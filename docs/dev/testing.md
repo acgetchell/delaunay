@@ -380,6 +380,14 @@ Default test recipes are split by target class:
 - `just test-cli` runs feature-gated CLI integration tests.
 - `just test-python` runs Python tests.
 
+The debug unit-test profile keeps the same 10-second per-test budget as the
+default and CI profiles. Timeout exceptions must be nextest overrides matching
+the smallest stable set of test names; do not raise the whole debug profile.
+The periodic T^2 builder smoke test and its matching-explicit-topology variant
+have a 60-second override because debug exact-geometry cost varies materially
+by platform. They remain in the normal suite because they cover distinct public
+builder contracts and are fast in release builds.
+
 For test-only changes, run only the matching focused recipe. If multiple test
 target classes changed, compose those focused recipes once each. Use
 `just test` when you intentionally want the full default test suite;
@@ -402,6 +410,11 @@ especially when measuring repair paths that need deliberately invalid topology.
 Those helpers should still have focused unit tests for their fixture contract.
 Known limitations should be asserted explicitly or tracked outside the routine
 test suite rather than hidden behind `#[ignore]`.
+
+`just test-slow` is the maintained execution path for every test hidden by the
+`slow-tests` feature, including feature-gated doctests. When changing a gate,
+compare nextest discovery with and without `--features slow-tests`; a test is
+not owned by the slow lane unless it appears in the feature-enabled catalog.
 
 Run all default test buckets:
 

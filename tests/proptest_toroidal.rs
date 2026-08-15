@@ -7,12 +7,9 @@
 //! - **Periodic construction invariance**: axis reflection and input permutation
 //!   preserve Levels 1-5 validity for the validated unit-domain fixture.
 
-#[cfg(feature = "slow-tests")]
 use delaunay::prelude::construction::{DelaunayTriangulationBuilder, Vertex};
-#[cfg(feature = "slow-tests")]
 use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::topology::spaces::{TopologicalSpace, ToroidalSpace};
-#[cfg(feature = "slow-tests")]
 use delaunay::vertex;
 use proptest::prelude::*;
 
@@ -37,7 +34,6 @@ fn coords_2d() -> impl Strategy<Value = [f64; 2]> {
 }
 
 /// Builds a proven non-degenerate fixture after axis reflection and input reordering.
-#[cfg(feature = "slow-tests")]
 fn transformed_periodic_vertices_t2(
     reflected_axes: [bool; 2],
     priorities: [u16; 7],
@@ -103,7 +99,6 @@ proptest! {
     }
 }
 
-#[cfg(feature = "slow-tests")]
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(32))]
 

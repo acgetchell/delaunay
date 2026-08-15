@@ -293,10 +293,12 @@ smoke recipe for cases where a compile-only check is the desired validator; do
 not run it before `test-integration` unless you intentionally want a separate
 compile-only pass. `test-unit` runs lib unit
 tests in both debug and release profiles so debug assertions and default
-overflow checks remain covered; the nextest `debug` profile gives slower debug
-geometry paths a finite 60-second watchdog. `test-integration` runs a focused
-release-profile nextest bucket. `test-cli` owns the feature-gated CLI tests,
-and `test-rust` composes every Rust test class once.
+overflow checks remain covered. The nextest `debug` profile preserves the
+default 10-second watchdog, with a 60-second override only for the two periodic
+builder cases whose debug exact-geometry cost is platform-sensitive.
+`test-integration` runs a focused release-profile nextest bucket. `test-cli`
+owns the feature-gated CLI tests, and `test-rust` composes every Rust test class
+once.
 
 ```bash
 just ci
@@ -442,7 +444,11 @@ The routine correctness suite has two buckets:
 profile. Debug-mode exact-predicate arithmetic can make high-dimensional tests
 look like hangs, so slow correctness timing should be measured with the release
 recipe. Deterministic slow tests should use `#[cfg(feature = "slow-tests")]`,
-not `#[ignore]`.
+not `#[ignore]`. The recipe is the maintained execution path for every test
+hidden by that feature and includes feature-gated doctests after the nextest
+run. When adding or removing a gate, compare nextest discovery with and without
+`--features slow-tests` so the slow-only case is demonstrably owned by this
+lane.
 
 `just perf-no-regressions` is the fuller local PR guard. It runs
 `ci_performance_suite` with the shared dev-mode Criterion arguments against a
