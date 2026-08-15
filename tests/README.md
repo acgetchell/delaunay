@@ -270,7 +270,9 @@ Property-based tests for serialization and deserialization verifying data preser
 - Property tests use randomized inputs to discover edge cases
 - Tests may take longer than unit tests due to multiple iterations
 - Failures include shrunk minimal failing cases for debugging
-- Configure test cases via `PROPTEST_CASES=N` environment variable (default: 256)
+- Integration properties default to 32 cases unless they configure a suite-specific local fallback
+- Configure test cases via `PROPTEST_CASES=N`; when set, it takes precedence over both repository and suite-specific
+  fallbacks
 - Reproduce failures using `PROPTEST_SEED=<seed>` from test output
 - For deterministic ordering when debugging, use `--test-threads=1`
 - Always prefer `--release` mode for representative performance

@@ -22,6 +22,10 @@
 //! Tests that construct through the Delaunay owner use owner-level Level 2
 //! structural validation instead of borrowing the underlying storage.
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use delaunay::prelude::collections::{SimplexVertexBuffer, SimplexVertexKeyBuffer};
 use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
 use delaunay::prelude::query::*;
@@ -29,6 +33,7 @@ use delaunay::prelude::tds::{Tds, jaccard_index};
 use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
+use proptest_config::with_default_cases;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
@@ -112,7 +117,7 @@ fn small_vertex_set_5d() -> impl Strategy<Value = Vec<Vertex<(), 5>>> {
 macro_rules! gen_tds_validity {
     ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_tds_from_vertices_is_valid_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
@@ -130,7 +135,7 @@ macro_rules! gen_tds_validity {
 macro_rules! gen_neighbor_symmetry {
     ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_neighbor_symmetry_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
@@ -189,7 +194,7 @@ macro_rules! gen_neighbor_symmetry {
 macro_rules! gen_neighbor_index_semantics {
     ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_neighbor_index_semantics_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
@@ -234,7 +239,7 @@ macro_rules! gen_neighbor_index_semantics {
 macro_rules! gen_simplex_vertices_exist_in_tds {
     ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_simplex_vertices_exist_in_tds_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
@@ -256,7 +261,7 @@ macro_rules! gen_simplex_vertices_exist_in_tds {
 macro_rules! gen_no_duplicate_simplices {
     ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_no_duplicate_simplices_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
@@ -278,7 +283,7 @@ macro_rules! gen_no_duplicate_simplices {
 macro_rules! gen_dimension_consistency {
     ($dim:literal, $min_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_dimension_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
@@ -296,7 +301,7 @@ macro_rules! gen_dimension_consistency {
 macro_rules! gen_vertex_count_consistency {
     ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_vertex_count_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
@@ -314,7 +319,7 @@ macro_rules! gen_vertex_count_consistency {
 macro_rules! gen_simplex_vertex_count {
     ($dim:literal, $expected:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_simplex_vertex_count_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
@@ -433,7 +438,7 @@ gen_simplex_vertex_count!(5, 6, #[cfg(feature = "slow-tests")]);
 macro_rules! gen_is_valid_topology {
     ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_triangulation_is_valid_topology_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
@@ -482,9 +487,8 @@ macro_rules! gen_high_dim_tds_smoke {
                 }
 
                 let config = Config {
-                    cases: 6,
                     max_shrink_iters: 16,
-                    ..Config::default()
+                    ..with_default_cases(6)
                 };
                 let target_cases = config.cases;
                 let mut runner = TestRunner::new(config);

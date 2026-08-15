@@ -9,6 +9,10 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::query::*;
 use delaunay::try_vertices_from_points;
@@ -32,7 +36,7 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 macro_rules! test_simplex_properties {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal, $expected_vertices:literal, $max_neighbors:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 /// Property: All simplices should have unique vertices (no duplicates)
                 $(#[$attr])*
                 #[test]

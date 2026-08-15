@@ -56,8 +56,9 @@ harness source.
 `just coverage-ci` runs through `cargo llvm-cov nextest` with the nextest
 `coverage` profile. That single instrumented CI pass produces both
 `coverage/cobertura.xml` and Codecov test-analytics JUnit XML. Property tests
-remain part of the CI coverage run; their case budget is controlled by
-`proptest.toml`, and longer deterministic coverage belongs behind the
+remain part of the CI coverage run; their shared repository fallback is 32
+cases, suite-local fallbacks may reduce that budget, and `PROPTEST_CASES`
+overrides either fallback. Longer deterministic coverage belongs behind the
 `slow-tests` feature rather than being hidden from coverage.
 
 Doc-test coverage remains intentionally disabled because `cargo-llvm-cov` marks

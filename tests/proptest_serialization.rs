@@ -8,6 +8,10 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use approx::relative_eq;
 use delaunay::prelude::Tds;
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
@@ -15,6 +19,7 @@ use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::query::*;
 use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
+use proptest_config::with_default_cases;
 
 /// Type alias for the default round-trip target (`AdaptiveKernel`).
 type DefaultDt<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
@@ -45,12 +50,9 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 macro_rules! test_serialization_properties {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, cases = $cases:literal)? $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 $(
-                    #![proptest_config(proptest::test_runner::Config {
-                        cases: $cases,
-                        ..proptest::test_runner::Config::default()
-                    })]
+                    #![proptest_config(with_default_cases($cases))]
                 )?
 
                 /// Property: Triangulation structure preserved after JSON roundtrip

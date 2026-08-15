@@ -12,6 +12,10 @@
 
 #![allow(unused_imports)] // Imports used in macro expansion
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use delaunay::prelude::construction::{Vertex, VertexValidationError};
 use delaunay::prelude::geometry::{CoordinateConversionError, Point};
 use delaunay::prelude::tds::UuidValidationError;
@@ -53,7 +57,7 @@ fn hash_of<T: Hash>(value: &T) -> u64 {
 macro_rules! test_vertex_properties {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 /// Property: Vertex equality is reflexive (v == v)
                 #[test]
                 fn [<prop_vertex_equality_reflexive_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
@@ -259,7 +263,7 @@ test_vertex_properties!(5);
 // CROSS-DIMENSIONAL TESTS
 // =============================================================================
 
-proptest! {
+repo_proptest! {
     /// Property: Vertex constructors reject non-finite coordinates before storage.
     #[test]
     fn prop_vertex_rejects_non_finite_2d(valid_coord in finite_coordinate(), non_finite_coord in non_finite_coordinate(), non_finite_index in 0..2_usize) {

@@ -100,13 +100,21 @@ prefer the documented recipes in [`tests/README.md`](../tests/README.md).
 
 ## Configuration
 
-The repository default is defined in [`proptest.toml`](../proptest.toml):
+The 32-case repository fallback is declared in
+[`proptest.toml`](../proptest.toml) and enforced for integration properties by
+[`tests/common/proptest_config.rs`](../tests/common/proptest_config.rs):
 
-```toml
-cases = 32
+```rust
+pub const REPOSITORY_DEFAULT_CASES: u32 = 32;
 ```
 
-Override it locally with environment variables:
+Proptest does not read `proptest.toml` itself. The regression tests keep its
+declaration synchronized with the Rust constant that supplies the fallback.
+
+Expensive suites may define a smaller local fallback. `PROPTEST_CASES` takes
+precedence over both the 32-case repository fallback and suite-local fallbacks.
+
+Override the case count locally with environment variables:
 
 ```bash
 PROPTEST_CASES=128 cargo test --release --test proptest_point

@@ -9,6 +9,10 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use delaunay::assert_jaccard_gte;
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::query::*;
@@ -39,7 +43,7 @@ fn count_boundary_facets<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, 
 macro_rules! test_minimal_simplex_hull {
     ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 /// Property: Hull facet count for minimal simplex is D+1
                 $(#[$attr])*
                 #[test]
@@ -98,7 +102,7 @@ macro_rules! test_minimal_simplex_hull {
 macro_rules! test_convex_hull_properties {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 /// Property: Convex hull can be constructed from valid triangulation
                 $(#[$attr])*
                 #[test]

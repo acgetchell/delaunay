@@ -1,15 +1,11 @@
-# Proptest configuration for delaunay
+# Repository Proptest configuration declaration
 #
-# This sets the default number of test cases for all property-based tests.
-# The default proptest value is 256, which is excessive for our complex
-# triangulation construction tests (each case builds a full 3D-5D triangulation
-# with flip-based repair).
+# Proptest does not read this file directly. Integration property tests apply
+# this fallback through `tests/common/proptest_config.rs`, and
+# `tests/proptest_config.rs` verifies that the declaration and Rust constant
+# remain synchronized.
 #
 # Override via environment variable: PROPTEST_CASES=64 cargo test
 
-# Number of test cases to run per property test
+# Number of cases for properties without a suite-specific local fallback
 cases = 32
-
-# Maximum number of shrink iterations when a test fails
-# (keep default of 1024)
-# max_shrink_iters = 1024

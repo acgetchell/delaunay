@@ -8,6 +8,10 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::query::*;
 use delaunay::try_vertices_from_points;
@@ -31,7 +35,7 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 macro_rules! test_facet_properties {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal, $expected_facet_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 /// Property: Each facet should have exactly D vertices (one less than simplex)
                 $(#[$attr])*
                 #[test]
@@ -139,7 +143,7 @@ test_facet_properties!(5, 7, 16, 5, #[cfg(feature = "slow-tests")]);
 macro_rules! test_facet_multiplicity {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_facet_multiplicity_ $dim d>](

@@ -10,6 +10,10 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use core::array;
 
 use delaunay::prelude::geometry::*;
@@ -64,7 +68,7 @@ fn prop_assert_relative_close(actual: f64, expected: f64) -> Result<(), TestCase
 macro_rules! test_geometry_properties {
     ($dim:literal, $num_points:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 /// Property: All simplex vertices are equidistant from the circumcenter
                 #[test]
                 fn [<prop_circumcenter_equidistance_ $dim d>](
@@ -243,7 +247,7 @@ test_geometry_properties!(3, 4);
 test_geometry_properties!(4, 5);
 test_geometry_properties!(5, 6);
 
-proptest! {
+repo_proptest! {
     /// Property: Low-dimensional simplex volume remains scale-aware across many orders
     /// of magnitude. This guards against fixed absolute degeneracy thresholds.
     #[test]

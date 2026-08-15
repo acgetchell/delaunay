@@ -24,6 +24,10 @@
 
 #![forbid(unsafe_code)]
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use delaunay::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
 use delaunay::prelude::geometry::{CoordinateConversionError, DegenerateSimplexReason, Point};
 use proptest::prelude::*;
@@ -110,7 +114,7 @@ macro_rules! gen_sos_tests {
             // Degenerate orientation — co-hyperplanar points ($dim D)
             // =============================================================
 
-            proptest! {
+            repo_proptest! {
                 /// `SoS` orientation returns ±1 for first-order-resolvable degenerate points.
                 #[test]
                 fn [<prop_sos_orientation_nonzero_ $dim d>](
@@ -218,7 +222,7 @@ macro_rules! gen_sos_tests {
             // Co-spherical insphere — hyper-rectangle vertices ($dim D)
             // =============================================================
 
-            proptest! {
+            repo_proptest! {
                 /// `SoS` insphere returns ±1 for exactly co-spherical points.
                 #[test]
                 fn [<prop_sos_insphere_nonzero_ $dim d>](
@@ -277,7 +281,7 @@ macro_rules! gen_sos_tests {
             // Robustness — arbitrary finite inputs ($dim D)
             // =============================================================
 
-            proptest! {
+            repo_proptest! {
                 /// `SoS` orientation never panics on random inputs.
                 #[test]
                 fn [<prop_sos_orientation_robust_ $dim d>](
@@ -322,7 +326,7 @@ gen_sos_tests!(5, prop::array::uniform5);
 // ERROR HANDLING (dimension-independent)
 // =============================================================================
 
-proptest! {
+repo_proptest! {
     /// `SoS` orientation returns `Err` for wrong point count.
     #[test]
     fn prop_sos_orientation_rejects_wrong_count(

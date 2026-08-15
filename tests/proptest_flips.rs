@@ -8,6 +8,10 @@
 //! subdivision round-trips preserve topology and Euler characteristic across
 //! dimensions 2D-5D.
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use ::uuid::Uuid;
 use delaunay::flips::BistellarFlips;
 use delaunay::prelude::construction::{
@@ -303,9 +307,7 @@ macro_rules! gen_k1_roundtrip_properties {
     ($($dim:literal),* $(,)?) => {
         pastey::paste! {
             $(
-                proptest! {
-                    #![proptest_config(ProptestConfig::with_cases(32))]
-
+                repo_proptest! {
                     #[test]
                     fn [<prop_k1_flip_roundtrip_preserves_topology_and_euler_ $dim d>](
                         (origin, edge_lengths) in prop_oneof![

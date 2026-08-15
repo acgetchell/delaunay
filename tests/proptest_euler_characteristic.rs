@@ -16,6 +16,10 @@
 //!
 //! For deterministic tests with known configurations, see `euler_characteristic.rs`.
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::generators::try_generate_random_triangulation_with_topology_guarantee;
 use delaunay::vertex;
@@ -61,7 +65,7 @@ const fn nonzero(value: usize) -> NonZeroUsize {
 macro_rules! test_euler_properties {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 /// Property: Euler characteristic matches topological classification
                 $(#[$attr])*
                 #[test]
