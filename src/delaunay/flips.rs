@@ -124,7 +124,8 @@ pub trait BistellarFlips<const D: usize> {
     /// # Errors
     ///
     /// Returns [`FlipError`] if the simplex is missing, the vertex cannot be inserted,
-    /// or the flip would create invalid topology.
+    /// the point is not strictly inside the selected simplex's active realization
+    /// chart, or the flip would create invalid topology.
     ///
     /// # Example
     ///
@@ -162,17 +163,24 @@ pub trait BistellarFlips<const D: usize> {
 
     /// Validate a forward k=1 move (simplex split) without mutating topology.
     ///
-    /// This checks the same deterministic pre-mutation conditions as
-    /// [`Self::flip_k1_insert`] on the same triangulation state, including
-    /// simplex liveness, duplicate inserted-vertex UUIDs, and exact
-    /// replacement-simplex degeneracy. The returned feasibility report omits
-    /// the inserted vertex key because that key is allocated only by the
-    /// mutating executor.
+    /// This checks the same deterministic structural, topological, and
+    /// orientation-realization conditions as [`Self::flip_k1_insert`] on the
+    /// same unchanged triangulation state. These include simplex liveness,
+    /// duplicate inserted-vertex UUIDs, exact replacement-simplex degeneracy,
+    /// and strict containment in the selected simplex's active affine chart.
+    /// Periodic containment is evaluated in the simplex's lifted local frame.
+    /// The returned feasibility report omits the inserted vertex key because
+    /// that key is allocated only by the mutating executor.
+    ///
+    /// Success predicts deterministic execution on the unchanged state; it
+    /// cannot guarantee against allocation failure, process termination, or
+    /// other environmental failures outside the triangulation contract.
     ///
     /// # Errors
     ///
     /// Returns [`FlipError`] when the corresponding mutating operation would
-    /// fail during deterministic pre-mutation validation.
+    /// fail during deterministic structural, topological, or
+    /// orientation-realization validation.
     ///
     /// # Examples
     ///
@@ -597,6 +605,7 @@ where
         simplex_key: SimplexKey,
         vertex: Vertex<U, D>,
     ) -> Result<FlipInfo<D>, FlipError> {
+        let _ = self.can_flip_k1_insert(simplex_key, &vertex)?;
         apply_realized_flip(self, |tri| {
             apply_bistellar_flip_k1_raw(&mut tri.tds, simplex_key, vertex)
         })
@@ -607,7 +616,8 @@ where
         simplex_key: SimplexKey,
         vertex: &Vertex<U, D>,
     ) -> Result<FlipFeasibility<D>, FlipError> {
-        validate_bistellar_flip_k1_insert(&self.tds, simplex_key, vertex)
+        let topology_model = self.global_topology.model();
+        validate_bistellar_flip_k1_insert(&self.tds, &topology_model, simplex_key, vertex)
     }
 
     fn flip_k1_remove(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {
@@ -827,11 +837,20 @@ mod tests {
             .unwrap();
         let mut tri = dt.into_triangulation();
         let simplex_key = tri.simplices().next().unwrap().0;
+        let candidate = vertex!([0.25, 0.25, 0.25]).unwrap();
+        let feasibility = tri
+            .can_flip_k1_insert(simplex_key, &candidate)
+            .expect("interior k=1 insertion should pass preflight");
 
-        let inserted = tri
-            .flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25]).unwrap())
-            .unwrap();
+        let inserted = tri.flip_k1_insert(simplex_key, candidate).unwrap();
         let inserted_vertex = inserted.inserted_face_vertices[0];
+        assert_eq!(feasibility.kind, inserted.kind);
+        assert_eq!(feasibility.direction, inserted.direction);
+        assert_eq!(feasibility.removed_simplices, inserted.removed_simplices);
+        assert_eq!(
+            feasibility.removed_face_vertices,
+            inserted.removed_face_vertices
+        );
         assert!(!inserted.new_simplices.is_empty());
         assert!(tri.validate().is_ok());
 
@@ -858,11 +877,76 @@ mod tests {
         let inserted = vertex!([0.5, 0.0]).unwrap();
         let inserted_uuid = inserted.uuid();
 
+        let preflight_err = tri.can_flip_k1_insert(simplex_key, &inserted).unwrap_err();
+        assert_matches!(preflight_err, FlipError::DegenerateSimplex);
+        assert_eq!(tri.tds.number_of_vertices(), before_vertices);
+        assert_eq!(tri.tds.number_of_simplices(), before_simplices);
+
         let err = tri.flip_k1_insert(simplex_key, inserted).unwrap_err();
 
         assert_matches!(err, FlipError::DegenerateSimplex);
         assert_eq!(tri.tds.number_of_vertices(), before_vertices);
         assert_eq!(tri.tds.number_of_simplices(), before_simplices);
+        assert!(tri.vertex_key_from_uuid(&inserted_uuid).is_none());
+        assert!(tri.validate().is_ok());
+        assert!(tri.is_valid_realization().is_ok());
+    }
+
+    #[test]
+    fn triangulation_flip_k1_insert_rejects_exterior_point_before_mutation() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .build()
+            .unwrap();
+        let mut tri = dt.into_triangulation();
+        let simplex_key = tri.simplices().next().unwrap().0;
+        let expected_opposite_index = tri
+            .simplex(simplex_key)
+            .unwrap()
+            .vertices()
+            .iter()
+            .position(|&vertex_key| *tri.vertex(vertex_key).unwrap().point().coords() == [0.0, 0.0])
+            .expect("fixture simplex should contain the origin");
+        let expected_opposite_vertex =
+            tri.simplex(simplex_key).unwrap().vertices()[expected_opposite_index];
+        let inserted = vertex!([0.75, 0.75]).unwrap();
+        let inserted_uuid = inserted.uuid();
+        let before = tri.tds.clone();
+
+        let preflight_err = tri.can_flip_k1_insert(simplex_key, &inserted).unwrap_err();
+        assert_eq!(
+            FlipFailureKind::from(&preflight_err),
+            FlipFailureKind::K1InsertionOutsideSimplex
+        );
+        assert_matches!(
+            preflight_err,
+            FlipError::K1InsertionOutsideSimplex {
+                simplex_key: rejected,
+                opposite_vertex,
+                opposite_vertex_index,
+            } if rejected == simplex_key
+                && opposite_vertex == expected_opposite_vertex
+                && opposite_vertex_index == expected_opposite_index
+        );
+        assert_eq!(tri.tds, before);
+
+        let commit_err = tri.flip_k1_insert(simplex_key, inserted).unwrap_err();
+        assert_matches!(
+            commit_err,
+            FlipError::K1InsertionOutsideSimplex {
+                simplex_key: rejected,
+                opposite_vertex,
+                opposite_vertex_index,
+            } if rejected == simplex_key
+                && opposite_vertex == expected_opposite_vertex
+                && opposite_vertex_index == expected_opposite_index
+        );
+        assert_eq!(tri.tds, before);
         assert!(tri.vertex_key_from_uuid(&inserted_uuid).is_none());
         assert!(tri.validate().is_ok());
         assert!(tri.is_valid_realization().is_ok());

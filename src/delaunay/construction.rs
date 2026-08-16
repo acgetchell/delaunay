@@ -1445,6 +1445,7 @@ fn is_geometric_flip_error(error: &FlipError) -> bool {
     match error {
         FlipError::PredicateFailure { .. }
         | FlipError::DegenerateSimplex
+        | FlipError::K1InsertionOutsideSimplex { .. }
         | FlipError::NegativeOrientation { .. } => true,
         FlipError::SimplexCreation(source) => matches!(
             source.as_ref(),

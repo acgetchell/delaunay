@@ -1706,8 +1706,16 @@ fn new_vertex_periodic_offset_in_frame<U, V, const D: usize>(
         .ok_or(FlipError::MissingSimplex {
             simplex_key: target_simplex_key,
         })?;
-    let target_offsets = periodic_offsets_or_zero_frame(target_simplex_key, target_simplex)?;
-    Ok(target_offsets.first().copied().unwrap_or([0_i8; D]))
+    k1_inserted_vertex_periodic_offset(target_simplex_key, target_simplex)
+}
+
+/// Selects the local lattice sheet used by both k=1 preflight and mutation planning.
+fn k1_inserted_vertex_periodic_offset<V, const D: usize>(
+    simplex_key: SimplexKey,
+    simplex: &Simplex<V, D>,
+) -> Result<[i8; D], FlipError> {
+    let offsets = periodic_offsets_or_zero_frame(simplex_key, simplex)?;
+    Ok(offsets.first().copied().unwrap_or([0_i8; D]))
 }
 
 /// Finds the target facet opposite the source facet, if the simplices share it.
@@ -2869,6 +2877,26 @@ pub enum FlipPredicateError {
         #[source]
         source: CoordinateValidationError,
     },
+    /// A topology model failed to lift a proposed k=1 vertex into the selected simplex frame.
+    #[error("failed to lift proposed k=1 vertex into simplex {simplex_key:?} frame: {source}")]
+    K1InsertedVertexLift {
+        /// Simplex whose local realization frame was requested.
+        simplex_key: SimplexKey,
+        /// Underlying topology-model error.
+        #[source]
+        source: GlobalTopologyModelError,
+    },
+    /// A lifted proposed k=1 vertex produced invalid point coordinates.
+    #[error(
+        "proposed k=1 vertex lifted into simplex {simplex_key:?} frame produced invalid coordinates: {source}"
+    )]
+    K1InsertedVertexPointValidation {
+        /// Simplex whose local realization frame was requested.
+        simplex_key: SimplexKey,
+        /// Coordinate validation failure for the lifted point.
+        #[source]
+        source: CoordinateValidationError,
+    },
 }
 
 impl FlipPredicateError {
@@ -3187,6 +3215,9 @@ pub enum FlipFailureKind {
     /// Degenerate simplex.
     #[error("degenerate simplex")]
     DegenerateSimplex,
+    /// Forward k=1 insertion point lies outside the selected simplex.
+    #[error("k=1 insertion outside simplex")]
+    K1InsertionOutsideSimplex,
     /// Negative orientation.
     #[error("negative orientation")]
     NegativeOrientation,
@@ -4099,6 +4130,18 @@ pub enum FlipError {
     /// Flip would create a degenerate simplex (zero orientation).
     #[error("Flip would create a degenerate simplex (zero orientation)")]
     DegenerateSimplex,
+    /// A forward k=1 insertion point is outside the selected simplex in its active chart.
+    #[error(
+        "Proposed k=1 vertex lies outside simplex {simplex_key:?} across facet slot {opposite_vertex_index} opposite {opposite_vertex:?}"
+    )]
+    K1InsertionOutsideSimplex {
+        /// Simplex selected for subdivision.
+        simplex_key: SimplexKey,
+        /// Vertex opposite a facet across which the proposed point lies outside.
+        opposite_vertex: VertexKey,
+        /// Vertex slot whose opposite facet the proposed point crosses.
+        opposite_vertex_index: usize,
+    },
     /// Delaunay repair would create a negative-orientation replacement simplex.
     #[error(
         "Delaunay repair would create a negative-orientation replacement simplex {simplex_vertices:?}"
@@ -4264,6 +4307,7 @@ impl From<&FlipError> for FlipFailureKind {
             FlipError::InvalidFlipContext { .. } => Self::InvalidFlipContext,
             FlipError::PredicateFailure { .. } => Self::PredicateFailure,
             FlipError::DegenerateSimplex => Self::DegenerateSimplex,
+            FlipError::K1InsertionOutsideSimplex { .. } => Self::K1InsertionOutsideSimplex,
             FlipError::NegativeOrientation { .. } => Self::NegativeOrientation,
             FlipError::DuplicateSimplex => Self::DuplicateSimplex,
             FlipError::NonManifoldFacet => Self::NonManifoldFacet,
@@ -4359,7 +4403,9 @@ pub struct FlipInfo<const D: usize> {
 /// is `None` for the same reason: the inserted vertex key does not exist until
 /// the mutation commits. Other move kinds report the already-live inserted face.
 /// Feasibility checks build only local replacement buffers and do not clone the
-/// full triangulation.
+/// full triangulation. They report deterministic failures on the inspected
+/// state; allocation failure, process termination, and other environmental
+/// failures remain outside the feasibility guarantee.
 ///
 /// # Examples
 ///
@@ -6618,14 +6664,124 @@ where
     validate_bistellar_flip::<U, V, D, 3>(tds, context)
 }
 
+/// Lifts a proposed k=1 vertex into the same simplex-local chart used by mutation planning.
+fn k1_inserted_vertex_point_in_simplex_frame<U, V, const D: usize>(
+    topology_model: &GlobalTopologyModelAdapter<D>,
+    simplex_key: SimplexKey,
+    simplex: &Simplex<V, D>,
+    vertex: &Vertex<U, D>,
+) -> Result<Point<D>, FlipError> {
+    let periodic_offset = if topology_model.supports_periodic_orientation_offsets() {
+        Some(k1_inserted_vertex_periodic_offset(simplex_key, simplex)?)
+    } else {
+        None
+    };
+    let lifted_coords = topology_model
+        .lift_for_orientation(*vertex.point().coords(), periodic_offset)
+        .map_err(|source| FlipPredicateError::K1InsertedVertexLift {
+            simplex_key,
+            source,
+        })?;
+    Point::try_new(lifted_coords).map_err(|source| {
+        FlipPredicateError::K1InsertedVertexPointValidation {
+            simplex_key,
+            source,
+        }
+        .into()
+    })
+}
+
+/// Requires the proposed k=1 point to lie strictly inside the selected realization chart.
+fn validate_k1_insertion_realization<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    topology_model: &GlobalTopologyModelAdapter<D>,
+    simplex_key: SimplexKey,
+    simplex: &Simplex<V, D>,
+    vertex: &Vertex<U, D>,
+) -> Result<(), FlipError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let offsets = periodic_offsets_or_zero_frame(simplex_key, simplex)?;
+    let use_offsets = topology_model.supports_periodic_orientation_offsets();
+    let mut simplex_points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(simplex.number_of_vertices());
+    for (vertex_index, &vertex_key) in simplex.vertices().iter().enumerate() {
+        let periodic_offset = use_offsets.then_some(offsets[vertex_index]);
+        simplex_points.push(lift_vertex_point(
+            tds,
+            topology_model,
+            vertex_key,
+            periodic_offset,
+        )?);
+    }
+
+    let simplex_orientation = robust_orientation(&simplex_points).map_err(|source| {
+        FlipPredicateError::coordinate_conversion(
+            FlipPredicateOperation::ReplacementSimplexOrientation,
+            source,
+        )
+    })?;
+    if simplex_orientation == Orientation::DEGENERATE {
+        return Err(FlipError::DegenerateSimplex);
+    }
+
+    let inserted_point =
+        k1_inserted_vertex_point_in_simplex_frame(topology_model, simplex_key, simplex, vertex)?;
+    for (omit_index, &opposite_vertex) in simplex.vertices().iter().enumerate() {
+        let mut replacement_points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(D + 1);
+        replacement_points.push(inserted_point);
+        replacement_points.extend(
+            simplex_points
+                .iter()
+                .enumerate()
+                .filter_map(|(index, point)| (index != omit_index).then_some(*point)),
+        );
+
+        let replacement_orientation =
+            robust_orientation(&replacement_points).map_err(|source| {
+                FlipPredicateError::coordinate_conversion(
+                    FlipPredicateOperation::ReplacementSimplexOrientation,
+                    source,
+                )
+            })?;
+        if replacement_orientation == Orientation::DEGENERATE {
+            return Err(FlipError::DegenerateSimplex);
+        }
+
+        let expected_orientation = if omit_index.is_multiple_of(2) {
+            simplex_orientation
+        } else {
+            match simplex_orientation {
+                Orientation::POSITIVE => Orientation::NEGATIVE,
+                Orientation::NEGATIVE => Orientation::POSITIVE,
+                Orientation::DEGENERATE => return Err(FlipError::DegenerateSimplex),
+            }
+        };
+        if replacement_orientation != expected_orientation {
+            return Err(FlipError::K1InsertionOutsideSimplex {
+                simplex_key,
+                opposite_vertex,
+                opposite_vertex_index: omit_index,
+            });
+        }
+    }
+
+    Ok(())
+}
+
 /// Validate a forward k=1 move (simplex split) without mutating the TDS.
 ///
 /// # Errors
 ///
 /// Returns a [`FlipError`] if the simplex is missing, the vertex UUID is already
-/// present, or the replacement simplices would be degenerate.
+/// present, the replacement simplices would be degenerate, or the inserted point
+/// is outside the selected simplex in its active realization chart.
 pub(crate) fn validate_bistellar_flip_k1_insert<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
+    topology_model: &GlobalTopologyModelAdapter<D>,
     simplex_key: SimplexKey,
     vertex: &Vertex<U, D>,
 ) -> Result<FlipFeasibility<D>, FlipError>
@@ -6652,28 +6808,31 @@ where
         .ok_or(FlipError::MissingSimplex { simplex_key })?;
     let removed_face_vertices: VertexKeyList = simplex.vertices().iter().copied().collect();
 
-    for &omit in &removed_face_vertices {
-        let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::with_capacity(D + 1);
-        points.push(*vertex.point());
-        for &vkey in &removed_face_vertices {
-            if vkey != omit {
-                points.push(vertex_point(tds, vkey)?);
+    if !topology_model.supports_periodic_orientation_offsets() {
+        for omit_index in 0..removed_face_vertices.len() {
+            let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::with_capacity(D + 1);
+            points.push(*vertex.point());
+            for (vertex_index, &vertex_key) in removed_face_vertices.iter().enumerate() {
+                if vertex_index != omit_index {
+                    points.push(vertex_point(tds, vertex_key)?);
+                }
             }
-        }
 
-        match robust_orientation(&points) {
-            Ok(Orientation::POSITIVE | Orientation::NEGATIVE) => {}
-            Ok(Orientation::DEGENERATE) => return Err(FlipError::DegenerateSimplex),
-            Err(error) => {
-                return Err(FlipPredicateError::coordinate_conversion(
-                    FlipPredicateOperation::ReplacementSimplexOrientation,
-                    error,
-                )
-                .into());
+            match robust_orientation(&points) {
+                Ok(Orientation::POSITIVE | Orientation::NEGATIVE) => {}
+                Ok(Orientation::DEGENERATE) => return Err(FlipError::DegenerateSimplex),
+                Err(error) => {
+                    return Err(FlipPredicateError::coordinate_conversion(
+                        FlipPredicateOperation::ReplacementSimplexOrientation,
+                        error,
+                    )
+                    .into());
+                }
             }
         }
     }
+    validate_k1_insertion_realization(tds, topology_model, simplex_key, simplex, vertex)?;
 
     Ok(FlipFeasibility {
         kind: BistellarFlipKind::k1(D),
@@ -15791,6 +15950,129 @@ mod tests {
         GlobalTopology::try_toroidal([1.0; D], ToroidalConstructionMode::PeriodicImagePoint)
             .unwrap()
             .model()
+    }
+
+    #[test]
+    fn k1_periodic_preflight_uses_lifted_repeated_vertex_slots() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let repeated_vertex = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+            .unwrap();
+        let other_vertex = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
+            .unwrap();
+        let simplex = Simplex::try_new_periodic(
+            vec![repeated_vertex, other_vertex, repeated_vertex],
+            vec![[0, 0], [0, 0], [1, 0]],
+        )
+        .expect("distinct lifted identities should form a periodic simplex");
+        let simplex_key = tds.insert_simplex_with_mapping(simplex).unwrap();
+        let topology_model = toroidal_model::<2>();
+        let interior_candidate = vertex!([0.25, 0.25]).unwrap();
+
+        let feasibility = validate_bistellar_flip_k1_insert(
+            &tds,
+            &topology_model,
+            simplex_key,
+            &interior_candidate,
+        )
+        .expect("lifted replacement simplices should be non-degenerate");
+        assert_eq!(feasibility.kind, BistellarFlipKind::k1(2));
+
+        let boundary_candidate = vertex!([0.5, 0.0]).unwrap();
+        assert_eq!(
+            validate_bistellar_flip_k1_insert(
+                &tds,
+                &topology_model,
+                simplex_key,
+                &boundary_candidate,
+            )
+            .expect_err("candidate on a lifted facet should be degenerate"),
+            FlipError::DegenerateSimplex
+        );
+
+        let exterior_candidate = vertex!([0.9, 0.25]).unwrap();
+
+        let error = validate_bistellar_flip_k1_insert(
+            &tds,
+            &topology_model,
+            simplex_key,
+            &exterior_candidate,
+        )
+        .expect_err("candidate should cross the facet opposite slot zero");
+
+        assert_eq!(
+            FlipFailureKind::from(&error),
+            FlipFailureKind::K1InsertionOutsideSimplex
+        );
+        assert_matches!(
+            error,
+            FlipError::K1InsertionOutsideSimplex {
+                simplex_key: rejected,
+                opposite_vertex,
+                opposite_vertex_index: 0,
+            } if rejected == simplex_key && opposite_vertex == repeated_vertex
+        );
+    }
+
+    #[test]
+    fn k1_periodic_preflight_reports_candidate_lift_overflow() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let vertices = vec![
+            tds.insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+                .unwrap(),
+            tds.insert_vertex_with_mapping(vertex!([0.0, 0.5]).unwrap())
+                .unwrap(),
+            tds.insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
+                .unwrap(),
+        ];
+        let simplex = Simplex::try_new_periodic(vertices, vec![[1, 0], [0, 0], [0, 0]]).unwrap();
+        let simplex_key = tds.insert_simplex_with_mapping(simplex).unwrap();
+        let topology_model = GlobalTopology::try_toroidal(
+            [f64::MAX, 1.0],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        )
+        .unwrap()
+        .model();
+        let candidate = vertex!([f64::MAX, 0.25]).unwrap();
+
+        let error =
+            validate_bistellar_flip_k1_insert(&tds, &topology_model, simplex_key, &candidate)
+                .expect_err("candidate lift should overflow its selected lattice sheet");
+        assert_matches!(
+            error,
+            FlipError::PredicateFailure { reason }
+                if matches!(
+                    reason.as_ref(),
+                    FlipPredicateError::K1InsertedVertexLift {
+                        simplex_key: rejected,
+                        source: GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value },
+                    } if *rejected == simplex_key && value.is_infinite()
+                )
+        );
+    }
+
+    #[test]
+    fn k1_periodic_preflight_rejects_degenerate_lifted_source() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let vertices = vec![
+            tds.insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+                .unwrap(),
+            tds.insert_vertex_with_mapping(vertex!([0.25, 0.0]).unwrap())
+                .unwrap(),
+            tds.insert_vertex_with_mapping(vertex!([0.75, 0.0]).unwrap())
+                .unwrap(),
+        ];
+        let simplex = Simplex::try_new_periodic(vertices, vec![[0, 0]; 3]).unwrap();
+        let simplex_key = tds.insert_simplex_with_mapping(simplex).unwrap();
+        let topology_model = toroidal_model::<2>();
+        let candidate = vertex!([0.5, 0.25]).unwrap();
+
+        assert_eq!(
+            validate_bistellar_flip_k1_insert(&tds, &topology_model, simplex_key, &candidate,)
+                .expect_err("degenerate lifted source should fail preflight"),
+            FlipError::DegenerateSimplex
+        );
     }
 
     fn insert_periodic_simplex_with_lifted_vertex<const D: usize>(
