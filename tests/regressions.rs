@@ -4,6 +4,7 @@
 //! integration test crates, unless the case needs separate crate-level setup,
 //! feature flags, or profile isolation.
 
+use delaunay::flips::{BistellarFlips, FlipError, SimplexKey};
 use delaunay::prelude::construction::{
     ConstructionOptions, ConstructionStatistics, DelaunayRepairPolicy, DelaunayTriangulation,
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
@@ -18,6 +19,7 @@ use delaunay::prelude::ordering::{
 };
 use delaunay::vertex;
 use std::num::NonZeroUsize;
+use uuid::Uuid;
 
 /// Replays a full Hilbert ordering while keeping only the prefix that first
 /// exposed issue #307, so the regression stays fast and deterministic.
@@ -532,8 +534,8 @@ fn regression_insertion_error_preserves_top_level_retryability() {
     assert!(source.is_retryable());
 }
 
-#[test]
-fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
+/// Builds the deterministic periodic T² fixture shared by regressions #536 and #551.
+fn periodic_regression_fixture_t2() -> DelaunayTriangulation<RobustKernel<f64>, (), (), 2> {
     let vertices: Vec<Vertex<(), 2>> = (0..7)
         .map(|index| {
             let index_f64 = f64::from(u32::try_from(index).expect("test index fits in u32"));
@@ -546,11 +548,111 @@ fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
         .collect();
     let kernel = RobustKernel::<f64>::new();
 
-    let dt = DelaunayTriangulationBuilder::new(&vertices)
+    DelaunayTriangulationBuilder::new(&vertices)
         .try_toroidal([1.0_f64; 2])
         .unwrap()
         .build_with_kernel(&kernel)
-        .expect("periodic T^2 build should succeed");
+        .expect("periodic T^2 build should succeed")
+}
+
+/// Finds a periodic simplex by exact coordinate bits and lattice offsets.
+fn periodic_simplex_key(
+    dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), 2>,
+    expected: [([f64; 2], [i8; 2]); 3],
+) -> SimplexKey {
+    let mut expected: Vec<_> = expected
+        .into_iter()
+        .map(|(coords, offset)| (coords.map(f64::to_bits), offset))
+        .collect();
+    expected.sort_unstable();
+
+    dt.simplices()
+        .find_map(|(simplex_key, simplex)| {
+            let offsets = simplex.periodic_vertex_offsets()?;
+            let mut actual: Vec<_> = simplex
+                .vertices()
+                .iter()
+                .copied()
+                .zip(offsets.iter().copied())
+                .map(|(vertex_key, offset)| {
+                    let coords = *dt
+                        .vertex(vertex_key)
+                        .expect("simplex should reference a live vertex")
+                        .point()
+                        .coords();
+                    (coords.map(f64::to_bits), offset)
+                })
+                .collect();
+            actual.sort_unstable();
+            (actual == expected).then_some(simplex_key)
+        })
+        .expect("periodic fixture should contain the requested lifted simplex")
+}
+
+type PeriodicSimplexSnapshot = (Uuid, Vec<(Uuid, [i8; 2])>, Vec<Option<Uuid>>);
+
+#[derive(Debug, PartialEq, Eq)]
+struct PeriodicTopologySnapshot {
+    vertices: Vec<(Uuid, [u64; 2])>,
+    simplices: Vec<PeriodicSimplexSnapshot>,
+}
+
+/// Captures canonical periodic topology and realization state through public views.
+fn snapshot_periodic_topology(
+    dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), 2>,
+) -> PeriodicTopologySnapshot {
+    let mut vertices: Vec<_> = dt
+        .vertices()
+        .map(|(_, vertex)| (vertex.uuid(), vertex.point().coords().map(f64::to_bits)))
+        .collect();
+    vertices.sort_unstable_by_key(|(uuid, _)| *uuid);
+
+    let mut simplices: Vec<_> = dt
+        .simplices()
+        .map(|(_, simplex)| {
+            let offsets = simplex
+                .periodic_vertex_offsets()
+                .expect("periodic simplex should carry lifted offsets");
+            let vertices = simplex
+                .vertices()
+                .iter()
+                .copied()
+                .zip(offsets.iter().copied())
+                .map(|(vertex_key, offset)| {
+                    let uuid = dt
+                        .vertex(vertex_key)
+                        .expect("simplex should reference a live vertex")
+                        .uuid();
+                    (uuid, offset)
+                })
+                .collect();
+            let neighbors = simplex
+                .neighbors()
+                .map(|keys| {
+                    keys.map(|neighbor_key| {
+                        neighbor_key.map(|key| {
+                            dt.simplex(key)
+                                .expect("neighbor should reference a live simplex")
+                                .uuid()
+                        })
+                    })
+                    .collect()
+                })
+                .unwrap_or_default();
+            (simplex.uuid(), vertices, neighbors)
+        })
+        .collect();
+    simplices.sort_unstable_by_key(|(uuid, _, _)| *uuid);
+
+    PeriodicTopologySnapshot {
+        vertices,
+        simplices,
+    }
+}
+
+#[test]
+fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
+    let dt = periodic_regression_fixture_t2();
 
     assert!(
         dt.simplices()
@@ -561,6 +663,102 @@ fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
         dt.is_valid_structure().is_ok(),
         "neighbor validation must compare lifted (offset) identities"
     );
+}
+
+#[test]
+fn regression_issue_551_periodic_k1_preflight_rejects_orientation_repair_failure() {
+    let dt = periodic_regression_fixture_t2();
+    let simplex_key = periodic_simplex_key(
+        &dt,
+        [
+            ([0.131_152_949_166_187_8, 0.113_961_030_586_907_43], [0, 0]),
+            ([0.262_461_179_900_496_8, 0.795_584_412_305_938_3], [0, -1]),
+            ([0.343_614_129_000_127_8, 0.859_545_442_942_608_2], [0, -1]),
+        ],
+    );
+    let candidate = vertex!([0.05, 0.35]).expect("finite regression point");
+    let candidate_uuid = candidate.uuid();
+    let before = snapshot_periodic_topology(&dt);
+
+    let preflight_error = dt
+        .can_flip_k1_insert(simplex_key, &candidate)
+        .expect_err("lifted-chart exterior point must fail immutable feasibility");
+    assert!(matches!(
+        preflight_error,
+        FlipError::K1InsertionOutsideSimplex {
+            simplex_key: rejected,
+            ..
+        } if rejected == simplex_key
+    ));
+    assert_eq!(
+        snapshot_periodic_topology(&dt),
+        before,
+        "immutable preflight must not alter the TDS"
+    );
+    assert!(dt.vertex_key_from_uuid(&candidate_uuid).is_none());
+
+    let mut trial = dt;
+    let before_commit = snapshot_periodic_topology(&trial);
+    let commit_error = trial
+        .flip_k1_insert(simplex_key, candidate)
+        .expect_err("commit must share the deterministic k=1 preflight");
+    assert!(matches!(
+        commit_error,
+        FlipError::K1InsertionOutsideSimplex {
+            simplex_key: rejected,
+            ..
+        } if rejected == simplex_key
+    ));
+    assert_eq!(
+        snapshot_periodic_topology(&trial),
+        before_commit,
+        "rejected commit must not mutate"
+    );
+    trial
+        .as_triangulation()
+        .validate_realization()
+        .expect("rejected insertion must preserve the original realization");
+}
+
+#[test]
+fn regression_issue_551_periodic_k1_preflight_success_matches_commit() {
+    let dt = periodic_regression_fixture_t2();
+    let simplex_key = periodic_simplex_key(
+        &dt,
+        [
+            ([0.131_152_949_166_187_8, 0.113_961_030_586_907_43], [0, 0]),
+            ([0.343_614_129_000_127_8, 0.859_545_442_942_608_2], [0, -1]),
+            ([0.606_230_589_834_825_3, 0.422_792_206_212_024_2], [0, 0]),
+        ],
+    );
+    let candidate = vertex!([0.360_332_556_000_380_3, 0.132_099_559_913_846_6])
+        .expect("finite periodic interior point");
+    let before = snapshot_periodic_topology(&dt);
+
+    let feasibility = dt
+        .can_flip_k1_insert(simplex_key, &candidate)
+        .expect("strictly interior periodic point should pass preflight");
+    assert_eq!(
+        snapshot_periodic_topology(&dt),
+        before,
+        "successful preflight must not alter the TDS"
+    );
+
+    let mut trial = dt;
+    let committed = trial
+        .flip_k1_insert(simplex_key, candidate)
+        .expect("successful periodic preflight should be executable");
+    assert_eq!(feasibility.kind, committed.kind);
+    assert_eq!(feasibility.direction, committed.direction);
+    assert_eq!(feasibility.removed_simplices, committed.removed_simplices);
+    assert_eq!(
+        feasibility.removed_face_vertices,
+        committed.removed_face_vertices
+    );
+    trial
+        .as_triangulation()
+        .validate_realization()
+        .expect("successful periodic k=1 insertion must preserve Level 4 realization");
 }
 
 /// The 35-vertex 3D seed `0xE30C78582376677C` produces a Hilbert-ordered
