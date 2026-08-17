@@ -1574,6 +1574,17 @@ mod tests {
                 DelaunayValidationErrorKind::Triangulation,
             ),
             (
+                DelaunayTriangulationValidationError::Realization {
+                    source: Box::new(
+                        TriangulationRealizationValidationError::UnsupportedTopology {
+                            topology: TopologyKind::Hyperbolic,
+                            dimension: 2,
+                        },
+                    ),
+                },
+                DelaunayValidationErrorKind::Realization,
+            ),
+            (
                 synthetic_delaunay_verification_error("non-Delaunay facet"),
                 DelaunayValidationErrorKind::VerificationFailed,
             ),

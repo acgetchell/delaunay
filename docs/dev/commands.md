@@ -296,7 +296,9 @@ tests in both debug and release profiles so debug assertions and default
 overflow checks remain covered. The nextest `debug` profile preserves the
 default 10-second watchdog, with 60-second overrides for the two periodic
 builder cases whose debug exact-geometry cost is platform-sensitive and, on
-Windows only, two randomized 5D agreement checks at the timeout boundary.
+Windows, two randomized 5D agreement checks at the timeout boundary. The
+optimized 5D intersection agreement check has the same focused override on
+macOS ARM runners.
 `test-integration` runs a focused release-profile nextest bucket. Selected 4D
 property families retain that default coverage with a Windows-only 60-second
 override because their release runtimes sit at the 10-second boundary on

@@ -890,6 +890,7 @@ class PerformanceSummaryGenerator:
         Returns:
             True if successful, False otherwise
         """
+        _require_positive_int_field("bench_timeout", bench_timeout)
         try:
             if output_path is None:
                 output_path = self.project_root / "benches" / "PERFORMANCE_RESULTS.md"
@@ -1162,6 +1163,7 @@ class PerformanceSummaryGenerator:
         Returns:
             True if the benchmark completed successfully, False otherwise.
         """
+        _require_positive_int_field("bench_timeout", bench_timeout)
         try:
             print("🔄 Running ci_performance_suite benchmarks...")
 

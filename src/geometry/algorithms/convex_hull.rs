@@ -205,6 +205,7 @@ pub enum ConvexHullConstructionError {
     #[error("Insufficient data for convex hull construction: {reason}")]
     InsufficientData {
         /// Typed reason that the input cannot define a convex hull.
+        #[source]
         reason: ConvexHullInsufficientDataReason,
     },
     /// Geometric degeneracy prevents convex hull construction.
@@ -3858,6 +3859,19 @@ mod tests {
         };
         let display = format!("{coord_error}");
         assert!(display.contains("Coordinate conversion error"));
+    }
+
+    #[test]
+    fn insufficient_data_error_preserves_typed_source() {
+        let reason = ConvexHullInsufficientDataReason::NoVertices;
+        let error = ConvexHullConstructionError::InsufficientData { reason };
+
+        assert_eq!(
+            error
+                .source()
+                .and_then(|source| source.downcast_ref::<ConvexHullInsufficientDataReason>()),
+            Some(&reason),
+        );
     }
 
     #[test]

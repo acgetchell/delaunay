@@ -1983,6 +1983,56 @@ mod tests {
     }
 
     #[test]
+    fn intrinsic_topology_adapters_preserve_typed_tds_sources() {
+        let direct = intrinsic_tds_error(TdsError::InconsistentDataStructure {
+            message: "invalid synthetic adjacency".to_string(),
+        });
+        assert_matches!(
+            direct,
+            SphericalDelaunayValidationError::IntrinsicTopology { source }
+                if matches!(
+                    source.as_ref(),
+                    InvariantError::Tds {
+                        source: TdsError::InconsistentDataStructure { message }
+                    } if message == "invalid synthetic adjacency"
+                )
+        );
+
+        let boundary_count = intrinsic_topology_support_error(TopologyError::BoundaryFacetCount {
+            source: TdsError::InconsistentDataStructure {
+                message: "invalid boundary count".to_string(),
+            },
+        });
+        assert_matches!(
+            boundary_count,
+            SphericalDelaunayValidationError::IntrinsicTopology { source }
+                if matches!(
+                    source.as_ref(),
+                    InvariantError::Tds {
+                        source: TdsError::InconsistentDataStructure { message }
+                    } if message == "invalid boundary count"
+                )
+        );
+
+        let facet_access =
+            intrinsic_topology_support_error(TopologyError::BoundaryFacetSimplexAccess {
+                source: FacetError::FacetNotFoundInTriangulation,
+            });
+        assert_matches!(
+            facet_access,
+            SphericalDelaunayValidationError::IntrinsicTopology { source }
+                if matches!(
+                    source.as_ref(),
+                    InvariantError::Tds {
+                        source: TdsError::FacetError {
+                            source: FacetError::FacetNotFoundInTriangulation
+                        }
+                    }
+                )
+        );
+    }
+
+    #[test]
     fn level3_rejects_empty_spherical_complex() {
         let triangulation = SphericalDelaunayTriangulation::<2> {
             points: tetrahedron_boundary_points(),

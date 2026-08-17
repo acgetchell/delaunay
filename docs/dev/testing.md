@@ -387,8 +387,9 @@ The periodic T^2 builder smoke test and its matching-explicit-topology variant
 have a 60-second override because debug exact-geometry cost varies materially
 by platform. They remain in the normal suite because they cover distinct public
 builder contracts and are fast in release builds. Two randomized 5D agreement
-checks also receive 60 seconds on Windows only because they sit at the
-10-second boundary there.
+checks also receive 60 seconds on Windows because they sit at the 10-second
+boundary there. The optimized 5D intersection agreement check receives the
+same focused override on macOS ARM runners.
 
 The release integration profile similarly grants 60 seconds on Windows only
 to the promoted 4D property families that sit at the 10-second boundary there.

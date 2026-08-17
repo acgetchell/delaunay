@@ -3436,6 +3436,8 @@ class TestTimeoutHandling:
                 "generate-summary",
                 "--run-benchmarks",
                 "--strict",
+                "--bench-timeout",
+                "3600",
                 "--profile",
                 "release",
                 "--output",
@@ -3457,7 +3459,7 @@ class TestTimeoutHandling:
             output_path=Path("summary.md"),
             run_benchmarks=True,
             cargo_profile="release",
-            bench_timeout=1800,
+            bench_timeout=3600,
             strict=True,
         )
 
@@ -4175,6 +4177,20 @@ Benchmark completed.""",
             assert success is True
             assert mock_cargo.call_args.kwargs["timeout"] == 3600
 
+    @pytest.mark.parametrize("bench_timeout", [0, -1])
+    def test_run_ci_performance_suite_rejects_non_positive_timeout(self, bench_timeout: int) -> None:
+        """Defensive suite calls must reject invalid benchmark budgets."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            generator = PerformanceSummaryGenerator(Path(temp_dir))
+
+            with (
+                patch("benchmark_utils.run_cargo_command") as mock_cargo,
+                pytest.raises(ValueError, match="bench_timeout must be a positive integer"),
+            ):
+                generator._run_ci_performance_suite(bench_timeout=bench_timeout)
+
+            mock_cargo.assert_not_called()
+
     @patch("benchmark_utils.run_cargo_command")
     def test_run_ci_performance_suite_dev_mode_uses_reduced_sampling(self, mock_cargo) -> None:
         """Test dev mode appends reduced Criterion sampling args explicitly."""
@@ -4286,6 +4302,15 @@ Benchmark completed.""",
             # Check success message was printed
             captured = capsys.readouterr()
             assert "Generated performance summary" in captured.out
+
+    @pytest.mark.parametrize("bench_timeout", [0, -1])
+    def test_generate_summary_rejects_non_positive_timeout(self, bench_timeout: int) -> None:
+        """Direct summary calls must reject invalid benchmark budgets."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            generator = PerformanceSummaryGenerator(Path(temp_dir))
+
+            with pytest.raises(ValueError, match="bench_timeout must be a positive integer"):
+                generator.generate_summary(bench_timeout=bench_timeout)
 
     @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
     @patch("benchmark_utils.PerformanceSummaryGenerator._run_ci_performance_suite")

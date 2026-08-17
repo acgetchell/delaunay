@@ -1330,7 +1330,8 @@ rules:
           ^\#\[non_exhaustive\]\s*
           (?:^\#\[[^\n]+\]\s*)*
           ^pub\s+enum\s+[A-Za-z_][A-Za-z0-9_]*
-          (?:\s*<(?:(?!\{).)*?>)?\s*\{
+          (?:\s*<(?:(?!\{).)*?>)?
+          (?:\s+where\b(?:(?!\{).)*)?\s*\{
           (?:(?!^\}).)*?^[ \t]+[A-Z][A-Za-z0-9_]*[ \t]*\(
       - pattern-regex: |-
           (?msx)
@@ -1340,7 +1341,8 @@ rules:
           (?:(?!\)\]).)*\b(?:thiserror::)?Error\b(?:(?!\)\]).)*\)\]\s*
           (?:^\#\[[^\n]+\]\s*)*
           ^pub\s+enum\s+[A-Za-z_][A-Za-z0-9_]*
-          (?:\s*<(?:(?!\{).)*?>)?\s*\{
+          (?:\s*<(?:(?!\{).)*?>)?
+          (?:\s+where\b(?:(?!\{).)*)?\s*\{
           (?:(?!^\}).)*?^[ \t]+[A-Z][A-Za-z0-9_]*[ \t]*\(
 
   - id: delaunay.rust.no-stringly-generator-error-payloads

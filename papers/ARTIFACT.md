@@ -22,7 +22,7 @@ documents remain the source of truth for their respective contracts.
 | Crate | [`delaunay` 0.8.0 on crates.io][crate-release] | Package version must be `0.8.0` |
 | Rust | 1.97.1 | `rustc --version` and [`rust-toolchain.toml`](../rust-toolchain.toml) |
 | Zenodo collection | [`10.5281/zenodo.16931097`][zenodo-concept] | Stable software concept DOI |
-| Zenodo v0.8.0 record | [`10.5281/zenodo.21635965`][zenodo-version] | `acgetchell/delaunay-v0.8.0.zip`; MD5 `6274e49bb1ef91e1e3023225131199d7` |
+| Zenodo v0.8.0 record | [`10.5281/zenodo.21635965`][zenodo-version] | SHA-256 `7ec456da83d105f807ac40737d38e102b30f5963467d410354925cf197cb45a7` |
 
 The published commit is recorded explicitly above and must also resolve from
 the annotated tag. In a Git checkout, verify both identities with:
@@ -39,6 +39,12 @@ rustc --version
 GitHub and Zenodo source archives do not contain `.git` metadata. For an
 archive, verify its published checksum and confirm that the release metadata
 records the same tag and peeled commit before running the reproduction paths.
+The Zenodo file is `acgetchell/delaunay-v0.8.0.zip`; the record also reports
+MD5 `6274e49bb1ef91e1e3023225131199d7`. Verify the stronger checksum with:
+
+```bash
+printf '%s\n' '7ec456da83d105f807ac40737d38e102b30f5963467d410354925cf197cb45a7  acgetchell/delaunay-v0.8.0.zip' | sha256sum --check
+```
 
 The release-specific Zenodo DOI is
 [`10.5281/zenodo.21635965`][zenodo-version].

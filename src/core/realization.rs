@@ -126,16 +126,18 @@ impl From<PeriodicSimplexSpanError> for PeriodicDomainPeriodError {
 #[non_exhaustive]
 pub enum TriangulationRealizationValidationError {
     /// Lower-layer element or TDS structural validation failed (Levels 1-2).
-    #[error(transparent)]
+    #[error("{source}")]
     Tds {
         /// Boxed TDS source error.
+        #[source]
         source: Box<TdsError>,
     },
 
     /// Lower-layer topology validation failed (Level 3).
-    #[error(transparent)]
+    #[error("{source}")]
     Triangulation {
         /// Boxed topology-validation source error.
+        #[source]
         source: Box<TriangulationValidationError>,
     },
 
@@ -2482,6 +2484,36 @@ mod tests {
                         if vertex_key == missing_identity.key
                             && context.contains(&format!("offset {:?}", missing_identity.offset))
                 )
+        );
+    }
+
+    #[test]
+    fn lower_layer_realization_errors_preserve_typed_sources() {
+        let expected_tds_source = TdsError::InconsistentDataStructure {
+            message: "invalid TDS".to_string(),
+        };
+        let tds_error = TriangulationRealizationValidationError::Tds {
+            source: Box::new(expected_tds_source.clone()),
+        };
+        let tds_source = std::error::Error::source(&tds_error)
+            .expect("TDS realization error should preserve its source");
+        assert_eq!(
+            tds_source.downcast_ref::<Box<TdsError>>().map(Box::as_ref),
+            Some(&expected_tds_source),
+        );
+
+        let expected_triangulation_source =
+            TriangulationValidationError::Disconnected { simplex_count: 2 };
+        let triangulation_error = TriangulationRealizationValidationError::Triangulation {
+            source: Box::new(expected_triangulation_source.clone()),
+        };
+        let triangulation_source = std::error::Error::source(&triangulation_error)
+            .expect("triangulation realization error should preserve its source");
+        assert_eq!(
+            triangulation_source
+                .downcast_ref::<Box<TriangulationValidationError>>()
+                .map(Box::as_ref),
+            Some(&expected_triangulation_source),
         );
     }
 

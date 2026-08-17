@@ -1301,6 +1301,18 @@ pub enum MultilineGenericPositionalCarrierFixtureFailure<
 }
 
 // ruleid: delaunay.rust.public-error-variants-use-named-fields
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum WhereClausePositionalCarrierFixtureFailure<T>
+where
+    T: std::error::Error,
+{
+    /// Positional carrier after a generic where clause.
+    #[error("where-clause source")]
+    Positional(T),
+}
+
+// ruleid: delaunay.rust.public-error-variants-use-named-fields
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum ReorderedAttributePositionalCarrierFixtureFailure {

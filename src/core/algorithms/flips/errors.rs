@@ -2203,9 +2203,11 @@ mod tests {
     use crate::core::algorithms::locate::LocateResult;
     use crate::core::collections::{SimplexVertexKeyBuffer, SimplexVertexUuidBuffer, Uuid};
     use crate::core::realization::TriangulationRealizationSimplexDetail;
+    use crate::core::tds::TdsError;
     use crate::core::validation::TopologyGuarantee;
     use crate::geometry::traits::coordinate::CoordinateConversionValue;
     use crate::repair::DelaunayRepairOperation;
+    use crate::topology::traits::topological_space::TopologyKind;
     use slotmap::KeyData;
     use std::assert_matches;
     use std::{
@@ -2333,6 +2335,12 @@ mod tests {
             FlipFailureKind::from(&dangling_vertex_incidence),
             FlipFailureKind::DanglingVertexIncidence
         );
+
+        let simplex_creation = FlipError::from(SimplexValidationError::DuplicateVertices);
+        assert_eq!(
+            FlipFailureKind::from(&simplex_creation),
+            FlipFailureKind::SimplexCreation
+        );
     }
 
     fn assert_hull_extension_failure_kind(
@@ -2376,8 +2384,34 @@ mod tests {
             FlipNeighborHullExtensionFailureKind::DisconnectedVisiblePatch,
             "disconnected visible patch",
         );
+
+        assert_hull_extension_failure_kind(
+            &HullExtensionReason::PredicateFailed {
+                source: CoordinateConversionError::InvalidSimplexPointCount {
+                    actual: 2,
+                    expected: 3,
+                    dimension: 2,
+                },
+            },
+            FlipNeighborHullExtensionFailureKind::PredicateFailed,
+            "predicate failed",
+        );
+
+        assert_hull_extension_failure_kind(
+            &HullExtensionReason::Tds {
+                source: TdsError::InconsistentDataStructure {
+                    message: "missing boundary facet".to_string(),
+                },
+            },
+            FlipNeighborHullExtensionFailureKind::Tds,
+            "TDS",
+        );
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps the insertion suberror conversion matrix together"
+    )]
     #[test]
     fn test_flip_neighbor_conversion_kinds_cover_insertion_suberrors() {
         let cavity_kind = FlipNeighborCavityFailureKind::from(
@@ -2418,6 +2452,38 @@ mod tests {
             FlipNeighborDelaunayValidationFailureKind::RepairOperationFailed
         );
         assert_eq!(validation_kind.to_string(), "repair operation failed");
+
+        let validation_cases = [
+            (
+                DelaunayTriangulationValidationError::from(TdsError::InconsistentDataStructure {
+                    message: "dangling simplex".to_string(),
+                }),
+                FlipNeighborDelaunayValidationFailureKind::Tds,
+            ),
+            (
+                DelaunayTriangulationValidationError::from(
+                    TriangulationValidationError::Disconnected { simplex_count: 2 },
+                ),
+                FlipNeighborDelaunayValidationFailureKind::Triangulation,
+            ),
+            (
+                DelaunayTriangulationValidationError::Realization {
+                    source: Box::new(
+                        TriangulationRealizationValidationError::UnsupportedTopology {
+                            topology: TopologyKind::Hyperbolic,
+                            dimension: 2,
+                        },
+                    ),
+                },
+                FlipNeighborDelaunayValidationFailureKind::Realization,
+            ),
+        ];
+        for (source, expected) in validation_cases {
+            assert_eq!(
+                FlipNeighborDelaunayValidationFailureKind::from(&source),
+                expected
+            );
+        }
 
         let repair_wiring = FlipNeighborWiringError::from(InsertionError::DelaunayRepairFailed {
             source: Box::new(DelaunayRepairError::InvalidTopology {
@@ -2468,6 +2534,58 @@ mod tests {
                 reason: SpatialIndexConstructionFailure::NonPositiveCellSize {
                     value: CoordinateConversionValue::from_f64(0.0),
                 },
+            }
+        );
+    }
+
+    #[test]
+    fn flip_neighbor_wiring_classifies_and_preserves_boundary_sources() {
+        let topology_error = InsertionError::TopologyValidation {
+            source: TdsError::InconsistentDataStructure {
+                message: "broken topology".to_string(),
+            },
+        };
+        assert_eq!(
+            insertion_error_kind(&topology_error),
+            InsertionErrorKind::TopologyValidation
+        );
+        assert_eq!(
+            FlipNeighborWiringError::from(topology_error),
+            FlipNeighborWiringError::TopologyValidation {
+                source: TdsValidationFailure::InconsistentDataStructure {
+                    message: "broken topology".to_string(),
+                },
+            }
+        );
+
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(9_001));
+        let conflict_source = ConflictError::InvalidStartSimplex { simplex_key };
+        let conflict_error = InsertionError::ConflictRegion {
+            source: conflict_source.clone(),
+        };
+        assert_eq!(
+            insertion_error_kind(&conflict_error),
+            InsertionErrorKind::ConflictRegion
+        );
+        assert_eq!(
+            FlipNeighborWiringError::from(conflict_error),
+            FlipNeighborWiringError::ConflictRegion {
+                source: conflict_source,
+            }
+        );
+
+        let location_source = LocateError::InvalidSimplex { simplex_key };
+        let location_error = InsertionError::Location {
+            source: location_source.clone(),
+        };
+        assert_eq!(
+            insertion_error_kind(&location_error),
+            InsertionErrorKind::Location
+        );
+        assert_eq!(
+            FlipNeighborWiringError::from(location_error),
+            FlipNeighborWiringError::Location {
+                source: location_source,
             }
         );
     }

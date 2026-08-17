@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 UTF8 = "utf-8"
-RULE_ANNOTATION_RE = re.compile(r"(?:ruleid|ok):\s*([^\n]+)")
+RULE_ANNOTATION_RE = re.compile(r"(?<![A-Za-z0-9_])(?:ruleid|ok):\s*([^\n]+)")
 RULE_VIOLATION_ANNOTATION_RE = re.compile(r"(?<![A-Za-z0-9_])ruleid:\s*([^\n]+)")
 RULE_SPLIT_RE = re.compile(r"(?m)^  - id: ")
 

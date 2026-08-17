@@ -31,6 +31,17 @@ def test_annotated_rule_ids_preserves_unique_project_rule_order() -> None:
     ]
 
 
+def test_annotated_rule_ids_requires_annotation_prefix_boundary() -> None:
+    """Embedded annotation names must not select fixture rules."""
+    assert annotated_rule_ids("// notruleid: delaunay.rust.covered-rule\n") == []
+    assert annotated_rule_ids("// notok: delaunay.rust.covered-rule\n") == []
+
+
+def test_violation_rule_ids_requires_annotation_prefix_boundary() -> None:
+    """Embedded rule identifiers must not count as violation annotations."""
+    assert violation_rule_ids("// notruleid: delaunay.rust.covered-rule\n") == []
+
+
 def test_write_fixture_config_extracts_only_annotated_rules(tmp_path: Path) -> None:
     """Generated configs should stay minimal and preserve annotation order."""
     fixture = tmp_path / "fixture.rs"
