@@ -90,14 +90,14 @@ This matters for large-scale investigations that need to run under
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_REPAIR_TRACE` | presence | `flips.rs` | Per-flip trace: enqueue, skip, apply, context details |
-| `DELAUNAY_REPAIR_DEBUG_FACETS` | presence | `flips.rs` | Facet-level flip skip reasons (degenerate, duplicate, non-manifold, existing simplex) |
-| `DELAUNAY_REPAIR_DEBUG_POSTCONDITION_FACET` | presence | `flips.rs` | `[release]` One-shot snapshot of the first unresolved k=2 facet with last-flip overlap |
-| `DELAUNAY_REPAIR_DEBUG_PREDICATES` | presence | `flips.rs` | Insphere classification details for k=2 and k=3 violation checks |
-| `DELAUNAY_REPAIR_DEBUG_RIDGE` | presence | `flips.rs` | Ridge context snapshots during k=3 repair |
-| `DELAUNAY_REPAIR_DEBUG_RIDGE_LIMIT` | **value** (integer) | `flips.rs` | Maximum ridge debug snapshots (default: 64) |
-| `DELAUNAY_REPAIR_DEBUG_RIDGE_MIN_MULTIPLICITY` | **value** (integer) | `flips.rs` | `[release]` Skip low-mult; emit when `found >= N` (default: 0). |
-| `DELAUNAY_REPAIR_DEBUG_SUMMARY` | presence | `flips.rs` | Per-attempt repair summary (flips, checks, cycles, ambiguous, skips) |
+| `DELAUNAY_REPAIR_TRACE` | presence | `flips/` | Per-flip trace: enqueue, skip, apply, context details |
+| `DELAUNAY_REPAIR_DEBUG_FACETS` | presence | `flips/` | Facet-level flip skip reasons (degenerate, duplicate, non-manifold, existing simplex) |
+| `DELAUNAY_REPAIR_DEBUG_POSTCONDITION_FACET` | presence | `flips/` | `[release]` One-shot snapshot of the first unresolved k=2 facet with last-flip overlap |
+| `DELAUNAY_REPAIR_DEBUG_PREDICATES` | presence | `flips/` | Insphere classification details for k=2 and k=3 violation checks |
+| `DELAUNAY_REPAIR_DEBUG_RIDGE` | presence | `flips/` | Ridge context snapshots during k=3 repair |
+| `DELAUNAY_REPAIR_DEBUG_RIDGE_LIMIT` | **value** (integer) | `flips/` | Maximum ridge debug snapshots (default: 64) |
+| `DELAUNAY_REPAIR_DEBUG_RIDGE_MIN_MULTIPLICITY` | **value** (integer) | `flips/` | `[release]` Skip low-mult; emit when `found >= N` (default: 0). |
+| `DELAUNAY_REPAIR_DEBUG_SUMMARY` | presence | `flips/` | Per-attempt repair summary (flips, checks, cycles, ambiguous, skips) |
 
 ## Predicates & Validation
 

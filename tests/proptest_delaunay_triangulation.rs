@@ -1951,7 +1951,7 @@ macro_rules! gen_duplicate_cloud_test {
                 /// This integration test exercises the full construction pipeline with messy real-world
                 /// inputs (exact duplicates + near-duplicates).
                 ///
-                /// See: Issue #120, src/core/algorithms/flips.rs
+                /// See: Issue #120, src/core/algorithms/flips/
                 $(#[$attr])*
                 #[test]
                 fn [<prop_cloud_with_duplicates_is_delaunay_ $dim d>](

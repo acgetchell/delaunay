@@ -190,7 +190,7 @@ on the selected kernel.
 
 ### Flip Operations
 
-`src/core/algorithms/flips.rs` preserves orientation during bistellar flips:
+`src/core/algorithms/flips/orientation.rs` preserves orientation during bistellar flips:
 
 - `apply_bistellar_flip_with_k()` asserts coherent orientation before and after
   the trial mutation in debug builds.
@@ -250,8 +250,8 @@ Focused orientation coverage lives in:
   explicit construction normalizes incoherent user simplex orderings.
 - [`tests/regressions.rs`](../tests/regressions.rs): regression coverage for the
   4D bulk-repair orientation cleanup that previously left negative simplices.
-- Unit tests inside `src/core/tds/validation.rs` and
-  `src/core/algorithms/flips.rs`: parity helpers, coherent-orientation
+- Unit tests inside `src/core/tds/validation.rs` and the focused modules under
+  `src/core/algorithms/flips/`: parity helpers, coherent-orientation
   validation, normalization behavior, and flip replacement orientation.
 
 ## Performance Notes
@@ -298,5 +298,5 @@ When adding or changing a path that creates, removes, rewires, or reorders simpl
   and [`src/geometry/robust_predicates.rs`](../src/geometry/robust_predicates.rs)
 - TDS orientation implementation: [`src/core/tds/validation.rs`](../src/core/tds/validation.rs)
 - Geometric orientation promotion: [`src/core/triangulation.rs`](../src/core/triangulation.rs)
-- Flip replacement orientation: [`src/core/algorithms/flips.rs`](../src/core/algorithms/flips.rs)
+- Flip replacement orientation: [`src/core/algorithms/flips/orientation.rs`](../src/core/algorithms/flips/orientation.rs)
 - Permutation parity: <https://en.wikipedia.org/wiki/Parity_of_a_permutation>

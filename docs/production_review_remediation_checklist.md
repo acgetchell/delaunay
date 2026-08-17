@@ -31,8 +31,9 @@ Treat partial items as still open until their acceptance notes are satisfied.
 - [x] **6. Split very large source files.**
   `core/triangulation.rs` and the Delaunay-facing layer have been split into
   orthogonal construction, insertion, query, repair, orientation, validation,
-  and serialization modules. The remaining large-file targets are `core/algorithms/flips.rs`
-  and, if future review warrants another split, the TDS validation/mutation modules.
+  and serialization modules. The bistellar-flip implementation is likewise
+  split across `core/algorithms/flips/`; if future review warrants another
+  split, the remaining candidates are the TDS validation/mutation modules.
 - [x] **7. Audit full-TDS clone rollback and centralize transactional mutation.**
   Scoped rollback guards now centralize failure-atomic TDS and triangulation
   mutation, with detached scratch workspaces retained where copy-on-success is

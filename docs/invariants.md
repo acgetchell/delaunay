@@ -488,7 +488,7 @@ In this crate, Hilbert indices are computed using Skilling’s algorithm and use
 
 Many “repair” and “editing” workflows in high dimensions rely on sequences of **bistellar flips**
 (Pachner moves) to improve topology or restore the Delaunay property (see
-[`src/core/algorithms/flips.rs`](../src/core/algorithms/flips.rs)).[^pachner1991][^edelshah1996][^impl-flips]
+[`src/core/algorithms/flips/repair.rs`](../src/core/algorithms/flips/repair.rs)).[^pachner1991][^edelshah1996][^impl-flips]
 
 Important caveats:
 
@@ -573,7 +573,8 @@ For the project-wide bibliography (including references not cited here), see [`R
     DOI: <https://doi.org/10.1007/BF01975867>.
 [^pachner1991]: Udo Pachner. “P.L. Homeomorphic Manifolds Are Equivalent by Elementary Shellings.”
     *European Journal of Combinatorics* 12(2), 1991. DOI: <https://doi.org/10.1016/S0195-6698(13)80080-7>.
-[^impl-flips]: Implementation: [src/core/algorithms/flips.rs](../src/core/algorithms/flips.rs).
+[^impl-flips]: Implementation: [src/core/algorithms/flips/engine.rs](../src/core/algorithms/flips/engine.rs)
+    and [src/core/algorithms/flips/repair.rs](../src/core/algorithms/flips/repair.rs).
 [^impl-delaunay-validation]: Implementation: [src/delaunay/property_validation.rs](../src/delaunay/property_validation.rs).
 [^hatcher2002]: Allen Hatcher. *Algebraic Topology*. Cambridge University Press, 2002.
     Free online version: <https://pi.math.cornell.edu/~hatcher/AT/ATpage>. (See Appendix A: “PL Manifolds and Links”.)

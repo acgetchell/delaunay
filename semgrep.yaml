@@ -1260,7 +1260,7 @@ rules:
         - "/benches/**/*.rs"
         - "/tests/**/*.rs"
       exclude:
-        - "/src/core/algorithms/flips.rs"
+        - "/src/core/algorithms/flips/**"
     pattern-regex: '\bverify_tds_via_flip_predicates\s*\('
 
   - id: delaunay.rust.tds-serialize-must-use-snapshot
@@ -1367,7 +1367,7 @@ rules:
         - "/src/geometry/quality.rs"
         - "/src/core/construction.rs"
         - "/src/core/algorithms/incremental_insertion.rs"
-        - "/src/core/algorithms/flips.rs"
+        - "/src/core/algorithms/flips/**"
         - "/src/delaunay/construction.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-either:
@@ -1398,11 +1398,12 @@ rules:
         as subordinate error enums evolve.
     paths:
       include:
-        - "/src/core/algorithms/flips.rs"
+        - "/src/core/algorithms/flips/**"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-either:
-      - pattern-regex: '^\s*(?:(?:reason|source):\s*|(?:#\[[^\]]+\]\s*)?)(?:Flip[A-Za-z0-9_]+Error|SimplexValidationError)\s*,'
-      - pattern-regex: '^\s*[A-Za-z0-9_]+\s*\(\s*(?:#\[[^\]]+\]\s*)?(?:Flip[A-Za-z0-9_]+Error|SimplexValidationError)\s*\),'
+      - pattern-regex: '^\s*(?:(?:reason|source):\s*|(?:#\[[^\]]+\]\s*)+)(?:Flip[A-Za-z0-9_]+Error|SimplexValidationError)\s*,'
+      - pattern-regex: '(?ms)^\s*(?:Flip[A-Za-z0-9_]+Error|SimplexValidationError)\s*,(?=\s*\))'
+      - pattern-regex: '(?ms)^\s*[A-Za-z0-9_]+\s*\(\s*(?:#\[[^\]]+\]\s*)?(?:Flip[A-Za-z0-9_]+Error|SimplexValidationError)\s*,\s*\)'
 
   - id: delaunay.rust.flip-error-boxed-payloads-are-sources
     languages:
@@ -1419,7 +1420,7 @@ rules:
         Error::source chain instead of becoming display-only diagnostics.
     paths:
       include:
-        - "/src/core/algorithms/flips.rs"
+        - "/src/core/algorithms/flips/**"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     # yamllint disable rule:line-length
     pattern-regex: >-
@@ -1878,7 +1879,7 @@ rules:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
       exclude:
-        - "/src/core/algorithms/flips.rs"
+        - "/src/core/algorithms/flips/**"
         - "/src/delaunay/flips.rs"
     patterns:
       - pattern-either:
