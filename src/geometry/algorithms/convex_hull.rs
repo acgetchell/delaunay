@@ -142,6 +142,21 @@ pub enum ConvexHullValidationError {
     },
 }
 
+/// Reasons that a triangulation lacks enough data to construct a convex hull.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ConvexHullInsufficientDataReason {
+    /// The triangulation contains no vertices.
+    #[error("triangulation contains no vertices")]
+    NoVertices,
+    /// The triangulation contains vertices but no simplices.
+    #[error("triangulation contains no simplices")]
+    NoSimplices,
+    /// The triangulation has no boundary facets, as for a closed topology.
+    #[error("triangulation contains no boundary facets")]
+    NoBoundaryFacets,
+}
+
 /// Errors that can occur during convex hull construction.
 ///
 /// # Examples
@@ -187,10 +202,11 @@ pub enum ConvexHullConstructionError {
         message: String,
     },
     /// Insufficient data to construct convex hull.
-    #[error("Insufficient data for convex hull construction: {message}")]
+    #[error("Insufficient data for convex hull construction: {reason}")]
     InsufficientData {
-        /// Description of the data insufficiency.
-        message: String,
+        /// Typed reason that the input cannot define a convex hull.
+        #[source]
+        reason: ConvexHullInsufficientDataReason,
     },
     /// Geometric degeneracy prevents convex hull construction.
     #[error("Geometric degeneracy encountered during convex hull construction: {message}")]
@@ -205,8 +221,12 @@ pub enum ConvexHullConstructionError {
         message: String,
     },
     /// Coordinate conversion error occurred during geometric computations.
-    #[error("Coordinate conversion error: {0}")]
-    CoordinateConversion(#[from] CoordinateConversionError),
+    #[error("Coordinate conversion error: {source}")]
+    CoordinateConversion {
+        /// Typed source error from coordinate conversion.
+        #[from]
+        source: CoordinateConversionError,
+    },
     /// Coordinate validation failed during geometric computations.
     #[error("Coordinate validation error during convex hull computation: {source}")]
     CoordinateValidation {
@@ -1068,13 +1088,13 @@ where
         // Validate input triangulation
         if tds.number_of_vertices() == 0 {
             return Err(ConvexHullConstructionError::InsufficientData {
-                message: "Triangulation contains no vertices".to_string(),
+                reason: ConvexHullInsufficientDataReason::NoVertices,
             });
         }
 
         if tds.number_of_simplices() == 0 {
             return Err(ConvexHullConstructionError::InsufficientData {
-                message: "Triangulation contains no simplices".to_string(),
+                reason: ConvexHullInsufficientDataReason::NoSimplices,
             });
         }
 
@@ -1106,7 +1126,7 @@ where
         // Additional validation: ensure we have at least one boundary facet
         if hull_facets.is_empty() {
             return Err(ConvexHullConstructionError::InsufficientData {
-                message: "No boundary facets found in triangulation".to_string(),
+                reason: ConvexHullInsufficientDataReason::NoBoundaryFacets,
             });
         }
 
@@ -1498,7 +1518,7 @@ where
             }
         }
         let num_vertices = safe_usize_to_scalar(vertex_points.len())
-            .map_err(ConvexHullConstructionError::CoordinateConversion)?;
+            .map_err(|source| ConvexHullConstructionError::CoordinateConversion { source })?;
         for coord in &mut centroid_coords {
             *coord /= num_vertices;
         }
@@ -1733,7 +1753,7 @@ where
             // Calculate distance from point to facet centroid as a simple heuristic
             let mut centroid_coords = [0.0; D];
             let num_vertices = safe_usize_to_scalar(facet_points.len())
-                .map_err(ConvexHullConstructionError::CoordinateConversion)?;
+                .map_err(|source| ConvexHullConstructionError::CoordinateConversion { source })?;
 
             for vertex_point in &facet_points {
                 let coords = vertex_point.coords();
@@ -3133,10 +3153,11 @@ mod tests {
                         "Hull with {desc} coordinates should validate successfully"
                     );
                 }
-                Err(DelaunayTriangulationConstructionError::Triangulation(
-                    DelaunayConstructionFailure::GeometricDegeneracy { .. }
-                    | DelaunayConstructionFailure::InsufficientVertices { .. },
-                )) => {
+                Err(DelaunayTriangulationConstructionError::Triangulation {
+                    source:
+                        DelaunayConstructionFailure::GeometricDegeneracy { .. }
+                        | DelaunayConstructionFailure::InsufficientVertices { .. },
+                }) => {
                     // Extremely large/small/mixed coordinate sets may be rejected as
                     // numerically unstable by the robust initial simplex search, or
                     // Hilbert-sort dedup may collapse near-identical coordinates at
@@ -3520,7 +3541,7 @@ mod tests {
 
         // Test Debug trait on error types
         let error = ConvexHullConstructionError::InsufficientData {
-            message: "test".to_string(),
+            reason: ConvexHullInsufficientDataReason::NoVertices,
         };
         let debug_error = format!("{error:?}");
         assert!(debug_error.contains("InsufficientData"));
@@ -3603,19 +3624,12 @@ mod tests {
         let empty_dt = DelaunayTriangulation::<_, (), (), 3>::empty();
         let result = ConvexHull::try_from_triangulation(empty_dt.as_triangulation());
 
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            ConvexHullConstructionError::InsufficientData { message } => {
-                assert!(message.contains("no vertices"));
-            }
-            _ => panic!("Expected InsufficientData error for no vertices"),
-        }
-
-        // Also test with assert_matches! for variant diagnostics.
-        let result2 = ConvexHull::try_from_triangulation(empty_dt.as_triangulation());
         assert_matches!(
-            result2,
-            Err(ConvexHullConstructionError::InsufficientData { .. })
+            result,
+            Err(ConvexHullConstructionError::InsufficientData {
+                reason: ConvexHullInsufficientDataReason::NoVertices,
+                ..
+            })
         );
     }
 
@@ -3631,31 +3645,40 @@ mod tests {
         let tri = Triangulation::new_with_tds(AdaptiveKernel::<f64>::new(), tds);
 
         let result = ConvexHull::try_from_triangulation(&tri);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            ConvexHullConstructionError::InsufficientData { message } => {
-                assert!(message.contains("no simplices"));
-            }
-            _ => panic!("Expected InsufficientData error for no simplices"),
-        }
+        assert_matches!(
+            result,
+            Err(ConvexHullConstructionError::InsufficientData {
+                reason: ConvexHullInsufficientDataReason::NoSimplices,
+                ..
+            })
+        );
     }
 
     #[test]
     fn test_try_from_triangulation_no_boundary_facets_error() {
-        // This is harder to trigger naturally, but we can test error propagation
-        // by creating a TDS that would fail boundary facet extraction
-        // For now, just test that the error mapping works with a valid TDS
+        // A closed periodic T^2 quotient has simplices but no boundary facets.
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.2, 0.3]).unwrap(),
+            vertex!([0.8, 0.1]).unwrap(),
+            vertex!([0.5, 0.7]).unwrap(),
+            vertex!([0.1, 0.9]).unwrap(),
+            vertex!([0.6, 0.4]).unwrap(),
+            vertex!([0.3, 0.5]).unwrap(),
+            vertex!([0.9, 0.2]).unwrap(),
         ];
-        let dt = create_triangulation(&vertices);
+        let dt = DelaunayTriangulationBuilder::new(&vertices)
+            .try_toroidal([1.0; 2])
+            .unwrap()
+            .build()
+            .unwrap();
         let result = ConvexHull::try_from_triangulation(dt.as_triangulation());
-        assert!(result.is_ok()); // This should succeed for a valid tetrahedron
-        let hull = result.unwrap();
-        assert!(!hull.hull_facets.is_empty());
+        assert_matches!(
+            result,
+            Err(ConvexHullConstructionError::InsufficientData {
+                reason: ConvexHullInsufficientDataReason::NoBoundaryFacets,
+                ..
+            })
+        );
     }
 
     #[test]
@@ -3809,21 +3832,46 @@ mod tests {
         let display = format!("{duplicate_error}");
         assert!(display.contains("duplicate vertices"));
 
-        // Test ConvexHullConstructionError display
-        let construction_error = ConvexHullConstructionError::InsufficientData {
-            message: "test message".to_string(),
-        };
-        let display = format!("{construction_error}");
-        assert!(display.contains("test message"));
+        // Lock in the intentionally concise, sentence-continuation wording.
+        for (reason, expected) in [
+            (
+                ConvexHullInsufficientDataReason::NoVertices,
+                "Insufficient data for convex hull construction: triangulation contains no vertices",
+            ),
+            (
+                ConvexHullInsufficientDataReason::NoSimplices,
+                "Insufficient data for convex hull construction: triangulation contains no simplices",
+            ),
+            (
+                ConvexHullInsufficientDataReason::NoBoundaryFacets,
+                "Insufficient data for convex hull construction: triangulation contains no boundary facets",
+            ),
+        ] {
+            let construction_error = ConvexHullConstructionError::InsufficientData { reason };
+            assert_eq!(construction_error.to_string(), expected);
+        }
 
-        let coord_error = ConvexHullConstructionError::CoordinateConversion(
-            CoordinateConversionError::NonFiniteValue {
+        let coord_error = ConvexHullConstructionError::CoordinateConversion {
+            source: CoordinateConversionError::NonFiniteValue {
                 coordinate_index: 0,
                 coordinate_value: InvalidCoordinateValue::Nan,
             },
-        );
+        };
         let display = format!("{coord_error}");
         assert!(display.contains("Coordinate conversion error"));
+    }
+
+    #[test]
+    fn insufficient_data_error_preserves_typed_source() {
+        let reason = ConvexHullInsufficientDataReason::NoVertices;
+        let error = ConvexHullConstructionError::InsufficientData { reason };
+
+        assert_eq!(
+            error
+                .source()
+                .and_then(|source| source.downcast_ref::<ConvexHullInsufficientDataReason>()),
+            Some(&reason),
+        );
     }
 
     #[test]
@@ -4033,9 +4081,9 @@ mod tests {
                     ConvexHull::<(), (), 3>::fallback_visibility_test(&facet_vertices, &test_point);
                 test_debug!("  Extreme precision fallback result: {fallback_result:?}");
             }
-            Err(DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::GeometricDegeneracy { .. },
-            )) => {
+            Err(DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::GeometricDegeneracy { .. },
+            }) => {
                 // On some platforms, these extreme coordinates may be judged too
                 // numerically unstable to form a reliable 3D simplex. In that
                 // case, it's acceptable for DelaunayTriangulationBuilder::build to fail with geometric
@@ -4785,12 +4833,12 @@ mod tests {
         assert!(cast_msg.contains("Numeric cast failed"));
         assert!(cast_msg.contains("Failed to convert f64 to usize"));
 
-        let coord_error = ConvexHullConstructionError::CoordinateConversion(
-            CoordinateConversionError::NonFiniteValue {
+        let coord_error = ConvexHullConstructionError::CoordinateConversion {
+            source: CoordinateConversionError::NonFiniteValue {
                 coordinate_index: 2,
                 coordinate_value: InvalidCoordinateValue::PositiveInfinity,
             },
-        );
+        };
         let coord_msg = format!("{coord_error}");
         assert!(coord_msg.contains("Coordinate conversion error"));
         assert!(coord_error.source().is_some());
@@ -4819,7 +4867,7 @@ mod tests {
         };
         let hull_error: ConvexHullConstructionError = coord_conv_error.into();
         match hull_error {
-            ConvexHullConstructionError::CoordinateConversion(_) => {
+            ConvexHullConstructionError::CoordinateConversion { source: _ } => {
                 test_debug!("    ✓ Coordinate conversion error properly wrapped");
             }
             _ => panic!("Coordinate conversion error not properly wrapped"),
@@ -4959,7 +5007,7 @@ mod tests {
                         );
                         // Verify appropriate error types for numeric issues
                         match e {
-                            ConvexHullConstructionError::CoordinateConversion(_)
+                            ConvexHullConstructionError::CoordinateConversion { source: _ }
                             | ConvexHullConstructionError::NumericCastFailed { .. }
                             | ConvexHullConstructionError::GeometricDegeneracy { .. } => {
                                 test_debug!("      ✓ Appropriate error type for numeric issues");
@@ -5140,7 +5188,7 @@ mod tests {
 
                     // Errors should only occur for coordinate conversion issues
                     match e {
-                        ConvexHullConstructionError::CoordinateConversion(_) => {
+                        ConvexHullConstructionError::CoordinateConversion { source: _ } => {
                             test_debug!("      ✓ Acceptable coordinate conversion error");
                         }
                         _ => {

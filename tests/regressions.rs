@@ -355,9 +355,9 @@ fn regression_issue_447_explicit_exact_strip_default_strict_level5_fails() {
     assert!(
         matches!(
             err,
-            DelaunayTriangulationConstructionError::ExplicitConstruction(
-                ExplicitConstructionError::DelaunayValidation { .. }
-            )
+            DelaunayTriangulationConstructionError::ExplicitConstruction {
+                source: ExplicitConstructionError::DelaunayValidation { .. }
+            }
         ),
         "strict explicit construction should fail at Level 5 Delaunay validation, got: {err:?}",
     );

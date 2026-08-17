@@ -1758,11 +1758,14 @@ mod tests {
         let tds: Tds<(), (), 2> = Tds::empty();
 
         match simplex_star_simplices(&tds, &[]) {
-            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
-                expected: 1,
-                actual: 0,
-                ..
-            })) => {}
+            Err(ManifoldError::Tds {
+                source:
+                    TdsError::DimensionMismatch {
+                        expected: 1,
+                        actual: 0,
+                        ..
+                    },
+            }) => {}
             other => panic!("Expected DimensionMismatch for empty simplex, got {other:?}"),
         }
     }
@@ -1846,11 +1849,14 @@ mod tests {
             .unwrap();
 
         match ridge_link_edges_from_star(&tds, &simplex(&[v0]), &[simplex_key]) {
-            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
-                expected: 2,
-                actual: 1,
-                ..
-            })) => {}
+            Err(ManifoldError::Tds {
+                source:
+                    TdsError::DimensionMismatch {
+                        expected: 2,
+                        actual: 1,
+                        ..
+                    },
+            }) => {}
             other => panic!("Expected DimensionMismatch(2, 1) for wrong ridge size, got {other:?}"),
         }
     }
@@ -2138,17 +2144,22 @@ mod tests {
 
         let ridge_candidate = RidgeCandidate::<2>::try_from_vertices([missing]).unwrap();
         match ridge_candidate.view(&tds) {
-            Err(ManifoldError::Tds(TdsError::VertexNotFound {
-                vertex_key,
-                context,
-            })) => {
+            Err(ManifoldError::Tds {
+                source:
+                    TdsError::VertexNotFound {
+                        vertex_key,
+                        context,
+                    },
+            }) => {
                 assert_eq!(vertex_key, missing);
                 assert!(context.contains("ridge query"));
             }
             other => panic!("Expected ridge view VertexNotFound error, got {other:?}"),
         }
         match ridge_star_simplices(&tds, &ridge_candidate) {
-            Err(ManifoldError::Tds(TdsError::VertexNotFound { vertex_key, .. })) => {
+            Err(ManifoldError::Tds {
+                source: TdsError::VertexNotFound { vertex_key, .. },
+            }) => {
                 assert_eq!(vertex_key, missing);
             }
             other => panic!("Expected VertexNotFound error, got {other:?}"),
@@ -2186,7 +2197,9 @@ mod tests {
         }
 
         match ridge_link_edges_from_star(&tds, &simplex(&[v0]), &[simplex_key]) {
-            Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { message })) => {
+            Err(ManifoldError::Tds {
+                source: TdsError::InconsistentDataStructure { message },
+            }) => {
                 assert!(
                     message.contains("self-loop"),
                     "Unexpected message: {message}"
@@ -2246,11 +2259,14 @@ mod tests {
         }
 
         match build_ridge_star_map(&tds) {
-            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
-                expected: 3,
-                actual: 2,
-                ..
-            })) => {}
+            Err(ManifoldError::Tds {
+                source:
+                    TdsError::DimensionMismatch {
+                        expected: 3,
+                        actual: 2,
+                        ..
+                    },
+            }) => {}
             other => {
                 panic!("Expected DimensionMismatch(3, 2) for corrupted simplex, got {other:?}")
             }
@@ -2294,11 +2310,14 @@ mod tests {
         }
 
         match build_ridge_star_map(&tds) {
-            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
-                expected: 4,
-                actual: 3,
-                ..
-            })) => {}
+            Err(ManifoldError::Tds {
+                source:
+                    TdsError::DimensionMismatch {
+                        expected: 4,
+                        actual: 3,
+                        ..
+                    },
+            }) => {}
             other => panic!("Expected whole-TDS ridge map to fail, got {other:?}"),
         }
 
@@ -2457,11 +2476,14 @@ mod tests {
         }
 
         match build_ridge_star_map_for_simplices(&tds, [simplex_key]) {
-            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
-                expected: 3,
-                actual: 2,
-                ..
-            })) => {}
+            Err(ManifoldError::Tds {
+                source:
+                    TdsError::DimensionMismatch {
+                        expected: 3,
+                        actual: 2,
+                        ..
+                    },
+            }) => {}
             other => {
                 panic!("Expected DimensionMismatch(3, 2) for corrupted simplex, got {other:?}")
             }
@@ -2473,10 +2495,13 @@ mod tests {
         let tds: Tds<(), (), 2> = Tds::empty();
         let stale_key = VertexKey::from(KeyData::from_ffi(0xDEAD));
         match simplex_star_simplices(&tds, &[stale_key]) {
-            Err(ManifoldError::Tds(TdsError::VertexNotFound {
-                vertex_key,
-                ref context,
-            })) => {
+            Err(ManifoldError::Tds {
+                source:
+                    TdsError::VertexNotFound {
+                        vertex_key,
+                        ref context,
+                    },
+            }) => {
                 assert_eq!(vertex_key, stale_key);
                 assert!(context.contains("simplex star"));
             }
@@ -2659,7 +2684,9 @@ mod tests {
         .collect();
 
         match periodic_aware_ridge_star(&tds, 0x42, &lifted, &bare) {
-            Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { ref message })) => {
+            Err(ManifoldError::Tds {
+                source: TdsError::InconsistentDataStructure { ref message },
+            }) => {
                 assert!(
                     message.contains("empty star"),
                     "error should mention empty star: {message}"

@@ -71,8 +71,12 @@ impl Default for TriangulationConstructionState {
 #[non_exhaustive]
 pub enum TdsConstructionError {
     /// Validation error during construction.
-    #[error("Validation error during construction: {0}")]
-    ValidationError(#[from] TdsError),
+    #[error("Validation error during construction: {source}")]
+    ValidationError {
+        /// Typed TDS validation source error.
+        #[from]
+        source: TdsError,
+    },
     /// Attempted to insert an entity with a UUID that already exists.
     #[error("Duplicate UUID: {entity:?} with UUID {uuid} already exists")]
     DuplicateUuid {
@@ -784,11 +788,19 @@ pub enum TdsError {
     /// This wraps a [`GeometricError`] and indicates a floating-point or geometric
     /// degeneracy issue rather than an internal data structure bug.
     #[error(transparent)]
-    Geometric(#[from] GeometricError),
+    Geometric {
+        /// Typed geometric source error.
+        #[from]
+        source: GeometricError,
+    },
 
     /// Facet operation failed during validation.
-    #[error("Facet operation failed: {0}")]
-    FacetError(#[from] FacetError),
+    #[error("Facet operation failed: {source}")]
+    FacetError {
+        /// Typed facet source error.
+        #[from]
+        source: FacetError,
+    },
     /// A simplex contains two or more vertices with identical coordinates.
     ///
     /// This is distinct from [`SimplexValidationError::DuplicateVertices`] which checks
@@ -873,8 +885,8 @@ impl From<&TdsError> for TdsErrorKind {
             TdsError::RemovedSimplexStillIncident { .. } => Self::RemovedSimplexStillIncident,
             TdsError::VertexIncidenceMismatch { .. } => Self::VertexIncidenceMismatch,
             TdsError::InconsistentDataStructure { .. } => Self::InconsistentDataStructure,
-            TdsError::Geometric(_) => Self::Geometric,
-            TdsError::FacetError(_) => Self::FacetError,
+            TdsError::Geometric { source: _ } => Self::Geometric,
+            TdsError::FacetError { source: _ } => Self::FacetError,
             TdsError::DuplicateCoordinatesInSimplex { .. } => Self::DuplicateCoordinatesInSimplex,
         }
     }
@@ -1000,10 +1012,12 @@ pub enum InvariantKind {
 /// ```
 /// use delaunay::prelude::tds::{InvariantError, TdsError};
 ///
-/// let err = InvariantError::Tds(TdsError::InconsistentDataStructure {
-///     message: "bad neighbors".to_string(),
-/// });
-/// std::assert_matches!(err, InvariantError::Tds(_));
+/// let err = InvariantError::Tds {
+///     source: TdsError::InconsistentDataStructure {
+///         message: "bad neighbors".to_string(),
+///     },
+/// };
+/// std::assert_matches!(err, InvariantError::Tds { .. });
 /// ```
 ///
 /// This is used by [`TriangulationValidationReport`] so that diagnostic reporting can
@@ -1014,19 +1028,35 @@ pub enum InvariantKind {
 pub enum InvariantError {
     /// Level 1–2 (elements + TDS structure).
     #[error(transparent)]
-    Tds(#[from] TdsError),
+    Tds {
+        /// Typed TDS source error.
+        #[from]
+        source: TdsError,
+    },
 
     /// Level 3 (topology).
     #[error(transparent)]
-    Triangulation(#[from] TriangulationValidationError),
+    Triangulation {
+        /// Typed topology-validation source error.
+        #[from]
+        source: TriangulationValidationError,
+    },
 
     /// Level 4 (realized geometry).
     #[error(transparent)]
-    Realization(#[from] TriangulationRealizationValidationError),
+    Realization {
+        /// Typed realization-validation source error.
+        #[from]
+        source: TriangulationRealizationValidationError,
+    },
 
     /// Level 5 (Delaunay property).
     #[error(transparent)]
-    Delaunay(#[from] DelaunayTriangulationValidationError),
+    Delaunay {
+        /// Typed Delaunay-validation source error.
+        #[from]
+        source: DelaunayTriangulationValidationError,
+    },
 }
 
 /// Discriminant for compact Level 3 topology-validation summaries.
@@ -1111,9 +1141,11 @@ pub enum DelaunayValidationErrorKind {
 impl From<&DelaunayTriangulationValidationError> for DelaunayValidationErrorKind {
     fn from(source: &DelaunayTriangulationValidationError) -> Self {
         match source {
-            DelaunayTriangulationValidationError::Tds(_) => Self::Tds,
-            DelaunayTriangulationValidationError::Triangulation(_) => Self::Triangulation,
-            DelaunayTriangulationValidationError::Realization(_) => Self::Realization,
+            DelaunayTriangulationValidationError::Tds { source: _ } => Self::Tds,
+            DelaunayTriangulationValidationError::Triangulation { source: _ } => {
+                Self::Triangulation
+            }
+            DelaunayTriangulationValidationError::Realization { source: _ } => Self::Realization,
             DelaunayTriangulationValidationError::VerificationFailed { .. } => {
                 Self::VerificationFailed
             }
@@ -1135,9 +1167,11 @@ impl From<&DelaunayTriangulationValidationError> for DelaunayValidationErrorKind
 ///
 /// let violation = InvariantViolation {
 ///     kind: InvariantKind::Topology,
-///     error: InvariantError::Tds(TdsError::InconsistentDataStructure {
-///         message: "bad neighbors".to_string(),
-///     }),
+///     error: InvariantError::Tds {
+///         source: TdsError::InconsistentDataStructure {
+///             message: "bad neighbors".to_string(),
+///         },
+///     },
 /// };
 /// assert_eq!(violation.kind, InvariantKind::Topology);
 /// ```
@@ -1270,16 +1304,20 @@ mod tests {
             TdsErrorKind::OrientationViolation,
         );
         assert_tds_error_kind(
-            &TdsError::Geometric(GeometricError::DegenerateOrientation {
-                message: "zero determinant".to_string(),
-            }),
+            &TdsError::Geometric {
+                source: GeometricError::DegenerateOrientation {
+                    message: "zero determinant".to_string(),
+                },
+            },
             TdsErrorKind::Geometric,
         );
         assert_tds_error_kind(
-            &TdsError::FacetError(FacetError::InvalidFacetIndex {
-                index: 4,
-                facet_count: 4,
-            }),
+            &TdsError::FacetError {
+                source: FacetError::InvalidFacetIndex {
+                    index: 4,
+                    facet_count: 4,
+                },
+            },
             TdsErrorKind::FacetError,
         );
         assert_tds_error_kind(
@@ -1536,6 +1574,17 @@ mod tests {
                 DelaunayValidationErrorKind::Triangulation,
             ),
             (
+                DelaunayTriangulationValidationError::Realization {
+                    source: Box::new(
+                        TriangulationRealizationValidationError::UnsupportedTopology {
+                            topology: TopologyKind::Hyperbolic,
+                            dimension: 2,
+                        },
+                    ),
+                },
+                DelaunayValidationErrorKind::Realization,
+            ),
+            (
                 synthetic_delaunay_verification_error("non-Delaunay facet"),
                 DelaunayValidationErrorKind::VerificationFailed,
             ),
@@ -1613,9 +1662,14 @@ mod tests {
         let inner = GeometricError::DegenerateOrientation {
             message: "test".to_string(),
         };
-        let err = TdsError::Geometric(inner.clone());
+        let err = TdsError::Geometric {
+            source: inner.clone(),
+        };
         assert!(err.to_string().contains("test"));
-        assert_eq!(TdsError::from(inner.clone()), TdsError::Geometric(inner));
+        assert_eq!(
+            TdsError::from(inner.clone()),
+            TdsError::Geometric { source: inner }
+        );
     }
 
     #[test]
@@ -1639,7 +1693,7 @@ mod tests {
             message: "test".to_string(),
         };
         let inv = InvariantError::from(tds_err);
-        assert_matches!(inv, InvariantError::Tds(_));
+        assert_matches!(inv, InvariantError::Tds { source: _ });
 
         let tri_err = TriangulationValidationError::EulerCharacteristicMismatch {
             computed: 1,
@@ -1647,14 +1701,14 @@ mod tests {
             classification: TopologyClassification::Ball(3),
         };
         let inv = InvariantError::from(tri_err);
-        assert_matches!(inv, InvariantError::Triangulation(_));
+        assert_matches!(inv, InvariantError::Triangulation { source: _ });
     }
 
     #[test]
     fn test_invariant_error_from_delaunay_validation_error() {
         let dt_err = synthetic_delaunay_verification_error("test");
         let inv = InvariantError::from(dt_err);
-        assert_matches!(inv, InvariantError::Delaunay(_));
+        assert_matches!(inv, InvariantError::Delaunay { source: _ });
     }
 
     #[test]
@@ -1689,12 +1743,14 @@ mod tests {
     fn test_invariant_violation_stores_kind_and_error() {
         let violation = InvariantViolation {
             kind: InvariantKind::NeighborConsistency,
-            error: InvariantError::Tds(TdsError::InconsistentDataStructure {
-                message: "test".to_string(),
-            }),
+            error: InvariantError::Tds {
+                source: TdsError::InconsistentDataStructure {
+                    message: "test".to_string(),
+                },
+            },
         };
         assert_eq!(violation.kind, InvariantKind::NeighborConsistency);
-        assert_matches!(violation.error, InvariantError::Tds(_));
+        assert_matches!(violation.error, InvariantError::Tds { source: _ });
     }
 
     #[test]
@@ -1725,7 +1781,9 @@ mod tests {
         let tds_err: TdsError = geo.into();
         assert_matches!(
             tds_err,
-            TdsError::Geometric(GeometricError::NegativeOrientation { .. })
+            TdsError::Geometric {
+                source: GeometricError::NegativeOrientation { .. }
+            }
         );
         // Display propagates via #[error(transparent)].
         assert!(tds_err.to_string().contains("det<0"));

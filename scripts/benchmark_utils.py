@@ -868,8 +868,8 @@ class PerformanceSummaryGenerator:
         self,
         output_path: Path | None = None,
         run_benchmarks: bool = False,
-        generator_name: str | None = None,
         cargo_profile: str | None = None,
+        bench_timeout: int = 1800,
         strict: bool = False,
     ) -> bool:
         """
@@ -878,11 +878,11 @@ class PerformanceSummaryGenerator:
         Args:
             output_path: Output file path (defaults to benches/PERFORMANCE_RESULTS.md)
             run_benchmarks: Whether to run fresh public API and circumsphere benchmarks
-            generator_name: Name of the tool generating the summary (for attribution)
             cargo_profile: Optional Cargo profile for fresh benchmark runs.  When
                 ``run_benchmarks`` is True and no profile is specified, defaults
                 to :data:`BENCHMARK_BUILD_FLAVOR` so fresh runs match baseline
                 and comparison measurements.
+            bench_timeout: Timeout for the public API benchmark command in seconds.
             strict: Fail instead of rendering from existing or fallback data
                 when fresh benchmark execution is requested and any benchmark
                 command fails.
@@ -890,6 +890,7 @@ class PerformanceSummaryGenerator:
         Returns:
             True if successful, False otherwise
         """
+        _require_positive_int_field("bench_timeout", bench_timeout)
         try:
             if output_path is None:
                 output_path = self.project_root / "benches" / "PERFORMANCE_RESULTS.md"
@@ -903,7 +904,10 @@ class PerformanceSummaryGenerator:
                 # comparable with baseline/compare output.
                 if cargo_profile is None:
                     cargo_profile = BENCHMARK_BUILD_FLAVOR
-                ci_success = self._run_ci_performance_suite(cargo_profile=cargo_profile)
+                ci_success = self._run_ci_performance_suite(
+                    cargo_profile=cargo_profile,
+                    bench_timeout=bench_timeout,
+                )
                 circumsphere_success, accuracy_data = self._run_circumsphere_benchmarks(cargo_profile=cargo_profile)
                 if circumsphere_success:
                     self.numerical_accuracy_data = accuracy_data
@@ -914,7 +918,7 @@ class PerformanceSummaryGenerator:
                     print("⚠️ Benchmark run failed, using existing/fallback data")
 
             # Generate markdown content
-            content = self._generate_markdown_content(generator_name)
+            content = self._generate_markdown_content()
             if strict and self._contains_fallback_summary_data(content):
                 print("❌ Strict summary mode detected fallback benchmark data", file=sys.stderr)
                 return False
@@ -1137,7 +1141,13 @@ class PerformanceSummaryGenerator:
             print(f"❌ Error running circumsphere benchmarks: {e}")
             return False, None
 
-    def _run_ci_performance_suite(self, cargo_profile: str | None = None, *, use_dev_mode: bool = False) -> bool:
+    def _run_ci_performance_suite(
+        self,
+        cargo_profile: str | None = None,
+        *,
+        use_dev_mode: bool = False,
+        bench_timeout: int = 1800,
+    ) -> bool:
         """
         Run the public API CI performance suite to generate fresh Criterion data.
 
@@ -1148,10 +1158,12 @@ class PerformanceSummaryGenerator:
             use_dev_mode: When true, pass reduced Criterion sampling arguments
                 for local development feedback. Full sampling is used by
                 default.
+            bench_timeout: Maximum runtime for the Cargo benchmark command in seconds.
 
         Returns:
             True if the benchmark completed successfully, False otherwise.
         """
+        _require_positive_int_field("bench_timeout", bench_timeout)
         try:
             print("🔄 Running ci_performance_suite benchmarks...")
 
@@ -1163,7 +1175,7 @@ class PerformanceSummaryGenerator:
             result = run_cargo_command(
                 cargo_args,
                 cwd=self.project_root,
-                timeout=900,
+                timeout=bench_timeout,
                 capture_output=True,
                 check=False,
             )
@@ -5788,6 +5800,7 @@ def _add_performance_summary_subcommands(subparsers: argparse._SubParsersAction[
         action="store_true",
         help="Fail instead of rendering from existing or fallback data when fresh benchmark execution fails",
     )
+    _add_bench_timeout_arg(perf_summary_parser)
 
 
 def _add_release_performance_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -6223,8 +6236,8 @@ def _cmd_generate_summary(args: argparse.Namespace, project_root: Path) -> None:
     success = generator.generate_summary(
         output_path=args.output,
         run_benchmarks=args.run_benchmarks,
-        generator_name="benchmark_utils.py",
         cargo_profile=args.profile,
+        bench_timeout=args.bench_timeout,
         strict=args.strict,
     )
     sys.exit(0 if success else 1)

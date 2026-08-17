@@ -241,9 +241,9 @@ impl From<RandomTriangulationBuilderError> for DelaunayTriangulationConstruction
 const fn random_point_generation_error(
     source: RandomPointGenerationError<f64>,
 ) -> DelaunayTriangulationConstructionError {
-    DelaunayTriangulationConstructionError::Triangulation(
-        DelaunayConstructionFailure::RandomPointGeneration { source },
-    )
+    DelaunayTriangulationConstructionError::Triangulation {
+        source: DelaunayConstructionFailure::RandomPointGeneration { source },
+    }
 }
 
 /// Generates random points through the seeded or unseeded public generator path.
@@ -695,9 +695,11 @@ where
 /// #     return Ok(());
 /// # };
 /// let range = make_range().map_err(|source| {
-///     DelaunayTriangulationConstructionError::Triangulation(
-///         DelaunayConstructionFailure::RandomPointGeneration { source: source.into() },
-///     )
+///     DelaunayTriangulationConstructionError::Triangulation {
+///         source: DelaunayConstructionFailure::RandomPointGeneration {
+///             source: source.into(),
+///         },
+///     }
 /// })?;
 /// let dt = generate_random_triangulation_in_range::<(), (), 3>(
 ///     twelve,
@@ -777,9 +779,11 @@ where
 /// #     return Ok(());
 /// # };
 /// let range = make_range().map_err(|source| {
-///     DelaunayTriangulationConstructionError::Triangulation(
-///         DelaunayConstructionFailure::RandomPointGeneration { source: source.into() },
-///     )
+///     DelaunayTriangulationConstructionError::Triangulation {
+///         source: DelaunayConstructionFailure::RandomPointGeneration {
+///             source: source.into(),
+///         },
+///     }
 /// })?;
 /// let dt = generate_random_triangulation_in_range_with_topology_guarantee::<(), (), 3>(
 ///     twelve,
@@ -1404,9 +1408,9 @@ mod tests {
         };
         let err = DelaunayTriangulationConstructionError::from(err);
 
-        let DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::RandomPointGeneration { source },
-        ) = err
+        let DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::RandomPointGeneration { source },
+        } = err
         else {
             panic!("expected coordinate-range builder error to map to random-point generation");
         };
@@ -1528,9 +1532,9 @@ mod tests {
             None,
             Some(42),
         );
-        let Err(DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::RandomPointGeneration { source },
-        )) = result
+        let Err(DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::RandomPointGeneration { source },
+        }) = result
         else {
             panic!("expected RandomPointGeneration error");
         };
@@ -1560,13 +1564,13 @@ mod tests {
 
         assert_matches!(
             nan_bounds,
-            Err(DelaunayTriangulationConstructionError::Triangulation(
+            Err(DelaunayTriangulationConstructionError::Triangulation { source:
                 DelaunayConstructionFailure::RandomPointGeneration {
                     source: RandomPointGenerationError::InvalidCoordinateRange {
                         source: CoordinateRangeError::NonFiniteBound { bound, value }
                     }
                 }
-            )) if bound == CoordinateRangeBound::Minimum && value == InvalidCoordinateValue::Nan
+             }) if bound == CoordinateRangeBound::Minimum && value == InvalidCoordinateValue::Nan
         );
 
         let Err(RandomTriangulationBuilderError::CoordinateRange {

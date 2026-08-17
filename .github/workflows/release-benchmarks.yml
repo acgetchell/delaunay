@@ -82,6 +82,7 @@ jobs:
             --run-benchmarks \
             --strict \
             --profile perf \
+            --bench-timeout 3600 \
             --output release-benchmark-artifacts/PERFORMANCE_RESULTS.md
           cargo bench --profile perf --bench cold_path_predicates
           cargo bench --profile perf --bench topology_guarantee_construction

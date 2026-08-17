@@ -146,27 +146,29 @@ use uuid::Uuid;
 /// Convert an [`InsertionError`] into the appropriate [`InvariantError`], preserving
 /// structured error information across all layers.
 ///
-/// - `TopologyValidation(source)` → `InvariantError::Tds(source)` (Level 1–2 preserved)
-/// - `TopologyValidationFailed { source }` → `InvariantError::Triangulation(source)` (Level 3 preserved)
-/// - `RealizationValidationFailed { source }` → `InvariantError::Realization(source)` (Level 4 preserved)
-/// - `DelaunayValidationFailed { source }` → `InvariantError::Delaunay(source)` (Level 5 preserved)
-/// - All other variants → `InvariantError::Tds(InconsistentDataStructure { .. })` with `context`
+/// - `TopologyValidation { source }` → `InvariantError::Tds { source }` (Level 1–2 preserved)
+/// - `TopologyValidationFailed { source }` → `InvariantError::Triangulation { source }` (Level 3 preserved)
+/// - `RealizationValidationFailed { source }` → `InvariantError::Realization { source }` (Level 4 preserved)
+/// - `DelaunayValidationFailed { source }` → `InvariantError::Delaunay { source }` (Level 5 preserved)
+/// - All other variants → `InvariantError::Tds { source: InconsistentDataStructure { .. } }` with `context`
 pub(crate) fn insertion_error_to_invariant_error(
     error: InsertionError,
     context: &str,
 ) -> InvariantError {
     match error {
-        InsertionError::TopologyValidation(source) => InvariantError::Tds(source),
+        InsertionError::TopologyValidation { source } => InvariantError::Tds { source },
         InsertionError::TopologyValidationFailed { source, .. } => {
-            InvariantError::Triangulation(source)
+            InvariantError::Triangulation { source }
         }
         InsertionError::RealizationValidationFailed { source } => {
-            InvariantError::Realization(source)
+            InvariantError::Realization { source }
         }
-        InsertionError::DelaunayValidationFailed { source } => InvariantError::Delaunay(source),
-        other => InvariantError::Tds(TdsError::InconsistentDataStructure {
-            message: format!("{context}: {other}"),
-        }),
+        InsertionError::DelaunayValidationFailed { source } => InvariantError::Delaunay { source },
+        other => InvariantError::Tds {
+            source: TdsError::InconsistentDataStructure {
+                message: format!("{context}: {other}"),
+            },
+        },
     }
 }
 
@@ -461,7 +463,7 @@ impl TryFrom<ManifoldError> for TriangulationValidationError {
 
     fn try_from(err: ManifoldError) -> Result<Self, Self::Error> {
         match err {
-            ManifoldError::Tds(source) => Err(source),
+            ManifoldError::Tds { source } => Err(source),
             ManifoldError::ManifoldFacetMultiplicity {
                 facet_key,
                 simplex_count,
@@ -544,8 +546,8 @@ impl TryFrom<ManifoldError> for TriangulationValidationError {
 impl From<ManifoldError> for InvariantError {
     fn from(err: ManifoldError) -> Self {
         match TriangulationValidationError::try_from(err) {
-            Ok(source) => Self::Triangulation(source),
-            Err(source) => Self::Tds(source),
+            Ok(source) => Self::Triangulation { source },
+            Err(source) => Self::Tds { source },
         }
     }
 }
@@ -560,8 +562,10 @@ fn invariant_error_from_topology_error(err: TopologyError) -> InvariantError {
     match err {
         TopologyError::FacetMapBuild { source }
         | TopologyError::BoundaryFacetEnumeration { source }
-        | TopologyError::BoundaryFacetCount { source } => InvariantError::Tds(source),
-        TopologyError::BoundaryFacetSimplexAccess { source } => InvariantError::Tds(source.into()),
+        | TopologyError::BoundaryFacetCount { source } => InvariantError::Tds { source },
+        TopologyError::BoundaryFacetSimplexAccess { source } => InvariantError::Tds {
+            source: source.into(),
+        },
         TopologyError::BoundaryClassification { source } => InvariantError::from(*source),
     }
 }
@@ -1775,7 +1779,7 @@ where
         if let Err(source) = self.validate_global_connectedness() {
             violations.push(InvariantViolation {
                 kind: InvariantKind::Connectedness,
-                error: InvariantError::Triangulation(source),
+                error: InvariantError::Triangulation { source },
             });
         }
 
@@ -2026,23 +2030,27 @@ where
 
     /// Convert an [`InvariantError`] into the appropriate [`InsertionError`] variant.
     ///
-    /// - `InvariantError::Tds(e)` → `InsertionError::TopologyValidation(e)`
-    /// - `InvariantError::Triangulation(e)` → `InsertionError::TopologyValidationFailed { source: e }`
-    /// - `InvariantError::Realization(e)` → `InsertionError::RealizationValidationFailed { source: e }`
-    /// - `InvariantError::Delaunay(e)` → `InsertionError::DelaunayValidationFailed { source: e }`
+    /// - `InvariantError::Tds { source }` → `InsertionError::TopologyValidation { source }`
+    /// - `InvariantError::Triangulation { source }` → `InsertionError::TopologyValidationFailed { source }`
+    /// - `InvariantError::Realization { source }` → `InsertionError::RealizationValidationFailed { source }`
+    /// - `InvariantError::Delaunay { source }` → `InsertionError::DelaunayValidationFailed { source }`
     pub(crate) fn invariant_error_to_insertion_error(err: InvariantError) -> InsertionError {
         match err {
-            InvariantError::Tds(tds_err) => InsertionError::TopologyValidation(tds_err),
-            InvariantError::Triangulation(tri_err) => InsertionError::TopologyValidationFailed {
-                context: InsertionTopologyValidationContext::InvariantConversion,
-                source: tri_err,
-            },
-            InvariantError::Realization(realization_err) => {
-                InsertionError::RealizationValidationFailed {
-                    source: realization_err,
+            InvariantError::Tds { source: tds_err } => {
+                InsertionError::TopologyValidation { source: tds_err }
+            }
+            InvariantError::Triangulation { source: tri_err } => {
+                InsertionError::TopologyValidationFailed {
+                    context: InsertionTopologyValidationContext::InvariantConversion,
+                    source: tri_err,
                 }
             }
-            InvariantError::Delaunay(dt_err) => {
+            InvariantError::Realization {
+                source: realization_err,
+            } => InsertionError::RealizationValidationFailed {
+                source: realization_err,
+            },
+            InvariantError::Delaunay { source: dt_err } => {
                 InsertionError::DelaunayValidationFailed { source: dt_err }
             }
         }
@@ -2082,7 +2090,7 @@ where
         // checks so topology diagnostics still surface first.
         let simplex_keys: SimplexKeyBuffer = self.tds.simplex_keys().collect();
         self.validate_local_realization_orientation(&simplex_keys)
-            .map_err(InvariantError::Realization)?;
+            .map_err(|source| InvariantError::Realization { source })?;
 
         Ok(())
     }
@@ -2110,24 +2118,25 @@ where
         }
 
         if new_set.is_empty() {
-            return Err(InsertionError::TopologyValidation(
+            return Err(InsertionError::TopologyValidation {
+                source:
                 TdsError::InconsistentDataStructure {
                     message: "Disconnected triangulation detected after insertion: no surviving new simplices"
                         .to_string(),
                 },
-            ));
+             });
         }
 
         let expected_new_simplices = new_set.len();
 
         let Some(&start) = new_set.iter().next() else {
-            return Err(InsertionError::TopologyValidation(
-                TdsError::InconsistentDataStructure {
+            return Err(InsertionError::TopologyValidation {
+                source: TdsError::InconsistentDataStructure {
                     message:
                         "new_set unexpectedly empty after non-empty check in validate_connectedness"
                             .to_string(),
                 },
-            ));
+            });
         };
 
         let mut touches_existing_simplices = false;
@@ -2156,25 +2165,25 @@ where
         );
 
         if visited.len() != expected_new_simplices {
-            return Err(InsertionError::TopologyValidation(
-                TdsError::InconsistentDataStructure {
+            return Err(InsertionError::TopologyValidation {
+                source: TdsError::InconsistentDataStructure {
                     message: format!(
                         "Disconnected triangulation detected after insertion: new-simplex subgraph visited {} of {} simplices",
                         visited.len(),
                         expected_new_simplices
                     ),
                 },
-            ));
+            });
         }
 
         if total_simplices > expected_new_simplices && !touches_existing_simplices {
-            return Err(InsertionError::TopologyValidation(
-                TdsError::InconsistentDataStructure {
+            return Err(InsertionError::TopologyValidation {
+                source: TdsError::InconsistentDataStructure {
                     message: format!(
                         "Disconnected triangulation detected after insertion: new-simplex component ({expected_new_simplices} simplices) is not connected to existing simplices (total_simplices={total_simplices})"
                     ),
                 },
-            ));
+            });
         }
 
         Ok(())
@@ -2215,7 +2224,7 @@ where
         }
 
         self.validate_local_realization_orientation(simplices)
-            .map_err(InvariantError::Realization)?;
+            .map_err(|source| InvariantError::Realization { source })?;
 
         Ok(())
     }
@@ -2263,7 +2272,7 @@ where
                     Some([]) | None => self.is_valid_realization(),
                     Some(simplices) => self.validate_realization_for_simplices(simplices),
                 }
-                .map_err(InvariantError::Realization)
+                .map_err(|source| InvariantError::Realization { source })
             }
             InsertionValidationWork::RequiredTopologyLinks => local_simplices.map_or_else(
                 || self.validate_required_topology_links(),
@@ -2858,12 +2867,16 @@ mod tests {
         };
 
         assert_eq!(
-            TriangulationValidationError::try_from(ManifoldError::Tds(tds_err.clone())),
+            TriangulationValidationError::try_from(ManifoldError::Tds {
+                source: tds_err.clone()
+            }),
             Err(tds_err.clone())
         );
         assert_eq!(
-            InvariantError::from(ManifoldError::Tds(tds_err.clone())),
-            InvariantError::Tds(tds_err)
+            InvariantError::from(ManifoldError::Tds {
+                source: tds_err.clone()
+            }),
+            InvariantError::Tds { source: tds_err }
         );
 
         assert_matches!(
@@ -3001,7 +3014,9 @@ mod tests {
             invariant_error_from_topology_error(TopologyError::FacetMapBuild {
                 source: facet_map_err.clone()
             }),
-            InvariantError::Tds(facet_map_err)
+            InvariantError::Tds {
+                source: facet_map_err
+            }
         );
 
         let boundary_enumeration_err = TdsError::InconsistentDataStructure {
@@ -3011,7 +3026,9 @@ mod tests {
             invariant_error_from_topology_error(TopologyError::BoundaryFacetEnumeration {
                 source: boundary_enumeration_err.clone()
             }),
-            InvariantError::Tds(boundary_enumeration_err)
+            InvariantError::Tds {
+                source: boundary_enumeration_err
+            }
         );
 
         let boundary_count_err = TdsError::InconsistentDataStructure {
@@ -3021,16 +3038,20 @@ mod tests {
             invariant_error_from_topology_error(TopologyError::BoundaryFacetCount {
                 source: boundary_count_err.clone()
             }),
-            InvariantError::Tds(boundary_count_err)
+            InvariantError::Tds {
+                source: boundary_count_err
+            }
         );
 
         assert_eq!(
             invariant_error_from_topology_error(TopologyError::BoundaryFacetSimplexAccess {
                 source: FacetError::SimplexNotFoundInTriangulation
             }),
-            InvariantError::Tds(TdsError::FacetError(
-                FacetError::SimplexNotFoundInTriangulation
-            ))
+            InvariantError::Tds {
+                source: TdsError::FacetError {
+                    source: FacetError::SimplexNotFoundInTriangulation
+                }
+            }
         );
 
         let simplex_key = SimplexKey::from(KeyData::from_ffi(13));
@@ -3045,7 +3066,7 @@ mod tests {
                     facet_index: 3
                 })
             }),
-            InvariantError::Triangulation(
+            InvariantError::Triangulation { source:
                 TriangulationValidationError::BoundaryFacetInClosedTopology {
                     topology: TopologyKind::Toroidal,
                     facet_key: 0x1234_5678,
@@ -3053,7 +3074,7 @@ mod tests {
                     simplex_uuid: observed_simplex_uuid,
                     facet_index: 3
                 }
-            ) if observed_simplex_key == simplex_key && observed_simplex_uuid == simplex_uuid
+             } if observed_simplex_key == simplex_key && observed_simplex_uuid == simplex_uuid
         );
     }
 
@@ -3075,12 +3096,12 @@ mod tests {
 
         assert_matches!(
             err,
-            InvariantError::Triangulation(
-                TriangulationValidationError::BoundaryFacetInClosedTopology {
+            InvariantError::Triangulation {
+                source: TriangulationValidationError::BoundaryFacetInClosedTopology {
                     topology: TopologyKind::Spherical,
                     ..
                 }
-            )
+            }
         );
         assert_eq!(tri.global_topology(), GlobalTopology::Euclidean);
         assert!(tri.is_valid_topology().is_ok());
@@ -3282,9 +3303,9 @@ mod tests {
                         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
                         match tri.validate_at_completion() {
-                            Err(InvariantError::Triangulation(
+                            Err(InvariantError::Triangulation { source:
                                 TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. },
-                            )) => assert_eq!(vertex_key, expected_vertex_key),
+                             }) => assert_eq!(vertex_key, expected_vertex_key),
                             other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
                         }
                     }
@@ -3297,9 +3318,9 @@ mod tests {
 
                         assert_matches!(
                             tri.validate_at_completion(),
-                            Err(InvariantError::Triangulation(
+                            Err(InvariantError::Triangulation { source:
                                 TriangulationValidationError::VertexLinkNotManifold { .. }
-                            ))
+                             })
                         );
                         assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
                         assert_eq!(
@@ -3371,9 +3392,9 @@ mod tests {
         tri.set_validation_policy(ValidationPolicy::Always);
 
         match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None) {
-            Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
-                ..
-            })) => {}
+            Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::Disconnected { .. },
+            }) => {}
             other => panic!("Expected Disconnected error, got {other:?}"),
         }
     }
@@ -3386,8 +3407,12 @@ mod tests {
         tri.set_validation_policy(ValidationPolicy::Always);
 
         match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None) {
-            Err(InvariantError::Tds(TdsError::MappingInconsistency { .. })) => {}
-            other => panic!("Expected InvariantError::Tds(MappingInconsistency), got {other:?}"),
+            Err(InvariantError::Tds {
+                source: TdsError::MappingInconsistency { .. },
+            }) => {}
+            other => panic!(
+                "Expected InvariantError::Tds with MappingInconsistency source, got {other:?}"
+            ),
         }
     }
 
@@ -3419,13 +3444,17 @@ mod tests {
 
     #[test]
     fn insertion_error_to_invariant_error_maps_all_arms() {
-        let source = TdsError::Geometric(GeometricError::DegenerateOrientation {
-            message: "det=0".to_string(),
-        });
-        let error = InsertionError::TopologyValidation(source.clone());
+        let source = TdsError::Geometric {
+            source: GeometricError::DegenerateOrientation {
+                message: "det=0".to_string(),
+            },
+        };
+        let error = InsertionError::TopologyValidation {
+            source: source.clone(),
+        };
         assert_eq!(
             insertion_error_to_invariant_error(error, "ctx"),
-            InvariantError::Tds(source)
+            InvariantError::Tds { source }
         );
 
         let inner = TriangulationValidationError::IsolatedVertex {
@@ -3438,7 +3467,7 @@ mod tests {
         };
         assert_eq!(
             insertion_error_to_invariant_error(error, "ctx"),
-            InvariantError::Triangulation(inner)
+            InvariantError::Triangulation { source: inner }
         );
 
         let realization_source = synthetic_realization_error();
@@ -3447,7 +3476,9 @@ mod tests {
         };
         assert_eq!(
             insertion_error_to_invariant_error(error, "ctx"),
-            InvariantError::Realization(realization_source)
+            InvariantError::Realization {
+                source: realization_source
+            }
         );
 
         let delaunay_source = synthetic_delaunay_verification_error("delaunay");
@@ -3456,7 +3487,9 @@ mod tests {
         };
         assert_eq!(
             insertion_error_to_invariant_error(error, "ctx"),
-            InvariantError::Delaunay(delaunay_source)
+            InvariantError::Delaunay {
+                source: delaunay_source
+            }
         );
 
         let error = InsertionError::CavityFilling {
@@ -3466,7 +3499,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                InvariantError::Tds(TdsError::InconsistentDataStructure { ref message })
+                InvariantError::Tds { source: TdsError::InconsistentDataStructure { ref message } }
                     if message.contains("ctx") && message.contains("fan triangulation produced no simplices")
             ),
             "CavityFilling should wrap to InconsistentDataStructure: {result:?}"
@@ -3475,27 +3508,35 @@ mod tests {
 
     #[test]
     fn invariant_error_to_insertion_error_maps_all_arms() {
-        let inv = InvariantError::Tds(TdsError::InconsistentDataStructure {
-            message: "test".to_string(),
-        });
+        let inv = InvariantError::Tds {
+            source: TdsError::InconsistentDataStructure {
+                message: "test".to_string(),
+            },
+        };
         let ins =
             Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
-        assert_matches!(ins, InsertionError::TopologyValidation(_));
+        assert_matches!(ins, InsertionError::TopologyValidation { source: _ });
 
-        let inv = InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex {
-            vertex_key: VertexKey::from(KeyData::from_ffi(1)),
-            vertex_uuid: Uuid::nil(),
-        });
+        let inv = InvariantError::Triangulation {
+            source: TriangulationValidationError::IsolatedVertex {
+                vertex_key: VertexKey::from(KeyData::from_ffi(1)),
+                vertex_uuid: Uuid::nil(),
+            },
+        };
         let ins =
             Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
         assert_matches!(ins, InsertionError::TopologyValidationFailed { .. });
 
-        let inv = InvariantError::Realization(synthetic_realization_error());
+        let inv = InvariantError::Realization {
+            source: synthetic_realization_error(),
+        };
         let ins =
             Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
         assert_matches!(ins, InsertionError::RealizationValidationFailed { .. });
 
-        let inv = InvariantError::Delaunay(synthetic_delaunay_verification_error("test"));
+        let inv = InvariantError::Delaunay {
+            source: synthetic_delaunay_verification_error("test"),
+        };
         let ins =
             Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
         assert_matches!(ins, InsertionError::DelaunayValidationFailed { .. });
@@ -3506,10 +3547,12 @@ mod tests {
         let tds_err = TdsError::InconsistentDataStructure {
             message: "underlying TDS issue".to_string(),
         };
-        let manifold_err = ManifoldError::Tds(tds_err.clone());
+        let manifold_err = ManifoldError::Tds {
+            source: tds_err.clone(),
+        };
         assert_eq!(
             InvariantError::from(manifold_err),
-            InvariantError::Tds(tds_err)
+            InvariantError::Tds { source: tds_err }
         );
 
         let err = ManifoldError::ManifoldFacetMultiplicity {
@@ -3519,12 +3562,12 @@ mod tests {
         let inv = InvariantError::from(err);
         assert_matches!(
             inv,
-            InvariantError::Triangulation(
-                TriangulationValidationError::ManifoldFacetMultiplicity {
+            InvariantError::Triangulation {
+                source: TriangulationValidationError::ManifoldFacetMultiplicity {
                     facet_key: 999,
                     simplex_count: 5
                 }
-            )
+            }
         );
 
         let ridge_vertex = VertexKey::from(KeyData::from_ffi(42));
@@ -3533,9 +3576,9 @@ mod tests {
         });
         assert_matches!(
             inv,
-            InvariantError::Triangulation(TriangulationValidationError::RidgeNotFound {
+            InvariantError::Triangulation { source: TriangulationValidationError::RidgeNotFound {
                 ridge_vertices
-            }) if ridge_vertices.as_slice() == [ridge_vertex]
+            } } if ridge_vertices.as_slice() == [ridge_vertex]
         );
     }
 
@@ -3559,12 +3602,13 @@ mod tests {
             .unwrap();
 
         match tri.is_valid_topology() {
-            Err(InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex {
-                vertex_key,
-                ..
-            })) => assert_eq!(vertex_key, iso),
+            Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::IsolatedVertex { vertex_key, .. },
+            }) => assert_eq!(vertex_key, iso),
             other => {
-                panic!("Expected InvariantError::Triangulation(IsolatedVertex), got {other:?}")
+                panic!(
+                    "Expected InvariantError::Triangulation with IsolatedVertex source, got {other:?}"
+                )
             }
         }
     }
@@ -3575,11 +3619,13 @@ mod tests {
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
         match tri.is_valid_topology() {
-            Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
-                simplex_count,
-            })) => assert_eq!(simplex_count, 2),
+            Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::Disconnected { simplex_count },
+            }) => assert_eq!(simplex_count, 2),
             other => {
-                panic!("Expected InvariantError::Triangulation(Disconnected), got {other:?}")
+                panic!(
+                    "Expected InvariantError::Triangulation with Disconnected source, got {other:?}"
+                )
             }
         }
     }
@@ -3591,8 +3637,12 @@ mod tests {
         tri.tds.uuid_to_vertex_key.remove(&uuid);
 
         match tri.validate() {
-            Err(InvariantError::Tds(TdsError::MappingInconsistency { .. })) => {}
-            other => panic!("Expected InvariantError::Tds(MappingInconsistency), got {other:?}"),
+            Err(InvariantError::Tds {
+                source: TdsError::MappingInconsistency { .. },
+            }) => {}
+            other => panic!(
+                "Expected InvariantError::Tds with MappingInconsistency source, got {other:?}"
+            ),
         }
     }
 
@@ -3605,11 +3655,13 @@ mod tests {
             .unwrap();
 
         match tri.validate() {
-            Err(InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex {
-                ..
-            })) => {}
+            Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::IsolatedVertex { .. },
+            }) => {}
             other => {
-                panic!("Expected InvariantError::Triangulation(IsolatedVertex), got {other:?}")
+                panic!(
+                    "Expected InvariantError::Triangulation with IsolatedVertex source, got {other:?}"
+                )
             }
         }
     }
@@ -3733,7 +3785,7 @@ mod tests {
         );
         assert_matches!(
             non_orientable.orientation_witness(),
-            Err(InvariantError::Triangulation(
+            Err(InvariantError::Triangulation { source:
                 TriangulationValidationError::NonOrientable {
                     simplex1_key,
                     simplex1_uuid,
@@ -3742,7 +3794,7 @@ mod tests {
                     simplex2_uuid,
                     simplex2_facet_index,
                 }
-            )) if non_orientable.tds.simplex(simplex1_key).map(Simplex::uuid)
+             }) if non_orientable.tds.simplex(simplex1_key).map(Simplex::uuid)
                 == Some(simplex1_uuid)
                 && non_orientable.tds.simplex(simplex2_key).map(Simplex::uuid)
                     == Some(simplex2_uuid)
@@ -3756,9 +3808,9 @@ mod tests {
         non_orientable.set_topology_guarantee(TopologyGuarantee::PLManifold);
         assert_matches!(
             non_orientable.is_valid_topology(),
-            Err(InvariantError::Triangulation(
-                TriangulationValidationError::NonOrientable { .. }
-            ))
+            Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::NonOrientable { .. }
+            })
         );
 
         // A local reversal violates Level 2 while the intrinsic witness remains available.
@@ -3807,9 +3859,9 @@ mod tests {
 
         assert_matches!(
             tri.orientation_witness(),
-            Err(InvariantError::Triangulation(
-                TriangulationValidationError::NonOrientable { .. }
-            ))
+            Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::NonOrientable { .. }
+            })
         );
     }
 
@@ -3845,9 +3897,9 @@ mod tests {
         );
         assert_matches!(
             tri_3d.orientation_witness(),
-            Err(InvariantError::Triangulation(
-                TriangulationValidationError::NonOrientable { .. }
-            ))
+            Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::NonOrientable { .. }
+            })
         );
     }
 
@@ -3948,21 +4000,22 @@ mod tests {
 
         assert_matches!(
             tri.is_valid_topology(),
-            Err(InvariantError::Triangulation(
-                TriangulationValidationError::Disconnected { .. }
-            ))
+            Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::Disconnected { .. }
+            })
         );
 
         tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
 
         match tri.is_valid_topology() {
-            Err(InvariantError::Triangulation(
-                TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. },
-            )) => assert_eq!(vertex_key, v0),
-            Err(InvariantError::Triangulation(
-                TriangulationValidationError::RidgeLinkNotManifold { .. }
-                | TriangulationValidationError::Disconnected { .. },
-            )) => {}
+            Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. },
+            }) => assert_eq!(vertex_key, v0),
+            Err(InvariantError::Triangulation {
+                source:
+                    TriangulationValidationError::RidgeLinkNotManifold { .. }
+                    | TriangulationValidationError::Disconnected { .. },
+            }) => {}
             other => panic!(
                 "Expected RidgeLinkNotManifold, VertexLinkNotManifold, or Disconnected, got {other:?}"
             ),
@@ -4028,14 +4081,15 @@ mod tests {
         tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
 
         match tri.is_valid_topology() {
-            Err(InvariantError::Triangulation(
-                TriangulationValidationError::VertexLinkNotManifold {
-                    vertex_key,
-                    connected,
-                    interior_vertex,
-                    ..
-                },
-            )) => {
+            Err(InvariantError::Triangulation {
+                source:
+                    TriangulationValidationError::VertexLinkNotManifold {
+                        vertex_key,
+                        connected,
+                        interior_vertex,
+                        ..
+                    },
+            }) => {
                 assert_eq!(vertex_key, apex);
                 assert!(connected);
                 assert!(interior_vertex);
@@ -4089,9 +4143,9 @@ mod tests {
         let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
         match tri.is_valid_topology() {
-            Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
-                simplex_count,
-            })) => assert_eq!(simplex_count, 2),
+            Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::Disconnected { simplex_count },
+            }) => assert_eq!(simplex_count, 2),
             other => panic!("Expected Disconnected, got {other:?}"),
         }
     }
@@ -4120,10 +4174,13 @@ mod tests {
         let expected_vk = tri.tds.insert_vertex_with_mapping(vertex).unwrap();
 
         match tri.is_valid_topology() {
-            Err(InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex {
-                vertex_key,
-                vertex_uuid,
-            })) => {
+            Err(InvariantError::Triangulation {
+                source:
+                    TriangulationValidationError::IsolatedVertex {
+                        vertex_key,
+                        vertex_uuid,
+                    },
+            }) => {
                 assert_eq!(vertex_key, expected_vk);
                 assert_eq!(vertex_uuid, expected_uuid);
             }
@@ -4153,9 +4210,9 @@ mod tests {
 
         assert_matches!(
             tri.is_valid_topology(),
-            Err(InvariantError::Triangulation(
-                TriangulationValidationError::IsolatedVertex { .. }
-            ))
+            Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::IsolatedVertex { .. }
+            })
         );
     }
 
@@ -4217,9 +4274,9 @@ mod tests {
         assert_eq!(topology.chi, 1);
 
         match tri.is_valid_topology() {
-            Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
-                simplex_count,
-            })) => assert_eq!(simplex_count, 5),
+            Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::Disconnected { simplex_count },
+            }) => assert_eq!(simplex_count, 5),
             other => panic!("Expected Disconnected, got {other:?}"),
         }
     }
@@ -4352,12 +4409,13 @@ mod tests {
         let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
         match tri.is_valid_topology() {
-            Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
-                ..
-            })) => {}
-            Err(InvariantError::Triangulation(
-                TriangulationValidationError::ManifoldFacetMultiplicity { simplex_count, .. },
-            )) => assert_eq!(simplex_count, 3),
+            Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::Disconnected { .. },
+            }) => {}
+            Err(InvariantError::Triangulation {
+                source:
+                    TriangulationValidationError::ManifoldFacetMultiplicity { simplex_count, .. },
+            }) => assert_eq!(simplex_count, 3),
             other => panic!("Expected Disconnected or ManifoldFacetMultiplicity, got {other:?}"),
         }
     }
@@ -4451,9 +4509,10 @@ mod tests {
         tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
         match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None) {
-            Err(InvariantError::Triangulation(
-                TriangulationValidationError::ManifoldFacetMultiplicity { simplex_count, .. },
-            )) => assert_eq!(simplex_count, 3),
+            Err(InvariantError::Triangulation {
+                source:
+                    TriangulationValidationError::ManifoldFacetMultiplicity { simplex_count, .. },
+            }) => assert_eq!(simplex_count, 3),
             other => panic!("Expected ManifoldFacetMultiplicity, got {other:?}"),
         }
     }
@@ -4469,9 +4528,10 @@ mod tests {
         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
         match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&scope)) {
-            Err(InvariantError::Triangulation(
-                TriangulationValidationError::ManifoldFacetMultiplicity { simplex_count, .. },
-            )) => assert_eq!(simplex_count, 3),
+            Err(InvariantError::Triangulation {
+                source:
+                    TriangulationValidationError::ManifoldFacetMultiplicity { simplex_count, .. },
+            }) => assert_eq!(simplex_count, 3),
             other => panic!("Expected ManifoldFacetMultiplicity, got {other:?}"),
         }
     }
@@ -4492,15 +4552,15 @@ mod tests {
                         tri.topology_guarantee = TopologyGuarantee::PLManifoldStrict;
 
                         match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&scope)) {
-                            Err(InvariantError::Triangulation(
+                            Err(InvariantError::Triangulation { source:
                                 TriangulationValidationError::RidgeLinkNotManifold {
                                     connected: false,
                                     ..
                                 },
-                            )) if $dim == 2 => {}
-                            Err(InvariantError::Triangulation(
+                             }) if $dim == 2 => {}
+                            Err(InvariantError::Triangulation { source:
                                 TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. },
-                            )) => assert_eq!(vertex_key, expected_vertex_key),
+                             }) => assert_eq!(vertex_key, expected_vertex_key),
                             other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
                         }
                     }
@@ -4579,7 +4639,7 @@ mod tests {
 
         let empty: SimplexKeyBuffer = SimplexKeyBuffer::new();
         let err = tri.validate_connectedness(&empty).unwrap_err();
-        assert_matches!(err, InsertionError::TopologyValidation(_));
+        assert_matches!(err, InsertionError::TopologyValidation { source: _ });
     }
 
     #[test]
@@ -4625,13 +4685,13 @@ mod tests {
 
         assert_matches!(
             err,
-            InvariantError::Realization(
+            InvariantError::Realization { source:
                 TriangulationRealizationValidationError::DegenerateSimplex {
                     simplex_key,
                     dimension: 3,
                     ..
                 }
-            ) if simplex_key == ck
+             } if simplex_key == ck
         );
     }
 
@@ -4648,13 +4708,13 @@ mod tests {
 
         assert_matches!(
             err,
-            InvariantError::Realization(
+            InvariantError::Realization { source:
                 TriangulationRealizationValidationError::DegenerateSimplex {
                     simplex_key,
                     dimension: 3,
                     ..
                 }
-            ) if simplex_key == ck
+             } if simplex_key == ck
         );
     }
 
@@ -4674,9 +4734,10 @@ mod tests {
 
         assert_matches!(
             err,
-            InvariantError::Realization(
-                TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace { .. }
-            )
+            InvariantError::Realization {
+                source:
+                    TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace { .. }
+            }
         );
     }
 
@@ -4698,7 +4759,12 @@ mod tests {
             .validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&empty_scope))
             .unwrap_err();
 
-        assert_eq!(err, InvariantError::Realization(expected_realization_error));
+        assert_eq!(
+            err,
+            InvariantError::Realization {
+                source: expected_realization_error
+            }
+        );
     }
 
     #[test]
@@ -4722,9 +4788,10 @@ mod tests {
 
         assert_matches!(
             err,
-            InvariantError::Realization(
-                TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace { .. }
-            )
+            InvariantError::Realization {
+                source:
+                    TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace { .. }
+            }
         );
     }
 

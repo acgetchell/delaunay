@@ -220,7 +220,9 @@ where
     /// };
     /// std::assert_matches!(
     ///     source.as_ref(),
-    ///     InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex { .. })
+    ///     InvariantError::Triangulation {
+    ///         source: TriangulationValidationError::IsolatedVertex { .. },
+    ///     }
     /// );
     /// assert_eq!(dt.number_of_vertices(), 3);
     /// assert_eq!(dt.number_of_simplices(), 1);
@@ -266,13 +268,11 @@ where
                         repair_result
                     };
 
-                    repair_result.map_err(|source| {
-                        InvariantError::Delaunay(
-                            DelaunayTriangulationValidationError::RepairOperationFailed {
-                                operation: DelaunayRepairOperation::VertexRemoval,
-                                source: Box::new(source),
-                            },
-                        )
+                    repair_result.map_err(|source| InvariantError::Delaunay {
+                        source: DelaunayTriangulationValidationError::RepairOperationFailed {
+                            operation: DelaunayRepairOperation::VertexRemoval,
+                            source: Box::new(source),
+                        },
                     })?;
 
                     // Re-canonicalize geometric orientation (#258): flip repair may leave
@@ -289,7 +289,7 @@ where
                 } else {
                     delaunay
                         .is_valid_delaunay()
-                        .map_err(InvariantError::Delaunay)?;
+                        .map_err(|source| InvariantError::Delaunay { source })?;
                 }
             }
 
@@ -466,19 +466,22 @@ mod tests {
         let err = result.expect_err("forced repair failure should make deletion fail");
         match err {
             DeleteVertexError::InvariantViolation { source } => match source.as_ref() {
-                InvariantError::Delaunay(
-                    DelaunayTriangulationValidationError::RepairOperationFailed {
-                        operation: DelaunayRepairOperation::VertexRemoval,
-                        source,
-                    },
-                ) if matches!(
+                InvariantError::Delaunay {
+                    source:
+                        DelaunayTriangulationValidationError::RepairOperationFailed {
+                            operation: DelaunayRepairOperation::VertexRemoval,
+                            source,
+                        },
+                } if matches!(
                     source.as_ref(),
                     DelaunayRepairError::NonConvergent { max_flips: 0, .. }
                 ) => {}
-                InvariantError::Triangulation(
-                    TriangulationValidationError::OrientationPromotionNonConvergence { .. },
-                )
-                | InvariantError::Tds(TdsError::FacetSharingViolation { .. }) => {}
+                InvariantError::Triangulation {
+                    source: TriangulationValidationError::OrientationPromotionNonConvergence { .. },
+                }
+                | InvariantError::Tds {
+                    source: TdsError::FacetSharingViolation { .. },
+                } => {}
                 other => panic!(
                     "expected vertex-deletion rollback error from forced repair path, got {other:?}"
                 ),
@@ -796,9 +799,9 @@ mod tests {
         };
         assert_matches!(
             source.as_ref(),
-            InvariantError::Delaunay(
-                DelaunayTriangulationValidationError::VerificationFailed { .. }
-            )
+            InvariantError::Delaunay {
+                source: DelaunayTriangulationValidationError::VerificationFailed { .. }
+            }
         );
         assert_eq!(dt.number_of_vertices(), vertex_count_before);
         assert_eq!(dt.number_of_simplices(), simplex_count_before);

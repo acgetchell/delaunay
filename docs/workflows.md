@@ -472,8 +472,9 @@ fn main() -> DelaunayResult<()> {
 
 When automatic repair fails after the mutation, `delete_vertex` reports
 `DeleteVertexError::InvariantViolation { source:
-Box::new(InvariantError::Delaunay(DelaunayTriangulationValidationError::RepairOperationFailed {
-operation: DelaunayRepairOperation::VertexRemoval, source })) }`, preserving the underlying
+Box::new(InvariantError::Delaunay { source:
+DelaunayTriangulationValidationError::RepairOperationFailed {
+operation: DelaunayRepairOperation::VertexRemoval, source } }) }`, preserving the underlying
 `DelaunayRepairError` for callers that need to inspect the exact repair failure.
 Successful deletions invalidate internal locate hints so stale simplex handles
 are not reused. The spatial index is retained, but the deleted vertex entry is

@@ -134,7 +134,11 @@ use thiserror::Error;
 pub enum ManifoldError {
     /// The underlying triangulation data structure is internally inconsistent.
     #[error(transparent)]
-    Tds(#[from] TdsError),
+    Tds {
+        /// Typed TDS source error.
+        #[from]
+        source: TdsError,
+    },
 
     /// A live ridge candidate does not occur in any D-simplex.
     #[error("Ridge candidate {ridge_vertices:?} is not present in the TDS")]
@@ -2444,10 +2448,12 @@ mod tests {
             facet_to_simplices,
             GlobalTopology::Euclidean,
         ) {
-            Err(ManifoldError::Tds(TdsError::FacetError(FacetError::InvalidFacetIndex {
-                index,
-                facet_count,
-            }))) => {
+            Err(ManifoldError::Tds {
+                source:
+                    TdsError::FacetError {
+                        source: FacetError::InvalidFacetIndex { index, facet_count },
+                    },
+            }) => {
                 assert_eq!(index, u8::MAX);
                 assert_eq!(facet_count, 4);
             }
@@ -2871,11 +2877,14 @@ mod tests {
         let tds: Tds<(), (), 2> = Tds::empty();
 
         match simplex_link_simplices_from_star(&tds, &[], &[]) {
-            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
-                expected: 1,
-                actual: 0,
-                ..
-            })) => {}
+            Err(ManifoldError::Tds {
+                source:
+                    TdsError::DimensionMismatch {
+                        expected: 1,
+                        actual: 0,
+                        ..
+                    },
+            }) => {}
             other => panic!("Expected DimensionMismatch for empty simplex, got {other:?}"),
         }
     }
@@ -2907,11 +2916,14 @@ mod tests {
             .unwrap();
 
         match simplex_link_simplices_from_star(&tds, &[v0, v3], &[simplex_key]) {
-            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
-                expected: 1,
-                actual,
-                ..
-            })) => {
+            Err(ManifoldError::Tds {
+                source:
+                    TdsError::DimensionMismatch {
+                        expected: 1,
+                        actual,
+                        ..
+                    },
+            }) => {
                 assert_ne!(actual, 1, "Expected actual != 1 for unrelated vertex");
             }
             other => panic!("Expected DimensionMismatch for link-size mismatch, got {other:?}"),
@@ -2968,11 +2980,14 @@ mod tests {
         }
 
         match validate_ridge_links(&tds) {
-            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
-                expected: 2,
-                actual,
-                ..
-            })) => {
+            Err(ManifoldError::Tds {
+                source:
+                    TdsError::DimensionMismatch {
+                        expected: 2,
+                        actual,
+                        ..
+                    },
+            }) => {
                 assert_ne!(actual, 2, "Expected actual != 2 for corrupted link");
             }
             other => {
@@ -3042,10 +3057,13 @@ mod tests {
             GlobalTopology::Euclidean,
             &[simplex_key],
         ) {
-            Err(ManifoldError::Tds(TdsError::SimplexNotFound {
-                simplex_key: missing_key,
-                ..
-            })) => assert_eq!(missing_key, simplex_key),
+            Err(ManifoldError::Tds {
+                source:
+                    TdsError::SimplexNotFound {
+                        simplex_key: missing_key,
+                        ..
+                    },
+            }) => assert_eq!(missing_key, simplex_key),
             other => panic!("Expected SimplexNotFound, got {other:?}"),
         }
     }
@@ -3403,11 +3421,17 @@ mod tests {
             facet_to_simplices,
             GlobalTopology::Euclidean,
         ) {
-            Err(ManifoldError::Tds(TdsError::FacetError(FacetError::FacetHandleKeyMismatch {
-                expected_facet_key,
-                actual_facet_key,
-                ..
-            }))) => {
+            Err(ManifoldError::Tds {
+                source:
+                    TdsError::FacetError {
+                        source:
+                            FacetError::FacetHandleKeyMismatch {
+                                expected_facet_key,
+                                actual_facet_key,
+                                ..
+                            },
+                    },
+            }) => {
                 assert_eq!(expected_facet_key, 0);
                 assert_ne!(actual_facet_key, expected_facet_key);
             }
@@ -3474,11 +3498,11 @@ mod tests {
 
         assert_matches!(
             err,
-            ManifoldError::Tds(TdsError::FacetError(FacetError::FacetHandleKeyMismatch {
+            ManifoldError::Tds { source: TdsError::FacetError { source: FacetError::FacetHandleKeyMismatch {
                 expected_facet_key,
                 actual_facet_key: found_actual_facet_key,
                 handle: found_handle,
-            })) if expected_facet_key == mismatched_facet_key
+            } } } if expected_facet_key == mismatched_facet_key
                 && found_actual_facet_key == actual_facet_key
                 && found_handle == handle
         );

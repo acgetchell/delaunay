@@ -5,31 +5,33 @@ artifact. It indexes the immutable release, reproduction commands, validation
 evidence, generated figures, benchmark evidence, and known limits. The linked
 documents remain the source of truth for their respective contracts.
 
-> **Release status:** v0.8.0 is not an immutable artifact until the annotated
-> `v0.8.0` tag, crates.io package, GitHub release, and Zenodo version record are
-> published by [the final release audit][release-audit]. Before that event,
-> this guide describes the release target and must not be cited as a published
-> v0.8.0 archive.
+> **Release status:** v0.8.0 was published on 2026-07-28 as an annotated tag, a
+> crates.io package, a [GitHub release][github-release], and a
+> [versioned Zenodo record][zenodo-version]. The GitHub release does not contain
+> the planned Criterion baseline asset because its release-benchmark workflow
+> failed; see [Known benchmark exception](#known-benchmark-exception).
 
 ## Artifact identity
 
 | Field | v0.8.0 identity | Check |
 |---|---|---|
 | Source tag | [`v0.8.0`][source-tag] | The annotated release tag, not `main` |
-| Commit | The commit peeled from `v0.8.0` | `git rev-list -n 1 v0.8.0` |
+| Commit | `ee0b1992071552ecf8669418ea74444a699343a9` | `git rev-list -n 1 v0.8.0` |
 | GitHub archive | [`delaunay` at `v0.8.0`][source-tag] | Tag and commit must agree |
+| GitHub release | [`v0.8.0`][github-release] | Published 2026-07-28 from the annotated tag |
 | Crate | [`delaunay` 0.8.0 on crates.io][crate-release] | Package version must be `0.8.0` |
 | Rust | 1.97.1 | `rustc --version` and [`rust-toolchain.toml`](../rust-toolchain.toml) |
 | Zenodo collection | [`10.5281/zenodo.16931097`][zenodo-concept] | Stable software concept DOI |
-| Zenodo v0.8.0 record | Published by [the final release audit][release-audit] | Version DOI, tag, and commit must match this release |
+| Zenodo v0.8.0 record | [`10.5281/zenodo.21635965`][zenodo-version] | SHA-256 `7ec456da83d105f807ac40737d38e102b30f5963467d410354925cf197cb45a7` |
 
-The commit is intentionally resolved from the annotated tag rather than
-hard-coded into a file contained by that commit. In a Git checkout, verify the
-exact commit with:
+The published commit is recorded explicitly above and must also resolve from
+the annotated tag. In a Git checkout, verify both identities with:
 
 ```bash
 TAG=v0.8.0
-test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$TAG")"
+RELEASE_COMMIT=ee0b1992071552ecf8669418ea74444a699343a9
+test "$(git rev-list -n 1 "$TAG")" = "$RELEASE_COMMIT"
+test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
 git show -s --format='tag=%D%ncommit=%H%ncommit-date=%cI' "$TAG^{commit}"
 rustc --version
 ```
@@ -37,11 +39,18 @@ rustc --version
 GitHub and Zenodo source archives do not contain `.git` metadata. For an
 archive, verify its published checksum and confirm that the release metadata
 records the same tag and peeled commit before running the reproduction paths.
+The Zenodo file is `acgetchell/delaunay-v0.8.0.zip`; the record also reports
+MD5 `6274e49bb1ef91e1e3023225131199d7`. Verify the stronger checksum with:
 
-The release-specific Zenodo DOI does not exist until the archive is published.
-The release audit must record it in the Zenodo metadata and, when the citation
-policy calls for a version DOI, in [`CITATION.cff`](../CITATION.cff). The stable
-concept DOI above identifies the software collection across releases.
+```bash
+printf '%s\n' '7ec456da83d105f807ac40737d38e102b30f5963467d410354925cf197cb45a7  acgetchell/delaunay-v0.8.0.zip' | sha256sum --check
+```
+
+The release-specific Zenodo DOI is
+[`10.5281/zenodo.21635965`][zenodo-version].
+[`CITATION.cff`](../CITATION.cff) intentionally uses the stable concept DOI
+[`10.5281/zenodo.16931097`][zenodo-concept] to identify the software collection
+across releases; cite the version DOI when referring specifically to v0.8.0.
 
 ### Which download to use
 
@@ -165,14 +174,24 @@ cost and observability only after those invariants pass.
 | Compare two durable GitHub release assets | `just perf-github-assets "$TAG" "$PREVIOUS_TAG"` | `target/bench-reports/github-assets-performance.md` |
 | Coarse 2D–5D large-scale guard | `just perf-large-scale-smoke` | Per-dimension pass/fail wall-clock diagnostics |
 
-The release audit regenerates the public summary after the v0.8.0 version bump.
-Before publication, its version, commit, Rust version, benchmark profile,
-operating system, CPU, and memory metadata must describe the run that produced
-the numbers. Absolute timings are not portable across machines. Use
-same-machine comparisons for regression claims and the stored GitHub release
-assets for runner-to-runner release comparisons. See
+Absolute timings are not portable across machines. Use same-machine comparisons
+for regression claims and stored GitHub release assets for runner-to-runner
+release comparisons when both releases provide them. See
 [`benches/README.md`](../benches/README.md) for the benchmark contract and
 [`docs/dev/perf-tuning.md`](../docs/dev/perf-tuning.md) for evidence rules.
+
+#### Known benchmark exception
+
+The v0.8.0 GitHub release has no
+`delaunay-v0.8.0-criterion-baseline.tar.gz` asset. The
+[release-benchmark run][release-benchmark-run] failed when
+`ci_performance_suite` exceeded its 900-second command timeout, before packaging
+or upload. The checked-in v0.8.0 performance summary also identifies commit
+`1f15b9352456aca9eade44d116cd8d15d3d1ac20`, not the peeled release commit.
+Consequently, do not use that summary or `perf-github-assets` as durable v0.8.0
+release-comparison evidence. Run `just perf-local` for a same-machine comparison,
+or regenerate measurements from the exact release checkout and record the
+environment metadata alongside the results.
 
 ## Five-level claim map
 
@@ -332,28 +351,19 @@ source snapshot, not a claim that the manuscript is submission-complete.
 Substantive author-owned manuscript completion and submission packaging are
 tracked separately in [issue #522][manuscript].
 
-## Release-finalization checks
+## Published release record
 
-The v0.8.0 release audit must complete these mechanical checks before this guide
-describes a published artifact:
-
-1. Bump Cargo, lockfile, Python utility, citation, README, and active
-   documentation version references to 0.8.0; run `just docs-version-check`.
-2. Run `just ci-slow`, `just papers`, and `just publish-check` from the release
-   commit.
-3. Run `just bench-perf-summary` after the version bump and verify the checked-in
-   summary records v0.8.0, the release commit, Rust 1.97.1, and hardware metadata.
-4. Inspect `cargo package --list` and confirm the documented crates.io packaging
-   decision remains true.
-5. Create the annotated `v0.8.0` tag from the release commit, then publish the
-   crates.io package and GitHub release from that tag.
-6. Publish the Zenodo v0.8.0 software record, record its version DOI and archive
-   checksum, and verify its metadata identifies the same tag and peeled commit.
-7. Confirm the GitHub release carries the durable v0.8.0 Criterion baseline
-   asset described in [`docs/RELEASING.md`](../docs/RELEASING.md).
+The annotated tag, crates.io package, GitHub release, and Zenodo record were
+published on 2026-07-28. The source identity is the peeled commit recorded above.
+The Zenodo archive supplies the immutable version DOI and checksum for reviewer
+verification. The missing GitHub Criterion asset is the sole incomplete release
+artifact identified by this guide and is documented as a benchmark limitation,
+not as evidence that the source release is unpublished.
 
 [crate-release]: https://crates.io/crates/delaunay/0.8.0
+[github-release]: https://github.com/acgetchell/delaunay/releases/tag/v0.8.0
 [manuscript]: https://github.com/acgetchell/delaunay/issues/522
-[release-audit]: https://github.com/acgetchell/delaunay/issues/506
+[release-benchmark-run]: https://github.com/acgetchell/delaunay/actions/runs/30325806574
 [source-tag]: https://github.com/acgetchell/delaunay/tree/v0.8.0
 [zenodo-concept]: https://doi.org/10.5281/zenodo.16931097
+[zenodo-version]: https://doi.org/10.5281/zenodo.21635965

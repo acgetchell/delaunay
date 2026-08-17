@@ -261,9 +261,9 @@ fn empty_flip_fixture_returns_construction_error() {
         FlipWorkflowError::Construction { dimension, source } => {
             assert_eq!(dimension, 2);
             match *source {
-                DelaunayTriangulationConstructionError::Triangulation(
-                    DelaunayConstructionFailure::InsufficientVertices { dimension, .. },
-                ) => assert_eq!(dimension, 2),
+                DelaunayTriangulationConstructionError::Triangulation {
+                    source: DelaunayConstructionFailure::InsufficientVertices { dimension, .. },
+                } => assert_eq!(dimension, 2),
                 other => panic!("unexpected construction source: {other}"),
             }
         }
@@ -607,21 +607,21 @@ fn assert_topology_and_delaunay_valid<const D: usize>(dt: &FlipTriangulation<D>,
 
 fn construction_error_is_degenerate(error: &DelaunayTriangulationConstructionError) -> bool {
     match error {
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::GeometricDegeneracy { .. },
-        ) => true,
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::FinalDelaunayValidation { source, .. },
-        ) => validation_error_is_degenerate(source),
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::InsertionRealizationValidation { source },
-        ) => matches!(
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::GeometricDegeneracy { .. },
+        } => true,
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::FinalDelaunayValidation { source, .. },
+        } => validation_error_is_degenerate(source),
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::InsertionRealizationValidation { source },
+        } => matches!(
             source,
             TriangulationRealizationValidationError::DegenerateSimplex { .. }
         ),
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
-        ) => match source.as_ref() {
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
+        } => match source.as_ref() {
             DelaunayConstructionRetryFailure::Construction { source } => {
                 construction_error_is_degenerate(source)
             }
@@ -634,7 +634,7 @@ fn construction_error_is_degenerate(error: &DelaunayTriangulationConstructionErr
 fn validation_error_is_degenerate(error: &DelaunayTriangulationValidationError) -> bool {
     matches!(
         error,
-        DelaunayTriangulationValidationError::Realization(source)
+        DelaunayTriangulationValidationError::Realization { source }
             if matches!(
                 source.as_ref(),
                 TriangulationRealizationValidationError::DegenerateSimplex { .. }

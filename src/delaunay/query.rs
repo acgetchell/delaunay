@@ -1728,10 +1728,10 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
                 }
                 Ok(())
             }
-            Err(InvariantError::Tds(err)) => Err(err.into()),
-            Err(InvariantError::Triangulation(err)) => Err(err.into()),
-            Err(InvariantError::Realization(err)) => Err(err.into()),
-            Err(InvariantError::Delaunay(err)) => Err(err),
+            Err(InvariantError::Tds { source: err }) => Err(err.into()),
+            Err(InvariantError::Triangulation { source: err }) => Err(err.into()),
+            Err(InvariantError::Realization { source: err }) => Err(err.into()),
+            Err(InvariantError::Delaunay { source: err }) => Err(err),
         }
     }
 
@@ -3263,7 +3263,7 @@ mod tests {
 
         assert_matches!(
             err,
-            DelaunayTriangulationValidationError::Triangulation(source)
+            DelaunayTriangulationValidationError::Triangulation { source }
                 if matches!(
                     &*source,
                     TriangulationValidationError::BoundaryFacetInClosedTopology {

@@ -103,34 +103,46 @@ fn cavity_reduction_trace_enabled() -> bool {
 /// conflict region.
 fn retryable_conflict_trace_detail(error: &InsertionError) -> Option<String> {
     match error {
-        InsertionError::ConflictRegion(ConflictError::NonManifoldFacet {
-            facet_hash,
-            simplex_count,
-        }) => Some(format!(
+        InsertionError::ConflictRegion {
+            source:
+                ConflictError::NonManifoldFacet {
+                    facet_hash,
+                    simplex_count,
+                },
+        } => Some(format!(
             "kind=non_manifold_facet facet_hash={facet_hash:#x} simplex_count={simplex_count}"
         )),
-        InsertionError::ConflictRegion(ConflictError::RidgeFan {
-            facet_count,
-            ridge_vertex_count,
-            extra_simplices,
-        }) => Some(format!(
+        InsertionError::ConflictRegion {
+            source:
+                ConflictError::RidgeFan {
+                    facet_count,
+                    ridge_vertex_count,
+                    extra_simplices,
+                },
+        } => Some(format!(
             "kind=ridge_fan facet_count={facet_count} ridge_vertex_count={ridge_vertex_count} \
              extra_simplices={}",
             extra_simplices.len()
         )),
-        InsertionError::ConflictRegion(ConflictError::DisconnectedBoundary {
-            visited,
-            total,
-            disconnected_simplices,
-        }) => Some(format!(
+        InsertionError::ConflictRegion {
+            source:
+                ConflictError::DisconnectedBoundary {
+                    visited,
+                    total,
+                    disconnected_simplices,
+                },
+        } => Some(format!(
             "kind=disconnected_boundary visited={visited} total={total} disconnected_simplices={}",
             disconnected_simplices.len()
         )),
-        InsertionError::ConflictRegion(ConflictError::OpenBoundary {
-            facet_count,
-            ridge_vertex_count,
-            ..
-        }) => Some(format!(
+        InsertionError::ConflictRegion {
+            source:
+                ConflictError::OpenBoundary {
+                    facet_count,
+                    ridge_vertex_count,
+                    ..
+                },
+        } => Some(format!(
             "kind=open_boundary facet_count={facet_count} ridge_vertex_count={ridge_vertex_count}"
         )),
         _ => None,
@@ -793,11 +805,11 @@ where
             }
         }
 
-        Err(InsertionError::TopologyValidation(
-            TdsError::InconsistentDataStructure {
+        Err(InsertionError::TopologyValidation {
+            source: TdsError::InconsistentDataStructure {
                 message: "insertion retry loop exhausted without producing an outcome".to_string(),
             },
-        ))
+        })
     }
 
     fn select_locate_hint_from_hash_grid(
@@ -1801,7 +1813,9 @@ where
         let _removed_count = self
             .tds
             .remove_simplices_by_keys(&conflict_simplices)
-            .map_err(|e| InsertionError::TopologyValidation(e.into_inner()))?;
+            .map_err(|e| InsertionError::TopologyValidation {
+                source: e.into_inner(),
+            })?;
 
         // Iteratively repair non-manifold topology until facet sharing is valid
         let mut total_removed = 0;
@@ -1852,14 +1866,14 @@ where
                         "No simplices removed in iteration {} - repair cannot make progress",
                         iteration + 1
                     );
-                    return Err(InsertionError::TopologyValidation(
-                        TdsError::InconsistentDataStructure {
+                    return Err(InsertionError::TopologyValidation {
+                        source: TdsError::InconsistentDataStructure {
                             message: format!(
                                 "Repair stalled: {} over-shared facets remain but no simplices could be removed",
                                 issues.len()
                             ),
                         },
-                    ));
+                    });
                 }
 
                 total_removed += removed;
@@ -2152,12 +2166,14 @@ where
         let inserted_uuid = vertex.uuid();
         let point = *vertex.point();
 
-        vertex.is_valid().map_err(|source| {
-            InsertionError::TopologyValidation(TdsError::InvalidVertex {
-                vertex_id: inserted_uuid,
-                source,
-            })
-        })?;
+        vertex
+            .is_valid()
+            .map_err(|source| InsertionError::TopologyValidation {
+                source: TdsError::InvalidVertex {
+                    vertex_id: inserted_uuid,
+                    source,
+                },
+            })?;
 
         // 1. Insert vertex into Tds
         let mut v_key = self
@@ -2472,12 +2488,12 @@ where
                             // is already heavily mutated and hull extension on that state is unsound.
                             let should_fallback = matches!(
                                 &err,
-                                InsertionError::ConflictRegion(
-                                    ConflictError::NonManifoldFacet { .. }
+                                InsertionError::ConflictRegion {
+                                    source: ConflictError::NonManifoldFacet { .. }
                                         | ConflictError::RidgeFan { .. }
                                         | ConflictError::DisconnectedBoundary { .. }
                                         | ConflictError::OpenBoundary { .. }
-                                )
+                                }
                             );
 
                             if should_fallback {
@@ -2717,14 +2733,14 @@ where
                                 "No simplices removed in iteration {} - repair cannot make progress",
                                 iteration + 1
                             );
-                            return Err(InsertionError::TopologyValidation(
-                                TdsError::InconsistentDataStructure {
+                            return Err(InsertionError::TopologyValidation {
+                                source: TdsError::InconsistentDataStructure {
                                     message: format!(
                                         "Hull extension repair stalled: {} over-shared facets remain but no simplices could be removed",
                                         issues.len()
                                     ),
                                 },
-                            ));
+                            });
                         }
 
                         total_removed += removed;
@@ -3014,40 +3030,48 @@ mod tests {
         let disconnected_simplex = SimplexKey::from(KeyData::from_ffi(11));
         let open_simplex = SimplexKey::from(KeyData::from_ffi(12));
 
-        let non_manifold = InsertionError::ConflictRegion(ConflictError::NonManifoldFacet {
-            facet_hash: 0xABCD,
-            simplex_count: 3,
-        });
+        let non_manifold = InsertionError::ConflictRegion {
+            source: ConflictError::NonManifoldFacet {
+                facet_hash: 0xABCD,
+                simplex_count: 3,
+            },
+        };
         assert_eq!(
             retryable_conflict_trace_detail(&non_manifold).as_deref(),
             Some("kind=non_manifold_facet facet_hash=0xabcd simplex_count=3")
         );
 
-        let ridge_fan = InsertionError::ConflictRegion(ConflictError::RidgeFan {
-            facet_count: 4,
-            ridge_vertex_count: 2,
-            extra_simplices: vec![extra_simplex],
-        });
+        let ridge_fan = InsertionError::ConflictRegion {
+            source: ConflictError::RidgeFan {
+                facet_count: 4,
+                ridge_vertex_count: 2,
+                extra_simplices: vec![extra_simplex],
+            },
+        };
         assert_eq!(
             retryable_conflict_trace_detail(&ridge_fan).as_deref(),
             Some("kind=ridge_fan facet_count=4 ridge_vertex_count=2 extra_simplices=1")
         );
 
-        let disconnected = InsertionError::ConflictRegion(ConflictError::DisconnectedBoundary {
-            visited: 2,
-            total: 5,
-            disconnected_simplices: vec![disconnected_simplex],
-        });
+        let disconnected = InsertionError::ConflictRegion {
+            source: ConflictError::DisconnectedBoundary {
+                visited: 2,
+                total: 5,
+                disconnected_simplices: vec![disconnected_simplex],
+            },
+        };
         assert_eq!(
             retryable_conflict_trace_detail(&disconnected).as_deref(),
             Some("kind=disconnected_boundary visited=2 total=5 disconnected_simplices=1")
         );
 
-        let open = InsertionError::ConflictRegion(ConflictError::OpenBoundary {
-            facet_count: 1,
-            ridge_vertex_count: 2,
-            open_simplex,
-        });
+        let open = InsertionError::ConflictRegion {
+            source: ConflictError::OpenBoundary {
+                facet_count: 1,
+                ridge_vertex_count: 2,
+                open_simplex,
+            },
+        };
         assert_eq!(
             retryable_conflict_trace_detail(&open).as_deref(),
             Some("kind=open_boundary facet_count=1 ridge_vertex_count=2")

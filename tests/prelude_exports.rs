@@ -138,9 +138,10 @@ use delaunay::prelude::pachner::{
 };
 use delaunay::prelude::query::{
     AllFacetsIter as QueryAllFacetsIter, BoundaryFacetsIter as QueryBoundaryFacetsIter, ConvexHull,
-    ConvexHullConstructionError, EdgeIndex as QueryEdgeIndex, EdgeKey as QueryEdgeKey,
-    EdgeView as QueryEdgeView, FacetHandle as QueryFacetHandle,
-    FacetIncidenceAnalysis as QueryFacetIncidenceAnalysis,
+    ConvexHullConstructionError,
+    ConvexHullInsufficientDataReason as QueryConvexHullInsufficientDataReason,
+    EdgeIndex as QueryEdgeIndex, EdgeKey as QueryEdgeKey, EdgeView as QueryEdgeView,
+    FacetHandle as QueryFacetHandle, FacetIncidenceAnalysis as QueryFacetIncidenceAnalysis,
     FacetIncidenceView as QueryFacetIncidenceView, IncidenceView as QueryIncidenceView,
     OneSidedFacetsIter as QueryOneSidedFacetsIter, QueryError,
     RidgeCandidate as QueryRidgeCandidate, RidgeCandidateError as QueryRidgeCandidateError,
@@ -247,6 +248,7 @@ use delaunay::prelude::{
 };
 use delaunay::query::{
     AllFacetsIter as QueryFacadeAllFacetsIter, BoundaryFacetsIter as QueryFacadeBoundaryFacetsIter,
+    ConvexHullInsufficientDataReason as QueryFacadeConvexHullInsufficientDataReason,
     EdgeIndex as QueryFacadeEdgeIndex, FacetHandle as QueryFacadeFacetHandle,
     IncidenceView as QueryFacadeIncidenceView, OneSidedFacetsIter as QueryFacadeOneSidedFacetsIter,
     RidgeCandidate as QueryFacadeRidgeCandidate,
@@ -531,9 +533,9 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
         DelaunayError::Construction { source }
             if matches!(
                 source.as_ref(),
-                DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayTriangulationConstructionError::Triangulation { source:
                     DelaunayConstructionFailure::InsufficientVertices { dimension: 2, .. }
-                )
+                 }
             )
     );
 
@@ -580,10 +582,11 @@ fn construction_prelude_exports_low_level_delaunay_error_aliases() {
             if err.as_ref() == &generic_construction
     );
 
-    let tds_construction =
-        TdsConstructionError::ValidationError(TdsError::InconsistentDataStructure {
+    let tds_construction = TdsConstructionError::ValidationError {
+        source: TdsError::InconsistentDataStructure {
             message: "prelude smoke test".to_owned(),
-        });
+        },
+    };
     assert_matches!(
         DelaunayError::from(tds_construction.clone()),
         DelaunayError::TdsConstruction { source: err } if err.as_ref() == &tds_construction
@@ -651,9 +654,9 @@ fn construction_prelude_exports_builder_statistics_terminal() -> Result<(), Prel
     let root_prelude_error: RootPreludeConstructionErrorWithStatistics = focused_error;
     assert_matches!(
         root_prelude_error.error,
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::InsufficientVertices { dimension: 2, .. }
-        )
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::InsufficientVertices { dimension: 2, .. }
+        }
     );
 
     Ok(())
@@ -701,6 +704,23 @@ fn query_preludes_export_simplex_data_fill_error() -> Result<(), PreludeExportTe
     );
 
     Ok(())
+}
+
+#[test]
+fn query_preludes_export_convex_hull_insufficient_data_reason() {
+    let reason = QueryConvexHullInsufficientDataReason::NoBoundaryFacets;
+    let facade_reason: QueryFacadeConvexHullInsufficientDataReason = reason;
+    let error = ConvexHullConstructionError::InsufficientData {
+        reason: facade_reason,
+    };
+
+    assert_matches!(
+        error,
+        ConvexHullConstructionError::InsufficientData {
+            reason: QueryConvexHullInsufficientDataReason::NoBoundaryFacets,
+            ..
+        }
+    );
 }
 
 #[test]
@@ -982,11 +1002,11 @@ fn construction_prelude_covers_retry_exhaustion_source() {
     let retry_failure = DelaunayConstructionFailure::ShuffledRetryExhausted {
         attempt_count: 7,
         source: Box::new(DelaunayConstructionRetryFailure::Construction {
-            source: Box::new(DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::GeometricDegeneracy {
+            source: Box::new(DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::GeometricDegeneracy {
                     message: "collinear".to_string(),
                 },
-            )),
+            }),
         }),
     };
 
@@ -1000,9 +1020,9 @@ fn construction_prelude_covers_retry_exhaustion_source() {
             DelaunayConstructionRetryFailure::Construction { source }
                 if matches!(
                     source.as_ref(),
-                    DelaunayTriangulationConstructionError::Triangulation(
+                    DelaunayTriangulationConstructionError::Triangulation { source:
                         DelaunayConstructionFailure::GeometricDegeneracy { message }
-                    ) if message == "collinear"
+                     } if message == "collinear"
                 )
         )
     );
@@ -1051,11 +1071,11 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
     );
     assert_matches!(
         RootConstructionRetryFailure::Construction {
-            source: Box::new(DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::GeometricDegeneracy {
+            source: Box::new(DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::GeometricDegeneracy {
                     message: "synthetic".to_string(),
                 },
-            )),
+            }),
         },
         RootConstructionRetryFailure::Construction { .. }
     );
@@ -1741,15 +1761,19 @@ fn construction_prelude_covers_explicit_tds_preflight_errors() {
     .expect("explicit duplicate specs should parse")
     .build()
     .expect_err("duplicate explicit topology should fail TDS assembly");
-    let DelaunayTriangulationConstructionError::ExplicitConstruction(
-        ExplicitConstructionError::TdsAssembly {
-            source: duplicate_source,
-        },
-    ) = duplicate_error
+    let DelaunayTriangulationConstructionError::ExplicitConstruction {
+        source:
+            ExplicitConstructionError::TdsAssembly {
+                source: duplicate_source,
+            },
+    } = duplicate_error
     else {
         panic!("expected explicit TDS assembly error");
     };
-    let TdsConstructionError::ValidationError(explicit_duplicate) = *duplicate_source else {
+    let TdsConstructionError::ValidationError {
+        source: explicit_duplicate,
+    } = *duplicate_source
+    else {
         panic!("expected TDS validation source");
     };
     assert_matches!(
@@ -1777,15 +1801,19 @@ fn construction_prelude_covers_explicit_tds_preflight_errors() {
     .expect("explicit overshared-facet specs should parse")
     .build()
     .expect_err("overshared explicit topology should fail TDS assembly");
-    let DelaunayTriangulationConstructionError::ExplicitConstruction(
-        ExplicitConstructionError::TdsAssembly {
-            source: overshared_source,
-        },
-    ) = overshared_error
+    let DelaunayTriangulationConstructionError::ExplicitConstruction {
+        source:
+            ExplicitConstructionError::TdsAssembly {
+                source: overshared_source,
+            },
+    } = overshared_error
     else {
         panic!("expected explicit TDS assembly error");
     };
-    let TdsConstructionError::ValidationError(explicit_facet_sharing) = *overshared_source else {
+    let TdsConstructionError::ValidationError {
+        source: explicit_facet_sharing,
+    } = *overshared_source
+    else {
         panic!("expected TDS validation source");
     };
     assert_matches!(
@@ -1800,6 +1828,10 @@ fn construction_prelude_covers_explicit_tds_preflight_errors() {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "test covers named-field construction and matching across the full explicit-error wrapper chain"
+)]
 fn construction_prelude_covers_typed_explicit_error_wrappers() {
     let explicit_construction = ExplicitConstructionError::StructuralValidation {
         source: Box::new(TdsError::FacetSharingViolation {
@@ -1837,57 +1869,24 @@ fn construction_prelude_covers_typed_explicit_error_wrappers() {
     );
 
     let explicit_insertion = ExplicitConstructionError::OrientationNormalization {
-        source: Box::new(InsertionError::TopologyValidation(
-            TdsError::InconsistentDataStructure {
+        source: Box::new(InsertionError::TopologyValidation {
+            source: TdsError::InconsistentDataStructure {
                 message: "topology validation failed".to_string(),
             },
-        )),
+        }),
     };
     assert_matches!(
         explicit_insertion,
         ExplicitConstructionError::OrientationNormalization { source }
             if matches!(
                 source.as_ref(),
-                InsertionError::TopologyValidation(TdsError::InconsistentDataStructure { .. })
+                InsertionError::TopologyValidation { source: TdsError::InconsistentDataStructure { .. } }
             )
     );
 
     let explicit_invariant = ExplicitConstructionError::TopologyValidation {
-        source: Box::new(InvariantError::Tds(TdsError::FacetSharingViolation {
-            facet_key: 42,
-            existing_incident_count: 2,
-            attempted_incident_count: 3,
-            max_incident_count: 2,
-            candidate_simplex_uuid: Uuid::default(),
-            candidate_facet_index: 0,
-        })),
-    };
-    assert_matches!(
-        explicit_invariant,
-        ExplicitConstructionError::TopologyValidation { source }
-            if matches!(source.as_ref(), InvariantError::Tds(TdsError::FacetSharingViolation { .. }))
-    );
-
-    let explicit_realization = ExplicitConstructionError::RealizationValidation {
-        source: Box::new(ConstructionDelaunayTriangulationValidationError::Tds(
-            Box::new(TdsError::InconsistentDataStructure {
-                message: "realization validation failed".to_string(),
-            }),
-        )),
-    };
-    assert_matches!(
-        explicit_realization,
-        ExplicitConstructionError::RealizationValidation { source }
-            if matches!(
-                source.as_ref(),
-                ConstructionDelaunayTriangulationValidationError::Tds(tds)
-                    if matches!(tds.as_ref(), TdsError::InconsistentDataStructure { .. })
-            )
-    );
-
-    let explicit_tds_construction = ExplicitConstructionError::TdsAssembly {
-        source: Box::new(TdsConstructionError::ValidationError(
-            TdsError::FacetSharingViolation {
+        source: Box::new(InvariantError::Tds {
+            source: TdsError::FacetSharingViolation {
                 facet_key: 42,
                 existing_incident_count: 2,
                 attempted_incident_count: 3,
@@ -1895,14 +1894,49 @@ fn construction_prelude_covers_typed_explicit_error_wrappers() {
                 candidate_simplex_uuid: Uuid::default(),
                 candidate_facet_index: 0,
             },
-        )),
+        }),
+    };
+    assert_matches!(
+        explicit_invariant,
+        ExplicitConstructionError::TopologyValidation { source }
+            if matches!(source.as_ref(), InvariantError::Tds { source: TdsError::FacetSharingViolation { .. } })
+    );
+
+    let explicit_realization = ExplicitConstructionError::RealizationValidation {
+        source: Box::new(ConstructionDelaunayTriangulationValidationError::Tds {
+            source: Box::new(TdsError::InconsistentDataStructure {
+                message: "realization validation failed".to_string(),
+            }),
+        }),
+    };
+    assert_matches!(
+        explicit_realization,
+        ExplicitConstructionError::RealizationValidation { source }
+            if matches!(
+                source.as_ref(),
+                ConstructionDelaunayTriangulationValidationError::Tds { source: tds }
+                    if matches!(tds.as_ref(), TdsError::InconsistentDataStructure { .. })
+            )
+    );
+
+    let explicit_tds_construction = ExplicitConstructionError::TdsAssembly {
+        source: Box::new(TdsConstructionError::ValidationError {
+            source: TdsError::FacetSharingViolation {
+                facet_key: 42,
+                existing_incident_count: 2,
+                attempted_incident_count: 3,
+                max_incident_count: 2,
+                candidate_simplex_uuid: Uuid::default(),
+                candidate_facet_index: 0,
+            },
+        }),
     };
     assert_matches!(
         explicit_tds_construction,
         ExplicitConstructionError::TdsAssembly { source }
             if matches!(
                 source.as_ref(),
-                TdsConstructionError::ValidationError(TdsError::FacetSharingViolation { .. })
+                TdsConstructionError::ValidationError { source: TdsError::FacetSharingViolation { .. } }
             )
     );
 }
@@ -2198,9 +2232,9 @@ fn assert_topology_prelude_dimension<const D: usize>() -> Result<(), PreludeExpo
     assert_cospherical_ridge_star::<D>()?;
     assert_matches!(
         DelaunayTriangulation::builder(&degenerate_prelude_vertices::<D>()?).build(),
-        Err(DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::GeometricDegeneracy { .. }
-        ))
+        Err(DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::GeometricDegeneracy { .. }
+        })
     );
     Ok(())
 }

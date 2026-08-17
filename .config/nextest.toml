@@ -91,6 +91,13 @@ test(=geometry::util::simplex_lp::tests::optimized_intersection_agrees_with_lega
 '''
 slow-timeout = { period = "60s", terminate-after = 1 }
 
+[[profile.debug.overrides]]
+# The optimized 5D intersection agreement check also reaches the 10-second
+# boundary on macOS ARM runners. Keep the exception limited to that test.
+platform = 'cfg(all(target_os = "macos", target_arch = "aarch64"))'
+filter = 'test(=geometry::util::simplex_lp::tests::optimized_intersection_agrees_with_legacy_random_5d)'
+slow-timeout = { period = "60s", terminate-after = 1 }
+
 [profile.coverage]
 # Coverage runs execute LLVM-instrumented binaries in parallel, so exact
 # predicate regressions need more headroom than the normal CI profile while

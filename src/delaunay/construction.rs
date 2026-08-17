@@ -630,16 +630,25 @@ pub type DelaunayResult<T> = Result<T, DelaunayError>;
 pub enum DelaunayTriangulationConstructionError {
     /// Lower-layer construction failure summarized for Delaunay construction.
     #[error(transparent)]
-    Triangulation(DelaunayConstructionFailure),
+    Triangulation {
+        /// Typed lower-layer construction failure.
+        source: DelaunayConstructionFailure,
+    },
 
     /// Input validation error from explicit combinatorial construction.
     #[error(transparent)]
-    ExplicitConstruction(#[from] ExplicitConstructionError),
+    ExplicitConstruction {
+        /// Typed explicit-construction source error.
+        #[from]
+        source: ExplicitConstructionError,
+    },
 }
 
 impl From<TriangulationConstructionError> for DelaunayTriangulationConstructionError {
     fn from(source: TriangulationConstructionError) -> Self {
-        Self::Triangulation(source.into())
+        Self::Triangulation {
+            source: source.into(),
+        }
     }
 }
 
@@ -681,11 +690,11 @@ impl fmt::Display for DelaunayConstructionRepairPhase {
 /// };
 ///
 /// let source = DelaunayConstructionRetryFailure::Construction {
-///     source: Box::new(DelaunayTriangulationConstructionError::Triangulation(
-///         DelaunayConstructionFailure::GeometricDegeneracy {
+///     source: Box::new(DelaunayTriangulationConstructionError::Triangulation {
+///         source: DelaunayConstructionFailure::GeometricDegeneracy {
 ///             message: String::from("collinear input"),
 ///         },
-///     )),
+///     }),
 /// };
 ///
 /// std::assert_matches!(
@@ -1215,7 +1224,7 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
     )]
     fn from(source: TriangulationConstructionError) -> Self {
         match source {
-            TriangulationConstructionError::Tds(source) => Self::Tds {
+            TriangulationConstructionError::Tds { source } => Self::Tds {
                 reason: source.into(),
             },
             TriangulationConstructionError::FailedToCreateSimplex { message } => {
@@ -1447,7 +1456,7 @@ fn is_geometric_flip_error(error: &FlipError) -> bool {
         | FlipError::DegenerateSimplex
         | FlipError::K1InsertionOutsideSimplex { .. }
         | FlipError::NegativeOrientation { .. } => true,
-        FlipError::SimplexCreation(source) => matches!(
+        FlipError::SimplexCreation { source } => matches!(
             source.as_ref(),
             SimplexValidationError::DegenerateSimplex
                 | SimplexValidationError::CoordinateConversion { .. }
@@ -3555,12 +3564,12 @@ where
 
         // Treat persistent construction failures or Delaunay violations as hard construction
         // errors so callers can deterministically reject.
-        Err(DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::ShuffledRetryExhausted {
+        Err(DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::ShuffledRetryExhausted {
                 attempt_count: attempts.get().saturating_add(1),
                 source: Box::new(last_failure),
             },
-        ))
+        })
     }
 
     /// Mirrors shuffled retry construction while preserving per-attempt
@@ -3866,12 +3875,12 @@ where
         // Treat persistent construction failures or Delaunay violations as hard construction
         // errors so callers can deterministically reject.
         Err(DelaunayTriangulationConstructionErrorWithStatistics {
-            error: DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::ShuffledRetryExhausted {
+            error: DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::ShuffledRetryExhausted {
                     attempt_count: attempts.get().saturating_add(1),
                     source: Box::new(last_failure),
                 },
-            ),
+            },
             statistics: aggregate_stats,
         })
     }
@@ -3909,12 +3918,12 @@ where
                 "post-construction: Delaunay validation (build) completed"
             );
             delaunay_result.map_err(|source| {
-                DelaunayTriangulationConstructionError::Triangulation(
-                    DelaunayConstructionFailure::FinalDelaunayValidation {
+                DelaunayTriangulationConstructionError::Triangulation {
+                    source: DelaunayConstructionFailure::FinalDelaunayValidation {
                         context: FinalDelaunayValidationContext::ConstructionFinalize,
                         source,
                     },
-                )
+                }
             })?;
         }
 
@@ -3966,12 +3975,12 @@ where
             );
             if let Err(err) = delaunay_result {
                 return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                    error: DelaunayTriangulationConstructionError::Triangulation(
-                        DelaunayConstructionFailure::FinalDelaunayValidation {
+                    error: DelaunayTriangulationConstructionError::Triangulation {
+                        source: DelaunayConstructionFailure::FinalDelaunayValidation {
                             context: FinalDelaunayValidationContext::ConstructionFinalize,
                             source: err,
                         },
-                    ),
+                    },
                     statistics: stats,
                 });
             }
@@ -5444,8 +5453,8 @@ where
     ) -> bool {
         matches!(
             err,
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::Tds {
+            DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::Tds {
                     reason: TdsConstructionFailure::DuplicateUuid { .. }
                         | TdsConstructionFailure::Validation { .. },
                 } | DelaunayConstructionFailure::InternalInconsistency { .. }
@@ -5461,13 +5470,13 @@ where
                     | DelaunayConstructionFailure::ShuffledRetryExhausted { .. }
                     | DelaunayConstructionFailure::FinalTopologyValidation { .. }
                     | DelaunayConstructionFailure::FinalDelaunayValidation { .. },
-            )
+            }
         ) || matches!(
             err,
-            DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayTriangulationConstructionError::Triangulation { source:
                 DelaunayConstructionFailure::DelaunayRepair { source, .. }
                     | DelaunayConstructionFailure::InsertionDelaunayRepair { source, .. },
-            ) if is_non_retryable_repair_error(source.as_ref())
+             } if is_non_retryable_repair_error(source.as_ref())
         )
     }
 
@@ -5488,36 +5497,36 @@ where
         index: usize,
         repair_err: DelaunayRepairError,
     ) -> DelaunayTriangulationConstructionError {
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::DelaunayRepair {
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::DelaunayRepair {
                 phase: DelaunayConstructionRepairPhase::BatchLocal { index },
                 source: Box::new(repair_err),
             },
-        )
+        }
     }
 
     pub(crate) fn map_completion_repair_error(
         repair_error: DelaunayRepairError,
     ) -> DelaunayTriangulationConstructionError {
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::DelaunayRepair {
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::DelaunayRepair {
                 phase: DelaunayConstructionRepairPhase::Completion,
                 source: Box::new(repair_error),
             },
-        )
+        }
     }
 
     pub(crate) fn map_final_delaunay_repair_error(
         repair_error: DelaunayRepairError,
     ) -> DelaunayTriangulationConstructionError {
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::FinalDelaunayValidation {
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::FinalDelaunayValidation {
                 context: FinalDelaunayValidationContext::ConstructionFinalize,
                 source: DelaunayTriangulationValidationError::VerificationFailed {
                     source: Box::new(DelaunayVerificationError::from(repair_error)),
                 },
             },
-        )
+        }
     }
 
     /// Map an [`InsertionError`] from post-construction orientation canonicalization
@@ -5538,9 +5547,11 @@ where
         match error {
             // Geometric orientation errors (degenerate or negative) are
             // geometry problems, not internal bugs.
-            source @ (InsertionError::TopologyValidation(TdsError::Geometric(_))
-            | InsertionError::ConflictRegion(_)
-            | InsertionError::Location(_)
+            source @ (InsertionError::TopologyValidation {
+                source: TdsError::Geometric { source: _ },
+            }
+            | InsertionError::ConflictRegion { source: _ }
+            | InsertionError::Location { source: _ }
             | InsertionError::NonManifoldTopology { .. }
             | InsertionError::HullExtension { .. }
             | InsertionError::RealizationValidationFailed { .. }
@@ -5560,7 +5571,7 @@ where
             // normalization algorithm failed its post-condition — an internal bug, not
             // bad input geometry. DegenerateOrientation / NegativeOrientation capture
             // the actual FP-related geometry failures.
-            source @ (InsertionError::TopologyValidation(_)
+            source @ (InsertionError::TopologyValidation { source: _ }
             | InsertionError::TopologyValidationFailed { .. }
             | InsertionError::CavityFilling { .. }
             | InsertionError::NeighborWiring { .. }
@@ -5601,8 +5612,10 @@ where
             InsertionError::NeighborWiring { reason } => {
                 TriangulationConstructionError::InsertionNeighborWiring { source: reason }
             }
-            InsertionError::TopologyValidation(source) => {
-                TriangulationConstructionError::from(TdsConstructionError::ValidationError(source))
+            InsertionError::TopologyValidation { source } => {
+                TriangulationConstructionError::from(TdsConstructionError::ValidationError {
+                    source,
+                })
             }
             InsertionError::DuplicateUuid { entity, uuid } => {
                 TriangulationConstructionError::from(TdsConstructionError::DuplicateUuid {
@@ -5617,10 +5630,10 @@ where
                 TriangulationConstructionError::InsertionDelaunayRepair { context, source }
             }
 
-            InsertionError::ConflictRegion(source) => {
+            InsertionError::ConflictRegion { source } => {
                 TriangulationConstructionError::InsertionConflictRegion { source }
             }
-            InsertionError::Location(source) => {
+            InsertionError::Location { source } => {
                 TriangulationConstructionError::InsertionLocation { source }
             }
             InsertionError::NonManifoldTopology {
@@ -5981,17 +5994,17 @@ mod tests {
                 max: 1.0,
             },
         };
-        let err = DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::RandomPointGeneration {
+        let err = DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::RandomPointGeneration {
                 source: source.clone(),
             },
-        );
+        };
 
         assert!(!matches!(
             &err,
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::GeometricDegeneracy { .. }
-            )
+            DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::GeometricDegeneracy { .. }
+            }
         ));
 
         let mut current_source = std::error::Error::source(&err);
@@ -6024,7 +6037,7 @@ mod tests {
                 source,
             } if matches!(
                 source.as_ref(),
-                DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayTriangulationConstructionError::Triangulation { source:
                     DelaunayConstructionFailure::InsufficientVertices {
                         dimension: 2,
                         source: SimplexValidationError::InsufficientVertices {
@@ -6033,7 +6046,7 @@ mod tests {
                             dimension: 2,
                         },
                     },
-                )
+                 }
             )
         );
     }
@@ -6103,9 +6116,9 @@ mod tests {
 
         assert_matches!(
             err,
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::FinalTopologyValidation { .. }
-            )
+            DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::FinalTopologyValidation { .. }
+            }
         );
     }
 
@@ -6350,9 +6363,9 @@ mod tests {
             DelaunayTriangulationBuilder::new(&vertices).build();
 
         match result.unwrap_err() {
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::InsufficientVertices { dimension, .. },
-            ) => assert_eq!(dimension, 2),
+            DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::InsufficientVertices { dimension, .. },
+            } => assert_eq!(dimension, 2),
             other => panic!("Expected InsufficientVertices error, got {other:?}"),
         }
     }
@@ -6370,9 +6383,9 @@ mod tests {
             DelaunayTriangulationBuilder::new(&vertices).build();
 
         match result.unwrap_err() {
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::InsufficientVertices { dimension, .. },
-            ) => assert_eq!(dimension, 3),
+            DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::InsufficientVertices { dimension, .. },
+            } => assert_eq!(dimension, 3),
             other => panic!("Expected InsufficientVertices error, got {other:?}"),
         }
     }
@@ -6400,11 +6413,12 @@ mod tests {
             DelaunayTriangulationBuilder::new(&vertices).build();
 
         match result.unwrap_err() {
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::Tds {
-                    reason: TdsConstructionFailure::DuplicateUuid { entity: _, uuid },
-                },
-            ) => assert_eq!(uuid, dup_uuid),
+            DelaunayTriangulationConstructionError::Triangulation {
+                source:
+                    DelaunayConstructionFailure::Tds {
+                        reason: TdsConstructionFailure::DuplicateUuid { entity: _, uuid },
+                    },
+            } => assert_eq!(uuid, dup_uuid),
             other => panic!("Expected DuplicateUuid error, got {other:?}"),
         }
     }
@@ -6999,11 +7013,11 @@ mod tests {
 
         assert_matches!(
             error,
-            DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayTriangulationConstructionError::Triangulation { source:
                 DelaunayConstructionFailure::SpatialIndexConstruction {
                     reason: SpatialIndexConstructionFailure::NonPositiveCellSize { value }
                 }
-            ) if value == CoordinateConversionValue::from_f64(0.0)
+             } if value == CoordinateConversionValue::from_f64(0.0)
         );
     }
 
@@ -7632,8 +7646,8 @@ mod tests {
 
         assert_eq!(
             err.error,
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::InsufficientVertices {
+            DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::InsufficientVertices {
                     dimension: D,
                     source: SimplexValidationError::InsufficientVertices {
                         actual: D,
@@ -7641,7 +7655,7 @@ mod tests {
                         dimension: D,
                     },
                 },
-            )
+            }
         );
         assert_eq!(err.statistics.inserted, 0);
         assert_eq!(err.statistics.total_skipped(), 0);
@@ -7866,12 +7880,12 @@ mod tests {
         assert!(
             matches!(
                 mapped_hard,
-                DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayTriangulationConstructionError::Triangulation { source:
                     DelaunayConstructionFailure::DelaunayRepair {
                         phase: DelaunayConstructionRepairPhase::BatchLocal { index: 23 },
                         ref source,
                     }
-                ) if matches!(
+                 } if matches!(
                     source.as_ref(),
                     DelaunayRepairError::Flip {
                         source: flip_source
@@ -7891,12 +7905,12 @@ mod tests {
         assert!(
             matches!(
                 &mapped_geometric,
-                DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayTriangulationConstructionError::Triangulation { source:
                     DelaunayConstructionFailure::DelaunayRepair {
                         phase: DelaunayConstructionRepairPhase::BatchLocal { index: 24 },
                         source,
                     }
-                ) if matches!(
+                 } if matches!(
                     source.as_ref(),
                     DelaunayRepairError::Flip { source }
                         if matches!(source.as_ref(), FlipError::DegenerateSimplex)
@@ -7912,12 +7926,12 @@ mod tests {
         assert!(
             matches!(
                 &mapped_simplex_creation,
-                DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayTriangulationConstructionError::Triangulation { source:
                     DelaunayConstructionFailure::DelaunayRepair {
                         phase: DelaunayConstructionRepairPhase::BatchLocal { index: 25 },
                         source,
                     }
-                ) if matches!(source.as_ref(), DelaunayRepairError::Flip { .. })
+                 } if matches!(source.as_ref(), DelaunayRepairError::Flip { .. })
                     && !TestDelaunay::<4>::is_non_retryable_construction_error(
                         &mapped_simplex_creation
                     )
@@ -7936,12 +7950,12 @@ mod tests {
         assert!(
             matches!(
                 mapped_verification,
-                DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayTriangulationConstructionError::Triangulation { source:
                     DelaunayConstructionFailure::DelaunayRepair {
                         phase: DelaunayConstructionRepairPhase::BatchLocal { index: 26 },
                         ref source,
                     }
-                ) if matches!(**source, DelaunayRepairError::VerificationFailed { .. })
+                 } if matches!(**source, DelaunayRepairError::VerificationFailed { .. })
             ),
             "verification context failures should stop shuffled retries: {mapped_verification:?}"
         );
@@ -7966,12 +7980,12 @@ mod tests {
         assert!(
             matches!(
                 &mapped_predicate,
-                DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayTriangulationConstructionError::Triangulation { source:
                     DelaunayConstructionFailure::DelaunayRepair {
                         phase: DelaunayConstructionRepairPhase::BatchLocal { index: 27 },
                         source,
                     }
-                ) if matches!(source.as_ref(), DelaunayRepairError::VerificationFailed { .. })
+                 } if matches!(source.as_ref(), DelaunayRepairError::VerificationFailed { .. })
                     && !TestDelaunay::<4>::is_non_retryable_construction_error(&mapped_predicate)
             ),
             "verification predicate failures should remain typed and retryable: {mapped_predicate:?}"
@@ -7990,7 +8004,7 @@ mod tests {
         );
         assert_matches!(
             mapped,
-            DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayTriangulationConstructionError::Triangulation { source:
                 DelaunayConstructionFailure::FinalDelaunayValidation {
                     context: FinalDelaunayValidationContext::ConstructionFinalize,
                     source:
@@ -7998,7 +8012,7 @@ mod tests {
                             source,
                         },
                 }
-            ) if matches!(
+             } if matches!(
                 source.as_ref(),
                 DelaunayVerificationError::FlipPredicates { source }
                     if matches!(
@@ -8015,9 +8029,11 @@ mod tests {
 
     #[test]
     fn test_map_orientation_canonicalization_error_topology_validation_is_internal() {
-        let error = InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
-            message: "missing simplex".to_string(),
-        });
+        let error = InsertionError::TopologyValidation {
+            source: TdsError::InconsistentDataStructure {
+                message: "missing simplex".to_string(),
+            },
+        };
         let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
@@ -8035,11 +8051,13 @@ mod tests {
 
     #[test]
     fn test_map_orientation_canonicalization_error_degenerate_orientation_is_degeneracy() {
-        let error = InsertionError::TopologyValidation(TdsError::Geometric(
-            GeometricError::DegenerateOrientation {
-                message: "det=0".to_string(),
+        let error = InsertionError::TopologyValidation {
+            source: TdsError::Geometric {
+                source: GeometricError::DegenerateOrientation {
+                    message: "det=0".to_string(),
+                },
             },
-        ));
+        };
         let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
@@ -8057,11 +8075,13 @@ mod tests {
 
     #[test]
     fn test_map_orientation_canonicalization_error_negative_orientation_is_degeneracy() {
-        let error = InsertionError::TopologyValidation(TdsError::Geometric(
-            GeometricError::NegativeOrientation {
-                message: "det<0 after canonicalization".to_string(),
+        let error = InsertionError::TopologyValidation {
+            source: TdsError::Geometric {
+                source: GeometricError::NegativeOrientation {
+                    message: "det<0 after canonicalization".to_string(),
+                },
             },
-        ));
+        };
         let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
@@ -8174,7 +8194,9 @@ mod tests {
     #[test]
     fn test_map_orientation_canonicalization_error_geometry_variants_are_degeneracy() {
         let geometry_errors: Vec<InsertionError> = vec![
-            InsertionError::Location(LocateError::EmptyTriangulation),
+            InsertionError::Location {
+                source: LocateError::EmptyTriangulation,
+            },
             InsertionError::NonManifoldTopology {
                 facet_hash: 0,
                 simplex_count: 3,
@@ -8277,12 +8299,14 @@ mod tests {
 
     #[test]
     fn test_map_insertion_error_topology_validation() {
-        let error = InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
-            message: "broken".to_string(),
-        });
+        let error = InsertionError::TopologyValidation {
+            source: TdsError::InconsistentDataStructure {
+                message: "broken".to_string(),
+            },
+        };
         let mapped = TestDelaunay::<3>::map_insertion_error(error);
         assert!(
-            matches!(mapped, TriangulationConstructionError::Tds(_)),
+            matches!(mapped, TriangulationConstructionError::Tds { source: _ }),
             "TopologyValidation should map to Tds(ValidationError), got: {mapped:?}"
         );
     }
@@ -8295,7 +8319,7 @@ mod tests {
         };
         let mapped = TestDelaunay::<3>::map_insertion_error(error);
         assert!(
-            matches!(mapped, TriangulationConstructionError::Tds(_)),
+            matches!(mapped, TriangulationConstructionError::Tds { source: _ }),
             "DuplicateUuid should map to Tds(DuplicateUuid), got: {mapped:?}"
         );
     }
@@ -8317,11 +8341,13 @@ mod tests {
 
     #[test]
     fn test_map_insertion_error_preserves_typed_insertion_sources() {
-        let conflict = InsertionError::ConflictRegion(ConflictError::OpenBoundary {
-            facet_count: 2,
-            ridge_vertex_count: 1,
-            open_simplex: SimplexKey::from(KeyData::from_ffi(1)),
-        });
+        let conflict = InsertionError::ConflictRegion {
+            source: ConflictError::OpenBoundary {
+                facet_count: 2,
+                ridge_vertex_count: 1,
+                open_simplex: SimplexKey::from(KeyData::from_ffi(1)),
+            },
+        };
         let mapped = TestDelaunay::<3>::map_insertion_error(conflict);
         assert_matches!(
             mapped,
@@ -8330,7 +8356,9 @@ mod tests {
             }
         );
 
-        let location = InsertionError::Location(LocateError::EmptyTriangulation);
+        let location = InsertionError::Location {
+            source: LocateError::EmptyTriangulation,
+        };
         let mapped = TestDelaunay::<3>::map_insertion_error(location);
         assert_matches!(
             mapped,
@@ -8627,12 +8655,12 @@ mod tests {
         let public_error: DelaunayTriangulationConstructionError = mapped.into();
         assert_matches!(
             public_error,
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::LocalRepairBudgetExceeded {
+            DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::LocalRepairBudgetExceeded {
                     max_simplices_removed: 2,
                     attempted: 3,
                 }
-            )
+            }
         );
     }
 
@@ -8655,18 +8683,20 @@ mod tests {
     #[test]
     fn test_map_orientation_canonicalization_error_orientation_violation_is_internal_inconsistency()
     {
-        let error = InsertionError::TopologyValidation(TdsError::OrientationViolation {
-            simplex1_key: SimplexKey::from(KeyData::from_ffi(1)),
-            simplex1_uuid: Uuid::nil(),
-            simplex2_key: SimplexKey::from(KeyData::from_ffi(2)),
-            simplex2_uuid: Uuid::nil(),
-            simplex1_facet_index: 0,
-            simplex2_facet_index: 1,
-            facet_vertices: vec![],
-            simplex2_facet_vertices: vec![],
-            observed_odd_permutation: true,
-            expected_odd_permutation: false,
-        });
+        let error = InsertionError::TopologyValidation {
+            source: TdsError::OrientationViolation {
+                simplex1_key: SimplexKey::from(KeyData::from_ffi(1)),
+                simplex1_uuid: Uuid::nil(),
+                simplex2_key: SimplexKey::from(KeyData::from_ffi(2)),
+                simplex2_uuid: Uuid::nil(),
+                simplex1_facet_index: 0,
+                simplex2_facet_index: 1,
+                facet_vertices: vec![],
+                simplex2_facet_vertices: vec![],
+                observed_odd_permutation: true,
+                expected_odd_permutation: false,
+            },
+        };
         let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
@@ -8679,10 +8709,12 @@ mod tests {
 
     #[test]
     fn test_map_orientation_canonicalization_error_conflict_region_is_degeneracy() {
-        let error = InsertionError::ConflictRegion(ConflictError::NonManifoldFacet {
-            facet_hash: 0x123,
-            simplex_count: 3,
-        });
+        let error = InsertionError::ConflictRegion {
+            source: ConflictError::NonManifoldFacet {
+                facet_hash: 0x123,
+                simplex_count: 3,
+            },
+        };
         let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
         assert!(
             matches!(
@@ -8695,12 +8727,13 @@ mod tests {
 
     #[test]
     fn test_is_non_retryable_construction_error_duplicate_uuid() {
-        let err: DelaunayTriangulationConstructionError =
-            TriangulationConstructionError::Tds(TdsConstructionError::DuplicateUuid {
+        let err: DelaunayTriangulationConstructionError = TriangulationConstructionError::Tds {
+            source: TdsConstructionError::DuplicateUuid {
                 entity: EntityKind::Simplex,
                 uuid: Uuid::nil(),
-            })
-            .into();
+            },
+        }
+        .into();
         assert!(
             TestDelaunay::<3>::is_non_retryable_construction_error(&err),
             "DuplicateUuid should be non-retryable"
@@ -8753,11 +8786,11 @@ mod tests {
     fn test_is_non_retryable_construction_error_internal_orientation_and_wiring() {
         let orientation_err: DelaunayTriangulationConstructionError =
             TriangulationConstructionError::OrientationCanonicalizationInternal {
-                source: Box::new(InsertionError::TopologyValidation(
-                    TdsError::InconsistentDataStructure {
+                source: Box::new(InsertionError::TopologyValidation {
+                    source: TdsError::InconsistentDataStructure {
                         message: "dangling incidence".to_string(),
                     },
-                )),
+                }),
             }
             .into();
         let wiring_err: DelaunayTriangulationConstructionError =
@@ -8780,11 +8813,13 @@ mod tests {
 
     #[test]
     fn test_is_non_retryable_construction_error_tds_validation() {
-        let err: DelaunayTriangulationConstructionError = TriangulationConstructionError::Tds(
-            TdsConstructionError::ValidationError(TdsError::InconsistentDataStructure {
-                message: "test".to_string(),
-            }),
-        )
+        let err: DelaunayTriangulationConstructionError = TriangulationConstructionError::Tds {
+            source: TdsConstructionError::ValidationError {
+                source: TdsError::InconsistentDataStructure {
+                    message: "test".to_string(),
+                },
+            },
+        }
         .into();
         assert!(
             TestDelaunay::<3>::is_non_retryable_construction_error(&err),
@@ -8807,20 +8842,20 @@ mod tests {
         let final_err: DelaunayTriangulationConstructionError =
             TriangulationConstructionError::FinalTopologyValidation {
                 context: FinalTopologyValidationContext::ConstructionFinalize,
-                source: Box::new(InvariantError::Triangulation(
-                    TriangulationValidationError::IsolatedVertex {
+                source: Box::new(InvariantError::Triangulation {
+                    source: TriangulationValidationError::IsolatedVertex {
                         vertex_key,
                         vertex_uuid: Uuid::nil(),
                     },
-                )),
+                }),
             }
             .into();
-        let final_delaunay_err = DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::FinalDelaunayValidation {
+        let final_delaunay_err = DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::FinalDelaunayValidation {
                 context: FinalDelaunayValidationContext::ConstructionFinalize,
                 source: synthetic_delaunay_verification_error(),
             },
-        );
+        };
 
         assert!(
             TestDelaunay::<3>::is_non_retryable_construction_error(&insertion_err),

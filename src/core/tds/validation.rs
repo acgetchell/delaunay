@@ -3993,7 +3993,9 @@ mod tests {
             .expect("validation_report should include the facet-sharing violation");
         assert_matches!(
             &facet_violation.error,
-            InvariantError::Tds(TdsError::FacetSharingViolation { .. }),
+            InvariantError::Tds {
+                source: TdsError::FacetSharingViolation { .. }
+            },
             "Expected validation_report to preserve structured facet-sharing error, got {:?}",
             facet_violation.error
         );

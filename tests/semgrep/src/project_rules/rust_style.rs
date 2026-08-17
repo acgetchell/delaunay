@@ -482,6 +482,46 @@ where
     }
 }
 
+// ruleid: delaunay.rust.no-infallible-fallible-constructor-definitions
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
+    // ruleid: delaunay.rust.no-fallible-new-or-from-constructor-definitions
+    pub fn new(
+        _vertices: &[Vertex<U, D>],
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
+        todo!()
+    }
+}
+
+// ok: delaunay.rust.no-infallible-fallible-constructor-definitions
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
+    // ok: delaunay.rust.no-fallible-new-or-from-constructor-definitions
+    pub fn try_new_for_fixture(
+        _vertices: &[Vertex<U, D>],
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
+        todo!()
+    }
+}
+
+// ruleid: delaunay.rust.no-infallible-fallible-constructor-definitions
+impl<U, V, const D: usize> ConvexHull<U, V, D> {
+    // ruleid: delaunay.rust.no-fallible-new-or-from-constructor-definitions
+    pub fn from_triangulation<T>(
+        _triangulation: &T,
+    ) -> Result<Self, ConvexHullConstructionError> {
+        todo!()
+    }
+}
+
+// ok: delaunay.rust.no-infallible-fallible-constructor-definitions
+impl<U, V, const D: usize> ConvexHull<U, V, D> {
+    // ok: delaunay.rust.no-fallible-new-or-from-constructor-definitions
+    pub fn try_from_triangulation_for_fixture<T>(
+        _triangulation: &T,
+    ) -> Result<Self, ConvexHullConstructionError> {
+        todo!()
+    }
+}
+
 pub fn triangulation_fallible_constructor_names_ok(
     vertices: &[Vertex<(), 3>],
     options: ConstructionOptions,
@@ -1228,6 +1268,83 @@ enum PrivateFixtureError {
     Invalid,
 }
 
+// ruleid: delaunay.rust.public-error-variants-use-named-fields
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum PositionalCarrierFixtureFailure {
+    /// Single-line positional source carrier.
+    #[error(transparent)]
+    SingleLine(#[from] TypedSourceFixtureError),
+}
+
+// ruleid: delaunay.rust.public-error-variants-use-named-fields
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum GenericPositionalCarrierFixtureFailure<T> {
+    /// Generic multi-line positional carrier.
+    #[error("generic source")]
+    Positional(
+        #[source]
+        T,
+    ),
+}
+
+// ruleid: delaunay.rust.public-error-variants-use-named-fields
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum MultilineGenericPositionalCarrierFixtureFailure<
+    T,
+> {
+    /// Positional carrier under a multiline generic declaration.
+    #[error("multiline generic source")]
+    Positional(T),
+}
+
+// ruleid: delaunay.rust.public-error-variants-use-named-fields
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum WhereClausePositionalCarrierFixtureFailure<T>
+where
+    T: std::error::Error,
+{
+    /// Positional carrier after a generic where clause.
+    #[error("where-clause source")]
+    Positional(T),
+}
+
+// ruleid: delaunay.rust.public-error-variants-use-named-fields
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum ReorderedAttributePositionalCarrierFixtureFailure {
+    /// Positional carrier with non-exhaustive before derive.
+    #[error(transparent)]
+    Positional(#[from] TypedSourceFixtureError),
+}
+
+// ruleid: delaunay.rust.public-error-variants-use-named-fields
+#[derive(Debug, thiserror::Error)]
+#[doc = "fixture with an intervening attribute"]
+#[non_exhaustive]
+pub enum InterveningAttributePositionalCarrierFixtureFailure {
+    /// Positional carrier after an intervening enum attribute.
+    #[error(transparent)]
+    Positional(#[from] TypedSourceFixtureError),
+}
+
+// ok: delaunay.rust.public-error-variants-use-named-fields
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum NamedCarrierFixtureFailure {
+    /// Named source carrier.
+    #[error("typed source: {source}")]
+    Named {
+        #[source]
+        source: TypedSourceFixtureError,
+    },
+}
+
+pub struct TypedSourceFixtureError;
+
 #[non_exhaustive]
 pub enum CoordinateRangeError<T = f64> {
     // ruleid: delaunay.rust.no-stringly-coordinate-range-error-payloads
@@ -1373,6 +1490,11 @@ pub enum FlipError {
         // ok: delaunay.rust.flip-error-boxed-payloads-are-sources
         #[source]
         reason: Box<FlipContextError>,
+    },
+    GoodBoxedContextFrom {
+        // ok: delaunay.rust.flip-error-boxed-payloads-are-sources
+        #[from]
+        source: Box<FlipContextError>,
     },
     // ok: delaunay.rust.flip-error-boxed-payloads-are-sources
     GoodBoxedSimplex(#[from] Box<SimplexValidationError>),

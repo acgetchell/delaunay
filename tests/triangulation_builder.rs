@@ -498,13 +498,13 @@ macro_rules! gen_toroidal_high_dim_guardrail_test {
                     ));
 
                 match err {
-                    DelaunayTriangulationConstructionError::Triangulation(
+                    DelaunayTriangulationConstructionError::Triangulation { source:
                         DelaunayConstructionFailure::UnsupportedPeriodicDimension {
                             dimension,
                             max_validated_dimension,
                             tracking_issue,
                         },
-                    ) => {
+                     } => {
                         assert_eq!(dimension, $dim);
                         assert_eq!(max_validated_dimension, 3);
                         assert_eq!(tracking_issue, 416);
@@ -530,13 +530,14 @@ fn test_builder_toroidal_large_dimension_fails_before_expansion_math() {
         .expect_err("64D periodic quotient should fail before computing 3^D image count");
 
     match err {
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::UnsupportedPeriodicDimension {
-                dimension,
-                max_validated_dimension,
-                tracking_issue,
-            },
-        ) => {
+        DelaunayTriangulationConstructionError::Triangulation {
+            source:
+                DelaunayConstructionFailure::UnsupportedPeriodicDimension {
+                    dimension,
+                    max_validated_dimension,
+                    tracking_issue,
+                },
+        } => {
             assert_eq!(dimension, 64);
             assert_eq!(max_validated_dimension, 3);
             assert_eq!(tracking_issue, 416);
@@ -578,9 +579,9 @@ fn test_explicit_toroidal_heawood_torus_rejected() {
         .expect_err("explicit toroidal connectivity requires a quotient realization validator");
 
     match err {
-        DelaunayTriangulationConstructionError::ExplicitConstruction(
-            ExplicitConstructionError::UnsupportedExplicitTopology { topology },
-        ) => assert_eq!(topology, TopologyKind::Toroidal),
+        DelaunayTriangulationConstructionError::ExplicitConstruction {
+            source: ExplicitConstructionError::UnsupportedExplicitTopology { topology },
+        } => assert_eq!(topology, TopologyKind::Toroidal),
         other => panic!("expected explicit construction validation failure, got {other:?}"),
     }
 }
@@ -611,19 +612,19 @@ fn test_explicit_toroidal_torus_euler_mismatch_without_override() {
         .expect_err("explicit torus without Toroidal metadata should fail Euler validation");
 
     match err {
-        DelaunayTriangulationConstructionError::ExplicitConstruction(
-            ExplicitConstructionError::TopologyValidation { source },
-        ) => {
+        DelaunayTriangulationConstructionError::ExplicitConstruction {
+            source: ExplicitConstructionError::TopologyValidation { source },
+        } => {
             assert_matches!(
                 source.as_ref(),
-                InvariantError::Triangulation(
-                    TriangulationValidationError::EulerCharacteristicMismatch { .. }
-                )
+                InvariantError::Triangulation {
+                    source: TriangulationValidationError::EulerCharacteristicMismatch { .. }
+                }
             );
         }
-        DelaunayTriangulationConstructionError::ExplicitConstruction(
-            ExplicitConstructionError::OrientationNormalization { source },
-        ) => {
+        DelaunayTriangulationConstructionError::ExplicitConstruction {
+            source: ExplicitConstructionError::OrientationNormalization { source },
+        } => {
             assert_matches!(
                 source.as_ref(),
                 InsertionError::TopologyValidationFailed {
@@ -757,11 +758,11 @@ fn assert_relaxed_explicit_invalid_realization_fails<const D: usize>() {
         .expect_err("relaxed explicit construction should still reject invalid realizations");
 
     match err {
-        DelaunayTriangulationConstructionError::ExplicitConstruction(
-            ExplicitConstructionError::RealizationValidation { source },
-        ) => assert_matches!(
+        DelaunayTriangulationConstructionError::ExplicitConstruction {
+            source: ExplicitConstructionError::RealizationValidation { source },
+        } => assert_matches!(
             source.as_ref(),
-            DelaunayTriangulationValidationError::Realization(_)
+            DelaunayTriangulationValidationError::Realization { source: _ }
         ),
         other => panic!("expected relaxed explicit realization-validation failure, got {other:?}"),
     }
@@ -1188,9 +1189,9 @@ fn test_explicit_non_delaunay_mesh() {
     assert!(
         matches!(
             err,
-            DelaunayTriangulationConstructionError::ExplicitConstruction(
-                ExplicitConstructionError::DelaunayValidation { .. }
-            )
+            DelaunayTriangulationConstructionError::ExplicitConstruction {
+                source: ExplicitConstructionError::DelaunayValidation { .. }
+            }
         ),
         "expected explicit validation failure, got {err:?}"
     );
@@ -1287,9 +1288,9 @@ fn test_explicit_unreferenced_vertices_rejected() {
     assert!(
         matches!(
             err,
-            DelaunayTriangulationConstructionError::ExplicitConstruction(
-                ExplicitConstructionError::TopologyValidation { .. }
-            )
+            DelaunayTriangulationConstructionError::ExplicitConstruction {
+                source: ExplicitConstructionError::TopologyValidation { .. }
+            }
         ),
         "Unreferenced vertices should produce TopologyValidation, got: {err}"
     );
@@ -1353,16 +1354,16 @@ fn test_explicit_error_variant_non_manifold_facet() {
         .build()
         .unwrap_err();
 
-    let DelaunayTriangulationConstructionError::ExplicitConstruction(
-        ExplicitConstructionError::TdsAssembly { source },
-    ) = &err
+    let DelaunayTriangulationConstructionError::ExplicitConstruction {
+        source: ExplicitConstructionError::TdsAssembly { source },
+    } = &err
     else {
         panic!("Expected explicit TDS assembly failure, got: {err}");
     };
 
     assert_matches!(
         source.as_ref(),
-        TdsConstructionError::ValidationError(TdsError::ExplicitFacetSharingViolation {
+        TdsConstructionError::ValidationError { source: TdsError::ExplicitFacetSharingViolation {
             facet_vertex_indices,
             existing_incident_count: 2,
             attempted_incident_count: 3,
@@ -1370,7 +1371,7 @@ fn test_explicit_error_variant_non_manifold_facet() {
             candidate_simplex_index: 2,
             candidate_facet_index: 2,
             ..
-        }) if facet_vertex_indices == &[0, 1]
+        } } if facet_vertex_indices == &[0, 1]
     );
 }
 
@@ -1418,9 +1419,9 @@ fn test_explicit_error_variant_incompatible_topology() {
     assert!(
         matches!(
             err,
-            DelaunayTriangulationConstructionError::ExplicitConstruction(
-                ExplicitConstructionError::IncompatibleTopology
-            )
+            DelaunayTriangulationConstructionError::ExplicitConstruction {
+                source: ExplicitConstructionError::IncompatibleTopology
+            }
         ),
         "Expected IncompatibleTopology, got: {err}"
     );
@@ -1447,9 +1448,9 @@ fn test_explicit_error_variant_unsupported_construction_options() {
     assert!(
         matches!(
             err,
-            DelaunayTriangulationConstructionError::ExplicitConstruction(
-                ExplicitConstructionError::UnsupportedConstructionOptions
-            )
+            DelaunayTriangulationConstructionError::ExplicitConstruction {
+                source: ExplicitConstructionError::UnsupportedConstructionOptions
+            }
         ),
         "Expected UnsupportedConstructionOptions, got: {err}"
     );
@@ -1468,9 +1469,9 @@ fn test_explicit_error_variant_unsupported_construction_options() {
     assert!(
         matches!(
             mixed_err,
-            DelaunayTriangulationConstructionError::ExplicitConstruction(
-                ExplicitConstructionError::UnsupportedConstructionOptions
-            )
+            DelaunayTriangulationConstructionError::ExplicitConstruction {
+                source: ExplicitConstructionError::UnsupportedConstructionOptions
+            }
         ),
         "Expected mixed non-enforcing point-insertion options to be rejected, got: {mixed_err}",
     );
@@ -1491,21 +1492,21 @@ fn test_explicit_error_variant_duplicate_simplices_structural_validation() {
         .build()
         .unwrap_err();
 
-    let DelaunayTriangulationConstructionError::ExplicitConstruction(
-        ExplicitConstructionError::TdsAssembly { source },
-    ) = &err
+    let DelaunayTriangulationConstructionError::ExplicitConstruction {
+        source: ExplicitConstructionError::TdsAssembly { source },
+    } = &err
     else {
         panic!("expected explicit TDS assembly failure, got {err:?}");
     };
 
     assert_matches!(
         source.as_ref(),
-        TdsConstructionError::ValidationError(TdsError::DuplicateExplicitSimplices {
+        TdsConstructionError::ValidationError { source: TdsError::DuplicateExplicitSimplices {
             existing_simplex_index: 0,
             duplicate_simplex_index: 1,
             vertex_indices,
             ..
-        }) if vertex_indices == &[0, 1, 2]
+        } } if vertex_indices == &[0, 1, 2]
     );
 }
 
@@ -1525,9 +1526,9 @@ fn test_explicit_error_variant_geometric_nondegeneracy() {
         .unwrap_err();
 
     match err {
-        DelaunayTriangulationConstructionError::ExplicitConstruction(
-            ExplicitConstructionError::GeometricNondegeneracy { source },
-        ) => assert_matches!(source.as_ref(), TdsError::Geometric(_)),
+        DelaunayTriangulationConstructionError::ExplicitConstruction {
+            source: ExplicitConstructionError::GeometricNondegeneracy { source },
+        } => assert_matches!(source.as_ref(), TdsError::Geometric { source: _ }),
         other => panic!("expected explicit geometric nondegeneracy failure, got {other:?}"),
     }
 }
@@ -1536,8 +1537,8 @@ fn test_explicit_error_variant_geometric_nondegeneracy() {
 #[test]
 fn test_explicit_error_variant_completion_validation_summary() {
     let err = ExplicitConstructionError::CompletionValidation {
-        source: Box::new(InvariantError::Triangulation(
-            TriangulationValidationError::VertexLinkNotManifold {
+        source: Box::new(InvariantError::Triangulation {
+            source: TriangulationValidationError::VertexLinkNotManifold {
                 vertex_key: VertexKey::default(),
                 link_vertex_count: 0,
                 link_simplex_count: 0,
@@ -1546,16 +1547,16 @@ fn test_explicit_error_variant_completion_validation_summary() {
                 connected: false,
                 interior_vertex: false,
             },
-        )),
+        }),
     };
 
     match err {
         ExplicitConstructionError::CompletionValidation { source } => {
             assert_matches!(
                 source.as_ref(),
-                InvariantError::Triangulation(
-                    TriangulationValidationError::VertexLinkNotManifold { .. }
-                )
+                InvariantError::Triangulation {
+                    source: TriangulationValidationError::VertexLinkNotManifold { .. }
+                }
             );
         }
         other => panic!("expected explicit completion validation failure, got {other:?}"),
@@ -1566,19 +1567,21 @@ fn test_explicit_error_variant_completion_validation_summary() {
 #[test]
 fn test_explicit_error_variant_orientation_normalization_summary() {
     let source = ExplicitConstructionError::OrientationNormalization {
-        source: Box::new(InsertionError::TopologyValidation(
-            TdsError::InconsistentDataStructure {
+        source: Box::new(InsertionError::TopologyValidation {
+            source: TdsError::InconsistentDataStructure {
                 message: "orientation normalization could not establish coherent simplices"
                     .to_string(),
             },
-        )),
+        }),
     };
 
     match source {
         ExplicitConstructionError::OrientationNormalization { source } => {
             assert_matches!(
                 source.as_ref(),
-                InsertionError::TopologyValidation(TdsError::InconsistentDataStructure { .. })
+                InsertionError::TopologyValidation {
+                    source: TdsError::InconsistentDataStructure { .. }
+                }
             );
             assert!(source.to_string().contains("coherent simplices"));
         }

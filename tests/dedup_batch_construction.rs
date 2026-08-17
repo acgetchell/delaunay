@@ -36,9 +36,9 @@ fn init_tracing() {
 const fn is_geometric_degeneracy_error(error: &DelaunayTriangulationConstructionError) -> bool {
     matches!(
         error,
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::GeometricDegeneracy { .. }
-        )
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::GeometricDegeneracy { .. }
+        }
     )
 }
 
@@ -47,9 +47,9 @@ fn is_geometric_degeneracy_or_retry_exhausted(
     error: &DelaunayTriangulationConstructionError,
 ) -> bool {
     match error {
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
-        ) => matches!(
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
+        } => matches!(
             source.as_ref(),
             DelaunayConstructionRetryFailure::Construction { source }
                 if is_geometric_degeneracy_error(source)
@@ -193,9 +193,9 @@ macro_rules! gen_dedup_batch_tests {
                 assert!(
                     matches!(
                         result,
-                        Err(DelaunayTriangulationConstructionError::Triangulation(
+                        Err(DelaunayTriangulationConstructionError::Triangulation { source:
                             DelaunayConstructionFailure::InsufficientVertices { .. }
-                        ))
+                         })
                     ),
                     "{}D: all-duplicate input should fail with InsufficientVertices",
                     $dim

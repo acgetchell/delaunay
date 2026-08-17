@@ -4,7 +4,7 @@ type: software
 title: "delaunay: A d-dimensional Delaunay triangulation library"
 version: 0.8.0
 doi: 10.5281/zenodo.16931097
-date-released: 2026-07-27
+date-released: 2026-07-28
 url: "https://github.com/acgetchell/delaunay"
 repository-code: "https://github.com/acgetchell/delaunay"
 authors:

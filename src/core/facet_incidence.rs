@@ -646,10 +646,12 @@ mod tests {
         // We test this by confirming the error structure exists and can be created.
 
         // Test that the error can be created and has correct structure
-        let error = TdsError::FacetError(FacetError::InvalidFacetIndex {
-            index: 42,
-            facet_count: 4,
-        });
+        let error = TdsError::FacetError {
+            source: FacetError::InvalidFacetIndex {
+                index: 42,
+                facet_count: 4,
+            },
+        };
 
         // Verify error display includes useful information
         let error_string = format!("{error}");
@@ -675,7 +677,9 @@ mod tests {
         // We test the error structure.
 
         // Test that the error can be created
-        let error = TdsError::FacetError(FacetError::SimplexNotFoundInTriangulation);
+        let error = TdsError::FacetError {
+            source: FacetError::SimplexNotFoundInTriangulation,
+        };
 
         // Verify error display is meaningful
         let error_string = format!("{error}");
@@ -812,7 +816,9 @@ mod tests {
 
         assert_matches!(
             err,
-            TdsError::FacetError(FacetError::FacetOwnerMismatch { .. })
+            TdsError::FacetError {
+                source: FacetError::FacetOwnerMismatch { .. }
+            }
         );
     }
 
@@ -839,7 +845,9 @@ mod tests {
 
         assert_matches!(
             err,
-            TdsError::FacetError(FacetError::FacetIndexOwnerMismatch)
+            TdsError::FacetError {
+                source: FacetError::FacetIndexOwnerMismatch
+            }
         );
     }
 
@@ -861,10 +869,12 @@ mod tests {
 
         assert_matches!(
             err,
-            TdsError::FacetError(FacetError::InvalidFacetMultiplicity {
-                facet_key: 0xCAFE,
-                found: 3
-            })
+            TdsError::FacetError {
+                source: FacetError::InvalidFacetMultiplicity {
+                    facet_key: 0xCAFE,
+                    found: 3
+                }
+            }
         );
     }
 
@@ -995,10 +1005,12 @@ mod tests {
 
         for &(multiplicity, description) in &test_cases {
             let facet_key = 0x1234_5678_9ABC_DEF0_u64; // Example facet key
-            let error = TdsError::FacetError(FacetError::InvalidFacetMultiplicity {
-                facet_key,
-                found: multiplicity,
-            });
+            let error = TdsError::FacetError {
+                source: FacetError::InvalidFacetMultiplicity {
+                    facet_key,
+                    found: multiplicity,
+                },
+            };
 
             // Verify error display includes all necessary information
             let error_string = format!("{error}");
