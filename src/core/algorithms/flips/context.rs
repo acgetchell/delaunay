@@ -17,6 +17,7 @@ use super::{
 /// use delaunay::prelude::tds::{SimplexKey, VertexKey};
 /// use slotmap::KeyData;
 ///
+/// # fn main() -> Result<(), delaunay::flips::BistellarFlipKindError> {
 /// let mut removed_simplices = SimplexKeyBuffer::new();
 /// removed_simplices.push(SimplexKey::from(KeyData::from_ffi(1)));
 /// let mut new_simplices = SimplexKeyBuffer::new();
@@ -30,7 +31,7 @@ use super::{
 /// inserted_face_vertices.push(VertexKey::from(KeyData::from_ffi(4)));
 ///
 /// let info: FlipInfo<3> = FlipInfo {
-///     kind: BistellarFlipKind::k2(3),
+///     kind: BistellarFlipKind::try_k2(3)?,
 ///     direction: FlipDirection::Forward,
 ///     removed_simplices,
 ///     new_simplices,
@@ -38,6 +39,8 @@ use super::{
 ///     inserted_face_vertices,
 /// };
 /// assert_eq!(info.kind.k(), 2);
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct FlipInfo<const D: usize> {
@@ -71,7 +74,7 @@ pub struct FlipInfo<const D: usize> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::flips::{BistellarFlipKind, BistellarFlips, FlipDirection};
+/// use delaunay::flips::{BistellarFlips, FlipDirection};
 /// use delaunay::prelude::construction::{
 ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
 /// };
@@ -91,7 +94,7 @@ pub struct FlipInfo<const D: usize> {
 ///
 /// let vertex = delaunay::vertex![0.25, 0.25]?;
 /// let feasibility = dt.can_flip_k1_insert(simplex_key, &vertex)?;
-/// assert_eq!(feasibility.kind, BistellarFlipKind::k1(2));
+/// assert_eq!((feasibility.kind.k(), feasibility.kind.d()), (1, 2));
 /// assert_eq!(feasibility.direction, FlipDirection::Forward);
 /// assert!(feasibility.inserted_face_vertices.is_none());
 /// # Ok(())
@@ -360,5 +363,38 @@ mod tests {
             Err(TriangleHandleError::DuplicateVertices { vertices })
                 if vertices == [a, b, a]
         );
+    }
+
+    #[test]
+    fn triangle_handle_try_from_canonicalizes_vertex_order() {
+        let a = VertexKey::from(KeyData::from_ffi(10));
+        let b = VertexKey::from(KeyData::from_ffi(20));
+        let c = VertexKey::from(KeyData::from_ffi(30));
+
+        let handle = TriangleHandle::try_from([c, a, b]).unwrap();
+
+        assert_eq!(handle.vertices(), [a, b, c]);
+    }
+
+    #[test]
+    fn ridge_handle_rejects_dimensions_below_three_before_simplex_lookup() {
+        let tds: Tds<(), (), 2> = Tds::empty();
+        let missing_simplex = SimplexKey::from(KeyData::from_ffi(40));
+
+        assert_matches!(
+            RidgeHandle::try_new(&tds, missing_simplex, 0, 1),
+            Err(FlipError::UnsupportedDimension { dimension: 2 })
+        );
+    }
+
+    #[test]
+    fn ridge_handle_canonicalizes_omitted_indices() {
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(50));
+        let canonical = RidgeHandle::from_validated(simplex_key, 1, 3);
+        let reversed = RidgeHandle::from_validated(simplex_key, 3, 1);
+
+        assert_eq!(reversed, canonical);
+        assert_eq!(reversed.simplex_key(), simplex_key);
+        assert_eq!((reversed.omit_a(), reversed.omit_b()), (1, 3));
     }
 }

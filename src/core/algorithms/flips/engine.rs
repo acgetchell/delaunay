@@ -78,6 +78,10 @@ where
     )
 }
 
+/// Applies a bistellar flip without rollback.
+///
+/// The caller owns transaction rollback if this returns an error or if later
+/// postconditions fail.
 #[expect(
     clippy::too_many_arguments,
     reason = "Raw flip mutation needs explicit move, cavity, policy, and validation inputs"
@@ -397,7 +401,7 @@ where
     let inserted_face_vertex_list: VertexKeyList = inserted_face_vertices.iter().copied().collect();
 
     Ok(PreparedFlip {
-        kind: BistellarFlipKind { k: k_move, d: D },
+        kind: BistellarFlipKind::from_validated(k_move, D),
         direction,
         removed_simplices: removed_simplices.iter().copied().collect(),
         removed_face_vertices: removed_face_vertices.iter().copied().collect(),
@@ -1127,19 +1131,7 @@ mod tests {
     use proptest::prelude::*;
     use slotmap::KeyData;
     use std::assert_matches;
-    use std::{iter::once, sync::Once};
-
-    fn init_tracing() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_test_writer()
-                .try_init();
-        });
-    }
+    use std::iter::once;
     /// Builds a simplex-basis vertex coordinate for dimension-generic flip tests.
     fn unit_vector<const D: usize>(index: usize) -> [f64; D] {
         let mut coords = [0.0; D];
@@ -1187,27 +1179,6 @@ mod tests {
         }
     }
 
-    /// Verifies source-simplex orientation gating only accepts certified positive orderings.
-    #[test]
-    fn test_source_simplex_is_certified_positive_requires_source_and_positive_order() {
-        let source_simplex = SimplexKey::from(KeyData::from_ffi(42));
-        let positive = [
-            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
-        ];
-        let negative = [positive[1], positive[0], positive[2]];
-
-        assert!(source_simplex_is_certified_positive(
-            Some(source_simplex),
-            &positive
-        ));
-        assert!(!source_simplex_is_certified_positive(None, &positive));
-        assert!(!source_simplex_is_certified_positive(
-            Some(source_simplex),
-            &negative,
-        ));
-    }
     /// Creates a non-axis-aligned point for high-dimensional roundtrip fixtures.
     fn skewed_point<const D: usize>() -> [f64; D] {
         let mut coords = [0.0; D];
@@ -1292,7 +1263,7 @@ mod tests {
 
                     let applied = AppliedFlip::<$dim> {
                         info: FlipInfo {
-                            kind: BistellarFlipKind::k2($dim),
+                            kind: BistellarFlipKind::from_validated(2, $dim),
                             direction: FlipDirection::Forward,
                             removed_simplices: once(removed_simplex).collect(),
                             new_simplices: once(new_simplex).collect(),
@@ -1303,7 +1274,7 @@ mod tests {
                     };
 
                     let last = LastAppliedFlip::from_applied_flip(&applied);
-                    assert_eq!(last.kind, BistellarFlipKind::k2($dim));
+                    assert_eq!(last.kind, BistellarFlipKind::from_validated(2, $dim));
                     assert_eq!(
                         last.removed_face_vertices
                             .iter()
@@ -1333,7 +1304,11 @@ mod tests {
                     assert!(!lines[0].contains("missing-snapshot"));
 
                     let mut placeholder =
-                        LastAppliedFlip::from_validated_flip_faces(BistellarFlipKind::k2($dim), &[v1], &[v2]);
+                        LastAppliedFlip::from_validated_flip_faces(
+                            BistellarFlipKind::from_validated(2, $dim),
+                            &[v1],
+                            &[v2],
+                        );
                     placeholder.removed_simplices.push(removed_simplex);
                     assert_eq!(
                         placeholder.removed_simplex_vertex_lines(),

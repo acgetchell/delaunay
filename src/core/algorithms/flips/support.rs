@@ -138,7 +138,9 @@ where
                     });
                 };
                 if !ridge.iter().all(|v| neighbor_simplex.contains_vertex(*v)) {
-                    return Err(FlipError::InvalidRidgeAdjacency { simplex_key });
+                    return Err(FlipError::InvalidRidgeAdjacency {
+                        simplex_key: neighbor_key,
+                    });
                 }
                 queue.push(neighbor_key);
             }
@@ -337,10 +339,12 @@ pub(super) fn periodic_offset_lifted_into_simplex<U, V, const D: usize>(
             continue;
         }
         let source_offsets = periodic_offsets_or_zero_frame(source_simplex_key, source_simplex)?;
-        let Some(source_vertex_index) = source_simplex
-            .vertices()
-            .iter()
-            .position(|&vkey| vkey == vertex_key)
+        let Some(source_vertex_offset) = consistent_periodic_vertex_offset(
+            source_simplex_key,
+            vertex_key,
+            source_simplex.vertices(),
+            source_offsets.as_ref(),
+        )?
         else {
             continue;
         };
@@ -348,7 +352,6 @@ pub(super) fn periodic_offset_lifted_into_simplex<U, V, const D: usize>(
         if shared_indices.is_empty() {
             continue;
         }
-        let source_vertex_offset = source_offsets[source_vertex_index];
         let mut aligned_offset: Option<[i8; D]> = None;
         for (target_shared_index, source_shared_index) in shared_indices {
             let target_offset = target_offsets[target_shared_index];
@@ -416,11 +419,41 @@ pub(super) fn periodic_offset_for_simplex_vertex<U, V, const D: usize>(
         .simplex(simplex_key)
         .ok_or(FlipError::MissingSimplex { simplex_key })?;
     let offsets = periodic_offsets_or_zero_frame(simplex_key, simplex)?;
-    Ok(simplex
-        .vertices()
+    consistent_periodic_vertex_offset(
+        simplex_key,
+        vertex_key,
+        simplex.vertices(),
+        offsets.as_ref(),
+    )
+}
+
+/// Rejects an ambiguous lifted representative instead of selecting whichever
+/// repeated vertex slot happens to appear first.
+fn consistent_periodic_vertex_offset<const D: usize>(
+    simplex_key: SimplexKey,
+    vertex_key: VertexKey,
+    vertices: &[VertexKey],
+    offsets: &[[i8; D]],
+) -> Result<Option<[i8; D]>, FlipError> {
+    let mut matching_offsets = vertices
         .iter()
-        .position(|&vkey| vkey == vertex_key)
-        .map(|index| offsets[index]))
+        .zip(offsets)
+        .filter_map(|(&candidate, &offset)| (candidate == vertex_key).then_some(offset));
+    let Some(expected_offset) = matching_offsets.next() else {
+        return Ok(None);
+    };
+    for found_offset in matching_offsets {
+        if found_offset != expected_offset {
+            return Err(FlipContextError::ConflictingPeriodicVertexOffset {
+                simplex_key,
+                vertex_key,
+                expected_offset: expected_offset.into(),
+                found_offset: found_offset.into(),
+            }
+            .into());
+        }
+    }
+    Ok(Some(expected_offset))
 }
 
 /// Borrows stored periodic offsets, or treats a periodic simplex without explicit
@@ -822,6 +855,7 @@ mod tests {
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::vertex;
     use approx::assert_relative_eq;
+    use slotmap::KeyData;
     use std::assert_matches;
     use std::iter::once;
 
@@ -845,6 +879,125 @@ mod tests {
             );
         }
         vertices
+    }
+
+    #[test]
+    fn collect_simplices_around_ridge_reports_invalid_neighbor_key() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let ridge_vertex = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+            .unwrap();
+        let start_vertices = vec![
+            ridge_vertex,
+            tds.insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
+                .unwrap(),
+            tds.insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
+                .unwrap(),
+        ];
+        let neighbor_vertices = vec![
+            tds.insert_vertex_with_mapping(vertex!([2.0, 0.0]).unwrap())
+                .unwrap(),
+            tds.insert_vertex_with_mapping(vertex!([2.0, 1.0]).unwrap())
+                .unwrap(),
+            tds.insert_vertex_with_mapping(vertex!([3.0, 0.0]).unwrap())
+                .unwrap(),
+        ];
+        let start_simplex = insert_plain_simplex(&mut tds, start_vertices);
+        let neighbor_simplex = insert_plain_simplex(&mut tds, neighbor_vertices);
+        let omit_index = tds
+            .simplex(start_simplex)
+            .unwrap()
+            .vertices()
+            .iter()
+            .position(|&candidate| candidate != ridge_vertex)
+            .unwrap();
+        let mut neighbors = [None; 3];
+        neighbors[omit_index] = Some(neighbor_simplex);
+        tds.simplex_mut(start_simplex)
+            .unwrap()
+            .set_neighbors_from_keys(neighbors)
+            .unwrap();
+        let ridge: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            once(ridge_vertex).collect();
+
+        let error = collect_simplices_around_ridge(&tds, start_simplex, &ridge, None)
+            .expect_err("neighbor without the full ridge should be rejected");
+
+        assert_eq!(
+            error,
+            FlipError::InvalidRidgeAdjacency {
+                simplex_key: neighbor_simplex,
+            }
+        );
+    }
+
+    #[test]
+    fn consistent_periodic_vertex_offset_accepts_agreeing_repeated_slots() {
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
+        let vertex_key = VertexKey::from(KeyData::from_ffi(2));
+
+        let result = consistent_periodic_vertex_offset(
+            simplex_key,
+            vertex_key,
+            &[vertex_key, vertex_key],
+            &[[1, -1], [1, -1]],
+        );
+
+        assert_eq!(result.unwrap(), Some([1, -1]));
+    }
+
+    #[test]
+    fn periodic_source_alignment_rejects_conflicting_repeated_vertex_offsets() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let shared_vertex = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+            .unwrap();
+        let repeated_vertex = tds
+            .insert_vertex_with_mapping(vertex!([0.5, 0.0]).unwrap())
+            .unwrap();
+        let target_vertices = vec![
+            shared_vertex,
+            tds.insert_vertex_with_mapping(vertex!([0.0, 0.5]).unwrap())
+                .unwrap(),
+            tds.insert_vertex_with_mapping(vertex!([0.5, 0.5]).unwrap())
+                .unwrap(),
+        ];
+        let target_simplex =
+            insert_periodic_simplex_with_offsets(&mut tds, target_vertices, vec![[0, 0]; 3]);
+        let source_simplex = tds
+            .insert_simplex_with_mapping(
+                Simplex::try_new_periodic(
+                    vec![shared_vertex, repeated_vertex, repeated_vertex],
+                    vec![[0, 0], [0, 0], [1, 0]],
+                )
+                .expect("distinct lifted identities should form a periodic simplex"),
+            )
+            .unwrap();
+
+        let error = periodic_offset_lifted_into_simplex(
+            &tds,
+            repeated_vertex,
+            target_simplex,
+            &[source_simplex],
+        )
+        .expect_err("conflicting repeated representatives should be rejected");
+
+        assert_matches!(
+            error,
+            FlipError::InvalidFlipContext { ref reason }
+                if matches!(
+                    reason.as_ref(),
+                    FlipContextError::ConflictingPeriodicVertexOffset {
+                        simplex_key,
+                        vertex_key,
+                        expected_offset,
+                        found_offset,
+                    } if *simplex_key == source_simplex
+                        && *vertex_key == repeated_vertex
+                        && expected_offset == &[0, 0]
+                        && found_offset == &[1, 0]
+                )
+        );
     }
 
     macro_rules! gen_align_periodic_offset_tests {
@@ -971,7 +1124,7 @@ mod tests {
             &interior_candidate,
         )
         .expect("lifted replacement simplices should be non-degenerate");
-        assert_eq!(feasibility.kind, BistellarFlipKind::k1(2));
+        assert_eq!(feasibility.kind, BistellarFlipKind::from_validated(1, 2));
 
         let boundary_candidate = vertex!([0.5, 0.0]).unwrap();
         assert_eq!(

@@ -243,10 +243,6 @@ where
     })
 }
 
-/// Captures each removed simplex's vertex list before a flip deletes the simplices.
-///
-/// The snapshot lets later diagnostics describe removed simplices even after
-/// their `SimplexKey`s no longer resolve in the TDS.
 /// Detect repeated flip signatures and abort on cycles.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct FlipCycleContext<'a> {
@@ -735,7 +731,7 @@ where
         }
         diagnostics.record_applicable_repair_site();
 
-        let kind = BistellarFlipKind::k2(D);
+        let kind = BistellarFlipKind::from_validated(2, D);
         let signature = flip_signature(
             kind,
             context.direction,
@@ -1943,19 +1939,7 @@ mod tests {
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
-    use std::{iter::once, sync::Once};
-
-    fn init_tracing() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_test_writer()
-                .try_init();
-        });
-    }
+    use std::iter::once;
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct TopologySnapshot {
         vertices: Vec<Uuid>,

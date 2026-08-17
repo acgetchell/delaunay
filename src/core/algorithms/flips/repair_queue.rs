@@ -933,7 +933,7 @@ where
 
     if would_immediately_reverse_last_flip::<D>(
         last_applied_flip.as_ref(),
-        BistellarFlipKind::k3(D),
+        BistellarFlipKind::from_validated(3, D),
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ) {
@@ -945,7 +945,7 @@ where
         return Ok(true);
     }
 
-    let kind = BistellarFlipKind::k3(D);
+    let kind = BistellarFlipKind::from_validated(3, D);
     let signature = flip_signature(
         kind,
         context.direction,
@@ -1127,7 +1127,7 @@ where
 
     if would_immediately_reverse_last_flip::<D>(
         last_applied_flip.as_ref(),
-        BistellarFlipKind::k2(D).inverse(),
+        BistellarFlipKind::from_validated(2, D).inverse(),
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ) {
@@ -1138,7 +1138,7 @@ where
         }
         return Ok(true);
     }
-    let kind = BistellarFlipKind::k2(D).inverse();
+    let kind = BistellarFlipKind::from_validated(2, D).inverse();
     let signature = flip_signature(
         kind,
         context.direction,
@@ -1311,7 +1311,7 @@ where
 
     if would_immediately_reverse_last_flip::<D>(
         last_applied_flip.as_ref(),
-        BistellarFlipKind::k3(D).inverse(),
+        BistellarFlipKind::from_validated(3, D).inverse(),
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ) {
@@ -1322,7 +1322,7 @@ where
         }
         return Ok(true);
     }
-    let kind = BistellarFlipKind::k3(D).inverse();
+    let kind = BistellarFlipKind::from_validated(3, D).inverse();
     let signature = flip_signature(
         kind,
         context.direction,
@@ -1489,7 +1489,7 @@ where
 
     if would_immediately_reverse_last_flip::<D>(
         last_applied_flip.as_ref(),
-        BistellarFlipKind::k2(D),
+        BistellarFlipKind::from_validated(2, D),
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ) {
@@ -1501,7 +1501,7 @@ where
         return Ok(true);
     }
 
-    let kind = BistellarFlipKind::k2(D);
+    let kind = BistellarFlipKind::from_validated(2, D);
     let signature = flip_signature(
         kind,
         context.direction,
@@ -1854,19 +1854,7 @@ mod tests {
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::vertex;
     use slotmap::KeyData;
-    use std::{iter::once, sync::Once};
-
-    fn init_tracing() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_test_writer()
-                .try_init();
-        });
-    }
+    use std::iter::once;
 
     #[test]
     fn test_repair_diagnostics_cycle_detection_records_repeats() {

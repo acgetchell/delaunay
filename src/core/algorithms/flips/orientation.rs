@@ -982,19 +982,7 @@ mod tests {
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
-    use std::{iter::once, sync::Once};
-
-    fn init_tracing() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_test_writer()
-                .try_init();
-        });
-    }
+    use std::iter::once;
     /// Builds a simplex-basis vertex coordinate for dimension-generic flip tests.
     fn unit_vector<const D: usize>(index: usize) -> [f64; D] {
         let mut coords = [0.0; D];
@@ -1139,7 +1127,7 @@ mod tests {
 
             let applied = AppliedFlip::<3> {
                 info: FlipInfo {
-                    kind: BistellarFlipKind::k2(3),
+                    kind: BistellarFlipKind::from_validated(2, 3),
                     direction: FlipDirection::Forward,
                     removed_simplices: once(self.upper_tetrahedron).collect(),
                     new_simplices: once(self.lower_neighbor).collect(),

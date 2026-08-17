@@ -439,7 +439,10 @@ fn assert_pachner_prelude_exports(
     let proposal = dt.propose_pachner(pachner_move)?;
     assert_eq!(proposal.owner_id(), &dt.topology_owner_id());
     let feasibility = proposal.can_attempt_on(dt)?;
-    assert_eq!(feasibility.kind, PachnerBistellarFlipKind::k1(3));
+    assert_eq!(
+        feasibility.kind,
+        PachnerBistellarFlipKind::try_k1(3).expect("3D k=1 move kind should be valid")
+    );
     assert!(feasibility.inserted_face_vertices.is_none());
     Ok(())
 }

@@ -524,6 +524,20 @@ mod core {
             type ReplacementPeriodicOffsets<const D: usize> =
                 SmallBuffer<Option<PeriodicOffsetBuffer<D>>, MAX_PRACTICAL_DIMENSION_SIZE>;
 
+            /// Initializes one shared test subscriber for every focused flip submodule.
+            #[cfg(test)]
+            fn init_tracing() {
+                static INIT: std::sync::Once = std::sync::Once::new();
+                INIT.call_once(|| {
+                    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+                    let _ = tracing_subscriber::fmt()
+                        .with_env_filter(filter)
+                        .with_test_writer()
+                        .try_init();
+                });
+            }
+
             mod context;
             mod contexts;
             mod engine;
@@ -1588,7 +1602,7 @@ pub mod prelude {
     ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
     /// use delaunay::prelude::pachner::{
-    ///     BistellarFlipKind, FlipDirection, PachnerMove, PachnerMoves, vertex,
+    ///     FlipDirection, PachnerMove, PachnerMoves, vertex,
     /// };
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -1611,7 +1625,7 @@ pub mod prelude {
     ///         vertex: vertex![0.2, 0.2, 0.2]?,
     ///     })?
     ///     .attempt_on(&mut dt)?;
-    /// assert_eq!(result.kind, BistellarFlipKind::k1(3));
+    /// assert_eq!((result.kind.k(), result.kind.d()), (1, 3));
     /// assert_eq!(result.direction, FlipDirection::Forward);
     /// assert_eq!(result.inserted_face_vertices.len(), 1);
     /// assert_eq!(result.new_simplices.len(), 4);
@@ -1653,8 +1667,8 @@ pub mod prelude {
     /// ```
     pub mod pachner {
         pub use crate::flips::{
-            BistellarFlipKind, FlipDirection, FlipError, RidgeHandle, TriangleHandle,
-            TriangleHandleError,
+            BistellarFlipKind, BistellarFlipKindError, FlipDirection, FlipError, RidgeHandle,
+            TriangleHandle, TriangleHandleError,
         };
         pub use crate::pachner::{
             PachnerMove, PachnerMoveFeasibility, PachnerMoveResult, PachnerMoves, PachnerProposal,

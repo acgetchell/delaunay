@@ -48,7 +48,7 @@ use crate::triangulation::DelaunayTriangulation;
 ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
 /// };
 /// use delaunay::prelude::pachner::{
-///     BistellarFlipKind, FlipDirection, PachnerMove, PachnerMoves, vertex,
+///     FlipDirection, PachnerMove, PachnerMoves, vertex,
 /// };
 ///
 /// # fn main() -> DelaunayResult<()> {
@@ -71,7 +71,7 @@ use crate::triangulation::DelaunayTriangulation;
 ///         vertex: vertex![0.2, 0.2, 0.2]?,
 ///     })?
 ///     .attempt_on(&mut dt)?;
-/// assert_eq!(result.kind, BistellarFlipKind::k1(3));
+/// assert_eq!((result.kind.k(), result.kind.d()), (1, 3));
 /// assert_eq!(result.direction, FlipDirection::Forward);
 /// assert_eq!(result.inserted_face_vertices.len(), 1);
 /// assert_eq!(result.new_simplices.len(), 4);
@@ -351,7 +351,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
     /// use delaunay::prelude::pachner::{
-    ///     BistellarFlipKind, FlipDirection, PachnerMove, PachnerMoves, vertex,
+    ///     FlipDirection, PachnerMove, PachnerMoves, vertex,
     /// };
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -368,7 +368,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     ///     vertex: vertex![0.25, 0.25]?,
     /// })?;
     /// let feasibility = proposal.can_attempt_on(&dt)?;
-    /// assert_eq!(feasibility.kind, BistellarFlipKind::k1(2));
+    /// assert_eq!((feasibility.kind.k(), feasibility.kind.d()), (1, 2));
     /// assert_eq!(feasibility.direction, FlipDirection::Forward);
     /// # Ok(())
     /// # }
@@ -403,7 +403,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
     /// use delaunay::prelude::pachner::{
-    ///     BistellarFlipKind, FlipDirection, PachnerMove, PachnerMoves, vertex,
+    ///     FlipDirection, PachnerMove, PachnerMoves, vertex,
     /// };
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -421,7 +421,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     ///         vertex: vertex![0.25, 0.25]?,
     ///     })?
     ///     .attempt_on(&mut dt)?;
-    /// assert_eq!(result.kind, BistellarFlipKind::k1(2));
+    /// assert_eq!((result.kind.k(), result.kind.d()), (1, 2));
     /// assert_eq!(result.direction, FlipDirection::Forward);
     /// # Ok(())
     /// # }
@@ -458,7 +458,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
     /// use delaunay::prelude::pachner::{
-    ///     BistellarFlipKind, FlipDirection, PachnerMove, PachnerMoves, vertex,
+    ///     FlipDirection, PachnerMove, PachnerMoves, vertex,
     /// };
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -477,7 +477,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     ///     })?
     ///     .attempt_topology_on(&mut dt)?;
     ///
-    /// assert_eq!(result.kind, BistellarFlipKind::k1(2));
+    /// assert_eq!((result.kind.k(), result.kind.d()), (1, 2));
     /// assert_eq!(result.direction, FlipDirection::Forward);
     /// assert!(dt.as_triangulation().validate().is_ok());
     /// # Ok(())
@@ -511,7 +511,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
 ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
 /// };
 /// use delaunay::prelude::pachner::{
-///     BistellarFlipKind, FlipDirection, PachnerMove, PachnerMoves, vertex,
+///     FlipDirection, PachnerMove, PachnerMoves, vertex,
 /// };
 ///
 /// # fn main() -> DelaunayResult<()> {
@@ -534,7 +534,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
 ///         vertex: vertex![0.2, 0.2, 0.2]?,
 ///     })?
 ///     .attempt_on(&mut dt)?;
-/// assert_eq!(result.kind, BistellarFlipKind::k1(3));
+/// assert_eq!((result.kind.k(), result.kind.d()), (1, 3));
 /// assert_eq!(result.direction, FlipDirection::Forward);
 /// assert_eq!(result.inserted_face_vertices.len(), 1);
 /// assert_eq!(result.new_simplices.len(), 4);
@@ -613,7 +613,7 @@ impl<const D: usize> From<PachnerMoveResult<D>> for FlipInfo<D> {
 ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
 /// };
 /// use delaunay::prelude::pachner::{
-///     BistellarFlipKind, FlipDirection, PachnerMove, PachnerMoves, vertex,
+///     FlipDirection, PachnerMove, PachnerMoves, vertex,
 /// };
 ///
 /// # fn main() -> DelaunayResult<()> {
@@ -630,7 +630,7 @@ impl<const D: usize> From<PachnerMoveResult<D>> for FlipInfo<D> {
 ///     vertex: vertex![0.25, 0.25]?,
 /// })?;
 /// let feasibility = proposal.can_attempt_on(&dt)?;
-/// assert_eq!(feasibility.kind, BistellarFlipKind::k1(2));
+/// assert_eq!((feasibility.kind.k(), feasibility.kind.d()), (1, 2));
 /// assert_eq!(feasibility.direction, FlipDirection::Forward);
 /// assert!(feasibility.inserted_face_vertices.is_none());
 /// # Ok(())
@@ -1276,7 +1276,7 @@ mod tests {
         inserted_face_vertices.push(VertexKey::from(KeyData::from_ffi(42)));
 
         let result = PachnerMoveResult::<3> {
-            kind: BistellarFlipKind::k2(3),
+            kind: BistellarFlipKind::try_k2(3).unwrap(),
             direction: FlipDirection::Forward,
             removed_simplices,
             new_simplices,
@@ -1311,7 +1311,7 @@ mod tests {
             .attempt_topology_on(&mut dt)
             .expect("topology-scope k=1 insert should commit");
 
-        assert_eq!(result.kind, BistellarFlipKind::k1(2));
+        assert_eq!(result.kind, BistellarFlipKind::try_k1(2).unwrap());
         assert_eq!(result.direction, FlipDirection::Forward);
         assert_eq!(result.inserted_face_vertices.len(), 1);
         assert_eq!(dt.number_of_vertices(), 4);
@@ -1435,7 +1435,7 @@ mod tests {
             .clone()
             .attempt_topology_on(&mut dt)
             .expect("first topology-scope k=1 insert should commit");
-        assert_eq!(committed.kind, BistellarFlipKind::k1(2));
+        assert_eq!(committed.kind, BistellarFlipKind::try_k1(2).unwrap());
         assert_eq!(committed.direction, FlipDirection::Forward);
         let vertex_count_after_commit = dt.number_of_vertices();
         let current_generation = dt.topology_generation();

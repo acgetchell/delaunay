@@ -1482,7 +1482,7 @@ where
     validate_k1_insertion_realization(tds, topology_model, simplex_key, simplex, vertex)?;
 
     Ok(FlipFeasibility {
-        kind: BistellarFlipKind::k1(D),
+        kind: BistellarFlipKind::from_validated(1, D),
         direction: FlipDirection::Forward,
         removed_simplices: once(simplex_key).collect(),
         removed_face_vertices,
@@ -1571,18 +1571,28 @@ mod tests {
     use rand::{RngExt, SeedableRng, rngs::StdRng};
     use slotmap::KeyData;
     use std::assert_matches;
-    use std::{iter::once, sync::Once};
+    use std::iter::once;
 
-    fn init_tracing() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_test_writer()
-                .try_init();
-        });
+    /// Verifies source-simplex orientation gating only accepts certified positive orderings.
+    #[test]
+    fn test_source_simplex_is_certified_positive_requires_source_and_positive_order() {
+        let source_simplex = SimplexKey::from(KeyData::from_ffi(42));
+        let positive = [
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
+        ];
+        let negative = [positive[1], positive[0], positive[2]];
+
+        assert!(source_simplex_is_certified_positive(
+            Some(source_simplex),
+            &positive
+        ));
+        assert!(!source_simplex_is_certified_positive(None, &positive));
+        assert!(!source_simplex_is_certified_positive(
+            Some(source_simplex),
+            &negative,
+        ));
     }
     /// Builds a simplex-basis vertex coordinate for dimension-generic flip tests.
     fn unit_vector<const D: usize>(index: usize) -> [f64; D] {
@@ -1841,7 +1851,7 @@ mod tests {
         let facet = FacetHandle::from_validated(c1, 2); // facet opposite vertex index 2 (edge AB)
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let feasibility = validate_bistellar_flip_k2(&tds, &context).unwrap();
-        assert_eq!(feasibility.kind, BistellarFlipKind::k2(2));
+        assert_eq!(feasibility.kind, BistellarFlipKind::from_validated(2, 2));
         assert_eq!(feasibility.direction, FlipDirection::Forward);
         assert_eq!(feasibility.removed_simplices.len(), 2);
         assert_eq!(
@@ -2113,7 +2123,7 @@ mod tests {
         let context = build_k3_flip_context(&tds, ridge).unwrap();
         let info = apply_bistellar_flip_raw(&mut tds, &context).unwrap();
 
-        assert_eq!(info.kind, BistellarFlipKind::k3(3));
+        assert_eq!(info.kind, BistellarFlipKind::from_validated(3, 3));
         assert_eq!(info.removed_simplices.len(), 3);
         assert_eq!(info.new_simplices.len(), 2);
         assert!(tds.is_valid().is_ok());
@@ -2164,7 +2174,7 @@ mod tests {
         let context = build_k3_flip_context(&tds, ridge).unwrap();
         let info = apply_bistellar_flip_raw(&mut tds, &context).unwrap();
 
-        assert_eq!(info.kind, BistellarFlipKind::k3(4));
+        assert_eq!(info.kind, BistellarFlipKind::from_validated(3, 4));
         assert_eq!(info.removed_simplices.len(), 3);
         assert_eq!(info.new_simplices.len(), 3);
         assert!(tds.is_valid().is_ok());
@@ -2218,7 +2228,7 @@ mod tests {
         let context = build_k3_flip_context(&tds, ridge).unwrap();
         let info = apply_bistellar_flip_raw(&mut tds, &context).unwrap();
 
-        assert_eq!(info.kind, BistellarFlipKind::k3(5));
+        assert_eq!(info.kind, BistellarFlipKind::from_validated(3, 5));
         assert_eq!(info.removed_simplices.len(), 3);
         assert_eq!(info.new_simplices.len(), 4);
         assert!(tds.is_valid().is_ok());
@@ -2447,7 +2457,7 @@ mod tests {
         let context_dyn = to_dynamic(context);
         let info = apply_bistellar_flip_dynamic_raw(&mut tds, 2, &context_dyn).unwrap();
 
-        assert_eq!(info.kind, BistellarFlipKind::k2(4));
+        assert_eq!(info.kind, BistellarFlipKind::from_validated(2, 4));
         assert_eq!(info.removed_simplices.len(), 2);
         assert_eq!(info.new_simplices.len(), 4);
         assert!(tds.is_valid().is_ok());
@@ -2502,7 +2512,7 @@ mod tests {
         let context_dyn = to_dynamic(context);
         let info = apply_bistellar_flip_dynamic_raw(&mut tds, 3, &context_dyn).unwrap();
 
-        assert_eq!(info.kind, BistellarFlipKind::k3(5));
+        assert_eq!(info.kind, BistellarFlipKind::from_validated(3, 5));
         assert_eq!(info.removed_simplices.len(), 3);
         assert_eq!(info.new_simplices.len(), 4);
         assert!(tds.is_valid().is_ok());
@@ -2725,7 +2735,7 @@ mod tests {
         let context_back = build_k2_flip_context_from_edge(&tds, edge).unwrap();
         let info_back = apply_bistellar_flip_dynamic_raw(&mut tds, 4, &context_back).unwrap();
 
-        assert_eq!(info_back.kind.k, 4);
+        assert_eq!(info_back.kind.k(), 4);
         assert_eq!(info_back.kind.d(), 4);
         assert_eq!(info_back.removed_simplices.len(), 4);
         assert_eq!(info_back.new_simplices.len(), 2);
@@ -2756,13 +2766,13 @@ mod tests {
         let new_uuid = new_vertex.uuid();
         let info = apply_bistellar_flip_k1_raw(&mut tds, simplex_key, new_vertex).unwrap();
 
-        assert_eq!(info.kind.k, 1);
+        assert_eq!(info.kind.k(), 1);
         assert_eq!(info.new_simplices.len(), 5);
 
         let new_key = tds.vertex_key_from_uuid(&new_uuid).unwrap();
         let info_back = apply_bistellar_flip_k1_inverse_raw(&mut tds, new_key).unwrap();
 
-        assert_eq!(info_back.kind.k, 5);
+        assert_eq!(info_back.kind.k(), 5);
         assert_eq!(info_back.kind.d(), 4);
         assert_eq!(info_back.removed_simplices.len(), 5);
         assert_eq!(info_back.new_simplices.len(), 1);
@@ -2817,7 +2827,7 @@ mod tests {
         let context = build_k3_flip_context(&tds, ridge).unwrap();
         let info = apply_bistellar_flip_raw(&mut tds, &context).unwrap();
 
-        assert_eq!(info.kind.k, 3);
+        assert_eq!(info.kind.k(), 3);
         assert_eq!(info.inserted_face_vertices.len(), 3);
 
         let triangle = TriangleHandle::try_new(
@@ -2829,7 +2839,7 @@ mod tests {
         let context_back = build_k3_flip_context_from_triangle(&tds, triangle).unwrap();
         let info_back = apply_bistellar_flip_dynamic_raw(&mut tds, 4, &context_back).unwrap();
 
-        assert_eq!(info_back.kind.k, 4);
+        assert_eq!(info_back.kind.k(), 4);
         assert_eq!(info_back.kind.d(), 5);
         assert_eq!(info_back.removed_simplices.len(), 4);
         assert_eq!(info_back.new_simplices.len(), 3);
@@ -2881,7 +2891,7 @@ mod tests {
         let context_back = build_k2_flip_context_from_edge(&tds, edge).unwrap();
         let info_back = apply_bistellar_flip_dynamic_raw(&mut tds, 5, &context_back).unwrap();
 
-        assert_eq!(info_back.kind.k, 5);
+        assert_eq!(info_back.kind.k(), 5);
         assert_eq!(info_back.kind.d(), 5);
         assert_eq!(info_back.removed_simplices.len(), 5);
         assert_eq!(info_back.new_simplices.len(), 2);
@@ -2912,13 +2922,13 @@ mod tests {
         let new_uuid = new_vertex.uuid();
         let info = apply_bistellar_flip_k1_raw(&mut tds, simplex_key, new_vertex).unwrap();
 
-        assert_eq!(info.kind.k, 1);
+        assert_eq!(info.kind.k(), 1);
         assert_eq!(info.new_simplices.len(), 6);
 
         let new_key = tds.vertex_key_from_uuid(&new_uuid).unwrap();
         let info_back = apply_bistellar_flip_k1_inverse_raw(&mut tds, new_key).unwrap();
 
-        assert_eq!(info_back.kind.k, 6);
+        assert_eq!(info_back.kind.k(), 6);
         assert_eq!(info_back.kind.d(), 5);
         assert_eq!(info_back.removed_simplices.len(), 6);
         assert_eq!(info_back.new_simplices.len(), 1);
@@ -2946,14 +2956,14 @@ mod tests {
         let new_uuid = new_vertex.uuid();
         let info = apply_bistellar_flip_k1_raw(&mut tds, simplex, new_vertex).unwrap();
 
-        assert_eq!(info.kind.k, 1);
+        assert_eq!(info.kind.k(), 1);
         assert_eq!(info.kind.d(), 2);
         assert_eq!(tds.number_of_simplices(), 3);
 
         let new_key = tds.vertex_key_from_uuid(&new_uuid).unwrap();
         let info_back = apply_bistellar_flip_k1_inverse_raw(&mut tds, new_key).unwrap();
 
-        assert_eq!(info_back.kind.k, 3);
+        assert_eq!(info_back.kind.k(), 3);
         assert_eq!(info_back.kind.d(), 2);
         assert_eq!(tds.number_of_simplices(), 1);
         assert_eq!(tds.number_of_vertices(), 3);

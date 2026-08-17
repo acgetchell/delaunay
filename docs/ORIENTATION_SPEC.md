@@ -190,7 +190,9 @@ on the selected kernel.
 
 ### Flip Operations
 
-`src/core/algorithms/flips/orientation.rs` preserves orientation during bistellar flips:
+`src/core/algorithms/flips/engine.rs` owns flip orchestration and orientation
+policy definitions, while `src/core/algorithms/flips/orientation.rs` provides
+the orientation helpers used during bistellar flips:
 
 - `apply_bistellar_flip_with_k()` asserts coherent orientation before and after
   the trial mutation in debug builds.

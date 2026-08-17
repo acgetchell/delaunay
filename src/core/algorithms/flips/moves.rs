@@ -2,6 +2,30 @@
 
 #![forbid(unsafe_code)]
 
+use thiserror::Error;
+
+/// Error returned when constructing an invalid bistellar flip kind.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BistellarFlipKindError {
+    /// The requested move size is outside the mathematical Pachner range.
+    #[error("k must be in 1..=D+1 (k={k_move}, D={dimension})")]
+    MoveSizeOutOfRange {
+        /// Requested number of simplices replaced on the current side.
+        k_move: usize,
+        /// Triangulation dimension supplied by the caller.
+        dimension: usize,
+    },
+    /// The inverse move size cannot be represented by `usize`.
+    #[error("inverse move size D+2-k is not representable (k={k_move}, D={dimension})")]
+    InverseMoveSizeOverflow {
+        /// Requested number of simplices replaced on the current side.
+        k_move: usize,
+        /// Triangulation dimension supplied by the caller.
+        dimension: usize,
+    },
+}
+
 /// Bistellar flip kind descriptor.
 ///
 /// Access the move size with [`BistellarFlipKind::k`].
@@ -12,18 +36,21 @@
 /// ```rust
 /// use delaunay::flips::BistellarFlipKind;
 ///
-/// let kind = BistellarFlipKind::k2(3);
+/// # fn main() -> Result<(), delaunay::flips::BistellarFlipKindError> {
+/// let kind = BistellarFlipKind::try_k2(3)?;
 /// let inverse = kind.inverse();
 /// assert_eq!(kind.k(), 2);
 /// assert_eq!(kind.d(), 3);
 /// assert_eq!(inverse.k(), 3);
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BistellarFlipKind {
     /// Number of simplices being replaced on the current side (k).
-    pub(super) k: usize,
+    k: usize,
     /// Dimension of the triangulation (D).
-    pub(super) d: usize,
+    d: usize,
 }
 /// Direction of a bistellar flip.
 ///
@@ -80,29 +107,67 @@ impl BistellarFlipKind {
     }
 
     /// Construct a k=1 flip kind for the given dimension.
-    #[must_use]
-    pub const fn k1(d: usize) -> Self {
-        Self { k: 1, d }
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BistellarFlipKindError::InverseMoveSizeOverflow`] when the
+    /// inverse move size cannot be represented by `usize`.
+    pub const fn try_k1(d: usize) -> Result<Self, BistellarFlipKindError> {
+        Self::try_from_raw(1, d)
     }
+
     /// Construct a k=2 flip kind for the given dimension.
-    #[must_use]
-    pub const fn k2(d: usize) -> Self {
-        Self { k: 2, d }
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BistellarFlipKindError::MoveSizeOutOfRange`] when a k=2 move
+    /// is not defined for the supplied dimension.
+    pub const fn try_k2(d: usize) -> Result<Self, BistellarFlipKindError> {
+        Self::try_from_raw(2, d)
     }
 
     /// Construct a k=3 flip kind for the given dimension.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BistellarFlipKindError::MoveSizeOutOfRange`] when a k=3 move
+    /// is not defined for the supplied dimension.
+    pub const fn try_k3(d: usize) -> Result<Self, BistellarFlipKindError> {
+        Self::try_from_raw(3, d)
+    }
+
+    /// Parses raw move metadata into a kind whose inverse is representable.
+    const fn try_from_raw(k_move: usize, d: usize) -> Result<Self, BistellarFlipKindError> {
+        if k_move == 0 || k_move > d.saturating_add(1) {
+            return Err(BistellarFlipKindError::MoveSizeOutOfRange {
+                k_move,
+                dimension: d,
+            });
+        }
+        if k_move == 1 && d == usize::MAX {
+            return Err(BistellarFlipKindError::InverseMoveSizeOverflow {
+                k_move,
+                dimension: d,
+            });
+        }
+        Ok(Self { k: k_move, d })
+    }
+
+    /// Constructs a kind from move metadata already proven valid and invertible.
     #[must_use]
-    pub const fn k3(d: usize) -> Self {
-        Self { k: 3, d }
+    pub(super) const fn from_validated(k_move: usize, d: usize) -> Self {
+        Self { k: k_move, d }
     }
 
     /// Construct the inverse flip kind (k' = D + 2 - k).
     #[must_use]
     pub const fn inverse(self) -> Self {
-        Self {
-            k: self.d + 2 - self.k,
-            d: self.d,
-        }
+        let k = if self.k <= 2 {
+            self.d + (2 - self.k)
+        } else {
+            self.d - (self.k - 2)
+        };
+        Self { k, d: self.d }
     }
 }
 
@@ -142,4 +207,47 @@ pub trait BistellarMove<const D: usize> {
 
 impl<const D: usize, const K: usize> BistellarMove<D> for ConstK<K> {
     const K: usize = K;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constructors_reject_invalid_move_metadata() {
+        assert_eq!(
+            BistellarFlipKind::try_k2(0),
+            Err(BistellarFlipKindError::MoveSizeOutOfRange {
+                k_move: 2,
+                dimension: 0,
+            })
+        );
+        assert_eq!(
+            BistellarFlipKind::try_k3(1),
+            Err(BistellarFlipKindError::MoveSizeOutOfRange {
+                k_move: 3,
+                dimension: 1,
+            })
+        );
+        assert_eq!(
+            BistellarFlipKind::try_k1(usize::MAX),
+            Err(BistellarFlipKindError::InverseMoveSizeOverflow {
+                k_move: 1,
+                dimension: usize::MAX,
+            })
+        );
+    }
+
+    #[test]
+    fn inverse_preserves_valid_formula_and_roundtrips() {
+        for kind in [
+            BistellarFlipKind::try_k1(3).unwrap(),
+            BistellarFlipKind::try_k2(3).unwrap(),
+            BistellarFlipKind::try_k3(3).unwrap(),
+            BistellarFlipKind::try_k2(usize::MAX).unwrap(),
+        ] {
+            assert_eq!(kind.inverse().inverse(), kind);
+        }
+        assert_eq!(BistellarFlipKind::try_k2(3).unwrap().inverse().k(), 3);
+    }
 }

@@ -262,6 +262,20 @@ pub enum FlipContextError {
         /// Observed ridge vertex count.
         found: usize,
     },
+    /// Repeated slots for one periodic vertex disagree on its lifted representative.
+    #[error(
+        "conflicting periodic offsets for vertex {vertex_key:?} in simplex {simplex_key:?}: expected {expected_offset:?}, got {found_offset:?}"
+    )]
+    ConflictingPeriodicVertexOffset {
+        /// Simplex containing the repeated vertex slots.
+        simplex_key: SimplexKey,
+        /// Repeated vertex whose slots disagree.
+        vertex_key: VertexKey,
+        /// First offset observed for the vertex.
+        expected_offset: Vec<i8>,
+        /// Conflicting offset observed in a later slot.
+        found_offset: Vec<i8>,
+    },
     /// Periodic frame alignment found contradictory translations.
     #[error(
         "conflicting periodic frame translations while aligning vertex {vertex_key:?} from simplex {source_simplex_key:?} into frame {target_simplex_key:?}: expected {expected_offset:?}, got {found_offset:?}"
