@@ -314,9 +314,9 @@ fn test_t2_explicit_toroidal_construction_rejected() {
         .expect_err("explicit toroidal connectivity requires a quotient realization validator");
 
     match err {
-        DelaunayTriangulationConstructionError::ExplicitConstruction(
-            ExplicitConstructionError::UnsupportedExplicitTopology { topology },
-        ) => assert_eq!(topology, TopologyKind::Toroidal),
+        DelaunayTriangulationConstructionError::ExplicitConstruction {
+            source: ExplicitConstructionError::UnsupportedExplicitTopology { topology },
+        } => assert_eq!(topology, TopologyKind::Toroidal),
         other => panic!("expected explicit construction validation failure, got {other:?}"),
     }
 }
@@ -396,9 +396,9 @@ fn test_t3_explicit_toroidal_construction_rejected() {
         .expect_err("explicit toroidal connectivity requires a quotient realization validator");
 
     match err {
-        DelaunayTriangulationConstructionError::ExplicitConstruction(
-            ExplicitConstructionError::UnsupportedExplicitTopology { topology },
-        ) => assert_eq!(topology, TopologyKind::Toroidal),
+        DelaunayTriangulationConstructionError::ExplicitConstruction {
+            source: ExplicitConstructionError::UnsupportedExplicitTopology { topology },
+        } => assert_eq!(topology, TopologyKind::Toroidal),
         other => panic!("expected explicit construction validation failure, got {other:?}"),
     }
 }

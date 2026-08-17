@@ -1448,7 +1448,7 @@ fn scaled_euclidean_norm(coords: &[f64]) -> f64 {
 
 /// Wraps TDS invariant failures from the synthetic topology bridge.
 fn intrinsic_tds_error(source: TdsError) -> SphericalDelaunayValidationError {
-    intrinsic_error(InvariantError::Tds(source))
+    intrinsic_error(InvariantError::Tds { source })
 }
 
 /// Wraps manifold invariant failures from the synthetic topology bridge.
@@ -1460,7 +1460,7 @@ fn intrinsic_manifold_error(source: ManifoldError) -> SphericalDelaunayValidatio
 fn intrinsic_topology_error(
     source: TriangulationValidationError,
 ) -> SphericalDelaunayValidationError {
-    intrinsic_error(InvariantError::Triangulation(source))
+    intrinsic_error(InvariantError::Triangulation { source })
 }
 
 /// Converts topology-support helper failures into the shared invariant tree.
@@ -1468,8 +1468,10 @@ fn intrinsic_topology_support_error(source: TopologyError) -> SphericalDelaunayV
     let invariant = match source {
         TopologyError::FacetMapBuild { source }
         | TopologyError::BoundaryFacetEnumeration { source }
-        | TopologyError::BoundaryFacetCount { source } => InvariantError::Tds(source),
-        TopologyError::BoundaryFacetSimplexAccess { source } => InvariantError::Tds(source.into()),
+        | TopologyError::BoundaryFacetCount { source } => InvariantError::Tds { source },
+        TopologyError::BoundaryFacetSimplexAccess { source } => InvariantError::Tds {
+            source: source.into(),
+        },
         TopologyError::BoundaryClassification { source } => InvariantError::from(*source),
     };
     intrinsic_error(invariant)
@@ -2275,9 +2277,9 @@ mod tests {
             Err(SphericalDelaunayValidationError::IntrinsicTopology { source })
                 if matches!(
                     source.as_ref(),
-                    InvariantError::Triangulation(
+                    InvariantError::Triangulation { source:
                         TriangulationValidationError::Disconnected { simplex_count: 8 }
-                    )
+                     }
                 )
         );
     }

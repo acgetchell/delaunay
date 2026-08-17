@@ -53,9 +53,9 @@ fn init_tracing() {
 const fn is_geometric_degeneracy_error(error: &DelaunayTriangulationConstructionError) -> bool {
     matches!(
         error,
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::GeometricDegeneracy { .. }
-        )
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::GeometricDegeneracy { .. }
+        }
     )
 }
 
@@ -64,9 +64,9 @@ fn is_geometric_degeneracy_or_retry_exhausted(
     error: &DelaunayTriangulationConstructionError,
 ) -> bool {
     match error {
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
-        ) => matches!(
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
+        } => matches!(
             source.as_ref(),
             DelaunayConstructionRetryFailure::Construction { source }
                 if is_geometric_degeneracy_error(source)
@@ -78,7 +78,7 @@ fn is_geometric_degeneracy_or_retry_exhausted(
 fn validation_error_is_degenerate_simplex(error: &DelaunayTriangulationValidationError) -> bool {
     matches!(
         error,
-        DelaunayTriangulationValidationError::Realization(source)
+        DelaunayTriangulationValidationError::Realization { source }
             if matches!(
                 source.as_ref(),
                 TriangulationRealizationValidationError::DegenerateSimplex { .. }
@@ -90,18 +90,18 @@ fn construction_error_is_degenerate_simplex(
     error: &DelaunayTriangulationConstructionError,
 ) -> bool {
     match error {
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::FinalDelaunayValidation { source, .. },
-        ) => validation_error_is_degenerate_simplex(source),
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::InsertionRealizationValidation { source },
-        ) => matches!(
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::FinalDelaunayValidation { source, .. },
+        } => validation_error_is_degenerate_simplex(source),
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::InsertionRealizationValidation { source },
+        } => matches!(
             source,
             TriangulationRealizationValidationError::DegenerateSimplex { .. }
         ),
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
-        ) => match source.as_ref() {
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
+        } => match source.as_ref() {
             DelaunayConstructionRetryFailure::Construction { source } => {
                 construction_error_is_degenerate_simplex(source)
             }

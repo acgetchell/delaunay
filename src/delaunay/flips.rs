@@ -989,7 +989,7 @@ mod tests {
         assert_matches!(
             err,
             FlipError::RealizationValidation { source }
-                if matches!(*source, TriangulationRealizationValidationError::Triangulation(_))
+                if matches!(*source, TriangulationRealizationValidationError::Triangulation { source: _ })
         );
         assert_eq!(tri.tds.number_of_vertices(), before_vertices);
         assert_eq!(tri.tds.number_of_simplices(), before_simplices);

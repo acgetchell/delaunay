@@ -118,14 +118,22 @@ pub enum HullExtensionReason {
     ///
     /// Preserves the structured [`CoordinateConversionError`] from the kernel or
     /// robust-predicate evaluation rather than collapsing it into a string.
-    #[error("Geometric predicate failed: {0}")]
-    PredicateFailed(#[source] CoordinateConversionError),
+    #[error("Geometric predicate failed: {source}")]
+    PredicateFailed {
+        /// Typed coordinate-conversion source error.
+        #[source]
+        source: CoordinateConversionError,
+    },
     /// Lower-layer TDS error encountered during hull extension.
     ///
     /// Preserves the structured [`TdsError`] (e.g. from boundary-facet retrieval)
     /// rather than collapsing it into a string.
-    #[error("TDS error: {0}")]
-    Tds(#[source] TdsError),
+    #[error("TDS error: {source}")]
+    Tds {
+        /// Typed TDS source error.
+        #[source]
+        source: TdsError,
+    },
 }
 
 /// Fixed context for a Level 3 topology validation failure during insertion.
@@ -566,8 +574,8 @@ impl From<TdsError> for TdsValidationFailure {
             TdsError::InconsistentDataStructure { message } => {
                 Self::InconsistentDataStructure { message }
             }
-            TdsError::Geometric(source) => Self::Geometric { source },
-            TdsError::FacetError(source) => Self::Facet { source },
+            TdsError::Geometric { source } => Self::Geometric { source },
+            TdsError::FacetError { source } => Self::Facet { source },
             TdsError::DuplicateCoordinatesInSimplex {
                 simplex_id,
                 message,
@@ -604,7 +612,7 @@ pub enum TdsConstructionFailure {
 impl From<TdsConstructionError> for TdsConstructionFailure {
     fn from(source: TdsConstructionError) -> Self {
         match source {
-            TdsConstructionError::ValidationError(source) => Self::Validation {
+            TdsConstructionError::ValidationError { source } => Self::Validation {
                 reason: source.into(),
             },
             TdsConstructionError::DuplicateUuid { entity, uuid } => {
@@ -865,7 +873,7 @@ pub enum InitialSimplexConstructionError {
 impl From<TdsConstructionError> for InitialSimplexConstructionError {
     fn from(source: TdsConstructionError) -> Self {
         match source {
-            TdsConstructionError::ValidationError(source) => Self::TdsValidation {
+            TdsConstructionError::ValidationError { source } => Self::TdsValidation {
                 source: source.into(),
             },
             TdsConstructionError::DuplicateUuid { entity, uuid } => {
@@ -882,7 +890,7 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
     )]
     fn from(source: TriangulationConstructionError) -> Self {
         match source {
-            TriangulationConstructionError::Tds(source) => source.into(),
+            TriangulationConstructionError::Tds { source } => source.into(),
             TriangulationConstructionError::FailedToCreateSimplex { message } => {
                 Self::FailedToCreateSimplex { message }
             }
@@ -1656,12 +1664,20 @@ impl From<HashGridIndexError> for SpatialIndexConstructionFailure {
 #[non_exhaustive]
 pub enum InsertionError {
     /// Conflict region finding failed
-    #[error("Conflict region error: {0}")]
-    ConflictRegion(#[from] ConflictError),
+    #[error("Conflict region error: {source}")]
+    ConflictRegion {
+        /// Typed conflict-region source error.
+        #[from]
+        source: ConflictError,
+    },
 
     /// Point location failed
-    #[error("Location error: {0}")]
-    Location(#[from] LocateError),
+    #[error("Location error: {source}")]
+    Location {
+        /// Typed point-location source error.
+        #[from]
+        source: LocateError,
+    },
 
     /// Cavity filling failed.
     #[error("Cavity filling failed: {reason}")]
@@ -1758,8 +1774,12 @@ pub enum InsertionError {
     },
 
     /// Topology validation or repair failed.
-    #[error("Topology validation error: {0}")]
-    TopologyValidation(#[from] TdsError),
+    #[error("Topology validation error: {source}")]
+    TopologyValidation {
+        /// Typed TDS validation source error.
+        #[from]
+        source: TdsError,
+    },
 
     /// Level 3 topology validation failed (Triangulation layer).
     ///
@@ -1834,7 +1854,7 @@ impl From<TdsConstructionError> for CavityFillingError {
 impl From<TdsConstructionError> for InsertionError {
     fn from(source: TdsConstructionError) -> Self {
         match source {
-            TdsConstructionError::ValidationError(source) => Self::TopologyValidation(source),
+            TdsConstructionError::ValidationError { source } => Self::TopologyValidation { source },
             TdsConstructionError::DuplicateUuid { entity, uuid } => {
                 Self::DuplicateUuid { entity, uuid }
             }
@@ -1859,7 +1879,7 @@ impl From<InsertionError> for NeighborRebuildError {
                 facet_hash,
                 simplex_count,
             },
-            InsertionError::TopologyValidation(source) => Self::TopologyValidation {
+            InsertionError::TopologyValidation { source } => Self::TopologyValidation {
                 reason: source.into(),
             },
             other => Self::Unexpected {
@@ -1921,16 +1941,16 @@ impl InsertionError {
             // TDS-level topology errors: perturbation-retryable sub-variants are
             // geometric, orientation, or facet-multiplicity degeneracies.
             // Structural errors (missing simplices, broken invariants) won't be fixed by perturbation.
-            Self::TopologyValidation(tds_err) => Self::is_tds_error_retryable(tds_err),
+            Self::TopologyValidation { source } => Self::is_tds_error_retryable(source),
             // Conflict region errors: only geometry-degeneracy variants are retryable.
             // Structural variants (InvalidStartSimplex, PredicateError, SimplexDataAccessFailed,
             // InvalidSimplexArity, MissingSimplexVertex, InternalInconsistency — regardless of which typed
             // `InternalInconsistencySite` carries the failure context) represent caller
             // or implementation errors that perturbation cannot fix, and so fall
             // through to non-retryable by omission.
-            Self::ConflictRegion(ce) => {
+            Self::ConflictRegion { source } => {
                 matches!(
-                    ce,
+                    source,
                     ConflictError::NonManifoldFacet { .. }
                         | ConflictError::RidgeFan { .. }
                         | ConflictError::DisconnectedBoundary { .. }
@@ -1960,7 +1980,7 @@ impl InsertionError {
             // overflow, etc.). Non-manifold topology detection uses the dedicated
             // `NonManifoldTopology` variant.
             Self::NeighborWiring { .. }
-            | Self::Location(_)
+            | Self::Location { .. }
             | Self::RealizationValidationFailed { .. }
             | Self::DelaunayValidationFailed { .. }
             | Self::DelaunayRepairFailed { .. }
@@ -1981,7 +2001,7 @@ impl InsertionError {
     const fn is_tds_error_retryable(tds_err: &TdsError) -> bool {
         matches!(
             tds_err,
-            TdsError::Geometric(_)
+            TdsError::Geometric { source: _ }
                 | TdsError::OrientationViolation { .. }
                 | TdsError::FacetSharingViolation { .. }
         )
@@ -2094,13 +2114,13 @@ impl InsertionError {
     /// Check whether a final validation error is perturbation-retryable.
     fn is_invariant_error_retryable(err: &InvariantError) -> bool {
         match err {
-            InvariantError::Tds(source) => matches!(
+            InvariantError::Tds { source } => matches!(
                 TdsErrorKind::from(source),
                 TdsErrorKind::Geometric
                     | TdsErrorKind::OrientationViolation
                     | TdsErrorKind::FacetSharingViolation
             ),
-            InvariantError::Triangulation(source) => matches!(
+            InvariantError::Triangulation { source } => matches!(
                 TriangulationValidationErrorKind::from(source),
                 TriangulationValidationErrorKind::ManifoldFacetMultiplicity
                     | TriangulationValidationErrorKind::BoundaryRidgeMultiplicity
@@ -2109,7 +2129,9 @@ impl InsertionError {
                     | TriangulationValidationErrorKind::OrientationPromotionNonConvergence
                     | TriangulationValidationErrorKind::IsolatedVertex
             ),
-            InvariantError::Realization(_) | InvariantError::Delaunay(_) => false,
+            InvariantError::Realization { source: _ } | InvariantError::Delaunay { source: _ } => {
+                false
+            }
         }
     }
 
@@ -3665,7 +3687,7 @@ where
         let total_boundary = tds
             .one_sided_facets()
             .map_err(|e| InsertionError::HullExtension {
-                reason: HullExtensionReason::Tds(e),
+                reason: HullExtensionReason::Tds { source: e },
             })
             .and_then(|mut facets| {
                 facets
@@ -3773,7 +3795,7 @@ where
     conflict_simplices.push(edge_facet.simplex_key());
 
     let mut boundary_facets = extract_cavity_boundary(tds, &conflict_simplices)
-        .map_err(InsertionError::ConflictRegion)?;
+        .map_err(|source| InsertionError::ConflictRegion { source })?;
     boundary_facets.retain(|facet| {
         facet.simplex_key() != edge_facet.simplex_key()
             || facet.facet_index() != edge_facet.facet_index()
@@ -3791,14 +3813,18 @@ where
         Some(&conflict_simplices),
     )?;
     tds.remove_simplices_by_keys(&conflict_simplices)
-        .map_err(|e| InsertionError::TopologyValidation(e.into_inner()))?;
+        .map_err(|e| InsertionError::TopologyValidation {
+            source: e.into_inner(),
+        })?;
 
     Ok(new_simplices)
 }
 
 fn hull_extension_tds_error(source: impl Into<TdsError>) -> InsertionError {
     InsertionError::HullExtension {
-        reason: HullExtensionReason::Tds(source.into()),
+        reason: HullExtensionReason::Tds {
+            source: source.into(),
+        },
     }
 }
 
@@ -3896,7 +3922,7 @@ fn find_boundary_edge_split_facet<U, V, const D: usize>(
     let boundary_facets = tds
         .one_sided_facets()
         .map_err(|e| InsertionError::HullExtension {
-            reason: HullExtensionReason::Tds(e),
+            reason: HullExtensionReason::Tds { source: e },
         })?;
 
     for facet_view in boundary_facets {
@@ -4032,7 +4058,7 @@ fn boundary_edge_split_facet_matches<U, V, const D: usize>(
     // property we need here: is the opposite simplex truly degenerate?
     let opposite_degenerate = matches!(
         robust_orientation(&simplex_points).map_err(|e| InsertionError::HullExtension {
-            reason: HullExtensionReason::PredicateFailed(e),
+            reason: HullExtensionReason::PredicateFailed { source: e },
         })?,
         Orientation::DEGENERATE
     );
@@ -4050,7 +4076,7 @@ fn boundary_edge_split_facet_matches<U, V, const D: usize>(
     // property we need here: is the point truly on the line through the edge?
     let is_collinear = matches!(
         robust_orientation(&edge_line).map_err(|e| InsertionError::HullExtension {
-            reason: HullExtensionReason::PredicateFailed(e),
+            reason: HullExtensionReason::PredicateFailed { source: e },
         })?,
         Orientation::DEGENERATE
     );
@@ -4135,7 +4161,7 @@ where
     let boundary_facets = tds
         .one_sided_facets()
         .map_err(|e| InsertionError::HullExtension {
-            reason: HullExtensionReason::Tds(e),
+            reason: HullExtensionReason::Tds { source: e },
         })?;
 
     // Test each boundary facet for visibility
@@ -4181,7 +4207,7 @@ where
             kernel
                 .orientation(&simplex_points)
                 .map_err(|e| InsertionError::HullExtension {
-                    reason: HullExtensionReason::PredicateFailed(e),
+                    reason: HullExtensionReason::PredicateFailed { source: e },
                 })?;
 
         // Replace opposite vertex with query point (last entry in canonical order).
@@ -4191,7 +4217,7 @@ where
             kernel
                 .orientation(&simplex_points)
                 .map_err(|e| InsertionError::HullExtension {
-                    reason: HullExtensionReason::PredicateFailed(e),
+                    reason: HullExtensionReason::PredicateFailed { source: e },
                 })?;
 
         #[cfg(debug_assertions)]
@@ -4737,7 +4763,9 @@ mod tests {
             expected: 3,
             dimension: 2,
         };
-        let predicate_reason = HullExtensionReason::PredicateFailed(predicate_source.clone());
+        let predicate_reason = HullExtensionReason::PredicateFailed {
+            source: predicate_source.clone(),
+        };
         let predicate_error = std::error::Error::source(&predicate_reason)
             .and_then(|source| source.downcast_ref::<CoordinateConversionError>());
         assert_eq!(predicate_error, Some(&predicate_source));
@@ -4745,7 +4773,9 @@ mod tests {
         let tds_source = TdsError::InconsistentDataStructure {
             message: "missing boundary facet".to_string(),
         };
-        let tds_reason = HullExtensionReason::Tds(tds_source.clone());
+        let tds_reason = HullExtensionReason::Tds {
+            source: tds_source.clone(),
+        };
         let tds_error = std::error::Error::source(&tds_reason)
             .and_then(|source| source.downcast_ref::<TdsError>());
         assert_eq!(tds_error, Some(&tds_source));
@@ -4753,7 +4783,10 @@ mod tests {
         let insertion_error = InsertionError::HullExtension { reason: tds_reason };
         let insertion_source = std::error::Error::source(&insertion_error)
             .and_then(|source| source.downcast_ref::<HullExtensionReason>());
-        assert_matches!(insertion_source, Some(HullExtensionReason::Tds(_)));
+        assert_matches!(
+            insertion_source,
+            Some(HullExtensionReason::Tds { source: _ })
+        );
     }
 
     /// Macro to generate cavity replacement filling tests for different dimensions.
@@ -5556,14 +5589,18 @@ mod tests {
 
     #[test]
     fn test_insertion_retryability_covers_tds_source_kinds() {
-        let geometric = InsertionError::TopologyValidation(TdsError::Geometric(
-            GeometricError::DegenerateOrientation {
-                message: "det=0".to_string(),
+        let geometric = InsertionError::TopologyValidation {
+            source: TdsError::Geometric {
+                source: GeometricError::DegenerateOrientation {
+                    message: "det=0".to_string(),
+                },
             },
-        ));
-        let structural = InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
-            message: "dangling neighbor".to_string(),
-        });
+        };
+        let structural = InsertionError::TopologyValidation {
+            source: TdsError::InconsistentDataStructure {
+                message: "dangling neighbor".to_string(),
+            },
+        };
 
         assert!(geometric.is_retryable());
         assert!(!structural.is_retryable());
@@ -5834,52 +5871,62 @@ mod tests {
         );
         // InconsistentDataStructure is now non-retryable (structural bug, not geometry).
         assert!(
-            !InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
-                message: "test".to_string()
-            })
+            !InsertionError::TopologyValidation {
+                source: TdsError::InconsistentDataStructure {
+                    message: "test".to_string()
+                }
+            }
             .is_retryable()
         );
         // Geometry-related variants are still retryable.
         assert!(
-            InsertionError::TopologyValidation(TdsError::Geometric(
-                GeometricError::DegenerateOrientation {
-                    message: "test".to_string()
+            InsertionError::TopologyValidation {
+                source: TdsError::Geometric {
+                    source: GeometricError::DegenerateOrientation {
+                        message: "test".to_string()
+                    }
                 }
-            ))
+            }
             .is_retryable()
         );
         assert!(
-            InsertionError::TopologyValidation(TdsError::Geometric(
-                GeometricError::NegativeOrientation {
-                    message: "test".to_string()
+            InsertionError::TopologyValidation {
+                source: TdsError::Geometric {
+                    source: GeometricError::NegativeOrientation {
+                        message: "test".to_string()
+                    }
                 }
-            ))
+            }
             .is_retryable()
         );
         assert!(
-            InsertionError::TopologyValidation(TdsError::OrientationViolation {
-                simplex1_key: SimplexKey::from(KeyData::from_ffi(1)),
-                simplex1_uuid: uuid::Uuid::nil(),
-                simplex2_key: SimplexKey::from(KeyData::from_ffi(2)),
-                simplex2_uuid: uuid::Uuid::nil(),
-                simplex1_facet_index: 0,
-                simplex2_facet_index: 1,
-                facet_vertices: vec![],
-                simplex2_facet_vertices: vec![],
-                observed_odd_permutation: true,
-                expected_odd_permutation: false,
-            })
+            InsertionError::TopologyValidation {
+                source: TdsError::OrientationViolation {
+                    simplex1_key: SimplexKey::from(KeyData::from_ffi(1)),
+                    simplex1_uuid: uuid::Uuid::nil(),
+                    simplex2_key: SimplexKey::from(KeyData::from_ffi(2)),
+                    simplex2_uuid: uuid::Uuid::nil(),
+                    simplex1_facet_index: 0,
+                    simplex2_facet_index: 1,
+                    facet_vertices: vec![],
+                    simplex2_facet_vertices: vec![],
+                    observed_odd_permutation: true,
+                    expected_odd_permutation: false,
+                }
+            }
             .is_retryable()
         );
         assert!(
-            InsertionError::TopologyValidation(TdsError::FacetSharingViolation {
-                facet_key: 0x1234,
-                existing_incident_count: 2,
-                attempted_incident_count: 3,
-                max_incident_count: 2,
-                candidate_simplex_uuid: uuid::Uuid::nil(),
-                candidate_facet_index: 1,
-            })
+            InsertionError::TopologyValidation {
+                source: TdsError::FacetSharingViolation {
+                    facet_key: 0x1234,
+                    existing_incident_count: 2,
+                    attempted_incident_count: 3,
+                    max_incident_count: 2,
+                    candidate_simplex_uuid: uuid::Uuid::nil(),
+                    candidate_facet_index: 1,
+                }
+            }
             .is_retryable()
         );
         // IsolatedVertex is retryable: during insertion, a geometrically-sensitive
@@ -5990,115 +6037,141 @@ mod tests {
 
         // Conflict-region errors
         assert!(
-            InsertionError::ConflictRegion(ConflictError::NonManifoldFacet {
-                facet_hash: 0x12345_u64,
-                simplex_count: 3,
-            })
+            InsertionError::ConflictRegion {
+                source: ConflictError::NonManifoldFacet {
+                    facet_hash: 0x12345_u64,
+                    simplex_count: 3,
+                }
+            }
             .is_retryable()
         );
         assert!(
-            InsertionError::ConflictRegion(ConflictError::RidgeFan {
-                facet_count: 3,
-                ridge_vertex_count: 2,
-                extra_simplices: vec![],
-            })
+            InsertionError::ConflictRegion {
+                source: ConflictError::RidgeFan {
+                    facet_count: 3,
+                    ridge_vertex_count: 2,
+                    extra_simplices: vec![],
+                }
+            }
             .is_retryable()
         );
         // extra_simplices contents do not affect retryability — a non-empty vec is also retryable.
         assert!(
-            InsertionError::ConflictRegion(ConflictError::RidgeFan {
-                facet_count: 3,
-                ridge_vertex_count: 2,
-                extra_simplices: vec![SimplexKey::from(KeyData::from_ffi(1))],
-            })
+            InsertionError::ConflictRegion {
+                source: ConflictError::RidgeFan {
+                    facet_count: 3,
+                    ridge_vertex_count: 2,
+                    extra_simplices: vec![SimplexKey::from(KeyData::from_ffi(1))],
+                }
+            }
             .is_retryable()
         );
         assert!(
-            !InsertionError::ConflictRegion(ConflictError::InvalidStartSimplex {
-                simplex_key: SimplexKey::from(KeyData::from_ffi(u64::MAX)),
-            })
+            !InsertionError::ConflictRegion {
+                source: ConflictError::InvalidStartSimplex {
+                    simplex_key: SimplexKey::from(KeyData::from_ffi(u64::MAX)),
+                }
+            }
             .is_retryable()
         );
         assert!(
-            !InsertionError::ConflictRegion(ConflictError::PredicateError {
-                source: CoordinateConversionError::ConversionFailed {
-                    coordinate_index: 0,
-                    coordinate_value: CoordinateConversionValue::Other("test".to_string()),
-                    from_type: "f64",
-                    to_type: "f64",
-                },
-            })
+            !InsertionError::ConflictRegion {
+                source: ConflictError::PredicateError {
+                    source: CoordinateConversionError::ConversionFailed {
+                        coordinate_index: 0,
+                        coordinate_value: CoordinateConversionValue::Other("test".to_string()),
+                        from_type: "f64",
+                        to_type: "f64",
+                    },
+                }
+            }
             .is_retryable()
         );
         assert!(
-            !InsertionError::ConflictRegion(ConflictError::SimplexDataAccessFailed {
-                simplex_key: SimplexKey::from(KeyData::from_ffi(1)),
-                message: "test".to_string(),
-            })
+            !InsertionError::ConflictRegion {
+                source: ConflictError::SimplexDataAccessFailed {
+                    simplex_key: SimplexKey::from(KeyData::from_ffi(1)),
+                    message: "test".to_string(),
+                }
+            }
             .is_retryable()
         );
         assert!(
-            !InsertionError::ConflictRegion(ConflictError::InvalidSimplexArity {
-                simplex_key: SimplexKey::from(KeyData::from_ffi(1)),
-                expected: 3,
-                found: 2,
-            })
+            !InsertionError::ConflictRegion {
+                source: ConflictError::InvalidSimplexArity {
+                    simplex_key: SimplexKey::from(KeyData::from_ffi(1)),
+                    expected: 3,
+                    found: 2,
+                }
+            }
             .is_retryable()
         );
         assert!(
-            !InsertionError::ConflictRegion(ConflictError::MissingSimplexVertex {
-                simplex_key: SimplexKey::from(KeyData::from_ffi(1)),
-                vertex_key: VertexKey::from(KeyData::from_ffi(999)),
-            })
+            !InsertionError::ConflictRegion {
+                source: ConflictError::MissingSimplexVertex {
+                    simplex_key: SimplexKey::from(KeyData::from_ffi(1)),
+                    vertex_key: VertexKey::from(KeyData::from_ffi(999)),
+                }
+            }
             .is_retryable()
         );
         // InternalInconsistency is not retryable regardless of the typed site:
         // perturbation cannot fix logic errors.
         assert!(
-            !InsertionError::ConflictRegion(ConflictError::InternalInconsistency {
-                site: InternalInconsistencySite::RidgeFanExtraFacetOutOfBounds {
-                    index: 7,
-                    boundary_facets_len: 5,
-                    extra_facets_len: 3,
-                },
-            })
+            !InsertionError::ConflictRegion {
+                source: ConflictError::InternalInconsistency {
+                    site: InternalInconsistencySite::RidgeFanExtraFacetOutOfBounds {
+                        index: 7,
+                        boundary_facets_len: 5,
+                        extra_facets_len: 3,
+                    },
+                }
+            }
             .is_retryable()
         );
         assert!(
-            !InsertionError::ConflictRegion(ConflictError::InternalInconsistency {
-                site: InternalInconsistencySite::OpenBoundaryMissingFirstFacet {
-                    first_facet: 4,
-                    boundary_facets_len: 2,
+            !InsertionError::ConflictRegion {
+                source: ConflictError::InternalInconsistency {
+                    site: InternalInconsistencySite::OpenBoundaryMissingFirstFacet {
+                        first_facet: 4,
+                        boundary_facets_len: 2,
+                        facet_count: 1,
+                        ridge_vertex_count: 2,
+                    },
+                }
+            }
+            .is_retryable()
+        );
+        assert!(
+            !InsertionError::ConflictRegion {
+                source: ConflictError::InternalInconsistency {
+                    site: InternalInconsistencySite::RidgeInfoMissingSecondFacet {
+                        first_facet: 0,
+                        boundary_facets_len: 2,
+                        ridge_vertex_count: 2,
+                    },
+                }
+            }
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::ConflictRegion {
+                source: ConflictError::DisconnectedBoundary {
+                    visited: 1,
+                    total: 3,
+                    disconnected_simplices: vec![],
+                }
+            }
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::ConflictRegion {
+                source: ConflictError::OpenBoundary {
                     facet_count: 1,
                     ridge_vertex_count: 2,
-                },
-            })
-            .is_retryable()
-        );
-        assert!(
-            !InsertionError::ConflictRegion(ConflictError::InternalInconsistency {
-                site: InternalInconsistencySite::RidgeInfoMissingSecondFacet {
-                    first_facet: 0,
-                    boundary_facets_len: 2,
-                    ridge_vertex_count: 2,
-                },
-            })
-            .is_retryable()
-        );
-        assert!(
-            InsertionError::ConflictRegion(ConflictError::DisconnectedBoundary {
-                visited: 1,
-                total: 3,
-                disconnected_simplices: vec![],
-            })
-            .is_retryable()
-        );
-        assert!(
-            InsertionError::ConflictRegion(ConflictError::OpenBoundary {
-                facet_count: 1,
-                ridge_vertex_count: 2,
-                open_simplex: SimplexKey::from(KeyData::from_ffi(1)),
-            })
+                    open_simplex: SimplexKey::from(KeyData::from_ffi(1)),
+                }
+            }
             .is_retryable()
         );
 
@@ -6175,23 +6248,25 @@ mod tests {
 
         assert!(
             !InsertionError::HullExtension {
-                reason: HullExtensionReason::PredicateFailed(
-                    CoordinateConversionError::ConversionFailed {
+                reason: HullExtensionReason::PredicateFailed {
+                    source: CoordinateConversionError::ConversionFailed {
                         coordinate_index: 0,
                         coordinate_value: CoordinateConversionValue::Other("test".to_string()),
                         from_type: "f64",
                         to_type: "f64",
                     }
-                )
+                }
             }
             .is_retryable()
         );
 
         assert!(
             !InsertionError::HullExtension {
-                reason: HullExtensionReason::Tds(TdsError::InconsistentDataStructure {
-                    message: "test".to_string(),
-                })
+                reason: HullExtensionReason::Tds {
+                    source: TdsError::InconsistentDataStructure {
+                        message: "test".to_string(),
+                    }
+                }
             }
             .is_retryable()
         );
@@ -6205,20 +6280,20 @@ mod tests {
         assert_matches!(
             missing_boundary_simplex(simplex_key, "facet lookup"),
             InsertionError::HullExtension {
-                reason: HullExtensionReason::Tds(TdsError::SimplexNotFound {
+                reason: HullExtensionReason::Tds { source: TdsError::SimplexNotFound {
                     simplex_key: found_simplex_key,
                     context,
-                }),
+                } },
             } if found_simplex_key == simplex_key && context == "facet lookup"
         );
 
         assert_matches!(
             missing_boundary_vertex(vertex_key, simplex_key, "visible boundary facet"),
             InsertionError::HullExtension {
-                reason: HullExtensionReason::Tds(TdsError::VertexNotFound {
+                reason: HullExtensionReason::Tds { source: TdsError::VertexNotFound {
                     vertex_key: found_vertex_key,
                     context,
-                }),
+                } },
             } if found_vertex_key == vertex_key
                 && context.starts_with("visible boundary facet")
                 && context.contains(&format!("{simplex_key:?}"))
@@ -6227,21 +6302,25 @@ mod tests {
         assert_matches!(
             invalid_boundary_facet_index(3, 2),
             InsertionError::HullExtension {
-                reason: HullExtensionReason::Tds(TdsError::FacetError(
-                    FacetError::InvalidFacetIndex {
-                        index: 3,
-                        facet_count: 2,
+                reason: HullExtensionReason::Tds {
+                    source: TdsError::FacetError {
+                        source: FacetError::InvalidFacetIndex {
+                            index: 3,
+                            facet_count: 2,
+                        }
                     }
-                )),
+                },
             }
         );
 
         assert_matches!(
             boundary_facet_iteration_error(FacetError::InsideVertexNotFound),
             InsertionError::HullExtension {
-                reason: HullExtensionReason::Tds(TdsError::FacetError(
-                    FacetError::InsideVertexNotFound
-                )),
+                reason: HullExtensionReason::Tds {
+                    source: TdsError::FacetError {
+                        source: FacetError::InsideVertexNotFound
+                    }
+                },
             }
         );
     }

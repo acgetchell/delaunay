@@ -1312,7 +1312,8 @@ pub mod query {
     pub use crate::flips::RidgeHandle;
     pub use crate::geometry::Point;
     pub use crate::geometry::algorithms::convex_hull::{
-        ConvexHull, ConvexHullConstructionError, ConvexHullValidationError,
+        ConvexHull, ConvexHullConstructionError, ConvexHullInsufficientDataReason,
+        ConvexHullValidationError,
     };
     pub use crate::geometry::kernel::{
         AdaptiveKernel, ExactPredicates, FastKernel, Kernel, RobustKernel,
@@ -2085,7 +2086,8 @@ pub mod prelude {
         // Read-only algorithms
         pub use crate::assert_jaccard_gte;
         pub use crate::geometry::algorithms::convex_hull::{
-            ConvexHull, ConvexHullConstructionError, ConvexHullValidationError,
+            ConvexHull, ConvexHullConstructionError, ConvexHullInsufficientDataReason,
+            ConvexHullValidationError,
         };
         pub use crate::query::{
             JaccardComputationError, extract_edge_set, extract_facet_identifier_set,

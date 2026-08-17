@@ -513,7 +513,9 @@ where
                 let mut simplices_removed = tri
                     .tds
                     .remove_simplices_by_keys(simplices_to_remove)
-                    .map_err(|e| InvariantError::Tds(e.into_inner()))?;
+                    .map_err(|e| InvariantError::Tds {
+                    source: e.into_inner(),
+                })?;
                 let max_repair_simplices_removed = simplices_to_remove.len();
                 let mut post_repair_frontier = SimplexKeyBuffer::new();
 
@@ -526,7 +528,9 @@ where
 
                 tri.tds
                     .remove_vertex(vertex_key)
-                    .map_err(|e| InvariantError::Tds(e.into_inner()))?;
+                    .map_err(|e| InvariantError::Tds {
+                        source: e.into_inner(),
+                    })?;
 
                 let surviving_new_simplices = tri.live_simplices_from(&new_simplices);
                 let validation_scope = tri.vertex_removal_validation_scope(
@@ -643,7 +647,7 @@ where
                 })?;
             self.tds
                 .normalize_coherent_orientation()
-                .map_err(InvariantError::Tds)?;
+                .map_err(|source| InvariantError::Tds { source })?;
             if self
                 .validate_geometric_simplex_orientation_for_simplices(validation_scope)
                 .is_ok()
@@ -696,12 +700,12 @@ where
                 let Some(vertex) = self.tds.vertex(vertex_key) else {
                     continue;
                 };
-                return Err(InvariantError::Triangulation(
-                    TriangulationValidationError::IsolatedVertex {
+                return Err(InvariantError::Triangulation {
+                    source: TriangulationValidationError::IsolatedVertex {
                         vertex_key,
                         vertex_uuid: vertex.uuid(),
                     },
-                ));
+                });
             };
 
             if let Some(vertex) = self.tds.vertex_mut(vertex_key) {
@@ -726,11 +730,15 @@ where
         let result = {
             let tri = transaction.triangulation_mut();
             (|| -> Result<usize, InvariantError> {
-                let simplices_removed = tri
-                    .tds
-                    .remove_vertex(vertex_key)
-                    .map_err(|e| InvariantError::Tds(e.into_inner()))?;
-                tri.tds.is_valid().map_err(InvariantError::Tds)?;
+                let simplices_removed =
+                    tri.tds
+                        .remove_vertex(vertex_key)
+                        .map_err(|e| InvariantError::Tds {
+                            source: e.into_inner(),
+                        })?;
+                tri.tds
+                    .is_valid()
+                    .map_err(|source| InvariantError::Tds { source })?;
                 tri.is_valid_topology()?;
                 Ok(simplices_removed)
             })()
@@ -757,12 +765,15 @@ where
         let mut affected_vertices =
             fast_hash_set_with_capacity(simplices_to_remove.len().saturating_mul(D));
         for &simplex_key in simplices_to_remove {
-            let simplex = self.tds.simplex(simplex_key).ok_or_else(|| {
-                InvariantError::Tds(TdsError::SimplexNotFound {
-                    simplex_key,
-                    context: "collecting affected vertices for vertex removal".to_string(),
-                })
-            })?;
+            let simplex = self
+                .tds
+                .simplex(simplex_key)
+                .ok_or_else(|| InvariantError::Tds {
+                    source: TdsError::SimplexNotFound {
+                        simplex_key,
+                        context: "collecting affected vertices for vertex removal".to_string(),
+                    },
+                })?;
             for &vertex_key in simplex.vertices() {
                 if vertex_key != removed_vertex {
                     affected_vertices.insert(vertex_key);
@@ -828,18 +839,22 @@ where
         validation_scope: &SimplexKeyBuffer,
     ) -> Result<(), InvariantError> {
         if self.tds.contains_vertex_key(removed_vertex) {
-            return Err(InvariantError::Tds(TdsError::InconsistentDataStructure {
-                message: format!(
-                    "Removed vertex {removed_vertex:?} still exists after vertex-removal finalization"
-                ),
-            }));
+            return Err(InvariantError::Tds {
+                source: TdsError::InconsistentDataStructure {
+                    message: format!(
+                        "Removed vertex {removed_vertex:?} still exists after vertex-removal finalization"
+                    ),
+                },
+            });
         }
 
         if self.tds.number_of_simplices() == 0
             || surviving_new_simplices.is_empty()
             || validation_scope.is_empty()
         {
-            self.tds.is_valid().map_err(InvariantError::Tds)?;
+            self.tds
+                .is_valid()
+                .map_err(|source| InvariantError::Tds { source })?;
             self.is_valid_topology()?;
             return Ok(());
         }
@@ -856,10 +871,12 @@ where
 
         #[cfg(debug_assertions)]
         {
-            self.tds.is_valid().map_err(InvariantError::Tds)?;
+            self.tds
+                .is_valid()
+                .map_err(|source| InvariantError::Tds { source })?;
             self.is_valid_topology()?;
             self.is_valid_realization()
-                .map_err(InvariantError::Realization)?;
+                .map_err(|source| InvariantError::Realization { source })?;
         }
 
         Ok(())
@@ -882,12 +899,12 @@ where
                 continue;
             }
 
-            return Err(InvariantError::Triangulation(
-                TriangulationValidationError::IsolatedVertex {
+            return Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::IsolatedVertex {
                     vertex_key,
                     vertex_uuid: vertex.uuid(),
                 },
-            ));
+            });
         }
         Ok(())
     }
@@ -1248,7 +1265,7 @@ where
 
         let to_remove = self
             .simplices_for_local_facet_issue_repair(issues)
-            .map_err(InsertionError::TopologyValidation)?;
+            .map_err(|source| InsertionError::TopologyValidation { source })?;
         let attempted = to_remove.len();
         if attempted > max_simplices_removed {
             return Err(InsertionError::MaxSimplicesRemovedExceeded {
@@ -1259,10 +1276,11 @@ where
         let mut affected_vertices = IncidentRepairVertexBuffer::new();
         self.extend_incident_repair_vertices_from_simplices(&to_remove, &mut affected_vertices);
         let frontier_simplices = self.collect_local_repair_frontier(issues, &to_remove);
-        let removed_count = self
-            .tds
-            .remove_simplices_by_keys(&to_remove)
-            .map_err(|e| InsertionError::TopologyValidation(e.into_inner()))?;
+        let removed_count = self.tds.remove_simplices_by_keys(&to_remove).map_err(|e| {
+            InsertionError::TopologyValidation {
+                source: e.into_inner(),
+            }
+        })?;
 
         Ok(LocalFacetRepairOutcome {
             removed_count,
@@ -1376,9 +1394,11 @@ where
                     &new_simplices,
                     &outcome.frontier_simplices,
                 )?;
-                tri.tds
-                    .assign_incident_simplices()
-                    .map_err(|error| InsertionError::TopologyValidation(error.into_inner()))?;
+                tri.tds.assign_incident_simplices().map_err(|error| {
+                    InsertionError::TopologyValidation {
+                        source: error.into_inner(),
+                    }
+                })?;
                 tri.validate()
                     .map_err(Self::invariant_error_to_insertion_error)?;
 
@@ -1884,10 +1904,10 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(InsertionError::TopologyValidation(TdsError::SimplexNotFound {
+            Err(InsertionError::TopologyValidation { source: TdsError::SimplexNotFound {
                 simplex_key,
                 ..
-            })) if simplex_key == ck
+            } }) if simplex_key == ck
         );
     }
 
@@ -1964,10 +1984,10 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(InvariantError::Tds(TdsError::SimplexNotFound {
+            Err(InvariantError::Tds { source: TdsError::SimplexNotFound {
                 simplex_key,
                 ..
-            })) if simplex_key == missing_simplex
+            } }) if simplex_key == missing_simplex
         );
     }
 
@@ -2098,12 +2118,12 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(InvariantError::Triangulation(
+            Err(InvariantError::Triangulation { source:
                 TriangulationValidationError::IsolatedVertex {
                     vertex_key,
                     ..
                 },
-            )) if vertex_key == isolated_survivor
+             }) if vertex_key == isolated_survivor
         );
         assert_eq!(tri.tds.number_of_vertices(), vertex_count);
         assert_eq!(tri.tds.number_of_simplices(), simplex_count);
@@ -2163,9 +2183,9 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(InvariantError::Triangulation(
+            Err(InvariantError::Triangulation { source:
                 TriangulationValidationError::IsolatedVertex { vertex_key, .. }
-            )) if vertex_key == v3
+             }) if vertex_key == v3
         );
     }
 
@@ -2187,9 +2207,9 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(InvariantError::Tds(
-                TdsError::InconsistentDataStructure { .. }
-            ))
+            Err(InvariantError::Tds {
+                source: TdsError::InconsistentDataStructure { .. }
+            })
         );
     }
 
@@ -2310,9 +2330,9 @@ mod tests {
                     ref source
                 } if matches!(
                     source.as_ref(),
-                    InvariantError::Triangulation(
+                    InvariantError::Triangulation { source:
                         TriangulationValidationError::IsolatedVertex { .. }
-                    )
+                     }
                 )
             ),
             "expected isolated-vertex invariant failure, got {error:?}"
@@ -2382,7 +2402,9 @@ mod tests {
                 tri.validate()
                     .expect("successful public repair should leave valid topology");
             }
-            Err(InsertionError::TopologyValidation(TdsError::DuplicateSimplices { .. })) => {
+            Err(InsertionError::TopologyValidation {
+                source: TdsError::DuplicateSimplices { .. },
+            }) => {
                 assert_eq!(tri.tds.number_of_simplices(), original_simplex_count);
             }
             Err(error) => panic!("unexpected duplicate-simplex repair error: {error:?}"),
@@ -2523,7 +2545,7 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { ref message }))
+            Err(InvariantError::Tds { source: TdsError::InconsistentDataStructure { ref message } })
                 if message.contains("Local facet repair after vertex removal failed")
                     && message.contains("Local facet repair removal budget exceeded")
         );

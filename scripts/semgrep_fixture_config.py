@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 UTF8 = "utf-8"
 RULE_ANNOTATION_RE = re.compile(r"(?:ruleid|ok):\s*([^\n]+)")
+RULE_VIOLATION_ANNOTATION_RE = re.compile(r"(?<![A-Za-z0-9_])ruleid:\s*([^\n]+)")
 RULE_SPLIT_RE = re.compile(r"(?m)^  - id: ")
 
 
@@ -19,6 +20,17 @@ def annotated_rule_ids(fixture_text: str) -> list[str]:
     """Return unique repository Semgrep rule IDs referenced by one fixture."""
     rule_ids: list[str] = []
     for match in RULE_ANNOTATION_RE.finditer(fixture_text):
+        for raw_rule_id in match.group(1).split(","):
+            rule_id = raw_rule_id.strip()
+            if rule_id.startswith("delaunay.") and rule_id not in rule_ids:
+                rule_ids.append(rule_id)
+    return rule_ids
+
+
+def violation_rule_ids(fixture_text: str) -> list[str]:
+    """Return unique rule IDs with an expected Semgrep finding."""
+    rule_ids: list[str] = []
+    for match in RULE_VIOLATION_ANNOTATION_RE.finditer(fixture_text):
         for raw_rule_id in match.group(1).split(","):
             rule_id = raw_rule_id.strip()
             if rule_id.startswith("delaunay.") and rule_id not in rule_ids:
@@ -36,6 +48,29 @@ def config_rule_chunks(config_text: str) -> dict[str, str]:
         rule_id = lines[0].strip()
         chunks[rule_id] = f"  - id: {chunk}"
     return chunks
+
+
+def fixture_paths(fixture_root: Path) -> list[Path]:
+    """Return fixture files covered by the repository Semgrep test harness."""
+    if fixture_root.is_file():
+        return [fixture_root]
+    return sorted(path for path in fixture_root.rglob("*") if path.is_file() and not path.name.endswith(".fixed"))
+
+
+def unannotated_rule_ids(fixture_root: Path, source_config_path: Path) -> list[str]:
+    """Return config rule IDs without a positive ``ruleid`` fixture."""
+    annotated_ids = {rule_id for fixture_path in fixture_paths(fixture_root) for rule_id in violation_rule_ids(fixture_path.read_text(encoding=UTF8))}
+    rule_chunks = config_rule_chunks(source_config_path.read_text(encoding=UTF8))
+    return [rule_id for rule_id in rule_chunks if rule_id not in annotated_ids]
+
+
+def validate_rule_coverage(fixture_root: Path, source_config_path: Path) -> None:
+    """Require every repository Semgrep rule to have a positive fixture."""
+    missing_rule_ids = unannotated_rule_ids(fixture_root, source_config_path)
+    if missing_rule_ids:
+        missing_rules = ", ".join(missing_rule_ids)
+        msg = f"Semgrep rules without ruleid fixtures under {fixture_root}: {missing_rules}"
+        raise ValueError(msg)
 
 
 def build_fixture_config(fixture_path: Path, source_config_path: Path) -> str:
@@ -61,9 +96,14 @@ def write_fixture_config(fixture_path: Path, source_config_path: Path, output_co
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description=__doc__, suggest_on_error=True, color=False)
+    parser.add_argument(
+        "--check-coverage",
+        action="store_true",
+        help="Require every rule in source_config to have a ruleid fixture",
+    )
     parser.add_argument("fixture", type=Path)
     parser.add_argument("source_config", type=Path)
-    parser.add_argument("output_config", type=Path)
+    parser.add_argument("output_config", type=Path, nargs="?")
     return parser.parse_args(argv)
 
 
@@ -71,7 +111,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the fixture-config generator."""
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        write_fixture_config(args.fixture, args.source_config, args.output_config)
+        if args.check_coverage:
+            if args.output_config is not None:
+                msg = "output_config is not accepted with --check-coverage"
+                raise ValueError(msg)
+            validate_rule_coverage(args.fixture, args.source_config)
+        else:
+            if args.output_config is None:
+                msg = "output_config is required unless --check-coverage is used"
+                raise ValueError(msg)
+            write_fixture_config(args.fixture, args.source_config, args.output_config)
     except ValueError as exc:
         print(exc, file=sys.stderr)
         return 1

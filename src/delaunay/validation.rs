@@ -351,15 +351,24 @@ impl From<&DelaunayVerificationError> for DelaunayVerificationErrorKind {
 pub enum DelaunayTriangulationValidationError {
     /// Lower-layer element or TDS structural validation error (Levels 1–2).
     #[error(transparent)]
-    Tds(Box<TdsError>),
+    Tds {
+        /// Boxed TDS source error.
+        source: Box<TdsError>,
+    },
 
     /// Lower-layer topology validation error (Level 3).
     #[error(transparent)]
-    Triangulation(Box<TriangulationValidationError>),
+    Triangulation {
+        /// Boxed topology-validation source error.
+        source: Box<TriangulationValidationError>,
+    },
 
     /// Lower-layer realized-geometry validation error (Level 4).
     #[error(transparent)]
-    Realization(Box<TriangulationRealizationValidationError>),
+    Realization {
+        /// Boxed realization-validation source error.
+        source: Box<TriangulationRealizationValidationError>,
+    },
 
     /// Flip-based Delaunay verification detected a violation.
     ///
@@ -398,24 +407,30 @@ pub enum DelaunayTriangulationValidationError {
 
 impl From<TdsError> for DelaunayTriangulationValidationError {
     fn from(source: TdsError) -> Self {
-        Self::Tds(Box::new(source))
+        Self::Tds {
+            source: Box::new(source),
+        }
     }
 }
 
 impl From<TriangulationValidationError> for DelaunayTriangulationValidationError {
     fn from(source: TriangulationValidationError) -> Self {
-        Self::Triangulation(Box::new(source))
+        Self::Triangulation {
+            source: Box::new(source),
+        }
     }
 }
 
 impl From<TriangulationRealizationValidationError> for DelaunayTriangulationValidationError {
     fn from(source: TriangulationRealizationValidationError) -> Self {
         match source {
-            TriangulationRealizationValidationError::Tds(source) => Self::Tds(source),
-            TriangulationRealizationValidationError::Triangulation(source) => {
-                Self::Triangulation(source)
+            TriangulationRealizationValidationError::Tds { source } => Self::Tds { source },
+            TriangulationRealizationValidationError::Triangulation { source } => {
+                Self::Triangulation { source }
             }
-            source => Self::Realization(Box::new(source)),
+            source => Self::Realization {
+                source: Box::new(source),
+            },
         }
     }
 }
@@ -648,24 +663,24 @@ where
                         .into_iter()
                         .map(|detail| InvariantViolation {
                             kind: InvariantKind::DelaunayProperty,
-                            error: InvariantError::Delaunay(
-                                DelaunayTriangulationValidationError::VerificationFailed {
+                            error: InvariantError::Delaunay {
+                                source: DelaunayTriangulationValidationError::VerificationFailed {
                                     source: Box::new(DelaunayVerificationError::from(
                                         DelaunayValidationError::from(detail),
                                     )),
                                 },
-                            ),
+                            },
                         })
                         .collect(),
                 }),
                 Err(source) => Err(TriangulationValidationReport {
                     violations: vec![InvariantViolation {
                         kind: InvariantKind::DelaunayProperty,
-                        error: InvariantError::Delaunay(
-                            DelaunayTriangulationValidationError::VerificationFailed {
+                        error: InvariantError::Delaunay {
+                            source: DelaunayTriangulationValidationError::VerificationFailed {
                                 source: Box::new(DelaunayVerificationError::from(source)),
                             },
-                        ),
+                        },
                     }],
                 }),
             };
@@ -675,7 +690,7 @@ where
             .map_err(|error| TriangulationValidationReport {
                 violations: vec![InvariantViolation {
                     kind: InvariantKind::DelaunayProperty,
-                    error: InvariantError::Delaunay(error),
+                    error: InvariantError::Delaunay { source: error },
                 }],
             })
     }
@@ -931,14 +946,14 @@ where
                             .extend(realization_report.violations.into_iter().map(|error| {
                                 InvariantViolation {
                                     kind: InvariantKind::Realization,
-                                    error: InvariantError::Realization(error),
+                                    error: InvariantError::Realization { source: error },
                                 }
                             }));
                     }
                     Err(source) => {
                         report.violations.push(InvariantViolation {
                             kind: InvariantKind::Realization,
-                            error: InvariantError::Realization(source),
+                            error: InvariantError::Realization { source },
                         });
                     }
                 }
@@ -1615,7 +1630,7 @@ mod tests {
             .expect_err("checked TDS reconstruction must reject broken UUID mappings");
         assert_matches!(
             err,
-            DelaunayTriangulationValidationError::Tds(source)
+            DelaunayTriangulationValidationError::Tds { source }
                 if matches!(source.as_ref(), TdsError::MappingInconsistency { .. })
         );
     }
@@ -1641,7 +1656,7 @@ mod tests {
             .expect_err("checked TDS reconstruction must reject isolated vertices");
         assert_matches!(
             err,
-            DelaunayTriangulationValidationError::Triangulation(source)
+            DelaunayTriangulationValidationError::Triangulation { source }
                 if matches!(
                     source.as_ref(),
                     TriangulationValidationError::IsolatedVertex { .. }
@@ -1774,10 +1789,10 @@ mod tests {
         dt.tds_mut_for_repair().uuid_to_vertex_key.remove(&uuid);
 
         match dt.validate() {
-            Err(DelaunayTriangulationValidationError::Tds(source))
+            Err(DelaunayTriangulationValidationError::Tds { source })
                 if matches!(source.as_ref(), TdsError::MappingInconsistency { .. }) => {}
             other => panic!(
-                "Expected DelaunayTriangulationValidationError::Tds(MappingInconsistency), got {other:?}"
+                "Expected DelaunayTriangulationValidationError::Tds with MappingInconsistency source, got {other:?}"
             ),
         }
     }
@@ -1801,13 +1816,13 @@ mod tests {
             .unwrap();
 
         match dt.validate() {
-            Err(DelaunayTriangulationValidationError::Triangulation(source))
+            Err(DelaunayTriangulationValidationError::Triangulation { source })
                 if matches!(
                     source.as_ref(),
                     TriangulationValidationError::IsolatedVertex { .. }
                 ) => {}
             other => panic!(
-                "Expected DelaunayTriangulationValidationError::Triangulation(IsolatedVertex), got {other:?}"
+                "Expected DelaunayTriangulationValidationError::Triangulation with IsolatedVertex source, got {other:?}"
             ),
         }
     }

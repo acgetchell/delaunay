@@ -741,6 +741,7 @@ rules:
       include:
         - "/src/delaunay/construction.rs"
         - "/src/geometry/algorithms/convex_hull.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-either:
       - pattern-regex: >-
           (?s)\bimpl[^{}]*\bDelaunayTriangulation\b[^{}]*\{(?:(?!^\}).)*?^\s*pub\s+(?:const\s+)?fn\s+(?:new|new_with_(?:construction_statistics|options(?:_and_construction_statistics)?|topology_guarantee)|with_(?:kernel|topology_guarantee(?:_and_options)?|options_and_statistics))\s*\(
@@ -1301,6 +1302,47 @@ rules:
         - "/tests/semgrep/**"
     pattern-regex: '(?m)(?<!#\[non_exhaustive\]\n)^\s*pub\s+enum\s+[A-Za-z0-9_]*Error\b'
 
+  - id: delaunay.rust.public-error-variants-use-named-fields
+    languages:
+      - generic
+    severity: WARNING
+    message: >-
+      Use a struct variant with a semantically named field instead of a
+      positional tuple carrier in public error enums.
+    metadata:
+      category: maintainability
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/566"
+      rationale: >-
+        Named fields document typed error payloads at the declaration and keep
+        downstream construction and matching syntax independent of tuple order.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-either:
+      - pattern-regex: |-
+          (?msx)
+          ^\#\[derive\(
+          (?:(?!\)\]).)*\b(?:thiserror::)?Error\b(?:(?!\)\]).)*\)\]\s*
+          (?:^\#\[(?!non_exhaustive\])[^\n]+\]\s*)*
+          ^\#\[non_exhaustive\]\s*
+          (?:^\#\[[^\n]+\]\s*)*
+          ^pub\s+enum\s+[A-Za-z_][A-Za-z0-9_]*
+          (?:\s*<(?:(?!\{).)*?>)?\s*\{
+          (?:(?!^\}).)*?^[ \t]+[A-Z][A-Za-z0-9_]*[ \t]*\(
+      - pattern-regex: |-
+          (?msx)
+          ^\#\[non_exhaustive\]\s*
+          (?:^\#\[(?!derive\()[^\n]+\]\s*)*
+          ^\#\[derive\(
+          (?:(?!\)\]).)*\b(?:thiserror::)?Error\b(?:(?!\)\]).)*\)\]\s*
+          (?:^\#\[[^\n]+\]\s*)*
+          ^pub\s+enum\s+[A-Za-z_][A-Za-z0-9_]*
+          (?:\s*<(?:(?!\{).)*?>)?\s*\{
+          (?:(?!^\}).)*?^[ \t]+[A-Z][A-Za-z0-9_]*[ \t]*\(
+
   - id: delaunay.rust.no-stringly-generator-error-payloads
     languages:
       - generic
@@ -1410,21 +1452,22 @@ rules:
       - generic
     severity: WARNING
     message: >-
-      Mark boxed nested FlipError fields with #[source] so callers can traverse
-      the typed error chain.
+      Mark boxed nested FlipError fields with #[source] or #[from] so callers
+      can traverse the typed error chain.
     metadata:
       category: maintainability
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/406"
       rationale: >-
         Boxed nested flip errors should remain visible through the standard
-        Error::source chain instead of becoming display-only diagnostics.
+        Error::source chain instead of becoming display-only diagnostics;
+        thiserror's #[from] also establishes that source relationship.
     paths:
       include:
         - "/src/core/algorithms/flips/**"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     # yamllint disable rule:line-length
     pattern-regex: >-
-      (?m)(?<!    #\[source\]\n)(?<!        #\[source\]\n)(?<!            #\[source\]\n)^\s*(?:reason|source):\s*Box<(?:Flip[A-Za-z0-9_]+Error|SimplexValidationError)>\s*,
+      (?m)(?<!    #\[source\]\n)(?<!    #\[from\]\n)(?<!        #\[source\]\n)(?<!        #\[from\]\n)(?<!            #\[source\]\n)(?<!            #\[from\]\n)^\s*(?:reason|source):\s*Box<(?:Flip[A-Za-z0-9_]+Error|SimplexValidationError)>\s*,
     # yamllint enable rule:line-length
 
   - id: delaunay.rust.no-public-unchecked-apis
@@ -1497,6 +1540,7 @@ rules:
       include:
         - "/README.md"
         - "/docs/**/*.md"
+        - "/tests/semgrep/docs/**/*.md"
       exclude:
         - "/docs/archive/**"
     pattern-regex: '\.(?:unwrap(?:_[A-Za-z0-9_]+)?|expect)\s*\('

@@ -707,7 +707,11 @@ fn search_closed_2d_selection(
 fn periodic_quotient_tds_mutation_error(
     source: TdsMutationError,
 ) -> TriangulationConstructionError {
-    TriangulationConstructionError::Tds(TdsConstructionError::ValidationError(source.into()))
+    TriangulationConstructionError::Tds {
+        source: TdsConstructionError::ValidationError {
+            source: source.into(),
+        },
+    }
 }
 
 // =============================================================================
@@ -1545,9 +1549,9 @@ where
         M: GlobalTopologyModel<D>,
     {
         model.validate_configuration().map_err(|source| {
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::TopologyModelConfiguration { source },
-            )
+            DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::TopologyModelConfiguration { source },
+            }
         })
     }
 
@@ -1625,22 +1629,22 @@ where
             let mut canonicalized_coords = *v.point().coords();
             model
                 .canonicalize_point_in_place(&mut canonicalized_coords)
-                .map_err(|source| {
-                    DelaunayTriangulationConstructionError::Triangulation(
-                        DelaunayConstructionFailure::VertexCanonicalization {
+                .map_err(
+                    |source| DelaunayTriangulationConstructionError::Triangulation {
+                        source: DelaunayConstructionFailure::VertexCanonicalization {
                             vertex_index: idx,
                             source,
                         },
-                    )
-                })?;
+                    },
+                )?;
 
             let new_point = Point::try_new(canonicalized_coords).map_err(|error| {
-                DelaunayTriangulationConstructionError::Triangulation(
-                    DelaunayConstructionFailure::CanonicalizedPointValidation {
+                DelaunayTriangulationConstructionError::Triangulation {
+                    source: DelaunayConstructionFailure::CanonicalizedPointValidation {
                         vertex_index: idx,
                         source: error,
                     },
-                )
+                }
             })?;
             let new_vertex = Vertex::from_validated_point_with_uuid(new_point, v.uuid(), v.data);
 
@@ -2095,13 +2099,13 @@ where
             match seen.entry(identity) {
                 Entry::Occupied(entry) => {
                     let existing_index = *entry.get();
-                    return Err(TdsConstructionError::ValidationError(
-                        TdsError::DuplicateExplicitSimplices {
+                    return Err(TdsConstructionError::ValidationError {
+                        source: TdsError::DuplicateExplicitSimplices {
                             existing_simplex_index: existing_index,
                             duplicate_simplex_index: simplex_index,
                             vertex_indices: Self::explicit_simplex_input_indices(simplex_spec),
                         },
-                    ));
+                    });
                 }
                 Entry::Vacant(entry) => {
                     entry.insert(simplex_index);
@@ -2131,8 +2135,8 @@ where
                     Entry::Occupied(mut entry) => {
                         let incident_count = *entry.get();
                         if incident_count >= 2 {
-                            return Err(TdsConstructionError::ValidationError(
-                                TdsError::ExplicitFacetSharingViolation {
+                            return Err(TdsConstructionError::ValidationError {
+                                source: TdsError::ExplicitFacetSharingViolation {
                                     facet_key: facet_key_from_vertices(entry.key().as_slice()),
                                     facet_vertex_indices: Self::explicit_facet_input_indices(
                                         simplex_spec,
@@ -2144,7 +2148,7 @@ where
                                     candidate_simplex_index: simplex_index,
                                     candidate_facet_index: facet_index,
                                 },
-                            ));
+                            });
                         }
                         *entry.get_mut() += 1;
                     }
@@ -2305,7 +2309,9 @@ where
         // --- Assign incident simplices ---
         tds.assign_incident_simplices().map_err(|source| {
             ExplicitConstructionError::TdsAssembly {
-                source: Box::new(TdsConstructionError::ValidationError(source.into())),
+                source: Box::new(TdsConstructionError::ValidationError {
+                    source: source.into(),
+                }),
             }
         })?;
 
@@ -2458,11 +2464,11 @@ where
             return Ok(());
         }
 
-        Err(DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology {
+        Err(DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology {
                 topology: global_topology.kind(),
             },
-        ))
+        })
     }
 
     /// Rejects explicit metadata that conflicts with derived periodic topology.
@@ -2483,8 +2489,8 @@ where
             return Ok(());
         }
 
-        Err(DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
+        Err(DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
                 requested_topology: requested_global_topology.kind(),
                 requested_mode: Self::toroidal_mode(requested_global_topology),
                 requested_periods: Self::toroidal_periods(requested_global_topology),
@@ -2492,7 +2498,7 @@ where
                 expected_periods: Self::toroidal_periods(derived_global_topology)
                     .unwrap_or_default(),
             },
-        ))
+        })
     }
 
     /// Extracts toroidal construction mode from topology metadata for diagnostics.
@@ -3252,7 +3258,7 @@ where
                 })?;
             let ck = tds_mut
                 .insert_simplex_with_mapping_trusted_vertices(simplex)
-                .map_err(TriangulationConstructionError::Tds)?;
+                .map_err(|source| TriangulationConstructionError::Tds { source })?;
             inserted_simplex_keys.push(ck);
             rep_lifted_by_key.insert(ck, lifted_vertices.clone());
         }
@@ -3379,7 +3385,7 @@ where
         if let Err(e) = tds_mut.is_valid() {
             return Err(TriangulationConstructionError::FinalTopologyValidation {
                 context: FinalTopologyValidationContext::PeriodicQuotientTopology,
-                source: Box::new(InvariantError::Tds(e)),
+                source: Box::new(InvariantError::Tds { source: e }),
             }
             .into());
         }
@@ -3393,7 +3399,7 @@ where
         let proof = candidate.validate_tds_structure().map_err(|source| {
             TriangulationConstructionError::FinalTopologyValidation {
                 context: FinalTopologyValidationContext::PeriodicQuotientTopology,
-                source: Box::new(InvariantError::Tds(source)),
+                source: Box::new(InvariantError::Tds { source }),
             }
         })?;
         Ok(candidate.into_structurally_valid_delaunay(proof))
@@ -3661,11 +3667,11 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology {
+            Err(DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology {
                     topology: TopologyKind::Spherical,
                 }
-            ))
+            })
         );
     }
 
@@ -3683,11 +3689,11 @@ mod tests {
 
         assert_matches!(
             err.error,
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology {
+            DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology {
                     topology: TopologyKind::Spherical,
                 }
-            )
+            }
         );
         assert_eq!(err.statistics.inserted, 0);
         assert_eq!(err.statistics.skipped_duplicate, 0);
@@ -3780,13 +3786,13 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::UnsupportedPeriodicDimension {
+            Err(DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::UnsupportedPeriodicDimension {
                     dimension: 4,
                     max_validated_dimension: 3,
                     tracking_issue: 416,
                 }
-            ))
+            })
         );
     }
 
@@ -3801,7 +3807,7 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(DelaunayTriangulationConstructionError::Triangulation(
+            Err(DelaunayTriangulationConstructionError::Triangulation { source:
                 DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
                     requested_topology: TopologyKind::Spherical,
                     requested_mode: None,
@@ -3809,7 +3815,7 @@ mod tests {
                     expected_mode: ToroidalConstructionMode::PeriodicImagePoint,
                     expected_periods,
                 }
-            )) if expected_periods.as_slice() == [1.0, 1.0]
+             }) if expected_periods.as_slice() == [1.0, 1.0]
         );
     }
 
@@ -3824,7 +3830,7 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(DelaunayTriangulationConstructionError::Triangulation(
+            Err(DelaunayTriangulationConstructionError::Triangulation { source:
                 DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
                     requested_topology: TopologyKind::Euclidean,
                     requested_mode: None,
@@ -3832,7 +3838,7 @@ mod tests {
                     expected_mode: ToroidalConstructionMode::PeriodicImagePoint,
                     expected_periods,
                 }
-            )) if expected_periods.as_slice() == [1.0, 1.0]
+             }) if expected_periods.as_slice() == [1.0, 1.0]
         );
     }
 
@@ -3849,7 +3855,7 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(DelaunayTriangulationConstructionError::Triangulation(
+            Err(DelaunayTriangulationConstructionError::Triangulation { source:
                 DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
                     requested_topology: TopologyKind::Toroidal,
                     requested_mode: Some(ToroidalConstructionMode::Explicit),
@@ -3857,7 +3863,7 @@ mod tests {
                     expected_mode: ToroidalConstructionMode::PeriodicImagePoint,
                     expected_periods,
                 }
-            )) if requested_periods.as_slice() == [1.0, 1.0]
+             }) if requested_periods.as_slice() == [1.0, 1.0]
                 && expected_periods.as_slice() == [1.0, 1.0]
         );
     }
@@ -3876,7 +3882,7 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(DelaunayTriangulationConstructionError::Triangulation(
+            Err(DelaunayTriangulationConstructionError::Triangulation { source:
                 DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
                     requested_topology: TopologyKind::Toroidal,
                     requested_mode: Some(ToroidalConstructionMode::PeriodicImagePoint),
@@ -3884,7 +3890,7 @@ mod tests {
                     expected_mode: ToroidalConstructionMode::PeriodicImagePoint,
                     expected_periods,
                 }
-            )) if requested_periods.as_slice() == [2.0, 1.0]
+             }) if requested_periods.as_slice() == [2.0, 1.0]
                 && expected_periods.as_slice() == [1.0, 1.0]
         );
     }
@@ -3979,12 +3985,13 @@ mod tests {
         let err =
             DelaunayTriangulationBuilder::<(), 2>::derive_periodic_facet_key(&lifted_ordered, 1)
                 .unwrap_err();
-        let DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::PeriodicQuotientFacetKeyDerivation {
-                facet_index,
-                reason,
-            },
-        ) = err
+        let DelaunayTriangulationConstructionError::Triangulation {
+            source:
+                DelaunayConstructionFailure::PeriodicQuotientFacetKeyDerivation {
+                    facet_index,
+                    reason,
+                },
+        } = err
         else {
             panic!("expected PeriodicQuotientFacetKeyDerivation mapping, got: {err:?}");
         };
@@ -4211,7 +4218,7 @@ mod tests {
 
         assert_matches!(
             &err,
-            TriangulationConstructionError::Tds(TdsConstructionError::ValidationError(tds_source))
+            TriangulationConstructionError::Tds { source: TdsConstructionError::ValidationError { source: tds_source } }
                 if tds_source == &source
         );
 
@@ -4240,14 +4247,14 @@ mod tests {
         let err = result.expect_err("non-period validation failure should be mapped");
         assert_matches!(
             err,
-            DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayTriangulationConstructionError::Triangulation { source:
                 DelaunayConstructionFailure::TopologyModelConfiguration {
                     source: GlobalTopologyModelError::NonFiniteCoordinate {
                         axis: 0,
                         value,
                     },
                 },
-            ) if value.is_nan()
+             } if value.is_nan()
         );
     }
 
@@ -4321,7 +4328,7 @@ mod tests {
         let err = result.expect_err("canonicalization failure should be reported");
         assert_matches!(
             err,
-            DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayTriangulationConstructionError::Triangulation { source:
                 DelaunayConstructionFailure::VertexCanonicalization {
                     vertex_index: 0,
                     source: GlobalTopologyModelError::NonFiniteCoordinate {
@@ -4329,7 +4336,7 @@ mod tests {
                         value,
                     },
                 },
-            ) if value.is_nan()
+             } if value.is_nan()
         );
     }
 
@@ -4353,11 +4360,11 @@ mod tests {
         let err = result.expect_err("missing periodic domain must fail");
         assert_matches!(
             err,
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::PeriodicImageMissingDomain {
+            DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::PeriodicImageMissingDomain {
                     topology: TopologyKind::Toroidal,
                 }
-            )
+            }
         );
     }
 

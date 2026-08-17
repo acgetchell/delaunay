@@ -592,8 +592,8 @@ impl From<&HullExtensionReason> for FlipNeighborHullExtensionFailureKind {
                 Self::MultipleBoundaryEdgeSplitFacets
             }
             HullExtensionReason::DisconnectedVisiblePatch { .. } => Self::DisconnectedVisiblePatch,
-            HullExtensionReason::PredicateFailed(_) => Self::PredicateFailed,
-            HullExtensionReason::Tds(_) => Self::Tds,
+            HullExtensionReason::PredicateFailed { source: _ } => Self::PredicateFailed,
+            HullExtensionReason::Tds { source: _ } => Self::Tds,
         }
     }
 }
@@ -628,9 +628,11 @@ pub enum FlipNeighborDelaunayValidationFailureKind {
 impl From<&DelaunayTriangulationValidationError> for FlipNeighborDelaunayValidationFailureKind {
     fn from(source: &DelaunayTriangulationValidationError) -> Self {
         match source {
-            DelaunayTriangulationValidationError::Tds(_) => Self::Tds,
-            DelaunayTriangulationValidationError::Triangulation(_) => Self::Triangulation,
-            DelaunayTriangulationValidationError::Realization(_) => Self::Realization,
+            DelaunayTriangulationValidationError::Tds { source: _ } => Self::Tds,
+            DelaunayTriangulationValidationError::Triangulation { source: _ } => {
+                Self::Triangulation
+            }
+            DelaunayTriangulationValidationError::Realization { source: _ } => Self::Realization,
             DelaunayTriangulationValidationError::VerificationFailed { .. } => {
                 Self::VerificationFailed
             }
@@ -898,11 +900,11 @@ impl From<InsertionError> for FlipNeighborWiringError {
                 facet_hash,
                 simplex_count,
             },
-            InsertionError::TopologyValidation(source) => Self::TopologyValidation {
+            InsertionError::TopologyValidation { source } => Self::TopologyValidation {
                 source: source.into(),
             },
-            InsertionError::ConflictRegion(source) => Self::ConflictRegion { source },
-            InsertionError::Location(source) => Self::Location { source },
+            InsertionError::ConflictRegion { source } => Self::ConflictRegion { source },
+            InsertionError::Location { source } => Self::Location { source },
             InsertionError::CavityFilling { reason } => Self::CavityFilling {
                 reason: reason.into(),
             },
@@ -1385,7 +1387,11 @@ pub enum FlipError {
     },
     /// Simplex creation failed.
     #[error(transparent)]
-    SimplexCreation(#[from] Box<SimplexValidationError>),
+    SimplexCreation {
+        /// Boxed simplex-validation source error.
+        #[from]
+        source: Box<SimplexValidationError>,
+    },
     /// Flip transaction could not repair post-mutation orientation invariants.
     #[error("Flip postcondition orientation repair failed: {source}")]
     PostconditionRepair {
@@ -1458,7 +1464,9 @@ impl From<FlipVertexAdjacencyError> for FlipError {
 
 impl From<SimplexValidationError> for FlipError {
     fn from(source: SimplexValidationError) -> Self {
-        Self::SimplexCreation(Box::new(source))
+        Self::SimplexCreation {
+            source: Box::new(source),
+        }
     }
 }
 
@@ -1518,7 +1526,7 @@ impl From<&FlipError> for FlipFailureKind {
             FlipError::NonManifoldFacet => Self::NonManifoldFacet,
             FlipError::InsertedSimplexAlreadyExists { .. } => Self::InsertedSimplexAlreadyExists,
             FlipError::FacetIteration { .. } => Self::FacetIteration,
-            FlipError::SimplexCreation(_) => Self::SimplexCreation,
+            FlipError::SimplexCreation { source: _ } => Self::SimplexCreation,
             FlipError::PostconditionRepair { .. } => Self::PostconditionRepair,
             FlipError::RealizationValidation { .. } => Self::RealizationValidation,
             FlipError::NeighborWiring { reason } => match reason.as_ref() {
@@ -2004,8 +2012,8 @@ impl From<&DelaunayRepairHeuristicRebuildFailure> for DelaunayRepairHeuristicReb
 
 pub(super) const fn insertion_error_kind(source: &InsertionError) -> InsertionErrorKind {
     match source {
-        InsertionError::ConflictRegion(_) => InsertionErrorKind::ConflictRegion,
-        InsertionError::Location(_) => InsertionErrorKind::Location,
+        InsertionError::ConflictRegion { source: _ } => InsertionErrorKind::ConflictRegion,
+        InsertionError::Location { source: _ } => InsertionErrorKind::Location,
         InsertionError::CavityFilling { .. } => InsertionErrorKind::CavityFilling,
         InsertionError::NeighborWiring { .. } => InsertionErrorKind::NeighborWiring,
         InsertionError::NonManifoldTopology { .. } => InsertionErrorKind::NonManifoldTopology,
@@ -2019,7 +2027,7 @@ pub(super) const fn insertion_error_kind(source: &InsertionError) -> InsertionEr
         InsertionError::DelaunayRepairFailed { .. } => InsertionErrorKind::DelaunayRepairFailed,
         InsertionError::DuplicateCoordinates { .. } => InsertionErrorKind::DuplicateCoordinates,
         InsertionError::DuplicateUuid { .. } => InsertionErrorKind::DuplicateUuid,
-        InsertionError::TopologyValidation(_) => InsertionErrorKind::TopologyValidation,
+        InsertionError::TopologyValidation { source: _ } => InsertionErrorKind::TopologyValidation,
         InsertionError::TopologyValidationFailed { .. } => {
             InsertionErrorKind::TopologyValidationFailed
         }

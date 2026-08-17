@@ -128,7 +128,7 @@ impl From<TdsError> for QueryError {
 impl From<ManifoldError> for QueryError {
     fn from(source: ManifoldError) -> Self {
         match source {
-            ManifoldError::Tds(source) => Self::from(source),
+            ManifoldError::Tds { source } => Self::from(source),
             source => Self::TopologyInvalid {
                 source: Box::new(source),
             },
@@ -2379,7 +2379,7 @@ mod tests {
         };
 
         assert_matches!(
-            QueryError::from(ManifoldError::Tds(source)),
+            QueryError::from(ManifoldError::Tds { source }),
             QueryError::TriangulationCorrupted { source }
                 if matches!(
                     source.as_ref(),

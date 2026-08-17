@@ -40,7 +40,7 @@ fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {
             context: InsertionTopologyValidationContext::DelaunayRepair,
             source,
         },
-        Err(source) => InsertionError::TopologyValidation(source),
+        Err(source) => InsertionError::TopologyValidation { source },
     }
 }
 
@@ -527,7 +527,7 @@ where
         self.tri.normalize_and_promote_positive_orientation()?;
         self.tri
             .validate_geometric_simplex_orientation()
-            .map_err(InsertionError::TopologyValidation)?;
+            .map_err(|source| InsertionError::TopologyValidation { source })?;
         Ok(())
     }
 
@@ -705,8 +705,10 @@ mod tests {
             message: "unit test".to_string(),
         };
 
-        match ridge_link_repair_validation_error(ManifoldError::Tds(tds_err.clone())) {
-            InsertionError::TopologyValidation(source) => assert_eq!(source, tds_err),
+        match ridge_link_repair_validation_error(ManifoldError::Tds {
+            source: tds_err.clone(),
+        }) {
+            InsertionError::TopologyValidation { source } => assert_eq!(source, tds_err),
             other => panic!("expected TopologyValidation, got {other:?}"),
         }
     }

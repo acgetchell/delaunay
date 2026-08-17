@@ -180,7 +180,11 @@ impl From<PeriodicFacetKeyDerivationError> for PeriodicQuotientFacetKeyDerivatio
 pub enum TriangulationConstructionError {
     /// Lower-layer construction error in the TDS.
     #[error(transparent)]
-    Tds(#[from] TdsConstructionError),
+    Tds {
+        /// Typed TDS-construction source error.
+        #[from]
+        source: TdsConstructionError,
+    },
 
     /// Failed to create a simplex during triangulation construction.
     #[error("Failed to create simplex during construction: {message}")]
@@ -661,14 +665,16 @@ where
         }
 
         for vertex in vertices {
-            vertex.is_valid().map_err(|source| {
-                TriangulationConstructionError::Tds(TdsConstructionError::ValidationError(
-                    TdsError::InvalidVertex {
-                        vertex_id: vertex.uuid(),
-                        source,
+            vertex
+                .is_valid()
+                .map_err(|source| TriangulationConstructionError::Tds {
+                    source: TdsConstructionError::ValidationError {
+                        source: TdsError::InvalidVertex {
+                            vertex_id: vertex.uuid(),
+                            source,
+                        },
                     },
-                ))
-            })?;
+                })?;
         }
 
         let points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -733,9 +739,9 @@ where
         let _simplex_key = tds.insert_simplex_with_mapping(simplex)?;
 
         tds.assign_neighbors()
-            .map_err(TdsConstructionError::ValidationError)?;
+            .map_err(|source| TdsConstructionError::ValidationError { source })?;
         tds.assign_incident_simplices()
-            .map_err(|e| TdsConstructionError::ValidationError(e.into()))?;
+            .map_err(|e| TdsConstructionError::ValidationError { source: e.into() })?;
 
         Ok(tds)
     }
@@ -798,13 +804,15 @@ mod tests {
 
     #[test]
     fn insertion_hull_extension_exposes_typed_source() {
-        let reason = HullExtensionReason::Tds(TdsError::InconsistentDataStructure {
-            message: "missing boundary facet".to_string(),
-        });
+        let reason = HullExtensionReason::Tds {
+            source: TdsError::InconsistentDataStructure {
+                message: "missing boundary facet".to_string(),
+            },
+        };
         let error = TriangulationConstructionError::InsertionHullExtension { reason };
         let source = std::error::Error::source(&error)
             .and_then(|source| source.downcast_ref::<HullExtensionReason>());
-        assert_matches!(source, Some(HullExtensionReason::Tds(_)));
+        assert_matches!(source, Some(HullExtensionReason::Tds { source: _ }));
     }
 
     #[test]

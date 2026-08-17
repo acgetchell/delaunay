@@ -44,3 +44,12 @@ let kernel = dt.as_triangulation().kernel();
 
 // ok: delaunay.rust.no-as-triangulation-storage-reach-through
 let generation = dt.topology_generation();
+
+// ruleid: delaunay.rust.no-unwrap-expect-in-markdown-examples
+let hull = ConvexHull::try_from_triangulation(&triangulation).unwrap();
+
+// ruleid: delaunay.rust.no-unwrap-expect-in-markdown-examples
+let hull = ConvexHull::try_from_triangulation(&triangulation).expect("valid hull");
+
+// ok: delaunay.rust.no-unwrap-expect-in-markdown-examples
+let hull = ConvexHull::try_from_triangulation(&triangulation)?;

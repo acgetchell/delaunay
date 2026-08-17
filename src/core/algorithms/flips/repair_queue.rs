@@ -1000,7 +1000,7 @@ where
             | FlipError::NegativeOrientation { .. }
             | FlipError::DuplicateSimplex
             | FlipError::NonManifoldFacet
-            | FlipError::SimplexCreation(_)),
+            | FlipError::SimplexCreation { source: _ }),
         ) => {
             log_apply_skip(&err);
             return Ok(true);
@@ -1193,7 +1193,7 @@ where
             | FlipError::NegativeOrientation { .. }
             | FlipError::DuplicateSimplex
             | FlipError::NonManifoldFacet
-            | FlipError::SimplexCreation(_)),
+            | FlipError::SimplexCreation { source: _ }),
         ) => {
             log_apply_skip(&err);
             return Ok(true);
@@ -1377,7 +1377,7 @@ where
             | FlipError::NegativeOrientation { .. }
             | FlipError::DuplicateSimplex
             | FlipError::NonManifoldFacet
-            | FlipError::SimplexCreation(_)),
+            | FlipError::SimplexCreation { source: _ }),
         ) => {
             log_apply_skip(&err);
             return Ok(true);
@@ -1566,7 +1566,7 @@ where
             | FlipError::NegativeOrientation { .. }
             | FlipError::DuplicateSimplex
             | FlipError::NonManifoldFacet
-            | FlipError::SimplexCreation(_)),
+            | FlipError::SimplexCreation { source: _ }),
         ) => {
             log_apply_skip(&err);
             return Ok(true);

@@ -783,7 +783,7 @@ fn failed_topology_repair_stats<U, V, const D: usize>(
             simplices_removed,
             ..
         } => (*iterations, *simplices_removed),
-        PlManifoldRepairError::Tds(_)
+        PlManifoldRepairError::Tds { source: _ }
         | PlManifoldRepairError::TargetedValidation { .. }
         | PlManifoldRepairError::TargetedPostconditionValidation { .. } => (0, 0),
     };

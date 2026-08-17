@@ -1457,9 +1457,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
                         || matches!(result, Err(QualityError::Inradius { .. }))
                 );
             }
-            Err(DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::GeometricDegeneracy { .. },
-            )) => {
+            Err(DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::GeometricDegeneracy { .. },
+            }) => {
                 // For sufficiently extreme configurations, the robust initial simplex
                 // search may reject the input up-front as geometrically degenerate.
                 // This is acceptable as long as it is reported cleanly.
@@ -1495,10 +1495,11 @@ let simplex_key = dt.simplices().next().unwrap().0;
                         || matches!(result, Err(QualityError::Volume { .. }))
                 );
             }
-            Err(DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::GeometricDegeneracy { .. }
-                | DelaunayConstructionFailure::InsufficientVertices { .. },
-            )) => {
+            Err(DelaunayTriangulationConstructionError::Triangulation {
+                source:
+                    DelaunayConstructionFailure::GeometricDegeneracy { .. }
+                    | DelaunayConstructionFailure::InsufficientVertices { .. },
+            }) => {
                 // Extremely flat/near-degenerate configurations may now be rejected
                 // up-front by the initial simplex search, or Hilbert-sort dedup may
                 // collapse near-identical coordinates (e.g. 1e-14 vs 0.0) at
@@ -1595,9 +1596,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
                     assert_matches!(observed, CoordinateConversionValue::Scalar(_));
                 }
             }
-            Err(DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::GeometricDegeneracy { .. },
-            )) => {
+            Err(DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::GeometricDegeneracy { .. },
+            }) => {
                 // In some numeric regimes, degeneracy is now detected at construction
                 // time instead of by the quality metrics. That is still acceptable
                 // as long as it is reported via the dedicated GeometricDegeneracy

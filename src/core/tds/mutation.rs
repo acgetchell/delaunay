@@ -357,7 +357,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         let vertex_key = self.vertices.insert(vertex);
         if let Err(source) = self.insert_empty_vertex_incidence(vertex_key) {
             self.vertices.remove(vertex_key);
-            return Err(TdsConstructionError::ValidationError(source));
+            return Err(TdsConstructionError::ValidationError { source });
         }
         self.uuid_to_vertex_key.insert(vertex_uuid, vertex_key);
         self.refresh_incomplete_construction_state();
@@ -439,13 +439,13 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         topology_check: SimplexInsertionTopologyCheck,
     ) -> Result<SimplexKey, TdsConstructionError> {
         if simplex.number_of_vertices() != D + 1 {
-            return Err(TdsConstructionError::ValidationError(
-                TdsError::DimensionMismatch {
+            return Err(TdsConstructionError::ValidationError {
+                source: TdsError::DimensionMismatch {
                     expected: D + 1,
                     actual: simplex.number_of_vertices(),
                     context: format!("{D}-dimensional simplex vertex count"),
                 },
-            ));
+            });
         }
 
         let simplex_uuid = simplex.uuid();
@@ -471,7 +471,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         if let Err(source) = self.add_simplex_to_vertex_incidence(simplex_key, &simplex_vertices) {
             self.simplices.remove(simplex_key);
             self.uuid_to_simplex_key.remove(&simplex_uuid);
-            return Err(TdsConstructionError::ValidationError(source));
+            return Err(TdsConstructionError::ValidationError { source });
         }
         // Topology changed; invalidate caches.
         self.bump_generation();
@@ -599,12 +599,12 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ) -> Result<(), TdsConstructionError> {
         for &vkey in simplex.vertices() {
             if !self.vertices.contains_key(vkey) {
-                return Err(TdsConstructionError::ValidationError(
-                    TdsError::VertexNotFound {
+                return Err(TdsConstructionError::ValidationError {
+                    source: TdsError::VertexNotFound {
                         vertex_key: vkey,
                         context: "referenced by simplex being inserted".to_string(),
                     },
-                ));
+                });
             }
         }
         Ok(())
@@ -3392,7 +3392,9 @@ mod tests {
         let err = tds.insert_simplex_with_mapping(simplex).unwrap_err();
         assert_matches!(
             err,
-            TdsConstructionError::ValidationError(TdsError::VertexNotFound { .. })
+            TdsConstructionError::ValidationError {
+                source: TdsError::VertexNotFound { .. }
+            }
         );
     }
 
@@ -3413,7 +3415,9 @@ mod tests {
             .unwrap_err();
         assert_matches!(
             err,
-            TdsConstructionError::ValidationError(TdsError::VertexNotFound { .. })
+            TdsConstructionError::ValidationError {
+                source: TdsError::VertexNotFound { .. }
+            }
         );
     }
 
@@ -3462,11 +3466,13 @@ mod tests {
 
         assert_matches!(
             err,
-            TdsConstructionError::ValidationError(TdsError::DimensionMismatch {
-                expected: 3,
-                actual: 2,
-                ..
-            })
+            TdsConstructionError::ValidationError {
+                source: TdsError::DimensionMismatch {
+                    expected: 3,
+                    actual: 2,
+                    ..
+                }
+            }
         );
         assert_eq!(tds.number_of_simplices(), 0);
         assert_eq!(tds.generation(), generation_before);
@@ -3507,9 +3513,9 @@ mod tests {
 
         assert_matches!(
             err,
-            TdsConstructionError::ValidationError(TdsError::InconsistentDataStructure {
+            TdsConstructionError::ValidationError { source: TdsError::InconsistentDataStructure {
                 message
-            }) if message.contains("Failed to derive periodic facet key")
+            } } if message.contains("Failed to derive periodic facet key")
         );
         assert_eq!(tds.number_of_simplices(), 1);
         assert_eq!(tds.generation(), generation_before);
@@ -3541,7 +3547,9 @@ mod tests {
 
         assert_matches!(
             err,
-            TdsConstructionError::ValidationError(TdsError::DuplicateSimplices { .. })
+            TdsConstructionError::ValidationError {
+                source: TdsError::DuplicateSimplices { .. }
+            }
         );
         assert_eq!(tds.number_of_simplices(), 1);
         assert_eq!(tds.generation(), generation_before);
@@ -3582,14 +3590,17 @@ mod tests {
         let err = tds.insert_simplex_with_mapping(candidate).unwrap_err();
 
         match err {
-            TdsConstructionError::ValidationError(TdsError::FacetSharingViolation {
-                existing_incident_count,
-                attempted_incident_count,
-                max_incident_count,
-                candidate_simplex_uuid,
-                candidate_facet_index,
-                ..
-            }) => {
+            TdsConstructionError::ValidationError {
+                source:
+                    TdsError::FacetSharingViolation {
+                        existing_incident_count,
+                        attempted_incident_count,
+                        max_incident_count,
+                        candidate_simplex_uuid,
+                        candidate_facet_index,
+                        ..
+                    },
+            } => {
                 assert_eq!(existing_incident_count, 2);
                 assert_eq!(attempted_incident_count, 3);
                 assert_eq!(max_incident_count, 2);

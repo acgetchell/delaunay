@@ -237,7 +237,11 @@ impl<U, V, const D: usize> Default for PlManifoldRepairStats<U, V, D> {
 pub enum PlManifoldRepairError {
     /// The underlying TDS is structurally inconsistent.
     #[error(transparent)]
-    Tds(#[from] TdsError),
+    Tds {
+        /// Typed TDS source error.
+        #[from]
+        source: TdsError,
+    },
 
     /// Iteration budget exhausted before the facet-degree invariant was satisfied.
     #[error(
@@ -437,9 +441,11 @@ where
         // Remove the batch. `remove_simplices_by_keys` handles local neighbor
         // back-reference clearing and incident-simplex repair. Full neighbor
         // rebuild is deferred to after the loop to avoid O(simplices²) work.
-        let removed = tds
-            .remove_simplices_by_keys(&keys)
-            .map_err(|e| PlManifoldRepairError::Tds(e.into_inner()))?;
+        let removed =
+            tds.remove_simplices_by_keys(&keys)
+                .map_err(|e| PlManifoldRepairError::Tds {
+                    source: e.into_inner(),
+                })?;
         stats.simplices_removed += removed;
 
         // Remove orphaned vertices (required for PL-manifold validity).
@@ -905,16 +911,18 @@ where
     if let Some(simplex) = tds.simplex(simplex_key) {
         stats.removed_simplices.push(simplex.clone());
     }
-    let removed = tds
-        .remove_simplices_by_keys(&[simplex_key])
-        .map_err(|e| PlManifoldRepairError::Tds(e.into_inner()))?;
+    let removed =
+        tds.remove_simplices_by_keys(&[simplex_key])
+            .map_err(|e| PlManifoldRepairError::Tds {
+                source: e.into_inner(),
+            })?;
     if removed == 0 {
         return Ok(0);
     }
     stats.simplices_removed += removed;
     remove_orphaned_vertices(tds, stats)?;
     tds.assign_incident_simplices()
-        .map_err(|e| PlManifoldRepairError::Tds(e.into()))?;
+        .map_err(|e| PlManifoldRepairError::Tds { source: e.into() })?;
     Ok(removed)
 }
 
@@ -931,9 +939,10 @@ where
 fn rebuild_success_topology<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
 ) -> Result<(), PlManifoldRepairError> {
-    tds.assign_neighbors().map_err(PlManifoldRepairError::Tds)?;
+    tds.assign_neighbors()
+        .map_err(|source| PlManifoldRepairError::Tds { source })?;
     tds.assign_incident_simplices()
-        .map_err(|e| PlManifoldRepairError::Tds(e.into()))
+        .map_err(|e| PlManifoldRepairError::Tds { source: e.into() })
 }
 
 /// Best-effort topology metadata repair before returning a non-convergence error.
@@ -1127,7 +1136,9 @@ where
             stats.removed_vertices.push(vertex.clone());
         }
         tds.remove_isolated_vertex(vk)
-            .map_err(|e| PlManifoldRepairError::Tds(e.into_inner()))?;
+            .map_err(|e| PlManifoldRepairError::Tds {
+                source: e.into_inner(),
+            })?;
     }
 
     Ok(())
@@ -1629,11 +1640,11 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(ManifoldError::Tds(TdsError::IndexOutOfBounds {
+            Err(ManifoldError::Tds { source: TdsError::IndexOutOfBounds {
                 index,
                 bound: 4,
                 ..
-            })) if index == <usize as From<u8>>::from(u8::MAX)
+            } }) if index == <usize as From<u8>>::from(u8::MAX)
         );
         assert!(facet_vertices.is_empty());
     }

@@ -3338,11 +3338,20 @@ class TestTimeoutHandling:
     def test_parser_accepts_strict_summary_generation(self) -> None:
         """Test that release workflows can fail summary generation on fallback."""
         parser = create_argument_parser()
-        args = parser.parse_args(["generate-summary", "--run-benchmarks", "--strict"])
+        args = parser.parse_args(
+            [
+                "generate-summary",
+                "--run-benchmarks",
+                "--strict",
+                "--bench-timeout",
+                "3600",
+            ],
+        )
 
         assert args.command == "generate-summary"
         assert args.run_benchmarks
         assert args.strict
+        assert args.bench_timeout == 3600
 
     def test_parser_accepts_release_performance_commands(self) -> None:
         """Test that release-performance commands expose the documented options."""
@@ -3447,8 +3456,8 @@ class TestTimeoutHandling:
         mock_generator.generate_summary.assert_called_once_with(
             output_path=Path("summary.md"),
             run_benchmarks=True,
-            generator_name="benchmark_utils.py",
             cargo_profile="release",
+            bench_timeout=1800,
             strict=True,
         )
 
@@ -3621,6 +3630,7 @@ class TestPerformanceSummaryGenerator:
         args = parser.parse_args(["generate-summary", "--run-benchmarks"])
 
         assert args.profile == BENCHMARK_BUILD_FLAVOR
+        assert args.bench_timeout == 1800
 
     @patch("benchmark_utils.run_git_command")
     def test_get_current_version_prefers_cargo_package_version(self, mock_git_command) -> None:
@@ -4121,6 +4131,7 @@ Benchmark completed.""",
                 "ci_performance_suite",
             ]
             assert "--" not in args
+            assert mock_cargo.call_args.kwargs["timeout"] == 1800
             manifest_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE
             assert manifest_path.read_text(encoding="utf-8") == "boundary_facets/boundary_facets_3d/50\n"
             metrics_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_METRICS_FILE
@@ -4150,6 +4161,19 @@ Benchmark completed.""",
             args = mock_cargo.call_args.args[0]
             assert args[:5] == ["bench", "--profile", requested_profile, "--bench", "ci_performance_suite"]
             assert "--" not in args
+
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_ci_performance_suite_uses_requested_timeout(self, mock_cargo) -> None:
+        """Test that release callers can extend the public API benchmark budget."""
+        mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            generator = PerformanceSummaryGenerator(Path(temp_dir))
+
+            success = generator._run_ci_performance_suite(bench_timeout=3600)
+
+            assert success is True
+            assert mock_cargo.call_args.kwargs["timeout"] == 3600
 
     @patch("benchmark_utils.run_cargo_command")
     def test_run_ci_performance_suite_dev_mode_uses_reduced_sampling(self, mock_cargo) -> None:
@@ -4281,7 +4305,10 @@ Benchmark completed.""",
             assert success is True
             # When run_benchmarks=True without an explicit profile, generate_summary
             # must default to BENCHMARK_BUILD_FLAVOR.
-            mock_run_ci_suite.assert_called_once_with(cargo_profile=BENCHMARK_BUILD_FLAVOR)
+            mock_run_ci_suite.assert_called_once_with(
+                cargo_profile=BENCHMARK_BUILD_FLAVOR,
+                bench_timeout=1800,
+            )
             mock_run_benchmarks.assert_called_once_with(cargo_profile=BENCHMARK_BUILD_FLAVOR)
             assert output_file.exists()
 
@@ -4302,7 +4329,10 @@ Benchmark completed.""",
             success = generator.generate_summary(output_path=output_file, run_benchmarks=True, cargo_profile=requested_profile)
 
             assert success is True
-            mock_run_ci_suite.assert_called_once_with(cargo_profile=requested_profile)
+            mock_run_ci_suite.assert_called_once_with(
+                cargo_profile=requested_profile,
+                bench_timeout=1800,
+            )
             mock_run_benchmarks.assert_called_once_with(cargo_profile=requested_profile)
             assert output_file.exists()
 

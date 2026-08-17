@@ -871,7 +871,7 @@ fn is_uuid_at(bytes: &[u8], start: usize) -> bool {
 fn demo_vertices(coordinates: &[[f64; 2]]) -> Result<Vec<Vertex<(), 2>>, CliError> {
     coordinates
         .iter()
-        .map(|coords| vertex!(*coords).map_err(CliError::CoordinateConversion))
+        .map(|coords| vertex!(*coords).map_err(|source| CliError::CoordinateConversion { source }))
         .collect()
 }
 
@@ -945,25 +945,53 @@ pub enum CliError {
     },
     /// I/O failed while writing an artifact.
     #[error(transparent)]
-    Io(#[from] io::Error),
+    Io {
+        /// Typed I/O source error.
+        #[from]
+        source: io::Error,
+    },
     /// JSON serialization failed while writing an artifact.
     #[error(transparent)]
-    Json(#[from] serde_json::Error),
+    Json {
+        /// Typed serialization source error.
+        #[from]
+        source: serde_json::Error,
+    },
     /// Coordinate range construction failed.
     #[error(transparent)]
-    CoordinateRange(#[from] CoordinateRangeError<f64>),
+    CoordinateRange {
+        /// Typed coordinate-range source error.
+        #[from]
+        source: CoordinateRangeError<f64>,
+    },
     /// Random point generation failed.
     #[error(transparent)]
-    PointGeneration(#[from] RandomPointGenerationError),
+    PointGeneration {
+        /// Typed point-generation source error.
+        #[from]
+        source: RandomPointGenerationError,
+    },
     /// Point-to-vertex conversion failed.
     #[error(transparent)]
-    CoordinateConversion(#[from] CoordinateConversionError),
+    CoordinateConversion {
+        /// Typed coordinate-conversion source error.
+        #[from]
+        source: CoordinateConversionError,
+    },
     /// Delaunay construction failed.
     #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
+    Construction {
+        /// Typed Delaunay-construction source error.
+        #[from]
+        source: DelaunayTriangulationConstructionError,
+    },
     /// Spherical Delaunay construction failed.
     #[error(transparent)]
-    SphericalConstruction(#[from] SphericalDelaunayConstructionError),
+    SphericalConstruction {
+        /// Typed spherical-construction source error.
+        #[from]
+        source: SphericalDelaunayConstructionError,
+    },
     /// The spherical hero count cannot be represented exactly by its plotting generator.
     #[error("spherical hero vertex count is too large: {value}")]
     SphericalHeroVertexCount {
@@ -972,13 +1000,24 @@ pub enum CliError {
     },
     /// Generic visualization export failed.
     #[error(transparent)]
-    Visualization(#[from] VisualizationExportError),
+    Visualization {
+        /// Typed visualization-export source error.
+        #[from]
+        source: VisualizationExportError,
+    },
     /// Convex hull extraction failed.
     #[error(transparent)]
-    ConvexHull(Box<ConvexHullConstructionError>),
+    ConvexHull {
+        /// Boxed convex-hull source error.
+        source: Box<ConvexHullConstructionError>,
+    },
     /// Facet-view extraction failed.
     #[error(transparent)]
-    Facet(#[from] FacetError),
+    Facet {
+        /// Typed facet source error.
+        #[from]
+        source: FacetError,
+    },
     /// A generated validation-demo case no longer fails at the intended boundary.
     #[error("validation demo case {case} is inconsistent: {message}")]
     ValidationDemoInvariant {
@@ -989,18 +1028,25 @@ pub enum CliError {
     },
     /// Pachner stress failed.
     #[error(transparent)]
-    PachnerStress(Box<PachnerStressError>),
+    PachnerStress {
+        /// Boxed Pachner-stress source error.
+        source: Box<PachnerStressError>,
+    },
 }
 
 impl From<ConvexHullConstructionError> for CliError {
     fn from(source: ConvexHullConstructionError) -> Self {
-        Self::ConvexHull(Box::new(source))
+        Self::ConvexHull {
+            source: Box::new(source),
+        }
     }
 }
 
 impl From<PachnerStressError> for CliError {
     fn from(source: PachnerStressError) -> Self {
-        Self::PachnerStress(Box::new(source))
+        Self::PachnerStress {
+            source: Box::new(source),
+        }
     }
 }
 

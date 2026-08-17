@@ -155,12 +155,14 @@ where
                     "negative geometric orientation detected during validation",
                 );
 
-                return Err(TdsError::Geometric(GeometricError::NegativeOrientation {
-                    message: format!(
-                        "Simplex {:?} (key {simplex_key:?}, vertices {vertex_keys:?}) has negative geometric orientation; expected positive canonical orientation",
-                        simplex.uuid(),
-                    ),
-                }));
+                return Err(TdsError::Geometric {
+                    source: GeometricError::NegativeOrientation {
+                        message: format!(
+                            "Simplex {:?} (key {simplex_key:?}, vertices {vertex_keys:?}) has negative geometric orientation; expected positive canonical orientation",
+                            simplex.uuid(),
+                        ),
+                    },
+                });
             }
         }
 
@@ -197,12 +199,14 @@ where
                     "negative geometric orientation detected during local validation",
                 );
 
-                return Err(TdsError::Geometric(GeometricError::NegativeOrientation {
-                    message: format!(
-                        "Simplex {:?} (key {simplex_key:?}, vertices {vertex_keys:?}) has negative geometric orientation; expected positive canonical orientation",
-                        simplex.uuid(),
-                    ),
-                }));
+                return Err(TdsError::Geometric {
+                    source: GeometricError::NegativeOrientation {
+                        message: format!(
+                            "Simplex {:?} (key {simplex_key:?}, vertices {vertex_keys:?}) has negative geometric orientation; expected positive canonical orientation",
+                            simplex.uuid(),
+                        ),
+                    },
+                });
             }
         }
 
@@ -550,13 +554,15 @@ where
                 "Orientation predicate failed for simplex",
             )?;
             if orientation == 0 {
-                return Err(TdsError::Geometric(GeometricError::DegenerateOrientation {
-                    message: format!(
-                        "Simplex {:?} (key {simplex_key:?}) is geometrically degenerate \
+                return Err(TdsError::Geometric {
+                    source: GeometricError::DegenerateOrientation {
+                        message: format!(
+                            "Simplex {:?} (key {simplex_key:?}) is geometrically degenerate \
                          (zero-volume simplex from collinear/coplanar vertices)",
-                        simplex.uuid(),
-                    ),
-                }));
+                            simplex.uuid(),
+                        ),
+                    },
+                });
             }
         }
         Ok(())
@@ -643,7 +649,7 @@ mod tests {
         let err = tri.validate_geometric_simplex_orientation().unwrap_err();
         assert_matches!(
             &err,
-            TdsError::Geometric(GeometricError::NegativeOrientation { message })
+            TdsError::Geometric { source: GeometricError::NegativeOrientation { message } }
                 if message.contains("negative geometric orientation")
                     && message.contains("vertices"),
             "Error should contain vertex keys: {err}"
@@ -778,7 +784,7 @@ mod tests {
         let err = tri.validate_geometric_simplex_orientation().unwrap_err();
         assert_matches!(
             err,
-            TdsError::Geometric(GeometricError::NegativeOrientation { message })
+            TdsError::Geometric { source: GeometricError::NegativeOrientation { message } }
                 if message.contains("negative geometric orientation")
         );
     }

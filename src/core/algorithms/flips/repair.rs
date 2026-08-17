@@ -771,7 +771,7 @@ where
                 | FlipError::DuplicateSimplex
                 | FlipError::NonManifoldFacet
                 | FlipError::InsertedSimplexAlreadyExists { .. }
-                | FlipError::SimplexCreation(_)),
+                | FlipError::SimplexCreation { source: _ }),
             ) => {
                 if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
                     tracing::debug!(

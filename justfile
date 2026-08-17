@@ -1113,6 +1113,9 @@ semgrep-test: _ensure-uv
     }
     trap cleanup EXIT
 
+    uv run --locked python scripts/semgrep_fixture_config.py \
+        --check-coverage tests/semgrep "$PWD/semgrep.yaml"
+
     # Semgrep directory test mode maps fixture paths to config paths, so mirror
     # each fixture to the shared config while keeping semgrep.yaml authoritative.
     # Run one fixture/config pair per Semgrep process so Windows does not race

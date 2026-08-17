@@ -127,11 +127,17 @@ impl From<PeriodicSimplexSpanError> for PeriodicDomainPeriodError {
 pub enum TriangulationRealizationValidationError {
     /// Lower-layer element or TDS structural validation failed (Levels 1-2).
     #[error(transparent)]
-    Tds(Box<TdsError>),
+    Tds {
+        /// Boxed TDS source error.
+        source: Box<TdsError>,
+    },
 
     /// Lower-layer topology validation failed (Level 3).
     #[error(transparent)]
-    Triangulation(Box<TriangulationValidationError>),
+    Triangulation {
+        /// Boxed topology-validation source error.
+        source: Box<TriangulationValidationError>,
+    },
 
     /// Realized-overlap validation is not yet defined for this topology model.
     #[error(
@@ -352,13 +358,17 @@ pub enum TriangulationRealizationValidationError {
 
 impl From<TdsError> for TriangulationRealizationValidationError {
     fn from(source: TdsError) -> Self {
-        Self::Tds(Box::new(source))
+        Self::Tds {
+            source: Box::new(source),
+        }
     }
 }
 
 impl From<TriangulationValidationError> for TriangulationRealizationValidationError {
     fn from(source: TriangulationValidationError) -> Self {
-        Self::Triangulation(Box::new(source))
+        Self::Triangulation {
+            source: Box::new(source),
+        }
     }
 }
 
@@ -403,8 +413,10 @@ impl From<&TriangulationRealizationValidationError>
 {
     fn from(source: &TriangulationRealizationValidationError) -> Self {
         match source {
-            TriangulationRealizationValidationError::Tds(_) => Self::Tds,
-            TriangulationRealizationValidationError::Triangulation(_) => Self::Triangulation,
+            TriangulationRealizationValidationError::Tds { source: _ } => Self::Tds,
+            TriangulationRealizationValidationError::Triangulation { source: _ } => {
+                Self::Triangulation
+            }
             TriangulationRealizationValidationError::UnsupportedTopology { .. } => {
                 Self::UnsupportedTopology
             }
@@ -1126,10 +1138,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         V: DataType,
     {
         self.validate().map_err(|error| match error {
-            InvariantError::Tds(source) => source.into(),
-            InvariantError::Triangulation(source) => source.into(),
-            InvariantError::Realization(source) => source,
-            source @ InvariantError::Delaunay(_) => {
+            InvariantError::Tds { source } => source.into(),
+            InvariantError::Triangulation { source } => source.into(),
+            InvariantError::Realization { source } => source,
+            source @ InvariantError::Delaunay { source: _ } => {
                 TriangulationRealizationValidationError::UnexpectedValidationLayer {
                     kind: InvariantKind::DelaunayProperty,
                     source: Box::new(source),
@@ -2463,7 +2475,7 @@ mod tests {
         let err = realized.point_for_identity(missing_identity).unwrap_err();
         assert_matches!(
             err,
-            TriangulationRealizationValidationError::Tds(source)
+            TriangulationRealizationValidationError::Tds { source }
                 if matches!(
                     *source,
                     TdsError::VertexNotFound { vertex_key, ref context }
@@ -2545,17 +2557,17 @@ mod tests {
     #[test]
     fn realization_error_kind_covers_wrapped_and_topology_variants() {
         assert_realization_error_kind(
-            &TriangulationRealizationValidationError::Tds(Box::new(
-                TdsError::InconsistentDataStructure {
+            &TriangulationRealizationValidationError::Tds {
+                source: Box::new(TdsError::InconsistentDataStructure {
                     message: "synthetic TDS failure".to_string(),
-                },
-            )),
+                }),
+            },
             TriangulationRealizationValidationErrorKind::Tds,
         );
         assert_realization_error_kind(
-            &TriangulationRealizationValidationError::Triangulation(Box::new(
-                TriangulationValidationError::Disconnected { simplex_count: 2 },
-            )),
+            &TriangulationRealizationValidationError::Triangulation {
+                source: Box::new(TriangulationValidationError::Disconnected { simplex_count: 2 }),
+            },
             TriangulationRealizationValidationErrorKind::Triangulation,
         );
         assert_realization_error_kind(
@@ -2700,8 +2712,8 @@ mod tests {
         assert_realization_error_kind(
             &TriangulationRealizationValidationError::UnexpectedValidationLayer {
                 kind: InvariantKind::DelaunayProperty,
-                source: Box::new(InvariantError::Delaunay(
-                    DelaunayTriangulationValidationError::VerificationFailed {
+                source: Box::new(InvariantError::Delaunay {
+                    source: DelaunayTriangulationValidationError::VerificationFailed {
                         source: Box::new(DelaunayVerificationError::from(
                             DelaunayValidationError::TriangulationState {
                                 source: TdsError::InconsistentDataStructure {
@@ -2710,7 +2722,7 @@ mod tests {
                             },
                         )),
                     },
-                )),
+                }),
             },
             TriangulationRealizationValidationErrorKind::UnexpectedValidationLayer,
         );
