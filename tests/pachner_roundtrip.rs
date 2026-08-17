@@ -331,7 +331,7 @@ fn pachner_feasibility_agrees_with_successful_2d_k2_attempt() {
         .clone();
     assert_pachner_feasibility_contract(
         &feasibility,
-        BistellarFlipKind::k2(2),
+        BistellarFlipKind::try_k2(2).expect("2D k=2 move kind should be valid"),
         FlipDirection::Forward,
     );
 
@@ -781,7 +781,7 @@ fn assert_public_k1_insert_feasibility_smoke<const D: usize>() {
         .clone();
     assert_pachner_feasibility_contract(
         &feasibility,
-        BistellarFlipKind::k1(D),
+        BistellarFlipKind::try_k1(D).expect("fixture dimension should support k=1"),
         FlipDirection::Forward,
     );
     assert!(feasibility.inserted_face_vertices.is_none());
@@ -816,7 +816,9 @@ fn assert_public_k1_insert_feasibility_smoke<const D: usize>() {
     assert_flip_and_pachner_feasibility_match(&primitive_remove_feasibility, remove_feasibility);
     assert_pachner_feasibility_contract(
         remove_feasibility,
-        BistellarFlipKind::k1(D).inverse(),
+        BistellarFlipKind::try_k1(D)
+            .expect("fixture dimension should support k=1")
+            .inverse(),
         FlipDirection::Inverse,
     );
 
@@ -825,7 +827,9 @@ fn assert_public_k1_insert_feasibility_smoke<const D: usize>() {
         .unwrap_or_else(|err| panic!("{D}D public k=1 remove mutation should succeed: {err:?}"));
     assert_pachner_result_contract(
         &removed,
-        BistellarFlipKind::k1(D).inverse(),
+        BistellarFlipKind::try_k1(D)
+            .expect("fixture dimension should support k=1")
+            .inverse(),
         FlipDirection::Inverse,
     );
     assert_topology_and_delaunay_valid(&trial, &format!("{D}D k=1 mutation"));
@@ -928,7 +932,11 @@ fn assert_stale_proposal_generation(
 
 /// Verifies the extra k=1 insert contract: the inserted face is exactly the new vertex.
 fn assert_k1_insert_result(result: &PachnerMoveResult<4>, inserted_vertex: VertexKey) {
-    assert_pachner_result_contract(result, BistellarFlipKind::k1(4), FlipDirection::Forward);
+    assert_pachner_result_contract(
+        result,
+        BistellarFlipKind::try_k1(4).expect("4D k=1 move kind should be valid"),
+        FlipDirection::Forward,
+    );
     assert_eq!(result.inserted_face_vertices.as_slice(), &[inserted_vertex]);
 }
 
@@ -1152,7 +1160,9 @@ fn roundtrip_k1(dt: &mut Dt4) {
     .expect("k=1 remove should invert insert");
     assert_pachner_result_contract(
         &removed,
-        BistellarFlipKind::k1(4).inverse(),
+        BistellarFlipKind::try_k1(4)
+            .expect("4D k=1 move kind should be valid")
+            .inverse(),
         FlipDirection::Inverse,
     );
 }
@@ -1182,13 +1192,19 @@ fn flippable_k2_facet(dt: &Dt4) -> FacetHandle {
 fn roundtrip_k2(dt: &mut Dt4, facet: FacetHandle) {
     let info: PachnerMoveResult<4> = attempt_pachner_move(dt, PachnerMove::K2 { facet })
         .expect("k=2 flip should succeed on selected stable 4D facet");
-    assert_pachner_result_contract(&info, BistellarFlipKind::k2(4), FlipDirection::Forward);
+    assert_pachner_result_contract(
+        &info,
+        BistellarFlipKind::try_k2(4).expect("4D k=2 move kind should be valid"),
+        FlipDirection::Forward,
+    );
     let edge = inserted_edge(dt, &info.inserted_face_vertices);
     let inverse = attempt_pachner_move(dt, PachnerMove::K2Inverse { edge })
         .expect("k=2 inverse should succeed after k=2 flip");
     assert_pachner_result_contract(
         &inverse,
-        BistellarFlipKind::k2(4).inverse(),
+        BistellarFlipKind::try_k2(4)
+            .expect("4D k=2 move kind should be valid")
+            .inverse(),
         FlipDirection::Inverse,
     );
 }
@@ -1229,7 +1245,11 @@ fn flippable_k3_ridge(dt: &Dt4) -> RidgeHandle {
 fn roundtrip_k3(dt: &mut Dt4, ridge: RidgeHandle) {
     let info: PachnerMoveResult<4> = attempt_pachner_move(dt, PachnerMove::K3 { ridge })
         .expect("k=3 flip should succeed on selected stable 4D ridge");
-    assert_pachner_result_contract(&info, BistellarFlipKind::k3(4), FlipDirection::Forward);
+    assert_pachner_result_contract(
+        &info,
+        BistellarFlipKind::try_k3(4).expect("4D k=3 move kind should be valid"),
+        FlipDirection::Forward,
+    );
     let inverse = attempt_pachner_move(
         dt,
         PachnerMove::K3Inverse {
@@ -1239,7 +1259,9 @@ fn roundtrip_k3(dt: &mut Dt4, ridge: RidgeHandle) {
     .expect("k=3 inverse should succeed after k=3 flip");
     assert_pachner_result_contract(
         &inverse,
-        BistellarFlipKind::k3(4).inverse(),
+        BistellarFlipKind::try_k3(4)
+            .expect("4D k=3 move kind should be valid")
+            .inverse(),
         FlipDirection::Inverse,
     );
 }

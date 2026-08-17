@@ -163,7 +163,7 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 - Fast O(N) flip-based validation provides 40-100x speedup over brute-force
 - Automatic repair runs after insertion/deletion via `DelaunayRepairPolicy`
 - Inverse edge/triangle queues for 4D/5D repair
-- See `src/core/algorithms/flips.rs` for implementation
+- See `src/core/algorithms/flips/` for implementation
 
 **Slow variants:** 5D empty-circumsphere, duplicate-coordinate, duplicate-cloud, and insertion-order robustness properties are gated by `slow-tests`.
 

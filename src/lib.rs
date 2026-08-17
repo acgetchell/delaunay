@@ -444,8 +444,143 @@
 mod core {
     /// Triangulation algorithms for construction, maintenance, and querying.
     pub mod algorithms {
-        /// Flip-based algorithms (Delaunay repair, diagnostics, and related utilities).
-        pub mod flips;
+        /// Bistellar flip operations for triangulations.
+        ///
+        /// This module implements **Pachner (bistellar) moves** for Delaunay repair and topology
+        /// editing. We use the standard convention where a k-move (1 ≤ k ≤ D+1) replaces the
+        /// star of a `(D+1−k)`-simplex with the star of the complementary `(k−1)`-simplex:
+        ///
+        /// - removed D-simplices = k
+        /// - inserted D-simplices = D+2−k
+        /// - removed-face dimension = D+1−k
+        /// - inserted-face dimension = k−1
+        ///
+        /// Delaunay repair uses k=2 (facets) and k=3 (ridges) only; k=1 is exposed for
+        /// topological editing via the public API.
+        ///
+        /// # References
+        ///
+        /// - Edelsbrunner & Shah (1996), "Incremental Topological Flipping Works for Regular
+        ///   Triangulations"
+        /// - Bistellar flips implementation notebook (Warp Drive)
+        pub mod flips {
+            use crate::core::algorithms::incremental_insertion::{
+                CavityFillingError, HullExtensionReason, InsertionError, InsertionErrorKind,
+                InsertionTopologyValidationContext, NeighborWiringError,
+                SpatialIndexConstructionFailure, TdsConstructionFailure, TdsValidationFailure,
+                external_facets_for_boundary, wire_cavity_neighbors,
+            };
+            use crate::core::algorithms::locate::{
+                ConflictError, LocateError, extract_cavity_boundary,
+            };
+            use crate::core::collections::{
+                FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE,
+                PeriodicOffsetBuffer, SimplexKeyBuffer, SmallBuffer,
+            };
+            use crate::core::edge::{EdgeKey, EdgeKeyError};
+            use crate::core::facet::{
+                AllFacetsIter, FacetError, FacetHandle, facet_key_from_vertices,
+            };
+            use crate::core::operations::TopologicalOperation;
+            use crate::core::realization::TriangulationRealizationValidationError;
+            use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
+            use crate::core::tds::{
+                EntityKind, NeighborValidationError, SimplexKey, Tds, TdsMutationError,
+                TdsRollbackTransaction, TopologyOwnerId, VertexKey,
+            };
+            use crate::core::traits::data_type::DataType;
+            use crate::core::triangulation::Triangulation;
+            use crate::core::util::stable_hash_u64_slice;
+            use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
+            use crate::core::vertex::Vertex;
+            use crate::geometry::kernel::{Kernel, RobustKernel};
+            use crate::geometry::point::Point;
+            use crate::geometry::predicates::{Orientation, simplex_orientation_fast_filter_sign};
+            use crate::geometry::robust_predicates::robust_orientation;
+            use crate::geometry::traits::coordinate::{
+                CoordinateConversionError, CoordinateValidationError, CoordinateValues,
+            };
+            use crate::topology::traits::global_topology_model::{
+                GlobalTopologyModel, GlobalTopologyModelAdapter, GlobalTopologyModelError,
+            };
+            use crate::topology::traits::topological_space::GlobalTopology;
+            use crate::validation::DelaunayTriangulationValidationError;
+            use slotmap::Key;
+            use std::borrow::Cow;
+            use std::collections::VecDeque;
+            use std::env;
+            use std::fmt;
+            use std::hash::{Hash, Hasher};
+            use std::iter::once;
+            use std::time::{Duration, Instant};
+            use thiserror::Error;
+
+            type VertexKeyList = SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>;
+            type RemovedSimplexVertexSnapshot =
+                SmallBuffer<VertexKeyList, MAX_PRACTICAL_DIMENSION_SIZE>;
+            type ReplacementSimplexVertices =
+                SmallBuffer<VertexKeyList, MAX_PRACTICAL_DIMENSION_SIZE>;
+            type ExternalFacetBuffer = SmallBuffer<FacetHandle, 64>;
+            type ReplacementPeriodicOffsets<const D: usize> =
+                SmallBuffer<Option<PeriodicOffsetBuffer<D>>, MAX_PRACTICAL_DIMENSION_SIZE>;
+
+            /// Initializes one shared test subscriber for every focused flip submodule.
+            #[cfg(test)]
+            fn init_tracing() {
+                static INIT: std::sync::Once = std::sync::Once::new();
+                INIT.call_once(|| {
+                    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+                    let _ = tracing_subscriber::fmt()
+                        .with_env_filter(filter)
+                        .with_test_writer()
+                        .try_init();
+                });
+            }
+
+            mod context;
+            mod contexts;
+            mod engine;
+            mod errors;
+            mod moves;
+            mod orientation;
+            mod repair;
+            mod repair_queue;
+            mod support;
+
+            pub use self::context::*;
+            pub(crate) use self::contexts::*;
+            pub(crate) use self::engine::*;
+            pub use self::errors::*;
+            pub use self::moves::*;
+            use self::orientation::{
+                debug_postcondition_facet_context, debug_ridge_context, facet_order,
+                k1_inserted_vertex_periodic_offset, normalized_facet_order_with_offsets,
+                orient_replacement_simplices, permutation_odd,
+                replacement_simplex_periodic_offsets, validate_replacement_orientation,
+            };
+            pub use self::repair::*;
+            use self::repair_queue::{
+                FlipSignature, LastAppliedFlip, MAX_REPEAT_SIGNATURE, RepairAttemptConfig,
+                RepairDiagnostics, RepairQueues, default_max_flips, duration_nanos_saturating,
+                emit_repair_debug_summary, enqueue_facet, enqueue_simplex_facets, flip_signature,
+                non_convergent_error, pop_queue, predicate_key_from_vertices,
+                repair_ridge_debug_enabled, repair_trace_enabled, run_next_edge_repair_step,
+                run_next_facet_repair_step, run_next_ridge_repair_step,
+                run_next_triangle_repair_step, seed_repair_queues,
+                should_emit_postcondition_facet_debug, should_emit_ridge_debug,
+            };
+            use self::support::{
+                EuclideanPointCache, align_periodic_offset, build_flip_topology_index,
+                collect_simplices_around_ridge, facet_vertices_from_simplex,
+                flip_would_create_nonmanifold_facets_any, flip_would_duplicate_simplex_any,
+                lift_vertex_point, matching_source_simplex, missing_opposite_for_simplex,
+                periodic_offset_lifted_into_simplex, periodic_offsets_or_zero_frame,
+                removed_simplex_frame, ridge_vertices_from_simplex, simplex_extras_for_ridge,
+                validate_periodic_offset_len, vertex_point, vertex_point_lifted_into_simplex,
+                vertices_to_points, vertices_to_points_with_optional_lift,
+            };
+        }
         /// Incremental cavity-based insertion.
         pub mod incremental_insertion;
         /// Point location algorithms (facet walking).
@@ -1467,7 +1602,7 @@ pub mod prelude {
     ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
     /// use delaunay::prelude::pachner::{
-    ///     BistellarFlipKind, FlipDirection, PachnerMove, PachnerMoves, vertex,
+    ///     FlipDirection, PachnerMove, PachnerMoves, vertex,
     /// };
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -1490,7 +1625,7 @@ pub mod prelude {
     ///         vertex: vertex![0.2, 0.2, 0.2]?,
     ///     })?
     ///     .attempt_on(&mut dt)?;
-    /// assert_eq!(result.kind, BistellarFlipKind::k1(3));
+    /// assert_eq!((result.kind.k(), result.kind.d()), (1, 3));
     /// assert_eq!(result.direction, FlipDirection::Forward);
     /// assert_eq!(result.inserted_face_vertices.len(), 1);
     /// assert_eq!(result.new_simplices.len(), 4);
@@ -1532,8 +1667,8 @@ pub mod prelude {
     /// ```
     pub mod pachner {
         pub use crate::flips::{
-            BistellarFlipKind, FlipDirection, FlipError, RidgeHandle, TriangleHandle,
-            TriangleHandleError,
+            BistellarFlipKind, BistellarFlipKindError, FlipDirection, FlipError, RidgeHandle,
+            TriangleHandle, TriangleHandleError,
         };
         pub use crate::pachner::{
             PachnerMove, PachnerMoveFeasibility, PachnerMoveResult, PachnerMoves, PachnerProposal,

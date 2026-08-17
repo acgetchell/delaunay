@@ -12,9 +12,10 @@
 #![forbid(unsafe_code)]
 
 pub use crate::core::algorithms::flips::{
-    BistellarFlipKind, BistellarMove, ConstK, DelaunayRepairDiagnostics, DelaunayRepairError,
-    DelaunayRepairHeuristicRebuildFailure, DelaunayRepairHeuristicRebuildFailureKind,
-    DelaunayRepairHeuristicVertexContext, DelaunayRepairOrientationCanonicalizationFailure,
+    BistellarFlipKind, BistellarFlipKindError, BistellarMove, ConstK, DelaunayRepairDiagnostics,
+    DelaunayRepairError, DelaunayRepairHeuristicRebuildFailure,
+    DelaunayRepairHeuristicRebuildFailureKind, DelaunayRepairHeuristicVertexContext,
+    DelaunayRepairOrientationCanonicalizationFailure,
     DelaunayRepairOrientationCanonicalizationFailureKind, DelaunayRepairPostconditionFailure,
     DelaunayRepairStats, DelaunayRepairVerificationContext, FlipContextError, FlipDirection,
     FlipEdgeAdjacencyError, FlipError, FlipFailureKind, FlipFeasibility, FlipInfo,
@@ -185,7 +186,7 @@ pub trait BistellarFlips<const D: usize> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::flips::{BistellarFlipKind, BistellarFlips, FlipDirection};
+    /// use delaunay::flips::{BistellarFlips, FlipDirection};
     /// use delaunay::prelude::construction::{
     ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
@@ -206,7 +207,7 @@ pub trait BistellarFlips<const D: usize> {
     /// let vertex = delaunay::vertex![0.25, 0.25, 0.25]?;
     ///
     /// let feasibility = dt.can_flip_k1_insert(simplex_key, &vertex)?;
-    /// assert_eq!(feasibility.kind, BistellarFlipKind::k1(3));
+    /// assert_eq!((feasibility.kind.k(), feasibility.kind.d()), (1, 3));
     /// assert_eq!(feasibility.direction, FlipDirection::Forward);
     /// assert!(feasibility.inserted_face_vertices.is_none());
     /// # Ok(())
@@ -270,7 +271,7 @@ pub trait BistellarFlips<const D: usize> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::flips::{BistellarFlipKind, BistellarFlips, FlipDirection};
+    /// use delaunay::flips::{BistellarFlips, FlipDirection};
     /// use delaunay::prelude::construction::{
     ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
@@ -294,7 +295,7 @@ pub trait BistellarFlips<const D: usize> {
     /// };
     ///
     /// let feasibility = dt.can_flip_k1_remove(*inserted_vertex)?;
-    /// assert_eq!(feasibility.kind, BistellarFlipKind::k1(3).inverse());
+    /// assert_eq!((feasibility.kind.k(), feasibility.kind.d()), (4, 3));
     /// assert_eq!(feasibility.direction, FlipDirection::Inverse);
     /// # Ok(())
     /// # }
@@ -360,7 +361,7 @@ pub trait BistellarFlips<const D: usize> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::flips::{BistellarFlipKind, BistellarFlips};
+    /// use delaunay::flips::BistellarFlips;
     /// use delaunay::prelude::construction::{
     ///     DelaunayResult, DelaunayTriangulationBuilder,
     ///     DelaunayTriangulationConstructionError,
@@ -400,7 +401,10 @@ pub trait BistellarFlips<const D: usize> {
     ///     }
     /// }
     ///
-    /// assert_eq!(accepted.map(|feasibility| feasibility.kind), Some(BistellarFlipKind::k2(2)));
+    /// assert_eq!(
+    ///     accepted.map(|feasibility| (feasibility.kind.k(), feasibility.kind.d())),
+    ///     Some((2, 2)),
+    /// );
     /// # Ok(())
     /// # }
     /// ```
@@ -972,7 +976,7 @@ mod tests {
                 .insert_vertex_with_mapping(vertex!([2.0, 2.0]).unwrap())
                 .unwrap();
             Ok(FlipInfo {
-                kind: BistellarFlipKind::k1(2),
+                kind: BistellarFlipKind::try_k1(2).unwrap(),
                 direction: FlipDirection::Forward,
                 removed_simplices: SimplexKeyBuffer::default(),
                 new_simplices: SimplexKeyBuffer::default(),

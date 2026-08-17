@@ -42,8 +42,11 @@ ordering, see [`module_patterns.md`](module_patterns.md).
   `Triangulation`/manifold layer.
 - `collections/` - optimized collection aliases, key maps, buffers, and
   spatial acceleration structures.
-- `algorithms/` - incremental insertion, flips, point location, and
-  PL-manifold repair algorithms.
+- `algorithms/flips/` - bistellar move vocabulary, mutation and orientation
+  engines, validation-context construction, typed errors, queued Delaunay
+  repair, and shared local topology/predicate support.
+- `algorithms/` - incremental insertion, point location, and PL-manifold repair
+  algorithms alongside the focused flip module.
 - `traits/` - core boundary/data trait definitions and facet-incidence analysis.
 - `util/` - shared helpers for UUIDs, hashing, deduplication, allocation
   measurement, facet keys, Jaccard diagnostics, Hilbert ordering, and
