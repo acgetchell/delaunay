@@ -15,6 +15,8 @@ use delaunay::prelude::construction::{
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::AdaptiveKernel;
+#[cfg(feature = "diagnostics")]
+use delaunay::prelude::triangulation::Triangulation;
 
 #[cfg(feature = "diagnostics")]
 fn main() -> DelaunayResult<()> {
@@ -96,7 +98,7 @@ fn report_non_delaunay_triangulation() -> DelaunayResult<()> {
 /// Builds a valid Levels 1-4 triangulation whose prescribed diagonal violates Delaunayness.
 #[cfg(feature = "diagnostics")]
 fn build_non_delaunay_triangulation_2d()
--> DelaunayResult<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>> {
+-> DelaunayResult<Triangulation<AdaptiveKernel<f64>, (), (), 2>> {
     let vertices = vec![
         vertex![0.0, 0.0]?,
         vertex![4.0, 0.0]?,
@@ -107,9 +109,9 @@ fn build_non_delaunay_triangulation_2d()
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .map_err(DelaunayTriangulationConstructionError::from)?
         .construction_options(ConstructionOptions::default().without_final_delaunay_enforcement())
-        .build()?;
+        .build_triangulation()?;
 
-    dt.as_triangulation().validate()?;
-    assert!(dt.is_valid_delaunay().is_err());
+    dt.validate()?;
+    assert!(!dt.delaunay_violation_report(None)?.is_valid());
     Ok(dt)
 }

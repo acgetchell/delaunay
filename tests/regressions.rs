@@ -10,12 +10,19 @@ use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     ExplicitConstructionError, InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex,
 };
+use delaunay::prelude::delaunayize::{DelaunayizeConfig, delaunayize};
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
 use delaunay::prelude::geometry::{CoordinateRange, Point, RobustKernel};
 use delaunay::prelude::insertion::{HullExtensionReason, InsertionError};
 use delaunay::prelude::ordering::{
     HilbertBitDepth, hilbert_indices_prequantized, hilbert_quantize_batch_in_range,
     hilbert_quantize_in_range,
+};
+use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
+use delaunay::prelude::tds::Tds;
+use delaunay::prelude::triangulation::Triangulation;
+use delaunay::prelude::validation::{
+    TriangulationRealizationValidationError, TriangulationValidationError,
 };
 use delaunay::vertex;
 use std::num::NonZeroUsize;
@@ -194,7 +201,7 @@ fn sorted_vertex_signatures(vertices: &[Vertex<u32, 2>]) -> Vec<(u64, u64, u32)>
 }
 
 fn sorted_triangulation_vertex_signatures(
-    dt: &DelaunayTriangulation<RobustKernel<f64>, u32, i32, 2>,
+    dt: &Triangulation<RobustKernel<f64>, u32, i32, 2>,
 ) -> Vec<(u64, u64, u32)> {
     let mut signatures: Vec<_> = dt
         .vertices()
@@ -224,7 +231,7 @@ fn assert_strip_vertices_use_exact_time_labels(vertices: &[Vertex<u32, 2>]) {
 }
 
 fn assert_triangulation_vertices_use_exact_time_labels(
-    dt: &DelaunayTriangulation<RobustKernel<f64>, u32, i32, 2>,
+    dt: &Triangulation<RobustKernel<f64>, u32, i32, 2>,
 ) {
     for (_, vertex) in dt.vertices() {
         let coords = vertex.point().coords();
@@ -239,7 +246,7 @@ fn assert_triangulation_vertices_use_exact_time_labels(
 
 fn assert_exact_strip_construction_result(
     case: &str,
-    dt: &DelaunayTriangulation<RobustKernel<f64>, u32, i32, 2>,
+    dt: &Triangulation<RobustKernel<f64>, u32, i32, 2>,
     stats: &ConstructionStatistics,
     input_signatures: &[(u64, u64, u32)],
 ) {
@@ -263,8 +270,7 @@ fn assert_exact_strip_construction_result(
         "{case} construction should preserve exact strip coordinate bits and labels; stats={stats:?}",
     );
     assert_triangulation_vertices_use_exact_time_labels(dt);
-    dt.as_triangulation()
-        .validate()
+    dt.validate()
         .expect("exact degenerate strip should satisfy Levels 1-4");
 }
 
@@ -284,7 +290,7 @@ fn regression_issue_447_exact_layered_strip_preserves_collinear_boundary_vertice
     let (default_dt, default_stats) = DelaunayTriangulationBuilder::new(&vertices)
         .simplex_data_type::<i32>()
         .construction_options(exact_degenerate_options)
-        .build_with_kernel_and_statistics(&kernel)
+        .build_triangulation_with_kernel_and_statistics(&kernel)
         .expect("exact layered CDT strip point construction should succeed");
 
     assert_exact_strip_construction_result(
@@ -302,7 +308,7 @@ fn regression_issue_447_exact_layered_strip_preserves_collinear_boundary_vertice
         .simplex_data_type::<i32>()
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .construction_options(input_options)
-        .build_with_kernel_and_statistics(&kernel)
+        .build_triangulation_with_kernel_and_statistics(&kernel)
         .expect("input-order exact layered CDT strip construction should succeed");
 
     assert_exact_strip_construction_result(
@@ -321,7 +327,7 @@ fn regression_issue_447_exact_layered_strip_preserves_collinear_boundary_vertice
                 .with_retry_policy(RetryPolicy::Disabled)
                 .without_final_delaunay_enforcement(),
         )
-        .build_with_kernel(&kernel)
+        .build_triangulation_with_kernel(&kernel)
         .expect("non-stat exact layered CDT strip construction should honor non-enforcing policy");
 
     assert_eq!(
@@ -336,7 +342,6 @@ fn regression_issue_447_exact_layered_strip_preserves_collinear_boundary_vertice
     );
     assert_triangulation_vertices_use_exact_time_labels(&no_stats_dt);
     no_stats_dt
-        .as_triangulation()
         .validate()
         .expect("non-stat exact strip should satisfy Levels 1-4");
 }
@@ -381,7 +386,7 @@ fn regression_issue_447_explicit_exact_strip_preserves_vertices_without_level5_e
                     NonZeroUsize::new(2).unwrap(),
                 )),
         )
-        .build_with_kernel(&kernel)
+        .build_triangulation_with_kernel(&kernel)
         .expect("explicit exact CDT strip should import under the non-enforcing policy");
 
     assert_eq!(
@@ -400,9 +405,12 @@ fn regression_issue_447_explicit_exact_strip_preserves_vertices_without_level5_e
         "explicit construction should preserve exact strip coordinate bits and labels",
     );
     assert_triangulation_vertices_use_exact_time_labels(&dt);
-    dt.as_triangulation()
-        .validate()
+    dt.validate()
         .expect("explicit exact CDT strip should satisfy Levels 1-4");
+    assert!(
+        DelaunayTriangulation::try_from_triangulation(dt).is_err(),
+        "the imported strip must not cross the strict Level 5 boundary",
+    );
 }
 
 /// Locks the equivalence between the single-pass proof-carrying batch quantizer
@@ -483,17 +491,14 @@ fn regression_empty_circumsphere_2d_minimal_case() {
         vertex!([-93.661_180_847_043, 1.562_430_007_326_195_9]).unwrap(),
     ];
 
-    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+    let tri = DelaunayTriangulation::builder(&vertices)
         .topology_guarantee(TopologyGuarantee::PLManifold)
-        .build()
+        .build_triangulation()
         .unwrap();
 
-    if dt.is_valid_delaunay().is_err() {
-        #[cfg(feature = "diagnostics")]
-        dt.debug_print_first_delaunay_violation(None);
-    }
-
-    dt.repair_delaunay_with_flips().unwrap();
+    let dt = delaunayize(tri, DelaunayizeConfig::default())
+        .expect("Levels 1–4 fixture should convert through bounded Delaunay repair")
+        .triangulation;
 
     dt.as_triangulation()
         .validate_realization()
@@ -557,7 +562,7 @@ fn periodic_regression_fixture_t2() -> DelaunayTriangulation<RobustKernel<f64>, 
 
 /// Finds a periodic simplex by exact coordinate bits and lattice offsets.
 fn periodic_simplex_key(
-    dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), 2>,
+    dt: &Triangulation<RobustKernel<f64>, (), (), 2>,
     expected: [([f64; 2], [i8; 2]); 3],
 ) -> SimplexKey {
     let mut expected: Vec<_> = expected
@@ -599,7 +604,7 @@ struct PeriodicTopologySnapshot {
 
 /// Captures canonical periodic topology and realization state through public views.
 fn snapshot_periodic_topology(
-    dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), 2>,
+    dt: &Triangulation<RobustKernel<f64>, (), (), 2>,
 ) -> PeriodicTopologySnapshot {
     let mut vertices: Vec<_> = dt
         .vertices()
@@ -650,9 +655,178 @@ fn snapshot_periodic_topology(
     }
 }
 
+/// Builds a payload-bearing periodic T^2 fixture for realized-state reconstruction.
+fn periodic_payload_fixture_t2() -> DelaunayTriangulation<RobustKernel<f64>, u32, u32, 2> {
+    let vertices: Vec<Vertex<u32, 2>> = (0_u32..7)
+        .map(|index| {
+            let index_f64 = f64::from(index);
+            vertex!(
+                [
+                    0.9_f64.mul_add(
+                        ((index_f64 + 1.0) * 0.618_033_988_749_894_8).fract(),
+                        0.05,
+                    ),
+                    0.9_f64.mul_add(
+                        ((index_f64 + 1.0) * 0.414_213_562_373_095_03).fract(),
+                        0.05,
+                    ),
+                ];
+                data = index
+            )
+            .unwrap()
+        })
+        .collect();
+    let kernel = RobustKernel::<f64>::new();
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .simplex_data_type::<u32>()
+        .try_toroidal([1.0_f64; 2])
+        .unwrap()
+        .build_with_kernel(&kernel)
+        .expect("periodic payload-bearing T^2 build should succeed");
+    let mut next_simplex_payload = 100_u32;
+    dt.fill_simplex_data(|_, _| {
+        let payload = next_simplex_payload;
+        next_simplex_payload += 1;
+        payload
+    });
+    dt
+}
+
+/// Applies a realized-geometry-preserving move that intentionally breaks Level 5.
+fn evolve_periodic_fixture_without_delaunay(
+    dt: &DelaunayTriangulation<RobustKernel<f64>, u32, u32, 2>,
+) -> Triangulation<RobustKernel<f64>, u32, u32, 2> {
+    let triangulation = dt.clone().into_triangulation();
+    let facets: Vec<_> = triangulation
+        .facets()
+        .map(|facet| {
+            facet
+                .expect("periodic fixture facets should reborrow")
+                .handle()
+        })
+        .collect();
+
+    for facet in facets {
+        let mut trial = triangulation.clone();
+        let Ok(proposal) = trial.propose_pachner(PachnerMove::K2 { facet }) else {
+            continue;
+        };
+        if proposal.attempt_on(&mut trial).is_ok()
+            && DelaunayTriangulation::try_from_triangulation(trial.clone()).is_err()
+            && delaunayize(trial.clone(), DelaunayizeConfig::default()).is_ok()
+        {
+            return trial;
+        }
+    }
+
+    panic!(
+        "periodic fixture should contain a realized k=2 move that breaks Level 5 and is repairable"
+    );
+}
+
+#[test]
+fn regression_issue_557_restores_evolved_toroidal_state_through_level_4() {
+    let fresh = periodic_payload_fixture_t2();
+    assert!(
+        fresh.validate().is_ok(),
+        "fresh T^2 state must pass Levels 1-5"
+    );
+    assert!(fresh.global_topology().is_toroidal());
+
+    let mut evolved = evolve_periodic_fixture_without_delaunay(&fresh);
+    let simplex_keys: Vec<_> = evolved.simplices().map(|(key, _)| key).collect();
+    for (next_simplex_payload, simplex_key) in (1_000_u32..).zip(simplex_keys) {
+        evolved
+            .set_simplex_data(simplex_key, Some(next_simplex_payload))
+            .expect("evolved simplex payload assignment should preserve topology");
+    }
+    assert!(evolved.validate_realization().is_ok());
+    assert!(DelaunayTriangulation::try_from_triangulation(evolved.clone()).is_err());
+
+    let topology_guarantee = evolved.topology_guarantee();
+    let global_topology = evolved.global_topology();
+    let serialized = serde_json::to_string(&evolved.into_tds())
+        .expect("evolved toroidal triangulation should serialize as TDS data");
+    let evolved_tds: Tds<u32, u32, 2> = serde_json::from_str(&serialized)
+        .expect("serialized evolved state should hydrate into validated TDS storage");
+    let expected_snapshot = serde_json::to_value(&evolved_tds)
+        .expect("validated evolved TDS should retain a durable snapshot");
+
+    let restored = Triangulation::try_from_tds_with_topology_context(
+        evolved_tds.clone(),
+        RobustKernel::new(),
+        topology_guarantee,
+        global_topology,
+    )
+    .expect("Levels 1-4 reconstruction should accept evolved toroidal state");
+
+    assert_eq!(restored.topology_guarantee(), topology_guarantee);
+    assert_eq!(restored.global_topology(), global_topology);
+    assert_eq!(
+        serde_json::to_value(restored.clone().into_tds())
+            .expect("restored triangulation storage should serialize exactly"),
+        expected_snapshot,
+        "reconstruction must preserve connectivity, periodic offsets, UUIDs, and payloads"
+    );
+    assert!(restored.validate_realization().is_ok());
+
+    DelaunayTriangulation::try_from_triangulation(restored.clone())
+        .expect_err("strict certification must reject the non-Delaunay triangulation");
+
+    let converted = delaunayize(restored, DelaunayizeConfig::default())
+        .expect("bounded toroidal flip repair should convert the realized triangulation");
+    assert_eq!(converted.triangulation.global_topology(), global_topology);
+    assert_eq!(
+        converted.triangulation.topology_guarantee(),
+        topology_guarantee
+    );
+    converted
+        .triangulation
+        .validate()
+        .expect("delaunayize must publish only a cumulative Levels 1-5 value");
+
+    DelaunayTriangulation::try_from_tds_with_topology_context(
+        evolved_tds.clone(),
+        RobustKernel::new(),
+        topology_guarantee,
+        global_topology,
+    )
+    .expect_err("strict reconstruction must continue to reject the non-Delaunay state");
+
+    let mut invalid_snapshot = serde_json::to_value(evolved_tds)
+        .expect("valid evolved TDS should serialize for invalid-topology fixture setup");
+    let isolated_vertex = vertex!([0.42_f64, 0.42]; data = 999_u32)
+        .expect("isolated regression vertex should be valid by itself");
+    invalid_snapshot
+        .get_mut("vertices")
+        .and_then(serde_json::Value::as_array_mut)
+        .expect("serialized TDS should contain vertex records")
+        .push(
+            serde_json::to_value(isolated_vertex)
+                .expect("isolated regression vertex should serialize"),
+        );
+    let invalid_tds: Tds<u32, u32, 2> = serde_json::from_value(invalid_snapshot)
+        .expect("isolated vertex should preserve Levels 1-2 snapshot validity");
+    let invalid_error = Triangulation::try_from_tds_with_topology_context(
+        invalid_tds,
+        RobustKernel::new(),
+        topology_guarantee,
+        global_topology,
+    )
+    .expect_err("Levels 1-4 reconstruction must reject invalid toroidal topology");
+    assert!(matches!(
+        invalid_error,
+        TriangulationRealizationValidationError::Triangulation { source }
+            if matches!(
+                source.as_ref(),
+                TriangulationValidationError::IsolatedVertex { .. }
+            )
+    ));
+}
+
 #[test]
 fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
-    let dt = periodic_regression_fixture_t2();
+    let dt = periodic_regression_fixture_t2().into_triangulation();
 
     assert!(
         dt.simplices()
@@ -667,7 +841,7 @@ fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
 
 #[test]
 fn regression_issue_551_periodic_k1_preflight_rejects_orientation_repair_failure() {
-    let dt = periodic_regression_fixture_t2();
+    let dt = periodic_regression_fixture_t2().into_triangulation();
     let simplex_key = periodic_simplex_key(
         &dt,
         [
@@ -715,14 +889,13 @@ fn regression_issue_551_periodic_k1_preflight_rejects_orientation_repair_failure
         "rejected commit must not mutate"
     );
     trial
-        .as_triangulation()
         .validate_realization()
         .expect("rejected insertion must preserve the original realization");
 }
 
 #[test]
 fn regression_issue_551_periodic_k1_preflight_success_matches_commit() {
-    let dt = periodic_regression_fixture_t2();
+    let dt = periodic_regression_fixture_t2().into_triangulation();
     let simplex_key = periodic_simplex_key(
         &dt,
         [
@@ -756,7 +929,6 @@ fn regression_issue_551_periodic_k1_preflight_success_matches_commit() {
         committed.removed_face_vertices
     );
     trial
-        .as_triangulation()
         .validate_realization()
         .expect("successful periodic k=1 insertion must preserve Level 4 realization");
 }

@@ -286,6 +286,33 @@ matches the legacy `PLManifold` behavior (slowest, maximum safety).
 
 ---
 
+## Strict construction and realized-state reconstruction
+
+Fresh Delaunay construction and restoration of evolved state have different
+validation boundaries:
+
+- Builder construction and
+  `DelaunayTriangulation::try_from_tds_with_topology_context` are strict. They
+  return a Delaunay wrapper only after cumulative Levels 1–5 validation.
+- `Triangulation::try_from_tds_with_topology_context` restores the supplied
+  `TopologyGuarantee` and `GlobalTopology`, then validates cumulative Levels
+  1–4. It preserves the input TDS exactly and neither checks nor repairs Level
+  5. Failures use `TriangulationRealizationValidationError`, keeping this
+  boundary independent of Delaunay-only variants.
+- `DelaunayTriangulation::try_from_triangulation` performs strict no-repair
+  Level 5 certification. `delaunayize` and `delaunayize_by_flips` consume a
+  Levels 1–4 triangulation, perform bounded repair, and return a Levels 1–5
+  owner only after final cumulative validation.
+
+Use the realized-state boundary for checkpoints created after valid local moves
+when Delaunay optimality is not an invariant of the evolved model. Use
+`delaunay_violation_report` for Level 5 diagnostics without promotion, or one
+of the explicit conversion boundaries when a Delaunay owner is required.
+Malformed storage, invalid intrinsic topology, and invalid realization remain
+structured reconstruction errors.
+
+---
+
 ## Error Types by Layer
 
 The library separates **construction-time** failures from **validation-time** invariant violations, and also separates errors by layer.
@@ -757,10 +784,11 @@ enough for future regular, weighted, Gabriel, alpha, constrained, or related pre
   higher dimensions by default. Delaunay validation can still fail if repair is disabled, if repair
   fails to converge, or if inputs are highly degenerate/duplicate-heavy. See
   [Issue #120 Investigation](archive/issue_120_investigation.md).
-- **Heuristic fallback**: If flip-based repair does not converge, you can opt into a heuristic
-  rebuild fallback via `DelaunayTriangulation::repair_delaunay_with_flips_advanced`.
-  This requires `TopologyGuarantee::PLManifold` and `K: ExactPredicates`, and records the
-  shuffle/perturbation seeds used. See [Numerical Robustness Guide](numerical_robustness_guide.md).
+- **Fallback rebuild**: If flip-based conversion does not converge, a Levels
+  1–4 `Triangulation` can opt into bounded rebuild recovery through
+  `delaunayize(tri, DelaunayizeConfig::default().with_fallback_rebuild(true))`.
+  This requires `TopologyGuarantee::PLManifold` and `K: ExactPredicates`.
+  See [Numerical Robustness Guide](numerical_robustness_guide.md).
 
 ### Complexity
 
@@ -1002,10 +1030,11 @@ but the validator itself does not mutate the triangulation.
 **Likely Cause**: Repair disabled or non-convergent, geometric degeneracy, numerical precision,
 or missing higher-dimensional flip coverage
 **Fix**: Keep flip repair enabled, handle insertion errors, check for near-coplanar/collinear points,
-and consider using `RobustKernel` or `AdaptiveKernel` instead of `FastKernel` (explicit repair
-methods require `K: ExactPredicates`, which `FastKernel` does not implement). If repair fails to
-converge, consider the opt-in heuristic rebuild fallback via
-`dt.repair_delaunay_with_flips_advanced(...)` (requires PL-manifold + `ExactPredicates`).
+and consider using `RobustKernel` or `AdaptiveKernel` instead of `FastKernel`
+(`delaunayize` requires `K: ExactPredicates`, which `FastKernel` does not
+implement). If conversion fails to converge, enable the opt-in rebuild through
+`DelaunayizeConfig::default().with_fallback_rebuild(true)` (requires
+PL-manifold + `ExactPredicates`).
 
 ---
 

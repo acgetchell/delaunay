@@ -1,23 +1,22 @@
-//! End-to-end "repair then delaunayize" workflow.
+//! End-to-end Delaunay conversion workflow.
 //!
-//! This module provides [`delaunayize_by_flips`](crate::delaunayize::delaunayize_by_flips),
-//! a single public entrypoint that takes an existing [`DelaunayTriangulation`],
-//! performs bounded deterministic topology repair toward
-//! [`TopologyGuarantee::PLManifold`](crate::TopologyGuarantee::PLManifold),
-//! and then applies
-//! standard flip-based Delaunay repair.
+//! This module provides [`delaunayize`], a consuming conversion from a Levels
+//! 1–4 [`Triangulation`] to a Levels 1–5 [`DelaunayTriangulation`]. The
+//! [`delaunayize_by_flips`](crate::delaunayize::delaunayize_by_flips) alias
+//! names the current repair strategy explicitly.
+//! Conversion applies bounded flip-based Delaunay repair without weakening the
+//! input type's existing topology and realization proofs.
 //!
 //! # Workflow
 //!
-//! 1. **PL-manifold topology repair** — removes simplices that cause facet
-//!    over-sharing, boundary-ridge multiplicity, ridge-link, or vertex-link
-//!    violations using bounded deterministic [`PlManifoldRepairStage`] pruning
-//!    stages.
+//! 1. **Levels 1–4 validation** — rejects an input whose proof-bearing
+//!    `Triangulation` contract no longer holds.
 //! 2. **Delaunay flip repair** — runs k=2/k=3 bistellar flips to restore the
 //!    empty-circumsphere property.
 //! 3. **Optional fallback rebuild** — if configured, rebuilds the triangulation
-//!    from its vertex set after topology repair fails, or after Delaunay repair
-//!    fails following successful topology repair.
+//!    from its vertex set after Delaunay repair fails.
+//! 4. **Level 5 certification** — publishes `DelaunayTriangulation` only after
+//!    cumulative validation succeeds.
 //!
 //! # Example
 //!
@@ -40,10 +39,10 @@
 //!     delaunay::vertex![0.0, 1.0, 0.0]?,
 //!     delaunay::vertex![0.0, 0.0, 1.0]?,
 //! ];
-//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+//! let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
 //!
-//! let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
-//! assert!(outcome.topology_repair.succeeded);
+//! let result = delaunayize(tri, DelaunayizeConfig::default())?;
+//! assert!(result.triangulation.validate().is_ok());
 //! # Ok(())
 //! # }
 //! ```
@@ -61,33 +60,32 @@ pub use crate::flips::{
     DelaunayRepairStats,
 };
 pub use crate::tds::SimplexValidationError;
-pub use crate::{PlManifoldRepairError, PlManifoldRepairStage, PlManifoldRepairStats};
 
 use crate::builder::DelaunayTriangulationBuilder;
-use crate::core::algorithms::pl_manifold_repair::{
-    PlManifoldRepairConfig, repair_pl_manifold_topology,
-};
+use crate::core::algorithms::flips::repair_delaunay_with_flips_k2_k3;
 use crate::core::collections::{Entry, FastHashMap, SimplexVertexUuidBuffer};
+use crate::core::operations::TopologicalOperation;
+use crate::core::realization::TriangulationRealizationValidationError;
 use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, TdsMutationError};
 use crate::core::traits::data_type::DataType;
+use crate::core::triangulation::Triangulation;
+use crate::core::validation::TopologyGuarantee;
 use crate::core::vertex::Vertex;
-use crate::delaunay_rollback::{DelaunayRollbackTransaction, DelaunaySpatialIndexRollback};
 use crate::geometry::kernel::ExactPredicates;
-use crate::repair::DelaunayRepairHeuristicConfig;
+use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
 use crate::triangulation::DelaunayTriangulation;
+use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
 
 // =============================================================================
 // CONFIGURATION
 // =============================================================================
 
-/// Configuration for the [`delaunayize_by_flips`] workflow.
+/// Configuration for the [`delaunayize`] workflow.
 ///
 /// # Defaults
 ///
-/// - `topology_max_iterations`: 64
-/// - `topology_max_simplices_removed`: 10,000
 /// - `fallback_rebuild`: false
 /// - `delaunay_max_flips`: `None`
 ///
@@ -97,25 +95,16 @@ use thiserror::Error;
 /// use delaunay::prelude::delaunayize::DelaunayizeConfig;
 ///
 /// let config = DelaunayizeConfig::default()
-///     .with_topology_max_iterations(32)
-///     .with_topology_max_simplices_removed(1_000)
 ///     .with_fallback_rebuild(true)
 ///     .with_delaunay_max_flips(500);
 ///
-/// assert_eq!(config.topology_max_iterations, 32);
-/// assert_eq!(config.topology_max_simplices_removed, 1_000);
 /// assert!(config.fallback_rebuild);
 /// assert_eq!(config.delaunay_max_flips, Some(500));
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DelaunayizeConfig {
-    /// Maximum number of topology-repair iterations.
-    pub topology_max_iterations: usize,
-    /// Maximum number of simplices that may be removed during topology repair.
-    pub topology_max_simplices_removed: usize,
-    /// If `true`, rebuild the triangulation from the vertex set when topology
-    /// repair fails, or when flip-based Delaunay repair fails after topology
-    /// repair succeeds.
+    /// If `true`, rebuild the triangulation from the vertex set when flip-based
+    /// Delaunay repair fails.
     ///
     /// Simplex-level user data (`V`) is restored for rebuilt simplices whose sorted
     /// vertex UUID set matches exactly one original simplex. Simplices that change
@@ -129,54 +118,8 @@ pub struct DelaunayizeConfig {
     pub delaunay_max_flips: Option<usize>,
 }
 
-impl Default for DelaunayizeConfig {
-    fn default() -> Self {
-        Self {
-            topology_max_iterations: 64,
-            topology_max_simplices_removed: 10_000,
-            fallback_rebuild: false,
-            delaunay_max_flips: None,
-        }
-    }
-}
-
 impl DelaunayizeConfig {
-    /// Sets the maximum number of PL-manifold topology-repair iterations.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::delaunayize::DelaunayizeConfig;
-    ///
-    /// let config = DelaunayizeConfig::default().with_topology_max_iterations(32);
-    /// assert_eq!(config.topology_max_iterations, 32);
-    /// ```
-    #[must_use]
-    pub const fn with_topology_max_iterations(mut self, max_iterations: usize) -> Self {
-        self.topology_max_iterations = max_iterations;
-        self
-    }
-
-    /// Sets the maximum number of simplices topology repair may remove.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::delaunayize::DelaunayizeConfig;
-    ///
-    /// let config = DelaunayizeConfig::default().with_topology_max_simplices_removed(1_000);
-    /// assert_eq!(config.topology_max_simplices_removed, 1_000);
-    /// ```
-    #[must_use]
-    pub const fn with_topology_max_simplices_removed(
-        mut self,
-        max_simplices_removed: usize,
-    ) -> Self {
-        self.topology_max_simplices_removed = max_simplices_removed;
-        self
-    }
-
-    /// Enables or disables fallback rebuild after failed topology or Delaunay repair.
+    /// Enables or disables fallback rebuild after failed Delaunay repair.
     ///
     /// # Examples
     ///
@@ -231,7 +174,7 @@ impl DelaunayizeConfig {
 // OUTCOME
 // =============================================================================
 
-/// Outcome of a successful [`delaunayize_by_flips`] call.
+/// Outcome of a successful [`delaunayize`] call.
 ///
 /// # Examples
 ///
@@ -254,24 +197,17 @@ impl DelaunayizeConfig {
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+/// let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
 ///
-/// let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
-/// assert!(outcome.topology_repair.succeeded);
-/// assert!(!outcome.used_fallback_rebuild);
+/// let result = delaunayize(tri, DelaunayizeConfig::default())?;
+/// assert!(!result.outcome.used_fallback_rebuild);
+/// assert!(result.triangulation.validate().is_ok());
 /// # Ok(())
 /// # }
 /// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct DelaunayizeOutcome<U, V, const D: usize> {
-    /// Statistics from the PL-manifold topology repair pass.
-    ///
-    /// If topology repair fails but fallback rebuild succeeds, these preserve
-    /// the counters available from the failed repair attempt. Use
-    /// [`used_fallback_rebuild`](Self::used_fallback_rebuild) to distinguish
-    /// successful rebuild recovery from direct topology repair success.
-    pub topology_repair: PlManifoldRepairStats<U, V, D>,
+pub struct DelaunayizeOutcome {
     /// Statistics from the flip-based Delaunay repair pass.
     ///
     /// If Delaunay repair fails but fallback rebuild succeeds, these preserve
@@ -283,27 +219,37 @@ pub struct DelaunayizeOutcome<U, V, const D: usize> {
     pub used_fallback_rebuild: bool,
 }
 
+/// A Delaunay-certified triangulation and the repair diagnostics that produced it.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct DelaunayizeResult<K, U, V, const D: usize> {
+    /// The Levels 1–5 domain value published after successful conversion.
+    pub triangulation: DelaunayTriangulation<K, U, V, D>,
+    /// Diagnostics from the bounded Delaunay repair workflow.
+    pub outcome: DelaunayizeOutcome,
+}
+
 // =============================================================================
 // ERRORS
 // =============================================================================
 
-/// Errors that can occur during the [`delaunayize_by_flips`] workflow.
+/// Errors that can occur during the [`delaunayize`] workflow.
 ///
-/// There are four orthogonal failure modes:
-/// - **Topology repair** failed (step 1).
-/// - **Delaunay repair** failed (step 2), with optional context about a
+/// There are six orthogonal failure modes:
+/// - **Input validation** rejected the supplied Levels 1–4 owner.
+/// - **Topology precondition** rejected an input without the PL-manifold proof
+///   required by flip repair.
+/// - **Delaunay repair** failed, with optional context about a
 ///   fallback rebuild attempt.
 /// - **Fallback snapshot** failed before a fallback-eligible repair phase.
 /// - **Fallback simplex-data recovery** failed while snapshotting before a
 ///   fallback-eligible phase or restoring simplex payloads after a repair
 ///   failure.
+/// - **Final validation** rejected the repaired Levels 1–5 candidate.
 ///
 /// # Orthogonality
 ///
 /// The variants are mutually exclusive by failure mode:
-/// - Topology repair, fallback not attempted -> [`TopologyRepairFailed`](Self::TopologyRepairFailed).
-/// - Topology repair, fallback also failed   -> [`TopologyRepairFailedWithRebuild`](Self::TopologyRepairFailedWithRebuild).
-/// - Topology repair, fallback rebuild succeeded but payload restore failed -> [`TopologyRepairFailedWithRebuildRestore`](Self::TopologyRepairFailedWithRebuildRestore).
 /// - Delaunay repair, fallback not attempted -> [`DelaunayRepairFailed`](Self::DelaunayRepairFailed).
 /// - Delaunay repair, fallback also failed   -> [`DelaunayRepairFailedWithRebuild`](Self::DelaunayRepairFailedWithRebuild).
 /// - Delaunay repair, fallback rebuild succeeded but payload restore failed -> [`DelaunayRepairFailedWithRebuildRestore`](Self::DelaunayRepairFailedWithRebuildRestore).
@@ -336,38 +282,22 @@ pub struct DelaunayizeOutcome<U, V, const D: usize> {
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum DelaunayizeError {
-    /// PL-manifold topology repair failed; no fallback rebuild was attempted
-    /// (fallback disabled, or the caller's config did not request one).
-    #[error("Topology repair failed: {source}")]
-    TopologyRepairFailed {
-        /// The underlying topology-repair error.
-        #[from]
+    /// The supplied generic triangulation no longer satisfies its Levels 1–4 contract.
+    #[error("Input triangulation failed cumulative Levels 1-4 validation: {source}")]
+    InputValidationFailed {
+        /// Underlying cumulative realization-validation failure.
         #[source]
-        source: PlManifoldRepairError,
+        source: TriangulationRealizationValidationError,
     },
 
-    /// PL-manifold topology repair failed **and** the fallback vertex-set
-    /// rebuild also failed.  Both errors are preserved as typed values.
-    #[error("Topology repair failed ({source}); fallback rebuild also failed: {rebuild_error}")]
-    TopologyRepairFailedWithRebuild {
-        /// The underlying topology-repair error that triggered the fallback.
-        #[source]
-        source: PlManifoldRepairError,
-        /// The construction error from the subsequent vertex-set rebuild attempt.
-        rebuild_error: DelaunayTriangulationConstructionError,
-    },
-
-    /// PL-manifold topology repair failed, the fallback vertex-set rebuild
-    /// succeeded, but simplex-payload restoration from the rebuilt topology failed.
-    #[error(
-        "Topology repair failed ({source}); fallback rebuild succeeded but simplex-data restore failed: {restore_error}"
-    )]
-    TopologyRepairFailedWithRebuildRestore {
-        /// The underlying topology-repair error that triggered the fallback.
-        #[source]
-        source: PlManifoldRepairError,
-        /// The simplex-data restoration error from the rebuilt triangulation.
-        restore_error: SimplexDataRestoreError,
+    /// The input is valid under its declared topology guarantee, but that
+    /// guarantee is too weak for bistellar flip repair.
+    #[error("Delaunay flip repair requires {required:?} topology, found {found:?}")]
+    FlipTopologyNotAdmissible {
+        /// Minimum topology proof required by the selected operation.
+        required: TopologyGuarantee,
+        /// Topology proof carried by the input triangulation.
+        found: TopologyGuarantee,
     },
 
     /// Delaunay flip repair failed; no fallback rebuild was attempted
@@ -378,29 +308,6 @@ pub enum DelaunayizeError {
         #[from]
         #[source]
         source: DelaunayRepairError,
-    },
-
-    /// Legacy diagnostic for Delaunay flip repair failure followed by fallback
-    /// payload snapshot failure.
-    ///
-    /// The current [`delaunayize_by_flips`] workflow validates fallback
-    /// snapshots before the Delaunay repair result can be accepted, so
-    /// crate-generated errors report
-    /// [`FallbackSimplexDataSnapshotFailed`](Self::FallbackSimplexDataSnapshotFailed)
-    /// for this condition.
-    #[deprecated(
-        since = "0.7.8",
-        note = "fallback snapshots are now validated before the Delaunay repair result is accepted; use FallbackSimplexDataSnapshotFailed"
-    )]
-    #[error(
-        "Delaunay repair failed ({source}); fallback simplex-data snapshot failed: {snapshot_error}"
-    )]
-    DelaunayRepairFailedWithSimplexDataSnapshot {
-        /// The underlying flip-repair error that triggered the fallback.
-        #[source]
-        source: DelaunayRepairError,
-        /// The simplex-data snapshot error from the current triangulation.
-        snapshot_error: SimplexValidationError,
     },
 
     /// Delaunay flip repair failed **and** the fallback vertex-set rebuild
@@ -437,6 +344,14 @@ pub enum DelaunayizeError {
         #[from]
         #[source]
         source: SimplexValidationError,
+    },
+
+    /// Repair completed, but cumulative Levels 1–5 validation rejected the result.
+    #[error("Delaunayized triangulation failed cumulative Levels 1-5 validation: {source}")]
+    FinalValidationFailed {
+        /// Underlying cumulative Delaunay-validation failure.
+        #[source]
+        source: DelaunayTriangulationValidationError,
     },
 }
 
@@ -515,12 +430,12 @@ type SimplexDataByVertexUuids<V> = FastHashMap<SimplexVertexUuidBuffer, SimplexD
 /// Snapshot of the inputs needed for a fallback rebuild.
 ///
 /// The snapshot stores only the preserved vertices and the simplex payload
-/// signatures needed for rebuild input. Transactional rollback remains owned by
-/// [`DelaunayRollbackTransaction`], so this helper cannot become a second
-/// rollback mechanism.
+/// signatures needed for rebuild input.
 struct FallbackRebuildSnapshot<U, V, const D: usize> {
     vertices: Vec<Vertex<U, D>>,
     simplex_data: SimplexDataByVertexUuids<V>,
+    topology_guarantee: TopologyGuarantee,
+    global_topology: GlobalTopology<D>,
 }
 
 impl<U, V, const D: usize> FallbackRebuildSnapshot<U, V, D> {
@@ -543,20 +458,22 @@ impl<U, V, const D: usize> FallbackRebuildSnapshot<U, V, D> {
 /// Returns [`SimplexValidationError`] if any simplex cannot resolve all vertex
 /// UUIDs needed to build its order-independent payload signature.
 fn snapshot_rebuild_state<K, U, V, const D: usize>(
-    dt: &DelaunayTriangulation<K, U, V, D>,
+    triangulation: &Triangulation<K, U, V, D>,
 ) -> Result<FallbackRebuildSnapshot<U, V, D>, SimplexValidationError>
 where
     U: Copy,
     V: Copy,
 {
-    let vertices = dt
+    let vertices = triangulation
         .vertices()
         .map(|(_, v)| Vertex::from_validated_point_with_uuid(*v.point(), v.uuid(), v.data))
         .collect::<Vec<_>>();
-    let simplex_data = collect_simplex_data(dt)?;
+    let simplex_data = collect_simplex_data(triangulation)?;
     Ok(FallbackRebuildSnapshot {
         vertices,
         simplex_data,
+        topology_guarantee: triangulation.topology_guarantee(),
+        global_topology: triangulation.global_topology(),
     })
 }
 
@@ -568,14 +485,14 @@ where
 /// Returns [`SimplexValidationError`] if a simplex references a vertex whose
 /// UUID cannot be resolved.
 fn collect_simplex_data<K, U, V, const D: usize>(
-    dt: &DelaunayTriangulation<K, U, V, D>,
+    triangulation: &Triangulation<K, U, V, D>,
 ) -> Result<SimplexDataByVertexUuids<V>, SimplexValidationError>
 where
     V: Copy,
 {
     let mut simplex_data = FastHashMap::default();
-    for (_, simplex) in dt.simplices() {
-        let vertex_uuids = simplex_vertex_uuids(dt, simplex)?;
+    for (_, simplex) in triangulation.simplices() {
+        let vertex_uuids = simplex_vertex_uuids(triangulation, simplex)?;
         match simplex_data.entry(vertex_uuids) {
             Entry::Vacant(entry) => {
                 entry.insert(SimplexDataMatch::Unique(simplex.data().copied()));
@@ -596,12 +513,12 @@ where
 /// Returns [`SimplexValidationError`] if any simplex vertex key cannot be
 /// resolved to its stable vertex UUID.
 fn simplex_vertex_uuids<K, U, V, const D: usize>(
-    dt: &DelaunayTriangulation<K, U, V, D>,
+    triangulation: &Triangulation<K, U, V, D>,
     simplex: &Simplex<V, D>,
 ) -> Result<SimplexVertexUuidBuffer, SimplexValidationError> {
     let mut vertex_uuids = SimplexVertexUuidBuffer::new();
     for &vertex_key in simplex.vertices() {
-        let vertex_uuid = dt
+        let vertex_uuid = triangulation
             .vertex_uuid_from_key(vertex_key)
             .ok_or(SimplexValidationError::VertexKeyNotFound { key: vertex_key })?;
         vertex_uuids.push(vertex_uuid);
@@ -626,7 +543,7 @@ where
 {
     let mut assignments: Vec<(SimplexKey, V)> = Vec::new();
     for (simplex_key, simplex) in rebuilt.simplices() {
-        let vertex_uuids = simplex_vertex_uuids(rebuilt, simplex)?;
+        let vertex_uuids = simplex_vertex_uuids(rebuilt.as_triangulation(), simplex)?;
         let Some(SimplexDataMatch::Unique(Some(data))) = original_simplex_data.get(&vertex_uuids)
         else {
             continue;
@@ -641,11 +558,11 @@ where
     Ok(())
 }
 
-/// Internal fallback rebuild failure before mapping into phase-specific public errors.
+/// Internal fallback rebuild failure before mapping into public conversion errors.
 ///
-/// The public [`DelaunayizeError`] variants distinguish whether fallback was
-/// triggered by topology repair or Delaunay repair. This private error keeps the
-/// rebuild phase orthogonal so both call sites can preserve the typed source.
+/// This private error keeps fallback construction and payload restoration
+/// orthogonal while [`DelaunayizeError`] preserves both the original Delaunay
+/// repair failure and the fallback failure.
 #[derive(Clone, Debug, Error, PartialEq)]
 enum FallbackRebuildError {
     /// Rebuilding from preserved vertices failed during triangulation construction.
@@ -662,28 +579,6 @@ enum FallbackRebuildError {
         #[source]
         source: SimplexDataRestoreError,
     },
-}
-
-/// Maps a fallback rebuild failure while handling a topology-repair failure
-/// without erasing either typed source.
-fn topology_rebuild_error(
-    source: PlManifoldRepairError,
-    fallback_error: FallbackRebuildError,
-) -> DelaunayizeError {
-    match fallback_error {
-        FallbackRebuildError::Construction {
-            source: rebuild_error,
-        } => DelaunayizeError::TopologyRepairFailedWithRebuild {
-            source,
-            rebuild_error,
-        },
-        FallbackRebuildError::Restore {
-            source: restore_error,
-        } => DelaunayizeError::TopologyRepairFailedWithRebuildRestore {
-            source,
-            restore_error,
-        },
-    }
 }
 
 /// Maps a fallback rebuild failure while handling a Delaunay-repair failure
@@ -725,9 +620,17 @@ where
     U: DataType,
     V: DataType,
 {
-    let mut rebuilt = DelaunayTriangulationBuilder::new(snapshot.vertices())
+    let builder = DelaunayTriangulationBuilder::new(snapshot.vertices())
         .simplex_data_type::<V>()
-        .build_with_kernel(kernel)?;
+        .topology_guarantee(snapshot.topology_guarantee);
+    let builder = match snapshot.global_topology {
+        GlobalTopology::Toroidal {
+            domain,
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
+        } => builder.toroidal(domain),
+        global_topology => builder.global_topology(global_topology),
+    };
+    let mut rebuilt = builder.build_with_kernel(kernel)?;
     restore_simplex_data(&mut rebuilt, snapshot.simplex_data())?;
     Ok(rebuilt)
 }
@@ -739,7 +642,7 @@ where
 /// Returns [`DelaunayRepairError`] from the selected flip-repair strategy when
 /// repair does not converge or validation rejects the repaired triangulation.
 fn run_configured_delaunay_repair<K, U, V, const D: usize>(
-    dt: &mut DelaunayTriangulation<K, U, V, D>,
+    triangulation: &mut Triangulation<K, U, V, D>,
     config: DelaunayizeConfig,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
@@ -747,52 +650,33 @@ where
     U: DataType,
     V: DataType,
 {
-    if let Some(max_flips) = config.delaunay_max_flips {
-        dt.repair_delaunay_with_flips_advanced(
-            DelaunayRepairHeuristicConfig::default().with_delaunay_max_flips(max_flips),
-        )
-        .map(|outcome| outcome.stats)
-    } else {
-        dt.repair_delaunay_with_flips()
+    #[cfg(test)]
+    if tests::force_delaunay_repair_failure_enabled() {
+        return Err(tests::synthetic_repair_error());
     }
-}
 
-/// Extracts topology repair counters so fallback-recovered outcomes report
-/// attempted repair work instead of zeroing diagnostics after rebuild recovery.
-fn failed_topology_repair_stats<U, V, const D: usize>(
-    source: &PlManifoldRepairError,
-) -> PlManifoldRepairStats<U, V, D> {
-    let (iterations, simplices_removed) = match source {
-        PlManifoldRepairError::BudgetExhausted {
-            iterations,
-            simplices_removed,
-            ..
-        }
-        | PlManifoldRepairError::NoProgress {
-            iterations,
-            simplices_removed,
-            ..
-        }
-        | PlManifoldRepairError::TargetedBudgetExhausted {
-            iterations,
-            simplices_removed,
-            ..
-        }
-        | PlManifoldRepairError::TargetedNoProgress {
-            iterations,
-            simplices_removed,
-            ..
-        } => (*iterations, *simplices_removed),
-        PlManifoldRepairError::Tds { source: _ }
-        | PlManifoldRepairError::TargetedValidation { .. }
-        | PlManifoldRepairError::TargetedPostconditionValidation { .. } => (0, 0),
-    };
-
-    PlManifoldRepairStats {
-        iterations,
-        simplices_removed,
-        ..PlManifoldRepairStats::default()
-    }
+    let topology = triangulation.topology_guarantee();
+    let global_topology = triangulation.global_topology();
+    let stats = repair_delaunay_with_flips_k2_k3(
+        &mut triangulation.tds,
+        &triangulation.kernel,
+        None,
+        topology,
+        global_topology,
+        config.delaunay_max_flips,
+    )?;
+    triangulation
+        .normalize_and_promote_positive_orientation()
+        .map_err(
+            |source| DelaunayRepairError::OrientationCanonicalizationFailed {
+                reason: Box::new(
+                    DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
+                        source: Box::new(source),
+                    },
+                ),
+            },
+        )?;
+    Ok(stats)
 }
 
 /// Extracts Delaunay repair counters so fallback-recovered outcomes preserve
@@ -813,268 +697,195 @@ fn failed_delaunay_repair_stats(source: &DelaunayRepairError) -> DelaunayRepairS
     }
 }
 
-/// Finalizes Delaunay repair while preserving atomic rollback semantics.
-///
-/// The transaction commits on direct Delaunay repair success or successful
-/// fallback rebuild. Every Delaunay repair, fallback snapshot, rebuild, or
-/// restore failure rolls the transaction back before returning the typed public
-/// [`DelaunayizeError`].
-///
-/// # Errors
-///
-/// Returns [`DelaunayizeError`] if Delaunay repair fails and fallback is
-/// disabled, if pre-Delaunay fallback snapshotting fails before the Delaunay
-/// repair result can be accepted, or if fallback rebuild or payload restoration
-/// fails.
-#[expect(
-    clippy::result_large_err,
-    reason = "DelaunayizeError preserves typed repair, rebuild, and restore errors so callers can pattern-match both primary and fallback failures; this is a cold transactional error path."
-)]
-fn finish_delaunayize_after_delaunay_repair<K, U, V, const D: usize>(
-    mut transaction: DelaunayRollbackTransaction<'_, K, U, V, D>,
-    topology_stats: PlManifoldRepairStats<U, V, D>,
-    pre_delaunay_fallback_snapshot: Option<
-        Result<FallbackRebuildSnapshot<U, V, D>, SimplexValidationError>,
-    >,
-    delaunay_result: Result<DelaunayRepairStats, DelaunayRepairError>,
-) -> Result<DelaunayizeOutcome<U, V, D>, DelaunayizeError>
-where
-    K: ExactPredicates<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
-{
-    let pre_delaunay_fallback_snapshot = match pre_delaunay_fallback_snapshot {
-        Some(Ok(snapshot)) => Some(snapshot),
-        Some(Err(source)) => {
-            transaction.rollback();
-            return Err(DelaunayizeError::FallbackSimplexDataSnapshotFailed { source });
-        }
-        None => None,
-    };
-
-    match delaunay_result {
-        Ok(delaunay_stats) => {
-            let outcome = DelaunayizeOutcome {
-                topology_repair: topology_stats,
-                delaunay_repair: delaunay_stats,
-                used_fallback_rebuild: false,
-            };
-            transaction.commit();
-            Ok(outcome)
-        }
-        Err(repair_err) => {
-            let Some(fallback_snapshot) = pre_delaunay_fallback_snapshot else {
-                transaction.rollback();
-                return Err(DelaunayizeError::from(repair_err));
-            };
-            let failed_delaunay_stats = failed_delaunay_repair_stats(&repair_err);
-
-            let fallback_result = {
-                let kernel = transaction.delaunay_mut().kernel();
-                rebuild_preserving_data(kernel, &fallback_snapshot)
-            };
-            match fallback_result {
-                Ok(rebuilt) => {
-                    *transaction.delaunay_mut() = rebuilt;
-                    transaction.commit();
-                    Ok(DelaunayizeOutcome {
-                        topology_repair: topology_stats,
-                        delaunay_repair: failed_delaunay_stats,
-                        used_fallback_rebuild: true,
-                    })
-                }
-                Err(fallback_error) => {
-                    transaction.rollback();
-                    Err(delaunay_rebuild_error(repair_err, fallback_error))
-                }
-            }
-        }
-    }
-}
-
 // =============================================================================
 // PUBLIC API
 // =============================================================================
 
-/// Performs bounded topology repair followed by flip-based Delaunay repair.
+/// Converts a Levels 1–4 triangulation into a Levels 1–5 Delaunay triangulation.
 ///
-/// This is the primary public entrypoint for the "repair then delaunayize"
-/// workflow described in the [module documentation](self).
+/// The input is consumed so an intermediate repair state cannot escape under
+/// the [`DelaunayTriangulation`] type. Conversion first confirms the generic
+/// triangulation's cumulative Levels 1–4 contract, performs bounded repair,
+/// then publishes the Delaunay owner only after cumulative Levels 1–5
+/// validation succeeds.
 ///
-/// # Type Constraints
-///
-/// The kernel must implement [`ExactPredicates`] (required by the underlying
-/// Delaunay flip-repair engine). The default [`AdaptiveKernel`](crate::geometry::kernel::AdaptiveKernel)
-/// satisfies this requirement.
+/// Use [`DelaunayTriangulation::try_from_triangulation`] instead when the input
+/// is already expected to be Delaunay and no repair should be attempted.
 ///
 /// # Errors
 ///
-/// Returns [`DelaunayizeError`] if:
-/// - Topology repair fails and no fallback rebuild was attempted
-///   ([`TopologyRepairFailed`](DelaunayizeError::TopologyRepairFailed)).
-/// - Topology repair fails **and** the fallback vertex-set rebuild also
-///   fails
-///   ([`TopologyRepairFailedWithRebuild`](DelaunayizeError::TopologyRepairFailedWithRebuild)).
-/// - Topology repair fails, fallback rebuild succeeds, and simplex-payload
-///   restoration fails
-///   ([`TopologyRepairFailedWithRebuildRestore`](DelaunayizeError::TopologyRepairFailedWithRebuildRestore)).
-/// - Delaunay flip repair fails and no fallback rebuild was attempted
-///   ([`DelaunayRepairFailed`](DelaunayizeError::DelaunayRepairFailed)).
-/// - Delaunay flip repair fails **and** the fallback vertex-set rebuild also
-///   fails
-///   ([`DelaunayRepairFailedWithRebuild`](DelaunayizeError::DelaunayRepairFailedWithRebuild)).
-/// - Delaunay flip repair fails, fallback rebuild succeeds, and simplex-payload
-///   restoration fails
-///   ([`DelaunayRepairFailedWithRebuildRestore`](DelaunayizeError::DelaunayRepairFailedWithRebuildRestore)).
-/// - Fallback rebuild was enabled but a simplex-payload snapshot fails before a
-///   fallback-eligible repair phase can safely continue
-///   ([`FallbackSimplexDataSnapshotFailed`](DelaunayizeError::FallbackSimplexDataSnapshotFailed)).
-///
-/// When topology repair fails and fallback rebuild succeeds, this function
-/// returns `Ok` with `used_fallback_rebuild = true` and
-/// `topology_repair.succeeded = false`; the topology pass is not reported as
-/// successful merely because rebuild recovered the workflow.
-/// When Delaunay repair fails and fallback rebuild succeeds, the returned
-/// [`DelaunayizeOutcome::delaunay_repair`] preserves the counters available
-/// from the failed repair attempt instead of resetting them to zero.
-///
-/// Fallback snapshots are validated before Delaunay repair results are accepted;
-/// if snapshotting fails, this function returns
-/// [`FallbackSimplexDataSnapshotFailed`](DelaunayizeError::FallbackSimplexDataSnapshotFailed)
-/// and rolls back even if the repair result would otherwise have been `Ok`.
-///
-/// If any repair stage fails and no fallback rebuild succeeds, the
-/// triangulation is restored to its pre-call state before the error is
-/// returned. A successful direct repair or successful fallback rebuild commits
-/// the resulting triangulation.
-///
-/// The `*WithRebuild` variants preserve both errors as typed fields so
-/// consumers can inspect both typed errors;
-/// [`Error::source`](std::error::Error::source) exposes the primary repair error.
+/// Returns [`DelaunayizeError::InputValidationFailed`] when the input does not
+/// satisfy Levels 1–4, a typed repair error when conversion cannot converge,
+/// or [`DelaunayizeError::FinalValidationFailed`] when the repaired result
+/// cannot cross the cumulative Levels 1–5 boundary.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::delaunayize::*;
+/// use delaunay::prelude::construction::{
+///     ConstructionOptions, DelaunayTriangulationBuilder,
+///     DelaunayTriangulationConstructionError,
+/// };
+/// use delaunay::prelude::delaunayize::{DelaunayizeConfig, delaunayize};
+/// use delaunay::prelude::geometry::CoordinateConversionError;
+/// use delaunay::prelude::validation::DelaunayValidationError;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
 /// #     #[error(transparent)]
-/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     Coordinate(#[from] CoordinateConversionError),
+/// #     #[error(transparent)]
+/// #     Construction(#[from] DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     DelaunayProperty(#[from] DelaunayValidationError),
 /// #     #[error(transparent)]
 /// #     Delaunayize(#[from] delaunay::prelude::delaunayize::DelaunayizeError),
-/// #     #[error(transparent)]
-/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::vertex![0.0, 0.0, 0.0]?,
-///     delaunay::vertex![1.0, 0.0, 0.0]?,
-///     delaunay::vertex![0.0, 1.0, 0.0]?,
-///     delaunay::vertex![0.0, 0.0, 1.0]?,
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![4.0, 0.0]?,
+///     delaunay::vertex![4.0, 2.0]?,
+///     delaunay::vertex![1.0, 2.0]?,
 /// ];
-/// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+/// let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
+/// let triangulation =
+///     DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+///         .map_err(DelaunayTriangulationConstructionError::from)?
+///         .construction_options(
+///             ConstructionOptions::default().without_final_delaunay_enforcement(),
+///         )
+///         .build_triangulation()?;
+/// assert!(!triangulation.delaunay_violation_report(None)?.is_valid());
 ///
-/// let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
-/// assert!(outcome.topology_repair.succeeded);
+/// let result = delaunayize(triangulation, DelaunayizeConfig::default())?;
+/// assert!(result.triangulation.validate().is_ok());
 /// # Ok(())
 /// # }
 /// ```
 #[expect(
     clippy::result_large_err,
-    reason = "DelaunayizeError preserves typed source and rebuild_error values on the *WithRebuild variants (no boxing) so callers can pattern-match both errors while Error::source exposes the primary repair error; this is a cold error path."
+    reason = "DelaunayizeError preserves typed repair and validation sources on a cold conversion error path."
 )]
-pub fn delaunayize_by_flips<K, U, V, const D: usize>(
-    dt: &mut DelaunayTriangulation<K, U, V, D>,
+pub fn delaunayize<K, U, V, const D: usize>(
+    mut triangulation: Triangulation<K, U, V, D>,
     config: DelaunayizeConfig,
-) -> Result<DelaunayizeOutcome<U, V, D>, DelaunayizeError>
+) -> Result<DelaunayizeResult<K, U, V, D>, DelaunayizeError>
 where
     K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
-    let pl_config = PlManifoldRepairConfig {
-        max_iterations: config.topology_max_iterations,
-        max_simplices_removed: config.topology_max_simplices_removed,
-    };
-    let mut transaction =
-        DelaunayRollbackTransaction::begin(dt, DelaunaySpatialIndexRollback::Restore);
+    triangulation
+        .validate_realization()
+        .map_err(|source| DelaunayizeError::InputValidationFailed { source })?;
 
-    // Step 1: PL-manifold topology repair.
-    let fallback_snapshot = if config.fallback_rebuild {
-        match snapshot_rebuild_state(transaction.delaunay_mut()) {
-            Ok(snapshot) => Some(snapshot),
-            Err(source) => {
-                transaction.rollback();
-                return Err(DelaunayizeError::FallbackSimplexDataSnapshotFailed { source });
-            }
+    let operation = TopologicalOperation::FacetFlip;
+    let topology = triangulation.topology_guarantee();
+    if !operation.is_admissible_under(topology) {
+        return Err(DelaunayizeError::FlipTopologyNotAdmissible {
+            required: operation.required_topology(),
+            found: topology,
+        });
+    }
+
+    let fallback_snapshot = config
+        .fallback_rebuild
+        .then(|| snapshot_rebuild_state(&triangulation))
+        .transpose()
+        .map_err(|source| DelaunayizeError::FallbackSimplexDataSnapshotFailed { source })?;
+
+    match run_configured_delaunay_repair(&mut triangulation, config) {
+        Ok(delaunay_repair) => {
+            let triangulation = DelaunayTriangulation::try_from_triangulation(triangulation)
+                .map_err(|source| DelaunayizeError::FinalValidationFailed { source })?;
+            Ok(DelaunayizeResult {
+                triangulation,
+                outcome: DelaunayizeOutcome {
+                    delaunay_repair,
+                    used_fallback_rebuild: false,
+                },
+            })
         }
-    } else {
-        None
-    };
-
-    let global_topology = transaction.delaunay_mut().global_topology();
-    let topology_result = {
-        let delaunay = transaction.delaunay_mut();
-        repair_pl_manifold_topology(delaunay.tds_mut_for_repair(), global_topology, &pl_config)
-    };
-    let topology_stats = match topology_result {
-        Ok(stats) => stats,
-        // Topology repair failed but fallback is enabled — try rebuilding.
-        Err(topo_err) if config.fallback_rebuild => {
+        Err(repair_error) => {
             let Some(fallback_snapshot) = fallback_snapshot else {
-                transaction.rollback();
-                return Err(topo_err.into());
+                return Err(DelaunayizeError::from(repair_error));
             };
-            let failed_topology_stats = failed_topology_repair_stats(&topo_err);
-            let fallback_result = {
-                let kernel = transaction.delaunay_mut().kernel();
-                rebuild_preserving_data(kernel, &fallback_snapshot)
-            };
-            match fallback_result {
-                Ok(rebuilt) => {
-                    *transaction.delaunay_mut() = rebuilt;
-                    transaction.commit();
-                    return Ok(DelaunayizeOutcome {
-                        topology_repair: failed_topology_stats,
-                        delaunay_repair: DelaunayRepairStats::default(),
-                        used_fallback_rebuild: true,
-                    });
-                }
-                Err(fallback_error) => {
-                    transaction.rollback();
-                    return Err(topology_rebuild_error(topo_err, fallback_error));
-                }
-            }
+            let delaunay_repair = failed_delaunay_repair_stats(&repair_error);
+            let triangulation = rebuild_preserving_data(&triangulation.kernel, &fallback_snapshot)
+                .map_err(|fallback_error| delaunay_rebuild_error(repair_error, fallback_error))?;
+            Ok(DelaunayizeResult {
+                triangulation,
+                outcome: DelaunayizeOutcome {
+                    delaunay_repair,
+                    used_fallback_rebuild: true,
+                },
+            })
         }
-        Err(topo_err) => {
-            transaction.rollback();
-            return Err(topo_err.into());
-        }
-    };
+    }
+}
 
-    // Step 2: Flip-based Delaunay repair.
-    // This is rebuild input only; rollback remains owned by `transaction`.
-    let pre_delaunay_fallback_snapshot = if config.fallback_rebuild {
-        Some(snapshot_rebuild_state(transaction.delaunay_mut()))
-    } else {
-        None
-    };
-    #[cfg(test)]
-    let delaunay_result = if tests::force_delaunay_repair_failure_enabled() {
-        Err(tests::synthetic_repair_error())
-    } else {
-        run_configured_delaunay_repair(transaction.delaunay_mut(), config)
-    };
-    #[cfg(not(test))]
-    let delaunay_result = run_configured_delaunay_repair(transaction.delaunay_mut(), config);
-
-    finish_delaunayize_after_delaunay_repair(
-        transaction,
-        topology_stats,
-        pre_delaunay_fallback_snapshot,
-        delaunay_result,
-    )
+/// Converts a Levels 1–4 triangulation into a Levels 1–5 Delaunay
+/// triangulation using the bounded flip-repair workflow.
+///
+/// This named variant is equivalent to [`delaunayize`] and makes the selected
+/// repair strategy explicit. It consumes the generic triangulation so no
+/// intermediate non-Delaunay state can escape under the Level 5 owner type.
+///
+/// # Errors
+///
+/// Returns [`DelaunayizeError`] when Levels 1–4 input validation fails, repair
+/// does not converge within its budgets, fallback reconstruction fails, or the
+/// final Levels 1–5 certification fails.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::construction::{
+///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+/// };
+/// use delaunay::prelude::delaunayize::{
+///     DelaunayizeConfig, DelaunayizeError, delaunayize_by_flips,
+/// };
+/// use delaunay::prelude::geometry::CoordinateConversionError;
+///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] CoordinateConversionError),
+/// #     #[error(transparent)]
+/// #     Construction(#[from] DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Delaunayize(#[from] DelaunayizeError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let vertices = [
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0]?,
+/// ];
+/// let triangulation = DelaunayTriangulationBuilder::new(&vertices)
+///     .build_triangulation()?;
+///
+/// let result = delaunayize_by_flips(triangulation, DelaunayizeConfig::default())?;
+/// assert!(result.triangulation.validate().is_ok());
+/// # Ok(())
+/// # }
+/// ```
+#[expect(
+    clippy::result_large_err,
+    reason = "DelaunayizeError preserves typed repair and validation sources on a cold conversion error path."
+)]
+pub fn delaunayize_by_flips<K, U, V, const D: usize>(
+    triangulation: Triangulation<K, U, V, D>,
+    config: DelaunayizeConfig,
+) -> Result<DelaunayizeResult<K, U, V, D>, DelaunayizeError>
+where
+    K: ExactPredicates<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    delaunayize(triangulation, config)
 }
 
 // =============================================================================
@@ -1086,16 +897,16 @@ mod tests {
     use super::*;
     use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
     use crate::geometry::kernel::AdaptiveKernel;
-    use crate::geometry::point::Point;
     use crate::tds::{Tds, TdsError, VertexKey};
-    use crate::try_vertices_from_points;
+    use crate::topology::traits::topological_space::TopologyKind;
     use crate::vertex;
-    use crate::{DelaunayTriangulationBuilder, TriangulationConstructionError};
+    use crate::{
+        DelaunayTriangulationBuilder, TriangulationConstructionError, TriangulationValidationError,
+    };
     use slotmap::KeyData;
     use std::assert_matches;
     use std::cell::Cell;
     use std::error::Error as StdError;
-    use uuid::Uuid;
 
     // Last-resort fault injection for rollback branches that are hard to
     // trigger deterministically; thread-local state avoids cross-test leakage.
@@ -1141,6 +952,49 @@ mod tests {
         FORCE_DELAUNAY_REPAIR_FAILURE.with(|flag| flag.set(prior));
     }
 
+    #[test]
+    fn consuming_delaunayize_preserves_typed_input_validation_failure() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        tds.insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+            .unwrap();
+        let triangulation = Triangulation::new_with_tds(AdaptiveKernel::new(), tds);
+
+        let error = delaunayize(triangulation, DelaunayizeConfig::default())
+            .expect_err("an isolated vertex must fail the Levels 1-4 input boundary");
+
+        assert_matches!(
+            error,
+            DelaunayizeError::InputValidationFailed {
+                source: TriangulationRealizationValidationError::Triangulation { source },
+            } if matches!(
+                source.as_ref(),
+                TriangulationValidationError::IsolatedVertex { .. }
+            )
+        );
+    }
+
+    #[test]
+    fn final_validation_error_preserves_typed_source_chain() {
+        let validation_error = DelaunayTriangulationValidationError::from(
+            TriangulationRealizationValidationError::UnsupportedTopology {
+                topology: TopologyKind::Hyperbolic,
+                dimension: 2,
+            },
+        );
+        let error = DelaunayizeError::FinalValidationFailed {
+            source: validation_error.clone(),
+        };
+
+        assert_eq!(
+            error,
+            DelaunayizeError::FinalValidationFailed {
+                source: validation_error,
+            }
+        );
+        assert!(StdError::source(&error).is_some());
+        assert!(error.to_string().contains("cumulative Levels 1-5"));
+    }
+
     /// Snapshots deliberately malformed raw TDS fixtures for payload-disambiguation tests.
     fn snapshot_rebuild_state_from_tds<U, V, const D: usize>(
         tds: &Tds<U, V, D>,
@@ -1157,6 +1011,8 @@ mod tests {
         Ok(FallbackRebuildSnapshot {
             vertices,
             simplex_data,
+            topology_guarantee: TopologyGuarantee::DEFAULT,
+            global_topology: GlobalTopology::DEFAULT,
         })
     }
 
@@ -1210,248 +1066,6 @@ mod tests {
         )
     }
 
-    /// Builds the canonical D-simplex vertex set used by fallback rebuild tests.
-    fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
-        let mut points = Vec::with_capacity(D + 1);
-        points.push(Point::try_new([0.0; D]).expect("finite point coordinates"));
-        for axis in 0..D {
-            let mut coords = [0.0; D];
-            coords[axis] = 1.0;
-            points.push(Point::try_new(coords).expect("finite point coordinates"));
-        }
-        try_vertices_from_points(&points).expect("finite point coordinates")
-    }
-
-    fn insert_duplicate_simplex_copies<const D: usize>(
-        dt: &mut DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
-        copies: usize,
-    ) {
-        let duplicate_vertices = {
-            let (_, existing_simplex) = dt.simplices().next().unwrap();
-            existing_simplex.vertices().to_vec()
-        };
-
-        for _ in 0..copies {
-            dt.tri
-                .tds
-                .insert_simplex_bypassing_topology_checks_for_test(
-                    Simplex::try_new_with_data(duplicate_vertices.clone(), None).unwrap(),
-                )
-                .unwrap();
-        }
-    }
-
-    /// Builds two tetrahedra sharing an edge but no facet.
-    fn make_boundary_ridge_multiplicity_tds() -> Tds<(), (), 3> {
-        let mut tds = Tds::empty();
-        let shared_v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
-            .unwrap();
-        let shared_v1 = tds
-            .insert_vertex_with_mapping(vertex!([2.0, 0.0, 0.0]).unwrap())
-            .unwrap();
-        let tet1_v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.1, 1.0, 0.2]).unwrap())
-            .unwrap();
-        let tet1_v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.2, 0.3, 1.3]).unwrap())
-            .unwrap();
-        let tet2_v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.4, -1.1, 0.7]).unwrap())
-            .unwrap();
-        let tet2_v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.6, 0.2, -1.4]).unwrap())
-            .unwrap();
-
-        for tet in [
-            [shared_v0, shared_v1, tet1_v2, tet1_v3],
-            [shared_v0, shared_v1, tet2_v2, tet2_v3],
-        ] {
-            tds.insert_simplex_with_mapping(
-                Simplex::try_new_with_data(vec![tet[0], tet[1], tet[2], tet[3]], None).unwrap(),
-            )
-            .unwrap();
-        }
-
-        tds
-    }
-
-    /// Builds a cone over a triangulated torus so targeted repair must mutate first.
-    fn make_cone_on_torus_tds() -> Tds<(), (), 3> {
-        const N: usize = 3;
-        const M: usize = 3;
-
-        let mut tds = Tds::empty();
-        let mut grid: [[VertexKey; M]; N] = [[VertexKey::from(KeyData::from_ffi(0)); M]; N];
-        for (i, row) in grid.iter_mut().enumerate() {
-            for (j, vertex_key) in row.iter_mut().enumerate() {
-                let i_f: f64 = u32::try_from(i).unwrap().into();
-                let j_f: f64 = u32::try_from(j).unwrap().into();
-                *vertex_key = tds
-                    .insert_vertex_with_mapping(vertex!([i_f, j_f, 0.0]).unwrap())
-                    .unwrap();
-            }
-        }
-        let apex = tds
-            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 1.0]).unwrap())
-            .unwrap();
-
-        for i in 0..N {
-            for j in 0..M {
-                let i1 = (i + 1) % N;
-                let j1 = (j + 1) % M;
-                let v00 = grid[i][j];
-                let v10 = grid[i1][j];
-                let v01 = grid[i][j1];
-                let v11 = grid[i1][j1];
-                for tri in [[v00, v10, v01], [v10, v11, v01]] {
-                    tds.insert_simplex_with_mapping(
-                        Simplex::try_new_with_data(vec![tri[0], tri[1], tri[2], apex], None)
-                            .unwrap(),
-                    )
-                    .unwrap();
-                }
-            }
-        }
-
-        tds
-    }
-
-    /// Creates a Delaunay wrapper whose TDS has a boundary-ridge violation.
-    fn boundary_ridge_multiplicity_dt() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> {
-        let vertices = unit_simplex_vertices::<3>();
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        *dt.tds_mut_for_repair() = make_boundary_ridge_multiplicity_tds();
-        dt
-    }
-
-    /// Creates a Delaunay wrapper whose TDS has a vertex-link violation.
-    fn cone_on_torus_dt() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> {
-        let vertices = unit_simplex_vertices::<3>();
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        *dt.tds_mut_for_repair() = make_cone_on_torus_tds();
-        dt
-    }
-
-    /// Returns simplex UUIDs in stable order for rollback identity checks.
-    fn sorted_simplex_uuids<K, U, V, const D: usize>(
-        dt: &DelaunayTriangulation<K, U, V, D>,
-    ) -> Vec<Uuid> {
-        let mut uuids = dt
-            .simplices()
-            .map(|(_, simplex)| simplex.uuid())
-            .collect::<Vec<_>>();
-        uuids.sort_unstable();
-        uuids
-    }
-
-    /// Forces topology repair to fail on duplicate simplices, then checks fallback rebuild.
-    fn assert_topology_repair_fallback_rebuilds_duplicate_simplex<const D: usize>()
-    where
-        AdaptiveKernel<f64>: ExactPredicates<D, Scalar = f64>,
-    {
-        init_tracing();
-        let vertices = unit_simplex_vertices::<D>();
-        let mut dt: DelaunayTriangulation<_, (), (), D> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-        insert_duplicate_simplex_copies(&mut dt, 2);
-
-        let outcome = delaunayize_by_flips(
-            &mut dt,
-            DelaunayizeConfig::default()
-                .with_topology_max_simplices_removed(0)
-                .with_fallback_rebuild(true),
-        )
-        .unwrap();
-
-        assert!(outcome.used_fallback_rebuild);
-        assert!(
-            !outcome.topology_repair.succeeded,
-            "fallback rebuild should not mark the failed topology repair as succeeded"
-        );
-        assert_eq!(dt.number_of_vertices(), vertices.len());
-        assert!(dt.validate().is_ok());
-    }
-
-    #[test]
-    fn topology_repair_failure_rolls_back_partial_mutation() {
-        init_tracing();
-        let vertices = unit_simplex_vertices::<2>();
-        let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        insert_duplicate_simplex_copies(&mut dt, 3);
-
-        let before_simplex_count = dt.number_of_simplices();
-        let before_simplex_uuids = sorted_simplex_uuids(&dt);
-
-        let err = delaunayize_by_flips(
-            &mut dt,
-            DelaunayizeConfig::default()
-                .with_topology_max_iterations(1)
-                .with_topology_max_simplices_removed(usize::MAX)
-                .with_fallback_rebuild(false),
-        )
-        .unwrap_err();
-
-        assert_matches!(
-            err,
-            DelaunayizeError::TopologyRepairFailed {
-                source: PlManifoldRepairError::BudgetExhausted { .. }
-            }
-        );
-        assert_eq!(dt.number_of_simplices(), before_simplex_count);
-
-        assert_eq!(sorted_simplex_uuids(&dt), before_simplex_uuids);
-    }
-
-    #[test]
-    fn targeted_topology_repair_failure_rolls_back_partial_mutation() {
-        init_tracing();
-        let mut dt = cone_on_torus_dt();
-        let before_simplex_count = dt.number_of_simplices();
-        let before_simplex_uuids = sorted_simplex_uuids(&dt);
-
-        let err = delaunayize_by_flips(
-            &mut dt,
-            DelaunayizeConfig::default()
-                .with_topology_max_iterations(1)
-                .with_topology_max_simplices_removed(usize::MAX)
-                .with_fallback_rebuild(false),
-        )
-        .unwrap_err();
-
-        assert_matches!(
-            err,
-            DelaunayizeError::TopologyRepairFailed {
-                source: PlManifoldRepairError::TargetedBudgetExhausted { .. }
-            }
-        );
-        assert_eq!(dt.number_of_simplices(), before_simplex_count);
-
-        assert_eq!(sorted_simplex_uuids(&dt), before_simplex_uuids);
-    }
-
-    #[test]
-    fn delaunay_repair_failure_rolls_back_successful_topology_repair() {
-        init_tracing();
-        let mut dt = cone_on_torus_dt();
-        let before_simplex_count = dt.number_of_simplices();
-        let before_simplex_uuids = sorted_simplex_uuids(&dt);
-        let _guard = ForceDelaunayRepairFailureGuard::enable();
-
-        let err = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap_err();
-
-        assert_matches!(
-            err,
-            DelaunayizeError::DelaunayRepairFailed {
-                source: DelaunayRepairError::NonConvergent { .. }
-            }
-        );
-        assert_eq!(dt.number_of_simplices(), before_simplex_count);
-        assert_eq!(sorted_simplex_uuids(&dt), before_simplex_uuids);
-    }
-
     struct ForceDelaunayRepairFailureGuard {
         prior: bool,
     }
@@ -1479,8 +1093,6 @@ mod tests {
     fn test_config_defaults() {
         init_tracing();
         let config = DelaunayizeConfig::default();
-        assert_eq!(config.topology_max_iterations, 64);
-        assert_eq!(config.topology_max_simplices_removed, 10_000);
         assert!(!config.fallback_rebuild);
         assert!(config.delaunay_max_flips.is_none());
     }
@@ -1498,13 +1110,12 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
-        let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
-        assert!(outcome.topology_repair.succeeded);
-        assert!(!outcome.used_fallback_rebuild);
-        assert!(dt.validate().is_ok());
+        let result = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default()).unwrap();
+        assert!(!result.outcome.used_fallback_rebuild);
+        assert!(result.triangulation.validate().is_ok());
     }
 
     #[test]
@@ -1516,12 +1127,12 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
             vertex!([1.0, 1.0]).unwrap(),
         ];
-        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+        let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
-        let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
-        assert!(outcome.topology_repair.succeeded);
-        assert!(dt.validate().is_ok());
+        let result = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default()).unwrap();
+        assert!(!result.outcome.used_fallback_rebuild);
+        assert!(result.triangulation.validate().is_ok());
     }
 
     // =============================================================================
@@ -1538,13 +1149,16 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
             vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
-        let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
-        assert!(outcome.topology_repair.succeeded);
-        assert_eq!(outcome.topology_repair.simplices_removed, 0);
-        assert!(!outcome.used_fallback_rebuild);
+        let result = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default()).unwrap();
+
+        assert!(result.outcome.delaunay_repair.facets_checked > 0);
+        assert_eq!(result.outcome.delaunay_repair.flips_performed, 0);
+        assert!(result.outcome.delaunay_repair.max_queue_len > 0);
+        assert!(!result.outcome.used_fallback_rebuild);
+        assert!(result.triangulation.validate().is_ok());
     }
 
     // =============================================================================
@@ -1602,87 +1216,7 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        deprecated,
-        reason = "deprecated variant remains directly constructible for compatibility"
-    )]
-    fn test_repair_snapshot_error_source() {
-        let source = DelaunayRepairError::PostconditionFailed {
-            reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
-        };
-        let snapshot_error = SimplexValidationError::VertexKeyNotFound {
-            key: VertexKey::from(KeyData::from_ffi(0xBAD)),
-        };
-        let err = DelaunayizeError::DelaunayRepairFailedWithSimplexDataSnapshot {
-            source: source.clone(),
-            snapshot_error: snapshot_error.clone(),
-        };
-
-        assert_eq!(
-            err,
-            DelaunayizeError::DelaunayRepairFailedWithSimplexDataSnapshot {
-                source: source.clone(),
-                snapshot_error,
-            }
-        );
-        assert!(
-            err.to_string()
-                .contains("fallback simplex-data snapshot failed")
-        );
-        let error_source = StdError::source(&err).unwrap();
-        assert_eq!(error_source.to_string(), source.to_string());
-    }
-
-    #[test]
-    fn fallback_snapshot_failure_rolls_back_before_delaunay_result_is_observed() {
-        init_tracing();
-        let vertices = [
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-        ];
-        let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let before_simplex_count = dt.number_of_simplices();
-        let before_simplex_uuids = sorted_simplex_uuids(&dt);
-        let snapshot_error = SimplexValidationError::VertexKeyNotFound {
-            key: VertexKey::from(KeyData::from_ffi(0xBAD)),
-        };
-        let transaction =
-            DelaunayRollbackTransaction::begin(&mut dt, DelaunaySpatialIndexRollback::Restore);
-
-        let err = finish_delaunayize_after_delaunay_repair(
-            transaction,
-            PlManifoldRepairStats {
-                succeeded: true,
-                ..PlManifoldRepairStats::default()
-            },
-            Some(Err(snapshot_error.clone())),
-            Ok(DelaunayRepairStats {
-                facets_checked: 99,
-                flips_performed: 88,
-                max_queue_len: 77,
-            }),
-        )
-        .unwrap_err();
-
-        assert_matches!(
-            err,
-            DelaunayizeError::FallbackSimplexDataSnapshotFailed {
-                source: observed_snapshot_error,
-            } if observed_snapshot_error == snapshot_error
-        );
-        assert_eq!(dt.number_of_simplices(), before_simplex_count);
-        assert_eq!(sorted_simplex_uuids(&dt), before_simplex_uuids);
-    }
-
-    #[test]
     fn test_restore_error_sources() {
-        let topology_source = PlManifoldRepairError::NoProgress {
-            over_shared_facets: 2,
-            iterations: 3,
-            simplices_removed: 4,
-        };
         let delaunay_source = DelaunayRepairError::PostconditionFailed {
             reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         };
@@ -1692,24 +1226,11 @@ mod tests {
             },
         };
 
-        let topology_err = DelaunayizeError::TopologyRepairFailedWithRebuildRestore {
-            source: topology_source.clone(),
-            restore_error: restore_error.clone(),
-        };
         let delaunay_err = DelaunayizeError::DelaunayRepairFailedWithRebuildRestore {
             source: delaunay_source.clone(),
             restore_error,
         };
 
-        assert!(
-            topology_err
-                .to_string()
-                .contains("simplex-data restore failed")
-        );
-        assert_eq!(
-            StdError::source(&topology_err).unwrap().to_string(),
-            topology_source.to_string()
-        );
         assert!(
             delaunay_err
                 .to_string()
@@ -1740,59 +1261,6 @@ mod tests {
         assert!(err.to_string().contains("payload assignment failed"));
         let error_source = StdError::source(&err).unwrap();
         assert_eq!(error_source.to_string(), source.to_string());
-    }
-
-    #[test]
-    fn test_topology_rebuild_error_mapping() {
-        let source = PlManifoldRepairError::NoProgress {
-            over_shared_facets: 2,
-            iterations: 3,
-            simplices_removed: 4,
-        };
-        let rebuild_error = construction_error();
-        let restore_error = SimplexDataRestoreError::SimplexIdentity {
-            source: SimplexValidationError::VertexKeyNotFound {
-                key: VertexKey::from(KeyData::from_ffi(0xBAD)),
-            },
-        };
-
-        let rebuild_err = topology_rebuild_error(
-            source.clone(),
-            FallbackRebuildError::Construction {
-                source: rebuild_error.clone(),
-            },
-        );
-        assert_eq!(
-            rebuild_err,
-            DelaunayizeError::TopologyRepairFailedWithRebuild {
-                source: source.clone(),
-                rebuild_error,
-            }
-        );
-        assert!(
-            rebuild_err
-                .to_string()
-                .contains("fallback rebuild also failed")
-        );
-
-        let restore_err = topology_rebuild_error(
-            source.clone(),
-            FallbackRebuildError::Restore {
-                source: restore_error.clone(),
-            },
-        );
-        assert_eq!(
-            restore_err,
-            DelaunayizeError::TopologyRepairFailedWithRebuildRestore {
-                source,
-                restore_error,
-            }
-        );
-        assert!(
-            restore_err
-                .to_string()
-                .contains("fallback rebuild succeeded but simplex-data restore failed")
-        );
     }
 
     #[test]
@@ -1851,13 +1319,6 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn test_fallback_disabled_by_default() {
-        init_tracing();
-        let config = DelaunayizeConfig::default();
-        assert!(!config.fallback_rebuild);
-    }
-
-    #[test]
     fn test_fallback_enabled_on_valid_triangulation() {
         init_tracing();
         let vertices = vec![
@@ -1866,84 +1327,34 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Fallback should not be triggered on a valid triangulation.
         let config = DelaunayizeConfig::default().with_fallback_rebuild(true);
-        let outcome = delaunayize_by_flips(&mut dt, config).unwrap();
-        assert!(!outcome.used_fallback_rebuild);
-    }
-
-    #[test]
-    fn targeted_topology_repair_fallback_rebuilds_after_budget_failure() {
-        init_tracing();
-        let mut dt = boundary_ridge_multiplicity_dt();
-        let vertex_count = dt.number_of_vertices();
-
-        let outcome = delaunayize_by_flips(
-            &mut dt,
-            DelaunayizeConfig::default()
-                .with_topology_max_simplices_removed(0)
-                .with_fallback_rebuild(true),
-        )
-        .unwrap();
-
-        assert!(outcome.used_fallback_rebuild);
-        assert!(!outcome.topology_repair.succeeded);
-        assert_eq!(outcome.topology_repair.simplices_removed, 0);
-        assert_eq!(dt.number_of_vertices(), vertex_count);
-        assert!(dt.validate().is_ok());
-    }
-
-    #[test]
-    fn targeted_topology_repair_fallback_preserves_partial_failed_stats() {
-        init_tracing();
-        let vertices = unit_simplex_vertices::<2>();
-        let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        insert_duplicate_simplex_copies(&mut dt, 3);
-
-        let outcome = delaunayize_by_flips(
-            &mut dt,
-            DelaunayizeConfig::default()
-                .with_topology_max_iterations(1)
-                .with_topology_max_simplices_removed(10_000)
-                .with_fallback_rebuild(true),
-        )
-        .unwrap();
-
-        assert!(outcome.used_fallback_rebuild);
-        assert!(!outcome.topology_repair.succeeded);
-        assert_eq!(outcome.topology_repair.iterations, 1);
-        assert!(
-            outcome.topology_repair.simplices_removed > 0,
-            "fallback outcome should preserve failed topology repair counters"
-        );
-        assert!(dt.validate().is_ok());
+        let result = delaunayize(dt.into_triangulation(), config).unwrap();
+        assert!(!result.outcome.used_fallback_rebuild);
     }
 
     #[test]
     fn delaunay_repair_fallback_rebuilds_after_unsupported_dimension() {
         init_tracing();
         let vertices = [vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
-        let mut dt: DelaunayTriangulation<_, (), (), 1> =
+        let dt: DelaunayTriangulation<_, (), (), 1> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
-        let outcome = delaunayize_by_flips(
-            &mut dt,
+        let result = delaunayize(
+            dt.into_triangulation(),
             DelaunayizeConfig::default().with_fallback_rebuild(true),
         )
         .unwrap();
 
-        assert!(outcome.topology_repair.succeeded);
-        assert_eq!(outcome.topology_repair.simplices_removed, 0);
-        assert_eq!(outcome.delaunay_repair.facets_checked, 0);
-        assert_eq!(outcome.delaunay_repair.flips_performed, 0);
-        assert_eq!(outcome.delaunay_repair.max_queue_len, 0);
-        assert!(outcome.used_fallback_rebuild);
-        assert_eq!(dt.number_of_vertices(), vertices.len());
-        assert!(dt.tds().is_valid().is_ok());
+        assert_eq!(result.outcome.delaunay_repair.facets_checked, 0);
+        assert_eq!(result.outcome.delaunay_repair.flips_performed, 0);
+        assert_eq!(result.outcome.delaunay_repair.max_queue_len, 0);
+        assert!(result.outcome.used_fallback_rebuild);
+        assert_eq!(result.triangulation.number_of_vertices(), vertices.len());
+        assert!(result.triangulation.tds().is_valid().is_ok());
     }
 
     #[test]
@@ -1955,44 +1366,23 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
             vertex!([1.0, 1.0]).unwrap(),
         ];
-        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+        let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let _guard = ForceDelaunayRepairFailureGuard::enable();
-        let outcome = delaunayize_by_flips(
-            &mut dt,
+        let result = delaunayize(
+            dt.into_triangulation(),
             DelaunayizeConfig::default().with_fallback_rebuild(true),
         )
         .unwrap();
 
-        assert!(outcome.topology_repair.succeeded);
-        assert!(outcome.used_fallback_rebuild);
-        assert_eq!(outcome.delaunay_repair.facets_checked, 1);
-        assert_eq!(outcome.delaunay_repair.flips_performed, 0);
-        assert_eq!(outcome.delaunay_repair.max_queue_len, 1);
-        assert_eq!(dt.number_of_vertices(), vertices.len());
-        assert!(dt.validate().is_ok());
+        assert!(result.outcome.used_fallback_rebuild);
+        assert_eq!(result.outcome.delaunay_repair.facets_checked, 1);
+        assert_eq!(result.outcome.delaunay_repair.flips_performed, 0);
+        assert_eq!(result.outcome.delaunay_repair.max_queue_len, 1);
+        assert_eq!(result.triangulation.number_of_vertices(), vertices.len());
+        assert!(result.triangulation.validate().is_ok());
     }
-
-    #[test]
-    fn topology_repair_fallback_stats_failed() {
-        assert_topology_repair_fallback_rebuilds_duplicate_simplex::<2>();
-    }
-
-    macro_rules! gen_topology_repair_fallback_tests {
-        ($($dim:literal),* $(,)?) => {
-            pastey::paste! {
-                $(
-                    #[test]
-                    fn [<topology_repair_fallback_rebuilds_duplicate_simplex_ $dim d>]() {
-                        assert_topology_repair_fallback_rebuilds_duplicate_simplex::<$dim>();
-                    }
-                )*
-            }
-        };
-    }
-
-    gen_topology_repair_fallback_tests!(3, 4, 5);
 
     #[test]
     fn test_rebuild_restores_simplex_data() {
@@ -2009,7 +1399,7 @@ mod tests {
         let original_simplex_key = dt.simplices().next().unwrap().0;
         dt.set_simplex_data(original_simplex_key, Some(42)).unwrap();
 
-        let snapshot = snapshot_rebuild_state(&dt).unwrap();
+        let snapshot = snapshot_rebuild_state(dt.as_triangulation()).unwrap();
 
         let rebuilt = rebuild_preserving_data(dt.kernel(), &snapshot).unwrap();
 
@@ -2071,17 +1461,29 @@ mod tests {
 
         let config = DelaunayizeConfig::default();
 
-        let mut dt1: DelaunayTriangulation<_, (), (), 3> =
+        let dt1: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let outcome1 = delaunayize_by_flips(&mut dt1, config).unwrap();
+        let outcome1 = delaunayize(dt1.into_triangulation(), config)
+            .unwrap()
+            .outcome;
 
-        let mut dt2: DelaunayTriangulation<_, (), (), 3> =
+        let dt2: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let outcome2 = delaunayize_by_flips(&mut dt2, config).unwrap();
+        let outcome2 = delaunayize(dt2.into_triangulation(), config)
+            .unwrap()
+            .outcome;
 
         assert_eq!(
-            outcome1.topology_repair.simplices_removed,
-            outcome2.topology_repair.simplices_removed
+            outcome1.delaunay_repair.facets_checked,
+            outcome2.delaunay_repair.facets_checked
+        );
+        assert_eq!(
+            outcome1.delaunay_repair.flips_performed,
+            outcome2.delaunay_repair.flips_performed
+        );
+        assert_eq!(
+            outcome1.delaunay_repair.max_queue_len,
+            outcome2.delaunay_repair.max_queue_len
         );
         assert_eq!(
             outcome1.used_fallback_rebuild,

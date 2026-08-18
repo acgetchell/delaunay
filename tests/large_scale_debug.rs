@@ -77,7 +77,8 @@
 //! DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
 //! # Skip the final flip-based repair pass (faster, but may leave Delaunay violations)
 //! DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR=1 \
-//! # Run bounded flip repair every N successful insertions (0 disables; default: 1)
+//! # Batch-construction repair cadence (0 disables; default: 1).
+//! # Published incremental Delaunay insertion always preserves Level 5.
 //! DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1 \
 //! # Optional: trace cadenced local-repair seed counts, flips, queues, and elapsed time
 //! DELAUNAY_BATCH_REPAIR_TRACE=1 \
@@ -107,6 +108,7 @@ use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionErrorWithStatistics,
     InitialSimplexStrategy, TopologyGuarantee, Vertex,
 };
+use delaunay::prelude::delaunayize::{DelaunayizeConfig, delaunayize};
 use delaunay::prelude::diagnostics::ConstructionTelemetry;
 use delaunay::prelude::generators::{
     generate_random_points_in_ball_seeded, generate_random_points_in_range_seeded,
@@ -117,7 +119,7 @@ use delaunay::prelude::geometry::{
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::insertion::InsertionResult;
 use delaunay::prelude::insertion::{InsertionOutcome, InsertionStatistics};
-use delaunay::prelude::repair::{DelaunayCheckPolicy, DelaunayRepairHeuristicConfig};
+use delaunay::prelude::repair::DelaunayCheckPolicy;
 use delaunay::prelude::tds::{InvariantKind, TriangulationValidationReport};
 use delaunay::prelude::validation::ValidationCadence;
 use delaunay::vertex;
@@ -1397,11 +1399,10 @@ where
                     topology_guarantee,
                 );
 
-            // Delaunay policies:
-            // - Enable bounded incremental repair (local flip queue) every N successful insertions.
-            // - Keep global Delaunay checks off during insertion; the harness can optionally run a final
-            //   global repair pass at the end.
-            dt.set_delaunay_repair_policy(repair_policy);
+            // Published incremental Delaunay insertion keeps the
+            // invariant-preserving EveryInsertion repair cadence. The
+            // configurable cadence above applies only to unpublished batch
+            // construction candidates.
             dt.set_delaunay_check_policy(DelaunayCheckPolicy::EndOnly);
 
             // Debug-mode-dependent topology validation strategy:
@@ -1412,7 +1413,7 @@ where
             println!("Policies:");
             println!("  topology_guarantee:   {:?}", dt.topology_guarantee());
             println!("  validation_policy:    {:?}", dt.validation_policy());
-            println!("  delaunay_repair_policy:{:?}", dt.delaunay_repair_policy());
+            println!("  delaunay_repair_policy:EveryInsertion (fixed public invariant)");
             println!("  delaunay_check_policy: {:?}", dt.delaunay_check_policy());
             println!();
 
@@ -1531,34 +1532,37 @@ where
         return outcome;
     }
 
-    let mut repair_failure: Option<String> = None;
     if !skip_final_repair && dt.number_of_simplices() > 0 {
         println!();
-        println!("Running final flip-based repair (advanced)...");
+        println!("Running final Triangulation -> DelaunayTriangulation conversion...");
         let t_repair = Instant::now();
-        let repair_config = repair_max_flips
-            .map_or_else(DelaunayRepairHeuristicConfig::default, |max_flips| {
-                DelaunayRepairHeuristicConfig::default().with_delaunay_max_flips(max_flips)
-            });
-        match dt.repair_delaunay_with_flips_advanced(repair_config) {
-            Ok(outcome) => {
+        let repair_config = repair_max_flips.map_or_else(
+            || DelaunayizeConfig::default().with_fallback_rebuild(true),
+            |max_flips| {
+                DelaunayizeConfig::default()
+                    .with_fallback_rebuild(true)
+                    .with_delaunay_max_flips(max_flips)
+            },
+        );
+        match delaunayize(dt.into_triangulation(), repair_config) {
+            Ok(converted) => {
+                let outcome = converted.outcome;
                 println!(
-                    "repair: checked={} flips={} max_queue={} used_heuristic={}",
-                    outcome.stats.facets_checked,
-                    outcome.stats.flips_performed,
-                    outcome.stats.max_queue_len,
-                    outcome.used_heuristic()
+                    "conversion: checked={} flips={} max_queue={} used_fallback_rebuild={}",
+                    outcome.delaunay_repair.facets_checked,
+                    outcome.delaunay_repair.flips_performed,
+                    outcome.delaunay_repair.max_queue_len,
+                    outcome.used_fallback_rebuild
                 );
-                if let Some(seeds) = outcome.heuristic {
-                    println!(
-                        "repair heuristic seeds: shuffle_seed={} perturbation_seed={}",
-                        seeds.shuffle_seed, seeds.perturbation_seed
-                    );
-                }
+                dt = converted.triangulation;
             }
             Err(e) => {
-                println!("repair failed: {e}");
-                repair_failure = Some(format!("{e}"));
+                println!("conversion failed: {e}");
+                let outcome = DebugOutcome::RepairNonConvergence {
+                    error: e.to_string(),
+                };
+                print_abort_summary::<D>(&outcome, seed, n_points, "final conversion");
+                return outcome;
             }
         }
         println!("repair wall time: {:?}", t_repair.elapsed());
@@ -1628,15 +1632,6 @@ where
         }
     }
     println!("validation_report: OK");
-
-    // If repair failed but validation passed, surface the repair failure as the outcome.
-    // This ensures operators see repair non-convergence even when the triangulation
-    // happens to pass L1-L4 validation (e.g. the violations are below the flip budget).
-    if let Some(error) = repair_failure {
-        let outcome = DebugOutcome::RepairNonConvergence { error };
-        print_abort_summary::<D>(&outcome, seed, n_points, "final repair");
-        return outcome;
-    }
 
     println!();
     println!("Total wall time: {:?}", t_gen.elapsed());

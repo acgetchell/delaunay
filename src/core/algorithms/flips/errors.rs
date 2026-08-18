@@ -360,6 +360,9 @@ pub enum FlipFailureKind {
     /// Flips are not supported for this dimension.
     #[error("unsupported dimension")]
     UnsupportedDimension,
+    /// The target lacks the topology proof required by the flip class.
+    #[error("flip topology not admissible")]
+    FlipTopologyNotAdmissible,
     /// Boundary facet.
     #[error("boundary facet")]
     BoundaryFacet,
@@ -1183,6 +1186,14 @@ pub enum FlipError {
         /// Dimension of the triangulation.
         dimension: usize,
     },
+    /// The requested flip lacks the PL-manifold proof required for mutation.
+    #[error("Bistellar flip requires {required:?} topology, found {found:?}")]
+    FlipTopologyNotAdmissible {
+        /// Minimum topology proof required by the flip class.
+        required: TopologyGuarantee,
+        /// Topology proof carried by the target triangulation.
+        found: TopologyGuarantee,
+    },
     /// The facet is on the boundary (no adjacent simplex).
     #[error("Facet {facet:?} is on the boundary (no neighbor)")]
     BoundaryFacet {
@@ -1500,6 +1511,7 @@ impl From<&FlipError> for FlipFailureKind {
             FlipError::WrongTopologyOwner { .. } => Self::WrongTopologyOwner,
             FlipError::StaleTopologyProposal { .. } => Self::StaleTopologyProposal,
             FlipError::UnsupportedDimension { .. } => Self::UnsupportedDimension,
+            FlipError::FlipTopologyNotAdmissible { .. } => Self::FlipTopologyNotAdmissible,
             FlipError::BoundaryFacet { .. } => Self::BoundaryFacet,
             FlipError::MissingSimplex { .. } => Self::MissingSimplex,
             FlipError::DanglingVertexIncidence { .. } => Self::DanglingVertexIncidence,

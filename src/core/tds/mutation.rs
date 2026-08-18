@@ -610,15 +610,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         Ok(())
     }
 
-    /// Inserts a simplex while intentionally bypassing topology safety checks in tests.
-    #[cfg(test)]
-    pub(crate) fn insert_simplex_bypassing_topology_checks_for_test(
-        &mut self,
-        simplex: Simplex<V, D>,
-    ) -> Result<SimplexKey, TdsConstructionError> {
-        self.insert_simplex_with_mapping_impl(simplex, SimplexInsertionTopologyCheck::Prechecked)
-    }
-
     /// Sets the auxiliary data on a vertex, returning the previous value.
     ///
     /// This is a safe O(1) operation that modifies only the user-data field.
@@ -1789,21 +1780,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         Ok(())
     }
 
-    /// Clears all neighbor relationships between simplices in the triangulation.
-    ///
-    /// This intentionally leaves the TDS below Level-2 structural validity until
-    /// neighbors are rebuilt. It is crate-internal so callers cannot observe or
-    /// depend on invalid intermediate topology through the public API.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn clear_all_neighbors(&mut self) {
-        for simplex in self.simplices.values_mut() {
-            simplex.clear_neighbors();
-        }
-        // Topology changed; invalidate caches.
-        self.bump_generation();
-    }
-
     pub(crate) fn normalize_coherent_orientation(&mut self) -> Result<(), TdsError> {
         let mut flip_assignment: FastHashMap<SimplexKey, bool> =
             fast_hash_map_with_capacity(self.simplices.len());
@@ -2095,6 +2071,28 @@ mod tests {
     use slotmap::KeyData;
     use std::assert_matches;
     use uuid::Uuid;
+
+    impl<U, V, const D: usize> Tds<U, V, D> {
+        /// Inserts a simplex while deliberately bypassing topology safety checks.
+        pub(crate) fn insert_simplex_bypassing_topology_checks_for_test(
+            &mut self,
+            simplex: Simplex<V, D>,
+        ) -> Result<SimplexKey, TdsConstructionError> {
+            self.insert_simplex_with_mapping_impl(
+                simplex,
+                SimplexInsertionTopologyCheck::Prechecked,
+            )
+        }
+
+        /// Clears all neighbor relationships for malformed-state fixtures.
+        #[inline]
+        pub(crate) fn clear_all_neighbors(&mut self) {
+            for simplex in self.simplices.values_mut() {
+                simplex.clear_neighbors();
+            }
+            self.bump_generation();
+        }
+    }
 
     // =============================================================================
     // TEST HELPER FUNCTIONS

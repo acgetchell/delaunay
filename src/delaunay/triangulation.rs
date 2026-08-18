@@ -52,8 +52,9 @@ impl EuclideanDelaunayReportDomain {
 ///
 /// For applications requiring explicit verification, you can still call
 /// [`is_valid_delaunay`](Self::is_valid_delaunay) (Level 5) or [`validate`](Self::validate) (Levels 1–5).
-/// If flip-based repair fails to converge, insertion returns an error and the
-/// triangulation is left structurally valid but not guaranteed Delaunay.
+/// If flip-based repair or final checking fails, insertion returns an error and
+/// rolls back the attempted mutation so an existing published value does not
+/// lose its Delaunay guarantee.
 ///
 /// See: [Issue #120 Investigation](https://github.com/acgetchell/delaunay/blob/main/docs/archive/issue_120_investigation.md)
 ///

@@ -27,8 +27,12 @@ into architecture docs; link to the command guide instead.
   is exposed through curated root modules such as `delaunay::tds`,
   `delaunay::collections`, `delaunay::algorithms`, and `delaunay::query`, not
   through a broad public `delaunay::core` module.
-- `src/delaunay/` owns Delaunay-facing construction, insertion, deletion,
-  validation, repair, flips, Pachner moves, serialization, and query APIs.
+- `src/core/triangulation/` owns the Levels 1–4 `Triangulation` model and all
+  operations whose contracts require no Level 5 Delaunay proof, including
+  queries, flips, and Pachner moves.
+- `src/delaunay/` owns the Levels 1–5 refinement and Delaunay-facing
+  construction, insertion, deletion, validation, repair, serialization, and
+  forwarding query APIs.
 - `src/geometry/` owns points, coordinate ranges, kernels, predicates,
   geometric quality measures, convex hull support, and coordinate conversion
   utilities.
@@ -49,7 +53,8 @@ into architecture docs; link to the command guide instead.
 - `edge.rs` and `facet.rs` stay in `src/core/` because they are direct TDS
   traversal primitives. Ridge query/view types belong in `src/topology/`
   because ridge shape and link semantics depend on dimension and topology.
-- Generic Level 4 realization validation belongs in `src/core/realization.rs`;
+- Generic Level 4 realization validation belongs in
+  `src/core/triangulation/realization.rs`;
   implemented Level 5 Geometric Predicate APIs for Delaunay belong in
   `src/delaunay/validation.rs`, with TDS-level Delaunay-property scan helpers
   under `src/delaunay/`; generic Level 1-3 validation belongs in the

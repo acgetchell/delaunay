@@ -86,45 +86,56 @@ cadence reflects the current #341 3D scale acceptance path: the release-mode
 `just debug-large-scale-3d 7500 1` harness is the current roughly one-minute
 maintainer-hardware envelope for final Levels 1–5 validation. The explicit
 `just debug-large-scale-3d 10000 1` run is a heavier characterization probe
-that has also passed the same final validation checks. Direct incremental insertion keeps the lower-level
-`DelaunayRepairPolicy` default at `EveryInsertion`.
-The explicit repair methods (`repair_delaunay_with_flips`, `repair_delaunay_with_flips_advanced`,
-`rebuild_with_heuristic`) require `K: ExactPredicates` at compile time. `AdaptiveKernel` and
-`RobustKernel` implement this trait; `FastKernel` does not. See
+that has also passed the same final validation checks. Published incremental
+insertion keeps the invariant-preserving repair cadence fixed at every
+insertion. `DelaunayRepairPolicy` remains configurable through
+`ConstructionOptions` while a batch candidate is unpublished; the terminal
+still certifies Level 5 before returning it.
+
+The consuming `delaunayize` conversion requires `K: ExactPredicates` at
+compile time. `AdaptiveKernel` and `RobustKernel` implement this trait;
+`FastKernel` does not. See
 [`numerical_robustness_guide.md`](numerical_robustness_guide.md) for kernel selection guidance.
 
 ```rust
-use delaunay::prelude::construction::{DelaunayRepairPolicy, DelaunayTriangulation};
+use delaunay::prelude::construction::{
+    ConstructionOptions, DelaunayRepairPolicy, DelaunayTriangulationBuilder,
+};
+use std::num::NonZeroUsize;
 
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+fn main() {
+    let Some(every_four) = NonZeroUsize::new(4) else {
+        return;
+    };
+    let options = ConstructionOptions::default()
+        .with_batch_repair_policy(DelaunayRepairPolicy::EveryN(every_four));
 
-// Default:
-assert_eq!(dt.delaunay_repair_policy(), DelaunayRepairPolicy::EveryInsertion);
-
-// Disable automatic repairs (manual repair is still available):
-dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+    let _builder = DelaunayTriangulationBuilder::<(), (), 3>::new(&[])
+        .construction_options(options);
+}
 ```
 
-You can also run a global repair pass manually:
+To repair and certify a general Levels 1–4 triangulation explicitly, use the
+consuming conversion:
 
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
+use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
 use delaunay::prelude::geometry::CoordinateConversionError;
-use delaunay::prelude::repair::DelaunayRepairError;
 
 #[derive(Debug, thiserror::Error)]
-enum RepairExampleError {
+enum ConversionExampleError {
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
-    Repair(#[from] DelaunayRepairError),
+    Delaunayize(#[from] DelaunayizeError),
     #[error(transparent)]
     Coordinate(#[from] CoordinateConversionError),
 }
 
-fn main() -> Result<(), RepairExampleError> {
+fn main() -> Result<(), ConversionExampleError> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,
@@ -132,22 +143,23 @@ fn main() -> Result<(), RepairExampleError> {
         vertex![0.0, 0.0, 1.0]?,
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-
-    let _stats = dt.repair_delaunay_with_flips()?;
+    let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
+    let converted = delaunayize(tri, DelaunayizeConfig::default())?;
+    assert!(converted.triangulation.validate().is_ok());
     Ok(())
 }
 ```
 
 ### Topology and kernel requirements
 
-Flip-based repair requires a PL-manifold topology guarantee. If your triangulation is configured as
-`TopologyGuarantee::Pseudomanifold`, `repair_delaunay_with_flips()` returns an error.
+Flip-based conversion requires a PL-manifold topology guarantee. Passing a
+`Triangulation` carrying `TopologyGuarantee::Pseudomanifold` returns
+`DelaunayizeError::FlipTopologyNotAdmissible`.
 
-Additionally, all explicit repair methods require `K: ExactPredicates` (compile-time bound).
+Additionally, `delaunayize` requires `K: ExactPredicates` (compile-time bound).
 The default `AdaptiveKernel` satisfies this. `FastKernel` does not — its automatic
-insertion-time repair uses a `RobustKernel` fallback internally, but the public repair
-methods are not available.
+insertion-time repair uses a `RobustKernel` fallback internally, but consuming
+conversion of a `Triangulation<FastKernel<…>, …>` is not available.
 
 ### Repair attempts and diagnostics
 
@@ -163,8 +175,8 @@ same flip predicates used by the repair loop. A postcondition failure is treated
 similarly to non-convergence and triggers the second attempt or a caller-level
 fallback.
 
-The public advanced repair path can then try a robust-kernel pass and, if that
-still fails, a deterministic heuristic rebuild.
+If requested, `delaunayize` can follow failed bounded repair with a vertex-set
+rebuild before final certification.
 
 If repair fails to converge within the flip budget, you get
 `DelaunayRepairError::NonConvergent { .. }`, which contains a `DelaunayRepairDiagnostics` payload
@@ -173,11 +185,21 @@ detections, etc.).
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayResult, DelaunayTriangulationBuilder, vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
+use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
+use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::repair::DelaunayRepairError;
 
-fn main() -> DelaunayResult<()> {
+#[derive(Debug, thiserror::Error)]
+enum DiagnosticExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Coordinate(#[from] CoordinateConversionError),
+}
+
+fn main() -> Result<(), DiagnosticExampleError> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,
@@ -185,11 +207,13 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 0.0, 1.0]?,
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
 
-    match dt.repair_delaunay_with_flips() {
-        Ok(_stats) => {}
-        Err(DelaunayRepairError::NonConvergent { diagnostics, .. }) => {
+    match delaunayize(tri, DelaunayizeConfig::default()) {
+        Ok(_converted) => {}
+        Err(DelaunayizeError::DelaunayRepairFailed {
+            source: DelaunayRepairError::NonConvergent { diagnostics, .. },
+        }) => {
             eprintln!("repair non-convergent: {diagnostics}");
         }
         Err(err) => {
@@ -219,7 +243,9 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build()?
+        .into_triangulation();
     let Some((simplex_key, _)) = dt.simplices().next() else {
         return Ok(());
     };
@@ -234,36 +260,35 @@ fn main() -> DelaunayResult<()> {
 }
 ```
 
-### Advanced repair with heuristic rebuild
+### Opt-in fallback rebuild
 
-If you want a stronger "try harder" path, call
-`repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig)`, which returns a
-`DelaunayRepairOutcome`.
+If you want a stronger "try harder" path, enable fallback rebuild on the
+consuming conversion:
+`DelaunayizeConfig::default().with_fallback_rebuild(true)`.
 
-This method:
+This workflow:
 
 1. Runs the standard flip-repair.
-2. If it fails (non-convergent or postcondition failure), tries a robust-kernel repair pass.
-3. If it still fails, rebuilds the triangulation from the **current vertex set** using a shuffled
-   insertion order and a perturbation seed, then runs a final flip-repair pass.
+2. If repair fails, rebuilds a candidate from the **current vertex set**.
+3. Restores simplex payloads whose vertex-UUID signature still identifies one
+   original simplex.
+4. Publishes only after cumulative Levels 1–5 certification succeeds.
 
-If a heuristic rebuild is used, the outcome records the seeds in `outcome.heuristic`.
-You can provide explicit seeds for reproducibility; otherwise deterministic defaults are derived
-from the current vertex set.
+The outcome reports whether rebuild fallback was used.
 
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
+use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
 use delaunay::prelude::geometry::CoordinateConversionError;
-use delaunay::prelude::repair::{DelaunayRepairError, DelaunayRepairHeuristicConfig};
 
 #[derive(Debug, thiserror::Error)]
 enum RepairExampleError {
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
-    Repair(#[from] DelaunayRepairError),
+    Delaunayize(#[from] DelaunayizeError),
     #[error(transparent)]
     Coordinate(#[from] CoordinateConversionError),
 }
@@ -276,14 +301,12 @@ fn main() -> Result<(), RepairExampleError> {
         vertex![0.0, 0.0, 1.0]?,
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-
-    let outcome = dt
-        .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())?;
-
-    if let Some(seeds) = outcome.heuristic {
-        eprintln!("heuristic rebuild used: {seeds:?}");
-    }
+    let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
+    let converted = delaunayize(
+        tri,
+        DelaunayizeConfig::default().with_fallback_rebuild(true),
+    )?;
+    eprintln!("fallback rebuild used: {}", converted.outcome.used_fallback_rebuild);
     Ok(())
 }
 ```
@@ -506,7 +529,9 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build()?
+        .into_triangulation();
 
     // k=1: split a simplex by inserting a vertex.
     let Some((simplex_key, _)) = dt.simplices().next() else {
@@ -529,11 +554,10 @@ fn main() -> DelaunayResult<()> {
     assert!(!removed.removed_simplices.is_empty());
 
     // Validate the stack (Levels 1–3) after topological edits.
-    assert!(dt.as_triangulation().validate().is_ok());
+    assert!(dt.validate().is_ok());
 
-    // If you need Delaunay after edits (requires K: ExactPredicates):
-    // dt.repair_delaunay_with_flips()?;
-    // assert!(dt.is_valid_delaunay().is_ok());
+    // If you need Delaunay after edits (requires K: ExactPredicates), consume
+    // `dt` with `delaunayize(dt, DelaunayizeConfig::default())?`.
     Ok(())
 }
 ```

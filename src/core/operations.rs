@@ -26,7 +26,8 @@ use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
 /// use delaunay::prelude::TopologyGuarantee;
 ///
 /// let op = TopologicalOperation::FacetFlip;
-/// assert!(op.is_admissible_under(TopologyGuarantee::Pseudomanifold));
+/// assert!(!op.is_admissible_under(TopologyGuarantee::Pseudomanifold));
+/// assert!(op.is_admissible_under(TopologyGuarantee::PLManifold));
 /// ```
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum TopologicalOperation {
@@ -126,12 +127,9 @@ impl TopologicalOperation {
     /// Returns `true` if this operation requires a PL-manifold topology guarantee.
     #[must_use]
     pub const fn requires_pl_manifold(self) -> bool {
-        // Higher-order cavity flips rely on stronger local topology guarantees.
-        //
-        // Note: k=2/k=3 flips used for Delaunay repair are admissible under the weaker
-        // pseudomanifold invariants (facet degree + closed boundary). Callers that need
-        // strict PL-manifold guarantees should select `TopologyGuarantee::PLManifold`.
-        matches!(self, Self::CavityFlip)
+        // Bistellar moves require the local link conditions certified by a
+        // PL-manifold proof; facet multiplicity alone is insufficient.
+        matches!(self, Self::FacetFlip | Self::CavityFlip)
     }
 
     /// Returns `true` if this operation is admissible under the given topology guarantee.
@@ -463,7 +461,7 @@ mod tests {
 
     #[test]
     fn test_topological_operation_admissibility() {
-        assert!(!TopologicalOperation::FacetFlip.requires_pl_manifold());
+        assert!(TopologicalOperation::FacetFlip.requires_pl_manifold());
         assert!(TopologicalOperation::CavityFlip.requires_pl_manifold());
         assert!(!TopologicalOperation::InsertVertex.requires_pl_manifold());
         assert!(!TopologicalOperation::DeleteVertex.requires_pl_manifold());
@@ -474,7 +472,7 @@ mod tests {
                 .is_admissible_under(TopologyGuarantee::PLManifoldStrict)
         );
         assert!(
-            TopologicalOperation::FacetFlip.is_admissible_under(TopologyGuarantee::Pseudomanifold)
+            !TopologicalOperation::FacetFlip.is_admissible_under(TopologyGuarantee::Pseudomanifold)
         );
 
         assert!(
@@ -502,7 +500,16 @@ mod tests {
 
         let decision =
             DelaunayRepairPolicy::EveryInsertion.decide(1, TopologyGuarantee::Pseudomanifold, op);
-        assert_matches!(decision, RepairDecision::Proceed);
+        assert_matches!(
+            decision,
+            RepairDecision::Skip {
+                reason: RepairSkipReason::Inadmissible {
+                    operation: TopologicalOperation::FacetFlip,
+                    required: TopologyGuarantee::PLManifold,
+                    found: TopologyGuarantee::Pseudomanifold,
+                }
+            }
+        );
 
         let decision = DelaunayRepairPolicy::Never.decide(1, TopologyGuarantee::PLManifold, op);
         assert_matches!(
@@ -539,7 +546,7 @@ mod tests {
         );
         assert_eq!(
             TopologicalOperation::FacetFlip.required_topology(),
-            TopologyGuarantee::Pseudomanifold
+            TopologyGuarantee::PLManifold
         );
         assert_eq!(
             TopologicalOperation::InsertVertex.required_topology(),

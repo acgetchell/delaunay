@@ -1123,6 +1123,7 @@ pub(super) fn find_simplex_containing_simplex<U, V, const D: usize>(
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::init_tracing;
     use super::super::*;
     use super::*;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;

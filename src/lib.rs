@@ -60,7 +60,7 @@
 //! | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
 //! | Unified Pachner move workflow | `use delaunay::prelude::pachner::*` |
 //! | Delaunay repair and flip-based Level 5 validation | `use delaunay::prelude::repair::*` |
-//! | Delaunayize workflow (repair + flip) | `use delaunay::prelude::delaunayize::*` |
+//! | Levels 1–4 to Level 5 Delaunay conversion | `use delaunay::prelude::delaunayize::*` |
 //! | Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
 //! | Export stable mesh and visualization primitives | `use delaunay::prelude::export::*` |
 //! | Validation policies, errors, reports, PL-manifold link errors, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
@@ -246,10 +246,10 @@
 //!   Level 5 (Geometric Predicates) validation is performed by
 //!   [`DelaunayTriangulation::is_valid_delaunay`](crate::DelaunayTriangulation::is_valid_delaunay) (Level 5 only) and
 //!   [`DelaunayTriangulation::validate`](crate::DelaunayTriangulation::validate) (Levels 1–5).
-//!   Batch construction normally runs final Delaunay validation before returning;
-//!   [`ConstructionOptions::without_final_delaunay_enforcement`](crate::construction::ConstructionOptions::without_final_delaunay_enforcement)
-//!   opts into returning after Levels 1–4 validation for exact degenerate or
-//!   externally constrained connectivity.
+//!   Delaunay-returning builder terminals always run final Level 5 validation.
+//!   To preserve exact degenerate or externally constrained Levels 1–4
+//!   connectivity, use a `build_triangulation*` terminal together with
+//!   [`ConstructionOptions::without_final_delaunay_enforcement`](crate::construction::ConstructionOptions::without_final_delaunay_enforcement).
 //!   Incremental insertion can run global Level 5 checks according to
 //!   [`DelaunayCheckPolicy`]. If robust
 //!   fallback and repair cannot certify a checked result, the operation returns a
@@ -524,18 +524,20 @@ mod core {
             type ReplacementPeriodicOffsets<const D: usize> =
                 SmallBuffer<Option<PeriodicOffsetBuffer<D>>, MAX_PRACTICAL_DIMENSION_SIZE>;
 
-            /// Initializes one shared test subscriber for every focused flip submodule.
             #[cfg(test)]
-            fn init_tracing() {
-                static INIT: std::sync::Once = std::sync::Once::new();
-                INIT.call_once(|| {
-                    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-                    let _ = tracing_subscriber::fmt()
-                        .with_env_filter(filter)
-                        .with_test_writer()
-                        .try_init();
-                });
+            mod test_support {
+                /// Initializes one shared subscriber for every focused flip test module.
+                pub(super) fn init_tracing() {
+                    static INIT: std::sync::Once = std::sync::Once::new();
+                    INIT.call_once(|| {
+                        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+                            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+                        let _ = tracing_subscriber::fmt()
+                            .with_env_filter(filter)
+                            .with_test_writer()
+                            .try_init();
+                    });
+                }
             }
 
             mod context;
@@ -714,22 +716,29 @@ mod core {
         pub use triangulation_maps::*;
     }
     /// Generic triangulation construction helpers.
+    #[path = "triangulation/construction.rs"]
     pub mod construction;
     pub mod edge;
     pub mod facet;
     /// Incremental insertion for generic triangulations.
+    #[path = "triangulation/insertion.rs"]
     pub mod insertion;
     /// Semantic classification and telemetry for topological operations
     pub mod operations;
     /// Geometric orientation validation and canonicalization for generic triangulations.
+    #[path = "triangulation/orientation.rs"]
     pub mod orientation;
     /// Read-only query and traversal helpers for generic triangulations.
+    #[path = "triangulation/query.rs"]
     pub mod query;
     /// Realized Euclidean geometry validation for generic triangulations.
+    #[path = "triangulation/realization.rs"]
     pub mod realization;
     /// Local topology repair for generic triangulations.
+    #[path = "triangulation/repair.rs"]
     pub mod repair;
     /// Scoped rollback guards for internal topology mutation windows.
+    #[path = "triangulation/rollback.rs"]
     pub(crate) mod rollback;
     /// Triangulation data structure internals.
     pub mod tds {
@@ -751,8 +760,10 @@ mod core {
         pub use storage::{Tds, TopologyOwner, TopologyOwnerId};
     }
     /// Generic triangulation combining kernel + Tds.
+    #[path = "triangulation/model.rs"]
     pub mod triangulation;
     /// Generic validation orchestration for triangulations.
+    #[path = "triangulation/validation.rs"]
     pub mod validation;
 
     /// General utility functions organized by functionality.
@@ -893,7 +904,7 @@ pub(crate) mod deletion;
 #[path = "delaunay/diagnostics.rs"]
 pub mod diagnostics;
 /// Triangulation editing operations (bistellar flips).
-#[path = "delaunay/flips.rs"]
+#[path = "core/triangulation/flips.rs"]
 pub mod flips;
 /// Post-construction vertex insertion operations.
 #[path = "delaunay/insertion.rs"]
@@ -901,7 +912,7 @@ pub(crate) mod insertion;
 #[path = "delaunay/locality.rs"]
 pub(crate) mod locality;
 /// Unified Pachner move workflow API for local topology editing.
-#[path = "delaunay/pachner.rs"]
+#[path = "core/triangulation/pachner.rs"]
 pub mod pachner;
 /// Repair policies and outcomes for Delaunay triangulations.
 #[path = "delaunay/repair.rs"]
@@ -945,7 +956,8 @@ pub use crate::core::algorithms::incremental_insertion::{
     SpatialIndexConstructionFailure, TdsConstructionFailure, TdsValidationFailure,
 };
 pub use crate::core::algorithms::pl_manifold_repair::{
-    PlManifoldRepairError, PlManifoldRepairStage, PlManifoldRepairStats,
+    PlManifoldRepairConfig, PlManifoldRepairError, PlManifoldRepairStage, PlManifoldRepairStats,
+    PlManifoldTdsRepairResult, repair_pl_manifold_tds,
 };
 pub use crate::core::construction::{
     FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
@@ -955,6 +967,7 @@ pub use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, RepairDecision, RepairSkipReason,
     SuspicionFlags, TopologicalOperation,
 };
+pub use crate::core::query::SimplexBarycenterError;
 pub use crate::core::realization::{
     PeriodicDomainPeriodError, TriangulationRealizationIntersectionDetail,
     TriangulationRealizationSimplexDetail, TriangulationRealizationSimplexPairDetail,
@@ -974,7 +987,7 @@ pub use crate::delaunay_property_validation::{
     DelaunayValidationError, DelaunayViolationDetail, DelaunayViolationReport,
     delaunay_violation_report, find_delaunay_violations,
 };
-pub use crate::delaunay_query::{SimplexBarycenterError, SimplexDataFillError};
+pub use crate::delaunay_query::SimplexDataFillError;
 pub use crate::deletion::DeleteVertexError;
 pub use crate::io::visualization::{
     AdjacencyRecord, MESH_EXPORT_SCHEMA, MESH_EXPORT_SCHEMA_VERSION, MeshAdjacencyRecord,
@@ -984,10 +997,7 @@ pub use crate::io::visualization::{
     VisualizationExportError, VisualizationMetadata, VisualizationTopologyGuarantee,
     VisualizationTopologyKind,
 };
-pub use crate::repair::{
-    DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,
-    DelaunayRepairOperation, DelaunayRepairOutcome, DelaunayRepairPolicy,
-};
+pub use crate::repair::{DelaunayCheckPolicy, DelaunayRepairOperation, DelaunayRepairPolicy};
 pub use crate::spherical::{
     SphericalDelaunayBuilder, SphericalDelaunayConstructionError, SphericalDelaunayTriangulation,
     SphericalDelaunayValidationError, SphericalSimplex, SphericalSimplexError,
@@ -1278,7 +1288,7 @@ pub mod algorithms {
 /// compare derived topology without importing construction and repair surfaces,
 /// or compute topology-aware local-editing points. It also re-exports
 /// query-adjacent support types such as [`SimplexBarycenterError`] for
-/// [`DelaunayTriangulation::simplex_barycenter`] and [`SimplexDataFillError`] for
+/// [`Triangulation::simplex_barycenter`] and [`SimplexDataFillError`] for
 /// follow-on simplex payload assignment.
 ///
 /// # Examples
@@ -1348,8 +1358,7 @@ pub mod prelude {
         ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
         ConstructionStatistics, DedupPolicy, DedupTolerance, DelaunayCheckPolicy,
         DelaunayConstructionFailure, DelaunayConstructionRepairPhase,
-        DelaunayConstructionRetryFailure, DelaunayError, DelaunayRepairHeuristicConfig,
-        DelaunayRepairHeuristicSeeds, DelaunayRepairOperation, DelaunayRepairOutcome,
+        DelaunayConstructionRetryFailure, DelaunayError, DelaunayRepairOperation,
         DelaunayRepairPolicy, DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder,
         DelaunayTriangulationConstructionError,
         DelaunayTriangulationConstructionErrorWithStatistics, DelaunayTriangulationValidationError,
@@ -1516,7 +1525,8 @@ pub mod prelude {
             CavityFillingError, CavityRepairStage, DelaunayTriangulation, DeleteVertexError,
             FinalDelaunayValidationContext, FinalTopologyValidationContext,
             SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
-            TriangulationConstructionError, try_vertices_from_points,
+            TriangulationConstructionError, TriangulationRealizationValidationError,
+            try_vertices_from_points,
         };
     }
 
@@ -1615,7 +1625,8 @@ pub mod prelude {
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build()?;
+    ///     .build()?
+    ///     .into_triangulation();
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -1726,7 +1737,7 @@ pub mod prelude {
         };
     }
 
-    /// Flip-based Delaunay repair, diagnostics, and Level 5 validation.
+    /// PL-manifold and Delaunay repair, diagnostics, and Level 5 validation.
     ///
     /// ```rust
     /// use delaunay::prelude::repair::{
@@ -1756,14 +1767,13 @@ pub mod prelude {
             FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
             TriangleHandleError,
         };
-        pub use crate::repair::{
-            DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,
-            DelaunayRepairOutcome, DelaunayRepairPolicy,
-        };
+        pub use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
         pub use crate::{
             DelaunayRepairErrorKind, DelaunayRepairOperation, DelaunayTriangulation,
             DelaunayTriangulationValidationError, DelaunayVerificationError,
-            DelaunayVerificationErrorKind,
+            DelaunayVerificationErrorKind, PlManifoldRepairConfig, PlManifoldRepairError,
+            PlManifoldRepairStage, PlManifoldRepairStats, PlManifoldTdsRepairResult,
+            repair_pl_manifold_tds,
         };
         pub use crate::{
             DelaunayValidationError, DelaunayViolationDetail, DelaunayViolationReport,
@@ -1774,16 +1784,14 @@ pub mod prelude {
         };
     }
 
-    /// End-to-end "repair then delaunayize" workflow.
+    /// End-to-end Delaunay conversion workflow.
     ///
     /// Self-contained: a single `use delaunay::prelude::delaunayize::*`
     /// import brings in [`DelaunayTriangulationBuilder`], [`DelaunayTriangulation`],
-    /// PL-manifold repair types such as [`PlManifoldRepairStage`], and all
-    /// delaunayize-specific types.
+    /// and all delaunayize-specific types.
     pub mod delaunayize {
         pub use crate::delaunayize::*;
         pub use crate::{DelaunayTriangulation, DelaunayTriangulationBuilder};
-        pub use crate::{PlManifoldRepairError, PlManifoldRepairStage, PlManifoldRepairStats};
     }
 
     /// Delaunay-level validation APIs, reports, and construction diagnostics.
@@ -2037,7 +2045,7 @@ pub mod prelude {
     ///   [`DelaunayTriangulation::adjacency`] / [`TriangulationAdjacency`]
     /// - Zero-allocation geometry accessors: [`DelaunayTriangulation::vertex_coords`],
     ///   [`DelaunayTriangulation::simplex_vertices`]
-    /// - Local-editing coordinates: [`DelaunayTriangulation::simplex_barycenter`] and
+    /// - Local-editing coordinates: [`Triangulation::simplex_barycenter`] and
     ///   [`SimplexBarycenterError`]
     /// - Convex hull extraction: [`ConvexHull::try_from_triangulation`]
     ///
@@ -2223,7 +2231,8 @@ pub const fn is_normal<T: Send + Sync + Unpin>() -> bool {
 mod tests {
     use crate::geometry::matrix::LaError;
     use crate::{
-        DelaunayTriangulation,
+        DelaunayTriangulation, PlManifoldRepairConfig, PlManifoldRepairError,
+        PlManifoldRepairStage, PlManifoldRepairStats, PlManifoldTdsRepairResult,
         core::{
             adjacency::TriangulationAdjacency, edge::EdgeKey, simplex::Simplex, tds::Tds,
             triangulation::Triangulation, vertex::Vertex,
@@ -2234,13 +2243,12 @@ mod tests {
         is_normal,
         prelude::delaunayize::{
             DelaunayTriangulationConstructionError, DelaunayizeConfig, DelaunayizeError,
-            DelaunayizeOutcome, PlManifoldRepairError, PlManifoldRepairStage,
-            PlManifoldRepairStats, SimplexDataRestoreError, SimplexValidationError,
+            DelaunayizeOutcome, SimplexDataRestoreError, SimplexValidationError,
         },
         prelude::repair::{
-            DelaunayCheckPolicy, DelaunayRepairError, DelaunayRepairOutcome, DelaunayRepairPolicy,
-            DelaunayRepairStats, DelaunayTriangulation as RepairDelaunayTriangulation,
-            FlipContextError, FlipError, RepairQueueOrder, TopologyGuarantee,
+            DelaunayCheckPolicy, DelaunayRepairError, DelaunayRepairPolicy, DelaunayRepairStats,
+            DelaunayTriangulation as RepairDelaunayTriangulation, FlipContextError, FlipError,
+            RepairQueueOrder, TopologyGuarantee,
         },
         prelude::*,
         vertex,
@@ -2266,13 +2274,15 @@ mod tests {
         assert!(is_normal::<EdgeKey>());
         assert!(is_normal::<TriangulationAdjacency<'static>>());
         assert!(is_normal::<DelaunayizeConfig>());
-        assert!(is_normal::<DelaunayizeOutcome<(), (), 3>>());
+        assert!(is_normal::<DelaunayizeOutcome>());
         assert!(is_normal::<DelaunayizeError>());
         assert!(is_normal::<DelaunayRepairError>());
         assert!(is_normal::<DelaunayRepairStats>());
         assert!(is_normal::<PlManifoldRepairError>());
         assert!(is_normal::<PlManifoldRepairStage>());
         assert!(is_normal::<PlManifoldRepairStats<(), (), 3>>());
+        assert!(is_normal::<PlManifoldRepairConfig>());
+        assert!(is_normal::<PlManifoldTdsRepairResult<(), (), 3>>());
         assert!(is_normal::<SimplexDataRestoreError>());
         assert!(is_normal::<SimplexValidationError>());
         assert!(is_normal::<DelaunayError>());
@@ -2355,11 +2365,7 @@ mod tests {
         assert!(dt.is_valid_delaunay().is_ok());
 
         let stats = DelaunayRepairStats::default();
-        let outcome = DelaunayRepairOutcome {
-            stats: stats.clone(),
-            heuristic: None,
-        };
-        assert_eq!(outcome.stats.flips_performed, stats.flips_performed);
+        assert_eq!(stats.flips_performed, 0);
         let order = RepairQueueOrder::Fifo;
         assert_matches!(order, RepairQueueOrder::Fifo);
         assert_eq!(

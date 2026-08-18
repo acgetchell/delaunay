@@ -133,68 +133,6 @@ where
     facet_view.vertices().copied().collect()
 }
 
-/// Generates all unique combinations of `k` vertices for local regression tests.
-///
-/// Keeping this helper test-only avoids exposing a nested-`Vec` API for a
-/// simplex-sized operation that production code models with small buffers.
-///
-/// # Arguments
-///
-/// * `vertices` - A slice of vertices from which to generate combinations.
-/// * `k` - The size of each combination.
-///
-#[cfg(test)]
-fn generate_combinations<U, const D: usize>(
-    vertices: &[Vertex<U, D>],
-    k: usize,
-) -> Vec<Vec<Vertex<U, D>>>
-where
-    U: DataType,
-{
-    let mut combinations = Vec::new();
-
-    if k == 0 {
-        combinations.push(Vec::new());
-        return combinations;
-    }
-
-    if k > vertices.len() {
-        return combinations;
-    }
-
-    if k == vertices.len() {
-        combinations.push(vertices.to_vec());
-        return combinations;
-    }
-
-    // Generate combinations using iterative approach
-    let n = vertices.len();
-    let mut indices = (0..k).collect::<Vec<_>>();
-
-    loop {
-        // Add current combination
-        let combination = indices.iter().map(|i| vertices[*i]).collect();
-        combinations.push(combination);
-
-        // Find next combination
-        let mut i = k;
-        loop {
-            if i == 0 {
-                return combinations;
-            }
-            i -= 1;
-            if indices[i] != i + n - k {
-                break;
-            }
-        }
-
-        indices[i] += 1;
-        for j in (i + 1)..k {
-            indices[j] = indices[j - 1] + 1;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,6 +141,54 @@ mod tests {
     use crate::core::collections::FastHashSet;
     use crate::triangulation::DelaunayTriangulation;
     use std::time::Instant;
+
+    /// Generates all unique combinations of `k` vertices for local regression tests.
+    fn generate_combinations<U, const D: usize>(
+        vertices: &[Vertex<U, D>],
+        k: usize,
+    ) -> Vec<Vec<Vertex<U, D>>>
+    where
+        U: DataType,
+    {
+        let mut combinations = Vec::new();
+
+        if k == 0 {
+            combinations.push(Vec::new());
+            return combinations;
+        }
+
+        if k > vertices.len() {
+            return combinations;
+        }
+
+        if k == vertices.len() {
+            combinations.push(vertices.to_vec());
+            return combinations;
+        }
+
+        let n = vertices.len();
+        let mut indices = (0..k).collect::<Vec<_>>();
+
+        loop {
+            combinations.push(indices.iter().map(|i| vertices[*i]).collect());
+
+            let mut i = k;
+            loop {
+                if i == 0 {
+                    return combinations;
+                }
+                i -= 1;
+                if indices[i] != i + n - k {
+                    break;
+                }
+            }
+
+            indices[i] += 1;
+            for j in (i + 1)..k {
+                indices[j] = indices[j - 1] + 1;
+            }
+        }
+    }
 
     #[test]
     fn test_generate_combinations_comprehensive() {

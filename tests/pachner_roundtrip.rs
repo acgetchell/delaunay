@@ -18,11 +18,12 @@ use delaunay::prelude::pachner::{
     PachnerMoveFeasibility, PachnerMoveResult, PachnerMoves, PachnerProposal, SimplexKey,
     TopologyOwner, TriangleHandle, VertexKey,
 };
+use delaunay::prelude::triangulation::Triangulation;
 use uuid::Uuid;
 
-type Dt4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;
-type Dt2 = DelaunayTriangulation<RobustKernel<f64>, (), (), 2>;
-type Dt<const D: usize> = DelaunayTriangulation<RobustKernel<f64>, (), (), D>;
+type Dt4 = Triangulation<RobustKernel<f64>, (), (), 4>;
+type Dt2 = Triangulation<RobustKernel<f64>, (), (), 2>;
+type Dt<const D: usize> = Triangulation<RobustKernel<f64>, (), (), D>;
 
 const FLIPPABLE_POINTS_2D: &[[f64; 2]] = &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
@@ -91,24 +92,21 @@ fn attempt_pachner_move<const D: usize>(
 }
 
 fn topology_and_delaunay_valid<const D: usize>(
-    dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), D>,
+    dt: &Triangulation<RobustKernel<f64>, (), (), D>,
 ) -> bool {
-    dt.as_triangulation().validate().is_ok()
-        && dt.as_triangulation().is_valid_realization().is_ok()
-        && dt.is_valid_delaunay().is_ok()
+    dt.validate_realization().is_ok()
+        && DelaunayTriangulation::try_from_triangulation(dt.clone()).is_ok()
 }
 
 fn assert_topology_and_delaunay_valid<const D: usize>(
-    dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), D>,
+    dt: &Triangulation<RobustKernel<f64>, (), (), D>,
     context: &str,
 ) {
-    dt.as_triangulation()
-        .validate()
+    dt.validate()
         .unwrap_or_else(|err| panic!("{context} should pass Levels 1-3: {err}"));
-    dt.as_triangulation()
-        .is_valid_realization()
+    dt.is_valid_realization()
         .unwrap_or_else(|err| panic!("{context} should pass Level 4 realization: {err}"));
-    dt.is_valid_delaunay()
+    DelaunayTriangulation::try_from_triangulation(dt.clone())
         .unwrap_or_else(|err| panic!("{context} should pass Level 5: {err}"));
 }
 
@@ -580,6 +578,7 @@ fn build_dt_4d(points: &[[f64; 4]], fixture_name: &str) -> Dt4 {
         .construction_options(options)
         .build_with_kernel(&RobustKernel::new())
         .unwrap_or_else(|err| panic!("{fixture_name} 4D fixture should build: {err}"))
+        .into_triangulation()
 }
 
 /// Builds a minimal Euclidean D-simplex fixture for dimension smoke tests.
@@ -593,6 +592,7 @@ fn build_minimal_simplex_dt<const D: usize>() -> Dt<D> {
         .construction_options(options)
         .build_with_kernel(&RobustKernel::new())
         .unwrap_or_else(|err| panic!("{D}D minimal simplex fixture should build: {err}"))
+        .into_triangulation()
 }
 
 /// Returns the origin plus coordinate unit vectors as a nondegenerate D-simplex.
@@ -618,7 +618,8 @@ fn build_flippable_dt_2d() -> Dt2 {
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .expect("explicit 2D fixture connectivity should parse")
         .build_with_kernel(&RobustKernel::new())
-        .expect("stable 2D fixture should build");
+        .expect("stable 2D fixture should build")
+        .into_triangulation();
     assert_topology_and_delaunay_valid(&dt, "stable 2D fixture before local edits");
     dt
 }
@@ -635,6 +636,7 @@ fn build_single_triangle_dt_2d() -> Dt2 {
         .topology_guarantee(TopologyGuarantee::PLManifold)
         .build_with_kernel(&RobustKernel::new())
         .expect("single-triangle fixture should build")
+        .into_triangulation()
 }
 
 /// Searches the 2D fixture for an edge facet whose public k=2 move succeeds.

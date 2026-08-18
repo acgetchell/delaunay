@@ -1,8 +1,8 @@
-//! Delaunay-level validation APIs, proofs, and construction diagnostics.
+//! Delaunay-level validation APIs, consuming promotion boundaries, and construction diagnostics.
 //!
 //! This module owns validation at the [`DelaunayTriangulation`](crate::DelaunayTriangulation)
 //! boundary: Level 5 fast-fail checks, first diagnostics, aggregate reports,
-//! cumulative validation roll-up, and construction-time validation proofs. The
+//! cumulative validation roll-up, and construction-time candidate promotion. The
 //! lower-level empty-circumsphere scan over bare [`Tds`](crate::tds::Tds) storage lives in
 //! `property_validation`.
 
@@ -37,20 +37,82 @@ use crate::triangulation::EuclideanDelaunayReportDomain;
 use std::num::NonZeroUsize;
 use thiserror::Error;
 
-/// Proof that a candidate's underlying TDS passed structural validation.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct TdsStructureValidationProof(());
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
+where
+    K: Kernel<D>,
+{
+    /// Builds a detailed Level 5 empty-circumsphere diagnostic without claiming
+    /// that this Levels 1–4 owner is Delaunay.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayValidationError`] if a simplex is malformed, a vertex
+    /// reference is stale, or an exact predicate cannot be evaluated.
+    ///
+    /// # Examples
+    ///
+    /// A Levels 1–4 owner can report a Level 5 violation without claiming the
+    /// stronger [`DelaunayTriangulation`] contract:
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     ConstructionOptions, DelaunayResult, DelaunayTriangulationBuilder,
+    ///     DelaunayTriangulationConstructionError,
+    /// };
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = vec![
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![4.0, 0.0]?,
+    ///     delaunay::vertex![4.0, 2.0]?,
+    ///     delaunay::vertex![1.0, 2.0]?,
+    /// ];
+    /// let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
+    /// let triangulation =
+    ///     DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+    ///         .map_err(DelaunayTriangulationConstructionError::from)?
+    ///         .construction_options(
+    ///             ConstructionOptions::default().without_final_delaunay_enforcement(),
+    ///         )
+    ///         .build_triangulation()?;
+    ///
+    /// let report = triangulation.delaunay_violation_report(None)?;
+    /// assert!(!report.is_valid());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn delaunay_violation_report(
+        &self,
+        simplices_to_check: Option<&[SimplexKey]>,
+    ) -> Result<DelaunayViolationReport, DelaunayValidationError> {
+        tds_delaunay_violation_report(self.tds(), simplices_to_check)
+    }
 
-/// Proof that a candidate passed the full validation boundary for a Delaunay wrapper.
-///
-/// The proof is minted only after Levels 1-4 triangulation validation and the
-/// Level 5 Delaunay-property check succeed for the candidate's topology model.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct DelaunayTriangulationValidationProof(());
-
-/// Proof that a candidate passed Levels 1-4 through realized-geometry validation.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct TriangulationRealizationValidationProof(());
+    /// Logs the first Level 5 violation in this generic triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .build_triangulation()?;
+    /// triangulation.debug_print_first_delaunay_violation(None);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "diagnostics")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
+    pub fn debug_print_first_delaunay_violation(&self, simplices_subset: Option<&[SimplexKey]>) {
+        debug_print_first_tds_delaunay_violation(self.tds(), simplices_subset);
+    }
+}
 
 /// Internal assembly stage for a triangulation that has not crossed its validation boundary yet.
 ///
@@ -59,10 +121,15 @@ pub(crate) struct TriangulationRealizationValidationProof(());
 /// invariants for the construction path.
 #[derive(Clone, Debug)]
 pub(crate) struct DelaunayTriangulationCandidate<K, U, V, const D: usize> {
-    candidate: DelaunayTriangulation<K, U, V, D>,
+    triangulation: Triangulation<K, U, V, D>,
 }
 
 impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D> {
+    /// Wraps a Levels 1–4 triangulation for Delaunay-specific certification.
+    pub(crate) const fn from_triangulation(triangulation: Triangulation<K, U, V, D>) -> Self {
+        Self { triangulation }
+    }
+
     /// Assembles a validation candidate with the topology context used for proof checks.
     ///
     /// The global topology is installed before any validation proof is minted so
@@ -76,58 +143,31 @@ impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D> {
     ) -> Self {
         let validation_policy = topology_guarantee.default_validation_policy();
         Self {
-            candidate: DelaunayTriangulation {
-                tri: Triangulation {
-                    kernel,
-                    tds,
-                    global_topology,
-                    validation_policy,
-                    topology_guarantee,
-                },
-                insertion_state: DelaunayInsertionState::new(),
-                spatial_index: None,
-                euclidean_report_domain: EuclideanDelaunayReportDomain::Unproven,
+            triangulation: Triangulation {
+                kernel,
+                tds,
+                global_topology,
+                validation_policy,
+                topology_guarantee,
             },
         }
     }
 
-    /// Validates Level 1–2 TDS structure and returns proof for structural-only assembly paths.
-    pub(crate) fn validate_tds_structure(&self) -> Result<TdsStructureValidationProof, TdsError> {
-        self.candidate.tri.tds.validate()?;
-        Ok(TdsStructureValidationProof(()))
+    /// Validates Level 1–2 TDS structure for staged construction diagnostics.
+    pub(crate) fn validate_tds_structure(&self) -> Result<(), TdsError> {
+        self.triangulation.tds.validate()
     }
 
-    /// Converts a candidate using proof from [`Self::validate_delaunay_property`].
-    pub(crate) fn into_validated_delaunay(
-        self,
-        _proof: DelaunayTriangulationValidationProof,
-    ) -> DelaunayTriangulation<K, U, V, D> {
-        self.candidate
-    }
-
-    /// Converts a candidate after the caller has proved structural validity.
+    /// Validates Level 1–2 structure and consumes the matching candidate.
     ///
     /// Periodic quotient construction uses this boundary after reconstructing
     /// closed neighbor and incidence relations. Exhaustive periodic realization
     /// validation remains available through the public cumulative validator.
-    pub(crate) fn into_structurally_valid_delaunay(
+    pub(crate) fn try_into_structurally_valid_triangulation(
         self,
-        _proof: TdsStructureValidationProof,
-    ) -> DelaunayTriangulation<K, U, V, D> {
-        self.candidate
-    }
-
-    /// Converts a candidate after the caller has proved Levels 1-4 validity.
-    pub(crate) fn into_realization_validated_delaunay(
-        self,
-        _proof: TriangulationRealizationValidationProof,
-    ) -> DelaunayTriangulation<K, U, V, D> {
-        self.candidate
-    }
-
-    #[cfg(test)]
-    pub(crate) fn into_repairable_delaunay_for_test(self) -> DelaunayTriangulation<K, U, V, D> {
-        self.candidate
+    ) -> Result<Triangulation<K, U, V, D>, TdsError> {
+        self.validate_tds_structure()?;
+        Ok(self.triangulation)
     }
 }
 
@@ -139,24 +179,23 @@ where
     pub(crate) fn normalize_and_promote_positive_orientation(
         &mut self,
     ) -> Result<(), InsertionError> {
-        self.candidate
-            .tri
+        self.triangulation
             .normalize_and_promote_positive_orientation()
     }
 
     /// Validates Level 3 intrinsic topology.
     pub(crate) fn validate_topology(&self) -> Result<(), InvariantError> {
-        self.candidate.tri.is_valid_topology()
+        self.triangulation.is_valid_topology()
     }
 
     /// Validates completion-time PL-manifold constraints.
     pub(crate) fn validate_at_completion(&self) -> Result<(), InvariantError> {
-        self.candidate.tri.validate_at_completion()
+        self.triangulation.validate_at_completion()
     }
 
     /// Validates explicit geometric nondegeneracy constraints.
     pub(crate) fn validate_geometric_nondegeneracy(&self) -> Result<(), TdsError> {
-        self.candidate.tri.validate_geometric_nondegeneracy()
+        self.triangulation.validate_geometric_nondegeneracy()
     }
 }
 
@@ -174,30 +213,39 @@ where
     /// candidates additionally pass Level 4 realized-geometry validation before
     /// the Level 5 Delaunay property is checked with the topology-appropriate
     /// validator.
-    pub(crate) fn validate_delaunay_property(
-        &self,
-    ) -> Result<DelaunayTriangulationValidationProof, DelaunayTriangulationValidationError> {
-        self.candidate.tri.validate_realization()?;
+    pub(crate) fn try_into_validated_delaunay(
+        self,
+    ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationValidationError> {
+        self.triangulation.validate_realization()?;
 
-        if self.candidate.global_topology().is_euclidean() {
-            is_delaunay_property_only(&self.candidate.tri.tds).map_err(|source| {
+        if self.triangulation.global_topology().is_euclidean() {
+            is_delaunay_property_only(&self.triangulation.tds).map_err(|source| {
                 DelaunayTriangulationValidationError::VerificationFailed {
                     source: Box::new(DelaunayVerificationError::from(source)),
                 }
             })?;
         } else {
-            self.candidate.is_valid_delaunay()?;
+            verify_triangulation_via_flip_predicates(&self.triangulation).map_err(|source| {
+                DelaunayTriangulationValidationError::VerificationFailed {
+                    source: Box::new(DelaunayVerificationError::from(source)),
+                }
+            })?;
         }
 
-        Ok(DelaunayTriangulationValidationProof(()))
+        Ok(DelaunayTriangulation {
+            tri: self.triangulation,
+            insertion_state: DelaunayInsertionState::new(),
+            spatial_index: None,
+            euclidean_report_domain: EuclideanDelaunayReportDomain::Unproven,
+        })
     }
 
-    /// Validates Levels 1-4 without enforcing the Level 5 Delaunay property.
-    pub(crate) fn validate_realization_only(
-        &self,
-    ) -> Result<TriangulationRealizationValidationProof, DelaunayTriangulationValidationError> {
-        self.candidate.tri.validate_realization()?;
-        Ok(TriangulationRealizationValidationProof(()))
+    /// Validates Levels 1-4 and consumes the matching candidate on success.
+    pub(crate) fn try_into_realization_validated_triangulation(
+        self,
+    ) -> Result<Triangulation<K, U, V, D>, TriangulationRealizationValidationError> {
+        self.triangulation.validate_realization()?;
+        Ok(self.triangulation)
     }
 }
 
@@ -1000,6 +1048,9 @@ where
     ///   via `try_from_tds` validates with [`GlobalTopology::Euclidean`]. Use
     ///   [`try_from_tds_with_topology_context`](Self::try_from_tds_with_topology_context) if you
     ///   need to validate toroidal or other non-default topology metadata during reconstruction.
+    /// - Every `try_from_tds*` path is strict through Level 5. Use
+    ///   [`Triangulation::try_from_tds_with_topology_context`] for evolved state
+    ///   whose contract ends at Level 4.
     /// - Euclidean reconstruction validates Level 4 realized geometry, then
     ///   validates Level 5 with the crate's robust empty-circumsphere validator,
     ///   independent of the supplied runtime kernel. The supplied kernel is
@@ -1102,9 +1153,11 @@ where
 
     /// Create a validated `DelaunayTriangulation` from a `Tds` with explicit topology context.
     ///
-    /// This is the checked reconstruction path for serialized TDS data whose
-    /// runtime [`TopologyGuarantee`] or [`GlobalTopology`] metadata must be
-    /// restored before validation.
+    /// This is the strict checked reconstruction path for serialized TDS data
+    /// whose runtime [`TopologyGuarantee`] or [`GlobalTopology`] metadata must
+    /// be restored before cumulative Levels 1–5 validation. Internally it
+    /// composes [`Triangulation::try_from_tds_with_topology_context`] with
+    /// [`Self::try_from_triangulation`].
     ///
     /// # Examples
     ///
@@ -1150,14 +1203,53 @@ where
         topology_guarantee: TopologyGuarantee,
         global_topology: GlobalTopology<D>,
     ) -> Result<Self, DelaunayTriangulationValidationError> {
-        let candidate = DelaunayTriangulationCandidate::assemble(
+        let triangulation = Triangulation::try_from_tds_with_topology_context(
             tds,
             kernel,
             topology_guarantee,
             global_topology,
-        );
-        let proof = candidate.validate_delaunay_property()?;
-        Ok(candidate.into_validated_delaunay(proof))
+        )?;
+        Self::try_from_triangulation(triangulation)
+    }
+
+    /// Certifies a Levels 1–4 [`Triangulation`] as Delaunay without changing it.
+    ///
+    /// This strict conversion reruns cumulative validation and checks the Level
+    /// 5 Delaunay predicate. It never repairs connectivity. Use the
+    /// `delaunayize` workflow when a valid realized triangulation must first be
+    /// converted to Delaunay form with bounded flips.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayTriangulationValidationError`] if cumulative Levels
+    /// 1–5 validation fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    /// };
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .build_triangulation()?;
+    ///
+    /// let delaunay = DelaunayTriangulation::try_from_triangulation(triangulation)?;
+    /// assert!(delaunay.validate().is_ok());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_from_triangulation(
+        triangulation: Triangulation<K, U, V, D>,
+    ) -> Result<Self, DelaunayTriangulationValidationError> {
+        let candidate = DelaunayTriangulationCandidate::from_triangulation(triangulation);
+        candidate.try_into_validated_delaunay()
     }
 }
 
@@ -1182,6 +1274,19 @@ mod tests {
     use std::assert_matches;
     use std::{error::Error, sync::Once};
     use uuid::Uuid;
+
+    impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D> {
+        /// Deliberately bypasses Level 5 promotion for validation and internal
+        /// repair failure tests.
+        pub(crate) fn into_unproven_delaunay_for_test(self) -> DelaunayTriangulation<K, U, V, D> {
+            DelaunayTriangulation {
+                tri: self.triangulation,
+                insertion_state: DelaunayInsertionState::new(),
+                spatial_index: None,
+                euclidean_report_domain: EuclideanDelaunayReportDomain::Unproven,
+            }
+        }
+    }
 
     #[derive(Clone, Debug)]
     struct PanickingKernel;
@@ -1284,7 +1389,7 @@ mod tests {
             TopologyGuarantee::Pseudomanifold,
             GlobalTopology::Euclidean,
         )
-        .into_repairable_delaunay_for_test()
+        .into_unproven_delaunay_for_test()
     }
 
     fn synthetic_flip_verification_source(message: &str) -> DelaunayVerificationError {
@@ -1317,8 +1422,8 @@ mod tests {
         panic!("failed to build seeded randomized {D}D Delaunay test fixture");
     }
 
-    fn shared_facet_flip_adversary<const D: usize>()
-    -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
+    fn shared_facet_flip_adversary<const D: usize>() -> Triangulation<AdaptiveKernel<f64>, (), (), D>
+    {
         let dim = u32::try_from(D).unwrap();
         let high_apex_coordinate = 1.1 / f64::from(dim);
         let mut vertices = Vec::with_capacity(D + 2);
@@ -1340,7 +1445,7 @@ mod tests {
             .construction_options(
                 ConstructionOptions::default().without_final_delaunay_enforcement(),
             )
-            .build()
+            .build_triangulation()
             .unwrap()
     }
 
@@ -1357,7 +1462,11 @@ mod tests {
 
     fn assert_adversarial_full_report_matches_brute_force<const D: usize>() {
         let triangulation = shared_facet_flip_adversary::<D>();
-        assert!(triangulation.verify_via_flip_predicates().is_err());
+        assert!(
+            triangulation
+                .delaunay_violation_report(None)
+                .is_ok_and(|report| !report.is_valid())
+        );
 
         let optimized = triangulation.delaunay_violation_report(None).unwrap();
         let brute_force = tds_delaunay_violation_report(triangulation.tds(), None).unwrap();
@@ -1399,7 +1508,7 @@ mod tests {
             source.topology_guarantee(),
             source.global_topology(),
         )
-        .into_repairable_delaunay_for_test();
+        .into_unproven_delaunay_for_test();
         triangulation.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
 
         let report = triangulation.delaunay_violation_report(None).unwrap();
@@ -1409,7 +1518,9 @@ mod tests {
 
     #[test]
     fn failed_complete_point_set_certificate_falls_back_to_global_report() {
-        let mut triangulation = shared_facet_flip_adversary::<2>();
+        let triangulation = shared_facet_flip_adversary::<2>();
+        let mut triangulation = DelaunayTriangulationCandidate::from_triangulation(triangulation)
+            .into_unproven_delaunay_for_test();
         triangulation.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
 
         let report = triangulation.delaunay_violation_report(None).unwrap();
@@ -1432,7 +1543,7 @@ mod tests {
             TopologyGuarantee::Pseudomanifold,
             GlobalTopology::Euclidean,
         )
-        .into_repairable_delaunay_for_test();
+        .into_unproven_delaunay_for_test();
         assert_eq!(
             triangulation.euclidean_report_domain,
             EuclideanDelaunayReportDomain::Unproven

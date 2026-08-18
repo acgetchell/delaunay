@@ -65,13 +65,13 @@ use delaunay::prelude::construction::{
     SphericalDelaunayBuilder, SphericalDelaunayConstructionError, SphericalDelaunayTriangulation,
     SphericalDelaunayValidationError, SphericalSimplex, SphericalSimplexError,
     SphericalValidationLayer, TopologyGuarantee, ToroidalDomain as ConstructionToroidalDomain,
+    TriangulationRealizationValidationError as ConstructionTriangulationRealizationValidationError,
     Vertex, VertexValidationError,
     try_vertices_from_points as construction_try_vertices_from_points, vertex,
 };
 use delaunay::prelude::delaunayize::{
     DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
-    DelaunayizeError, DelaunayizeOutcome, PlManifoldRepairError, PlManifoldRepairStage,
-    PlManifoldRepairStats, SimplexDataRestoreError, delaunayize_by_flips,
+    DelaunayizeError, DelaunayizeOutcome, SimplexDataRestoreError, delaunayize_by_flips,
 };
 use delaunay::prelude::deletion::{
     DeleteVertexError as FocusedDeleteVertexError, VertexKey as DeletionVertexKey,
@@ -154,14 +154,15 @@ use delaunay::prelude::query::{
 };
 use delaunay::prelude::repair::{
     DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError,
-    DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicRebuildFailure,
-    DelaunayRepairHeuristicRebuildFailureKind, DelaunayRepairHeuristicVertexContext,
-    DelaunayRepairOperation, DelaunayRepairOrientationCanonicalizationFailure,
-    DelaunayRepairOrientationCanonicalizationFailureKind, DelaunayRepairOutcome,
-    DelaunayRepairPostconditionFailure, DelaunayRepairStats, DelaunayRepairVerificationContext,
-    DelaunayTriangulationValidationError, FlipEdgeAdjacencyError, FlipError, FlipFailureKind,
+    DelaunayRepairHeuristicRebuildFailure, DelaunayRepairHeuristicRebuildFailureKind,
+    DelaunayRepairHeuristicVertexContext, DelaunayRepairOperation,
+    DelaunayRepairOrientationCanonicalizationFailure,
+    DelaunayRepairOrientationCanonicalizationFailureKind, DelaunayRepairPostconditionFailure,
+    DelaunayRepairStats, DelaunayRepairVerificationContext, DelaunayTriangulationValidationError,
+    FlipEdgeAdjacencyError, FlipError, FlipFailureKind,
     FlipOrientationCheckStage as RepairFlipOrientationCheckStage, FlipTriangleAdjacencyError,
-    FlipVertexAdjacencyError, RepairQueueOrder,
+    FlipVertexAdjacencyError, PlManifoldRepairConfig, PlManifoldRepairError, PlManifoldRepairStage,
+    PlManifoldRepairStats, PlManifoldTdsRepairResult, RepairQueueOrder, repair_pl_manifold_tds,
 };
 use delaunay::prelude::tds::{
     AllFacetsIter as TdsAllFacetsIter, BoundaryFacetsIter as TdsBoundaryFacetsIter, EdgeKeyError,
@@ -449,8 +450,10 @@ fn assert_pachner_prelude_exports(
     Ok(())
 }
 
-fn assert_delaunayize_prelude_repair_exports() {
+fn assert_repair_prelude_pl_manifold_exports() {
     let _typed_repair_stats: PlManifoldRepairStats<(), (), 3> = PlManifoldRepairStats::default();
+    let _config = PlManifoldRepairConfig::default();
+    assert_pl_manifold_repair_function(repair_pl_manifold_tds);
     let repair_stage = PlManifoldRepairStage::RidgeLink;
     assert_eq!(repair_stage, PlManifoldRepairStage::RidgeLink);
     let repair_error = PlManifoldRepairError::TargetedPostconditionValidation {
@@ -461,6 +464,15 @@ fn assert_delaunayize_prelude_repair_exports() {
     };
     assert!(repair_error.to_string().contains("postcondition"));
 }
+
+type PlManifoldRepairFunction =
+    fn(
+        Tds<(), (), 3>,
+        GlobalTopology<3>,
+        &PlManifoldRepairConfig,
+    ) -> Result<PlManifoldTdsRepairResult<(), (), 3>, PlManifoldRepairError>;
+
+const fn assert_pl_manifold_repair_function(_: PlManifoldRepairFunction) {}
 
 const fn assert_send_sync_unpin<T: Send + Sync + Unpin>() {}
 
@@ -1051,7 +1063,7 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
         .with_insertion_order(ConstructionModuleInsertionOrderStrategy::Input);
     let builder: BuilderModuleBuilder<'_, (), 3> =
         RootDelaunayTriangulationBuilder::new(&vertices).construction_options(options);
-    let mut dt: RootDelaunayTriangulation<_, (), (), 3> = builder.build()?;
+    let dt: RootDelaunayTriangulation<_, (), (), 3> = builder.build()?;
 
     assert_eq!(dt.topology_guarantee(), RootTopologyGuarantee::PLManifold);
     assert_eq!(dt.validation_policy(), RootValidationPolicy::ExplicitOnly);
@@ -1110,12 +1122,12 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
     let root_validated_data: RootValidatedVisualizationData<3> =
         dt.to_visualization_data()?.into_validated()?;
     assert_eq!(root_validated_data.metadata().schema, RootMeshExportSchema);
-    assert_bistellar_flips(&dt);
-    assert_root_bistellar_flips(&dt);
+    assert_bistellar_flips(dt.as_triangulation());
+    assert_root_bistellar_flips(dt.as_triangulation());
 
-    let outcome = module_delaunayize_by_flips(&mut dt, DelaunayizeModuleConfig::default())?;
-    assert!(!outcome.used_fallback_rebuild);
-    assert!(outcome.topology_repair.succeeded);
+    let result =
+        module_delaunayize_by_flips(dt.into_triangulation(), DelaunayizeModuleConfig::default())?;
+    assert!(!result.outcome.used_fallback_rebuild);
     Ok(())
 }
 
@@ -1435,8 +1447,8 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     dt.validate()?;
     let empty_tds: Tds<(), (), 3> = Tds::empty();
     assert_tds_topology_owner(&empty_tds);
-    assert_bistellar_flips(&dt);
-    assert_pachner_prelude_exports(&dt, simplex_key)?;
+    assert_bistellar_flips(dt.as_triangulation());
+    assert_pachner_prelude_exports(dt.as_triangulation(), simplex_key)?;
     assert_send_sync_unpin::<PachnerProposal<(), 3>>();
     assert_send_sync_unpin::<PachnerTopologyOwnerId>();
     assert_send_sync_unpin::<TdsTopologyOwnerId>();
@@ -1903,7 +1915,7 @@ fn construction_prelude_covers_typed_explicit_error_wrappers() {
     );
 
     let explicit_realization = ExplicitConstructionError::RealizationValidation {
-        source: Box::new(ConstructionDelaunayTriangulationValidationError::Tds {
+        source: Box::new(ConstructionTriangulationRealizationValidationError::Tds {
             source: Box::new(TdsError::InconsistentDataStructure {
                 message: "realization validation failed".to_string(),
             }),
@@ -1914,7 +1926,7 @@ fn construction_prelude_covers_typed_explicit_error_wrappers() {
         ExplicitConstructionError::RealizationValidation { source }
             if matches!(
                 source.as_ref(),
-                ConstructionDelaunayTriangulationValidationError::Tds { source: tds }
+                ConstructionTriangulationRealizationValidationError::Tds { source: tds }
                     if matches!(tds.as_ref(), TdsError::InconsistentDataStructure { .. })
             )
     );
@@ -2462,28 +2474,10 @@ fn construction_prelude_covers_random_point_generation_failure_variant()
     Ok(())
 }
 
-fn assert_repair_heuristic_config_fluent_setters() {
-    let heuristic_config = DelaunayRepairHeuristicConfig::default()
-        .with_shuffle_seed(7)
-        .with_perturbation_seed(11)
-        .with_delaunay_max_flips(100);
-    assert_eq!(heuristic_config.shuffle_seed, Some(7));
-    assert_eq!(heuristic_config.perturbation_seed, Some(11));
-    assert_eq!(heuristic_config.max_flips, Some(100));
-    assert_eq!(
-        heuristic_config.without_delaunay_max_flips().max_flips,
-        None
-    );
-}
-
 fn assert_delaunayize_config_fluent_setters() {
     let delaunayize_config = DelaunayizeConfig::default()
-        .with_topology_max_iterations(32)
-        .with_topology_max_simplices_removed(1_000)
         .with_fallback_rebuild(true)
         .with_delaunay_max_flips(500);
-    assert_eq!(delaunayize_config.topology_max_iterations, 32);
-    assert_eq!(delaunayize_config.topology_max_simplices_removed, 1_000);
     assert!(delaunayize_config.fallback_rebuild);
     assert_eq!(delaunayize_config.delaunay_max_flips, Some(500));
     assert_eq!(
@@ -2502,19 +2496,14 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let mut dt = DelaunayizeDelaunayTriangulationBuilder::new(&vertices).build()?;
+    let dt = DelaunayizeDelaunayTriangulationBuilder::new(&vertices).build()?;
 
     let repair_stats = DelaunayRepairStats::default();
-    let repair_outcome = DelaunayRepairOutcome {
-        stats: repair_stats,
-        heuristic: None,
-    };
-    assert!(!repair_outcome.used_heuristic());
+    assert_eq!(repair_stats.flips_performed, 0);
     assert_eq!(
         DelaunayRepairPolicy::default(),
         DelaunayRepairPolicy::EveryInsertion
     );
-    assert_repair_heuristic_config_fluent_setters();
     assert!(!DelaunayCheckPolicy::default().should_check(1));
     assert_eq!(RepairQueueOrder::Fifo, RepairQueueOrder::Fifo);
     let diagnostics = DelaunayRepairDiagnostics {
@@ -2593,11 +2582,11 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
 
     assert_delaunayize_config_fluent_setters();
 
-    let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
-    assert!(!outcome.used_fallback_rebuild);
-    let _typed_outcome: DelaunayizeOutcome<(), (), 3> = outcome;
+    let result = delaunayize_by_flips(dt.into_triangulation(), DelaunayizeConfig::default())?;
+    assert!(!result.outcome.used_fallback_rebuild);
+    let _typed_outcome: DelaunayizeOutcome = result.outcome;
     let _typed_error: Option<DelaunayizeError> = None;
-    assert_delaunayize_prelude_repair_exports();
+    assert_repair_prelude_pl_manifold_exports();
     assert_send_sync_unpin::<SimplexDataRestoreError>();
     Ok(())
 }

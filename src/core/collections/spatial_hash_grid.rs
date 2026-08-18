@@ -125,14 +125,6 @@ impl<const D: usize, K> HashGridIndex<D, K> {
     }
 }
 
-#[cfg(test)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HashGridIndexSnapshot {
-    cell_size: String,
-    usable: bool,
-    cells: Vec<String>,
-}
-
 impl<const D: usize, K> HashGridIndex<D, K> {
     /// Creates a new grid index with a finite, positive cell size.
     ///
@@ -161,24 +153,6 @@ impl<const D: usize, K> HashGridIndex<D, K> {
             usable: D <= MAX_HASH_GRID_DIMENSION,
             cells: SecureHashMap::default(),
         })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn debug_snapshot(&self) -> HashGridIndexSnapshot
-    where
-        K: std::fmt::Debug,
-    {
-        let mut cells = self
-            .cells
-            .iter()
-            .map(|(key, bucket)| format!("{key:?}={bucket:?}"))
-            .collect::<Vec<_>>();
-        cells.sort();
-        HashGridIndexSnapshot {
-            cell_size: format!("{:?}", self.cell_size),
-            usable: self.usable,
-            cells,
-        }
     }
 
     /// Marks the index unusable so callers fall back to a conservative scan.
@@ -324,6 +298,37 @@ impl<const D: usize, K> HashGridIndex<D, K> {
         }
 
         true
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::HashGridIndex;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(crate) struct HashGridIndexSnapshot {
+        cell_size: String,
+        usable: bool,
+        cells: Vec<String>,
+    }
+
+    impl<const D: usize, K> HashGridIndex<D, K> {
+        pub(crate) fn debug_snapshot(&self) -> HashGridIndexSnapshot
+        where
+            K: std::fmt::Debug,
+        {
+            let mut cells = self
+                .cells
+                .iter()
+                .map(|(key, bucket)| format!("{key:?}={bucket:?}"))
+                .collect::<Vec<_>>();
+            cells.sort();
+            HashGridIndexSnapshot {
+                cell_size: format!("{:?}", self.cell_size),
+                usable: self.usable,
+                cells,
+            }
+        }
     }
 }
 

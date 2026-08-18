@@ -1031,22 +1031,6 @@ impl<V, const D: usize> Simplex<V, D> {
         mirror_idx
     }
 
-    /// Adds a vertex key in tests that deliberately construct invalid topology.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn push_vertex_key(&mut self, vertex_key: VertexKey) {
-        self.vertices.push(vertex_key);
-        self.periodic_vertex_offsets = None;
-    }
-
-    /// Clears vertex keys in tests that deliberately construct invalid topology.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn clear_vertex_keys(&mut self) {
-        self.vertices.clear();
-        self.periodic_vertex_offsets = None;
-    }
-
     /// Swaps two vertex slots and keeps aligned per-slot buffers consistent.
     ///
     /// This updates:
@@ -1231,22 +1215,6 @@ impl<V, const D: usize> Simplex<V, D> {
     #[must_use]
     pub const fn data(&self) -> Option<&V> {
         self.data.as_ref()
-    }
-
-    /// Clears the neighbors of the [Simplex].
-    ///
-    /// **Internal API**: This method is `pub(crate)` to enforce that all neighbor
-    /// modifications go through validated TDS methods. External code should use
-    /// triangulation-level repair or rebuild APIs rather than clearing neighbor state.
-    ///
-    /// This method sets the `neighbors` field to `None`, effectively removing all
-    /// neighbor relationships. This is useful for benchmarking neighbor assignment
-    /// or when rebuilding neighbor relationships from scratch.
-    ///
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn clear_neighbors(&mut self) {
-        self.neighbors = None;
     }
 
     /// Returns the UUIDs of the vertices in this simplex.
@@ -1916,6 +1884,28 @@ mod tests {
         collections::{HashSet, hash_map::DefaultHasher},
         hash::Hasher,
     };
+
+    impl<V, const D: usize> Simplex<V, D> {
+        /// Adds a vertex key in deliberately malformed topology fixtures.
+        #[inline]
+        pub(crate) fn push_vertex_key(&mut self, vertex_key: VertexKey) {
+            self.vertices.push(vertex_key);
+            self.periodic_vertex_offsets = None;
+        }
+
+        /// Clears vertex keys in deliberately malformed topology fixtures.
+        #[inline]
+        pub(crate) fn clear_vertex_keys(&mut self) {
+            self.vertices.clear();
+            self.periodic_vertex_offsets = None;
+        }
+
+        /// Clears neighbor state in deliberately malformed topology fixtures.
+        #[inline]
+        pub(crate) fn clear_neighbors(&mut self) {
+            self.neighbors = None;
+        }
+    }
     // Type aliases for commonly used types to reduce repetition
     type TestVertex3D = Vertex<(), 3>;
     type TestVertex2D = Vertex<(), 2>;

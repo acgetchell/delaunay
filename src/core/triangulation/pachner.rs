@@ -19,17 +19,17 @@ use crate::core::algorithms::flips::{
     apply_bistellar_flip_k1_raw, apply_bistellar_flip_raw, build_k2_flip_context,
     build_k2_flip_context_from_edge, build_k3_flip_context, build_k3_flip_context_from_triangle,
 };
+use crate::core::operations::TopologicalOperation;
 use crate::core::rollback::TriangulationRollbackTransaction;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
 use crate::flips::{
     BistellarFlipKind, BistellarFlips, FlipDirection, FlipError, FlipFeasibility, FlipInfo,
-    RidgeHandle, TriangleHandle,
+    RidgeHandle, TriangleHandle, validate_flip_topology,
 };
 use crate::geometry::kernel::Kernel;
 use crate::tds::{EdgeKey, FacetHandle, SimplexKey, TopologyOwner, TopologyOwnerId, VertexKey};
-use crate::triangulation::DelaunayTriangulation;
 
 /// Raw Pachner move request for explicit triangulation editing.
 ///
@@ -60,7 +60,8 @@ use crate::triangulation::DelaunayTriangulation;
 /// ];
 /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-///     .build()?;
+///     .build()?
+///     .into_triangulation();
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
@@ -138,7 +139,8 @@ pub enum PachnerMove<U, const D: usize> {
 /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-///     .build()?;
+///     .build()?
+///     .into_triangulation();
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
@@ -190,7 +192,8 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build()?;
+    ///     .build()?
+    ///     .into_triangulation();
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -223,7 +226,8 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build()?;
+    ///     .build()?
+    ///     .into_triangulation();
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -258,7 +262,8 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build()?;
+    ///     .build()?
+    ///     .into_triangulation();
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -301,7 +306,8 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build()?;
+    ///     .build()?
+    ///     .into_triangulation();
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -358,7 +364,8 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build()?;
+    ///     .build()?
+    ///     .into_triangulation();
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -410,7 +417,8 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build()?;
+    ///     .build()?
+    ///     .into_triangulation();
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -465,7 +473,8 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build()?;
+    ///     .build()?
+    ///     .into_triangulation();
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -479,7 +488,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     ///
     /// assert_eq!((result.kind.k(), result.kind.d()), (1, 2));
     /// assert_eq!(result.direction, FlipDirection::Forward);
-    /// assert!(dt.as_triangulation().validate().is_ok());
+    /// assert!(dt.validate().is_ok());
     /// # Ok(())
     /// # }
     /// ```
@@ -523,7 +532,8 @@ impl<U, const D: usize> PachnerProposal<U, D> {
 /// ];
 /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-///     .build()?;
+///     .build()?
+///     .into_triangulation();
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
@@ -620,7 +630,8 @@ impl<const D: usize> From<PachnerMoveResult<D>> for FlipInfo<D> {
 /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-///     .build()?;
+///     .build()?
+///     .into_triangulation();
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
@@ -702,7 +713,8 @@ pub trait PachnerMoves<const D: usize>: BistellarFlips<D> + TopologyOwner {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build()?;
+    ///     .build()?
+    ///     .into_triangulation();
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -928,6 +940,7 @@ where
 /// Apply one topology-scope flip transaction and roll back on any failure.
 fn apply_topology_flip<K, U, V, const D: usize>(
     tri: &mut Triangulation<K, U, V, D>,
+    operation: TopologicalOperation,
     apply: impl FnOnce(&mut Triangulation<K, U, V, D>) -> Result<FlipInfo<D>, FlipError>,
 ) -> Result<FlipInfo<D>, FlipError>
 where
@@ -935,6 +948,7 @@ where
     U: DataType,
     V: DataType,
 {
+    validate_flip_topology(tri, operation)?;
     let mut transaction = TriangulationRollbackTransaction::begin(tri);
     let result = apply(transaction.triangulation_mut());
     let info = match result {
@@ -1004,19 +1018,19 @@ where
         simplex_key: SimplexKey,
         vertex: Vertex<U, D>,
     ) -> Result<FlipInfo<D>, FlipError> {
-        apply_topology_flip(self, |tri| {
+        apply_topology_flip(self, TopologicalOperation::InsertVertex, |tri| {
             apply_bistellar_flip_k1_raw(&mut tri.tds, simplex_key, vertex)
         })
     }
 
     fn flip_k1_remove_topology(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {
-        apply_topology_flip(self, |tri| {
+        apply_topology_flip(self, TopologicalOperation::DeleteVertex, |tri| {
             apply_bistellar_flip_k1_inverse_raw(&mut tri.tds, vertex_key)
         })
     }
 
     fn flip_k2_topology(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError> {
-        apply_topology_flip(self, |tri| {
+        apply_topology_flip(self, TopologicalOperation::FacetFlip, |tri| {
             let context = build_k2_flip_context(&tri.tds, facet)?;
             apply_bistellar_flip_raw::<U, V, D, 2>(&mut tri.tds, &context)
         })
@@ -1026,14 +1040,14 @@ where
         &mut self,
         edge: EdgeKey,
     ) -> Result<FlipInfo<D>, FlipError> {
-        apply_topology_flip(self, |tri| {
+        apply_topology_flip(self, TopologicalOperation::CavityFlip, |tri| {
             let context = build_k2_flip_context_from_edge(&tri.tds, edge)?;
             apply_bistellar_flip_dynamic_raw(&mut tri.tds, D, &context)
         })
     }
 
     fn flip_k3_topology(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError> {
-        apply_topology_flip(self, |tri| {
+        apply_topology_flip(self, TopologicalOperation::CavityFlip, |tri| {
             let context = build_k3_flip_context(&tri.tds, ridge)?;
             apply_bistellar_flip_raw::<U, V, D, 3>(&mut tri.tds, &context)
         })
@@ -1047,83 +1061,10 @@ where
             return Err(FlipError::UnsupportedDimension { dimension: D });
         }
 
-        apply_topology_flip(self, |tri| {
+        apply_topology_flip(self, TopologicalOperation::CavityFlip, |tri| {
             let context = build_k3_flip_context_from_triangle(&tri.tds, triangle)?;
             apply_bistellar_flip_dynamic_raw(&mut tri.tds, D - 1, &context)
         })
-    }
-}
-
-impl<K, U, V, const D: usize> TopologyPachnerMoves<D> for DelaunayTriangulation<K, U, V, D>
-where
-    K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
-{
-    type VertexData = U;
-
-    fn flip_k1_insert_topology(
-        &mut self,
-        simplex_key: SimplexKey,
-        vertex: Vertex<U, D>,
-    ) -> Result<FlipInfo<D>, FlipError> {
-        let result = self.tri.flip_k1_insert_topology(simplex_key, vertex);
-        if result.is_ok() {
-            self.invalidate_repair_caches();
-            self.invalidate_euclidean_report_domain();
-        }
-        result
-    }
-
-    fn flip_k1_remove_topology(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {
-        let result = self.tri.flip_k1_remove_topology(vertex_key);
-        if result.is_ok() {
-            self.invalidate_repair_caches();
-            self.invalidate_euclidean_report_domain();
-        }
-        result
-    }
-
-    fn flip_k2_topology(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError> {
-        let result = self.tri.flip_k2_topology(facet);
-        if result.is_ok() {
-            self.invalidate_locate_hint_cache();
-            self.invalidate_euclidean_report_domain();
-        }
-        result
-    }
-
-    fn flip_k2_inverse_from_edge_topology(
-        &mut self,
-        edge: EdgeKey,
-    ) -> Result<FlipInfo<D>, FlipError> {
-        let result = self.tri.flip_k2_inverse_from_edge_topology(edge);
-        if result.is_ok() {
-            self.invalidate_locate_hint_cache();
-            self.invalidate_euclidean_report_domain();
-        }
-        result
-    }
-
-    fn flip_k3_topology(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError> {
-        let result = self.tri.flip_k3_topology(ridge);
-        if result.is_ok() {
-            self.invalidate_locate_hint_cache();
-            self.invalidate_euclidean_report_domain();
-        }
-        result
-    }
-
-    fn flip_k3_inverse_from_triangle_topology(
-        &mut self,
-        triangle: TriangleHandle,
-    ) -> Result<FlipInfo<D>, FlipError> {
-        let result = self.tri.flip_k3_inverse_from_triangle_topology(triangle);
-        if result.is_ok() {
-            self.invalidate_locate_hint_cache();
-            self.invalidate_euclidean_report_domain();
-        }
-        result
     }
 }
 
@@ -1136,14 +1077,14 @@ mod tests {
     use super::*;
     use crate::{
         DelaunayTriangulationBuilder, TopologyGuarantee, construction::ConstructionOptions,
-        geometry::kernel::AdaptiveKernel, triangulation::EuclideanDelaunayReportDomain, vertex,
+        geometry::kernel::AdaptiveKernel, vertex,
     };
 
-    type Dt2 = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>;
-    type Dt3 = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>;
-    type Dt4 = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 4>;
+    type Tri2 = Triangulation<AdaptiveKernel<f64>, (), (), 2>;
+    type Tri3 = Triangulation<AdaptiveKernel<f64>, (), (), 3>;
+    type Tri4 = Triangulation<AdaptiveKernel<f64>, (), (), 4>;
 
-    fn triangle_dt() -> Dt2 {
+    fn triangle_dt() -> Tri2 {
         let vertices: Vec<Vertex<(), 2>> = vec![
             vertex![0.0, 0.0].expect("test vertex should be valid"),
             vertex![1.0, 0.0].expect("test vertex should be valid"),
@@ -1153,9 +1094,10 @@ mod tests {
             .topology_guarantee(TopologyGuarantee::PLManifold)
             .build()
             .expect("minimal 2D simplex should build")
+            .into_triangulation()
     }
 
-    fn first_simplex_key(dt: &Dt2) -> SimplexKey {
+    fn first_simplex_key(dt: &Tri2) -> SimplexKey {
         dt.simplices()
             .next()
             .map(|(simplex_key, _)| simplex_key)
@@ -1163,7 +1105,7 @@ mod tests {
     }
 
     /// Builds the smallest 3D complex supporting a k=2 forward/inverse roundtrip.
-    fn k2_roundtrip_dt() -> Dt3 {
+    fn k2_roundtrip_dt() -> Tri3 {
         let vertices = [
             [1.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
@@ -1179,12 +1121,12 @@ mod tests {
             .construction_options(
                 ConstructionOptions::default().without_final_delaunay_enforcement(),
             )
-            .build()
+            .build_triangulation()
             .expect("k=2 roundtrip fixture should build")
     }
 
     /// Builds the smallest 4D complex supporting a k=3 forward/inverse roundtrip.
-    fn k3_roundtrip_dt() -> Dt4 {
+    fn k3_roundtrip_dt() -> Tri4 {
         let vertices = [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
@@ -1205,12 +1147,12 @@ mod tests {
             .construction_options(
                 ConstructionOptions::default().without_final_delaunay_enforcement(),
             )
-            .build()
+            .build_triangulation()
             .expect("k=3 roundtrip fixture should build")
     }
 
     /// Finds a facet whose topology-scope k=2 move succeeds on a cloned fixture.
-    fn flippable_k2_facet(dt: &Dt3) -> FacetHandle {
+    fn flippable_k2_facet(dt: &Tri3) -> FacetHandle {
         for facet in dt.facets() {
             let facet = facet.expect("k=2 fixture facets should reborrow").handle();
             let mut trial = dt.clone();
@@ -1225,7 +1167,7 @@ mod tests {
     }
 
     /// Finds a ridge whose topology-scope k=3 move succeeds on a cloned fixture.
-    fn flippable_k3_ridge(dt: &Dt4) -> RidgeHandle {
+    fn flippable_k3_ridge(dt: &Tri4) -> RidgeHandle {
         for ridge in dt.ridge_handles() {
             let ridge = ridge.expect("k=3 fixture ridges should reborrow");
             let mut trial = dt.clone();
@@ -1241,7 +1183,7 @@ mod tests {
 
     /// Resolves the live edge reported as a k=2 move's inserted face.
     fn inserted_edge<const D: usize>(
-        dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
+        dt: &Triangulation<AdaptiveKernel<f64>, (), (), D>,
         inserted_face_vertices: &[VertexKey],
     ) -> EdgeKey {
         let [a, b] = inserted_face_vertices else {
@@ -1300,8 +1242,6 @@ mod tests {
         let mut dt = triangle_dt();
         let simplex_key = first_simplex_key(&dt);
         let previous_generation = dt.topology_generation();
-        assert!(dt.euclidean_report_domain.supports_local_certificate());
-
         let result = dt
             .propose_pachner(PachnerMove::K1Insert {
                 simplex_key,
@@ -1316,10 +1256,8 @@ mod tests {
         assert_eq!(result.inserted_face_vertices.len(), 1);
         assert_eq!(dt.number_of_vertices(), 4);
         assert!(dt.topology_generation() > previous_generation);
-        dt.as_triangulation()
-            .validate()
+        dt.validate()
             .expect("topology-scope Pachner move should preserve Levels 1-3");
-        assert!(!dt.euclidean_report_domain.supports_local_certificate());
     }
 
     #[test]
@@ -1332,15 +1270,14 @@ mod tests {
             vertex![0.0, 1.0].expect("test vertex should be valid"),
             interior_vertex,
         ];
-        let mut dt: Dt2 = DelaunayTriangulationBuilder::new(&vertices)
+        let mut dt: Tri2 = DelaunayTriangulationBuilder::new(&vertices)
             .build()
-            .expect("subdivided triangle should build");
+            .expect("subdivided triangle should build")
+            .into_triangulation();
         let interior_key = dt
             .vertices()
             .find_map(|(vertex_key, vertex)| (vertex.uuid() == interior_uuid).then_some(vertex_key))
             .expect("interior vertex should be present");
-        assert!(dt.euclidean_report_domain.supports_local_certificate());
-
         let result = dt
             .propose_pachner(PachnerMove::K1Remove {
                 vertex_key: interior_key,
@@ -1351,27 +1288,21 @@ mod tests {
 
         assert_eq!(result.direction, FlipDirection::Inverse);
         assert!(!dt.contains_vertex_key(interior_key));
-        assert!(!dt.euclidean_report_domain.supports_local_certificate());
-        dt.as_triangulation()
-            .validate()
+        dt.validate()
             .expect("topology-scope k=1 inverse should preserve Levels 1-3");
     }
 
     #[test]
-    fn topology_scope_k2_roundtrip_invalidates_euclidean_report_domain() {
+    fn topology_scope_k2_roundtrip_preserves_triangulation_domain() {
         let mut dt = k2_roundtrip_dt();
         let facet = flippable_k2_facet(&dt);
-        dt.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
-
         let forward = dt
             .propose_pachner(PachnerMove::K2 { facet })
             .expect("k=2 fixture facet should support a proposal")
             .attempt_topology_on(&mut dt)
             .expect("topology-scope k=2 move should commit");
 
-        assert!(!dt.euclidean_report_domain.supports_local_certificate());
         let edge = inserted_edge(&dt, &forward.inserted_face_vertices);
-        dt.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
 
         let inverse = dt
             .propose_pachner(PachnerMove::K2Inverse { edge })
@@ -1380,32 +1311,25 @@ mod tests {
             .expect("topology-scope inverse k=2 move should commit");
 
         assert_eq!(inverse.direction, FlipDirection::Inverse);
-        assert!(!dt.euclidean_report_domain.supports_local_certificate());
-        dt.as_triangulation()
-            .validate()
+        dt.validate()
             .expect("topology-scope k=2 roundtrip should preserve Levels 1-3");
     }
 
     #[test]
-    fn topology_scope_k3_roundtrip_invalidates_euclidean_report_domain() {
+    fn topology_scope_k3_roundtrip_preserves_triangulation_domain() {
         let mut dt = k3_roundtrip_dt();
         let ridge = flippable_k3_ridge(&dt);
-        dt.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
-
         let forward = dt
             .propose_pachner(PachnerMove::K3 { ridge })
             .expect("k=3 fixture ridge should support a proposal")
             .attempt_topology_on(&mut dt)
             .expect("topology-scope k=3 move should commit");
 
-        assert!(!dt.euclidean_report_domain.supports_local_certificate());
         let [a, b, c] = forward.inserted_face_vertices.as_slice() else {
             panic!("k=3 move should report an inserted triangle")
         };
         let triangle = TriangleHandle::try_new(*a, *b, *c)
             .expect("reported k=3 inserted triangle should be valid");
-        dt.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
-
         let inverse = dt
             .propose_pachner(PachnerMove::K3Inverse { triangle })
             .expect("inserted triangle should support the inverse proposal")
@@ -1413,9 +1337,7 @@ mod tests {
             .expect("topology-scope inverse k=3 move should commit");
 
         assert_eq!(inverse.direction, FlipDirection::Inverse);
-        assert!(!dt.euclidean_report_domain.supports_local_certificate());
-        dt.as_triangulation()
-            .validate()
+        dt.validate()
             .expect("topology-scope k=3 roundtrip should preserve Levels 1-3");
     }
 
@@ -1453,8 +1375,7 @@ mod tests {
                 && observed_current_generation == current_generation
         );
         assert_eq!(dt.number_of_vertices(), vertex_count_after_commit);
-        dt.as_triangulation()
-            .validate()
+        dt.validate()
             .expect("rejected stale proposal should preserve Levels 1-3");
     }
 }

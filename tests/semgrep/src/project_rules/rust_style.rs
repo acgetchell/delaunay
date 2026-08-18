@@ -2,9 +2,110 @@
 
 use num_traits::NumCast;
 
+pub struct DelaunayTriangulation<K, U, V, const D: usize>(K, U, V);
+pub struct Triangulation<K, U, V, const D: usize>(K, U, V);
+pub trait BistellarFlips<const D: usize> {}
+pub trait PachnerMoves<const D: usize> {}
+
+// ruleid: delaunay.rust.no-topology-edit-traits-for-delaunay-owner
+impl<K, U, V, const D: usize> BistellarFlips<D> for DelaunayTriangulation<K, U, V, D> {}
+
+// ok: delaunay.rust.no-topology-edit-traits-for-delaunay-owner
+impl<K, U, V, const D: usize> BistellarFlips<D> for Triangulation<K, U, V, D> {}
+
+// ruleid: delaunay.rust.no-lower-proof-delaunay-promotion
+fn into_realization_validated_delaunay() {}
+
+// ok: delaunay.rust.no-lower-proof-delaunay-promotion
+fn into_realization_validated_triangulation() {}
+
+mod invalid_delaunay_candidate_fixture {
+    use super::*;
+
+    // ruleid: delaunay.rust.no-unproven-delaunay-candidate-storage
+    struct DelaunayTriangulationCandidate<K, U, V, const D: usize> {
+        candidate: DelaunayTriangulation<K, U, V, D>,
+    }
+}
+
+mod valid_triangulation_candidate_fixture {
+    use super::*;
+
+    // ok: delaunay.rust.no-unproven-delaunay-candidate-storage
+    struct DelaunayTriangulationCandidate<K, U, V, const D: usize> {
+        candidate: Triangulation<K, U, V, D>,
+    }
+}
+
+// ruleid: delaunay.rust.no-in-place-public-delaunayize
+pub fn delaunayize_by_flips<K, U, V, const D: usize>(
+    _candidate: &mut DelaunayTriangulation<K, U, V, D>,
+) {
+}
+
+// ok: delaunay.rust.no-in-place-public-delaunayize
+pub fn delaunayize<K, U, V, const D: usize>(
+    _triangulation: Triangulation<K, U, V, D>,
+) {
+}
+
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
+    // ruleid: delaunay.rust.no-public-in-place-delaunay-repair
+    pub fn repair_delaunay_with_flips(&mut self) {}
+
+    // ruleid: delaunay.rust.no-public-in-place-delaunay-repair
+    pub fn repair_delaunay_with_flips_advanced(&mut self) {}
+
+    // ok: delaunay.rust.no-public-in-place-delaunay-repair
+    pub(crate) fn repair_delaunay_with_flips_capped(&mut self) {}
+
+    // ruleid: delaunay.rust.no-public-delaunay-repair-policy-setter
+    pub const fn set_delaunay_repair_policy(&mut self) {}
+
+    // ok: delaunay.rust.no-public-delaunay-repair-policy-setter
+    pub(crate) const fn set_internal_delaunay_repair_policy(&mut self) {}
+}
+
+// ruleid: delaunay.rust.no-level4-delaunay-repair-constructor
+fn from_realized_triangulation_for_repair() {}
+
+// ok: delaunay.rust.no-level4-delaunay-repair-constructor
+fn from_validated_delaunay_candidate() {}
+
+// ruleid: delaunay.rust.no-detached-candidate-validation-proof
+struct DelaunayTriangulationValidationProof(());
+
+// ruleid: delaunay.rust.no-detached-candidate-validation-proof
+struct TriangulationRealizationValidationProof(());
+
+// ok: delaunay.rust.no-detached-candidate-validation-proof
+fn try_into_validated_delaunay() {}
+
+// ruleid: delaunay.rust.no-build-delaunay-then-demote-terminal
+fn validate_constructed_triangulation() {}
+
+fn invalid_triangulation_terminal(builder: Builder, kernel: &Kernel) {
+    // ruleid: delaunay.rust.no-build-delaunay-then-demote-terminal
+    builder.build_with_kernel(kernel)
+        .map(DelaunayTriangulation::into_triangulation);
+}
+
+// ok: delaunay.rust.no-build-delaunay-then-demote-terminal
+fn build_triangulation_with_kernel_options() {}
+
 // ruleid: delaunay.rust.no-module-scope-cfg-test-use
 #[cfg(test)]
 use crate::tests::FixtureOnlyImport;
+
+// ruleid: delaunay.rust.no-cfg-test-items-outside-test-modules
+#[cfg(test)]
+fn misplaced_test_helper() {}
+
+// ok: delaunay.rust.no-cfg-test-items-outside-test-modules
+#[cfg(test)]
+mod correctly_scoped_test_support {
+    fn helper() {}
+}
 
 // ruleid: delaunay.rust.prefer-prelude-imports-in-examples-benches
 use delaunay::core::vertex::Vertex as DeepVertex;

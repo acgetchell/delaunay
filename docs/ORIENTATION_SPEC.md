@@ -169,7 +169,7 @@ have been validated. The validation report records it as
 
 ### Triangulation Layer
 
-`src/core/triangulation.rs` owns geometric sign handling:
+`src/core/triangulation/` owns geometric sign handling:
 
 - Initial simplex construction calls `robust_orientation`, rejects
   `DEGENERATE`, and swaps two vertex keys when the sign is negative.
@@ -299,6 +299,6 @@ When adding or changing a path that creates, removes, rewires, or reorders simpl
 - Orientation predicates: [`src/geometry/predicates.rs`](../src/geometry/predicates.rs)
   and [`src/geometry/robust_predicates.rs`](../src/geometry/robust_predicates.rs)
 - TDS orientation implementation: [`src/core/tds/validation.rs`](../src/core/tds/validation.rs)
-- Geometric orientation promotion: [`src/core/triangulation.rs`](../src/core/triangulation.rs)
+- Geometric orientation promotion: [`src/core/triangulation/orientation.rs`](../src/core/triangulation/orientation.rs)
 - Flip replacement orientation: [`src/core/algorithms/flips/orientation.rs`](../src/core/algorithms/flips/orientation.rs)
 - Permutation parity: <https://en.wikipedia.org/wiki/Parity_of_a_permutation>

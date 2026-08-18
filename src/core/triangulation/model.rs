@@ -1,4 +1,4 @@
-//! Generic triangulation combining kernel and combinatorial data structure.
+//! Generic triangulation combining a kernel and combinatorial data structure.
 //!
 //! Following CGAL's architecture, the `Triangulation` struct combines:
 //! - A geometric `Kernel` for predicates
@@ -68,6 +68,47 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
     K: Kernel<D>,
 {
+    /// Returns a borrowed view of the canonical triangulation storage to
+    /// crate-internal algorithms.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn tds(&self) -> &Tds<U, V, D> {
+        &self.tds
+    }
+
+    /// Consumes this Levels 1–4 owner and returns its transport/storage value.
+    ///
+    /// This explicit demotion is the inverse boundary of
+    /// [`Triangulation::try_from_tds_with_topology_context`](crate::Triangulation::try_from_tds_with_topology_context).
+    /// `Tds` does not retain the runtime [`TopologyGuarantee`] or
+    /// [`GlobalTopology`] context, so callers must persist those values
+    /// separately when they intend to restore the same domain contract.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .build_triangulation()?;
+    ///
+    /// let tds = triangulation.into_tds();
+    /// assert_eq!(tds.number_of_vertices(), 3);
+    /// assert_eq!(tds.number_of_simplices(), 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn into_tds(self) -> Tds<U, V, D> {
+        self.tds
+    }
+
     /// Create an empty triangulation with the given kernel.
     ///
     /// # Examples
@@ -106,20 +147,6 @@ where
             global_topology,
             validation_policy: topology_guarantee.default_validation_policy(),
             topology_guarantee,
-        }
-    }
-
-    /// Test-only constructor for fixtures that need a prepared TDS without
-    /// crossing a public validation boundary.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) const fn new_with_tds(kernel: K, tds: Tds<U, V, D>) -> Self {
-        Self {
-            kernel,
-            tds,
-            global_topology: GlobalTopology::DEFAULT,
-            validation_policy: TopologyGuarantee::DEFAULT.default_validation_policy(),
-            topology_guarantee: TopologyGuarantee::DEFAULT,
         }
     }
 
@@ -251,6 +278,21 @@ mod tests {
     use crate::geometry::kernel::FastKernel;
     use slotmap::KeyData;
     use std::assert_matches;
+
+    impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
+        /// Constructs a prepared TDS fixture without crossing a public
+        /// validation boundary.
+        #[inline]
+        pub(crate) const fn new_with_tds(kernel: K, tds: Tds<U, V, D>) -> Self {
+            Self {
+                kernel,
+                tds,
+                global_topology: GlobalTopology::DEFAULT,
+                validation_policy: TopologyGuarantee::DEFAULT.default_validation_policy(),
+                topology_guarantee: TopologyGuarantee::DEFAULT,
+            }
+        }
+    }
 
     #[test]
     fn new_empty_sets_default_topology_and_validation_policy() {

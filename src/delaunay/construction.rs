@@ -628,6 +628,12 @@ pub type DelaunayResult<T> = Result<T, DelaunayError>;
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum DelaunayTriangulationConstructionError {
+    /// A Delaunay-returning terminal was configured to skip Level 5 proof.
+    #[error(
+        "Delaunay construction cannot disable final Level 5 certification; use build_triangulation instead"
+    )]
+    Level5CertificationDisabled,
+
     /// Lower-layer construction failure summarized for Delaunay construction.
     #[error(transparent)]
     Triangulation {
@@ -1175,6 +1181,14 @@ pub enum DelaunayConstructionFailure {
         source: TriangulationRealizationValidationError,
     },
 
+    /// Final Levels 1–4 validation failed before publishing a generic triangulation.
+    #[error("final realization validation failed during triangulation construction: {source}")]
+    FinalRealizationValidation {
+        /// Underlying cumulative realization validation error.
+        #[source]
+        source: TriangulationRealizationValidationError,
+    },
+
     /// Level 3 topology validation failed during insertion.
     #[error("topology validation failed during insertion: {context}: {source}")]
     InsertionTopologyValidation {
@@ -1464,6 +1478,7 @@ fn is_geometric_flip_error(error: &FlipError) -> bool {
         FlipError::WrongTopologyOwner { .. }
         | FlipError::StaleTopologyProposal { .. }
         | FlipError::UnsupportedDimension { .. }
+        | FlipError::FlipTopologyNotAdmissible { .. }
         | FlipError::BoundaryFacet { .. }
         | FlipError::MissingSimplex { .. }
         | FlipError::DanglingVertexIncidence { .. }
@@ -1764,19 +1779,6 @@ impl FinalDelaunayEnforcement {
             Self::Disabled => Self::Disabled,
         }
     }
-
-    const fn without_global_repair_fallback(self) -> Self {
-        match self {
-            Self::Strict {
-                batch_repair_policy,
-                ..
-            } => Self::Strict {
-                batch_repair_policy,
-                use_global_repair_fallback: false,
-            },
-            Self::Disabled => Self::Disabled,
-        }
-    }
 }
 
 /// Internal insertion behavior used while assembling construction scaffolding.
@@ -1791,9 +1793,10 @@ pub(crate) struct InsertionConstructionPolicy {
 /// Defaults prioritize strict [`DelaunayTriangulation`] construction: insertion
 /// includes local repair and the completed triangulation must pass final Level 5
 /// Delaunay validation. Exact degenerate workloads that need to preserve a
-/// valid triangulation without proving strict empty-circumsphere validity can
-/// opt out with
-/// [`without_final_delaunay_enforcement`](Self::without_final_delaunay_enforcement).
+/// valid Levels 1–4 triangulation can opt out with
+/// [`without_final_delaunay_enforcement`](Self::without_final_delaunay_enforcement)
+/// and use a `build_triangulation*` builder terminal. Delaunay-returning
+/// terminals reject disabled Level 5 certification.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct ConstructionOptions {
@@ -1864,10 +1867,11 @@ impl ConstructionOptions {
 
     /// Returns whether construction enforces final Level 5 Delaunay validity.
     ///
-    /// When this is `true`, public constructors repair and validate the strict
-    /// Delaunay property before returning. When this is `false`, constructors
-    /// may return after Levels 1-4 validation so callers can preserve exact
-    /// degenerate connectivity and handle Level 5 policy externally.
+    /// When this is `true`, Delaunay-returning constructors repair and validate
+    /// the strict Delaunay property before returning. When this is `false`,
+    /// `build_triangulation*` terminals may return after Levels 1–4 validation
+    /// so callers can preserve exact degenerate connectivity and handle Level 5
+    /// policy externally. Delaunay-returning terminals reject this setting.
     ///
     /// # Examples
     ///
@@ -1953,12 +1957,15 @@ impl ConstructionOptions {
 
     /// Disables final Level 5 Delaunay enforcement during batch construction.
     ///
-    /// The default constructor repairs and validates the strict Delaunay property
-    /// before returning. Exact degenerate inputs can have multiple valid
+    /// Delaunay-returning builder terminals repair and validate the strict
+    /// Delaunay property before returning. Exact degenerate inputs can have multiple valid
     /// triangulations under symbolic perturbation, and flip-based strict repair
     /// may cycle among equivalent choices. Use this mode when callers need a
-    /// valid Levels 1-4 triangulation that preserves exact coordinates and will
-    /// validate or repair the Level 5 Delaunay property separately.
+    /// valid Levels 1–4 triangulation that preserves exact coordinates and will
+    /// validate or repair the Level 5 Delaunay property separately. Use a
+    /// `build_triangulation*` terminal with this option; a Delaunay-returning
+    /// terminal returns
+    /// [`DelaunayTriangulationConstructionError::Level5CertificationDisabled`].
     ///
     /// This also disables automatic batch Delaunay repair by setting
     /// [`batch_repair_policy`](Self::batch_repair_policy) to
@@ -1980,10 +1987,10 @@ impl ConstructionOptions {
         self
     }
 
-    /// Disables the D<4 global repair fallback.
+    /// Restores strict Level 5 enforcement for internal proof-producing scaffolds.
     #[must_use]
-    pub(crate) const fn without_global_repair_fallback(mut self) -> Self {
-        self.final_delaunay = self.final_delaunay.without_global_repair_fallback();
+    pub(crate) const fn with_final_delaunay_enforcement(mut self) -> Self {
+        self.final_delaunay = FinalDelaunayEnforcement::strict_default();
         self
     }
 
@@ -5013,9 +5020,10 @@ where
         );
         self.invalidate_locate_hint_cache();
         let topology = self.tri.topology_guarantee();
+        let global_topology = self.tri.global_topology();
         let global_result = {
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-            repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology, None)
+            repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology, global_topology, None)
         };
         match global_result {
             Ok(_) => Ok(()),
@@ -5127,6 +5135,41 @@ where
         topology_guarantee: TopologyGuarantee,
         options: ConstructionOptions,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
+        if !options.enforces_final_delaunay() {
+            return Err(DelaunayTriangulationConstructionError::Level5CertificationDisabled);
+        }
+        Self::build_candidate_with_kernel_options(kernel, vertices, topology_guarantee, options)
+    }
+
+    /// Shared batch backend for a Levels 1–4 builder terminal.
+    pub(crate) fn build_triangulation_with_kernel_options(
+        kernel: &K,
+        vertices: &[Vertex<U, D>],
+        topology_guarantee: TopologyGuarantee,
+        options: ConstructionOptions,
+    ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError> {
+        let candidate = Self::build_candidate_with_kernel_options(
+            kernel,
+            vertices,
+            topology_guarantee,
+            options,
+        )?;
+        let triangulation = candidate.into_triangulation();
+        triangulation.validate_realization().map_err(|source| {
+            DelaunayTriangulationConstructionError::Triangulation {
+                source: DelaunayConstructionFailure::FinalRealizationValidation { source },
+            }
+        })?;
+        Ok(triangulation)
+    }
+
+    /// Builds an unpublished batch-construction candidate for a proof-producing terminal.
+    fn build_candidate_with_kernel_options(
+        kernel: &K,
+        vertices: &[Vertex<U, D>],
+        topology_guarantee: TopologyGuarantee,
+        options: ConstructionOptions,
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let ConstructionOptions {
             insertion_order,
             dedup_policy,
@@ -5216,11 +5259,69 @@ where
         clippy::result_large_err,
         reason = "Builder statistics terminal intentionally returns by-value construction statistics"
     )]
+    pub(crate) fn build_with_kernel_options_and_statistics(
+        kernel: &K,
+        vertices: &[Vertex<U, D>],
+        topology_guarantee: TopologyGuarantee,
+        options: ConstructionOptions,
+    ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
+    {
+        if !options.enforces_final_delaunay() {
+            return Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                error: DelaunayTriangulationConstructionError::Level5CertificationDisabled,
+                statistics: ConstructionStatistics::default(),
+            });
+        }
+        Self::build_candidate_with_kernel_options_and_statistics(
+            kernel,
+            vertices,
+            topology_guarantee,
+            options,
+        )
+    }
+
+    /// Statistics-returning backend for a Levels 1–4 builder terminal.
+    #[expect(
+        clippy::result_large_err,
+        reason = "Builder statistics terminal intentionally returns by-value construction statistics"
+    )]
+    pub(crate) fn build_triangulation_with_kernel_options_and_statistics(
+        kernel: &K,
+        vertices: &[Vertex<U, D>],
+        topology_guarantee: TopologyGuarantee,
+        options: ConstructionOptions,
+    ) -> Result<
+        (Triangulation<K, U, V, D>, ConstructionStatistics),
+        DelaunayTriangulationConstructionErrorWithStatistics,
+    > {
+        let (candidate, statistics) = Self::build_candidate_with_kernel_options_and_statistics(
+            kernel,
+            vertices,
+            topology_guarantee,
+            options,
+        )?;
+        let triangulation = candidate.into_triangulation();
+        if let Err(source) = triangulation.validate_realization() {
+            return Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                error: DelaunayTriangulationConstructionError::Triangulation {
+                    source: DelaunayConstructionFailure::FinalRealizationValidation { source },
+                },
+                statistics,
+            });
+        }
+        Ok((triangulation, statistics))
+    }
+
+    /// Builds an unpublished statistics-bearing candidate for a proof-producing terminal.
+    #[expect(
+        clippy::result_large_err,
+        reason = "Builder statistics terminal intentionally returns by-value construction statistics"
+    )]
     #[expect(
         clippy::too_many_lines,
         reason = "Statistics constructor handles preprocessing, retry, and fallback aggregation"
     )]
-    pub(crate) fn build_with_kernel_options_and_statistics(
+    fn build_candidate_with_kernel_options_and_statistics(
         kernel: &K,
         vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
@@ -5915,6 +6016,30 @@ mod tests {
     use uuid::Uuid;
 
     type TestDelaunay<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
+
+    impl FinalDelaunayEnforcement {
+        const fn without_global_repair_fallback(self) -> Self {
+            match self {
+                Self::Strict {
+                    batch_repair_policy,
+                    ..
+                } => Self::Strict {
+                    batch_repair_policy,
+                    use_global_repair_fallback: false,
+                },
+                Self::Disabled => Self::Disabled,
+            }
+        }
+    }
+
+    impl ConstructionOptions {
+        /// Disables the D<4 global repair fallback in construction tests.
+        #[must_use]
+        pub(crate) const fn without_global_repair_fallback(mut self) -> Self {
+            self.final_delaunay = self.final_delaunay.without_global_repair_fallback();
+            self
+        }
+    }
 
     // Last-resort fault injection for rollback branches that are hard to
     // trigger deterministically; thread-local state avoids cross-test leakage.
@@ -9044,7 +9169,7 @@ mod tests {
                 TopologyGuarantee::Pseudomanifold,
                 threshold
             ),
-            Some(BatchLocalRepairTrigger::SeedBacklog)
+            None
         );
     }
 }

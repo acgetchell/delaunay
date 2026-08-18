@@ -1,10 +1,20 @@
 //! Bounded deterministic PL-manifold topology repair.
 //!
-//! This module implements repair algorithms that attempt to bring a
-//! triangulation closer to satisfying the
+//! This module implements repair algorithms that attempt to bring a raw
+//! [`Tds`](crate::tds::Tds) closer to satisfying the
 //! [`TopologyGuarantee::PLManifold`](crate::prelude::validation::TopologyGuarantee::PLManifold)
 //! invariant by removing simplices that cause facet over-sharing, non-closed
 //! boundary ridges, non-manifold ridge links, or non-manifold vertex links.
+//!
+//! The public [`repair_pl_manifold_tds`](crate::repair_pl_manifold_tds) entry
+//! point consumes its input so a
+//! failed repair cannot expose a partially modified TDS. A successful result is
+//! still a raw TDS, not a proof-bearing triangulation. Pass it to
+//! [`Triangulation::try_from_tds_with_topology_context`](crate::Triangulation::try_from_tds_with_topology_context)
+//! to validate Levels 1-4 and mint a [`Triangulation`](crate::Triangulation),
+//! then optionally pass that value to
+//! [`delaunayize`](crate::delaunayize::delaunayize) for Level 5 repair and
+//! certification.
 //!
 //! # Algorithm
 //!
@@ -23,8 +33,7 @@
 //!    `max_simplices_removed`), or no-progress (a violation has no removable
 //!    local candidate).
 //!
-//! The narrower `repair_facet_oversharing` entrypoint remains available for
-//! callers that only want codimension-1 facet-degree repair:
+//! The implementation first repairs codimension-1 facet degree, then:
 //! the loop terminates on success (all facets have degree
 //!    ≤ 2), budget exhaustion (`max_iterations` or `max_simplices_removed`), or
 //!    no-progress (zero simplices removed in a pass).
@@ -70,6 +79,18 @@ use uuid::Uuid;
 ///
 /// - `max_iterations`: 64
 /// - `max_simplices_removed`: 10,000
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::repair::PlManifoldRepairConfig;
+///
+/// let config = PlManifoldRepairConfig {
+///     max_iterations: 32,
+///     max_simplices_removed: 1_000,
+/// };
+/// assert_eq!(config.max_iterations, 32);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlManifoldRepairConfig {
     /// Maximum number of repair iterations (each iteration removes a batch of
@@ -97,7 +118,7 @@ impl Default for PlManifoldRepairConfig {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::delaunayize::PlManifoldRepairStage;
+/// use delaunay::prelude::repair::PlManifoldRepairStage;
 ///
 /// let stage = PlManifoldRepairStage::RidgeLink;
 /// assert_eq!(format!("{stage:?}"), "RidgeLink");
@@ -157,7 +178,7 @@ pub(crate) const fn manifold_error_matches_repair_stage(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::delaunayize::PlManifoldRepairStats;
+/// use delaunay::prelude::repair::PlManifoldRepairStats;
 ///
 /// let stats = PlManifoldRepairStats::<(), (), 3>::default();
 /// assert_eq!(stats.iterations, 0);
@@ -181,11 +202,8 @@ pub struct PlManifoldRepairStats<U, V, const D: usize> {
     pub removed_vertices: Vec<Vertex<U, D>>,
     /// Whether the requested PL-manifold repair target was satisfied at termination.
     ///
-    /// For facet-over-sharing repair, this means the codimension-1 facet-degree
-    /// invariant holds. For the full
-    /// [`delaunayize_by_flips`](crate::delaunayize::delaunayize_by_flips)
-    /// topology stage, this means all targeted boundary-ridge, ridge-link, and
-    /// vertex-link checks passed.
+    /// For the full [`repair_pl_manifold_tds`] transformation, this means all
+    /// targeted boundary-ridge, ridge-link, and vertex-link checks passed.
     pub succeeded: bool,
 }
 
@@ -213,6 +231,59 @@ impl<U, V, const D: usize> Default for PlManifoldRepairStats<U, V, D> {
     }
 }
 
+/// Successful output of consuming raw-TDS PL-manifold repair.
+///
+/// The contained [`Tds`] has passed the repair algorithm's structural and
+/// targeted topology postconditions, but this type is deliberately not a
+/// topology proof. Use
+/// [`Triangulation::try_from_tds_with_topology_context`](crate::Triangulation::try_from_tds_with_topology_context)
+/// to validate Levels 1-4 before calling algorithms that require a
+/// proof-bearing [`Triangulation`](crate::Triangulation).
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::repair::{
+///     PlManifoldRepairConfig, PlManifoldTdsRepairResult, repair_pl_manifold_tds,
+/// };
+/// use delaunay::prelude::triangulation::{FastKernel, Triangulation};
+/// use delaunay::prelude::topology::spaces::GlobalTopology;
+///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::TriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Repair(#[from] delaunay::PlManifoldRepairError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let vertices = vec![
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0]?,
+/// ];
+/// let tds = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices)?;
+/// let repaired: PlManifoldTdsRepairResult<(), (), 2> = repair_pl_manifold_tds(
+///     tds,
+///     GlobalTopology::Euclidean,
+///     &PlManifoldRepairConfig::default(),
+/// )?;
+/// assert!(repaired.statistics.succeeded);
+/// assert_eq!(repaired.tds.number_of_simplices(), 1);
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+#[must_use]
+pub struct PlManifoldTdsRepairResult<U, V, const D: usize> {
+    /// Repaired raw topology data structure.
+    pub tds: Tds<U, V, D>,
+    /// Work performed and user payloads removed by the repair.
+    pub statistics: PlManifoldRepairStats<U, V, D>,
+}
+
 // =============================================================================
 // ERRORS
 // =============================================================================
@@ -222,7 +293,7 @@ impl<U, V, const D: usize> Default for PlManifoldRepairStats<U, V, D> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::delaunayize::PlManifoldRepairError;
+/// use delaunay::prelude::repair::PlManifoldRepairError;
 ///
 /// let err = PlManifoldRepairError::BudgetExhausted {
 ///     iterations: 64,
@@ -349,7 +420,7 @@ pub enum PlManifoldRepairError {
 /// - The TDS fails structural validation (Levels 1–2).
 /// - The iteration or simplex-removal budget is exhausted.
 /// - A pass finds violations but cannot remove any simplices.
-pub fn repair_facet_oversharing<U, V, const D: usize>(
+pub(crate) fn repair_facet_oversharing<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     config: &PlManifoldRepairConfig,
 ) -> Result<PlManifoldRepairStats<U, V, D>, PlManifoldRepairError>
@@ -549,6 +620,76 @@ where
             }
         }
     }
+}
+
+/// Attempts bounded, deterministic PL-manifold repair on a raw [`Tds`].
+///
+/// This transformation consumes the input so an error cannot return a
+/// partially repaired topology to the caller. Success does not itself certify
+/// Levels 3-4; compose the returned TDS with
+/// [`Triangulation::try_from_tds_with_topology_context`](crate::Triangulation::try_from_tds_with_topology_context)
+/// to obtain that proof-bearing domain type.
+///
+/// # Errors
+///
+/// Returns [`PlManifoldRepairError`] if the input fails structural checks, a
+/// repair budget is exhausted, a targeted violation has no removable local
+/// candidate, topology rebuilding fails, or a targeted postcondition cannot be
+/// established. On error, the consumed TDS is not returned.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::repair::{PlManifoldRepairConfig, repair_pl_manifold_tds};
+/// use delaunay::prelude::triangulation::{FastKernel, Triangulation};
+/// use delaunay::prelude::topology::spaces::GlobalTopology;
+/// use delaunay::prelude::validation::{TopologyGuarantee, ValidationPolicy};
+///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::TriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Repair(#[from] delaunay::PlManifoldRepairError),
+/// #     #[error(transparent)]
+/// #     Realization(#[from] delaunay::TriangulationRealizationValidationError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let vertices = vec![
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0]?,
+/// ];
+/// let tds = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices)?;
+/// let repaired = repair_pl_manifold_tds(
+///     tds,
+///     GlobalTopology::Euclidean,
+///     &PlManifoldRepairConfig::default(),
+/// )?;
+///
+/// let triangulation = Triangulation::try_from_tds_with_topology_context(
+///     repaired.tds,
+///     FastKernel::new(),
+///     TopologyGuarantee::PLManifold,
+///     GlobalTopology::Euclidean,
+/// )?;
+/// assert_ne!(triangulation.validation_policy(), ValidationPolicy::Never);
+/// # Ok(())
+/// # }
+/// ```
+pub fn repair_pl_manifold_tds<U, V, const D: usize>(
+    mut tds: Tds<U, V, D>,
+    global_topology: GlobalTopology<D>,
+    config: &PlManifoldRepairConfig,
+) -> Result<PlManifoldTdsRepairResult<U, V, D>, PlManifoldRepairError>
+where
+    U: Clone,
+    V: Clone,
+{
+    let statistics = repair_pl_manifold_topology(&mut tds, global_topology, config)?;
+    Ok(PlManifoldTdsRepairResult { tds, statistics })
 }
 
 const TARGETED_REPAIR_STAGES: [PlManifoldRepairStage; 3] = [
@@ -1745,6 +1886,23 @@ mod tests {
             err.to_string()
                 .contains("boundary-ridge multiplicity repair")
         );
+    }
+
+    #[test]
+    fn public_tds_repair_returns_repaired_raw_owner_and_statistics() {
+        init_tracing();
+        let tds = make_boundary_ridge_multiplicity_tds();
+
+        let repaired = repair_pl_manifold_tds(
+            tds,
+            GlobalTopology::Euclidean,
+            &PlManifoldRepairConfig::default(),
+        )
+        .unwrap();
+
+        assert!(repaired.statistics.succeeded);
+        assert!(repaired.statistics.simplices_removed > 0);
+        validate_targeted_topology(&repaired.tds, GlobalTopology::Euclidean).unwrap();
     }
 
     #[test]

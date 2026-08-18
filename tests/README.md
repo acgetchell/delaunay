@@ -372,7 +372,8 @@ Integration tests for serialization ensuring vertex identifiers and associated d
 
 #### [`delaunayize_workflow.rs`](./delaunayize_workflow.rs)
 
-Integration tests for the `delaunayize_by_flips` workflow validating the public API in `delaunay::delaunayize`.
+Integration tests for the consuming `delaunayize` workflow and its explicit
+`delaunayize_by_flips` alias, validating the public API in `delaunay::delaunayize`.
 
 **Test Coverage:**
 

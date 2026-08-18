@@ -29,10 +29,15 @@ use crate::core::util::usize_to_u8;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateValidationError};
+use crate::geometry::util::safe_usize_to_scalar;
 use crate::topology::manifold::{ManifoldError, boundary_facet_handles_from_index};
 use crate::topology::ridge::{
     RidgeCandidate, RidgeCandidateError, RidgeQuery, RidgeView,
     ridge_star_simplices as ridge_star_simplices_in_tds,
+};
+use crate::topology::traits::{
+    GlobalTopologyModelError, global_topology_model::GlobalTopologyModel,
 };
 
 /// Errors returned by read-only triangulation queries.
@@ -133,6 +138,213 @@ impl From<ManifoldError> for QueryError {
                 source: Box::new(source),
             },
         }
+    }
+}
+
+/// Error returned when computing a simplex barycenter.
+///
+/// The error preserves whether the failure came from stale topology keys,
+/// malformed periodic-offset storage, topology-model lifting/wrapping, or the
+/// final point validation boundary.
+#[derive(Clone, Debug, thiserror::Error, PartialEq)]
+#[non_exhaustive]
+pub enum SimplexBarycenterError {
+    /// The requested simplex key is not live in this triangulation.
+    #[error("simplex {simplex_key:?} is not live in this triangulation")]
+    MissingSimplex {
+        /// Missing or stale simplex key supplied by the caller.
+        simplex_key: SimplexKey,
+    },
+    /// A live simplex does not have the expected `D + 1` vertices.
+    #[error("simplex {simplex_key:?} has {actual} vertices, expected {expected}")]
+    InvalidSimplexArity {
+        /// Simplex with an unexpected vertex count.
+        simplex_key: SimplexKey,
+        /// Expected vertex count (`D + 1`).
+        expected: usize,
+        /// Actual vertex count.
+        actual: usize,
+    },
+    /// A simplex references a vertex key that is not live in this triangulation.
+    #[error("simplex {simplex_key:?} references missing vertex {vertex_key:?}")]
+    MissingVertex {
+        /// Simplex whose vertex reference was stale.
+        simplex_key: SimplexKey,
+        /// Missing vertex key.
+        vertex_key: VertexKey,
+    },
+    /// Stored periodic offsets are not aligned with simplex vertices.
+    #[error(
+        "simplex {simplex_key:?} has {offset_count} periodic offsets for {vertex_count} vertices"
+    )]
+    PeriodicOffsetCountMismatch {
+        /// Simplex with malformed periodic-offset storage.
+        simplex_key: SimplexKey,
+        /// Stored periodic-offset count.
+        offset_count: usize,
+        /// Stored simplex vertex count.
+        vertex_count: usize,
+    },
+    /// The barycenter divisor could not be represented exactly as the coordinate scalar.
+    #[error(
+        "failed to convert barycenter divisor {vertex_count} for simplex {simplex_key:?}: {source}"
+    )]
+    DivisorConversion {
+        /// Simplex whose barycenter divisor failed conversion.
+        simplex_key: SimplexKey,
+        /// Number of vertices used as the divisor.
+        vertex_count: usize,
+        /// Underlying coordinate conversion failure.
+        #[source]
+        source: CoordinateConversionError,
+    },
+    /// Topology-model lifting failed for a simplex vertex.
+    #[error(
+        "failed to lift vertex {vertex_key:?} while computing simplex {simplex_key:?} barycenter: {source}"
+    )]
+    VertexLift {
+        /// Simplex whose barycenter was being computed.
+        simplex_key: SimplexKey,
+        /// Vertex whose coordinate lift failed.
+        vertex_key: VertexKey,
+        /// Underlying topology-model failure.
+        #[source]
+        source: GlobalTopologyModelError,
+    },
+    /// Topology-model canonicalization failed for the averaged point.
+    #[error("failed to canonicalize barycenter for simplex {simplex_key:?}: {source}")]
+    BarycenterCanonicalization {
+        /// Simplex whose barycenter could not be wrapped/canonicalized.
+        simplex_key: SimplexKey,
+        /// Underlying topology-model failure.
+        #[source]
+        source: GlobalTopologyModelError,
+    },
+    /// The computed barycenter was rejected by [`Point`] validation.
+    #[error("computed barycenter for simplex {simplex_key:?} is not a valid point: {source}")]
+    PointValidation {
+        /// Simplex whose barycenter failed point validation.
+        simplex_key: SimplexKey,
+        /// Underlying point-coordinate validation failure.
+        #[source]
+        source: CoordinateValidationError,
+    },
+}
+
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
+    /// Computes the canonical barycenter of a live simplex.
+    ///
+    /// Periodic triangulations are averaged in their simplex-local lifted
+    /// chart and then canonicalized back into the topology model's coordinate
+    /// domain. The result is suitable for a k=1 Pachner insertion.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimplexBarycenterError`] when the simplex is stale or
+    /// malformed, a referenced vertex is missing, periodic metadata is
+    /// inconsistent, or coordinate lifting, averaging, canonicalization, or
+    /// point validation fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![3.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 3.0]?,
+    /// ];
+    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .build_triangulation()?;
+    /// let simplex_key = triangulation
+    ///     .simplices()
+    ///     .next()
+    ///     .map(|(key, _)| key)
+    ///     .expect("a triangle was constructed");
+    ///
+    /// let barycenter = triangulation.simplex_barycenter(simplex_key)?;
+    /// assert_eq!(barycenter.coords(), &[1.0, 1.0]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn simplex_barycenter(
+        &self,
+        simplex_key: SimplexKey,
+    ) -> Result<Point<D>, SimplexBarycenterError> {
+        let simplex = self
+            .tds
+            .simplex(simplex_key)
+            .ok_or(SimplexBarycenterError::MissingSimplex { simplex_key })?;
+
+        let vertex_count = simplex.number_of_vertices();
+        let expected = D + 1;
+        if vertex_count != expected {
+            return Err(SimplexBarycenterError::InvalidSimplexArity {
+                simplex_key,
+                expected,
+                actual: vertex_count,
+            });
+        }
+
+        let model = self.global_topology().model();
+        let periodic_offsets = if model.supports_periodic_orientation_offsets() {
+            simplex.periodic_vertex_offsets()
+        } else {
+            None
+        };
+        if let Some(offsets) = periodic_offsets
+            && offsets.len() != vertex_count
+        {
+            return Err(SimplexBarycenterError::PeriodicOffsetCountMismatch {
+                simplex_key,
+                offset_count: offsets.len(),
+                vertex_count,
+            });
+        }
+
+        let divisor = safe_usize_to_scalar(vertex_count).map_err(|source| {
+            SimplexBarycenterError::DivisorConversion {
+                simplex_key,
+                vertex_count,
+                source,
+            }
+        })?;
+        let mut barycenter = [0.0_f64; D];
+        for (vertex_index, &vertex_key) in simplex.vertices().iter().enumerate() {
+            let vertex =
+                self.tds
+                    .vertex(vertex_key)
+                    .ok_or(SimplexBarycenterError::MissingVertex {
+                        simplex_key,
+                        vertex_key,
+                    })?;
+            let periodic_offset = periodic_offsets.map(|offsets| offsets[vertex_index]);
+            let lifted = model
+                .lift_for_orientation(*vertex.point().coords(), periodic_offset)
+                .map_err(|source| SimplexBarycenterError::VertexLift {
+                    simplex_key,
+                    vertex_key,
+                    source,
+                })?;
+            for axis in 0..D {
+                barycenter[axis] += lifted[axis] / divisor;
+            }
+        }
+
+        model
+            .canonicalize_point_in_place(&mut barycenter)
+            .map_err(
+                |source| SimplexBarycenterError::BarycenterCanonicalization {
+                    simplex_key,
+                    source,
+                },
+            )?;
+        Point::try_new(barycenter).map_err(|source| SimplexBarycenterError::PointValidation {
+            simplex_key,
+            source,
+        })
     }
 }
 

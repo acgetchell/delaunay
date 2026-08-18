@@ -38,10 +38,11 @@ use delaunay::prelude::pachner::{
     RidgeHandle, TriangleHandle, TriangleHandleError, Vertex, VertexKey,
 };
 use delaunay::prelude::tds::TdsError;
+use delaunay::prelude::triangulation::Triangulation;
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 
 type ExampleResult<T = ()> = Result<T, TopologyEditingExampleError>;
-type Dt3 = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>;
+type Dt3 = Triangulation<AdaptiveKernel<f64>, (), (), 3>;
 
 #[derive(Debug, thiserror::Error)]
 enum TopologyEditingExampleError {
@@ -136,7 +137,7 @@ fn builder_api_2d() -> ExampleResult {
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     println!("Initial triangle:");
-    print_stats_2d(&dt);
+    print_stats_2d(dt.as_triangulation());
     dt.validate()?;
     println!("  ✓ Delaunay property verified\n");
 
@@ -167,7 +168,9 @@ fn pachner_2d_k1() -> ExampleResult {
 
     let vertices = vec![vertex![0.0, 0.0]?, vertex![3.0, 0.0]?, vertex![1.5, 2.5]?];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build()?
+        .into_triangulation();
 
     println!("Initial triangle:");
     print_stats_2d(&dt);
@@ -266,12 +269,13 @@ fn pachner_2d_k2() -> ExampleResult {
         vertex![0.0, 2.0]?,
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    let delaunay = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    let initial_valid = delaunay.validate().is_ok();
+    let mut dt = delaunay.into_triangulation();
 
     println!("Initial square (2 triangles):");
     print_stats_2d(&dt);
 
-    let initial_valid = dt.is_valid_delaunay().is_ok();
     println!(
         "  Initial Delaunay: {}",
         if initial_valid { "✓" } else { "⚠️" }
@@ -293,7 +297,7 @@ fn pachner_2d_k2() -> ExampleResult {
     println!("  Inserted: {} simplices", flip_info.new_simplices.len());
 
     // Check if Delaunay property changed
-    let after_valid = dt.is_valid_delaunay().is_ok();
+    let after_valid = DelaunayTriangulation::try_from_triangulation(dt.clone()).is_ok();
     println!(
         "  Delaunay after flip: {}",
         if after_valid { "✓" } else { "⚠️" }
@@ -344,7 +348,7 @@ fn builder_api_3d() -> ExampleResult {
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     println!("Initial tetrahedron:");
-    print_stats_3d(&dt);
+    print_stats_3d(dt.as_triangulation());
     dt.validate()?;
     println!("  ✓ Delaunay property verified\n");
 
@@ -379,7 +383,9 @@ fn pachner_3d_k1() -> ExampleResult {
         vertex![1.0, 0.5, 1.5]?,
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build()?
+        .into_triangulation();
 
     println!("Initial tetrahedron:");
     print_stats_3d(&dt);
@@ -526,7 +532,7 @@ fn pachner_3d_k3() -> ExampleResult {
     let flip_info = dt
         .propose_pachner(PachnerMove::K3 { ridge })?
         .attempt_on(&mut dt)?;
-    dt.as_triangulation().validate()?;
+    dt.validate()?;
     let triangle = inserted_triangle(&flip_info.inserted_face_vertices, "3D k=3 demo")?;
 
     println!("\n✓ k=3 flip succeeded:");
@@ -542,7 +548,7 @@ fn pachner_3d_k3() -> ExampleResult {
 // UTILITY FUNCTIONS
 // ============================================================================
 
-fn print_stats_2d<K>(dt: &DelaunayTriangulation<K, (), (), 2>) {
+fn print_stats_2d<K>(dt: &Triangulation<K, (), (), 2>) {
     println!(
         "  Vertices: {}, Triangles: {}",
         dt.number_of_vertices(),
@@ -550,7 +556,7 @@ fn print_stats_2d<K>(dt: &DelaunayTriangulation<K, (), (), 2>) {
     );
 }
 
-fn print_stats_3d<K>(dt: &DelaunayTriangulation<K, (), (), 3>) {
+fn print_stats_3d<K>(dt: &Triangulation<K, (), (), 3>) {
     println!(
         "  Vertices: {}, Tetrahedra: {}",
         dt.number_of_vertices(),
@@ -561,7 +567,9 @@ fn print_stats_3d<K>(dt: &DelaunayTriangulation<K, (), (), 3>) {
 /// Builds the stable 3D local-edit fixture used by the successful k=2/k=3 demos.
 fn build_stable_pachner_dt_3d() -> ExampleResult<Dt3> {
     let vertices = stable_pachner_vertices_3d()?;
-    Ok(DelaunayTriangulationBuilder::new(&vertices).build()?)
+    Ok(DelaunayTriangulationBuilder::new(&vertices)
+        .build()?
+        .into_triangulation())
 }
 
 /// Returns the stable 3D point set used to find accepted public Pachner moves.
@@ -580,7 +588,7 @@ fn stable_pachner_vertices_3d() -> Result<Vec<Vertex<(), 3>>, CoordinateConversi
 }
 
 fn find_interior_facet<K, const D: usize>(
-    dt: &DelaunayTriangulation<K, (), (), D>,
+    dt: &Triangulation<K, (), (), D>,
 ) -> ExampleResult<Option<FacetHandle>> {
     for (simplex_key, simplex) in dt.simplices() {
         let Some(neighbors) = simplex.neighbors() else {
@@ -654,9 +662,7 @@ fn find_flippable_ridge_3d(dt: &Dt3) -> ExampleResult<Option<RidgeHandle>> {
                 let Ok(proposal) = trial.propose_pachner(PachnerMove::K3 { ridge }) else {
                     continue;
                 };
-                if proposal.attempt_on(&mut trial).is_ok()
-                    && trial.as_triangulation().validate().is_ok()
-                {
+                if proposal.attempt_on(&mut trial).is_ok() && trial.validate().is_ok() {
                     return Ok(Some(ridge));
                 }
             }

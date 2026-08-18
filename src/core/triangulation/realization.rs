@@ -17,7 +17,7 @@ use crate::core::simplex::Simplex;
 use crate::core::tds::{InvariantError, InvariantKind, SimplexKey, Tds, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
-use crate::core::validation::TriangulationValidationError;
+use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
@@ -33,7 +33,7 @@ use crate::geometry::traits::coordinate::{
 use crate::topology::traits::global_topology_model::{
     GlobalTopologyModel, GlobalTopologyModelError,
 };
-use crate::topology::traits::topological_space::TopologyKind;
+use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use num_traits::ToPrimitive;
 use thiserror::Error;
 use uuid::Uuid;
@@ -921,6 +921,73 @@ fn labeled_simplex_error_to_realized_simplex_error<const D: usize>(
 }
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
+    /// Restores a generic triangulation from raw storage and explicit topology context.
+    ///
+    /// This is the checked boundary from a transport [`Tds`] into the
+    /// Levels 1–4 [`Triangulation`] domain. The topology context is installed
+    /// before cumulative structural, intrinsic-topology, and realized-geometry
+    /// validation. The Level 5 Delaunay property is deliberately outside this
+    /// constructor's contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TriangulationRealizationValidationError`] if Levels 1–4 do not
+    /// hold under the supplied topology context.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
+    /// use delaunay::prelude::geometry::AdaptiveKernel;
+    /// use delaunay::prelude::triangulation::Triangulation;
+    /// use delaunay::prelude::validation::DelaunayTriangulationValidationError;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .build_triangulation()?;
+    /// let topology_guarantee = triangulation.topology_guarantee();
+    /// let global_topology = triangulation.global_topology();
+    /// let tds = triangulation.into_tds();
+    ///
+    /// let restored = Triangulation::try_from_tds_with_topology_context(
+    ///     tds,
+    ///     AdaptiveKernel::new(),
+    ///     topology_guarantee,
+    ///     global_topology,
+    /// )
+    /// .map_err(DelaunayTriangulationValidationError::from)?;
+    /// assert_eq!(restored.number_of_vertices(), 3);
+    /// assert!(restored.validate_realization().is_ok());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_from_tds_with_topology_context(
+        tds: Tds<U, V, D>,
+        kernel: K,
+        topology_guarantee: TopologyGuarantee,
+        global_topology: GlobalTopology<D>,
+    ) -> Result<Self, TriangulationRealizationValidationError>
+    where
+        K: Kernel<D, Scalar = f64>,
+        U: DataType,
+        V: DataType,
+    {
+        let triangulation = Self {
+            kernel,
+            tds,
+            global_topology,
+            validation_policy: topology_guarantee.default_validation_policy(),
+            topology_guarantee,
+        };
+        triangulation.validate_realization()?;
+        Ok(triangulation)
+    }
+
     /// Validates realized geometry only (Level 4).
     ///
     /// This method assumes lower layers have already passed validation. Use

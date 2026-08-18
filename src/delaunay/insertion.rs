@@ -479,8 +479,16 @@ where
 
         let repair_result = {
             self.invalidate_locate_hint_cache();
+            let global_topology = self.tri.global_topology();
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-            repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_ref, topology, max_flips)
+            repair_delaunay_with_flips_k2_k3_run(
+                tds,
+                kernel,
+                seed_ref,
+                topology,
+                global_topology,
+                max_flips,
+            )
         };
 
         #[cfg(test)]
@@ -501,9 +509,10 @@ where
                 // Robust fallback: retry with `RobustKernel` which guarantees exact
                 // predicate evaluation. This covers 99.9%+ of repair failures.
                 //
-                // If the robust pass also fails, return an error. Callers that need
-                // the full heuristic rebuild (shuffled re-insertion) can invoke
-                // `repair_delaunay_with_flips_advanced()` explicitly.
+                // If the robust pass also fails, return an error so the
+                // insertion transaction can roll back. Batch workflows that
+                // start from a Levels 1–4 value can opt into rebuild fallback
+                // through the consuming `delaunayize` conversion.
                 let robust_run = self
                     .repair_delaunay_with_flips_robust_run(seed_ref, max_flips)
                     .map_err(|robust_err| InsertionError::DelaunayRepairFailed {
@@ -824,7 +833,7 @@ mod tests {
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
 
         // Initially no last_inserted_simplex
         assert!(dt.insertion_state.last_inserted_simplex.is_none());
@@ -904,7 +913,8 @@ mod tests {
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(3).unwrap()));
+        dt.insertion_state.delaunay_repair_policy =
+            DelaunayRepairPolicy::EveryN(NonZeroUsize::new(3).unwrap());
         dt.set_delaunay_check_policy(DelaunayCheckPolicy::EndOnly);
         dt.insertion_state.delaunay_repair_insertion_count = 0;
         assert!(!dt.post_insertion_transaction_required());
@@ -912,7 +922,7 @@ mod tests {
         dt.insertion_state.delaunay_repair_insertion_count = 2;
         assert!(dt.post_insertion_transaction_required());
 
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
         dt.set_delaunay_check_policy(DelaunayCheckPolicy::EveryN(NonZeroUsize::new(2).unwrap()));
         dt.insertion_state.delaunay_repair_insertion_count = 0;
         assert!(!dt.post_insertion_transaction_required());
@@ -1099,7 +1109,7 @@ mod tests {
             TopologyGuarantee::PLManifold,
             GlobalTopology::DEFAULT,
         )
-        .into_repairable_delaunay_for_test();
+        .into_unproven_delaunay_for_test();
         let stats = DelaunayRepairStats {
             flips_performed: 1,
             ..DelaunayRepairStats::default()

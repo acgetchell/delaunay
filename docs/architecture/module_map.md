@@ -21,17 +21,26 @@ ordering, see [`module_patterns.md`](module_patterns.md).
 - `tds/snapshot.rs` - persistence boundary from raw codec records into
   validated UUID snapshots before hydration allocates fresh slotmap keys.
 - `tds/validation.rs` - Level 2 Combinatorial Consistency validation and adjacency checks.
-- `triangulation.rs` - generic triangulation layer with kernel.
-- `construction.rs` - generic construction helpers and initial-simplex setup.
-- `insertion.rs` - generic transactional insertion, duplicate detection, and
+- `triangulation/model.rs` - proof-bearing Levels 1–4 `Triangulation` domain
+  owner and kernel/topology metadata.
+- `triangulation/construction.rs` - generic construction helpers and
+  initial-simplex setup.
+- `triangulation/insertion.rs` - generic transactional insertion, duplicate detection, and
   insertion telemetry.
-- `orientation.rs` - simplex orientation validation, lifted-coordinate
+- `triangulation/orientation.rs` - simplex orientation validation, lifted-coordinate
   handling, and positive-orientation canonicalization.
-- `query.rs` - read-only generic triangulation accessors, adjacency indices,
-  and topology traversal helpers.
-- `repair.rs` - generic local topology repair, stale incident-simplex repair,
+- `triangulation/query.rs` - read-only generic triangulation accessors,
+  adjacency indices, barycenters, and topology traversal helpers.
+- `triangulation/repair.rs` - generic local topology repair, stale incident-simplex repair,
   and vertex-deletion cavity retriangulation.
-- `validation.rs` - generic validation vocabulary and Level 3 orchestration.
+- `triangulation/rollback.rs` - rollback guards for generic mutation windows.
+- `triangulation/validation.rs` - generic validation vocabulary and Level 3 orchestration.
+- `triangulation/realization.rs` - Level 4 realization validation and the
+  checked TDS-to-`Triangulation` restoration boundary.
+- `triangulation/flips.rs` - public primitive bistellar-edit contract, defined
+  only for the generic triangulation owner.
+- `triangulation/pachner.rs` - composed Pachner workflow over generic
+  triangulations.
 - `vertex.rs`, `simplex.rs`, and `facet.rs` - core geometric primitives.
 - `edge.rs` - canonical `EdgeKey` for topology traversal.
 - `adjacency.rs` - optional lifetime-bound topology indexes:
@@ -103,12 +112,10 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
   helpers.
 - `triangulation.rs` - `DelaunayTriangulation` storage type and insertion-state
   cache.
-- `delaunayize.rs` - bounded topology repair plus flip-based Delaunay repair,
-  with optional fallback rebuild.
-- `flips.rs` - high-level bistellar flip primitive trait and supporting public
-  types.
-- `pachner.rs` - unified Pachner move enum, result, and dispatch trait over the
-  primitive flip layer.
+- `delaunayize.rs` - consuming flip-based promotion from a Levels 1–4
+  `Triangulation` to a Levels 1–5 `DelaunayTriangulation`, with optional
+  fallback rebuild. Raw-TDS PL-manifold repair remains an orthogonal core
+  transformation before Levels 1–4 restoration.
 - `locality.rs` - local seed/frontier helpers for Hilbert-local construction
   and repair.
 - `repair.rs` - Delaunay repair policies, rebuild config, and repair outcomes.
@@ -123,10 +130,12 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
   repair-oriented violation reports used by Level 5 validation APIs.
 
 `src/lib.rs` wires public modules, root re-exports, focused preludes, and the
-crate-level documentation map. Delaunay-facing modules are exposed directly as
+crate-level documentation map. Public workflow modules are exposed directly as
 `delaunay::builder`, `delaunay::construction`, `delaunay::flips`,
-`delaunay::repair`, `delaunay::validation`, and focused preludes rather than
-through a nested `delaunay::delaunay` facade.
+`delaunay::pachner`, `delaunay::repair`, `delaunay::validation`, and focused
+preludes rather than through a nested `delaunay::delaunay` facade. The physical
+location of `flips` and `pachner` under `core/triangulation/` records that these
+operations require only the Levels 1–4 owner.
 
 ## I/O And Export Layer
 

@@ -4823,7 +4823,7 @@ mod tests {
 
         dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)
             .unwrap();
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
 
         for (i, point) in points.into_iter().enumerate() {
             let vertex = Vertex::from_validated_point(point, None);

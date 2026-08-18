@@ -20,6 +20,7 @@ use crate::core::facet::{
     SimplexFacetsIter,
 };
 use crate::core::query::QueryError;
+use crate::core::query::SimplexBarycenterError;
 use crate::core::simplex::Simplex;
 use crate::core::tds::{
     InvariantError, InvariantViolation, SimplexKey, Tds, TdsError, TdsMutationError,
@@ -31,9 +32,7 @@ use crate::core::validation::{TopologyGuarantee, ValidationConfigurationError, V
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateValidationError};
-use crate::geometry::util::safe_usize_to_scalar;
-use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
+use crate::repair::DelaunayCheckPolicy;
 use crate::topology::characteristics::{
     euler::{FVector, TopologyClassification},
     validation::TopologyCheckResult,
@@ -41,9 +40,6 @@ use crate::topology::characteristics::{
 use crate::topology::manifold::ManifoldError;
 use crate::topology::ridge::{RidgeCandidate, RidgeQuery, RidgeView};
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, TopologyKind};
-use crate::topology::traits::{
-    GlobalTopologyModelError, global_topology_model::GlobalTopologyModel,
-};
 use crate::triangulation::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
 use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
@@ -75,96 +71,6 @@ pub enum SimplexDataFillError {
         /// Underlying TDS mutation failure.
         #[source]
         source: Box<TdsMutationError>,
-    },
-}
-
-/// Error returned when computing a simplex barycenter.
-///
-/// The error preserves whether the failure came from stale topology keys,
-/// malformed periodic-offset storage, topology-model lifting/wrapping, or the
-/// final point validation boundary.
-#[derive(Clone, Debug, Error, PartialEq)]
-#[non_exhaustive]
-pub enum SimplexBarycenterError {
-    /// The requested simplex key is not live in this triangulation.
-    #[error("simplex {simplex_key:?} is not live in this triangulation")]
-    MissingSimplex {
-        /// Missing or stale simplex key supplied by the caller.
-        simplex_key: SimplexKey,
-    },
-    /// A live simplex does not have the expected `D + 1` vertices.
-    #[error("simplex {simplex_key:?} has {actual} vertices, expected {expected}")]
-    InvalidSimplexArity {
-        /// Simplex with an unexpected vertex count.
-        simplex_key: SimplexKey,
-        /// Expected vertex count (`D + 1`).
-        expected: usize,
-        /// Actual vertex count.
-        actual: usize,
-    },
-    /// A simplex references a vertex key that is not live in this triangulation.
-    #[error("simplex {simplex_key:?} references missing vertex {vertex_key:?}")]
-    MissingVertex {
-        /// Simplex whose vertex reference was stale.
-        simplex_key: SimplexKey,
-        /// Missing vertex key.
-        vertex_key: VertexKey,
-    },
-    /// Stored periodic offsets are not aligned with simplex vertices.
-    #[error(
-        "simplex {simplex_key:?} has {offset_count} periodic offsets for {vertex_count} vertices"
-    )]
-    PeriodicOffsetCountMismatch {
-        /// Simplex with malformed periodic-offset storage.
-        simplex_key: SimplexKey,
-        /// Stored periodic-offset count.
-        offset_count: usize,
-        /// Stored simplex vertex count.
-        vertex_count: usize,
-    },
-    /// The barycenter divisor could not be represented exactly as the coordinate scalar.
-    #[error(
-        "failed to convert barycenter divisor {vertex_count} for simplex {simplex_key:?}: {source}"
-    )]
-    DivisorConversion {
-        /// Simplex whose barycenter divisor failed conversion.
-        simplex_key: SimplexKey,
-        /// Number of vertices used as the divisor.
-        vertex_count: usize,
-        /// Underlying coordinate conversion failure.
-        #[source]
-        source: CoordinateConversionError,
-    },
-    /// Topology-model lifting failed for a simplex vertex.
-    #[error(
-        "failed to lift vertex {vertex_key:?} while computing simplex {simplex_key:?} barycenter: {source}"
-    )]
-    VertexLift {
-        /// Simplex whose barycenter was being computed.
-        simplex_key: SimplexKey,
-        /// Vertex whose coordinate lift failed.
-        vertex_key: VertexKey,
-        /// Underlying topology-model failure.
-        #[source]
-        source: GlobalTopologyModelError,
-    },
-    /// Topology-model canonicalization failed for the averaged point.
-    #[error("failed to canonicalize barycenter for simplex {simplex_key:?}: {source}")]
-    BarycenterCanonicalization {
-        /// Simplex whose barycenter could not be wrapped/canonicalized.
-        simplex_key: SimplexKey,
-        /// Underlying topology-model failure.
-        #[source]
-        source: GlobalTopologyModelError,
-    },
-    /// The computed barycenter was rejected by [`Point`] validation.
-    #[error("computed barycenter for simplex {simplex_key:?} is not a valid point: {source}")]
-    PointValidation {
-        /// Simplex whose barycenter failed point validation.
-        simplex_key: SimplexKey,
-        /// Underlying point-coordinate validation failure.
-        #[source]
-        source: CoordinateValidationError,
     },
 }
 
@@ -798,7 +704,8 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build()?;
+    ///     .build()?
+    ///     .into_triangulation();
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -818,80 +725,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         &self,
         simplex_key: SimplexKey,
     ) -> Result<Point<D>, SimplexBarycenterError> {
-        let simplex = self
-            .tri
-            .tds
-            .simplex(simplex_key)
-            .ok_or(SimplexBarycenterError::MissingSimplex { simplex_key })?;
-
-        let vertex_count = simplex.number_of_vertices();
-        let expected = D + 1;
-        if vertex_count != expected {
-            return Err(SimplexBarycenterError::InvalidSimplexArity {
-                simplex_key,
-                expected,
-                actual: vertex_count,
-            });
-        }
-
-        let model = self.global_topology().model();
-        let periodic_offsets = if model.supports_periodic_orientation_offsets() {
-            simplex.periodic_vertex_offsets()
-        } else {
-            None
-        };
-        if let Some(offsets) = periodic_offsets
-            && offsets.len() != vertex_count
-        {
-            return Err(SimplexBarycenterError::PeriodicOffsetCountMismatch {
-                simplex_key,
-                offset_count: offsets.len(),
-                vertex_count,
-            });
-        }
-
-        let divisor = safe_usize_to_scalar(vertex_count).map_err(|source| {
-            SimplexBarycenterError::DivisorConversion {
-                simplex_key,
-                vertex_count,
-                source,
-            }
-        })?;
-        let mut barycenter = [0.0_f64; D];
-        for (vertex_index, &vertex_key) in simplex.vertices().iter().enumerate() {
-            let vertex =
-                self.tri
-                    .tds
-                    .vertex(vertex_key)
-                    .ok_or(SimplexBarycenterError::MissingVertex {
-                        simplex_key,
-                        vertex_key,
-                    })?;
-            let periodic_offset = periodic_offsets.map(|offsets| offsets[vertex_index]);
-            let lifted = model
-                .lift_for_orientation(*vertex.point().coords(), periodic_offset)
-                .map_err(|source| SimplexBarycenterError::VertexLift {
-                    simplex_key,
-                    vertex_key,
-                    source,
-                })?;
-            for axis in 0..D {
-                barycenter[axis] += lifted[axis] / divisor;
-            }
-        }
-
-        model
-            .canonicalize_point_in_place(&mut barycenter)
-            .map_err(
-                |source| SimplexBarycenterError::BarycenterCanonicalization {
-                    simplex_key,
-                    source,
-                },
-            )?;
-        Point::try_new(barycenter).map_err(|source| SimplexBarycenterError::PointValidation {
-            simplex_key,
-            source,
-        })
+        self.as_triangulation().simplex_barycenter(simplex_key)
     }
 
     /// Returns an iterator over all vertices in the triangulation.
@@ -1219,16 +1053,6 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         &self.tri.tds
     }
 
-    /// Returns the kernel backing crate-internal repair and rebuild workflows.
-    ///
-    /// This keeps internal callers from reaching through
-    /// [`DelaunayTriangulation::as_triangulation`] just to access storage
-    /// details on the generic triangulation owner.
-    #[must_use]
-    pub(crate) const fn kernel(&self) -> &K {
-        &self.tri.kernel
-    }
-
     pub(crate) const fn invalidate_locate_hint_cache(&mut self) {
         self.insertion_state.last_inserted_simplex = None;
     }
@@ -1236,22 +1060,6 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// Revokes the proof required to replace the global Euclidean report scan.
     pub(crate) const fn invalidate_euclidean_report_domain(&mut self) {
         self.euclidean_report_domain = EuclideanDelaunayReportDomain::Unproven;
-    }
-
-    pub(crate) fn invalidate_repair_caches(&mut self) {
-        self.invalidate_locate_hint_cache();
-        self.spatial_index = None;
-    }
-
-    /// Returns mutable TDS access for crate-internal repair algorithms.
-    ///
-    /// Repair passes may rewrite topology and invalidate locate hints, so this
-    /// deliberately clears the ephemeral caches and complete-point-set proof
-    /// before handing out the borrow.
-    pub(crate) fn tds_mut_for_repair(&mut self) -> &mut Tds<U, V, D> {
-        self.invalidate_repair_caches();
-        self.invalidate_euclidean_report_domain();
-        &mut self.tri.tds
     }
 
     /// Returns a reference to the underlying `Triangulation` (kernel + tds).
@@ -1493,57 +1301,6 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         guarantee: TopologyGuarantee,
     ) -> Result<(), ValidationConfigurationError> {
         self.tri.try_set_topology_guarantee(guarantee)
-    }
-
-    /// Returns the automatic Delaunay repair policy.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayResult, DelaunayTriangulationBuilder,
-    /// };
-    /// use delaunay::prelude::repair::DelaunayRepairPolicy;
-    ///
-    /// # fn main() -> DelaunayResult<()> {
-    /// let vertices = vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    ///
-    /// assert_eq!(dt.delaunay_repair_policy(), DelaunayRepairPolicy::EveryInsertion);
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn delaunay_repair_policy(&self) -> DelaunayRepairPolicy {
-        self.insertion_state.delaunay_repair_policy
-    }
-
-    /// Sets the automatic Delaunay repair policy.
-    ///
-    /// This affects future incremental insertions; it does not rewrite already
-    /// stored topology.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayResult, DelaunayTriangulationBuilder,
-    /// };
-    /// use delaunay::prelude::repair::DelaunayRepairPolicy;
-    ///
-    /// # fn main() -> DelaunayResult<()> {
-    /// let vertices = vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    ///
-    /// dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
-    /// assert_eq!(dt.delaunay_repair_policy(), DelaunayRepairPolicy::Never);
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[inline]
-    pub const fn set_delaunay_repair_policy(&mut self, policy: DelaunayRepairPolicy) {
-        self.insertion_state.delaunay_repair_policy = policy;
     }
 
     /// Returns the automatic global Delaunay validation policy.
@@ -2833,12 +2590,34 @@ mod tests {
     use crate::core::tds::TdsError;
     use crate::core::validation::TriangulationValidationError;
     use crate::geometry::kernel::FastKernel;
-    use crate::geometry::traits::coordinate::InvalidCoordinateValue;
+    use crate::geometry::traits::coordinate::{CoordinateValidationError, InvalidCoordinateValue};
+    use crate::geometry::util::safe_usize_to_scalar;
+    use crate::topology::traits::GlobalTopologyModelError;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
     use std::{assert_matches, collections::HashSet, num::NonZeroUsize, sync::Once};
+
+    impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
+        /// Returns the kernel to crate-internal test fixtures.
+        #[must_use]
+        pub(crate) const fn kernel(&self) -> &K {
+            &self.tri.kernel
+        }
+
+        fn invalidate_repair_caches(&mut self) {
+            self.invalidate_locate_hint_cache();
+            self.spatial_index = None;
+        }
+
+        /// Returns mutable TDS access to crate-internal malformed-state fixtures.
+        pub(crate) fn tds_mut_for_repair(&mut self) -> &mut Tds<U, V, D> {
+            self.invalidate_repair_caches();
+            self.invalidate_euclidean_report_domain();
+            &mut self.tri.tds
+        }
+    }
 
     struct Payload;
     #[derive(Copy, Clone)]

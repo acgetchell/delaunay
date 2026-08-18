@@ -14,6 +14,7 @@
 //! 6. Incremental vertex insertion
 //! 7. Explicit bistellar flip workflows on stable and adversarial 2D-5D
 //!    PL-manifold cases
+//! 8. Independent Levels 1–4 restoration and strict Level 5 certification
 //!
 //! The roundtrip flip cases are an n=1 ergodicity check for the public
 //! Pachner/bistellar move API: one admissible move followed immediately by its
@@ -46,11 +47,14 @@ use criterion::{
 use delaunay::flips::{FacetHandle, RidgeHandle, SimplexKey};
 use delaunay::prelude::collections::FastHashMap;
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder, RetryPolicy, Vertex,
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder, GlobalTopology,
+    RetryPolicy, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point};
 use delaunay::prelude::query::ConvexHull;
+use delaunay::prelude::tds::Tds;
+use delaunay::prelude::triangulation::Triangulation;
 use delaunay::try_vertices_from_points;
 use std::{env, hint::black_box, num::NonZeroUsize, sync::Once};
 #[cfg(feature = "bench-logging")]
@@ -96,10 +100,19 @@ const EXPLICIT_IMPORT_COUNT_4D: usize = 16;
 const EXPLICIT_IMPORT_COUNT_5D: usize = 10;
 type SeedSearchResult<const D: usize> = Option<(u64, Vec<Point<D>>, Vec<Vertex<(), D>>)>;
 type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
+type BenchGenericTriangulation<const D: usize> = Triangulation<AdaptiveKernel<f64>, (), (), D>;
 
 struct ExplicitImportFixture<const D: usize> {
     vertices: Vec<Vertex<(), D>>,
     simplices: Vec<Vec<usize>>,
+}
+
+struct ProofBoundaryFixture<const D: usize> {
+    tds: Tds<(), (), D>,
+    triangulation: BenchGenericTriangulation<D>,
+    topology_guarantee: TopologyGuarantee,
+    global_topology: GlobalTopology<D>,
+    simplex_count: usize,
 }
 
 fn finite_point<const D: usize>(coords: [f64; D]) -> Point<D> {
@@ -215,6 +228,16 @@ fn explicit_import_benchmark_ids() -> String {
     .join(";")
 }
 
+fn proof_boundary_benchmark_ids() -> String {
+    [
+        "proof_boundaries/{restore_2d,certify_2d}",
+        "proof_boundaries/{restore_3d,certify_3d}",
+        "proof_boundaries/{restore_4d,certify_4d}",
+        "proof_boundaries/{restore_5d,certify_5d}",
+    ]
+    .join(";")
+}
+
 fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
     vec![
         ApiBenchmarkEntry {
@@ -261,10 +284,17 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
         },
         ApiBenchmarkEntry {
             group: "explicit_import",
-            public_api: "DelaunayTriangulationBuilder::try_from_vertices_and_simplices(...).construction_options(without_final_delaunay_enforcement).build",
+            public_api: "DelaunayTriangulationBuilder::try_from_vertices_and_simplices(...).build_triangulation",
             dimensions: "2,3,4,5",
             benchmark_ids: explicit_import_benchmark_ids(),
             note: "reimport_valid_levels_1_through_4_connectivity_from_public_vertex_and_simplex_iterators",
+        },
+        ApiBenchmarkEntry {
+            group: "proof_boundaries",
+            public_api: "Triangulation::try_from_tds_with_topology_context;DelaunayTriangulation::try_from_triangulation",
+            dimensions: "2,3,4,5",
+            benchmark_ids: proof_boundary_benchmark_ids(),
+            note: "measure_levels_1_through_4_restore_and_strict_level_5_certification_independently",
         },
         ApiBenchmarkEntry {
             group: "bistellar_flips",
@@ -480,6 +510,46 @@ fn prepare_explicit_import_fixture<const D: usize>(
     ExplicitImportFixture {
         vertices,
         simplices,
+    }
+}
+
+/// Prepares independently cloneable inputs for the two proof-boundary benchmarks.
+fn prepare_proof_boundary_fixture<const D: usize>(
+    dim_seed: u64,
+    count: usize,
+) -> ProofBoundaryFixture<D> {
+    let import = prepare_explicit_import_fixture::<D>(dim_seed, count);
+    let triangulation: BenchGenericTriangulation<D> =
+        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(
+            &import.vertices,
+            &import.simplices,
+        )
+        .or_abort()
+        .construction_options(ConstructionOptions::default().without_final_delaunay_enforcement())
+        .build_triangulation()
+        .or_abort();
+    let topology_guarantee = triangulation.topology_guarantee();
+    let global_topology = triangulation.global_topology();
+    let simplex_count = triangulation.number_of_simplices();
+    let tds = triangulation.clone().into_tds();
+
+    // Preflight both independent boundaries outside Criterion timing. A failed
+    // scientific precondition invalidates the fixture instead of timing errors.
+    Triangulation::try_from_tds_with_topology_context(
+        tds.clone(),
+        AdaptiveKernel::new(),
+        topology_guarantee,
+        global_topology,
+    )
+    .or_abort();
+    DelaunayTriangulation::try_from_triangulation(triangulation.clone()).or_abort();
+
+    ProofBoundaryFixture {
+        tds,
+        triangulation,
+        topology_guarantee,
+        global_topology,
+        simplex_count,
     }
 }
 
@@ -1414,12 +1484,46 @@ fn bench_explicit_import_case<const D: usize>(
                 .construction_options(
                     ConstructionOptions::default().without_final_delaunay_enforcement(),
                 )
-                .build()
+                .build_triangulation()
                 .or_abort();
                 black_box(dt);
             });
         },
     );
+}
+
+fn bench_proof_boundary_case<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    fixture: &ProofBoundaryFixture<D>,
+) {
+    let parameter = format!("simplices_{}", fixture.simplex_count);
+    group.throughput(Throughput::Elements(fixture.simplex_count as u64));
+    group.bench_function(BenchmarkId::new(format!("restore_{D}d"), &parameter), |b| {
+        b.iter_batched(
+            || (fixture.tds.clone(), AdaptiveKernel::new()),
+            |(tds, kernel)| {
+                black_box(
+                    Triangulation::try_from_tds_with_topology_context(
+                        tds,
+                        kernel,
+                        fixture.topology_guarantee,
+                        fixture.global_topology,
+                    )
+                    .or_abort(),
+                );
+            },
+            BatchSize::LargeInput,
+        );
+    });
+    group.bench_function(BenchmarkId::new(format!("certify_{D}d"), parameter), |b| {
+        b.iter_batched(
+            || fixture.triangulation.clone(),
+            |triangulation| {
+                black_box(DelaunayTriangulation::try_from_triangulation(triangulation).or_abort());
+            },
+            BatchSize::LargeInput,
+        );
+    });
 }
 
 fn benchmark_boundary_facets(c: &mut Criterion) {
@@ -1787,6 +1891,43 @@ fn benchmark_explicit_import(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_proof_boundaries(c: &mut Criterion) {
+    print_manifest_once();
+    if discover_seeds_enabled() {
+        return;
+    }
+    let filters = criterion_filters();
+    let mut group = c.benchmark_group("proof_boundaries");
+    group.sample_size(10);
+
+    if benchmark_selected(&filters, "proof_boundaries/restore_2d")
+        || benchmark_selected(&filters, "proof_boundaries/certify_2d")
+    {
+        let fixture = prepare_proof_boundary_fixture::<2>(42, EXPLICIT_IMPORT_COUNT_2D);
+        bench_proof_boundary_case(&mut group, &fixture);
+    }
+    if benchmark_selected(&filters, "proof_boundaries/restore_3d")
+        || benchmark_selected(&filters, "proof_boundaries/certify_3d")
+    {
+        let fixture = prepare_proof_boundary_fixture::<3>(123, EXPLICIT_IMPORT_COUNT_3D);
+        bench_proof_boundary_case(&mut group, &fixture);
+    }
+    if benchmark_selected(&filters, "proof_boundaries/restore_4d")
+        || benchmark_selected(&filters, "proof_boundaries/certify_4d")
+    {
+        let fixture = prepare_proof_boundary_fixture::<4>(456, EXPLICIT_IMPORT_COUNT_4D);
+        bench_proof_boundary_case(&mut group, &fixture);
+    }
+    if benchmark_selected(&filters, "proof_boundaries/restore_5d")
+        || benchmark_selected(&filters, "proof_boundaries/certify_5d")
+    {
+        let fixture = prepare_proof_boundary_fixture::<5>(789, EXPLICIT_IMPORT_COUNT_5D);
+        bench_proof_boundary_case(&mut group, &fixture);
+    }
+
+    group.finish();
+}
+
 /// Registers the complete 2D-5D public bistellar flip benchmark matrix.
 fn benchmark_bistellar_flips(c: &mut Criterion) {
     print_manifest_once();
@@ -1957,6 +2098,7 @@ criterion_group!(
         benchmark_validation,
         benchmark_insert,
         benchmark_explicit_import,
+        benchmark_proof_boundaries,
         benchmark_bistellar_flips
 );
 criterion_main!(benches);

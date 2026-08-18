@@ -103,10 +103,11 @@ identities, including explicit self-identifications.
 
 Implementation pointers:
 
-- Level 3 entry points and validation vocabulary: `src/core/validation.rs`
+- Level 3 entry points and validation vocabulary:
+  `src/core/triangulation/validation.rs`
   (`Triangulation::is_valid_topology`, `Triangulation::orientation_witness`,
   `OrientationWitness`, and `Triangulation::validate`)
-- Owner-level topology validators: `src/core/validation.rs` and
+- Owner-level topology validators: `src/core/triangulation/validation.rs` and
   `src/delaunay/query.rs`
   (`Triangulation::validate_ridge_links`,
   `Triangulation::validate_ridge_links_for_simplices`,
@@ -321,16 +322,18 @@ PL-topology validation separate from spherical Level 4/5 geometry. Full
 spherical integration across `S^2`-`S^5` and hyperbolic integration remain future
 work.
 
-## Triangulation editing (`src/delaunay/`)
+## Triangulation editing (`src/core/triangulation/`)
 
-`src/delaunay/flips.rs` exposes explicit bistellar-flip editing APIs
+`src/core/triangulation/flips.rs` exposes explicit bistellar-flip editing APIs
 (`BistellarFlips`) built on `core::algorithms::flips`. These operations:
 
 - are topological edits (they can change manifold structure), and
 - do not automatically restore the Delaunay property.
 
-After batch edits, consider repair and/or validation (see `docs/api_design.md`
-and `docs/validation.md`).
+They operate on `Triangulation`, not `DelaunayTriangulation`, because an edit
+can invalidate Level 5. After batch edits, use strict certification or the
+consuming Delaunay conversion workflow (see `docs/api_design.md` and
+`docs/validation.md`).
 
 ## Further reading
 

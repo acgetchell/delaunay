@@ -20,7 +20,7 @@ use delaunay::prelude::tds::{InvariantError, TdsConstructionError, TdsError, Ver
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 use delaunay::prelude::topology::validation::{TopologyClassification, euler_characteristic};
 use delaunay::prelude::validation::{
-    DelaunayTriangulationValidationError, TriangulationValidationError, ValidationPolicy,
+    TriangulationRealizationValidationError, TriangulationValidationError, ValidationPolicy,
 };
 use delaunay::vertex;
 
@@ -733,16 +733,15 @@ fn assert_relaxed_explicit_non_delaunay_succeeds<const D: usize>() {
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .expect("explicit simplex specs should validate")
         .construction_options(ConstructionOptions::default().without_final_delaunay_enforcement())
-        .build()
+        .build_triangulation()
         .expect("relaxed explicit construction should accept a realized non-Delaunay mesh");
 
     assert_eq!(dt.number_of_vertices(), D + 2);
     assert_eq!(dt.number_of_simplices(), 2);
-    dt.as_triangulation()
-        .validate_realization()
+    dt.validate_realization()
         .expect("relaxed explicit mesh should pass Levels 1-4");
     assert!(
-        dt.is_valid_delaunay().is_err(),
+        DelaunayTriangulation::try_from_triangulation(dt).is_err(),
         "fixture should still violate Level 5 Delaunay predicates",
     );
 }
@@ -754,7 +753,7 @@ fn assert_relaxed_explicit_invalid_realization_fails<const D: usize>() {
     let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .expect("explicit simplex specs should validate")
         .construction_options(ConstructionOptions::default().without_final_delaunay_enforcement())
-        .build()
+        .build_triangulation()
         .expect_err("relaxed explicit construction should still reject invalid realizations");
 
     match err {
@@ -762,7 +761,7 @@ fn assert_relaxed_explicit_invalid_realization_fails<const D: usize>() {
             source: ExplicitConstructionError::RealizationValidation { source },
         } => assert_matches!(
             source.as_ref(),
-            DelaunayTriangulationValidationError::Realization { source: _ }
+            TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace { .. }
         ),
         other => panic!("expected relaxed explicit realization-validation failure, got {other:?}"),
     }
@@ -1161,7 +1160,7 @@ fn test_explicit_3d_single_tetrahedron() {
 }
 
 /// Non-Delaunay mesh: prescribed connectivity that violates the empty-circumsphere
-/// property. Because the builder returns `DelaunayTriangulation`, Level 4
+/// property. Because the builder returns `DelaunayTriangulation`, Level 5
 /// validation must reject this connectivity before construction succeeds.
 ///
 /// Geometry: A=(0,0), B=(4,0), C=(4,2), D=(1,2). The circumcircle of ABC has
@@ -1469,11 +1468,9 @@ fn test_explicit_error_variant_unsupported_construction_options() {
     assert!(
         matches!(
             mixed_err,
-            DelaunayTriangulationConstructionError::ExplicitConstruction {
-                source: ExplicitConstructionError::UnsupportedConstructionOptions
-            }
+            DelaunayTriangulationConstructionError::Level5CertificationDisabled
         ),
-        "Expected mixed non-enforcing point-insertion options to be rejected, got: {mixed_err}",
+        "Expected a Delaunay terminal to reject disabled Level 5 certification, got: {mixed_err}",
     );
 }
 

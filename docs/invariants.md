@@ -299,7 +299,7 @@ simplicial complexes for geometry:
 Piecewise-linear (PL) manifoldness is strictly stronger than the pseudomanifold conditions. The public API exposes this
 via `TopologyGuarantee`, re-exported at the crate root and in
 `delaunay::prelude::construction` (source:
-[`src/core/validation.rs`](../src/core/validation.rs)):
+[`src/core/triangulation/validation.rs`](../src/core/triangulation/validation.rs)):
 
 - `TopologyGuarantee::Pseudomanifold`
   checks the codimension-1 incidence conditions (plus boundary consistency, connectedness,

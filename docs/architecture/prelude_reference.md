@@ -12,7 +12,7 @@ they exercise.
 | Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
 | Export stable simplicial-complex primitives | `use delaunay::prelude::export::*` |
 | Validation policies, errors, reports, PL-manifold link errors, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
-| Delaunay repair diagnostics and policies | `use delaunay::prelude::repair::*` |
+| Raw-TDS PL-manifold repair plus Delaunay repair diagnostics and policies | `use delaunay::prelude::repair::*` |
 | Delaunayize workflow | `use delaunay::prelude::delaunayize::*` |
 | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
 | Incremental insertion diagnostics and result types | `use delaunay::prelude::insertion::*` |

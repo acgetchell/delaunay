@@ -6,7 +6,7 @@ use super::{
     AMBIGUOUS_SAMPLE_LIMIT, AllFacetsIter, AppliedFlip, BistellarFlipKind, CYCLE_SAMPLE_LIMIT,
     DataType, DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats, Duration,
     EdgeKey, FLIP_SIGNATURE_WINDOW, FacetHandle, FastHashMap, FastHashSet, FastHasher,
-    FlipCycleContext, FlipDirection, FlipError, GlobalTopology, Hash, Hasher, Kernel,
+    FlipCycleContext, FlipDirection, FlipError, GlobalTopologyModelAdapter, Hash, Hasher, Kernel,
     MAX_PRACTICAL_DIMENSION_SIZE, RemovedSimplexVertexSnapshot, RepairQueueOrder, RidgeHandle,
     SimplexKey, SimplexKeyBuffer, SmallBuffer, Tds, TriangleHandle, VecDeque, VertexKey,
     VertexKeyList, apply_delaunay_flip_dynamic, apply_delaunay_flip_k2, apply_delaunay_flip_k3,
@@ -583,8 +583,8 @@ pub(super) fn default_max_flips<const D: usize>(simplex_count: usize) -> usize {
     //   while failing faster (triggering the heuristic rebuild sooner) when cycling.
     // - D>=4: use simplices×(D+1)×4 (min 4096) in debug/test.  Flip convergence is not
     //   guaranteed in D>=4 (Edelsbrunner-Shah 1996), so this budget is intentionally
-    //   conservative: it bounds the cost of user-facing repair APIs (repair_delaunay_with_flips
-    //   and run_flip_repair_fallbacks during incremental insertion) while failing fast
+    //   conservative: it bounds the cost of consuming Delaunay conversion and
+    //   run_flip_repair_fallbacks during incremental insertion while failing fast
     //   when cycling occurs.  Bulk construction for D>=4 does NOT rely on post-construction
     //   flip repair; correctness is ensured by the robust conflict-region detection in
     //   find_conflict_region and the is_delaunay_property_only() check in
@@ -843,6 +843,7 @@ where
 pub(super) fn run_next_ridge_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     kernel: &K,
+    topology_model: &GlobalTopologyModelAdapter<D>,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
     max_flips: usize,
@@ -915,16 +916,20 @@ where
         Err(e) => return Err(e.into()),
     };
 
-    let topology_model = GlobalTopology::DEFAULT.model();
-    let violates =
-        match is_delaunay_violation_k3(tds, kernel, &topology_model, &context, config, diagnostics)
-        {
-            Ok(violates) => violates,
-            Err(FlipError::PredicateFailure { .. }) => {
-                return Ok(true);
-            }
-            Err(e) => return Err(e.into()),
-        };
+    let violates = match is_delaunay_violation_k3(
+        tds,
+        kernel,
+        topology_model,
+        &context,
+        config,
+        diagnostics,
+    ) {
+        Ok(violates) => violates,
+        Err(FlipError::PredicateFailure { .. }) => {
+            return Ok(true);
+        }
+        Err(e) => return Err(e.into()),
+    };
 
     if !violates {
         return Ok(true);
@@ -1042,6 +1047,7 @@ where
 pub(super) fn run_next_edge_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     kernel: &K,
+    topology_model: &GlobalTopologyModelAdapter<D>,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
     max_flips: usize,
@@ -1099,7 +1105,7 @@ where
     let violates = match delaunay_violation_k2_for_facet(
         tds,
         kernel,
-        &GlobalTopology::DEFAULT.model(),
+        topology_model,
         &context.inserted_face_vertices,
         opposite_a,
         opposite_b,
@@ -1235,6 +1241,7 @@ where
 pub(super) fn run_next_triangle_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     kernel: &K,
+    topology_model: &GlobalTopologyModelAdapter<D>,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
     max_flips: usize,
@@ -1288,7 +1295,7 @@ where
     let violates = match delaunay_violation_k3_for_ridge(
         tds,
         kernel,
-        &GlobalTopology::DEFAULT.model(),
+        topology_model,
         &context.inserted_face_vertices,
         &context.removed_face_vertices,
         &context.removed_simplices,
@@ -1419,6 +1426,7 @@ where
 pub(super) fn run_next_facet_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     kernel: &K,
+    topology_model: &GlobalTopologyModelAdapter<D>,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
     max_flips: usize,
@@ -1471,16 +1479,20 @@ where
         Err(e) => return Err(e.into()),
     };
 
-    let topology_model = GlobalTopology::DEFAULT.model();
-    let violates =
-        match is_delaunay_violation_k2(tds, kernel, &topology_model, &context, config, diagnostics)
-        {
-            Ok(violates) => violates,
-            Err(FlipError::PredicateFailure { .. }) => {
-                return Ok(true);
-            }
-            Err(e) => return Err(e.into()),
-        };
+    let violates = match is_delaunay_violation_k2(
+        tds,
+        kernel,
+        topology_model,
+        &context,
+        config,
+        diagnostics,
+    ) {
+        Ok(violates) => violates,
+        Err(FlipError::PredicateFailure { .. }) => {
+            return Ok(true);
+        }
+        Err(e) => return Err(e.into()),
+    };
 
     if !violates {
         return Ok(true);
@@ -1847,6 +1859,7 @@ pub(super) fn enqueue_ridge<U, V, const D: usize>(
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::init_tracing;
     use super::super::*;
     use super::*;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
@@ -2046,6 +2059,7 @@ mod tests {
             &kernel,
             Some(seed_simplices.as_slice()),
             TopologyGuarantee::PLManifold,
+            GlobalTopology::DEFAULT,
             None,
         )
         .unwrap();
@@ -2108,6 +2122,7 @@ mod tests {
             &kernel,
             Some(seed_simplices.as_slice()),
             TopologyGuarantee::PLManifold,
+            GlobalTopology::DEFAULT,
             None,
         );
 

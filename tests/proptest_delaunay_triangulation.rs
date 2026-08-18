@@ -36,8 +36,7 @@
 mod proptest_config;
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, DedupPolicy, DelaunayRepairPolicy, DelaunayTriangulation,
-    TopologyGuarantee, Vertex,
+    ConstructionOptions, DedupPolicy, DelaunayTriangulation, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::insertion::InsertionOutcome;
@@ -899,7 +898,6 @@ macro_rules! gen_duplicate_coords_test {
                     let mut dt = dt.unwrap();
                     dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)
                         .expect("explicit-only validation policy should be compatible");
-                    dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
                     // Select a vertex that is actually present in the triangulation.
                     // `DelaunayTriangulation::builder(...).construction_options(...).build()` may skip some input vertices (e.g., due to degeneracy),
                     // so we must use stored vertices to test duplicate rejection.
@@ -1356,7 +1354,7 @@ gen_insertion_order_robustness_test!(2, 6, 10);
 // Coverage note:
 // - The filters below intentionally trade breadth for determinism and debuggability.
 // - Degenerate/perturbation paths are exercised by unit regressions in
-//   `src/core/triangulation.rs` and the curated edge-case suites in
+//   `src/core/triangulation/` and the curated edge-case suites in
 //   [`tests/delaunay_edge_cases.rs`](tests/delaunay_edge_cases.rs:1) /
 //   [`tests/delaunay_incremental_insertion.rs`](tests/delaunay_incremental_insertion.rs:1).
 // - If these filters start rejecting a large fraction of generated cases, that is a signal

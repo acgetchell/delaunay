@@ -81,17 +81,17 @@ contributor/testing references rather than user-facing workflow guides.
 ### `data_and_serialization`
 
 Stores typed vertex/simplex payloads, uses caller-owned secondary maps, and
-round-trips the serialized TDS through checked Delaunay reconstruction while
-comparing the before/after coordinate sets.
+round-trips the serialized TDS through checked Levels 1–4 reconstruction. It
+then contrasts strict Level 5 certification with consuming `delaunayize`
+repair while comparing the before/after coordinate sets.
 
 - Run: `cargo run --release --example data_and_serialization`
 - Source: [`data_and_serialization.rs`](./data_and_serialization.rs)
 
 ### `delaunayize_repair`
 
-Demonstrates the `delaunayize_by_flips` workflow: bounded topology repair
-followed by flip-based Delaunay repair, with no-op and flip-then-repair cases
-plus custom configuration with fallback.
+Demonstrates the consuming `delaunayize` workflow with bounded Delaunay flip
+repair, no-op and flip-then-repair cases, plus custom fallback configuration.
 
 - Run: `cargo run --release --example delaunayize_repair`
 - Source: [`delaunayize_repair.rs`](./delaunayize_repair.rs)
