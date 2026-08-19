@@ -113,25 +113,25 @@ impl From<ToroidalConstructionModeWire> for ToroidalConstructionMode {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum GlobalTopologyWire {
-    Euclidean,
+    Euclidean {},
     Toroidal {
         periods: Vec<f64>,
         mode: ToroidalConstructionModeWire,
     },
-    Spherical,
-    Hyperbolic,
+    Spherical {},
+    Hyperbolic {},
 }
 
 impl<const D: usize> From<GlobalTopology<D>> for GlobalTopologyWire {
     fn from(value: GlobalTopology<D>) -> Self {
         match value {
-            GlobalTopology::Euclidean => Self::Euclidean,
+            GlobalTopology::Euclidean => Self::Euclidean {},
             GlobalTopology::Toroidal { domain, mode } => Self::Toroidal {
                 periods: domain.periods().to_vec(),
                 mode: mode.into(),
             },
-            GlobalTopology::Spherical => Self::Spherical,
-            GlobalTopology::Hyperbolic => Self::Hyperbolic,
+            GlobalTopology::Spherical => Self::Spherical {},
+            GlobalTopology::Hyperbolic => Self::Hyperbolic {},
         }
     }
 }
@@ -142,7 +142,7 @@ impl GlobalTopologyWire {
         self,
     ) -> Result<GlobalTopology<D>, DelaunayTriangulationWireError> {
         match self {
-            Self::Euclidean => Ok(GlobalTopology::Euclidean),
+            Self::Euclidean {} => Ok(GlobalTopology::Euclidean),
             Self::Toroidal { periods, mode } => {
                 let actual = periods.len();
                 let periods = periods.try_into().map_err(|_| {
@@ -154,8 +154,8 @@ impl GlobalTopologyWire {
                 GlobalTopology::try_toroidal(periods, mode.into())
                     .map_err(|source| DelaunayTriangulationWireError::ToroidalDomain { source })
             }
-            Self::Spherical => Ok(GlobalTopology::Spherical),
-            Self::Hyperbolic => Ok(GlobalTopology::Hyperbolic),
+            Self::Spherical {} => Ok(GlobalTopology::Spherical),
+            Self::Hyperbolic {} => Ok(GlobalTopology::Hyperbolic),
         }
     }
 }
@@ -376,13 +376,56 @@ mod tests {
     }
 
     #[test]
+    fn global_topology_wire_accepts_unit_variants_without_payload_fields() {
+        let euclidean: GlobalTopologyWire =
+            serde_json::from_value(serde_json::json!({ "kind": "euclidean" })).unwrap();
+        let spherical: GlobalTopologyWire =
+            serde_json::from_value(serde_json::json!({ "kind": "spherical" })).unwrap();
+        let hyperbolic: GlobalTopologyWire =
+            serde_json::from_value(serde_json::json!({ "kind": "hyperbolic" })).unwrap();
+
+        assert!(matches!(euclidean, GlobalTopologyWire::Euclidean {}));
+        assert!(matches!(spherical, GlobalTopologyWire::Spherical {}));
+        assert!(matches!(hyperbolic, GlobalTopologyWire::Hyperbolic {}));
+    }
+
+    #[test]
+    fn global_topology_wire_rejects_unknown_fields_for_unit_variants() {
+        for kind in ["euclidean", "spherical", "hyperbolic"] {
+            let error = serde_json::from_value::<GlobalTopologyWire>(serde_json::json!({
+                "kind": kind,
+                "unexpected": true
+            }))
+            .expect_err("unit topology variants must reject payload fields");
+
+            assert!(
+                error.to_string().contains("unknown field `unexpected`"),
+                "unexpected serde error for {kind}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn global_topology_wire_rejects_unknown_toroidal_fields() {
+        let error = serde_json::from_value::<GlobalTopologyWire>(serde_json::json!({
+            "kind": "toroidal",
+            "periods": [1.0, 1.0],
+            "mode": "explicit",
+            "unexpected": true
+        }))
+        .expect_err("toroidal topology must reject fields outside its wire schema");
+
+        assert!(error.to_string().contains("unknown field `unexpected`"));
+    }
+
+    #[test]
     fn robust_deserialize_rejects_non_delaunay_connectivity() {
         init_tracing();
         let json = serde_json::to_string(&DelaunayTriangulationWire {
             schema_version: DELAUNAY_SERIALIZATION_SCHEMA_VERSION,
             tds: non_delaunay_quad_tds(),
             topology_guarantee: TopologyGuaranteeWire::PlManifold,
-            global_topology: GlobalTopologyWire::Euclidean,
+            global_topology: GlobalTopologyWire::Euclidean {},
             validation_policy: ValidationPolicyWire::ExplicitOnly,
         })
         .unwrap();

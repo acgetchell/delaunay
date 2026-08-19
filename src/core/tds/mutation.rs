@@ -12,7 +12,7 @@ use crate::core::collections::{
     SimplexRemovalBuffer, SmallBuffer, VertexKeySet, fast_hash_map_with_capacity,
     fast_hash_set_with_capacity,
 };
-use crate::core::simplex::{NeighborSlot, Simplex};
+use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::vertex::Vertex;
 use std::collections::VecDeque;
 
@@ -2123,13 +2123,38 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                         simplex_key,
                         context: "checking orientation-reversal target".to_string(),
                     })?;
-            if simplex.number_of_vertices() < 2 {
+            let vertex_count = simplex.number_of_vertices();
+            if vertex_count < 2 {
                 return Err(TdsError::DimensionMismatch {
                     expected: 2,
-                    actual: simplex.number_of_vertices(),
+                    actual: vertex_count,
                     context: format!(
                         "simplex {simplex_key:?} needs at least two vertices for orientation reversal"
                     ),
+                });
+            }
+            if vertex_count != D + 1 {
+                return Err(TdsError::DimensionMismatch {
+                    expected: D + 1,
+                    actual: vertex_count,
+                    context: format!(
+                        "{D}-dimensional orientation-reversal target simplex vertex count"
+                    ),
+                });
+            }
+            Self::validate_existing_neighbor_buffer_arity(
+                simplex,
+                "checking orientation-reversal target",
+            )?;
+            if let Some(offsets) = simplex.periodic_vertex_offsets()
+                && offsets.len() != vertex_count
+            {
+                return Err(TdsError::InvalidSimplex {
+                    simplex_id: simplex.uuid(),
+                    source: SimplexValidationError::PeriodicOffsetLengthMismatch {
+                        expected: vertex_count,
+                        found: offsets.len(),
+                    },
                 });
             }
         }
@@ -3433,6 +3458,110 @@ mod tests {
             simplex_key,
             neighbor_key,
         }
+    }
+
+    #[test]
+    fn reverse_simplex_orientations_rejects_malformed_neighbors_without_mutation() {
+        let StageNeighborSlotFixture {
+            mut tds,
+            simplex_key,
+            neighbor_key,
+            ..
+        } = stage_neighbor_slot_fixture();
+        let neighbor = tds.simplex_mut(neighbor_key).unwrap();
+        neighbor
+            .set_neighbors_from_keys([None; 3])
+            .expect("test neighbor buffer should match simplex arity");
+        neighbor.neighbor_slots_mut().unwrap().truncate(2);
+
+        let simplex_vertices_before = tds.simplex(simplex_key).unwrap().vertices().to_vec();
+        let neighbor_vertices_before = tds.simplex(neighbor_key).unwrap().vertices().to_vec();
+        let neighbor_slots_before = tds
+            .simplex(neighbor_key)
+            .unwrap()
+            .neighbor_slots()
+            .unwrap()
+            .clone();
+        let generation = tds.generation();
+
+        let error = tds
+            .reverse_simplex_orientations(&[simplex_key, neighbor_key])
+            .unwrap_err();
+
+        assert_matches!(
+            error,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::LengthMismatch {
+                    actual: 2,
+                    expected: 3,
+                    ..
+                }
+            }
+        );
+        assert_eq!(
+            tds.simplex(simplex_key).unwrap().vertices(),
+            simplex_vertices_before
+        );
+        assert_eq!(
+            tds.simplex(neighbor_key).unwrap().vertices(),
+            neighbor_vertices_before
+        );
+        assert_eq!(
+            tds.simplex(neighbor_key).unwrap().neighbor_slots(),
+            Some(&neighbor_slots_before)
+        );
+        assert_eq!(tds.generation(), generation);
+    }
+
+    #[test]
+    fn reverse_simplex_orientations_rejects_misaligned_offsets_without_mutation() {
+        let StageNeighborSlotFixture {
+            mut tds,
+            simplex_key,
+            neighbor_key,
+            ..
+        } = stage_neighbor_slot_fixture();
+        tds.simplex_mut(neighbor_key)
+            .unwrap()
+            .periodic_vertex_offsets = Some(vec![[0_i8; 2]; 2].into());
+
+        let simplex_vertices_before = tds.simplex(simplex_key).unwrap().vertices().to_vec();
+        let neighbor_vertices_before = tds.simplex(neighbor_key).unwrap().vertices().to_vec();
+        let offsets_before = tds
+            .simplex(neighbor_key)
+            .unwrap()
+            .periodic_vertex_offsets()
+            .unwrap()
+            .to_vec();
+        let generation = tds.generation();
+
+        let error = tds
+            .reverse_simplex_orientations(&[simplex_key, neighbor_key])
+            .unwrap_err();
+
+        assert_matches!(
+            error,
+            TdsError::InvalidSimplex {
+                source: SimplexValidationError::PeriodicOffsetLengthMismatch {
+                    expected: 3,
+                    found: 2,
+                },
+                ..
+            }
+        );
+        assert_eq!(
+            tds.simplex(simplex_key).unwrap().vertices(),
+            simplex_vertices_before
+        );
+        assert_eq!(
+            tds.simplex(neighbor_key).unwrap().vertices(),
+            neighbor_vertices_before
+        );
+        assert_eq!(
+            tds.simplex(neighbor_key).unwrap().periodic_vertex_offsets(),
+            Some(offsets_before.as_slice())
+        );
+        assert_eq!(tds.generation(), generation);
     }
 
     #[test]

@@ -3386,12 +3386,24 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
 /// caches and repair scheduling state. Keeping these fields outside
 /// [`DelaunayTriangulation`] prevents deferred Delaunay repair from placing a
 /// merely realized value inside the Levels 1–5 public owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DelaunayCandidateCertification {
+    /// The construction workspace still requires its final Level 5 proof.
+    Unproven,
+    /// Retry selection already proved Level 5 after the last topology mutation.
+    Proven {
+        /// TDS generation for which the Level 5 proof was established.
+        generation: u64,
+    },
+}
+
 #[derive(Clone, Debug)]
 struct DelaunayConstructionCandidate<K, U, V, const D: usize> {
     tri: Triangulation<K, U, V, D>,
     insertion_state: DelaunayInsertionState,
     spatial_index: Option<HashGridIndex<D>>,
     euclidean_report_domain: EuclideanDelaunayReportDomain,
+    delaunay_certification: DelaunayCandidateCertification,
 }
 
 impl<K, U, V, const D: usize> DelaunayConstructionCandidate<K, U, V, D>
@@ -3428,6 +3440,7 @@ where
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: None,
             euclidean_report_domain: EuclideanDelaunayReportDomain::CompletePointSet,
+            delaunay_certification: DelaunayCandidateCertification::Unproven,
         })
     }
 
@@ -3445,11 +3458,32 @@ where
         verify_triangulation_via_flip_predicates(&self.tri)
     }
 
+    /// Proves Level 5 for retry selection and retains that evidence for publication.
+    fn certify_via_flip_predicates(&mut self) -> Result<(), DelaunayRepairError> {
+        self.verify_via_flip_predicates()?;
+        self.delaunay_certification = DelaunayCandidateCertification::Proven {
+            generation: self.tri.tds.generation(),
+        };
+        Ok(())
+    }
+
+    /// Returns whether publication still needs to perform Level 5 certification.
+    fn requires_delaunay_certification(&self) -> bool {
+        match self.delaunay_certification {
+            DelaunayCandidateCertification::Unproven => true,
+            DelaunayCandidateCertification::Proven { generation } => {
+                generation != self.tri.tds.generation()
+            }
+        }
+    }
+
     /// Consumes a fully checked construction workspace into the Level 5 owner.
     fn try_into_delaunay(
         self,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationValidationError> {
-        self.validate_delaunay()?;
+        if self.requires_delaunay_certification() {
+            self.validate_delaunay()?;
+        }
         Ok(DelaunayTriangulation {
             tri: self.tri,
             insertion_state: self.insertion_state,
@@ -3523,12 +3557,12 @@ where
             final_delaunay,
             insertion_policy,
         ) {
-            Ok(candidate) => {
+            Ok(mut candidate) => {
                 if !enforce_final_delaunay {
                     log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
                     return Ok(candidate);
                 }
-                match candidate.verify_via_flip_predicates() {
+                match candidate.certify_via_flip_predicates() {
                     Ok(()) => {
                         log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
                         return Ok(candidate);
@@ -3617,7 +3651,7 @@ where
                 final_delaunay,
                 insertion_policy,
             ) {
-                Ok(candidate) => {
+                Ok(mut candidate) => {
                     if !enforce_final_delaunay {
                         log_construction_retry_result(
                             attempt,
@@ -3629,7 +3663,7 @@ where
                         );
                         return Ok(candidate);
                     }
-                    match candidate.verify_via_flip_predicates() {
+                    match candidate.certify_via_flip_predicates() {
                         Ok(()) => {
                             log_construction_retry_result(
                                 attempt,
@@ -3773,7 +3807,7 @@ where
                 final_delaunay,
                 insertion_policy,
             ) {
-                Ok((candidate, mut stats)) => {
+                Ok((mut candidate, mut stats)) => {
                     if !enforce_final_delaunay {
                         aggregate_stats.merge_from(&stats);
                         log_construction_retry_result(
@@ -3787,7 +3821,7 @@ where
                         return Ok((candidate, aggregate_stats));
                     }
                     let delaunay_started = Instant::now();
-                    let delaunay_result = candidate.verify_via_flip_predicates();
+                    let delaunay_result = candidate.certify_via_flip_predicates();
                     stats
                         .telemetry
                         .record_construction_final_delaunay_validation_timing(
@@ -3911,7 +3945,7 @@ where
                 final_delaunay,
                 insertion_policy,
             ) {
-                Ok((candidate, mut stats)) => {
+                Ok((mut candidate, mut stats)) => {
                     if !enforce_final_delaunay {
                         aggregate_stats.merge_from(&stats);
                         log_construction_retry_result(
@@ -3925,7 +3959,7 @@ where
                         return Ok((candidate, aggregate_stats));
                     }
                     let delaunay_started = Instant::now();
-                    let delaunay_result = candidate.verify_via_flip_predicates();
+                    let delaunay_result = candidate.certify_via_flip_predicates();
                     stats
                         .telemetry
                         .record_construction_final_delaunay_validation_timing(
@@ -4041,7 +4075,7 @@ where
         insertion_policy: InsertionConstructionPolicy,
     ) -> Result<DelaunayConstructionCandidate<K, U, V, D>, DelaunayTriangulationConstructionError>
     {
-        let dt = Self::build_with_kernel_inner_seeded(
+        Self::build_with_kernel_inner_seeded(
             kernel,
             vertices,
             topology_guarantee,
@@ -4049,33 +4083,7 @@ where
             grid_cell_size,
             final_delaunay,
             insertion_policy,
-        )?;
-        let enforce_final_delaunay = final_delaunay.enforces_final_delaunay();
-
-        // `DelaunayCheckPolicy::EndOnly`: always run a final global Delaunay validation pass after
-        // batch construction.
-        if enforce_final_delaunay {
-            tracing::debug!("post-construction: starting Delaunay validation (build)");
-            let delaunay_started = Instant::now();
-            let delaunay_result = dt.verify_via_flip_predicates();
-            tracing::debug!(
-                elapsed = ?delaunay_started.elapsed(),
-                success = delaunay_result.is_ok(),
-                "post-construction: Delaunay validation (build) completed"
-            );
-            delaunay_result.map_err(|source| {
-                DelaunayTriangulationConstructionError::Triangulation {
-                    source: DelaunayConstructionFailure::FinalDelaunayValidation {
-                        context: FinalDelaunayValidationContext::ConstructionFinalize,
-                        source: DelaunayTriangulationValidationError::VerificationFailed {
-                            source: Box::new(DelaunayVerificationError::from(source)),
-                        },
-                    },
-                }
-            })?;
-        }
-
-        Ok(dt)
+        )
     }
 
     /// Runs batch construction with aggregate statistics without changing the
@@ -4098,7 +4106,7 @@ where
         ),
         DelaunayTriangulationConstructionErrorWithStatistics,
     > {
-        let (dt, mut stats) = Self::build_with_kernel_inner_seeded_with_construction_statistics(
+        Self::build_with_kernel_inner_seeded_with_construction_statistics(
             kernel,
             vertices,
             topology_guarantee,
@@ -4106,42 +4114,7 @@ where
             grid_cell_size,
             final_delaunay,
             insertion_policy,
-        )?;
-        let enforce_final_delaunay = final_delaunay.enforces_final_delaunay();
-
-        // `DelaunayCheckPolicy::EndOnly`: always run a final global Delaunay validation pass after
-        // batch construction.
-        if enforce_final_delaunay {
-            tracing::debug!("post-construction: starting Delaunay validation (build stats)");
-            let delaunay_started = Instant::now();
-            let delaunay_result = dt.verify_via_flip_predicates();
-            let delaunay_elapsed = delaunay_started.elapsed();
-            stats
-                .telemetry
-                .record_construction_final_delaunay_validation_timing(duration_nanos_saturating(
-                    delaunay_elapsed,
-                ));
-            tracing::debug!(
-                elapsed = ?delaunay_elapsed,
-                success = delaunay_result.is_ok(),
-                "post-construction: Delaunay validation (build stats) completed"
-            );
-            if let Err(err) = delaunay_result {
-                return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                    error: DelaunayTriangulationConstructionError::Triangulation {
-                        source: DelaunayConstructionFailure::FinalDelaunayValidation {
-                            context: FinalDelaunayValidationContext::ConstructionFinalize,
-                            source: DelaunayTriangulationValidationError::VerificationFailed {
-                                source: Box::new(DelaunayVerificationError::from(err)),
-                            },
-                        },
-                    },
-                    statistics: stats,
-                });
-            }
-        }
-
-        Ok((dt, stats))
+        )
     }
 
     /// Implements the seeded batch-construction core so retry and statistics
@@ -5464,13 +5437,24 @@ where
                 statistics: ConstructionStatistics::default(),
             });
         }
-        let (candidate, statistics) = Self::build_candidate_with_kernel_options_and_statistics(
+        let (candidate, mut statistics) = Self::build_candidate_with_kernel_options_and_statistics(
             kernel,
             vertices,
             topology_guarantee,
             options,
         )?;
-        match candidate.try_into_delaunay() {
+        let certification_started = candidate
+            .requires_delaunay_certification()
+            .then(Instant::now);
+        let result = candidate.try_into_delaunay();
+        if let Some(certification_started) = certification_started {
+            statistics
+                .telemetry
+                .record_construction_final_delaunay_validation_timing(duration_nanos_saturating(
+                    certification_started.elapsed(),
+                ));
+        }
+        match result {
             Ok(delaunay) => Ok((delaunay, statistics)),
             Err(source) => Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error: DelaunayTriangulationConstructionError::Triangulation {
@@ -6231,7 +6215,26 @@ mod tests {
             insertion_state: dt.insertion_state,
             spatial_index: dt.spatial_index,
             euclidean_report_domain: dt.euclidean_report_domain,
+            delaunay_certification: DelaunayCandidateCertification::Unproven,
         }
+    }
+
+    #[test]
+    fn construction_candidate_certification_is_bound_to_tds_generation() {
+        let vertices = [
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+        ];
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let mut candidate = into_construction_candidate(dt);
+
+        assert!(candidate.requires_delaunay_certification());
+        candidate.certify_via_flip_predicates().unwrap();
+        assert!(!candidate.requires_delaunay_certification());
+
+        candidate.tri.tds.mark_topology_modified_for_test();
+        assert!(candidate.requires_delaunay_certification());
     }
 
     impl FinalDelaunayEnforcement {
