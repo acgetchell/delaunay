@@ -1909,6 +1909,7 @@ mod tests {
     // Type aliases for commonly used types to reduce repetition
     type TestVertex3D = Vertex<(), 3>;
     type TestVertex2D = Vertex<(), 2>;
+    type CanonicalSimplexRecord = (Uuid, Vec<Uuid>, Option<Vec<Option<Uuid>>>);
 
     struct NonDataType(String);
 
@@ -1926,6 +1927,40 @@ mod tests {
             data: Some(data),
             periodic_vertex_offsets: None,
         }
+    }
+
+    /// Captures stable simplex incidence so snapshot hydration can be compared across fresh keys.
+    fn canonical_simplex_records(
+        dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>,
+    ) -> Vec<CanonicalSimplexRecord> {
+        let mut records: Vec<_> = dt
+            .simplices()
+            .map(|(_, simplex)| {
+                let vertices = simplex
+                    .vertices()
+                    .iter()
+                    .map(|&vertex_key| {
+                        dt.vertex(vertex_key)
+                            .expect("simplex should reference a live vertex")
+                            .uuid()
+                    })
+                    .collect();
+                let neighbors = simplex.neighbors().map(|neighbor_keys| {
+                    neighbor_keys
+                        .map(|neighbor_key| {
+                            neighbor_key.map(|key| {
+                                dt.simplex(key)
+                                    .expect("neighbor should reference a live simplex")
+                                    .uuid()
+                            })
+                        })
+                        .collect()
+                });
+                (simplex.uuid(), vertices, neighbors)
+            })
+            .collect();
+        records.sort_unstable_by_key(|(simplex_uuid, _, _)| *simplex_uuid);
+        records
     }
 
     /// Creates distinct synthetic vertex keys for tests.
@@ -3137,18 +3172,20 @@ mod tests {
     #[test]
     fn simplex_to_and_from_json() {
         // Test serialization through TDS context.
-        // Use a non-degenerate 3D tetrahedron so `DelaunayTriangulationBuilder::build` can construct a
-        // valid initial simplex.
+        // Use a non-degenerate 3D tetrahedron with an interior point so the
+        // snapshot contains multiple simplices and non-boundary neighbors.
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.2, 0.2, 0.2]).unwrap(),
         ];
         let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let expected_vertices = dt.number_of_vertices();
         let expected_simplices = dt.number_of_simplices();
         let expected_dimension = dt.dim();
+        let expected_simplex_records = canonical_simplex_records(&dt);
 
         // Exercise the TDS snapshot boundary directly. Delaunay owner
         // checkpoints use a distinct versioned envelope with proof context.
@@ -3167,6 +3204,10 @@ mod tests {
         assert_eq!(deserialized.number_of_simplices(), expected_simplices);
         assert_eq!(deserialized.dim(), expected_dimension);
         assert!(deserialized.validation_report().is_ok());
+        assert_eq!(
+            canonical_simplex_records(&deserialized),
+            expected_simplex_records
+        );
 
         // Verify simplices within DT can be accessed
         assert_ne!(deserialized.number_of_simplices(), 0);

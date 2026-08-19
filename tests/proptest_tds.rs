@@ -1,9 +1,12 @@
 //! Property-based tests for Tds (Triangulation Data Structure) invariants.
 //!
-//! This module tests the Levels 1–2 element and combinatorial-consistency
-//! invariants owned by the `Tds` layer. These tests do not use geometric
-//! predicates: they operate on vertex keys, simplex keys, neighbor relationships,
-//! and mappings.
+//! This module primarily tests the Levels 1–2 element and
+//! combinatorial-consistency invariants owned by the `Tds` layer through vertex
+//! keys, simplex keys, neighbor relationships, and mappings. The
+//! `gen_is_valid_topology` properties and active high-dimensional smoke tests
+//! also construct a `DelaunayTriangulation`, whose construction may evaluate
+//! geometric predicates, then check Level 3 through
+//! `as_triangulation().is_valid_topology()`.
 //!
 //! The `Tds` is geometry-independent; Level 3 intrinsic PL topology belongs to
 //! `Triangulation`.
