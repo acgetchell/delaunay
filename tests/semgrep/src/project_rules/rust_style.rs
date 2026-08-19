@@ -259,8 +259,8 @@ fn try_into_validated_delaunay() {}
 // ok: delaunay.rust.no-cumulative-revalidation-delaunay-promotion
 fn try_into_delaunay() {}
 
-fn verify_triangulation_via_flip_predicates<K, U, const D: usize>(
-    triangulation: &Triangulation<K, U, D>,
+fn verify_triangulation_via_flip_predicates<K, U, V, const D: usize>(
+    triangulation: &Triangulation<K, U, V, D>,
 ) -> Result<(), Error>
 where
     K: Kernel<D>,

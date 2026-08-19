@@ -3393,7 +3393,7 @@ mod tests {
     }
 
     #[test]
-    fn stage_neighbor_slot_rejects_malformed_simplex_and_neighbor_buffers() {
+    fn stage_neighbor_slot_rejects_invalid_or_malformed_candidates_without_mutation() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v_a = tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
@@ -3417,6 +3417,73 @@ mod tests {
                 Simplex::try_new_with_data(vec![v_b, v_a, v_d], None).unwrap(),
             )
             .unwrap();
+
+        let generation = tds.generation();
+        let missing_key = SimplexKey::from(KeyData::from_ffi(0xDEAD));
+
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(missing_key, 0, None)
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::SimplexNotFound { simplex_key, .. } if simplex_key == missing_key
+        );
+
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, 3, None)
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::IndexOutOfBounds {
+                index: 3,
+                bound: 3,
+                ..
+            }
+        );
+
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, 0, Some(simplex_key))
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::NonPeriodicSelfNeighbor {
+                    simplex_key: rejected,
+                    facet_index: 0,
+                    ..
+                }
+            } if rejected == simplex_key
+        );
+
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, 0, Some(missing_key))
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::MissingNeighborSimplex {
+                    neighbor_key: missing,
+                    facet_index: 0,
+                    ..
+                }
+            } if missing == missing_key
+        );
+
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, 0, Some(neighbor_key))
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::MirrorFacetMissing { facet_index: 0, .. }
+            }
+        );
+        assert_eq!(tds.generation(), generation);
 
         let simplex = tds.simplex_mut(simplex_key).unwrap();
         simplex
@@ -3462,6 +3529,24 @@ mod tests {
             }
         );
 
+        tds.simplex_mut(neighbor_key)
+            .unwrap()
+            .set_neighbors_from_keys([None; 3])
+            .expect("test neighbor buffer should match simplex arity");
+        tds.simplex_mut(neighbor_key).unwrap().push_vertex_key(v_c);
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, 2, Some(neighbor_key))
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::DimensionMismatch {
+                expected: 3,
+                actual: 4,
+                ..
+            }
+        );
+
         tds.push_first_simplex_vertex_key_storage_only_for_test(v_d);
         assert_eq!(tds.simplex(simplex_key).unwrap().number_of_vertices(), 4);
         let error = tds
@@ -3476,6 +3561,7 @@ mod tests {
                 ..
             }
         );
+        assert_eq!(tds.generation(), generation);
     }
 
     #[test]

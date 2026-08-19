@@ -890,6 +890,60 @@ fn test_builder_build_with_statistics_explicit_records_telemetry() {
     assert!(dt.validate().is_ok());
 }
 
+/// The Levels 1–4 statistics terminal preserves explicit connectivity without
+/// requiring or claiming a Level 5 proof.
+#[test]
+fn test_builder_build_triangulation_with_statistics_explicit() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+    ];
+    let simplices = vec![vec![0, 1, 2]];
+
+    let (triangulation, stats) =
+        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+            .unwrap()
+            .validation_policy(ValidationPolicy::Always)
+            .build_triangulation_with_statistics()
+            .expect("explicit Levels 1-4 statistics build should succeed");
+
+    assert_eq!(triangulation.number_of_vertices(), stats.inserted);
+    assert_eq!(triangulation.number_of_simplices(), 1);
+    assert_eq!(triangulation.validation_policy(), ValidationPolicy::Always);
+    assert_eq!(stats.total_attempts, 0);
+    assert_eq!(stats.telemetry.insertion_wall_time_calls, 0);
+    assert!(stats.telemetry.has_data());
+    triangulation
+        .validate_realization()
+        .expect("the returned triangulation should remain valid through Level 4");
+}
+
+/// Statistics-bearing Delaunay terminals reject options that disable the proof
+/// they promise and retain an inspectable default statistics record.
+#[test]
+fn test_builder_build_with_kernel_and_statistics_rejects_disabled_level_five() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+    ];
+    let kernel = RobustKernel::new();
+
+    let error = DelaunayTriangulationBuilder::new(&vertices)
+        .construction_options(ConstructionOptions::default().without_final_delaunay_enforcement())
+        .build_with_kernel_and_statistics(&kernel)
+        .expect_err("a Delaunay terminal must not publish without Level 5 certification");
+
+    assert_matches!(
+        error.error,
+        DelaunayTriangulationConstructionError::Level5CertificationDisabled
+    );
+    assert_eq!(error.statistics.inserted, 0);
+    assert_eq!(error.statistics.total_attempts, 0);
+    assert!(error.statistics.attempts_histogram.is_empty());
+}
+
 /// Explicit construction normalizes incoherent local simplex orderings.
 ///
 /// Swapping two vertices in one simplex flips its local orientation relative to an
@@ -1449,6 +1503,21 @@ fn test_explicit_error_variant_incompatible_topology() {
         ),
         "Expected IncompatibleTopology, got: {err}"
     );
+
+    let triangulation_err =
+        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+            .unwrap()
+            .try_toroidal([1.0, 1.0])
+            .unwrap()
+            .build_triangulation()
+            .unwrap_err();
+
+    assert_matches!(
+        triangulation_err,
+        DelaunayTriangulationConstructionError::ExplicitConstruction {
+            source: ExplicitConstructionError::IncompatibleTopology
+        }
+    );
 }
 
 /// Error variant: explicit connectivity rejects point-insertion-only construction options.
@@ -1496,6 +1565,22 @@ fn test_explicit_error_variant_unsupported_construction_options() {
             DelaunayTriangulationConstructionError::Level5CertificationDisabled
         ),
         "Expected a Delaunay terminal to reject disabled Level 5 certification, got: {mixed_err}",
+    );
+
+    let triangulation_err =
+        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+            .unwrap()
+            .construction_options(
+                ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input),
+            )
+            .build_triangulation()
+            .unwrap_err();
+
+    assert_matches!(
+        triangulation_err,
+        DelaunayTriangulationConstructionError::ExplicitConstruction {
+            source: ExplicitConstructionError::UnsupportedConstructionOptions
+        }
     );
 }
 
