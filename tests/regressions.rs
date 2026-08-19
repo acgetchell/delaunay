@@ -31,6 +31,77 @@ use delaunay::vertex;
 use uuid::Uuid;
 
 #[test]
+fn regression_issue_557_builder_validation_policy_is_order_independent() {
+    let vertices = [
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+    ];
+    let options =
+        ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
+
+    let policy_then_options = DelaunayTriangulationBuilder::new(&vertices)
+        .validation_policy(ValidationPolicy::Always)
+        .construction_options(options)
+        .build()
+        .expect("construction options must not overwrite the builder validation policy");
+    let options_then_policy = DelaunayTriangulationBuilder::new(&vertices)
+        .construction_options(options)
+        .validation_policy(ValidationPolicy::Always)
+        .build()
+        .expect("builder setter order must not change the resulting policy");
+
+    assert_eq!(
+        policy_then_options.validation_policy(),
+        ValidationPolicy::Always
+    );
+    assert_eq!(
+        options_then_policy.validation_policy(),
+        ValidationPolicy::Always
+    );
+    policy_then_options
+        .validate()
+        .expect("policy-first construction must preserve the Level 5 proof");
+    options_then_policy
+        .validate()
+        .expect("options-first construction must preserve the Level 5 proof");
+}
+
+#[test]
+fn regression_issue_557_delaunay_checkpoint_preserves_proof_context() {
+    let vertices = [
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+    ];
+    let original: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
+        DelaunayTriangulationBuilder::new(&vertices)
+            .topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .validation_policy(ValidationPolicy::Never)
+            .build_with_kernel(&RobustKernel::new())
+            .expect("fixture construction should succeed");
+
+    let checkpoint = serde_json::to_string(&original).expect("checkpoint should serialize");
+    let restored: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
+        serde_json::from_str(&checkpoint).expect("checkpoint should re-prove Levels 1-5");
+
+    assert_eq!(
+        restored.topology_guarantee(),
+        TopologyGuarantee::Pseudomanifold
+    );
+    assert_eq!(restored.global_topology(), GlobalTopology::Euclidean);
+    assert_eq!(restored.validation_policy(), ValidationPolicy::Never);
+    restored
+        .validate()
+        .expect("restored checkpoint must retain the cumulative Level 5 proof");
+
+    let legacy_tds_json = serde_json::to_string(&original.into_triangulation().into_tds())
+        .expect("legacy fixture should serialize");
+    serde_json::from_str::<DelaunayTriangulation<RobustKernel<f64>, (), (), 2>>(&legacy_tds_json)
+        .expect_err("a TDS-only payload must not silently acquire default owner context");
+}
+
+#[test]
 fn regression_issue_557_triangulation_topology_setter_preserves_levels_one_through_four() {
     let mut tri: Triangulation<_, (), (), 2> = DelaunayTriangulation::empty().into_triangulation();
     let previous_topology = tri.global_topology();
@@ -1148,6 +1219,7 @@ fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
         "all prefix vertices should insert without orientation-related skips",
     );
     assert_eq!(stats.total_skipped(), 0);
+    assert_eq!(dt.validation_policy(), ValidationPolicy::Always);
     assert!(
         dt.as_triangulation().is_valid_topology().is_ok(),
         "bulk repair must leave all simplices in positive geometric orientation",

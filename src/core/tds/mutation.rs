@@ -3392,8 +3392,16 @@ mod tests {
         assert_matches!(err, TdsError::InvalidNeighbors { .. });
     }
 
-    #[test]
-    fn stage_neighbor_slot_rejects_invalid_or_malformed_candidates_without_mutation() {
+    struct StageNeighborSlotFixture {
+        tds: Tds<(), (), 2>,
+        v_c: VertexKey,
+        v_d: VertexKey,
+        simplex_key: SimplexKey,
+        neighbor_key: SimplexKey,
+    }
+
+    /// Builds adjacent 2D simplices for neighbor-slot rejection tests.
+    fn stage_neighbor_slot_fixture() -> StageNeighborSlotFixture {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v_a = tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
@@ -3418,6 +3426,23 @@ mod tests {
             )
             .unwrap();
 
+        StageNeighborSlotFixture {
+            tds,
+            v_c,
+            v_d,
+            simplex_key,
+            neighbor_key,
+        }
+    }
+
+    #[test]
+    fn stage_neighbor_slot_rejects_invalid_candidates_without_mutation() {
+        let StageNeighborSlotFixture {
+            mut tds,
+            simplex_key,
+            neighbor_key,
+            ..
+        } = stage_neighbor_slot_fixture();
         let generation = tds.generation();
         let missing_key = SimplexKey::from(KeyData::from_ffi(0xDEAD));
 
@@ -3484,6 +3509,18 @@ mod tests {
             }
         );
         assert_eq!(tds.generation(), generation);
+    }
+
+    #[test]
+    fn stage_neighbor_slot_rejects_malformed_simplices_and_buffers_without_mutation() {
+        let StageNeighborSlotFixture {
+            mut tds,
+            v_c,
+            v_d,
+            simplex_key,
+            neighbor_key,
+        } = stage_neighbor_slot_fixture();
+        let generation = tds.generation();
 
         let simplex = tds.simplex_mut(simplex_key).unwrap();
         simplex

@@ -781,6 +781,29 @@ pub fn silent_validation_configuration_bad<K, U, V, const D: usize>(
     let _ = triangulation.try_set_topology_guarantee(TopologyGuarantee::PLManifold);
 }
 
+// ruleid: delaunay.rust.no-validation-policy-in-construction-options
+struct ConstructionOptions {
+    validation_policy: Option<ValidationPolicy>,
+}
+
+struct DelaunayOwnerTdsOnlySerializationFixture {
+    tri: TriangulationStorageFixture,
+}
+
+struct TriangulationStorageFixture {
+    tds: Tds,
+}
+
+// ruleid: delaunay.rust.no-tds-only-delaunay-serialization
+impl Serialize for DelaunayTriangulation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.tri.tds.serialize(serializer)
+    }
+}
+
 // ruleid: delaunay.rust.no-topology-only-pachner-terminal
 pub trait TopologyPachnerMoves {}
 

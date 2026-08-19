@@ -131,8 +131,9 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
 - `locality.rs` - local seed/frontier helpers for Hilbert-local construction
   and repair.
 - `repair.rs` - Delaunay repair policies, rebuild config, and repair outcomes.
-- `serialization.rs` - conversion to/from `Tds` with topology metadata reset
-  rules.
+- `serialization.rs` - versioned owner-level persistence that stores the
+  canonical `Tds` plus topology guarantee, global topology, and validation
+  policy, then re-proves Levels 3–5 during restoration.
 - `spherical.rs` - bounded `S^2`/`S^3` construction,
   realization-validation, and empty-cap Delaunay backend using the topology
   space coordinate/metric backend.
@@ -157,9 +158,10 @@ operations require only the Levels 1–4 owner.
   visualization tools, analysis pipelines, and downstream crates.
 
 This layer is distinct from the TDS snapshot/hydration boundary. TDS serde
-remains the canonical validated persistence path; `io::visualization` exposes
-stable UUID-based records for consumers that should not depend on runtime
-slotmap handles.
+persists the Levels 1–2 owner; Delaunay serde wraps that snapshot with the
+higher-layer proof context needed for validated restoration.
+`io::visualization` exposes stable UUID-based records for consumers that should
+not depend on runtime slotmap handles.
 
 ## Topology Layer
 

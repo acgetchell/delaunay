@@ -1848,7 +1848,6 @@ pub struct ConstructionOptions {
     pub(crate) initial_simplex: InitialSimplexStrategy,
     pub(crate) retry_policy: RetryPolicy,
     pub(crate) final_delaunay: FinalDelaunayEnforcement,
-    pub(crate) validation_policy: Option<ValidationPolicy>,
     pub(crate) insertion_policy: InsertionConstructionPolicy,
 }
 
@@ -1860,7 +1859,6 @@ impl Default for ConstructionOptions {
             initial_simplex: InitialSimplexStrategy::default(),
             retry_policy: RetryPolicy::default(),
             final_delaunay: FinalDelaunayEnforcement::strict_default(),
-            validation_policy: None,
             insertion_policy: InsertionConstructionPolicy::default(),
         }
     }
@@ -1889,14 +1887,6 @@ impl ConstructionOptions {
     #[must_use]
     pub const fn retry_policy(&self) -> RetryPolicy {
         self.retry_policy
-    }
-
-    /// Returns the caller-selected validation cadence for the constructed value.
-    ///
-    /// `None` means the cadence is derived from the selected [`TopologyGuarantee`].
-    #[must_use]
-    pub const fn validation_policy(&self) -> Option<ValidationPolicy> {
-        self.validation_policy
     }
 
     /// Returns the effective automatic local Delaunay repair policy used during batch construction.
@@ -1971,35 +1961,6 @@ impl ConstructionOptions {
     #[must_use]
     pub const fn with_retry_policy(mut self, retry_policy: RetryPolicy) -> Self {
         self.retry_policy = retry_policy;
-        self
-    }
-
-    /// Selects the global validation cadence independently of the mathematical topology guarantee.
-    ///
-    /// Mutation paths always enforce their scoped Levels 1–4 postconditions.
-    /// [`ValidationPolicy::Always`] additionally requests a full global audit
-    /// after every insertion; [`ValidationPolicy::ExplicitOnly`] leaves those
-    /// full audits to explicit checkpoints.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::{ConstructionOptions, ValidationPolicy};
-    ///
-    /// let options = ConstructionOptions::default()
-    ///     .with_validation_policy(ValidationPolicy::Always);
-    /// assert_eq!(options.validation_policy(), Some(ValidationPolicy::Always));
-    /// ```
-    #[must_use]
-    pub const fn with_validation_policy(mut self, validation_policy: ValidationPolicy) -> Self {
-        self.validation_policy = Some(validation_policy);
-        self
-    }
-
-    /// Removes the caller-visible validation-cadence override for option comparison.
-    #[must_use]
-    pub(crate) const fn without_validation_policy(mut self) -> Self {
-        self.validation_policy = None;
         self
     }
 
@@ -5400,22 +5361,12 @@ where
             initial_simplex,
             retry_policy,
             final_delaunay,
-            validation_policy,
-            mut insertion_policy,
+            insertion_policy,
         } = options;
 
-        if let Some(policy) = validation_policy {
-            if !topology_guarantee.is_compatible_with_policy(policy) {
-                return Err(
-                    ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
-                        topology_guarantee,
-                        validation_policy: policy,
-                    }
-                    .into(),
-                );
-            }
-            insertion_policy.validation_policy = Some(policy);
-        }
+        let validation_policy = insertion_policy
+            .validation_policy
+            .unwrap_or_else(|| topology_guarantee.default_validation_policy());
 
         let preprocessed = Self::preprocess_vertices_for_construction(
             vertices,
@@ -5485,8 +5436,8 @@ where
             result = build_with_vertices(fallback);
         }
 
-        if let (Ok(candidate), Some(policy)) = (&mut result, validation_policy) {
-            candidate.tri.validation_policy = policy;
+        if let Ok(candidate) = &mut result {
+            candidate.tri.validation_policy = validation_policy;
         }
         result
     }
@@ -5583,23 +5534,12 @@ where
             initial_simplex,
             retry_policy,
             final_delaunay,
-            validation_policy,
-            mut insertion_policy,
+            insertion_policy,
         } = options;
 
-        if let Some(policy) = validation_policy {
-            if !topology_guarantee.is_compatible_with_policy(policy) {
-                return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                    error: ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
-                        topology_guarantee,
-                        validation_policy: policy,
-                    }
-                    .into(),
-                    statistics: ConstructionStatistics::default(),
-                });
-            }
-            insertion_policy.validation_policy = Some(policy);
-        }
+        let validation_policy = insertion_policy
+            .validation_policy
+            .unwrap_or_else(|| topology_guarantee.default_validation_policy());
 
         let preprocessing_started = Instant::now();
         let preprocessed = match Self::preprocess_vertices_for_construction(
@@ -5680,9 +5620,7 @@ where
 
         match build_with_vertices(primary_vertices) {
             Ok((mut dt, mut stats)) => {
-                if let Some(policy) = validation_policy {
-                    dt.tri.validation_policy = policy;
-                }
+                dt.tri.validation_policy = validation_policy;
                 stats
                     .telemetry
                     .record_construction_preprocessing_timing(preprocessing_nanos);
@@ -5699,9 +5637,7 @@ where
 
                 match build_with_vertices(fallback) {
                     Ok((mut dt, stats)) => {
-                        if let Some(policy) = validation_policy {
-                            dt.tri.validation_policy = policy;
-                        }
+                        dt.tri.validation_policy = validation_policy;
                         let mut aggregate = primary_err.statistics;
                         aggregate.merge_from(&stats);
                         aggregate

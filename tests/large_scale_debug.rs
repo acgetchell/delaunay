@@ -1357,11 +1357,11 @@ where
             let t_batch = Instant::now();
             let options = ConstructionOptions::default()
                 .with_initial_simplex_strategy(initial_simplex_strategy)
-                .with_batch_repair_policy(repair_policy)
-                .with_validation_policy(validation_policy);
+                .with_batch_repair_policy(repair_policy);
             match DelaunayTriangulationBuilder::new(&vertices)
                 .topology_guarantee(topology_guarantee)
                 .construction_options(options)
+                .validation_policy(validation_policy)
                 .build_with_kernel_and_statistics(&kernel)
             {
                 Ok((dt, stats)) => {

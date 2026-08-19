@@ -2035,6 +2035,46 @@ rules:
         - "/tests/semgrep/src/project_rules/rust_style.rs"
     pattern-regex: '\.\s*set_(?:validation_policy|topology_guarantee)\s*\('
 
+  - id: delaunay.rust.no-validation-policy-in-construction-options
+    languages:
+      - generic
+    severity: ERROR
+    message: >-
+      ValidationPolicy belongs to DelaunayTriangulationBuilder; keep
+      ConstructionOptions limited to algorithmic construction settings.
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Giving both the builder and ConstructionOptions ownership of validation
+        cadence makes fluent setter order observable and lets an options bundle
+        silently replace the requested proof-audit policy.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '(?s)\bstruct\s+ConstructionOptions\s*\{[^}]*\bvalidation_policy\s*:'
+
+  - id: delaunay.rust.no-tds-only-delaunay-serialization
+    languages:
+      - generic
+    severity: ERROR
+    message: >-
+      Serialize the versioned Delaunay owner checkpoint, not the embedded TDS
+      alone.
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        TDS-only serialization drops the topology guarantee, global topology,
+        and validation policy. Reloading that payload with defaults changes the
+        mathematical contract while appearing to restore the same proof owner.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '(?s)\bimpl[^{}]*\bSerialize\s+for\s+DelaunayTriangulation[^{}]*\{.*?\bself\s*\.\s*tri\s*\.\s*tds\s*\.\s*serialize\s*\('
+
   - id: delaunay.rust.no-topology-only-pachner-terminal
     languages:
       - generic

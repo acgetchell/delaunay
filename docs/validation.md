@@ -458,6 +458,13 @@ cannot obtain mutable storage or edit its fields directly. An incomplete
 `Tds` can still be valid at Levels 1–2; construction completion additionally
 requires a full-dimensional simplex and an atomic cumulative audit.
 
+The serde boundaries mirror those proof owners. Serializing `Tds` produces a
+Levels 1–2 snapshot. Serializing `DelaunayTriangulation` produces a versioned
+owner checkpoint containing that TDS plus its topology guarantee, global
+topology, and validation policy. Loading the owner checkpoint reparses topology
+metadata and re-proves Levels 3–5; a legacy TDS-only payload is rejected instead
+of silently acquiring default higher-layer context.
+
 ### Methods
 
 - `Tds::is_valid()` - Level 2 Combinatorial Consistency checks only (fast-fail).

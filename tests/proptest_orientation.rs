@@ -70,7 +70,8 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                         prop_assume!(dt.number_of_simplices() >= 2);
                         prop_assert!(dt.is_coherently_oriented());
 
-                        let mut serialized = serde_json::to_value(&dt).unwrap();
+                        let tds = dt.into_triangulation().into_tds();
+                        let mut serialized = serde_json::to_value(tds).unwrap();
                         let simplex_vertices_map = serialized
                             .get_mut("simplex_vertices")
                             .and_then(serde_json::Value::as_object_mut)

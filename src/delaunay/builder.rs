@@ -108,7 +108,7 @@ use crate::core::tds::{
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
-use crate::core::validation::{TopologyGuarantee, ValidationPolicy};
+use crate::core::validation::{TopologyGuarantee, ValidationConfigurationError, ValidationPolicy};
 use crate::core::vertex::Vertex;
 use crate::delaunay_property_validation::is_delaunay_property_only;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
@@ -1016,6 +1016,7 @@ pub struct DelaunayTriangulationBuilder<'v, U, const D: usize, V = ()> {
     /// construction.
     topology: BuilderTopology<D>,
     topology_guarantee: TopologyGuarantee,
+    requested_validation_policy: Option<ValidationPolicy>,
     construction_options: ConstructionOptions,
     /// Optional explicit simplex specifications for direct combinatorial construction.
     ///
@@ -1100,6 +1101,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
             vertices,
             topology: BuilderTopology::Euclidean,
             topology_guarantee: TopologyGuarantee::DEFAULT,
+            requested_validation_policy: None,
             construction_options: ConstructionOptions::default(),
             explicit_simplices: None,
             requested_global_topology: None,
@@ -1269,6 +1271,7 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
             vertices,
             topology,
             topology_guarantee,
+            requested_validation_policy,
             construction_options,
             explicit_simplices,
             requested_global_topology,
@@ -1278,6 +1281,7 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
             vertices,
             topology,
             topology_guarantee,
+            requested_validation_policy,
             construction_options,
             explicit_simplices,
             requested_global_topology,
@@ -1442,9 +1446,7 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// ```
     #[must_use]
     pub const fn validation_policy(mut self, validation_policy: ValidationPolicy) -> Self {
-        self.construction_options = self
-            .construction_options
-            .with_validation_policy(validation_policy);
+        self.requested_validation_policy = Some(validation_policy);
         self
     }
 
@@ -1504,13 +1506,17 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
         self
     }
 
-    /// Sets the [`ConstructionOptions`] for construction and final validation.
+    /// Sets the algorithmic [`ConstructionOptions`] for batch construction.
     ///
     /// Defaults to [`ConstructionOptions::default`], which enforces final Level
     /// 5 Delaunay validation on Delaunay-returning terminals.
     /// `build_triangulation*` terminals automatically remove Level 5
     /// enforcement. Explicit-simplex builders reject point-insertion options
     /// that would otherwise be silently ignored.
+    ///
+    /// Global audit cadence is configured separately with
+    /// [`validation_policy`](Self::validation_policy). Because the two setters
+    /// own disjoint settings, their call order does not change the build request.
     ///
     /// # Examples
     ///
@@ -1553,6 +1559,39 @@ where
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
+
+    /// Resolves and validates the one caller-owned audit policy before construction starts.
+    ///
+    /// Keeping this setting outside [`ConstructionOptions`] makes fluent setters
+    /// order-independent and prevents a replacement options bundle from silently
+    /// changing the proof owner's validation cadence.
+    fn resolved_validation_policy(
+        &self,
+    ) -> Result<ValidationPolicy, DelaunayTriangulationConstructionError> {
+        let validation_policy = self
+            .requested_validation_policy
+            .unwrap_or_else(|| self.topology_guarantee.default_validation_policy());
+        if self
+            .topology_guarantee
+            .is_compatible_with_policy(validation_policy)
+        {
+            Ok(validation_policy)
+        } else {
+            Err(
+                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                    topology_guarantee: self.topology_guarantee,
+                    validation_policy,
+                }
+                .into(),
+            )
+        }
+    }
+
+    /// Composes the validated caller policy with private insertion-time execution settings.
+    const fn execution_options(&self, validation_policy: ValidationPolicy) -> ConstructionOptions {
+        self.construction_options
+            .with_insertion_validation_policy(validation_policy)
+    }
 
     /// Validates the topology model configuration before using it in construction.
     ///
@@ -1883,6 +1922,7 @@ where
     where
         K: Kernel<D, Scalar = f64>,
     {
+        let validation_policy = self.resolved_validation_policy()?;
         let construction_options = self
             .construction_options
             .without_final_delaunay_enforcement();
@@ -1900,21 +1940,27 @@ where
                 self.topology_guarantee,
                 self.global_topology_or_default(),
             )?;
-            return Self::apply_requested_validation_policy(triangulation, construction_options);
+            return Self::apply_validation_policy(triangulation, validation_policy);
         }
 
         if let BuilderTopology::PeriodicImagePoint(domain) = self.topology {
             let mut builder = self;
             builder.construction_options = construction_options;
-            return builder.build_periodic_triangulation_with_kernel(kernel, domain);
+            return builder.build_periodic_triangulation_with_kernel(
+                kernel,
+                domain,
+                validation_policy,
+            );
         }
 
         Self::reject_euclidean_non_euclidean_topology(self.global_topology_or_default())?;
+        let execution_options =
+            construction_options.with_insertion_validation_policy(validation_policy);
         DelaunayTriangulation::build_triangulation_with_kernel_options(
             kernel,
             self.vertices,
             self.topology_guarantee,
-            construction_options,
+            execution_options,
         )
     }
 
@@ -2040,6 +2086,7 @@ where
     where
         K: Kernel<D, Scalar = f64>,
     {
+        let validation_policy = self.resolved_validation_policy()?;
         if !self.construction_options.enforces_final_delaunay() {
             return Err(DelaunayTriangulationConstructionError::Level5CertificationDisabled);
         }
@@ -2049,9 +2096,7 @@ where
             if !matches!(self.topology, BuilderTopology::Euclidean) {
                 return Err(ExplicitConstructionError::IncompatibleTopology.into());
             }
-            if self.construction_options.without_validation_policy()
-                != ConstructionOptions::default()
-            {
+            if self.construction_options != ConstructionOptions::default() {
                 return Err(ExplicitConstructionError::UnsupportedConstructionOptions.into());
             }
             let mut triangulation = Self::build_explicit_triangulation(
@@ -2061,8 +2106,7 @@ where
                 self.topology_guarantee,
                 self.global_topology_or_default(),
             )?;
-            triangulation =
-                Self::apply_requested_validation_policy(triangulation, self.construction_options)?;
+            triangulation = Self::apply_validation_policy(triangulation, validation_policy)?;
             if is_delaunay_property_only(&triangulation.tds).is_err() {
                 let topology = triangulation.topology_guarantee();
                 let global_topology = triangulation.global_topology();
@@ -2100,8 +2144,11 @@ where
                 Self::reject_euclidean_non_euclidean_topology(self.global_topology_or_default())?;
             }
             BuilderTopology::PeriodicImagePoint(domain) => {
-                let triangulation =
-                    self.build_periodic_triangulation_with_kernel(kernel, domain)?;
+                let triangulation = self.build_periodic_triangulation_with_kernel(
+                    kernel,
+                    domain,
+                    validation_policy,
+                )?;
                 let dt = DelaunayTriangulation::try_from_triangulation(triangulation).map_err(
                     |failure| TriangulationConstructionError::FinalDelaunayValidation {
                         context: FinalDelaunayValidationContext::PeriodicQuotientDelaunay,
@@ -2112,11 +2159,12 @@ where
             }
         }
 
+        let execution_options = self.execution_options(validation_policy);
         let dt = DelaunayTriangulation::build_with_kernel_options(
             kernel,
             self.vertices,
             self.topology_guarantee,
-            self.construction_options,
+            execution_options,
         )?;
         Ok(dt)
     }
@@ -2186,6 +2234,15 @@ where
         K: Kernel<D, Scalar = f64>,
     {
         let construction_started = Instant::now();
+        let validation_policy = match self.resolved_validation_policy() {
+            Ok(validation_policy) => validation_policy,
+            Err(error) => {
+                return Self::record_construction_total_timing(
+                    Err(Self::with_default_error_statistics(error)),
+                    construction_started,
+                );
+            }
+        };
 
         if !self.construction_options.enforces_final_delaunay() {
             return Self::record_construction_total_timing(
@@ -2206,7 +2263,7 @@ where
             let global_topology = self.global_topology_or_default();
             let vertices = self.vertices;
             let topology_guarantee = self.topology_guarantee;
-            let construction_options = self.construction_options;
+            let construction_options = self.execution_options(validation_policy);
 
             Self::reject_euclidean_non_euclidean_topology(global_topology)
                 .map_err(Self::with_default_error_statistics)
@@ -2276,6 +2333,15 @@ where
         K: Kernel<D, Scalar = f64>,
     {
         let construction_started = Instant::now();
+        let validation_policy = match self.resolved_validation_policy() {
+            Ok(validation_policy) => validation_policy,
+            Err(error) => {
+                return Self::record_construction_total_timing(
+                    Err(Self::with_default_error_statistics(error)),
+                    construction_started,
+                );
+            }
+        };
         let result = if self.explicit_simplices.is_some()
             || matches!(&self.topology, BuilderTopology::PeriodicImagePoint(_))
         {
@@ -2288,7 +2354,8 @@ where
             let topology_guarantee = self.topology_guarantee;
             let construction_options = self
                 .construction_options
-                .without_final_delaunay_enforcement();
+                .without_final_delaunay_enforcement()
+                .with_insertion_validation_policy(validation_policy);
 
             Self::reject_euclidean_non_euclidean_topology(global_topology)
                 .map_err(Self::with_default_error_statistics)
@@ -2373,21 +2440,18 @@ where
     /// Delaunay certification explicitly when selecting a
     /// `build_triangulation*` terminal.
     fn supports_explicit_triangulation_options(options: ConstructionOptions) -> bool {
-        let normalized = options.without_validation_policy();
-        normalized == ConstructionOptions::default().without_final_delaunay_enforcement()
+        options == ConstructionOptions::default().without_final_delaunay_enforcement()
     }
 
-    /// Installs a caller-selected audit cadence after Levels 1–4 proof succeeds.
-    fn apply_requested_validation_policy<K>(
+    /// Installs the builder-validated audit cadence after Levels 1–4 proof succeeds.
+    fn apply_validation_policy<K>(
         mut triangulation: Triangulation<K, U, V, D>,
-        options: ConstructionOptions,
+        validation_policy: ValidationPolicy,
     ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
         K: Kernel<D, Scalar = f64>,
     {
-        if let Some(policy) = options.validation_policy() {
-            triangulation.try_set_validation_policy(policy)?;
-        }
+        triangulation.try_set_validation_policy(validation_policy)?;
         Ok(triangulation)
     }
 
@@ -2397,6 +2461,7 @@ where
         self,
         kernel: &K,
         domain: ToroidalDomain<D>,
+        validation_policy: ValidationPolicy,
     ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
         K: Kernel<D, Scalar = f64>,
@@ -2444,7 +2509,7 @@ where
                 source: DelaunayConstructionFailure::FinalRealizationValidation { source },
             }
         })?;
-        Self::apply_requested_validation_policy(triangulation, self.construction_options)
+        Self::apply_validation_policy(triangulation, validation_policy)
     }
 
     /// Proves explicit simplex topology once before taking the prechecked TDS insertion path.

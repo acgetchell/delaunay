@@ -3146,9 +3146,14 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let expected_vertices = dt.number_of_vertices();
+        let expected_simplices = dt.number_of_simplices();
+        let expected_dimension = dt.dim();
 
-        // Serialize the entire DT (includes simplices with proper context)
-        let serialized = serde_json::to_string(&dt).unwrap();
+        // Exercise the TDS snapshot boundary directly. Delaunay owner
+        // checkpoints use a distinct versioned envelope with proof context.
+        let tds = dt.into_triangulation().into_tds();
+        let serialized = serde_json::to_string(&tds).unwrap();
         assert!(serialized.contains("vertices"));
         assert!(serialized.contains("simplices"));
 
@@ -3158,9 +3163,9 @@ mod tests {
             .expect("serialized Delaunay TDS should validate");
 
         // Verify DT properties match
-        assert_eq!(deserialized.number_of_vertices(), dt.number_of_vertices());
-        assert_eq!(deserialized.number_of_simplices(), dt.number_of_simplices());
-        assert_eq!(deserialized.dim(), dt.dim());
+        assert_eq!(deserialized.number_of_vertices(), expected_vertices);
+        assert_eq!(deserialized.number_of_simplices(), expected_simplices);
+        assert_eq!(deserialized.dim(), expected_dimension);
 
         // Verify simplices within DT can be accessed
         assert_ne!(deserialized.number_of_simplices(), 0);
