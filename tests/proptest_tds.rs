@@ -1,10 +1,12 @@
 //! Property-based tests for Tds (Triangulation Data Structure) invariants.
 //!
-//! This module tests the pure combinatorial/topological structure of the Tds layer.
-//! These tests do NOT use geometric predicates - they operate entirely on topology:
-//! vertex keys, simplex keys, neighbor relationships, and mappings.
+//! This module tests the Levels 1–2 element and combinatorial-consistency
+//! invariants owned by the `Tds` layer. These tests do not use geometric
+//! predicates: they operate on vertex keys, simplex keys, neighbor relationships,
+//! and mappings.
 //!
-//! Following CGAL's architecture, the Tds is purely combinatorial and geometry-independent.
+//! The `Tds` is geometry-independent; Level 3 intrinsic PL topology belongs to
+//! `Triangulation`.
 //!
 //! ## Invariants Tested
 //!
@@ -518,7 +520,7 @@ macro_rules! gen_high_dim_tds_smoke {
                     let topology_result = dt.as_triangulation().is_valid_topology();
                     prop_assert!(
                         topology_result.is_ok(),
-                        "{}D active TDS smoke should satisfy Level 3 topology: {:?}",
+                        "{}D construction fixture for the active TDS smoke should satisfy owner-level Level 3 topology: {:?}",
                         $dim,
                         topology_result.err()
                     );

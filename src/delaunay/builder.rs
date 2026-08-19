@@ -3111,6 +3111,7 @@ where
             let mut full_triangulation = DelaunayTriangulationBuilder::new(&expanded)
                 .simplex_data_type::<V>()
                 .topology_guarantee(TopologyGuarantee::PLManifold)
+                .validation_policy(ValidationPolicy::ExplicitOnly)
                 .construction_options(expanded_options)
                 .build_triangulation_with_kernel(&image_kernel)?;
             let full_topology_guarantee = full_triangulation.topology_guarantee();

@@ -3166,6 +3166,7 @@ mod tests {
         assert_eq!(deserialized.number_of_vertices(), expected_vertices);
         assert_eq!(deserialized.number_of_simplices(), expected_simplices);
         assert_eq!(deserialized.dim(), expected_dimension);
+        assert!(deserialized.validation_report().is_ok());
 
         // Verify simplices within DT can be accessed
         assert_ne!(deserialized.number_of_simplices(), 0);

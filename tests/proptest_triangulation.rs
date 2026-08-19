@@ -1,14 +1,14 @@
 //! Property-based tests for Triangulation layer invariants.
 //!
-//! This module tests the generic geometric layer that combines a `Kernel` with
-//! the combinatorial `Tds`. The Triangulation layer provides geometric operations
-//! while delegating pure topology to Tds.
+//! This module tests the proof-bearing layer that combines a `Kernel` with a
+//! Levels 1–2 `Tds`. `Triangulation` owns Level 3 intrinsic PL topology, Level 4
+//! realization, and generic kernel-backed geometric operations.
 //!
 //! ## Architectural Context
 //!
 //! Following CGAL's architecture:
-//! - **Tds** - Pure combinatorial/topological structure (tested in `proptest_tds.rs`)
-//! - **Triangulation** - Generic geometric layer with kernel (tested here)
+//! - **Tds** - Levels 1–2 element and combinatorial consistency (tested in `proptest_tds.rs`)
+//! - **Triangulation** - Levels 3–4 topology and realization with a kernel (tested here)
 //! - **`DelaunayTriangulation`** - Delaunay-specific operations (tested in `proptest_delaunay_triangulation.rs`)
 //!
 //! ## Tests Included

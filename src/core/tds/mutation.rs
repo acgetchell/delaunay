@@ -3417,62 +3417,78 @@ mod tests {
         assert_matches!(err, TdsError::InvalidNeighbors { .. });
     }
 
-    struct StageNeighborSlotFixture {
-        tds: Tds<(), (), 2>,
-        v_c: VertexKey,
-        v_d: VertexKey,
+    struct StageNeighborSlotFixture<const D: usize> {
+        tds: Tds<(), (), D>,
+        simplex_only_vertex: VertexKey,
+        neighbor_only_vertex: VertexKey,
         simplex_key: SimplexKey,
         neighbor_key: SimplexKey,
     }
 
-    /// Builds adjacent 2D simplices for neighbor-slot rejection tests.
-    fn stage_neighbor_slot_fixture() -> StageNeighborSlotFixture {
-        let mut tds: Tds<(), (), 2> = Tds::empty();
-        let v_a = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+    /// Builds adjacent simplices for neighbor-slot rejection tests.
+    fn stage_neighbor_slot_fixture<const D: usize>() -> StageNeighborSlotFixture<D> {
+        assert!((2..=5).contains(&D));
+
+        let mut tds: Tds<(), (), D> = Tds::empty();
+        let mut shared_vertices = Vec::with_capacity(D);
+        for shared_index in 0..D {
+            let mut coordinates = [0.0; D];
+            if shared_index > 0 {
+                coordinates[shared_index - 1] = 1.0;
+            }
+            shared_vertices.push(
+                tds.insert_vertex_with_mapping(vertex!(coordinates).unwrap())
+                    .unwrap(),
+            );
+        }
+
+        let mut simplex_only_coordinates = [0.0; D];
+        simplex_only_coordinates[D - 1] = 1.0;
+        let simplex_only_vertex = tds
+            .insert_vertex_with_mapping(vertex!(simplex_only_coordinates).unwrap())
             .unwrap();
-        let v_b = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
+        let mut neighbor_only_coordinates = [0.0; D];
+        neighbor_only_coordinates[D - 1] = -1.0;
+        let neighbor_only_vertex = tds
+            .insert_vertex_with_mapping(vertex!(neighbor_only_coordinates).unwrap())
             .unwrap();
-        let v_c = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
-            .unwrap();
-        let v_d = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
-            .unwrap();
+
+        let mut simplex_vertices = shared_vertices.clone();
+        simplex_vertices.push(simplex_only_vertex);
         let simplex_key = tds
             .insert_simplex_with_mapping(
-                Simplex::try_new_with_data(vec![v_a, v_b, v_c], None).unwrap(),
+                Simplex::try_new_with_data(simplex_vertices, None).unwrap(),
             )
             .unwrap();
+        shared_vertices.reverse();
+        shared_vertices.push(neighbor_only_vertex);
         let neighbor_key = tds
-            .insert_simplex_with_mapping(
-                Simplex::try_new_with_data(vec![v_b, v_a, v_d], None).unwrap(),
-            )
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(shared_vertices, None).unwrap())
             .unwrap();
 
         StageNeighborSlotFixture {
             tds,
-            v_c,
-            v_d,
+            simplex_only_vertex,
+            neighbor_only_vertex,
             simplex_key,
             neighbor_key,
         }
     }
 
-    #[test]
-    fn reverse_simplex_orientations_rejects_malformed_neighbors_without_mutation() {
+    fn assert_reverse_simplex_orientations_rejects_malformed_neighbors_without_mutation<
+        const D: usize,
+    >() {
         let StageNeighborSlotFixture {
             mut tds,
             simplex_key,
             neighbor_key,
             ..
-        } = stage_neighbor_slot_fixture();
+        } = stage_neighbor_slot_fixture::<D>();
         let neighbor = tds.simplex_mut(neighbor_key).unwrap();
         neighbor
-            .set_neighbors_from_keys([None; 3])
+            .set_neighbors_from_keys(vec![None; D + 1])
             .expect("test neighbor buffer should match simplex arity");
-        neighbor.neighbor_slots_mut().unwrap().truncate(2);
+        neighbor.neighbor_slots_mut().unwrap().truncate(D);
 
         let simplex_vertices_before = tds.simplex(simplex_key).unwrap().vertices().to_vec();
         let neighbor_vertices_before = tds.simplex(neighbor_key).unwrap().vertices().to_vec();
@@ -3492,11 +3508,11 @@ mod tests {
             error,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::LengthMismatch {
-                    actual: 2,
-                    expected: 3,
+                    actual,
+                    expected,
                     ..
                 }
-            }
+            } if actual == D && expected == D + 1
         );
         assert_eq!(
             tds.simplex(simplex_key).unwrap().vertices(),
@@ -3513,17 +3529,18 @@ mod tests {
         assert_eq!(tds.generation(), generation);
     }
 
-    #[test]
-    fn reverse_simplex_orientations_rejects_misaligned_offsets_without_mutation() {
+    fn assert_reverse_simplex_orientations_rejects_misaligned_offsets_without_mutation<
+        const D: usize,
+    >() {
         let StageNeighborSlotFixture {
             mut tds,
             simplex_key,
             neighbor_key,
             ..
-        } = stage_neighbor_slot_fixture();
+        } = stage_neighbor_slot_fixture::<D>();
         tds.simplex_mut(neighbor_key)
             .unwrap()
-            .periodic_vertex_offsets = Some(vec![[0_i8; 2]; 2].into());
+            .periodic_vertex_offsets = Some(vec![[0_i8; D]; D].into());
 
         let simplex_vertices_before = tds.simplex(simplex_key).unwrap().vertices().to_vec();
         let neighbor_vertices_before = tds.simplex(neighbor_key).unwrap().vertices().to_vec();
@@ -3543,11 +3560,11 @@ mod tests {
             error,
             TdsError::InvalidSimplex {
                 source: SimplexValidationError::PeriodicOffsetLengthMismatch {
-                    expected: 3,
-                    found: 2,
+                    expected,
+                    found,
                 },
                 ..
-            }
+            } if expected == D + 1 && found == D
         );
         assert_eq!(
             tds.simplex(simplex_key).unwrap().vertices(),
@@ -3564,14 +3581,13 @@ mod tests {
         assert_eq!(tds.generation(), generation);
     }
 
-    #[test]
-    fn stage_neighbor_slot_rejects_invalid_candidates_without_mutation() {
+    fn assert_stage_neighbor_slot_rejects_invalid_candidates_without_mutation<const D: usize>() {
         let StageNeighborSlotFixture {
             mut tds,
             simplex_key,
             neighbor_key,
             ..
-        } = stage_neighbor_slot_fixture();
+        } = stage_neighbor_slot_fixture::<D>();
         let generation = tds.generation();
         let missing_key = SimplexKey::from(KeyData::from_ffi(0xDEAD));
 
@@ -3585,16 +3601,16 @@ mod tests {
         );
 
         let error = tds
-            .stage_neighbor_slot_for_topology_candidate(simplex_key, 3, None)
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, D + 1, None)
             .unwrap_err()
             .into_inner();
         assert_matches!(
             error,
             TdsError::IndexOutOfBounds {
-                index: 3,
-                bound: 3,
+                index,
+                bound,
                 ..
-            }
+            } if index == D + 1 && bound == D + 1
         );
 
         let error = tds
@@ -3640,95 +3656,131 @@ mod tests {
         assert_eq!(tds.generation(), generation);
     }
 
-    #[test]
-    fn stage_neighbor_slot_rejects_malformed_simplices_and_buffers_without_mutation() {
+    fn assert_stage_neighbor_slot_rejects_malformed_simplices_and_buffers_without_mutation<
+        const D: usize,
+    >() {
         let StageNeighborSlotFixture {
             mut tds,
-            v_c,
-            v_d,
+            simplex_only_vertex,
+            neighbor_only_vertex,
             simplex_key,
             neighbor_key,
-        } = stage_neighbor_slot_fixture();
+        } = stage_neighbor_slot_fixture::<D>();
         let generation = tds.generation();
 
         let simplex = tds.simplex_mut(simplex_key).unwrap();
         simplex
-            .set_neighbors_from_keys([None; 3])
+            .set_neighbors_from_keys(vec![None; D + 1])
             .expect("test neighbor buffer should match simplex arity");
-        simplex.neighbor_slots_mut().unwrap().truncate(2);
+        simplex.neighbor_slots_mut().unwrap().truncate(D);
         let error = tds
-            .stage_neighbor_slot_for_topology_candidate(simplex_key, 2, Some(neighbor_key))
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, D, Some(neighbor_key))
             .unwrap_err()
             .into_inner();
         assert_matches!(
             error,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::LengthMismatch {
-                    actual: 2,
-                    expected: 3,
+                    actual,
+                    expected,
                     ..
                 }
-            }
+            } if actual == D && expected == D + 1
         );
 
         tds.simplex_mut(simplex_key)
             .unwrap()
-            .set_neighbors_from_keys([None; 3])
+            .set_neighbors_from_keys(vec![None; D + 1])
             .expect("test neighbor buffer should match simplex arity");
         let neighbor = tds.simplex_mut(neighbor_key).unwrap();
         neighbor
-            .set_neighbors_from_keys([None; 3])
+            .set_neighbors_from_keys(vec![None; D + 1])
             .expect("test neighbor buffer should match simplex arity");
-        neighbor.neighbor_slots_mut().unwrap().truncate(2);
+        neighbor.neighbor_slots_mut().unwrap().truncate(D);
         let error = tds
-            .stage_neighbor_slot_for_topology_candidate(simplex_key, 2, Some(neighbor_key))
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, D, Some(neighbor_key))
             .unwrap_err()
             .into_inner();
         assert_matches!(
             error,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::LengthMismatch {
-                    actual: 2,
-                    expected: 3,
+                    actual,
+                    expected,
                     ..
                 }
-            }
+            } if actual == D && expected == D + 1
         );
 
         tds.simplex_mut(neighbor_key)
             .unwrap()
-            .set_neighbors_from_keys([None; 3])
+            .set_neighbors_from_keys(vec![None; D + 1])
             .expect("test neighbor buffer should match simplex arity");
-        tds.simplex_mut(neighbor_key).unwrap().push_vertex_key(v_c);
+        tds.simplex_mut(neighbor_key)
+            .unwrap()
+            .push_vertex_key(simplex_only_vertex);
         let error = tds
-            .stage_neighbor_slot_for_topology_candidate(simplex_key, 2, Some(neighbor_key))
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, D, Some(neighbor_key))
             .unwrap_err()
             .into_inner();
         assert_matches!(
             error,
             TdsError::DimensionMismatch {
-                expected: 3,
-                actual: 4,
+                expected,
+                actual,
                 ..
-            }
+            } if expected == D + 1 && actual == D + 2
         );
 
-        tds.push_first_simplex_vertex_key_storage_only_for_test(v_d);
-        assert_eq!(tds.simplex(simplex_key).unwrap().number_of_vertices(), 4);
+        tds.push_first_simplex_vertex_key_storage_only_for_test(neighbor_only_vertex);
+        assert_eq!(
+            tds.simplex(simplex_key).unwrap().number_of_vertices(),
+            D + 2
+        );
         let error = tds
-            .stage_neighbor_slot_for_topology_candidate(simplex_key, 2, None)
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, D, None)
             .unwrap_err()
             .into_inner();
         assert_matches!(
             error,
             TdsError::DimensionMismatch {
-                expected: 3,
-                actual: 4,
+                expected,
+                actual,
                 ..
-            }
+            } if expected == D + 1 && actual == D + 2
         );
         assert_eq!(tds.generation(), generation);
     }
+
+    macro_rules! generate_stage_neighbor_slot_tests {
+        ($($dim:expr),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<reverse_simplex_orientations_rejects_malformed_neighbors_without_mutation_ $dim d>]() {
+                        assert_reverse_simplex_orientations_rejects_malformed_neighbors_without_mutation::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<reverse_simplex_orientations_rejects_misaligned_offsets_without_mutation_ $dim d>]() {
+                        assert_reverse_simplex_orientations_rejects_misaligned_offsets_without_mutation::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<stage_neighbor_slot_rejects_invalid_candidates_without_mutation_ $dim d>]() {
+                        assert_stage_neighbor_slot_rejects_invalid_candidates_without_mutation::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<stage_neighbor_slot_rejects_malformed_simplices_and_buffers_without_mutation_ $dim d>]() {
+                        assert_stage_neighbor_slot_rejects_malformed_simplices_and_buffers_without_mutation::<$dim>();
+                    }
+                )+
+            }
+        };
+    }
+
+    generate_stage_neighbor_slot_tests!(2, 3, 4, 5);
 
     #[test]
     fn test_set_neighbors_by_key_updates_reciprocal_back_reference() {

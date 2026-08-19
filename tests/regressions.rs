@@ -102,6 +102,32 @@ fn regression_issue_557_delaunay_checkpoint_preserves_proof_context() {
 }
 
 #[test]
+fn regression_issue_557_delaunay_checkpoint_rejects_incompatible_policy() {
+    let vertices = [
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+    ];
+    let original: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
+        DelaunayTriangulationBuilder::new(&vertices)
+            .topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .validation_policy(ValidationPolicy::Never)
+            .build_with_kernel(&RobustKernel::new())
+            .expect("fixture construction should succeed");
+
+    let mut checkpoint = serde_json::to_value(&original).expect("checkpoint should serialize");
+    checkpoint["topology_guarantee"] = serde_json::json!("pl_manifold");
+
+    let error =
+        serde_json::from_value::<DelaunayTriangulation<RobustKernel<f64>, (), (), 2>>(checkpoint)
+            .expect_err("PL-manifold checkpoints must reject ValidationPolicy::Never");
+    let message = error.to_string();
+    assert!(message.contains("incompatible"));
+    assert!(message.contains("PLManifold"));
+    assert!(message.contains("Never"));
+}
+
+#[test]
 fn regression_issue_557_triangulation_topology_setter_preserves_levels_one_through_four() {
     let mut tri: Triangulation<_, (), (), 2> = DelaunayTriangulation::empty().into_triangulation();
     let previous_topology = tri.global_topology();

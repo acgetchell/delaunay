@@ -6,9 +6,9 @@
 //! ## Architectural Context
 //!
 //! Following CGAL's architecture:
-//! - **Tds** - Pure combinatorial/topological structure (tested in `proptest_tds.rs`)
-//! - **Triangulation** - Generic geometric layer with kernel (tested in `proptest_triangulation.rs`)
-//! - **`DelaunayTriangulation`** - Delaunay-specific operations (tested here)
+//! - **Tds** - Levels 1–2 element and combinatorial consistency (tested in `proptest_tds.rs`)
+//! - **Triangulation** - Levels 3–4 topology and realization with a kernel (tested in `proptest_triangulation.rs`)
+//! - **`DelaunayTriangulation`** - Level 5 Delaunay certification and operations (tested here)
 //!
 //! ## Invariants Tested
 //!
