@@ -1188,9 +1188,10 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
 
     /// Sets construction options for the ambient hull-duality build.
     ///
-    /// Final Euclidean Delaunay enforcement is disabled internally because all
-    /// spherical inputs are cospherical in the ambient space; the options still
-    /// control insertion order, deduplication, and retry behavior.
+    /// The supplied options are retained for the ambient Levels 1–4 build, except
+    /// that the initial-simplex strategy is set to `Balanced`. The ambient builder
+    /// calls `build_triangulation()`, so this boundary stops before Euclidean
+    /// Level 5 certification of the cospherical inputs.
     ///
     /// # Examples
     ///

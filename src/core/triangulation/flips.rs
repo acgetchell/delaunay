@@ -105,24 +105,24 @@ where
                 source: Box::new(source),
             });
         }
-    }
 
-    let run_global_audit = transaction
-        .triangulation_mut()
-        .validation_policy()
-        .should_validate(SuspicionFlags::default());
-    if run_global_audit {
-        if let Err(source) = transaction.triangulation_mut().validate() {
-            transaction.rollback();
-            return Err(FlipError::InvariantValidation {
-                source: Box::new(source),
-            });
-        }
-        if let Err(source) = transaction.triangulation_mut().is_valid_realization() {
-            transaction.rollback();
-            return Err(FlipError::RealizationValidation {
-                source: Box::new(source),
-            });
+        let run_global_audit = transaction
+            .triangulation_mut()
+            .validation_policy()
+            .should_validate(SuspicionFlags::default());
+        if run_global_audit {
+            if let Err(source) = transaction.triangulation_mut().validate() {
+                transaction.rollback();
+                return Err(FlipError::InvariantValidation {
+                    source: Box::new(source),
+                });
+            }
+            if let Err(source) = transaction.triangulation_mut().is_valid_realization() {
+                transaction.rollback();
+                return Err(FlipError::RealizationValidation {
+                    source: Box::new(source),
+                });
+            }
         }
     }
 

@@ -2110,7 +2110,7 @@ rules:
 
   - id: delaunay.rust.no-connectivity-recheck-in-level5-proof-promotion
     languages:
-      - generic
+      - rust
     severity: ERROR
     message: "A proof-bearing Triangulation promotion must replay Level 5 predicates without rechecking connectivity."
     metadata:
@@ -2124,7 +2124,12 @@ rules:
       include:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/rust_style.rs"
-    pattern-regex: '(?s)\bfn\s+verify_triangulation_via_flip_predicates\b[^{}]*\{[^{}]*ConnectivityPostcondition::Check'
+    patterns:
+      - pattern-inside: |
+          fn verify_triangulation_via_flip_predicates(...) {
+            ...
+          }
+      - pattern: ConnectivityPostcondition::Check
 
   - id: delaunay.rust.no-in-place-public-delaunayize
     languages:

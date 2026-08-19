@@ -259,9 +259,18 @@ fn try_into_validated_delaunay() {}
 // ok: delaunay.rust.no-cumulative-revalidation-delaunay-promotion
 fn try_into_delaunay() {}
 
-// ruleid: delaunay.rust.no-connectivity-recheck-in-level5-proof-promotion
-fn verify_triangulation_via_flip_predicates() {
+fn verify_triangulation_via_flip_predicates<K, U, const D: usize>(
+    triangulation: &Triangulation<K, U, D>,
+) -> Result<(), Error>
+where
+    K: Kernel<D>,
+{
+    if needs_local_verification() {
+        let _ = ConnectivityPostcondition::Defer;
+    }
+    // ruleid: delaunay.rust.no-connectivity-recheck-in-level5-proof-promotion
     let _ = ConnectivityPostcondition::Check;
+    Ok(())
 }
 
 // ok: delaunay.rust.no-connectivity-recheck-in-level5-proof-promotion

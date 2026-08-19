@@ -1778,10 +1778,7 @@ mod tests {
 
         // Pointers unchanged.
         for vk in [v0, v1, v2, v3] {
-            assert_eq!(
-                tri.tds.vertex_mut_for_test(vk).unwrap().incident_simplex(),
-                Some(ck)
-            );
+            assert_eq!(tri.tds.vertex(vk).unwrap().incident_simplex(), Some(ck));
         }
     }
 
@@ -1798,7 +1795,7 @@ mod tests {
 
         assert!(tri.repair_stale_incident_simplices(&scope).is_ok());
         assert_eq!(
-            tri.tds.vertex_mut_for_test(v3).unwrap().incident_simplex(),
+            tri.tds.vertex(v3).unwrap().incident_simplex(),
             Some(ck),
             "v3 should be repaired to point to the tetrahedron"
         );
@@ -1818,7 +1815,7 @@ mod tests {
 
         assert!(tri.repair_stale_incident_simplices(&scope).is_ok());
         assert_eq!(
-            tri.tds.vertex_mut_for_test(v3).unwrap().incident_simplex(),
+            tri.tds.vertex(v3).unwrap().incident_simplex(),
             Some(ck),
             "stale pointer should be repaired to the valid simplex"
         );

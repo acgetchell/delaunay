@@ -1846,8 +1846,8 @@ fn regression_issue_230_4d_100_orientation() {
     let kernel = RobustKernel::<f64>::new();
     let (dt, stats) = DelaunayTriangulationBuilder::new(&vertices)
         .topology_guarantee(TopologyGuarantee::PLManifold)
-        .validation_policy(ValidationPolicy::Always)
         .construction_options(ConstructionOptions::default())
+        .validation_policy(ValidationPolicy::Always)
         .build_with_kernel_and_statistics(&kernel)
         .expect("construction must not fail (#230 regression)");
 

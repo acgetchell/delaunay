@@ -1290,6 +1290,9 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// This is the correctness-first toroidal constructor: it builds a periodic
     /// quotient with rewired neighbor pointers and Euler characteristic χ = 0 for
     /// the validated `T^2` and compact `T^3` cases.
+    /// Input vertices are canonicalized into the fundamental domain before
+    /// periodic image-point expansion, so callers do not need to pre-canonicalize
+    /// their coordinates.
     /// Periodic construction applies a deterministic perturbation of at most
     /// approximately `2^-32` of each domain period to canonical coordinates to
     /// resolve covering-space degeneracies; stable vertex UUIDs and payloads are

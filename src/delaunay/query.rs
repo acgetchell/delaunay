@@ -2567,6 +2567,7 @@ mod tests {
     use crate::geometry::util::safe_usize_to_scalar;
     use crate::topology::traits::GlobalTopologyModelError;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
+    use crate::validation::DelaunayTriangulationCandidate;
     use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
@@ -3068,6 +3069,39 @@ mod tests {
         assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
         assert!(dt.euclidean_report_domain.supports_local_certificate());
         assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn level_five_topology_change_rejection_restores_topology_and_report_domain() {
+        let vertices = [
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([0.55, 0.55]).unwrap(),
+        ];
+        let simplices = [vec![0, 1, 2], vec![1, 2, 3]];
+        let triangulation =
+            DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+                .expect("non-Delaunay fixture connectivity should parse")
+                .build_triangulation()
+                .expect("non-Delaunay fixture should satisfy Levels 1–4");
+        let mut dt = DelaunayTriangulationCandidate::from_triangulation(triangulation)
+            .into_unproven_delaunay_for_test();
+        dt.tri.global_topology = GlobalTopology::Spherical;
+        dt.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
+        let previous_topology = dt.global_topology();
+        let previous_report_domain = dt.euclidean_report_domain;
+
+        let error = dt
+            .try_set_global_topology(GlobalTopology::Euclidean)
+            .expect_err("the Level 5-invalid fixture must reject Euclidean promotion");
+
+        assert_matches!(
+            error,
+            DelaunayTriangulationValidationError::VerificationFailed { .. }
+        );
+        assert_eq!(dt.global_topology(), previous_topology);
+        assert_eq!(dt.euclidean_report_domain, previous_report_domain);
     }
 
     #[test]

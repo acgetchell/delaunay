@@ -850,7 +850,7 @@ mod tests {
             .expect("k=3 roundtrip fixture should build")
     }
 
-    /// Finds a facet whose topology-scope k=2 move succeeds on a cloned fixture.
+    /// Finds a facet whose Levels 1–4 k=2 move succeeds on a cloned fixture.
     fn flippable_k2_facet(dt: &Tri3) -> FacetHandle {
         for facet in dt.facets() {
             let facet = facet.expect("k=2 fixture facets should reborrow").handle();
@@ -862,10 +862,10 @@ mod tests {
                 return facet;
             }
         }
-        panic!("k=2 fixture should contain a topology-scope move")
+        panic!("k=2 fixture should contain a Levels 1–4-preserving move")
     }
 
-    /// Finds a ridge whose topology-scope k=3 move succeeds on a cloned fixture.
+    /// Finds a ridge whose Levels 1–4 k=3 move succeeds on a cloned fixture.
     fn flippable_k3_ridge(dt: &Tri4) -> RidgeHandle {
         for ridge in dt.ridge_handles() {
             let ridge = ridge.expect("k=3 fixture ridges should reborrow");
@@ -877,7 +877,7 @@ mod tests {
                 return ridge;
             }
         }
-        panic!("k=3 fixture should contain a topology-scope move")
+        panic!("k=3 fixture should contain a Levels 1–4-preserving move")
     }
 
     /// Resolves the live edge reported as a k=2 move's inserted face.
@@ -962,7 +962,7 @@ mod tests {
     }
 
     #[test]
-    fn pachner_k1_remove_invalidates_euclidean_report_domain() {
+    fn pachner_k1_remove_preserves_levels_1_through_4() {
         let interior_vertex = vertex![0.25, 0.25].expect("interior vertex should be valid");
         let interior_uuid = interior_vertex.uuid();
         let vertices = vec![

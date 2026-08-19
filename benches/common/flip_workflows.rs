@@ -308,8 +308,8 @@ pub enum FlipWorkflowError {
         source: TriangleHandleError,
     },
 
-    /// A forward-only flip produced an invalid underlying triangulation.
-    #[error("{context} produced invalid triangulation topology: {source}")]
+    /// A forward-only flip produced an invalid triangulation realization.
+    #[error("{context} produced invalid triangulation realization: {source}")]
     InvalidAfterForward {
         /// Forward-only context.
         context: FlipWorkflowContext,

@@ -171,10 +171,12 @@ When the policy triggers automatic validation, it runs **Level 3**
 Note: neighbor-pointer consistency is a **Level 2 Combinatorial Consistency** invariant checked by
 `Tds::is_valid()` / `Tds::validate()`, and is intentionally not part of Level 3.
 
-The same automatic validation pass then runs the complete **Level 4 realization** audit. Mandatory
-mutation postconditions use changed-scope pseudomanifold, ridge-link, and realization checks on
-every commit; a policy-triggered audit additionally rescans the whole realized complex, including
-vertex-link certification. It does **not** run Level 5
+The same automatic validation pass then runs the complete **Level 4 realization** audit. Every
+mutating operation preserves the proof-layer postconditions applicable to its topology guarantee:
+changed-scope pseudomanifold and realization checks run on every commit, while ridge-link checks
+are additionally required for `TopologyGuarantee::PLManifold`. A policy-triggered audit rescans
+the whole realized complex and includes vertex-link certification for the PL-manifold guarantee.
+It does **not** run Level 5
 Delaunay empty-circumsphere validation. If you need complete Level 4 realization validation or a Level 5
 geometric-predicate check, call `dt.as_triangulation().validate_realization()`, `dt.is_valid_delaunay()`,
 `dt.delaunay_report()`, or `dt.validate()` explicitly.

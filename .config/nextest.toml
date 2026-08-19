@@ -117,6 +117,16 @@ inherits = "ci"
 retries = 0
 slow-timeout = { period = "300s", terminate-after = 1 }
 
+[[profile.coverage.overrides]]
+# The compact T^3 periodic-image builders can exceed seven minutes even before
+# LLVM coverage instrumentation. Keep the broader coverage watchdog at five
+# minutes and grant only these named tests enough instrumented headroom.
+filter = '''
+binary(=triangulation_builder)
+& test(/^(test_builder_toroidal_t3_compact_quotient_validates_topology_and_delaunay|test_builder_toroidal_t3_compact_quotient_handles_reversed_input|test_builder_toroidal_t3_compact_quotient_handles_orientation_reversing_map)$/)
+'''
+slow-timeout = { period = "1200s", terminate-after = 1 }
+
 [profile.slow]
 # Slow correctness and regression tests are intentionally outside the default
 # 10-second per-test budget. Keep a finite watchdog so hangs still fail.
