@@ -161,7 +161,8 @@ use delaunay::prelude::repair::{
     DelaunayRepairStats, DelaunayRepairVerificationContext, DelaunayTriangulationValidationError,
     FlipEdgeAdjacencyError, FlipError, FlipFailureKind,
     FlipOrientationCheckStage as RepairFlipOrientationCheckStage, FlipTriangleAdjacencyError,
-    FlipVertexAdjacencyError, PlManifoldRepairConfig, PlManifoldRepairError, PlManifoldRepairStage,
+    FlipVertexAdjacencyError, GlobalTopology as RepairGlobalTopology, PlManifoldRepairConfig,
+    PlManifoldRepairError, PlManifoldRepairRefinementError, PlManifoldRepairStage,
     PlManifoldRepairStats, PlManifoldTdsRepairResult, RepairQueueOrder, repair_pl_manifold_tds,
 };
 use delaunay::prelude::tds::{
@@ -468,9 +469,10 @@ fn assert_repair_prelude_pl_manifold_exports() {
 type PlManifoldRepairFunction =
     fn(
         Tds<(), (), 3>,
-        GlobalTopology<3>,
+        RepairGlobalTopology<3>,
         &PlManifoldRepairConfig,
-    ) -> Result<PlManifoldTdsRepairResult<(), (), 3>, PlManifoldRepairError>;
+    )
+        -> Result<PlManifoldTdsRepairResult<(), (), 3>, PlManifoldRepairRefinementError<(), (), 3>>;
 
 const fn assert_pl_manifold_repair_function(_: PlManifoldRepairFunction) {}
 
@@ -1126,7 +1128,8 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
     assert_root_bistellar_flips(dt.as_triangulation());
 
     let result =
-        module_delaunayize_by_flips(dt.into_triangulation(), DelaunayizeModuleConfig::default())?;
+        module_delaunayize_by_flips(dt.into_triangulation(), DelaunayizeModuleConfig::default())
+            .map_err(delaunay::RefinementError::into_reason)?;
     assert!(!result.outcome.used_fallback_rebuild);
     Ok(())
 }
@@ -1971,13 +1974,13 @@ fn validation_prelude_covers_configuration_error() {
 
     let triangulation_error =
         TriangulationValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
-            topology_guarantee: TriangulationTopologyGuarantee::PLManifoldStrict,
+            topology_guarantee: TriangulationTopologyGuarantee::PLManifold,
             validation_policy: TriangulationValidationPolicy::Never,
         };
     assert_matches!(
         triangulation_error,
         TriangulationValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
-            topology_guarantee: TriangulationTopologyGuarantee::PLManifoldStrict,
+            topology_guarantee: TriangulationTopologyGuarantee::PLManifold,
             validation_policy: TriangulationValidationPolicy::Never,
         }
     );
@@ -2339,8 +2342,10 @@ fn triangulation_prelude_covers_generic_layer() -> Result<(), PreludeExportTestE
 
     let mut tri: GenericTriangulation<TriangulationFastKernel<f64>, (), (), 2> =
         GenericTriangulation::new_empty(TriangulationFastKernel::new());
-    tri.set_topology_guarantee(TriangulationTopologyGuarantee::Pseudomanifold);
-    tri.set_validation_policy(TriangulationValidationPolicy::Never);
+    tri.try_set_topology_guarantee(TriangulationTopologyGuarantee::Pseudomanifold)
+        .unwrap();
+    tri.try_set_validation_policy(TriangulationValidationPolicy::Never)
+        .unwrap();
     tri.validate().unwrap();
     let _triangulation_all_facets: TriangulationAllFacetsIter<'_, (), (), 2> = tri.facets();
     let _triangulation_boundary_facets: TriangulationBoundaryFacetsIter<'_, (), (), 2> =
@@ -2582,7 +2587,8 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
 
     assert_delaunayize_config_fluent_setters();
 
-    let result = delaunayize_by_flips(dt.into_triangulation(), DelaunayizeConfig::default())?;
+    let result = delaunayize_by_flips(dt.into_triangulation(), DelaunayizeConfig::default())
+        .map_err(delaunay::RefinementError::into_reason)?;
     assert!(!result.outcome.used_fallback_rebuild);
     let _typed_outcome: DelaunayizeOutcome = result.outcome;
     let _typed_error: Option<DelaunayizeError> = None;

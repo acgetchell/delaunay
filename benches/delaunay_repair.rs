@@ -2,12 +2,11 @@
 
 //! Benchmark: consuming `Triangulation` to `DelaunayTriangulation` conversion.
 //!
-//! Fixtures are built with
-//! [`ConstructionOptions::without_final_delaunay_enforcement`], which returns a
-//! valid Levels 1-4 triangulation without running batch or final Level 5
-//! repair, so well-conditioned random fixtures typically still carry Delaunay
-//! violations. The benchmark then times the public `delaunayize` entry point on a
-//! clone of each prepared fixture.
+//! Fixtures are built with a `build_triangulation*` terminal, which returns a
+//! valid Levels 1-4 triangulation without running batch or final Level 5 repair,
+//! so well-conditioned random fixtures typically still carry Delaunay violations.
+//! The benchmark then times the public `delaunayize` entry point on a clone of
+//! each prepared fixture.
 //!
 //! Setup verifies on a throwaway clone that repair converges for the chosen
 //! seed, so the measured closure never times a repair failure chain. Case
@@ -33,7 +32,7 @@ use criterion::{
     BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
     measurement::WallTime,
 };
-use delaunay::prelude::construction::{ConstructionOptions, DelaunayTriangulationBuilder, Vertex};
+use delaunay::prelude::construction::{DelaunayTriangulationBuilder, Vertex};
 use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeOutcome, delaunayize};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{
@@ -170,16 +169,12 @@ fn build_source_with_requirement<const D: usize>(
 where
     AdaptiveKernel<f64>: ExactPredicates<D> + Kernel<D, Scalar = f64>,
 {
-    let options = ConstructionOptions::default().without_final_delaunay_enforcement();
-
     for attempt in 0..SEED_SEARCH_ATTEMPTS {
         let attempt_seed = u64::try_from(attempt).or_abort();
         let seed = seed_for_case::<D>(requested_vertices, seed_base)
             ^ attempt_seed.wrapping_mul(SEED_SALT.rotate_left(17));
         let vertices = generate_vertices::<D>(requested_vertices, seed);
-        let Ok(triangulation) = DelaunayTriangulationBuilder::new(&vertices)
-            .construction_options(options)
-            .build_triangulation()
+        let Ok(triangulation) = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()
         else {
             continue;
         };

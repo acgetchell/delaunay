@@ -230,10 +230,10 @@ fn explicit_import_benchmark_ids() -> String {
 
 fn proof_boundary_benchmark_ids() -> String {
     [
-        "proof_boundaries/{restore_2d,certify_2d}",
-        "proof_boundaries/{restore_3d,certify_3d}",
-        "proof_boundaries/{restore_4d,certify_4d}",
-        "proof_boundaries/{restore_5d,certify_5d}",
+        "proof_boundaries/{promote_2d,certify_2d}",
+        "proof_boundaries/{promote_3d,certify_3d}",
+        "proof_boundaries/{promote_4d,certify_4d}",
+        "proof_boundaries/{promote_5d,certify_5d}",
     ]
     .join(";")
 }
@@ -294,7 +294,7 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
             public_api: "Triangulation::try_from_tds_with_topology_context;DelaunayTriangulation::try_from_triangulation",
             dimensions: "2,3,4,5",
             benchmark_ids: proof_boundary_benchmark_ids(),
-            note: "measure_levels_1_through_4_restore_and_strict_level_5_certification_independently",
+            note: "measure_level_3_4_promotion_from_proof_bearing_tds_and_strict_level_5_certification_independently",
         },
         ApiBenchmarkEntry {
             group: "bistellar_flips",
@@ -525,7 +525,6 @@ fn prepare_proof_boundary_fixture<const D: usize>(
             &import.simplices,
         )
         .or_abort()
-        .construction_options(ConstructionOptions::default().without_final_delaunay_enforcement())
         .build_triangulation()
         .or_abort();
     let topology_guarantee = triangulation.topology_guarantee();
@@ -1481,9 +1480,6 @@ fn bench_explicit_import_case<const D: usize>(
                     &fixture.simplices,
                 )
                 .or_abort()
-                .construction_options(
-                    ConstructionOptions::default().without_final_delaunay_enforcement(),
-                )
                 .build_triangulation()
                 .or_abort();
                 black_box(dt);
@@ -1498,7 +1494,7 @@ fn bench_proof_boundary_case<const D: usize>(
 ) {
     let parameter = format!("simplices_{}", fixture.simplex_count);
     group.throughput(Throughput::Elements(fixture.simplex_count as u64));
-    group.bench_function(BenchmarkId::new(format!("restore_{D}d"), &parameter), |b| {
+    group.bench_function(BenchmarkId::new(format!("promote_{D}d"), &parameter), |b| {
         b.iter_batched(
             || (fixture.tds.clone(), AdaptiveKernel::new()),
             |(tds, kernel)| {
@@ -1900,25 +1896,25 @@ fn benchmark_proof_boundaries(c: &mut Criterion) {
     let mut group = c.benchmark_group("proof_boundaries");
     group.sample_size(10);
 
-    if benchmark_selected(&filters, "proof_boundaries/restore_2d")
+    if benchmark_selected(&filters, "proof_boundaries/promote_2d")
         || benchmark_selected(&filters, "proof_boundaries/certify_2d")
     {
         let fixture = prepare_proof_boundary_fixture::<2>(42, EXPLICIT_IMPORT_COUNT_2D);
         bench_proof_boundary_case(&mut group, &fixture);
     }
-    if benchmark_selected(&filters, "proof_boundaries/restore_3d")
+    if benchmark_selected(&filters, "proof_boundaries/promote_3d")
         || benchmark_selected(&filters, "proof_boundaries/certify_3d")
     {
         let fixture = prepare_proof_boundary_fixture::<3>(123, EXPLICIT_IMPORT_COUNT_3D);
         bench_proof_boundary_case(&mut group, &fixture);
     }
-    if benchmark_selected(&filters, "proof_boundaries/restore_4d")
+    if benchmark_selected(&filters, "proof_boundaries/promote_4d")
         || benchmark_selected(&filters, "proof_boundaries/certify_4d")
     {
         let fixture = prepare_proof_boundary_fixture::<4>(456, EXPLICIT_IMPORT_COUNT_4D);
         bench_proof_boundary_case(&mut group, &fixture);
     }
-    if benchmark_selected(&filters, "proof_boundaries/restore_5d")
+    if benchmark_selected(&filters, "proof_boundaries/promote_5d")
         || benchmark_selected(&filters, "proof_boundaries/certify_5d")
     {
         let fixture = prepare_proof_boundary_fixture::<5>(789, EXPLICIT_IMPORT_COUNT_5D);

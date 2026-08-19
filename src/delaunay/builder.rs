@@ -87,10 +87,10 @@
 use crate::construction::{
     ConstructionOptions, ConstructionStatistics, DelaunayConstructionFailure,
     DelaunayConstructionRepairPhase, DelaunayTriangulationConstructionError,
-    DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy, RetryPolicy,
-    duration_nanos_saturating,
+    DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
+    InsertionOrderStrategy, RetryPolicy, duration_nanos_saturating,
 };
-use crate::core::algorithms::flips::repair_delaunay_with_flips_k2_k3;
+use crate::core::algorithms::flips::{DelaunayRepairError, repair_delaunay_with_flips_k2_k3};
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::collections::{
     Entry, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, PeriodicOffsetBuffer, SimplexVertexKeyBuffer,
@@ -103,14 +103,14 @@ use crate::core::facet::facet_key_from_vertices;
 use crate::core::realization::TriangulationRealizationValidationError;
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
-    InvariantError, SimplexKey, Tds, TdsConstructionError, TdsError, TdsMutationError,
-    TriangulationConstructionState, VertexKey,
+    InvariantError, SimplexKey, Tds, TdsConstructionError, TdsError, TdsMutationError, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
 use crate::core::validation::{TopologyGuarantee, ValidationPolicy};
 use crate::core::vertex::Vertex;
+use crate::delaunay_property_validation::is_delaunay_property_only;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::util::circumcenter;
@@ -119,7 +119,10 @@ use crate::topology::traits::topological_space::{
     GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
 };
 use crate::triangulation::DelaunayTriangulation;
-use crate::validation::{DelaunayTriangulationCandidate, DelaunayTriangulationValidationError};
+use crate::validation::{
+    DelaunayTriangulationValidationError, TriangulationAssemblyCandidate,
+    TriangulationAssemblyError,
+};
 use num_traits::ToPrimitive;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -835,7 +838,7 @@ pub enum ExplicitConstructionError {
     ///
     /// [`ConstructionOptions`]: crate::construction::ConstructionOptions
     #[error(
-        "Explicit connectivity supports only default ConstructionOptions or without_final_delaunay_enforcement() with a build_triangulation* terminal"
+        "Explicit connectivity supports only default point-insertion options with a build_triangulation* terminal"
     )]
     UnsupportedConstructionOptions,
     /// Neighbor assignment failed while assembling explicit connectivity.
@@ -866,13 +869,6 @@ pub enum ExplicitConstructionError {
         #[source]
         source: Box<InvariantError>,
     },
-    /// Completion-time PL-manifold validation failed after assembly.
-    #[error("PL-manifold completion validation failed during explicit construction: {source}")]
-    CompletionValidation {
-        /// Underlying cumulative validation error.
-        #[source]
-        source: Box<InvariantError>,
-    },
     /// Geometric nondegeneracy validation failed after assembly.
     #[error("Geometric nondegeneracy validation failed during explicit construction: {source}")]
     GeometricNondegeneracy {
@@ -886,6 +882,13 @@ pub enum ExplicitConstructionError {
         /// Underlying cumulative realization validation error.
         #[source]
         source: Box<TriangulationRealizationValidationError>,
+    },
+    /// Bounded bistellar-flip repair could not restore the Delaunay property.
+    #[error("Delaunay repair failed during explicit construction: {source}")]
+    DelaunayRepair {
+        /// Underlying transactional flip-repair failure.
+        #[source]
+        source: Box<DelaunayRepairError>,
     },
     /// Level 5 Delaunay validation failed before returning the wrapper.
     #[error("Delaunay validation failed during explicit construction: {source}")]
@@ -1174,10 +1177,9 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// checked at Levels 1–4 during a `build_triangulation*` terminal. The
     /// [`build`](Self::build) and [`build_with_kernel`](Self::build_with_kernel)
     /// terminals additionally require the Level 5 Delaunay empty-circumsphere
-    /// property. Use [`ConstructionOptions::without_final_delaunay_enforcement`]
-    /// together with a `build_triangulation*` terminal when importing exact
-    /// degenerate or externally constrained connectivity that should remain a
-    /// generic triangulation.
+    /// property. A `build_triangulation*` terminal automatically omits that
+    /// Level 5 work when importing exact degenerate or externally constrained
+    /// connectivity that should remain a generic triangulation.
     /// Non-Euclidean explicit connectivity is rejected at build time because
     /// quotient meshes need Level 4 handling before they can be accepted.
     ///
@@ -1381,9 +1383,8 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// Sets the [`TopologyGuarantee`]
     ///
     /// Defaults to [`TopologyGuarantee::DEFAULT`] (`PLManifold`).
-    /// The builder derives the initial [`ValidationPolicy`]
-    /// from this guarantee; it does not expose a separate construction-time validation
-    /// policy knob.
+    /// The builder derives the initial [`ValidationPolicy`] from this guarantee
+    /// unless [`validation_policy`](Self::validation_policy) is selected separately.
     ///
     /// # Examples
     ///
@@ -1410,6 +1411,37 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     #[must_use]
     pub const fn topology_guarantee(mut self, topology_guarantee: TopologyGuarantee) -> Self {
         self.topology_guarantee = topology_guarantee;
+        self
+    }
+
+    /// Selects how often construction and later mutations run full global validation audits.
+    ///
+    /// This is independent of [`topology_guarantee`](Self::topology_guarantee):
+    /// the guarantee selects which Level 3 invariants the value carries, while
+    /// this policy selects the cadence of additional global audits. Scoped
+    /// Levels 1–4 mutation postconditions remain mandatory for every policy.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::{
+    ///     DelaunayResult, DelaunayTriangulationBuilder, ValidationPolicy, vertex,
+    /// };
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .validation_policy(ValidationPolicy::Always)
+    ///     .build()?;
+    /// assert_eq!(dt.validation_policy(), ValidationPolicy::Always);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub const fn validation_policy(mut self, validation_policy: ValidationPolicy) -> Self {
+        self.construction_options = self
+            .construction_options
+            .with_validation_policy(validation_policy);
         self
     }
 
@@ -1472,12 +1504,10 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// Sets the [`ConstructionOptions`] for construction and final validation.
     ///
     /// Defaults to [`ConstructionOptions::default`], which enforces final Level
-    /// 5 Delaunay validation. Explicit-simplex builders accept either the
-    /// default options or
-    /// [`ConstructionOptions::without_final_delaunay_enforcement`] when callers
-    /// intentionally import valid Levels 1–4 connectivity through a
-    /// `build_triangulation*` terminal. Delaunay-returning terminals reject the
-    /// non-enforcing option.
+    /// 5 Delaunay validation on Delaunay-returning terminals.
+    /// `build_triangulation*` terminals automatically remove Level 5
+    /// enforcement. Explicit-simplex builders reject point-insertion options
+    /// that would otherwise be silently ignored.
     ///
     /// # Examples
     ///
@@ -1672,8 +1702,8 @@ where
     ///   geometric degeneracy, etc.).
     /// - Explicit-simplex construction is requested with unsupported
     ///   [`ConstructionOptions`], non-Euclidean topology, invalid topology or
-    ///   realization, or a failed Level 5 Delaunay check when final enforcement is
-    ///   enabled.
+    ///   realization, non-convergent bounded Delaunay repair, or failed final
+    ///   Level 5 certification when enforcement is enabled.
     ///
     /// # Examples
     ///
@@ -1711,6 +1741,8 @@ where
     ///
     /// This terminal is intentionally separate from [`Self::build`]: a valid
     /// realized triangulation need not satisfy the Level 5 Delaunay predicate.
+    /// It therefore disables final Delaunay repair and certification regardless
+    /// of the builder's Level 5 option, while preserving all Levels 1–4 options.
     /// Call [`DelaunayTriangulation::try_from_triangulation`]
     /// for strict no-repair certification, or
     /// [`crate::delaunayize::delaunayize`] for bounded repair and certification.
@@ -1726,8 +1758,8 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     ConstructionOptions, DelaunayResult, DelaunayTriangulation,
-    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    ///     DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    ///     DelaunayTriangulationConstructionError,
     /// };
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -1741,9 +1773,6 @@ where
     /// let triangulation =
     ///     DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
     ///         .map_err(DelaunayTriangulationConstructionError::from)?
-    ///         .construction_options(
-    ///             ConstructionOptions::default().without_final_delaunay_enforcement(),
-    ///         )
     ///         .build_triangulation()?;
     ///
     /// assert!(triangulation.validate_realization().is_ok());
@@ -1815,6 +1844,10 @@ where
     /// Builds a point cloud or explicit connectivity as a Levels 1–4
     /// [`Triangulation`] with a caller-supplied kernel.
     ///
+    /// Final Level 5 repair and certification are disabled by this terminal;
+    /// callers do not need to alter [`ConstructionOptions`] to request the
+    /// weaker proof-bearing result.
+    ///
     /// # Errors
     ///
     /// Returns a typed construction error when the input cannot cross the
@@ -1847,24 +1880,30 @@ where
     where
         K: Kernel<D, Scalar = f64>,
     {
+        let construction_options = self
+            .construction_options
+            .without_final_delaunay_enforcement();
         if let Some(simplices) = self.explicit_simplices {
             if !matches!(self.topology, BuilderTopology::Euclidean) {
                 return Err(ExplicitConstructionError::IncompatibleTopology.into());
             }
-            if !Self::supports_explicit_triangulation_options(self.construction_options) {
+            if !Self::supports_explicit_triangulation_options(construction_options) {
                 return Err(ExplicitConstructionError::UnsupportedConstructionOptions.into());
             }
-            return Self::build_explicit_triangulation(
+            let triangulation = Self::build_explicit_triangulation(
                 kernel,
                 self.vertices,
                 simplices,
                 self.topology_guarantee,
                 self.global_topology_or_default(),
-            );
+            )?;
+            return Self::apply_requested_validation_policy(triangulation, construction_options);
         }
 
         if let BuilderTopology::PeriodicImagePoint(domain) = self.topology {
-            return self.build_periodic_triangulation_with_kernel(kernel, domain);
+            let mut builder = self;
+            builder.construction_options = construction_options;
+            return builder.build_periodic_triangulation_with_kernel(kernel, domain);
         }
 
         Self::reject_euclidean_non_euclidean_topology(self.global_topology_or_default())?;
@@ -1872,7 +1911,7 @@ where
             kernel,
             self.vertices,
             self.topology_guarantee,
-            self.construction_options,
+            construction_options,
         )
     }
 
@@ -1960,8 +1999,12 @@ where
     /// # Errors
     ///
     /// Returns [`DelaunayTriangulationConstructionError`] if canonicalization,
-    /// point-insertion construction, or explicit-simplex construction fails (see
-    /// [`build`](Self::build) for the policy-level conditions).
+    /// point-insertion construction, explicit-simplex construction, bounded
+    /// flip repair, or final Levels 1–5 certification fails (see
+    /// [`build`](Self::build) for the policy-level conditions). Explicit
+    /// connectivity is first constructed as a Levels 1–4 [`Triangulation`]; if
+    /// it is not already Delaunay, the strict terminal attempts transactional
+    /// bistellar-flip repair before promotion.
     ///
     /// # Examples
     ///
@@ -2003,20 +2046,46 @@ where
             if !matches!(self.topology, BuilderTopology::Euclidean) {
                 return Err(ExplicitConstructionError::IncompatibleTopology.into());
             }
-            if self.construction_options != ConstructionOptions::default() {
+            if self.construction_options.without_validation_policy()
+                != ConstructionOptions::default()
+            {
                 return Err(ExplicitConstructionError::UnsupportedConstructionOptions.into());
             }
-            let triangulation = Self::build_explicit_triangulation(
+            let mut triangulation = Self::build_explicit_triangulation(
                 kernel,
                 self.vertices,
                 simplices,
                 self.topology_guarantee,
                 self.global_topology_or_default(),
             )?;
+            triangulation =
+                Self::apply_requested_validation_policy(triangulation, self.construction_options)?;
+            if is_delaunay_property_only(&triangulation.tds).is_err() {
+                let topology = triangulation.topology_guarantee();
+                let global_topology = triangulation.global_topology();
+                repair_delaunay_with_flips_k2_k3(
+                    &mut triangulation.tds,
+                    &triangulation.kernel,
+                    None,
+                    topology,
+                    global_topology,
+                    None,
+                )
+                .map_err(|source| ExplicitConstructionError::DelaunayRepair {
+                    source: Box::new(source),
+                })?;
+                triangulation
+                    .normalize_and_promote_positive_orientation()
+                    .map_err(
+                        |source| ExplicitConstructionError::OrientationNormalization {
+                            source: Box::new(source),
+                        },
+                    )?;
+            }
             return DelaunayTriangulation::try_from_triangulation(triangulation).map_err(
-                |source| {
+                |failure| {
                     ExplicitConstructionError::DelaunayValidation {
-                        source: Box::new(source),
+                        source: Box::new(failure.into_reason()),
                     }
                     .into()
                 },
@@ -2031,9 +2100,9 @@ where
                 let triangulation =
                     self.build_periodic_triangulation_with_kernel(kernel, domain)?;
                 let dt = DelaunayTriangulation::try_from_triangulation(triangulation).map_err(
-                    |source| TriangulationConstructionError::FinalDelaunayValidation {
+                    |failure| TriangulationConstructionError::FinalDelaunayValidation {
                         context: FinalDelaunayValidationContext::PeriodicQuotientDelaunay,
-                        source,
+                        source: failure.into_reason(),
                     },
                 )?;
                 return Ok(dt);
@@ -2214,7 +2283,9 @@ where
             let global_topology = self.global_topology_or_default();
             let vertices = self.vertices;
             let topology_guarantee = self.topology_guarantee;
-            let construction_options = self.construction_options;
+            let construction_options = self
+                .construction_options
+                .without_final_delaunay_enforcement();
 
             Self::reject_euclidean_non_euclidean_topology(global_topology)
                 .map_err(Self::with_default_error_statistics)
@@ -2294,14 +2365,27 @@ where
     ///
     /// Explicit connectivity bypasses insertion ordering, deduplication, and
     /// retry policies, so accepting arbitrary [`ConstructionOptions`] would make
-    /// those knobs look meaningful when they are ignored. The one supported
-    /// non-default policy is
-    /// [`ConstructionOptions::without_final_delaunay_enforcement`], which is the
-    /// public opt-in for importing valid Levels 1–4 constrained connectivity
-    /// through a `build_triangulation*` terminal.
+    /// those knobs look meaningful when they are ignored. The terminal removes
+    /// Level 5 enforcement automatically; callers do not need to disable
+    /// Delaunay certification explicitly when selecting a
+    /// `build_triangulation*` terminal.
     fn supports_explicit_triangulation_options(options: ConstructionOptions) -> bool {
-        options == ConstructionOptions::default()
-            || options == ConstructionOptions::default().without_final_delaunay_enforcement()
+        let normalized = options.without_validation_policy();
+        normalized == ConstructionOptions::default().without_final_delaunay_enforcement()
+    }
+
+    /// Installs a caller-selected audit cadence after Levels 1–4 proof succeeds.
+    fn apply_requested_validation_policy<K>(
+        mut triangulation: Triangulation<K, U, V, D>,
+        options: ConstructionOptions,
+    ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
+    where
+        K: Kernel<D, Scalar = f64>,
+    {
+        if let Some(policy) = options.validation_policy() {
+            triangulation.try_set_validation_policy(policy)?;
+        }
+        Ok(triangulation)
     }
 
     /// Builds and proves a periodic quotient through Level 4 without ever
@@ -2357,7 +2441,7 @@ where
                 source: DelaunayConstructionFailure::FinalRealizationValidation { source },
             }
         })?;
-        Ok(triangulation)
+        Self::apply_requested_validation_policy(triangulation, self.construction_options)
     }
 
     /// Proves explicit simplex topology once before taking the prechecked TDS insertion path.
@@ -2585,9 +2669,6 @@ where
                 })?;
         }
 
-        // Mark as constructed so validation doesn't reject incomplete state.
-        tds.construction_state = TriangulationConstructionState::Constructed;
-
         // --- Compute adjacency ---
         tds.assign_neighbors()
             .map_err(|source| ExplicitConstructionError::NeighborAssignment {
@@ -2603,83 +2684,35 @@ where
             }
         })?;
 
-        // --- Assemble an unpublished validation candidate ---
-        //
-        // Construct the candidate first so the Triangulation-layer helpers
-        // (orientation promotion, topology checks) operate on the assembled complex.
-        // Include global topology metadata before validation so that
-        // validate_topology_core() uses the correct Euler characteristic
-        // expectation (e.g. χ = 0 for toroidal instead of χ = 2 for sphere).
-        let mut candidate = DelaunayTriangulationCandidate::assemble(
+        // Keep raw connectivity in an assembly workspace until the consuming
+        // smart constructor has repaired orientation and proved Levels 1–4.
+        // Installing global topology before proof ensures Euler and boundary
+        // checks use the intended model rather than the Euclidean default.
+        let candidate = TriangulationAssemblyCandidate::new(
             tds,
             kernel.clone(),
             topology_guarantee,
             global_topology,
         );
-
-        // --- Normalize orientation and promote to positive ---
-        //
-        // normalize_and_promote_positive_orientation() combines:
-        //   1. BFS coherent-orientation normalization (adjacent simplices agree)
-        //   2. Global sign canonicalization (flip all if representative is negative)
-        //   3. Bounded per-simplex promotion passes for FP-precision edge cases
-        // This ensures the returned DT has positive geometric orientation,
-        // matching the invariant expected by validate_geometric_simplex_orientation.
         candidate
-            .normalize_and_promote_positive_orientation()
-            .map_err(
-                |source| ExplicitConstructionError::OrientationNormalization {
-                    source: Box::new(source),
-                },
-            )?;
-
-        // Level 1–2: TDS structural validation (mappings, neighbors, facet
-        // sharing, coherent orientation, etc.).
-        if let Err(e) = candidate.validate_tds_structure() {
-            return Err(ExplicitConstructionError::StructuralValidation {
-                source: Box::new(e),
-            }
-            .into());
-        }
-
-        // Level 3 intrinsic topology: connectedness, manifold facets, isolated
-        // vertices, Euler characteristic, and PL-manifold vertex/ridge links
-        // when the topology guarantee requires them. Coordinate-dependent
-        // orientation belongs to the Level 4 realization checks below.
-        if let Err(e) = candidate.validate_topology() {
-            return Err(ExplicitConstructionError::TopologyValidation {
-                source: Box::new(e),
-            }
-            .into());
-        }
-
-        // Completion-time PL-manifold check (vertex links) if required.
-        if let Err(e) = candidate.validate_at_completion() {
-            return Err(ExplicitConstructionError::CompletionValidation {
-                source: Box::new(e),
-            }
-            .into());
-        }
-
-        // --- Geometric nondegeneracy ---
-        //
-        // Reject degenerate simplices (zero-volume simplices from collinear /
-        // coplanar vertices).  Unlike the Delaunay construction paths, which
-        // may tolerate near-degenerate simplices from flip-based repair,
-        // explicit construction should not silently accept geometrically
-        // collapsed simplices supplied by the user.
-        if let Err(e) = candidate.validate_geometric_nondegeneracy() {
-            return Err(ExplicitConstructionError::GeometricNondegeneracy {
-                source: Box::new(e),
-            }
-            .into());
-        }
-
-        candidate
-            .try_into_realization_validated_triangulation()
+            .try_into_validated_triangulation()
             .map_err(|source| {
-                ExplicitConstructionError::RealizationValidation {
-                    source: Box::new(source),
+                match source {
+                    TriangulationAssemblyError::OrientationNormalization { source } => {
+                        ExplicitConstructionError::OrientationNormalization { source }
+                    }
+                    TriangulationAssemblyError::StructuralValidation { source } => {
+                        ExplicitConstructionError::StructuralValidation { source }
+                    }
+                    TriangulationAssemblyError::TopologyValidation { source } => {
+                        ExplicitConstructionError::TopologyValidation { source }
+                    }
+                    TriangulationAssemblyError::GeometricNondegeneracy { source } => {
+                        ExplicitConstructionError::GeometricNondegeneracy { source }
+                    }
+                    TriangulationAssemblyError::RealizationValidation { source } => {
+                        ExplicitConstructionError::RealizationValidation { source }
+                    }
                 }
                 .into()
             })
@@ -2925,7 +2958,23 @@ where
         let mut image_uuid_to_canonical_with_offset: FastHashMap<Uuid, (Uuid, [i8; D])> =
             FastHashMap::default();
         let mut expanded: Vec<Vertex<U, D>> = Vec::with_capacity(n.saturating_mul(image_count));
-        for k in 0..image_count {
+        // In 3D, insert the central representatives before their translated
+        // scaffold images. Batch construction may legitimately skip an
+        // unsalvageable scaffold point, but the quotient cannot exist without
+        // every central representative. Keeping the central block first makes
+        // those required vertices the earliest incremental insertions after
+        // initial-simplex selection instead of leaving them behind an
+        // architecture-sensitive finite-cover insertion sequence. Preserve the
+        // established Hilbert scaffold path in 2D, where its quotient
+        // connectivity is covered by the periodic flip regressions.
+        let image_indices: Vec<usize> = if D == 3 {
+            std::iter::once(zero_offset_idx)
+                .chain((0..image_count).filter(|&k| k != zero_offset_idx))
+                .collect()
+        } else {
+            (0..image_count).collect()
+        };
+        for k in image_indices {
             let mut offset = [0i8; D];
             for (i, offset_val) in offset.iter_mut().enumerate() {
                 let digit = (k / image_width
@@ -2970,7 +3019,12 @@ where
                 }
             }
         }
-        let expanded_base_options = construction_options
+        let expanded_construction_options = if D == 3 {
+            construction_options.with_insertion_order(InsertionOrderStrategy::Input)
+        } else {
+            construction_options
+        };
+        let expanded_base_options = expanded_construction_options
             .with_initial_simplex_strategy(InitialSimplexStrategy::Balanced)
             .with_insertion_validation_policy(ValidationPolicy::ExplicitOnly)
             .with_degenerate_realization_retries()
@@ -2989,7 +3043,7 @@ where
             let mut full_triangulation = DelaunayTriangulationBuilder::new(&expanded)
                 .simplex_data_type::<V>()
                 .topology_guarantee(TopologyGuarantee::PLManifold)
-                .construction_options(expanded_options.without_final_delaunay_enforcement())
+                .construction_options(expanded_options)
                 .build_triangulation_with_kernel(&image_kernel)?;
             let full_topology_guarantee = full_triangulation.topology_guarantee();
             let full_global_topology = full_triangulation.global_topology();
@@ -3016,10 +3070,10 @@ where
                         source: Box::new(source),
                     }
                 })?;
-            DelaunayTriangulation::try_from_triangulation(full_triangulation).map_err(|source| {
+            DelaunayTriangulation::try_from_triangulation(full_triangulation).map_err(|failure| {
                 TriangulationConstructionError::FinalDelaunayValidation {
                     context: FinalDelaunayValidationContext::PeriodicQuotientDelaunay,
-                    source,
+                    source: failure.into_reason(),
                 }
                 .into()
             })
@@ -3691,18 +3745,45 @@ where
         tds_mut
             .assign_incident_simplices()
             .map_err(periodic_quotient_tds_mutation_error)?;
-        let candidate = DelaunayTriangulationCandidate::assemble(
+        let candidate = TriangulationAssemblyCandidate::new(
             tds_mut,
             kernel.clone(),
             topology_guarantee,
             global_topology,
         );
         candidate
-            .try_into_structurally_valid_triangulation()
+            .try_into_validated_triangulation()
             .map_err(|source| {
-                TriangulationConstructionError::FinalTopologyValidation {
-                    context: FinalTopologyValidationContext::PeriodicQuotientTopology,
-                    source: Box::new(InvariantError::Tds { source }),
+                match source {
+                    TriangulationAssemblyError::OrientationNormalization { source } => {
+                        TriangulationConstructionError::PeriodicImageOrientationCanonicalization {
+                            source,
+                        }
+                    }
+                    TriangulationAssemblyError::StructuralValidation { source } => {
+                        TriangulationConstructionError::FinalTopologyValidation {
+                            context: FinalTopologyValidationContext::PeriodicQuotientTopology,
+                            source: Box::new(InvariantError::Tds { source: *source }),
+                        }
+                    }
+                    TriangulationAssemblyError::TopologyValidation { source } => {
+                        TriangulationConstructionError::FinalTopologyValidation {
+                            context: FinalTopologyValidationContext::PeriodicQuotientTopology,
+                            source,
+                        }
+                    }
+                    TriangulationAssemblyError::GeometricNondegeneracy { source } => {
+                        TriangulationConstructionError::PeriodicImageGeometricOrientationValidation {
+                            source,
+                        }
+                    }
+                    TriangulationAssemblyError::RealizationValidation { source } => {
+                        return DelaunayTriangulationConstructionError::Triangulation {
+                            source: DelaunayConstructionFailure::FinalRealizationValidation {
+                                source: *source,
+                            },
+                        };
+                    }
                 }
                 .into()
             })
@@ -4073,9 +4154,7 @@ mod tests {
         let triangulation = DelaunayTriangulationBuilder::new(&vertices)
             .try_toroidal([1.0, 1.0])
             .unwrap()
-            .construction_options(
-                deterministic_periodic_options().without_final_delaunay_enforcement(),
-            )
+            .construction_options(deterministic_periodic_options())
             .build_triangulation_with_kernel(&kernel)
             .unwrap();
         assert_eq!(triangulation.number_of_vertices(), n);

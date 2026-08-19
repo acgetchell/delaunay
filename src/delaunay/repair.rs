@@ -110,7 +110,9 @@ impl fmt::Display for DelaunayRepairOperation {
 /// cadence rather than a hard lower bound on repair frequency: construction may
 /// run an additional local repair earlier when the accumulated seed frontier
 /// grows large. [`DelaunayRepairPolicy::Never`] disables those automatic batch
-/// repairs.
+/// repairs. For an already published [`DelaunayTriangulation`], skipping a
+/// repair never weakens the owner: an insertion that reports repair is needed
+/// must instead pass Level 5 validation or be rolled back.
 ///
 /// # Examples
 ///
@@ -485,27 +487,40 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     // REPAIR POLICY GATES (No Kernel Bounds)
     // =============================================================================
 
-    /// Applies the repair policy only when the dimension and topology can
+    /// Returns whether insertion cadence schedules a Delaunay repair decision.
+    ///
+    /// This intentionally does not inspect topology admissibility: callers
+    /// still need rollback protection when the cadence fires but facet flips
+    /// are inadmissible, because that path must validate and reject a Level 5
+    /// violation instead of silently publishing it.
+    pub(crate) const fn delaunay_repair_scheduled_for(&self, insertion_count: usize) -> bool {
+        D >= 2
+            && self
+                .insertion_state
+                .delaunay_repair_policy
+                .should_repair(insertion_count)
+    }
+
+    /// Applies the repair schedule only when stored simplices and topology can
     /// support bistellar flips.
     pub(crate) fn should_run_delaunay_repair_for(
         &self,
         topology: TopologyGuarantee,
         insertion_count: usize,
     ) -> bool {
-        if D < 2 {
-            return false;
-        }
         if self.tri.tds.number_of_simplices() == 0 {
             return false;
         }
-
-        let policy = self.insertion_state.delaunay_repair_policy;
-        if policy == DelaunayRepairPolicy::Never {
+        if !self.delaunay_repair_scheduled_for(insertion_count) {
             return false;
         }
 
         matches!(
-            policy.decide(insertion_count, topology, TopologicalOperation::FacetFlip),
+            self.insertion_state.delaunay_repair_policy.decide(
+                insertion_count,
+                topology,
+                TopologicalOperation::FacetFlip,
+            ),
             RepairDecision::Proceed
         )
     }
@@ -926,7 +941,7 @@ mod tests {
     };
     use crate::core::operations::InsertionOutcome;
     use crate::core::simplex::Simplex;
-    use crate::core::tds::{Tds, TriangulationConstructionState};
+    use crate::core::tds::Tds;
     use crate::core::validation::TopologyGuarantee;
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
@@ -1068,7 +1083,7 @@ mod tests {
             Simplex::try_new_with_data(vec![v0, v2, v3], None).unwrap(),
         )
         .unwrap();
-        tds.construction_state = TriangulationConstructionState::Constructed;
+        tds.force_construction_complete_for_test();
         tds.assign_neighbors().unwrap();
         tds.assign_incident_simplices().unwrap();
         tds
@@ -1140,6 +1155,24 @@ mod tests {
         assert!(!dt.should_run_delaunay_repair_for(topology, 0));
         assert!(!dt.should_run_delaunay_repair_for(topology, 1));
         assert!(dt.should_run_delaunay_repair_for(topology, 2));
+    }
+
+    #[test]
+    fn repair_schedule_is_distinct_from_flip_admissibility() {
+        init_tracing();
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .unwrap();
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::EveryInsertion;
+
+        assert!(dt.delaunay_repair_scheduled_for(1));
+        assert!(!dt.should_run_delaunay_repair_for(TopologyGuarantee::Pseudomanifold, 1));
     }
 
     #[test]
@@ -1273,7 +1306,8 @@ mod tests {
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
+            .unwrap();
 
         let result = dt.repair_delaunay_with_flips();
         assert!(
@@ -1381,18 +1415,19 @@ mod tests {
         let kernel = AdaptiveKernel::<f64>::new();
         let robust_kernel = RobustKernel::<f64>::new();
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulationCandidate::assemble(
+            DelaunayTriangulationCandidate::assemble_unchecked_for_test(
                 non_delaunay_quad_tds(),
                 kernel,
                 TopologyGuarantee::PLManifold,
                 GlobalTopology::DEFAULT,
             )
             .into_unproven_delaunay_for_test();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
+            .unwrap();
         assert!(dt.verify_via_flip_predicates().is_err());
 
         let robust_dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
-            DelaunayTriangulationCandidate::assemble(
+            DelaunayTriangulationCandidate::assemble_unchecked_for_test(
                 non_delaunay_quad_tds(),
                 robust_kernel,
                 TopologyGuarantee::PLManifold,
@@ -1422,14 +1457,15 @@ mod tests {
         // Reconstruct dt from the same raw TDS in case the previous attempt mutated it.
         let tds2 = non_delaunay_quad_tds();
         let mut dt2: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulationCandidate::assemble(
+            DelaunayTriangulationCandidate::assemble_unchecked_for_test(
                 tds2,
                 AdaptiveKernel::new(),
                 TopologyGuarantee::PLManifold,
                 GlobalTopology::DEFAULT,
             )
             .into_unproven_delaunay_for_test();
-        dt2.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        dt2.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
+            .unwrap();
         let outcome_generous = dt2
             .repair_delaunay_with_flips_advanced(config_generous)
             .unwrap();

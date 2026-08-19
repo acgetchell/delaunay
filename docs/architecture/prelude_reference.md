@@ -12,7 +12,8 @@ they exercise.
 | Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
 | Export stable simplicial-complex primitives | `use delaunay::prelude::export::*` |
 | Validation policies, errors, reports, PL-manifold link errors, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
-| Raw-TDS PL-manifold repair plus Delaunay repair diagnostics and policies | `use delaunay::prelude::repair::*` |
+| Raw-TDS PL-manifold repair and restoration context | `use delaunay::prelude::repair::{repair_pl_manifold_tds, GlobalTopology, PlManifoldRepairConfig}` |
+| Delaunay repair diagnostics and policies | `use delaunay::prelude::repair::*` |
 | Delaunayize workflow | `use delaunay::prelude::delaunayize::*` |
 | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
 | Incremental insertion diagnostics and result types | `use delaunay::prelude::insertion::*` |
@@ -23,6 +24,11 @@ they exercise.
 | Read-only traversal, adjacency, ridge views, simplex barycenters, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
 | Topological space helpers, topology traits, spherical point/metric backends, and lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
 | Low-level topology validation, Euler characteristic helpers, manifold validators, and ridge queries | `use delaunay::prelude::topology::validation::*` |
+
+The triangulation, Delaunayize, and validation preludes re-export
+`RefinementError` and their stage-specific aliases. A failed consuming proof
+promotion therefore remains recoverable without importing an unrelated
+construction prelude.
 
 ## Policy
 

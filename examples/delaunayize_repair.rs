@@ -8,10 +8,10 @@
 //!
 //! The workflow has three steps:
 //!
-//! 1. **Levels 1–4 validation** — confirms the input remains a valid realized
-//!    PL-manifold triangulation.
-//! 2. **Delaunay flip repair** — restores the empty-circumsphere property
-//!    via k=2/k=3 bistellar flips.
+//! 1. **Levels 1–4 proof consumption** — accepts the validated
+//!    `Triangulation` domain value without repeating its encoded checks.
+//! 2. **Delaunay flip repair** — preserves Levels 1–4 transactionally while
+//!    restoring the empty-circumsphere property via k=2/k=3 bistellar flips.
 //! 3. **Optional fallback rebuild** — rebuilds from the vertex set if flip
 //!    repair fails.
 //!
@@ -21,6 +21,7 @@
 //! cargo run --example delaunayize_repair
 //! ```
 
+use delaunay::RefinementError;
 use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     vertex,
@@ -94,7 +95,8 @@ fn already_delaunay_3d() -> Result<(), DelaunayizeRepairExampleError> {
         dt.number_of_simplices()
     );
 
-    let result = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default())?;
+    let result = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default())
+        .map_err(RefinementError::into_reason)?;
     print_outcome(&result.outcome);
 
     result.triangulation.validate()?;
@@ -127,7 +129,8 @@ fn already_delaunay_4d() -> Result<(), DelaunayizeRepairExampleError> {
         dt.number_of_simplices()
     );
 
-    let result = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default())?;
+    let result = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default())
+        .map_err(RefinementError::into_reason)?;
     print_outcome(&result.outcome);
 
     result.triangulation.validate()?;
@@ -205,20 +208,25 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
         .propose_pachner(PachnerMove::K2 { facet })?
         .attempt_on(&mut tri)?;
     assert!(!selected_flip.new_simplices.is_empty());
-    match DelaunayTriangulation::try_from_triangulation(tri.clone()) {
+    tri = match DelaunayTriangulation::try_from_triangulation(tri) {
         Ok(_) => {
             println!(
                 "  Applied selected k=2 flip, but Delaunay property remained satisfied (unexpected)"
             );
             return Ok(());
         }
-        Err(err) => {
-            println!("  Applied k=2 flip; post-flip check confirms Delaunay violation: {err}");
+        Err(failure) => {
+            println!(
+                "  Applied k=2 flip; post-flip check confirms Delaunay violation: {}",
+                failure.reason()
+            );
+            failure.into_owner()
         }
-    }
+    };
 
     // Repair.
-    let result = delaunayize(tri, DelaunayizeConfig::default())?;
+    let result =
+        delaunayize(tri, DelaunayizeConfig::default()).map_err(RefinementError::into_reason)?;
     print_outcome(&result.outcome);
 
     result.triangulation.validate()?;
@@ -254,7 +262,8 @@ fn custom_config_2d() -> Result<(), DelaunayizeRepairExampleError> {
         config.delaunay_max_flips, config.fallback_rebuild,
     );
 
-    let result = delaunayize(dt.into_triangulation(), config)?;
+    let result =
+        delaunayize(dt.into_triangulation(), config).map_err(RefinementError::into_reason)?;
     print_outcome(&result.outcome);
 
     result.triangulation.validate()?;

@@ -14,14 +14,14 @@ binary_extension := if os_family() == "windows" { ".exe" } else { "" }
 perf_delaunay_binary := "target/perf/delaunay" + binary_extension
 
 cargo_audit_version := "0.22.2"
-cargo_llvm_cov_version := "0.8.7"
+cargo_llvm_cov_version := "0.9.0"
 cargo_machete_version := "0.9.2"
 clippy_sarif_version := "0.8.0"
-dprint_version := "0.55.2"
+dprint_version := "0.56.0"
 git_cliff_version := "2.13.1"
 just_version := "1.58.0"
 nextest_version := "0.9.143"
-rumdl_version := "0.2.55"
+rumdl_version := "0.2.57"
 samply_version := "0.13.1"
 sarif_fmt_version := "0.8.0"
 taplo_version := "0.10.0"

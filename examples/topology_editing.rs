@@ -39,7 +39,9 @@ use delaunay::prelude::pachner::{
 };
 use delaunay::prelude::tds::TdsError;
 use delaunay::prelude::triangulation::Triangulation;
-use delaunay::prelude::validation::DelaunayTriangulationValidationError;
+use delaunay::prelude::validation::{
+    DelaunayTriangulationValidationError, TriangulationRealizationValidationError,
+};
 
 type ExampleResult<T = ()> = Result<T, TopologyEditingExampleError>;
 type Dt3 = Triangulation<AdaptiveKernel<f64>, (), (), 3>;
@@ -52,6 +54,8 @@ enum TopologyEditingExampleError {
     Validation(#[from] DelaunayTriangulationValidationError),
     #[error(transparent)]
     Topology(#[from] InvariantError),
+    #[error(transparent)]
+    Realization(#[from] TriangulationRealizationValidationError),
     #[error(transparent)]
     Insertion(#[from] InsertionError),
     #[error(transparent)]
@@ -532,7 +536,7 @@ fn pachner_3d_k3() -> ExampleResult {
     let flip_info = dt
         .propose_pachner(PachnerMove::K3 { ridge })?
         .attempt_on(&mut dt)?;
-    dt.validate()?;
+    dt.validate_realization()?;
     let triangle = inserted_triangle(&flip_info.inserted_face_vertices, "3D k=3 demo")?;
 
     println!("\n✓ k=3 flip succeeded:");
@@ -637,7 +641,7 @@ fn find_roundtrip_k2_facet_3d(dt: &Dt3) -> ExampleResult<Option<FacetHandle>> {
             let Ok(inverse) = trial.propose_pachner(PachnerMove::K2Inverse { edge }) else {
                 continue;
             };
-            if inverse.attempt_on(&mut trial).is_ok() && trial.validate().is_ok() {
+            if inverse.attempt_on(&mut trial).is_ok() && trial.validate_realization().is_ok() {
                 return Ok(Some(facet));
             }
         }
@@ -662,7 +666,7 @@ fn find_flippable_ridge_3d(dt: &Dt3) -> ExampleResult<Option<RidgeHandle>> {
                 let Ok(proposal) = trial.propose_pachner(PachnerMove::K3 { ridge }) else {
                     continue;
                 };
-                if proposal.attempt_on(&mut trial).is_ok() && trial.validate().is_ok() {
+                if proposal.attempt_on(&mut trial).is_ok() && trial.validate_realization().is_ok() {
                     return Ok(Some(ridge));
                 }
             }

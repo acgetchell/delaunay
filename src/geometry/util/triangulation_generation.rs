@@ -879,7 +879,7 @@ where
 ///
 /// This builder provides a fluent API for constructing random triangulations with control over:
 /// - Insertion order strategy (`Input`, `Hilbert`)
-/// - Topology guarantee (`Pseudomanifold`, `PLManifold`, `PLManifoldStrict`)
+/// - Topology guarantee (`Pseudomanifold`, `PLManifold`)
 /// - Construction options (deduplication, retry policy)
 /// - Topology/Euler validation (the final triangulation must pass Level-3 checks)
 ///

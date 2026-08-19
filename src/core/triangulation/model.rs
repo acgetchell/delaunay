@@ -19,7 +19,21 @@ use crate::core::validation::{TopologyGuarantee, ValidationPolicy};
 use crate::geometry::kernel::Kernel;
 use crate::topology::traits::topological_space::GlobalTopology;
 
-/// Generic triangulation combining kernel and data structure.
+/// Proof-bearing Levels 1–4 triangulation.
+///
+/// `Triangulation` owns a validated [`Tds`] (Levels 1–2), explicit topology
+/// context (Level 3), and a valid realization in that context (Level 4). Its
+/// public constructors and mutating operations either preserve those proofs or
+/// return an error without publishing the attempted state. An empty Euclidean
+/// triangulation satisfies the same contract vacuously.
+///
+/// Use [`Triangulation::try_from_tds_with_topology_context`] to refine validated
+/// storage into this domain type and [`Triangulation::into_tds`] to demote it
+/// explicitly. Consume a triangulation with
+/// [`DelaunayTriangulation::try_from_triangulation`](crate::DelaunayTriangulation::try_from_triangulation)
+/// to certify Level 5 without repair, or pass it to
+/// [`delaunayize`](crate::delaunayize::delaunayize) to repair and certify the
+/// Delaunay property.
 ///
 /// # Type Parameters
 /// - `K`: Geometric kernel implementing predicates
@@ -40,7 +54,10 @@ use crate::topology::traits::topological_space::GlobalTopology;
 pub struct Triangulation<K, U, V, const D: usize> {
     /// The geometric kernel for predicates.
     pub(crate) kernel: K,
-    /// The combinatorial triangulation data structure.
+    /// The proof-bearing Levels 1–2 combinatorial owner.
+    ///
+    /// Higher layers may query it or invoke its checked transitions, but must
+    /// not expose mutable storage or edit its canonical fields directly.
     pub(crate) tds: Tds<U, V, D>,
     /// Runtime metadata describing the global topological space represented by this triangulation.
     pub(crate) global_topology: GlobalTopology<D>,

@@ -59,9 +59,8 @@
 //! # Initial simplex strategy for batch construction: "max-volume" (default), "balanced", or "first"
 //! DELAUNAY_LARGE_DEBUG_INITIAL_SIMPLEX=max-volume \
 //! # Debug mode:
-//! # - "cadenced" (default): PLManifold, ridge-link validation during insertion,
-//! #   vertex-link validation at completion
-//! # - "strict": PLManifoldStrict-link validation after every insertion
+//! # - "cadenced" (default): PLManifold with suspicion-triggered global audits
+//! # - "always": PL-manifold validation with a full global audit after every insertion
 //! DELAUNAY_LARGE_DEBUG_DEBUG_MODE=cadenced \
 //! # Deterministically shuffle insertion order (incremental mode only)
 //! DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED=123 \
@@ -77,6 +76,8 @@
 //! DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
 //! # Skip the final flip-based repair pass (faster, but may leave Delaunay violations)
 //! DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR=1 \
+//! # Allow final conversion to rebuild after bounded flip repair fails (disabled by default)
+//! DELAUNAY_LARGE_DEBUG_FALLBACK_REBUILD=1 \
 //! # Batch-construction repair cadence (0 disables; default: 1).
 //! # Published incremental Delaunay insertion always preserves Level 5.
 //! DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1 \
@@ -121,7 +122,7 @@ use delaunay::prelude::insertion::InsertionResult;
 use delaunay::prelude::insertion::{InsertionOutcome, InsertionStatistics};
 use delaunay::prelude::repair::DelaunayCheckPolicy;
 use delaunay::prelude::tds::{InvariantKind, TriangulationValidationReport};
-use delaunay::prelude::validation::ValidationCadence;
+use delaunay::prelude::validation::{ValidationCadence, ValidationPolicy};
 use delaunay::vertex;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 #[cfg(feature = "slow-tests")]
@@ -487,24 +488,24 @@ fn initial_simplex_strategy_from_env() -> InitialSimplexStrategy {
 enum DebugMode {
     /// Faster default: repair/check in cadence, with suspicion-driven automatic validation.
     Cadenced,
-    /// Maximal diagnostics: strict guarantee + per-insertion automatic validation.
-    Strict,
+    /// Maximal diagnostics: per-insertion full global validation.
+    Always,
 }
 
 impl DebugMode {
     const fn name(self) -> &'static str {
         match self {
             Self::Cadenced => "cadenced",
-            Self::Strict => "strict",
+            Self::Always => "always",
         }
     }
 }
 
-/// Selects the topology guarantee that matches the requested debug intensity.
-const fn topology_for_debug_mode(debug_mode: DebugMode) -> TopologyGuarantee {
+/// Selects the validation cadence that matches the requested debug intensity.
+const fn validation_policy_for_debug_mode(debug_mode: DebugMode) -> ValidationPolicy {
     match debug_mode {
-        DebugMode::Cadenced => TopologyGuarantee::PLManifold,
-        DebugMode::Strict => TopologyGuarantee::PLManifoldStrict,
+        DebugMode::Cadenced => ValidationPolicy::OnSuspicion,
+        DebugMode::Always => ValidationPolicy::Always,
     }
 }
 
@@ -611,11 +612,11 @@ fn debug_mode_from_env() -> DebugMode {
         return DebugMode::Cadenced;
     }
 
-    if raw.eq_ignore_ascii_case("strict") {
-        return DebugMode::Strict;
+    if raw.eq_ignore_ascii_case("always") || raw.eq_ignore_ascii_case("strict") {
+        return DebugMode::Always;
     }
 
-    panic!("invalid DELAUNAY_LARGE_DEBUG_DEBUG_MODE={raw:?} (expected 'cadenced' or 'strict')");
+    panic!("invalid DELAUNAY_LARGE_DEBUG_DEBUG_MODE={raw:?} (expected 'cadenced' or 'always')");
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1233,7 +1234,8 @@ where
     let mode = construction_mode_from_env();
     let initial_simplex_strategy = initial_simplex_strategy_from_env();
     let debug_mode = debug_mode_from_env();
-    let topology_guarantee = topology_for_debug_mode(debug_mode);
+    let topology_guarantee = TopologyGuarantee::PLManifold;
+    let validation_policy = validation_policy_for_debug_mode(debug_mode);
 
     let shuffle_seed = env_u64("DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED");
     let progress_every = env_usize("DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY")
@@ -1244,6 +1246,7 @@ where
     let allow_skips = env_flag("DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS");
     let max_skip_pct = max_skip_pct_from_env();
     let skip_final_repair = env_flag("DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR");
+    let fallback_rebuild = env_flag("DELAUNAY_LARGE_DEBUG_FALLBACK_REBUILD");
 
     // Delaunay repair scheduling
     // - 0 disables incremental repair
@@ -1354,7 +1357,8 @@ where
             let t_batch = Instant::now();
             let options = ConstructionOptions::default()
                 .with_initial_simplex_strategy(initial_simplex_strategy)
-                .with_batch_repair_policy(repair_policy);
+                .with_batch_repair_policy(repair_policy)
+                .with_validation_policy(validation_policy);
             match DelaunayTriangulationBuilder::new(&vertices)
                 .topology_guarantee(topology_guarantee)
                 .construction_options(options)
@@ -1391,8 +1395,6 @@ where
                 println!("Shuffled insertion order with seed {shuffle_seed}");
             }
 
-            let validation_policy = topology_guarantee.default_validation_policy();
-
             let mut dt: DelaunayTriangulation<_, (), (), D> =
                 DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
                     RobustKernel::<f64>::new(),
@@ -1407,8 +1409,9 @@ where
 
             // Debug-mode-dependent topology validation strategy:
             // - cadenced: suspicion-driven automatic checks + periodic explicit checks
-            // - strict: per-insertion automatic checks
-            dt.set_validation_policy(validation_policy);
+            // - always: per-insertion full global checks
+            dt.try_set_validation_policy(validation_policy)
+                .unwrap_or_else(|error| panic!("invalid validation configuration: {error}"));
 
             println!("Policies:");
             println!("  topology_guarantee:   {:?}", dt.topology_guarantee());
@@ -1537,10 +1540,10 @@ where
         println!("Running final Triangulation -> DelaunayTriangulation conversion...");
         let t_repair = Instant::now();
         let repair_config = repair_max_flips.map_or_else(
-            || DelaunayizeConfig::default().with_fallback_rebuild(true),
+            || DelaunayizeConfig::default().with_fallback_rebuild(fallback_rebuild),
             |max_flips| {
                 DelaunayizeConfig::default()
-                    .with_fallback_rebuild(true)
+                    .with_fallback_rebuild(fallback_rebuild)
                     .with_delaunay_max_flips(max_flips)
             },
         );
@@ -1697,14 +1700,14 @@ fn test_write_timeout_abort_message_propagates_error() {
 }
 
 #[test]
-fn test_topology_for_debug_mode_uses_ridge_links_by_default() {
+fn test_validation_policy_for_debug_mode_is_independent_of_topology() {
     assert_eq!(
-        topology_for_debug_mode(DebugMode::Cadenced),
-        TopologyGuarantee::PLManifold
+        validation_policy_for_debug_mode(DebugMode::Cadenced),
+        ValidationPolicy::OnSuspicion
     );
     assert_eq!(
-        topology_for_debug_mode(DebugMode::Strict),
-        TopologyGuarantee::PLManifoldStrict
+        validation_policy_for_debug_mode(DebugMode::Always),
+        ValidationPolicy::Always
     );
 }
 
@@ -1842,7 +1845,8 @@ fn regression_issue_230_4d_100_orientation() {
 
     let kernel = RobustKernel::<f64>::new();
     let (dt, stats) = DelaunayTriangulationBuilder::new(&vertices)
-        .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .validation_policy(ValidationPolicy::Always)
         .construction_options(ConstructionOptions::default())
         .build_with_kernel_and_statistics(&kernel)
         .expect("construction must not fail (#230 regression)");

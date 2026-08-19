@@ -233,13 +233,17 @@ fn fallback_does_not_bypass_flip_topology_precondition() {
     )
     .expect_err("a weaker topology guarantee must not enter flip repair or fallback");
 
+    let (triangulation, reason) = error.into_parts();
     std::assert_matches!(
-        error,
+        reason,
         DelaunayizeError::FlipTopologyNotAdmissible {
             found: TopologyGuarantee::Pseudomanifold,
             ..
         }
     );
+    triangulation
+        .validate_realization()
+        .expect("rejected repair precondition must return the valid Levels 1-4 owner");
 }
 
 /// Verify that `DelaunayizeError::DelaunayRepairFailedWithRebuild` preserves

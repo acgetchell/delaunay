@@ -34,6 +34,7 @@ use crate::core::algorithms::flips::{
     validate_bistellar_flip_dynamic, validate_bistellar_flip_k1_insert,
     validate_bistellar_flip_k1_inverse, validate_bistellar_flip_k2, validate_bistellar_flip_k3,
 };
+use crate::core::operations::SuspicionFlags;
 use crate::core::operations::TopologicalOperation;
 use crate::core::rollback::TriangulationRollbackTransaction;
 use crate::core::traits::data_type::DataType;
@@ -72,11 +73,57 @@ where
             source: Box::new(error),
         });
     }
-    if let Err(source) = transaction.triangulation_mut().validate_realization() {
-        transaction.rollback();
-        return Err(FlipError::RealizationValidation {
-            source: Box::new(source),
-        });
+    if info.new_simplices.is_empty() {
+        if let Err(source) = transaction.triangulation_mut().validate() {
+            transaction.rollback();
+            return Err(FlipError::InvariantValidation {
+                source: Box::new(source),
+            });
+        }
+        if let Err(source) = transaction.triangulation_mut().is_valid_realization() {
+            transaction.rollback();
+            return Err(FlipError::RealizationValidation {
+                source: Box::new(source),
+            });
+        }
+    } else {
+        if let Err(source) = transaction
+            .triangulation_mut()
+            .validate_mandatory_mutation_postconditions_for_simplices(&info.new_simplices)
+        {
+            transaction.rollback();
+            return Err(FlipError::InvariantValidation {
+                source: Box::new(source),
+            });
+        }
+        if let Err(source) = transaction
+            .triangulation_mut()
+            .validate_realization_for_simplices(&info.new_simplices)
+        {
+            transaction.rollback();
+            return Err(FlipError::RealizationValidation {
+                source: Box::new(source),
+            });
+        }
+    }
+
+    let run_global_audit = transaction
+        .triangulation_mut()
+        .validation_policy()
+        .should_validate(SuspicionFlags::default());
+    if run_global_audit {
+        if let Err(source) = transaction.triangulation_mut().validate() {
+            transaction.rollback();
+            return Err(FlipError::InvariantValidation {
+                source: Box::new(source),
+            });
+        }
+        if let Err(source) = transaction.triangulation_mut().is_valid_realization() {
+            transaction.rollback();
+            return Err(FlipError::RealizationValidation {
+                source: Box::new(source),
+            });
+        }
     }
 
     transaction.commit();
@@ -752,10 +799,10 @@ where
         &self,
         triangle: TriangleHandle,
     ) -> Result<FlipFeasibility<D>, FlipError> {
-        validate_flip_topology(self, TopologicalOperation::CavityFlip)?;
         if D < 4 {
             return Err(FlipError::UnsupportedDimension { dimension: D });
         }
+        validate_flip_topology(self, TopologicalOperation::CavityFlip)?;
 
         let context = build_k3_flip_context_from_triangle(&self.tds, triangle)?;
 
@@ -774,7 +821,7 @@ mod tests {
     use super::*;
     use crate::DelaunayTriangulation;
     use crate::core::facet::FacetError;
-    use crate::core::realization::TriangulationRealizationValidationError;
+    use crate::core::tds::InvariantError;
     use crate::vertex;
     use std::assert_matches;
 
@@ -944,8 +991,8 @@ mod tests {
 
         assert_matches!(
             err,
-            FlipError::RealizationValidation { source }
-                if matches!(*source, TriangulationRealizationValidationError::Triangulation { source: _ })
+            FlipError::InvariantValidation { source }
+                if matches!(*source, InvariantError::Triangulation { source: _ })
         );
         assert_eq!(tri.tds.number_of_vertices(), before_vertices);
         assert_eq!(tri.tds.number_of_simplices(), before_simplices);
@@ -1047,6 +1094,21 @@ mod tests {
             .unwrap_err();
 
         assert_matches!(err, FlipError::UnsupportedDimension { dimension: 3 });
+    }
+
+    #[test]
+    fn triangulation_can_flip_k3_inverse_prioritizes_unsupported_dimension() {
+        let tri: Triangulation<AdaptiveKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(AdaptiveKernel::new());
+        let a = VertexKey::from(KeyData::from_ffi(1));
+        let b = VertexKey::from(KeyData::from_ffi(2));
+        let c = VertexKey::from(KeyData::from_ffi(3));
+
+        let error = tri
+            .can_flip_k3_inverse_from_triangle(TriangleHandle::try_new(a, b, c).unwrap())
+            .expect_err("3D inverse k=3 feasibility must reject the dimension first");
+
+        assert_matches!(error, FlipError::UnsupportedDimension { dimension: 3 });
     }
 
     #[test]

@@ -12,6 +12,7 @@ use super::{
     TdsMutationError, TdsValidationFailure, TopologyGuarantee, TopologyOwnerId, TriangleHandle,
     TriangulationRealizationValidationError, TriangulationValidationError, VertexKey, fmt,
 };
+use crate::core::tds::InvariantError;
 
 /// Predicate operation being evaluated by flip logic.
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
@@ -447,6 +448,9 @@ pub enum FlipFailureKind {
     /// Flip transaction could not repair post-mutation orientation invariants.
     #[error("postcondition orientation repair")]
     PostconditionRepair,
+    /// Flip transaction failed a Levels 1–3 invariant postcondition.
+    #[error("invariant validation")]
+    InvariantValidation,
     /// Flip transaction failed realized-geometry validation after mutation.
     #[error("realization validation")]
     RealizationValidation,
@@ -1410,6 +1414,13 @@ pub enum FlipError {
         #[source]
         source: Box<InsertionError>,
     },
+    /// Flip transaction failed a Levels 1–3 invariant postcondition.
+    #[error("Flip postcondition invariant validation failed: {source}")]
+    InvariantValidation {
+        /// Structured cumulative or scoped invariant failure.
+        #[source]
+        source: Box<InvariantError>,
+    },
     /// Flip transaction failed realized-geometry validation after mutation.
     #[error("Flip postcondition realization validation failed: {source}")]
     RealizationValidation {
@@ -1540,6 +1551,7 @@ impl From<&FlipError> for FlipFailureKind {
             FlipError::FacetIteration { .. } => Self::FacetIteration,
             FlipError::SimplexCreation { source: _ } => Self::SimplexCreation,
             FlipError::PostconditionRepair { .. } => Self::PostconditionRepair,
+            FlipError::InvariantValidation { .. } => Self::InvariantValidation,
             FlipError::RealizationValidation { .. } => Self::RealizationValidation,
             FlipError::NeighborWiring { reason } => match reason.as_ref() {
                 FlipNeighborWiringError::TopologyValidation { .. }
@@ -2657,6 +2669,16 @@ mod tests {
         assert_eq!(
             FlipFailureKind::from(&transaction_realization),
             FlipFailureKind::RealizationValidation
+        );
+
+        let invariant_validation = FlipError::InvariantValidation {
+            source: Box::new(InvariantError::Realization {
+                source: realization_source.clone(),
+            }),
+        };
+        assert_eq!(
+            FlipFailureKind::from(&invariant_validation),
+            FlipFailureKind::InvariantValidation
         );
 
         let transaction_repair = FlipError::PostconditionRepair {

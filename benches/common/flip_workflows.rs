@@ -17,7 +17,7 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::geometry::{CoordinateConversionError, Point, RobustKernel, simplex_volume};
 use delaunay::prelude::query::{JaccardComputationError, QueryError, format_jaccard_report};
-use delaunay::prelude::tds::{EdgeKeyError, FacetError, InvariantError, VertexKey};
+use delaunay::prelude::tds::{EdgeKeyError, FacetError, VertexKey};
 use delaunay::prelude::topology::validation::{ManifoldError, RidgeCandidate, RidgeCandidateError};
 use delaunay::prelude::triangulation::Triangulation;
 use delaunay::prelude::validation::TriangulationRealizationValidationError;
@@ -313,9 +313,9 @@ pub enum FlipWorkflowError {
     InvalidAfterForward {
         /// Forward-only context.
         context: FlipWorkflowContext,
-        /// Underlying triangulation invariant failure.
+        /// Underlying realized-triangulation validation failure.
         #[source]
-        source: Box<InvariantError>,
+        source: Box<TriangulationRealizationValidationError>,
     },
 
     /// A roundtrip produced a triangulation that failed validation.
@@ -481,9 +481,9 @@ pub enum FlipCandidateError {
     InvalidAfterForwardFlip {
         /// Candidate move kind.
         move_kind: FlipMoveKind,
-        /// Underlying validation failure.
+        /// Underlying realized-triangulation validation failure.
         #[source]
-        source: Box<InvariantError>,
+        source: Box<TriangulationRealizationValidationError>,
     },
 }
 
@@ -757,7 +757,7 @@ pub fn flippable_k2_facet<const D: usize>(
                         continue;
                     }
                 };
-                if let Err(source) = trial.validate() {
+                if let Err(source) = trial.validate_realization() {
                     last_error = Some(Box::new(FlipCandidateError::InvalidAfterForwardFlip {
                         move_kind: FlipMoveKind::K2,
                         source: Box::new(source),
@@ -840,7 +840,7 @@ pub fn flippable_k3_ridge<const D: usize>(
                         continue;
                     }
                 };
-                if let Err(source) = trial.validate() {
+                if let Err(source) = trial.validate_realization() {
                     last_error = Some(Box::new(FlipCandidateError::InvalidAfterForwardFlip {
                         move_kind: FlipMoveKind::K3,
                         source: Box::new(source),
@@ -998,7 +998,7 @@ pub fn verify_k2_forward<const D: usize>(
     let context = FlipWorkflowContext::forward_only::<D>(FlipMoveKind::K2);
     let mut trial = base_dt.clone();
     forward_k2(&mut trial, facet)?;
-    validate_forward_topology(&trial, context)
+    validate_forward_realization(&trial, context)
 }
 
 /// Executes a selected public k=3 flip without its inverse.
@@ -1104,7 +1104,7 @@ pub fn verify_k3_forward<const D: usize>(
     let context = FlipWorkflowContext::forward_only::<D>(FlipMoveKind::K3);
     let mut trial = base_dt.clone();
     forward_k3(&mut trial, ridge)?;
-    validate_forward_topology(&trial, context)
+    validate_forward_realization(&trial, context)
 }
 
 /// Verifies exact topology recovery for a selected k=1 roundtrip.
@@ -1125,7 +1125,7 @@ pub fn verify_k1_roundtrip<const D: usize>(
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k1(&mut trial, simplex_key)?;
-    validate_topology_and_delaunay(&trial, context)?;
+    validate_roundtrip_realization(&trial, context)?;
     assert_same_topology(&trial, &before, context)
 }
 
@@ -1147,7 +1147,7 @@ pub fn verify_k2_roundtrip<const D: usize>(
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k2(&mut trial, facet)?;
-    validate_topology_and_delaunay(&trial, context)?;
+    validate_roundtrip_realization(&trial, context)?;
     assert_same_topology(&trial, &before, context)
 }
 
@@ -1176,11 +1176,11 @@ pub fn verify_k3_roundtrip<const D: usize>(
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k3(&mut trial, ridge)?;
-    validate_topology_and_delaunay(&trial, context)?;
+    validate_roundtrip_realization(&trial, context)?;
     assert_same_topology(&trial, &before, context)
 }
 
-fn validate_topology_and_delaunay<const D: usize>(
+fn validate_roundtrip_realization<const D: usize>(
     dt: &FlipTriangulation<D>,
     context: FlipWorkflowContext,
 ) -> FlipWorkflowResult<()> {
@@ -1191,11 +1191,11 @@ fn validate_topology_and_delaunay<const D: usize>(
         })
 }
 
-fn validate_forward_topology<const D: usize>(
+fn validate_forward_realization<const D: usize>(
     dt: &FlipTriangulation<D>,
     context: FlipWorkflowContext,
 ) -> FlipWorkflowResult<()> {
-    dt.validate()
+    dt.validate_realization()
         .map_err(|source| FlipWorkflowError::InvalidAfterForward {
             context,
             source: Box::new(source),

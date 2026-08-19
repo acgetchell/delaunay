@@ -5,24 +5,33 @@ policy, and architecture principles. For import guidance, see
 [`prelude_reference.md`](prelude_reference.md). For file-internal section
 ordering, see [`module_patterns.md`](module_patterns.md).
 
+## Shared Refinement Boundary
+
+- `src/refinement.rs` - generic recoverable `RefinementError<T, E>` carrier for
+  consuming transitions between proof-bearing owners. It keeps the accepted
+  lower-layer owner attached to the typed rejection reason on failure.
+
 ## Core Layer
 
 `src/core/` contains triangulation data structures and algorithm machinery:
 
-- `tds/storage.rs` - main `Tds` storage, accessors, identity helpers, and
-  construction tests.
+- `tds/storage.rs` - proof-bearing Levels 1–2 `Tds` storage, read-only
+  accessors, identity helpers, and construction tests. Canonical fields remain
+  visible only inside `core::tds`.
 - `tds/errors.rs` - TDS error/report vocabulary re-export boundary.
 - `tds/equality.rs` - TDS equality implementation and stable simplex identity
   helpers.
 - `tds/incidence.rs` - invariant-bearing vertex-to-simplices incidence index.
 - `tds/keys.rs` - slotmap-backed `VertexKey` and `SimplexKey` handle types.
-- `tds/mutation.rs` - TDS topology mutation, orientation repair, and neighbor
-  maintenance.
+- `tds/mutation.rs` - checked TDS topology transitions, construction
+  completion, orientation repair, incidence updates, and neighbor maintenance.
+  Higher proof owners delegate storage edits here.
 - `tds/snapshot.rs` - persistence boundary from raw codec records into
   validated UUID snapshots before hydration allocates fresh slotmap keys.
 - `tds/validation.rs` - Level 2 Combinatorial Consistency validation and adjacency checks.
 - `triangulation/model.rs` - proof-bearing Levels 1–4 `Triangulation` domain
-  owner and kernel/topology metadata.
+  owner and kernel/topology metadata. It owns a Levels 1–2 `Tds` without raw
+  mutable access to its canonical storage.
 - `triangulation/construction.rs` - generic construction helpers and
   initial-simplex setup.
 - `triangulation/insertion.rs` - generic transactional insertion, duplicate detection, and
@@ -34,6 +43,9 @@ ordering, see [`module_patterns.md`](module_patterns.md).
 - `triangulation/repair.rs` - generic local topology repair, stale incident-simplex repair,
   and vertex-deletion cavity retriangulation.
 - `triangulation/rollback.rs` - rollback guards for generic mutation windows.
+- `tds/rollback.rs` - canonical TDS snapshot ownership plus the shared
+  transaction window used by nested proof refinements without duplicate
+  snapshots.
 - `triangulation/validation.rs` - generic validation vocabulary and Level 3 orchestration.
 - `triangulation/realization.rs` - Level 4 realization validation and the
   checked TDS-to-`Triangulation` restoration boundary.

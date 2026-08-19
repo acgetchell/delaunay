@@ -27,7 +27,9 @@ use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
-use crate::geometry::traits::coordinate::{CoordinateValidationError, CoordinateValues};
+use crate::geometry::traits::coordinate::{
+    CoordinateConversionError, CoordinateValidationError, CoordinateValues,
+};
 use crate::topology::traits::topological_space::TopologyKind;
 use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
@@ -269,6 +271,27 @@ pub enum TriangulationConstructionError {
         /// The underlying simplex validation error.
         #[source]
         source: SimplexValidationError,
+    },
+
+    /// Too many vertices were supplied for one initial D-simplex.
+    #[error(
+        "Excess vertices for {dimension}D initial simplex: got {actual}, expected exactly {expected}"
+    )]
+    ExcessVertices {
+        /// The dimension that was attempted.
+        dimension: usize,
+        /// Expected initial-simplex vertex count (`D + 1`).
+        expected: usize,
+        /// Actual vertex count supplied by the caller.
+        actual: usize,
+    },
+
+    /// The exact initial-simplex orientation predicate failed.
+    #[error("Initial-simplex orientation predicate failed: {source}")]
+    InitialSimplexOrientationPredicate {
+        /// Typed predicate-boundary conversion failure.
+        #[source]
+        source: CoordinateConversionError,
     },
 
     /// Geometric degeneracy prevents triangulation construction.
@@ -653,7 +676,7 @@ where
     pub fn build_initial_simplex(
         vertices: &[Vertex<U, D>],
     ) -> Result<Tds<U, V, D>, TriangulationConstructionError> {
-        if vertices.len() != D + 1 {
+        if vertices.len() < D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
                 dimension: D,
                 source: SimplexValidationError::InsufficientVertices {
@@ -661,6 +684,13 @@ where
                     expected: D + 1,
                     dimension: D,
                 },
+            });
+        }
+        if vertices.len() > D + 1 {
+            return Err(TriangulationConstructionError::ExcessVertices {
+                dimension: D,
+                expected: D + 1,
+                actual: vertices.len(),
             });
         }
 
@@ -680,10 +710,8 @@ where
         let points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
             vertices.iter().map(|v| *v.point()).collect();
 
-        let exact_orientation = robust_orientation(&points[..]).map_err(|e| {
-            TriangulationConstructionError::FailedToCreateSimplex {
-                message: format!("Exact orientation test failed: {e}"),
-            }
+        let exact_orientation = robust_orientation(&points[..]).map_err(|source| {
+            TriangulationConstructionError::InitialSimplexOrientationPredicate { source }
         })?;
 
         if matches!(exact_orientation, Orientation::DEGENERATE) {
@@ -742,6 +770,8 @@ where
             .map_err(|source| TdsConstructionError::ValidationError { source })?;
         tds.assign_incident_simplices()
             .map_err(|e| TdsConstructionError::ValidationError { source: e.into() })?;
+        tds.complete_construction()
+            .map_err(|source| TdsConstructionError::ValidationError { source })?;
 
         Ok(tds)
     }
@@ -751,6 +781,7 @@ where
 mod tests {
     use super::*;
     use crate::core::simplex::NeighborSlot;
+    use crate::core::tds::TriangulationConstructionState;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{CoordinateValidationError, InvalidCoordinateValue};
     use crate::vertex;
@@ -838,6 +869,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn initial_simplex_orientation_predicate_exposes_typed_source() {
+        let error = TriangulationConstructionError::InitialSimplexOrientationPredicate {
+            source: CoordinateConversionError::InvalidSimplexPointCount {
+                actual: 2,
+                expected: 3,
+                dimension: 2,
+            },
+        };
+
+        let source = std::error::Error::source(&error)
+            .and_then(|source| source.downcast_ref::<CoordinateConversionError>());
+        assert_matches!(
+            source,
+            Some(CoordinateConversionError::InvalidSimplexPointCount {
+                actual: 2,
+                expected: 3,
+                dimension: 2,
+            })
+        );
+    }
+
     macro_rules! test_build_initial_simplex {
         ($dim:expr, [$($simplex_coords:expr),+ $(,)?]) => {
             pastey::paste! {
@@ -857,6 +910,11 @@ mod tests {
                     assert_eq!(tds.number_of_simplices(), 1);
                     assert_eq!(tds.dim(), $dim as i32);
                     assert_eq!(tds.vertices().count(), expected_vertices);
+                    assert_matches!(
+                        tds.construction_state(),
+                        TriangulationConstructionState::Constructed
+                    );
+                    tds.validate().unwrap();
 
                     let (_, simplex) = tds.simplices().next()
                         .expect("initial simplex should exist");
@@ -935,7 +993,11 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(TriangulationConstructionError::InsufficientVertices { .. })
+            Err(TriangulationConstructionError::ExcessVertices {
+                dimension: 2,
+                expected: 3,
+                actual: 4,
+            })
         );
     }
 

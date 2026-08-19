@@ -9,14 +9,20 @@
 //!
 //! # Workflow
 //!
-//! 1. **Levels 1–4 validation** — rejects an input whose proof-bearing
-//!    `Triangulation` contract no longer holds.
-//! 2. **Delaunay flip repair** — runs k=2/k=3 bistellar flips to restore the
-//!    empty-circumsphere property.
+//! 1. **Levels 1–4 proof consumption** — accepts the proof-bearing
+//!    `Triangulation` without revalidating invariants encoded by its type.
+//! 2. **Delaunay flip repair** — runs transactional k=2/k=3 bistellar flips
+//!    that preserve Levels 1–4 while restoring the empty-circumsphere property.
 //! 3. **Optional fallback rebuild** — if configured, rebuilds the triangulation
 //!    from its vertex set after Delaunay repair fails.
 //! 4. **Level 5 certification** — publishes `DelaunayTriangulation` only after
-//!    cumulative validation succeeds.
+//!    the refinement predicate succeeds.
+//!
+//! The flip stage follows the regular-triangulation framework of Edelsbrunner
+//! and Shah \[4]. This API deliberately exposes a bounded, fallible conversion:
+//! the cited result motivates incremental topological flipping, while rollback,
+//! typed non-convergence, and final certification define this implementation's
+//! supported contract. See `REFERENCES.md` for the numbered bibliography.
 //!
 //! # Example
 //!
@@ -41,7 +47,8 @@
 //! ];
 //! let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
 //!
-//! let result = delaunayize(tri, DelaunayizeConfig::default())?;
+//! let result = delaunayize(tri, DelaunayizeConfig::default())
+//!     .map_err(RefinementError::into_reason)?;
 //! assert!(result.triangulation.validate().is_ok());
 //! # Ok(())
 //! # }
@@ -62,10 +69,10 @@ pub use crate::flips::{
 pub use crate::tds::SimplexValidationError;
 
 use crate::builder::DelaunayTriangulationBuilder;
-use crate::core::algorithms::flips::repair_delaunay_with_flips_k2_k3;
+use crate::core::algorithms::flips::repair_delaunay_with_flips_k2_k3_run_in_transaction;
 use crate::core::collections::{Entry, FastHashMap, SimplexVertexUuidBuffer};
 use crate::core::operations::TopologicalOperation;
-use crate::core::realization::TriangulationRealizationValidationError;
+use crate::core::rollback::TriangulationRollbackTransaction;
 use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, TdsMutationError};
 use crate::core::traits::data_type::DataType;
@@ -73,9 +80,13 @@ use crate::core::triangulation::Triangulation;
 use crate::core::validation::TopologyGuarantee;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::ExactPredicates;
+use crate::refinement::RefinementError;
 use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
 use crate::triangulation::DelaunayTriangulation;
-use crate::validation::DelaunayTriangulationValidationError;
+use crate::validation::{
+    DelaunayTriangulationCandidate, DelaunayTriangulationValidationError,
+    validate_level_five_for_refinement,
+};
 use thiserror::Error;
 
 // =============================================================================
@@ -199,7 +210,8 @@ impl DelaunayizeConfig {
 /// ];
 /// let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
 ///
-/// let result = delaunayize(tri, DelaunayizeConfig::default())?;
+/// let result = delaunayize(tri, DelaunayizeConfig::default())
+///     .map_err(RefinementError::into_reason)?;
 /// assert!(!result.outcome.used_fallback_rebuild);
 /// assert!(result.triangulation.validate().is_ok());
 /// # Ok(())
@@ -235,16 +247,14 @@ pub struct DelaunayizeResult<K, U, V, const D: usize> {
 
 /// Errors that can occur during the [`delaunayize`] workflow.
 ///
-/// There are six orthogonal failure modes:
-/// - **Input validation** rejected the supplied Levels 1–4 owner.
+/// There are five orthogonal failure modes:
 /// - **Topology precondition** rejected an input without the PL-manifold proof
 ///   required by flip repair.
 /// - **Delaunay repair** failed, with optional context about a
 ///   fallback rebuild attempt.
 /// - **Fallback snapshot** failed before a fallback-eligible repair phase.
-/// - **Fallback simplex-data recovery** failed while snapshotting before a
-///   fallback-eligible phase or restoring simplex payloads after a repair
-///   failure.
+/// - **Fallback simplex-data recovery** failed while restoring simplex payloads
+///   after a repair failure.
 /// - **Final validation** rejected the repaired Levels 1–5 candidate.
 ///
 /// # Orthogonality
@@ -282,14 +292,6 @@ pub struct DelaunayizeResult<K, U, V, const D: usize> {
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum DelaunayizeError {
-    /// The supplied generic triangulation no longer satisfies its Levels 1–4 contract.
-    #[error("Input triangulation failed cumulative Levels 1-4 validation: {source}")]
-    InputValidationFailed {
-        /// Underlying cumulative realization-validation failure.
-        #[source]
-        source: TriangulationRealizationValidationError,
-    },
-
     /// The input is valid under its declared topology guarantee, but that
     /// guarantee is too weak for bistellar flip repair.
     #[error("Delaunay flip repair requires {required:?} topology, found {found:?}")]
@@ -346,14 +348,21 @@ pub enum DelaunayizeError {
         source: SimplexValidationError,
     },
 
-    /// Repair completed, but cumulative Levels 1–5 validation rejected the result.
-    #[error("Delaunayized triangulation failed cumulative Levels 1-5 validation: {source}")]
+    /// Repair completed, but Level 5 certification rejected the result.
+    #[error("Delaunayized triangulation failed Level 5 certification: {source}")]
     FinalValidationFailed {
-        /// Underlying cumulative Delaunay-validation failure.
+        /// Underlying Delaunay-validation failure.
         #[source]
         source: DelaunayTriangulationValidationError,
     },
 }
+
+/// Recoverable failure to repair and refine a Levels 1–4 triangulation.
+///
+/// Every variant retains the original triangulation after rollback, including
+/// failures after successful flips but before final Level 5 publication.
+pub type DelaunayizeRefinementError<K, U, V, const D: usize> =
+    RefinementError<Triangulation<K, U, V, D>, DelaunayizeError>;
 
 // =============================================================================
 // HELPERS
@@ -642,7 +651,10 @@ where
 /// Returns [`DelaunayRepairError`] from the selected flip-repair strategy when
 /// repair does not converge or validation rejects the repaired triangulation.
 fn run_configured_delaunay_repair<K, U, V, const D: usize>(
-    triangulation: &mut Triangulation<K, U, V, D>,
+    transaction: &mut TriangulationRollbackTransaction<'_, K, U, V, D>,
+    kernel: &K,
+    topology: TopologyGuarantee,
+    global_topology: GlobalTopology<D>,
     config: DelaunayizeConfig,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
@@ -655,17 +667,16 @@ where
         return Err(tests::synthetic_repair_error());
     }
 
-    let topology = triangulation.topology_guarantee();
-    let global_topology = triangulation.global_topology();
-    let stats = repair_delaunay_with_flips_k2_k3(
-        &mut triangulation.tds,
-        &triangulation.kernel,
+    let run = repair_delaunay_with_flips_k2_k3_run_in_transaction(
+        transaction,
+        kernel,
         None,
         topology,
         global_topology,
         config.delaunay_max_flips,
     )?;
-    triangulation
+    transaction
+        .triangulation_mut()
         .normalize_and_promote_positive_orientation()
         .map_err(
             |source| DelaunayRepairError::OrientationCanonicalizationFailed {
@@ -676,7 +687,7 @@ where
                 ),
             },
         )?;
-    Ok(stats)
+    Ok(run.stats)
 }
 
 /// Extracts Delaunay repair counters so fallback-recovered outcomes preserve
@@ -704,31 +715,32 @@ fn failed_delaunay_repair_stats(source: &DelaunayRepairError) -> DelaunayRepairS
 /// Converts a Levels 1–4 triangulation into a Levels 1–5 Delaunay triangulation.
 ///
 /// The input is consumed so an intermediate repair state cannot escape under
-/// the [`DelaunayTriangulation`] type. Conversion first confirms the generic
-/// triangulation's cumulative Levels 1–4 contract, performs bounded repair,
-/// then publishes the Delaunay owner only after cumulative Levels 1–5
-/// validation succeeds.
+/// the [`DelaunayTriangulation`] type. Conversion consumes the generic
+/// triangulation's cumulative Levels 1–4 proof, performs bounded
+/// invariant-preserving repair, then publishes the Delaunay owner only after
+/// Level 5 certification succeeds.
 ///
 /// Use [`DelaunayTriangulation::try_from_triangulation`] instead when the input
 /// is already expected to be Delaunay and no repair should be attempted.
 ///
 /// # Errors
 ///
-/// Returns [`DelaunayizeError::InputValidationFailed`] when the input does not
-/// satisfy Levels 1–4, a typed repair error when conversion cannot converge,
-/// or [`DelaunayizeError::FinalValidationFailed`] when the repaired result
-/// cannot cross the cumulative Levels 1–5 boundary.
+/// Returns [`DelaunayizeRefinementError`] when conversion cannot converge or
+/// final certification rejects the candidate. Every failure rolls back and
+/// retains the original Levels 1–4 owner together with its typed
+/// [`DelaunayizeError`] reason.
 ///
 /// # Examples
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
-///     ConstructionOptions, DelaunayTriangulationBuilder,
+///     DelaunayTriangulationBuilder,
 ///     DelaunayTriangulationConstructionError,
 /// };
 /// use delaunay::prelude::delaunayize::{DelaunayizeConfig, delaunayize};
 /// use delaunay::prelude::geometry::CoordinateConversionError;
 /// use delaunay::prelude::validation::DelaunayValidationError;
+/// use delaunay::RefinementError;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -752,53 +764,78 @@ fn failed_delaunay_repair_stats(source: &DelaunayRepairError) -> DelaunayRepairS
 /// let triangulation =
 ///     DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
 ///         .map_err(DelaunayTriangulationConstructionError::from)?
-///         .construction_options(
-///             ConstructionOptions::default().without_final_delaunay_enforcement(),
-///         )
 ///         .build_triangulation()?;
 /// assert!(!triangulation.delaunay_violation_report(None)?.is_valid());
 ///
-/// let result = delaunayize(triangulation, DelaunayizeConfig::default())?;
+/// let result = delaunayize(triangulation, DelaunayizeConfig::default())
+///     .map_err(RefinementError::into_reason)?;
 /// assert!(result.triangulation.validate().is_ok());
 /// # Ok(())
 /// # }
 /// ```
 #[expect(
     clippy::result_large_err,
-    reason = "DelaunayizeError preserves typed repair and validation sources on a cold conversion error path."
+    reason = "recoverable Delaunayize failures preserve typed sources on a cold conversion error path"
 )]
 pub fn delaunayize<K, U, V, const D: usize>(
     mut triangulation: Triangulation<K, U, V, D>,
     config: DelaunayizeConfig,
-) -> Result<DelaunayizeResult<K, U, V, D>, DelaunayizeError>
+) -> Result<DelaunayizeResult<K, U, V, D>, DelaunayizeRefinementError<K, U, V, D>>
 where
     K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
-    triangulation
-        .validate_realization()
-        .map_err(|source| DelaunayizeError::InputValidationFailed { source })?;
-
     let operation = TopologicalOperation::FacetFlip;
     let topology = triangulation.topology_guarantee();
     if !operation.is_admissible_under(topology) {
-        return Err(DelaunayizeError::FlipTopologyNotAdmissible {
+        let reason = DelaunayizeError::FlipTopologyNotAdmissible {
             required: operation.required_topology(),
             found: topology,
-        });
+        };
+        return Err(RefinementError::new(triangulation, reason));
     }
 
-    let fallback_snapshot = config
+    let fallback_snapshot = match config
         .fallback_rebuild
         .then(|| snapshot_rebuild_state(&triangulation))
         .transpose()
-        .map_err(|source| DelaunayizeError::FallbackSimplexDataSnapshotFailed { source })?;
+    {
+        Ok(snapshot) => snapshot,
+        Err(source) => {
+            let reason = DelaunayizeError::FallbackSimplexDataSnapshotFailed { source };
+            return Err(RefinementError::new(triangulation, reason));
+        }
+    };
 
-    match run_configured_delaunay_repair(&mut triangulation, config) {
+    let kernel = triangulation.kernel.clone();
+    let global_topology = triangulation.global_topology();
+    let mut transaction = TriangulationRollbackTransaction::begin(&mut triangulation);
+
+    match run_configured_delaunay_repair(
+        &mut transaction,
+        &kernel,
+        topology,
+        global_topology,
+        config,
+    ) {
         Ok(delaunay_repair) => {
-            let triangulation = DelaunayTriangulation::try_from_triangulation(triangulation)
-                .map_err(|source| DelaunayizeError::FinalValidationFailed { source })?;
+            #[cfg(test)]
+            if tests::force_final_validation_failure_enabled() {
+                let source = tests::synthetic_final_validation_error();
+                transaction.rollback();
+                let reason = DelaunayizeError::FinalValidationFailed { source };
+                return Err(RefinementError::new(triangulation, reason));
+            }
+            if let Err(source) = validate_level_five_for_refinement(transaction.triangulation_mut())
+            {
+                transaction.rollback();
+                let reason = DelaunayizeError::FinalValidationFailed { source };
+                return Err(RefinementError::new(triangulation, reason));
+            }
+            transaction.commit();
+            let triangulation = DelaunayTriangulationCandidate::from_triangulation(triangulation)
+                .into_delaunay_after_level_five_check();
             Ok(DelaunayizeResult {
                 triangulation,
                 outcome: DelaunayizeOutcome {
@@ -809,11 +846,22 @@ where
         }
         Err(repair_error) => {
             let Some(fallback_snapshot) = fallback_snapshot else {
-                return Err(DelaunayizeError::from(repair_error));
+                transaction.rollback();
+                return Err(RefinementError::new(
+                    triangulation,
+                    DelaunayizeError::from(repair_error),
+                ));
             };
             let delaunay_repair = failed_delaunay_repair_stats(&repair_error);
-            let triangulation = rebuild_preserving_data(&triangulation.kernel, &fallback_snapshot)
-                .map_err(|fallback_error| delaunay_rebuild_error(repair_error, fallback_error))?;
+            let triangulation = match rebuild_preserving_data(&kernel, &fallback_snapshot) {
+                Ok(triangulation) => triangulation,
+                Err(fallback_error) => {
+                    let reason = delaunay_rebuild_error(repair_error, fallback_error);
+                    transaction.rollback();
+                    return Err(RefinementError::new(triangulation, reason));
+                }
+            };
+            transaction.commit();
             Ok(DelaunayizeResult {
                 triangulation,
                 outcome: DelaunayizeOutcome {
@@ -834,9 +882,10 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`DelaunayizeError`] when Levels 1–4 input validation fails, repair
-/// does not converge within its budgets, fallback reconstruction fails, or the
-/// final Levels 1–5 certification fails.
+/// Returns [`DelaunayizeRefinementError`] when repair does not converge within
+/// its budgets, fallback reconstruction fails, or final Level 5 certification
+/// rejects the candidate. The failure retains the original Levels 1–4 owner
+/// after rollback together with its typed [`DelaunayizeError`] reason.
 ///
 /// # Examples
 ///
@@ -848,6 +897,7 @@ where
 ///     DelaunayizeConfig, DelaunayizeError, delaunayize_by_flips,
 /// };
 /// use delaunay::prelude::geometry::CoordinateConversionError;
+/// use delaunay::RefinementError;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -867,19 +917,20 @@ where
 /// let triangulation = DelaunayTriangulationBuilder::new(&vertices)
 ///     .build_triangulation()?;
 ///
-/// let result = delaunayize_by_flips(triangulation, DelaunayizeConfig::default())?;
+/// let result = delaunayize_by_flips(triangulation, DelaunayizeConfig::default())
+///     .map_err(RefinementError::into_reason)?;
 /// assert!(result.triangulation.validate().is_ok());
 /// # Ok(())
 /// # }
 /// ```
 #[expect(
     clippy::result_large_err,
-    reason = "DelaunayizeError preserves typed repair and validation sources on a cold conversion error path."
+    reason = "recoverable Delaunayize failures preserve typed sources on a cold conversion error path"
 )]
 pub fn delaunayize_by_flips<K, U, V, const D: usize>(
     triangulation: Triangulation<K, U, V, D>,
     config: DelaunayizeConfig,
-) -> Result<DelaunayizeResult<K, U, V, D>, DelaunayizeError>
+) -> Result<DelaunayizeResult<K, U, V, D>, DelaunayizeRefinementError<K, U, V, D>>
 where
     K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
@@ -898,21 +949,57 @@ mod tests {
     use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::tds::{Tds, TdsError, VertexKey};
-    use crate::topology::traits::topological_space::TopologyKind;
+    use crate::validation::DelaunayVerificationError;
     use crate::vertex;
-    use crate::{
-        DelaunayTriangulationBuilder, TriangulationConstructionError, TriangulationValidationError,
-    };
+    use crate::{DelaunayTriangulationBuilder, TriangulationConstructionError};
     use slotmap::KeyData;
-    use std::assert_matches;
     use std::cell::Cell;
     use std::error::Error as StdError;
+
+    struct ForceDelaunayRepairFailureGuard {
+        prior: bool,
+    }
+
+    struct ForceFinalValidationFailureGuard {
+        prior: bool,
+    }
+
+    impl ForceDelaunayRepairFailureGuard {
+        /// Enables synthetic Delaunay repair failure until the guard is dropped.
+        fn enable() -> Self {
+            Self {
+                prior: set_force_delaunay_repair_failure(true),
+            }
+        }
+    }
+
+    impl ForceFinalValidationFailureGuard {
+        /// Enables synthetic final validation failure until the guard is dropped.
+        fn enable() -> Self {
+            Self {
+                prior: set_force_final_validation_failure(true),
+            }
+        }
+    }
+
+    impl Drop for ForceDelaunayRepairFailureGuard {
+        fn drop(&mut self) {
+            restore_force_delaunay_repair_failure(self.prior);
+        }
+    }
+
+    impl Drop for ForceFinalValidationFailureGuard {
+        fn drop(&mut self) {
+            restore_force_final_validation_failure(self.prior);
+        }
+    }
 
     // Last-resort fault injection for rollback branches that are hard to
     // trigger deterministically; thread-local state avoids cross-test leakage.
     // Remove this once a cleaner harness can reach the branch directly.
     thread_local! {
         static FORCE_DELAUNAY_REPAIR_FAILURE: Cell<bool> = const { Cell::new(false) };
+        static FORCE_FINAL_VALIDATION_FAILURE: Cell<bool> = const { Cell::new(false) };
     }
 
     #[must_use]
@@ -940,6 +1027,18 @@ mod tests {
     }
 
     #[must_use]
+    pub(super) fn force_final_validation_failure_enabled() -> bool {
+        FORCE_FINAL_VALIDATION_FAILURE.with(Cell::get)
+    }
+
+    #[must_use]
+    pub(super) fn synthetic_final_validation_error() -> DelaunayTriangulationValidationError {
+        DelaunayTriangulationValidationError::VerificationFailed {
+            source: Box::new(DelaunayVerificationError::from(synthetic_repair_error())),
+        }
+    }
+
+    #[must_use]
     fn set_force_delaunay_repair_failure(enabled: bool) -> bool {
         FORCE_DELAUNAY_REPAIR_FAILURE.with(|flag| {
             let prior = flag.get();
@@ -952,47 +1051,17 @@ mod tests {
         FORCE_DELAUNAY_REPAIR_FAILURE.with(|flag| flag.set(prior));
     }
 
-    #[test]
-    fn consuming_delaunayize_preserves_typed_input_validation_failure() {
-        let mut tds: Tds<(), (), 2> = Tds::empty();
-        tds.insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
-            .unwrap();
-        let triangulation = Triangulation::new_with_tds(AdaptiveKernel::new(), tds);
-
-        let error = delaunayize(triangulation, DelaunayizeConfig::default())
-            .expect_err("an isolated vertex must fail the Levels 1-4 input boundary");
-
-        assert_matches!(
-            error,
-            DelaunayizeError::InputValidationFailed {
-                source: TriangulationRealizationValidationError::Triangulation { source },
-            } if matches!(
-                source.as_ref(),
-                TriangulationValidationError::IsolatedVertex { .. }
-            )
-        );
+    #[must_use]
+    fn set_force_final_validation_failure(enabled: bool) -> bool {
+        FORCE_FINAL_VALIDATION_FAILURE.with(|flag| {
+            let prior = flag.get();
+            flag.set(enabled);
+            prior
+        })
     }
 
-    #[test]
-    fn final_validation_error_preserves_typed_source_chain() {
-        let validation_error = DelaunayTriangulationValidationError::from(
-            TriangulationRealizationValidationError::UnsupportedTopology {
-                topology: TopologyKind::Hyperbolic,
-                dimension: 2,
-            },
-        );
-        let error = DelaunayizeError::FinalValidationFailed {
-            source: validation_error.clone(),
-        };
-
-        assert_eq!(
-            error,
-            DelaunayizeError::FinalValidationFailed {
-                source: validation_error,
-            }
-        );
-        assert!(StdError::source(&error).is_some());
-        assert!(error.to_string().contains("cumulative Levels 1-5"));
+    fn restore_force_final_validation_failure(prior: bool) {
+        FORCE_FINAL_VALIDATION_FAILURE.with(|flag| flag.set(prior));
     }
 
     /// Snapshots deliberately malformed raw TDS fixtures for payload-disambiguation tests.
@@ -1066,28 +1135,28 @@ mod tests {
         )
     }
 
-    struct ForceDelaunayRepairFailureGuard {
-        prior: bool,
-    }
-
-    impl ForceDelaunayRepairFailureGuard {
-        /// Enables synthetic Delaunay repair failure until the guard is dropped.
-        fn enable() -> Self {
-            Self {
-                prior: set_force_delaunay_repair_failure(true),
-            }
-        }
-    }
-
-    impl Drop for ForceDelaunayRepairFailureGuard {
-        fn drop(&mut self) {
-            restore_force_delaunay_repair_failure(self.prior);
-        }
-    }
-
     // =============================================================================
     // CONFIG DEFAULT TESTS
     // =============================================================================
+
+    #[test]
+    fn final_validation_error_preserves_typed_source_chain() {
+        let validation_error = DelaunayTriangulationValidationError::VerificationFailed {
+            source: Box::new(DelaunayVerificationError::from(synthetic_repair_error())),
+        };
+        let error = DelaunayizeError::FinalValidationFailed {
+            source: validation_error.clone(),
+        };
+
+        assert_eq!(
+            error,
+            DelaunayizeError::FinalValidationFailed {
+                source: validation_error,
+            }
+        );
+        assert!(StdError::source(&error).is_some());
+        assert!(error.to_string().contains("Level 5 certification"));
+    }
 
     #[test]
     fn test_config_defaults() {
@@ -1334,6 +1403,51 @@ mod tests {
         let config = DelaunayizeConfig::default().with_fallback_rebuild(true);
         let result = delaunayize(dt.into_triangulation(), config).unwrap();
         assert!(!result.outcome.used_fallback_rebuild);
+    }
+
+    #[test]
+    fn final_certification_failure_rolls_back_mutating_repair_and_returns_triangulation() {
+        init_tracing();
+        let vertices = [
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([4.0, 0.0]).unwrap(),
+            vertex!([4.0, 2.0]).unwrap(),
+            vertex!([1.0, 2.0]).unwrap(),
+        ];
+        let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
+        let triangulation =
+            DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+                .unwrap()
+                .build_triangulation()
+                .unwrap();
+        assert!(
+            !triangulation
+                .delaunay_violation_report(None)
+                .unwrap()
+                .is_valid()
+        );
+
+        let probe = delaunayize(triangulation.clone(), DelaunayizeConfig::default()).unwrap();
+        assert!(probe.outcome.delaunay_repair.flips_performed > 0);
+
+        let before = triangulation.tds.clone_for_rollback();
+        let owner_before = triangulation.tds.topology_owner_id();
+        let generation_before = triangulation.tds.generation();
+        let _guard = ForceFinalValidationFailureGuard::enable();
+        let failure = delaunayize(triangulation, DelaunayizeConfig::default())
+            .expect_err("synthetic final certification must reject the repaired candidate");
+        let (triangulation, reason) = failure.into_parts();
+
+        assert!(matches!(
+            reason,
+            DelaunayizeError::FinalValidationFailed { .. }
+        ));
+        assert_eq!(triangulation.tds, before);
+        assert_eq!(triangulation.tds.topology_owner_id(), owner_before);
+        assert_eq!(triangulation.tds.generation(), generation_before);
+        triangulation
+            .validate_realization()
+            .expect("failed Delaunay refinement must return the original Levels 1-4 owner");
     }
 
     #[test]

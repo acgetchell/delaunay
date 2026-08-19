@@ -10,7 +10,7 @@
 
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder,
     DelaunayTriangulationConstructionError, vertex,
 };
 #[cfg(feature = "diagnostics")]
@@ -108,7 +108,6 @@ fn build_non_delaunay_triangulation_2d()
     let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .map_err(DelaunayTriangulationConstructionError::from)?
-        .construction_options(ConstructionOptions::default().without_final_delaunay_enforcement())
         .build_triangulation()?;
 
     dt.validate()?;

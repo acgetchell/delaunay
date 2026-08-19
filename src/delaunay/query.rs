@@ -26,7 +26,7 @@ use crate::core::tds::{
     InvariantError, InvariantViolation, SimplexKey, Tds, TdsError, TdsMutationError,
     TriangulationValidationReport, VertexKey,
 };
-use crate::core::traits::data_type::DataCopy;
+use crate::core::traits::data_type::{DataCopy, DataType};
 use crate::core::triangulation::Triangulation;
 use crate::core::validation::{TopologyGuarantee, ValidationConfigurationError, ValidationPolicy};
 use crate::core::vertex::Vertex;
@@ -1249,35 +1249,15 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         self.tri.try_set_validation_policy(policy)
     }
 
-    /// Sets the insertion-time global topology validation policy used by the underlying
-    /// triangulation.
-    ///
-    /// Prefer [`try_set_validation_policy`](Self::try_set_validation_policy) when callers need
-    /// typed feedback for rejected combinations. This compatibility setter leaves the existing
-    /// policy unchanged and emits a warning if the requested combination is incoherent.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::DelaunayTriangulation;
-    /// use delaunay::prelude::validation::ValidationPolicy;
-    ///
-    /// let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
-    ///
-    /// dt.set_validation_policy(ValidationPolicy::Always);
-    /// assert_eq!(dt.validation_policy(), ValidationPolicy::Always);
-    /// ```
-    #[inline]
-    pub fn set_validation_policy(&mut self, policy: ValidationPolicy) {
-        self.tri.set_validation_policy(policy);
-    }
-
     /// Tries to set the topology guarantee used for Level 3 topology validation.
     ///
     /// # Errors
     ///
     /// Returns [`ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy`] when the
-    /// requested guarantee cannot be represented with the current validation policy.
+    /// requested guarantee cannot be represented with the current validation policy. Strengthening
+    /// to [`TopologyGuarantee::PLManifold`] can also return
+    /// [`ValidationConfigurationError::TopologyGuaranteeValidation`] when the current triangulation
+    /// cannot prove the stronger Level 3 contract.
     ///
     /// # Examples
     ///
@@ -1299,7 +1279,10 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     pub fn try_set_topology_guarantee(
         &mut self,
         guarantee: TopologyGuarantee,
-    ) -> Result<(), ValidationConfigurationError> {
+    ) -> Result<(), ValidationConfigurationError>
+    where
+        K: Kernel<D, Scalar = f64>,
+    {
         self.tri.try_set_topology_guarantee(guarantee)
     }
 
@@ -1476,12 +1459,24 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     pub fn try_set_global_topology(
         &mut self,
         global_topology: GlobalTopology<D>,
-    ) -> Result<(), DelaunayTriangulationValidationError> {
-        let topology_changed = self.global_topology() != global_topology;
+    ) -> Result<(), DelaunayTriangulationValidationError>
+    where
+        K: Kernel<D, Scalar = f64>,
+        U: DataType,
+        V: DataType,
+    {
+        let previous_topology = self.global_topology();
+        if previous_topology == global_topology {
+            return Ok(());
+        }
+        let previous_report_domain = self.euclidean_report_domain;
         match self.tri.try_set_global_topology(global_topology) {
             Ok(()) => {
-                if topology_changed {
-                    self.invalidate_euclidean_report_domain();
+                self.invalidate_euclidean_report_domain();
+                if let Err(error) = self.is_valid_delaunay() {
+                    self.tri.global_topology = previous_topology;
+                    self.euclidean_report_domain = previous_report_domain;
+                    return Err(error);
                 }
                 Ok(())
             }
@@ -1490,29 +1485,6 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
             Err(InvariantError::Realization { source: err }) => Err(err.into()),
             Err(InvariantError::Delaunay { source: err }) => Err(err),
         }
-    }
-
-    /// Sets the topology guarantee used for Level 3 topology validation.
-    ///
-    /// Prefer [`try_set_topology_guarantee`](Self::try_set_topology_guarantee) when callers need
-    /// typed feedback for rejected combinations. This compatibility setter leaves the existing
-    /// guarantee unchanged and emits a warning if the requested combination is incoherent.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulation, TopologyGuarantee,
-    /// };
-    ///
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
-    /// dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
-    ///
-    /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
-    /// ```
-    #[inline]
-    pub fn set_topology_guarantee(&mut self, guarantee: TopologyGuarantee) {
-        self.tri.set_topology_guarantee(guarantee);
     }
 
     /// Returns an iterator over all facets in the triangulation.
@@ -2587,6 +2559,7 @@ mod tests {
     use crate::builder::DelaunayTriangulationBuilder;
     use crate::construction::{DelaunayError, DelaunayResult};
     use crate::core::operations::DelaunayInsertionState;
+    use crate::core::realization::TriangulationRealizationValidationError;
     use crate::core::tds::TdsError;
     use crate::core::validation::TriangulationValidationError;
     use crate::geometry::kernel::FastKernel;
@@ -3019,7 +2992,8 @@ mod tests {
         assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
         assert_eq!(dt.tri.topology_guarantee, TopologyGuarantee::PLManifold);
 
-        dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+        dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .unwrap();
         assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
         assert_eq!(dt.tri.topology_guarantee, TopologyGuarantee::Pseudomanifold);
     }
@@ -3072,15 +3046,28 @@ mod tests {
     }
 
     #[test]
-    fn successful_global_topology_change_invalidates_euclidean_report_domain() {
+    fn unsupported_global_topology_change_preserves_euclidean_report_domain() {
         let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
         dt.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
 
-        dt.try_set_global_topology(GlobalTopology::Hyperbolic)
-            .expect("empty topology should accept hyperbolic metadata");
+        let error = dt
+            .try_set_global_topology(GlobalTopology::Hyperbolic)
+            .expect_err("unsupported Level 4 metadata must be rejected");
 
-        assert_eq!(dt.global_topology(), GlobalTopology::Hyperbolic);
-        assert!(!dt.euclidean_report_domain.supports_local_certificate());
+        assert_matches!(
+            error,
+            DelaunayTriangulationValidationError::Realization { source }
+                if matches!(
+                    source.as_ref(),
+                    TriangulationRealizationValidationError::UnsupportedTopology {
+                        topology: TopologyKind::Hyperbolic,
+                        dimension: 2,
+                    }
+                )
+        );
+        assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
+        assert!(dt.euclidean_report_domain.supports_local_certificate());
+        assert!(dt.validate().is_ok());
     }
 
     #[test]
@@ -3386,8 +3373,11 @@ mod tests {
 
         // try_from_tds() is a separate reconstruction path and should also
         // default to the topology guarantee policy after validation succeeds.
-        let tds =
-            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let tds = DelaunayTriangulationBuilder::new(&vertices)
+            .build()
+            .unwrap()
+            .into_triangulation()
+            .into_tds();
         let dt_from_tds: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_from_tds(tds, FastKernel::new()).unwrap();
         assert_eq!(
@@ -3412,16 +3402,13 @@ mod tests {
         assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
         assert_eq!(dt.tri.validation_policy, ValidationPolicy::ExplicitOnly);
 
-        dt.set_validation_policy(ValidationPolicy::Always);
+        dt.try_set_validation_policy(ValidationPolicy::Always)
+            .unwrap();
         assert_eq!(dt.validation_policy(), ValidationPolicy::Always);
         assert_eq!(dt.tri.validation_policy, ValidationPolicy::Always);
 
         dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)
             .unwrap();
-        assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
-        assert_eq!(dt.tri.validation_policy, ValidationPolicy::ExplicitOnly);
-
-        dt.set_validation_policy(ValidationPolicy::Never);
         assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
         assert_eq!(dt.tri.validation_policy, ValidationPolicy::ExplicitOnly);
 
@@ -3442,7 +3429,8 @@ mod tests {
         assert_eq!(dt.validation_policy(), ValidationPolicy::Never);
         assert_eq!(dt.tri.validation_policy, ValidationPolicy::Never);
 
-        dt.set_validation_policy(ValidationPolicy::OnSuspicion);
+        dt.try_set_validation_policy(ValidationPolicy::OnSuspicion)
+            .unwrap();
         assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
         assert_eq!(dt.tri.validation_policy, ValidationPolicy::OnSuspicion);
     }

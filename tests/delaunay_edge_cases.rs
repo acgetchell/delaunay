@@ -10,9 +10,8 @@
 
 use delaunay::construction::DelaunayConstructionRetryFailure;
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayConstructionFailure, DelaunayTriangulation,
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-    Vertex,
+    DelaunayConstructionFailure, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    DelaunayTriangulationConstructionError, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::delaunayize::{DelaunayizeConfig, delaunayize};
 use delaunay::prelude::generators::{
@@ -939,7 +938,6 @@ fn regression_issue_228_exact_predicate_paths_3d_fast() {
 
     let triangulation = DelaunayTriangulation::builder(&vertices)
         .topology_guarantee(TopologyGuarantee::PLManifold)
-        .construction_options(ConstructionOptions::default().without_final_delaunay_enforcement())
         .build_triangulation()
         .expect("3D exact-predicate fast regression must cross the Levels 1-4 boundary (#228)");
     let dt = delaunayize(triangulation, DelaunayizeConfig::default())

@@ -1,15 +1,16 @@
 //! Bounded deterministic PL-manifold topology repair.
 //!
-//! This module implements repair algorithms that attempt to bring a raw
-//! [`Tds`](crate::tds::Tds) closer to satisfying the
+//! This module implements repair algorithms that attempt to bring a validated
+//! Levels 1–2 [`Tds`](crate::tds::Tds) closer to satisfying the
 //! [`TopologyGuarantee::PLManifold`](crate::prelude::validation::TopologyGuarantee::PLManifold)
 //! invariant by removing simplices that cause facet over-sharing, non-closed
 //! boundary ridges, non-manifold ridge links, or non-manifold vertex links.
 //!
 //! The public [`repair_pl_manifold_tds`](crate::repair_pl_manifold_tds) entry
-//! point consumes its input so a
-//! failed repair cannot expose a partially modified TDS. A successful result is
-//! still a raw TDS, not a proof-bearing triangulation. Pass it to
+//! point consumes its input so a failed repair can roll back and return the
+//! original TDS rather than expose a partially modified value. A successful
+//! result still proves only the TDS contract plus the targeted repair
+//! postconditions, not a Level 3 topology. Pass it to
 //! [`Triangulation::try_from_tds_with_topology_context`](crate::Triangulation::try_from_tds_with_topology_context)
 //! to validate Levels 1-4 and mint a [`Triangulation`](crate::Triangulation),
 //! then optionally pass that value to
@@ -18,8 +19,9 @@
 //!
 //! # Algorithm
 //!
-//! 1. **Structural precheck**: validate Levels 1–2 via `Tds::validate()`. If
-//!    the facet-degree invariant already holds, return early with zero work.
+//! 1. **Proof consumption**: the public boundary accepts a Levels 1–2 `Tds`
+//!    without repeating its encoded preconditions and opens one rollback
+//!    transaction for the complete repair attempt.
 //! 2. **Iterative facet over-sharing repair**: build the facet-to-simplices map,
 //!    identify facets with degree > 2, deterministically select the worst-quality
 //!    simplex per over-shared facet for removal, remove the batch, and rebuild
@@ -54,9 +56,10 @@ use crate::core::collections::{
 };
 use crate::core::facet::{FacetHandle, facet_key_from_vertices};
 use crate::core::simplex::Simplex;
-use crate::core::tds::{SimplexKey, Tds, TdsError, VertexKey};
+use crate::core::tds::{SimplexKey, Tds, TdsError, TdsRollbackTransaction, VertexKey};
 use crate::core::vertex::Vertex;
 use crate::geometry::util::norms::hypot;
+use crate::refinement::RefinementError;
 use crate::topology::manifold::{
     BoundaryFacetClassification, ManifoldError, ValidatedFacetDegreeMap, classify_boundary_facet,
     validate_closed_boundary_from_validated_facet_map, validate_ridge_links,
@@ -231,7 +234,7 @@ impl<U, V, const D: usize> Default for PlManifoldRepairStats<U, V, D> {
     }
 }
 
-/// Successful output of consuming raw-TDS PL-manifold repair.
+/// Successful output of consuming TDS PL-manifold repair.
 ///
 /// The contained [`Tds`] has passed the repair algorithm's structural and
 /// targeted topology postconditions, but this type is deliberately not a
@@ -248,6 +251,7 @@ impl<U, V, const D: usize> Default for PlManifoldRepairStats<U, V, D> {
 /// };
 /// use delaunay::prelude::triangulation::{FastKernel, Triangulation};
 /// use delaunay::prelude::topology::spaces::GlobalTopology;
+/// use delaunay::RefinementError;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -269,7 +273,8 @@ impl<U, V, const D: usize> Default for PlManifoldRepairStats<U, V, D> {
 ///     tds,
 ///     GlobalTopology::Euclidean,
 ///     &PlManifoldRepairConfig::default(),
-/// )?;
+/// )
+/// .map_err(RefinementError::into_reason)?;
 /// assert!(repaired.statistics.succeeded);
 /// assert_eq!(repaired.tds.number_of_simplices(), 1);
 /// # Ok(())
@@ -278,7 +283,7 @@ impl<U, V, const D: usize> Default for PlManifoldRepairStats<U, V, D> {
 #[derive(Clone, Debug)]
 #[must_use]
 pub struct PlManifoldTdsRepairResult<U, V, const D: usize> {
-    /// Repaired raw topology data structure.
+    /// Repaired Levels 1–2 topology data structure.
     pub tds: Tds<U, V, D>,
     /// Work performed and user payloads removed by the repair.
     pub statistics: PlManifoldRepairStats<U, V, D>,
@@ -402,6 +407,14 @@ pub enum PlManifoldRepairError {
         source: Box<ManifoldError>,
     },
 }
+
+/// Recoverable failure of a bounded PL-manifold repair attempt.
+///
+/// The retained [`Tds`] is the original Levels 1–2 owner after rollback; the
+/// [`PlManifoldRepairError`] records why the requested topology repair could
+/// not be completed.
+pub type PlManifoldRepairRefinementError<U, V, const D: usize> =
+    RefinementError<Tds<U, V, D>, PlManifoldRepairError>;
 
 // =============================================================================
 // REPAIR ALGORITHM
@@ -622,28 +635,31 @@ where
     }
 }
 
-/// Attempts bounded, deterministic PL-manifold repair on a raw [`Tds`].
+/// Attempts bounded, deterministic PL-manifold repair on a Levels 1–2 [`Tds`].
 ///
-/// This transformation consumes the input so an error cannot return a
-/// partially repaired topology to the caller. Success does not itself certify
-/// Levels 3-4; compose the returned TDS with
+/// This transformation consumes the input and keeps one rollback snapshot
+/// through all repair stages. Success does not itself certify Levels 3-4;
+/// compose the returned TDS with
 /// [`Triangulation::try_from_tds_with_topology_context`](crate::Triangulation::try_from_tds_with_topology_context)
 /// to obtain that proof-bearing domain type.
 ///
 /// # Errors
 ///
-/// Returns [`PlManifoldRepairError`] if the input fails structural checks, a
-/// repair budget is exhausted, a targeted violation has no removable local
-/// candidate, topology rebuilding fails, or a targeted postcondition cannot be
-/// established. On error, the consumed TDS is not returned.
+/// Returns [`PlManifoldRepairRefinementError`] if a repair budget is exhausted,
+/// a targeted violation has no removable local candidate, topology rebuilding
+/// fails, or a targeted postcondition cannot be established. Every failure
+/// returns the original Levels 1–2 owner after rollback together with the typed
+/// [`PlManifoldRepairError`] reason.
 ///
 /// # Examples
 ///
 /// ```rust
+/// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
 /// use delaunay::prelude::repair::{PlManifoldRepairConfig, repair_pl_manifold_tds};
 /// use delaunay::prelude::triangulation::{FastKernel, Triangulation};
 /// use delaunay::prelude::topology::spaces::GlobalTopology;
 /// use delaunay::prelude::validation::{TopologyGuarantee, ValidationPolicy};
+/// use delaunay::RefinementError;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -651,6 +667,8 @@ where
 /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// #     #[error(transparent)]
 /// #     Construction(#[from] delaunay::TriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     DelaunayConstruction(#[from] delaunay::DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
 /// #     Repair(#[from] delaunay::PlManifoldRepairError),
 /// #     #[error(transparent)]
@@ -662,34 +680,56 @@ where
 ///     delaunay::vertex![1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 1.0]?,
 /// ];
-/// let tds = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices)?;
+/// let tds = DelaunayTriangulationBuilder::new(&vertices)
+///     .build_triangulation()?
+///     .into_tds();
 /// let repaired = repair_pl_manifold_tds(
 ///     tds,
 ///     GlobalTopology::Euclidean,
 ///     &PlManifoldRepairConfig::default(),
-/// )?;
+/// )
+/// .map_err(RefinementError::into_reason)?;
 ///
 /// let triangulation = Triangulation::try_from_tds_with_topology_context(
 ///     repaired.tds,
 ///     FastKernel::new(),
 ///     TopologyGuarantee::PLManifold,
 ///     GlobalTopology::Euclidean,
-/// )?;
+/// )
+/// .map_err(RefinementError::into_reason)?;
 /// assert_ne!(triangulation.validation_policy(), ValidationPolicy::Never);
 /// # Ok(())
 /// # }
 /// ```
+#[expect(
+    clippy::result_large_err,
+    reason = "recoverable PL-manifold repair returns the original TDS on a cold failure path"
+)]
 pub fn repair_pl_manifold_tds<U, V, const D: usize>(
     mut tds: Tds<U, V, D>,
     global_topology: GlobalTopology<D>,
     config: &PlManifoldRepairConfig,
-) -> Result<PlManifoldTdsRepairResult<U, V, D>, PlManifoldRepairError>
+) -> Result<PlManifoldTdsRepairResult<U, V, D>, PlManifoldRepairRefinementError<U, V, D>>
 where
     U: Clone,
     V: Clone,
 {
-    let statistics = repair_pl_manifold_topology(&mut tds, global_topology, config)?;
-    Ok(PlManifoldTdsRepairResult { tds, statistics })
+    let mut transaction = TdsRollbackTransaction::begin(&mut tds);
+    let result = repair_pl_manifold_topology(transaction.tds_mut(), global_topology, config)
+        .and_then(|statistics| {
+            transaction.tds_mut().validate()?;
+            Ok(statistics)
+        });
+    match result {
+        Ok(statistics) => {
+            transaction.commit();
+            Ok(PlManifoldTdsRepairResult { tds, statistics })
+        }
+        Err(reason) => {
+            transaction.rollback();
+            Err(RefinementError::new(tds, reason))
+        }
+    }
 }
 
 const TARGETED_REPAIR_STAGES: [PlManifoldRepairStage; 3] = [
@@ -1620,7 +1660,7 @@ mod tests {
         let dangling = SimplexKey::from(KeyData::from_ffi(u64::MAX));
         let vertex_keys: Vec<_> = tds.vertex_keys().collect();
         for vertex_key in vertex_keys {
-            tds.vertex_mut(vertex_key)
+            tds.vertex_mut_for_test(vertex_key)
                 .unwrap()
                 .set_incident_simplex(Some(dangling));
         }
@@ -1903,6 +1943,33 @@ mod tests {
         assert!(repaired.statistics.succeeded);
         assert!(repaired.statistics.simplices_removed > 0);
         validate_targeted_topology(&repaired.tds, GlobalTopology::Euclidean).unwrap();
+    }
+
+    #[test]
+    fn public_tds_repair_failure_rolls_back_and_returns_original_owner() {
+        init_tracing();
+        let tds = make_boundary_ridge_multiplicity_tds();
+        let before = tds.clone_for_rollback();
+        let owner_before = tds.topology_owner_id();
+        let generation_before = tds.generation();
+        let config = PlManifoldRepairConfig {
+            max_iterations: 64,
+            max_simplices_removed: 0,
+        };
+
+        let failure = repair_pl_manifold_tds(tds, GlobalTopology::Euclidean, &config)
+            .expect_err("zero removal budget must reject the targeted topology repair");
+        let (tds, reason) = failure.into_parts();
+
+        assert!(matches!(
+            reason,
+            PlManifoldRepairError::TargetedBudgetExhausted { .. }
+        ));
+        assert_eq!(tds, before);
+        assert_eq!(tds.topology_owner_id(), owner_before);
+        assert_eq!(tds.generation(), generation_before);
+        tds.validate()
+            .expect("failed PL-manifold repair must return the original Levels 1-2 owner");
     }
 
     #[test]

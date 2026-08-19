@@ -185,6 +185,14 @@ pub enum SimplexBarycenterError {
         /// Stored simplex vertex count.
         vertex_count: usize,
     },
+    /// Stored periodic offsets cannot be interpreted by the active topology.
+    #[error(
+        "simplex {simplex_key:?} stores periodic offsets, but the active topology does not support periodic orientation offsets"
+    )]
+    PeriodicOffsetsUnsupported {
+        /// Simplex carrying incompatible periodic metadata.
+        simplex_key: SimplexKey,
+    },
     /// The barycenter divisor could not be represented exactly as the coordinate scalar.
     #[error(
         "failed to convert barycenter divisor {vertex_count} for simplex {simplex_key:?}: {source}"
@@ -258,11 +266,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// ];
     /// let triangulation = DelaunayTriangulationBuilder::new(&vertices)
     ///     .build_triangulation()?;
-    /// let simplex_key = triangulation
-    ///     .simplices()
-    ///     .next()
-    ///     .map(|(key, _)| key)
-    ///     .expect("a triangle was constructed");
+    /// let Some((simplex_key, _)) = triangulation.simplices().next() else {
+    ///     return Ok(());
+    /// };
     ///
     /// let barycenter = triangulation.simplex_barycenter(simplex_key)?;
     /// assert_eq!(barycenter.coords(), &[1.0, 1.0]);
@@ -289,11 +295,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         }
 
         let model = self.global_topology().model();
-        let periodic_offsets = if model.supports_periodic_orientation_offsets() {
-            simplex.periodic_vertex_offsets()
-        } else {
-            None
-        };
+        let periodic_offsets = simplex.periodic_vertex_offsets();
+        if periodic_offsets.is_some() && !model.supports_periodic_orientation_offsets() {
+            return Err(SimplexBarycenterError::PeriodicOffsetsUnsupported { simplex_key });
+        }
         if let Some(offsets) = periodic_offsets
             && offsets.len() != vertex_count
         {
@@ -2278,6 +2283,31 @@ mod tests {
     use slotmap::KeyData;
     use std::assert_matches;
     use std::collections::HashSet;
+
+    #[test]
+    fn simplex_barycenter_rejects_periodic_offsets_under_euclidean_topology() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+        ];
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]])
+            .unwrap();
+        let triangulation =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        assert_matches!(
+            triangulation.simplex_barycenter(simplex_key),
+            Err(SimplexBarycenterError::PeriodicOffsetsUnsupported {
+                simplex_key: rejected_key,
+            }) if rejected_key == simplex_key
+        );
+    }
 
     /// Builds two D-simplices sharing one facet so split topology indexes can be
     /// tested without depending on Delaunay construction tie-breaking.

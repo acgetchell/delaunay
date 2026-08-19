@@ -815,9 +815,6 @@ fn strict_delaunay_certification_failure<const N: usize>(
                     "explicit builder parse failed before the intended layer: {source}"
                 ),
             })?
-            .construction_options(
-                ConstructionOptions::default().without_final_delaunay_enforcement(),
-            )
             .build_triangulation()
             .map_err(|source| CliError::ValidationDemoInvariant {
                 case: CASE,
@@ -1847,7 +1844,7 @@ fn run_pachner_round_trip_sequence<const D: usize>(
 
         match dt.propose_pachner(request) {
             Ok(proposal) => {
-                let Ok(forward) = proposal.attempt_topology_on(dt) else {
+                let Ok(forward) = proposal.attempt_on(dt) else {
                     counters.proposal_rejections = counters.proposal_rejections.saturating_add(1);
                     maybe_validate_stress_step(
                         dt,
@@ -1861,7 +1858,7 @@ fn run_pachner_round_trip_sequence<const D: usize>(
                 };
                 counters.accepted = counters.accepted.saturating_add(1);
                 let inverse = inverse_move_from_forward_result(dt, &forward)?;
-                let _inverse_result = dt.propose_pachner(inverse)?.attempt_topology_on(dt)?;
+                let _inverse_result = dt.propose_pachner(inverse)?.attempt_on(dt)?;
                 counters.accepted = counters.accepted.saturating_add(1);
             }
             Err(_) => {
@@ -1897,7 +1894,7 @@ fn run_pachner_random_walk_sequence<const D: usize>(
         };
 
         match dt.propose_pachner(request) {
-            Ok(proposal) => match proposal.attempt_topology_on(dt) {
+            Ok(proposal) => match proposal.attempt_on(dt) {
                 Ok(_) => {
                     counters.accepted = counters.accepted.saturating_add(1);
                 }

@@ -1286,8 +1286,7 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
         let ambient_vertices = self.ambient_vertices::<A>()?;
         let ambient_options = self
             .construction_options
-            .with_initial_simplex_strategy(InitialSimplexStrategy::Balanced)
-            .without_final_delaunay_enforcement();
+            .with_initial_simplex_strategy(InitialSimplexStrategy::Balanced);
         let ambient: Triangulation<_, usize, (), A> =
             DelaunayTriangulationBuilder::new(&ambient_vertices)
                 .topology_guarantee(TopologyGuarantee::Pseudomanifold)

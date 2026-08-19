@@ -15,10 +15,11 @@
 //! ```
 
 use approx::assert_abs_diff_eq;
+use delaunay::RefinementError;
 use delaunay::prelude::collections::{SimplexSecondaryMap, VertexSecondaryMap};
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
-    DelaunayTriangulationConstructionError, vertex,
+    DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    vertex,
 };
 use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateConversionError};
@@ -101,7 +102,8 @@ fn main() -> Result<(), DataExampleError> {
         AdaptiveKernel::new(),
         topology_guarantee,
         global_topology,
-    )?;
+    )
+    .map_err(RefinementError::into_reason)?;
     restored.validate_realization()?;
 
     let coordinates_after = extract_vertex_coordinate_set(&restored);
@@ -112,10 +114,12 @@ fn main() -> Result<(), DataExampleError> {
     assert_eq!(labels_after, labels_before);
     assert_eq!(labeled_simplices_after, labeled_simplices_before);
 
-    let Err(strict_error) = DelaunayTriangulation::try_from_triangulation(restored.clone()) else {
-        return Err(DataExampleError::UnexpectedStrictCertification);
+    let (restored, strict_error) = match DelaunayTriangulation::try_from_triangulation(restored) {
+        Ok(_) => return Err(DataExampleError::UnexpectedStrictCertification),
+        Err(failure) => failure.into_parts(),
     };
-    let converted = delaunayize(restored, DelaunayizeConfig::default())?;
+    let converted = delaunayize(restored, DelaunayizeConfig::default())
+        .map_err(RefinementError::into_reason)?;
     converted.triangulation.validate()?;
     let repaired_coordinates =
         extract_vertex_coordinate_set(converted.triangulation.as_triangulation());
@@ -152,9 +156,6 @@ fn build_labeled_triangulation() -> Result<LabeledTriangulation, DataExampleErro
         DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
             .map_err(DelaunayTriangulationConstructionError::from)?
             .simplex_data_type::<i32>()
-            .construction_options(
-                ConstructionOptions::default().without_final_delaunay_enforcement(),
-            )
             .build_triangulation()?;
 
     let Some(vertex_key) = triangulation.vertices().next().map(|(key, _)| key) else {

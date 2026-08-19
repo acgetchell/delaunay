@@ -77,7 +77,9 @@ fn repair_fallback_produces_valid_triangulation() {
             continue;
         };
         if proposal.attempt_on(&mut trial).is_ok()
-            && DelaunayTriangulation::try_from_triangulation(trial.clone()).is_err()
+            && trial
+                .delaunay_violation_report(None)
+                .is_ok_and(|report| !report.is_valid())
         {
             tri = trial;
             flipped = true;

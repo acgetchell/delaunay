@@ -240,9 +240,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 
         for update in updates {
             if let Some(simplex_key) = update.incident_simplex {
-                if let Some(vertex) = self.tds.vertex_mut(update.vertex_key) {
-                    vertex.set_incident_simplex(Some(simplex_key));
-                }
+                self.tds
+                    .set_incident_simplex_hint(update.vertex_key, simplex_key)
+                    .map_err(|source| InsertionError::TopologyValidation { source })?;
             } else {
                 return Err(InsertionError::TopologyValidationFailed {
                     context: InsertionTopologyValidationContext::StaleIncidentSimplexRepair,
@@ -708,9 +708,8 @@ where
                 });
             };
 
-            if let Some(vertex) = self.tds.vertex_mut(vertex_key) {
-                vertex.set_incident_simplex(Some(simplex_key));
-            }
+            self.tds
+                .set_incident_simplex_hint(vertex_key, simplex_key)?;
         }
 
         Ok(())
@@ -866,7 +865,7 @@ where
                     "Vertex-removal connectedness validation failed",
                 )
             })?;
-        self.validate_required_topology_links_for_simplices(validation_scope)?;
+        self.validate_mandatory_mutation_postconditions_for_simplices(validation_scope)?;
         self.validate_affected_vertices_non_isolated(affected_vertices)?;
 
         #[cfg(debug_assertions)]
@@ -1470,7 +1469,7 @@ mod tests {
 
         for vk in [v0, v1, v2, v3] {
             tri.tds
-                .vertex_mut(vk)
+                .vertex_mut_for_test(vk)
                 .unwrap()
                 .set_incident_simplex(Some(ck));
         }
@@ -1779,7 +1778,10 @@ mod tests {
 
         // Pointers unchanged.
         for vk in [v0, v1, v2, v3] {
-            assert_eq!(tri.tds.vertex_mut(vk).unwrap().incident_simplex(), Some(ck));
+            assert_eq!(
+                tri.tds.vertex_mut_for_test(vk).unwrap().incident_simplex(),
+                Some(ck)
+            );
         }
     }
 
@@ -1788,12 +1790,15 @@ mod tests {
         let (mut tri, [_, _, _, v3], ck) = build_single_tet();
 
         // Corrupt v3 to have no incident simplex.
-        tri.tds.vertex_mut(v3).unwrap().set_incident_simplex(None);
+        tri.tds
+            .vertex_mut_for_test(v3)
+            .unwrap()
+            .set_incident_simplex(None);
         let scope = incident_repair_scope([v3]);
 
         assert!(tri.repair_stale_incident_simplices(&scope).is_ok());
         assert_eq!(
-            tri.tds.vertex_mut(v3).unwrap().incident_simplex(),
+            tri.tds.vertex_mut_for_test(v3).unwrap().incident_simplex(),
             Some(ck),
             "v3 should be repaired to point to the tetrahedron"
         );
@@ -1806,14 +1811,14 @@ mod tests {
         // Point v3 to a non-existent simplex key (simulates a deleted conflict simplex).
         let stale = SimplexKey::from(KeyData::from_ffi(0xDEAD_BEEF));
         tri.tds
-            .vertex_mut(v3)
+            .vertex_mut_for_test(v3)
             .unwrap()
             .set_incident_simplex(Some(stale));
         let scope = incident_repair_scope([v3]);
 
         assert!(tri.repair_stale_incident_simplices(&scope).is_ok());
         assert_eq!(
-            tri.tds.vertex_mut(v3).unwrap().incident_simplex(),
+            tri.tds.vertex_mut_for_test(v3).unwrap().incident_simplex(),
             Some(ck),
             "stale pointer should be repaired to the valid simplex"
         );
@@ -1824,9 +1829,12 @@ mod tests {
         let (mut tri, [v0, v1, v2, v3], ck) = build_single_tet();
 
         let stale = SimplexKey::from(KeyData::from_ffi(0xDEAD_BEEF));
-        tri.tds.vertex_mut(v0).unwrap().set_incident_simplex(None);
         tri.tds
-            .vertex_mut(v2)
+            .vertex_mut_for_test(v0)
+            .unwrap()
+            .set_incident_simplex(None);
+        tri.tds
+            .vertex_mut_for_test(v2)
             .unwrap()
             .set_incident_simplex(Some(stale));
         let scope = incident_repair_scope([v0, v2]);
@@ -1847,10 +1855,13 @@ mod tests {
 
         let stale = SimplexKey::from(KeyData::from_ffi(0xDEAD_BEEF));
         tri.tds
-            .vertex_mut(v0)
+            .vertex_mut_for_test(v0)
             .unwrap()
             .set_incident_simplex(Some(stale));
-        tri.tds.vertex_mut(v2).unwrap().set_incident_simplex(None);
+        tri.tds
+            .vertex_mut_for_test(v2)
+            .unwrap()
+            .set_incident_simplex(None);
         let scope = incident_repair_scope([v2]);
 
         assert!(tri.repair_stale_incident_simplices(&scope).is_ok());
@@ -1897,7 +1908,10 @@ mod tests {
     fn test_repair_stale_incident_simplices_errors_on_stale_incidence_index() {
         let (mut tri, [v0, _, _, _], ck) = build_single_tet();
         tri.tds.remove_simplex_storage_only_for_test(ck);
-        tri.tds.vertex_mut(v0).unwrap().set_incident_simplex(None);
+        tri.tds
+            .vertex_mut_for_test(v0)
+            .unwrap()
+            .set_incident_simplex(None);
         let scope = incident_repair_scope([v0]);
 
         let result = tri.repair_stale_incident_simplices(&scope);
@@ -2155,7 +2169,10 @@ mod tests {
     #[test]
     fn test_repair_affected_vertex_incidence_from_scope_repairs_missing_pointer() {
         let (mut tri, [_, _, _, v3], simplex_key) = build_single_tet();
-        tri.tds.vertex_mut(v3).unwrap().set_incident_simplex(None);
+        tri.tds
+            .vertex_mut_for_test(v3)
+            .unwrap()
+            .set_incident_simplex(None);
         let mut affected_vertices = VertexKeySet::default();
         affected_vertices.insert(v3);
         let mut validation_scope = SimplexKeyBuffer::new();
@@ -2173,7 +2190,10 @@ mod tests {
     #[test]
     fn test_repair_affected_vertex_incidence_from_scope_reports_isolated_vertex() {
         let (mut tri, [_, _, _, v3], _) = build_single_tet();
-        tri.tds.vertex_mut(v3).unwrap().set_incident_simplex(None);
+        tri.tds
+            .vertex_mut_for_test(v3)
+            .unwrap()
+            .set_incident_simplex(None);
         let mut affected_vertices = VertexKeySet::default();
         affected_vertices.insert(v3);
         let validation_scope = SimplexKeyBuffer::new();
@@ -2394,20 +2414,24 @@ mod tests {
         let all_simplices: Vec<_> = tri.tds.simplex_keys().collect();
         let issues = tri.detect_local_facet_issues(&all_simplices).unwrap();
         assert!(issues.is_some(), "Should detect over-shared facet");
-        let original_simplex_count = tri.tds.number_of_simplices();
+        let before_repair = tri.tds.clone_for_rollback();
+        let owner_before = tri.tds.topology_owner_id();
+        let generation_before = tri.tds.generation();
 
         match tri.repair_local_facet_issues(&issues.unwrap(), usize::MAX) {
             Ok(removed) => {
-                assert!(removed > 0, "repair should remove at least one simplex");
+                assert_eq!(removed, 1);
                 tri.validate()
                     .expect("successful public repair should leave valid topology");
             }
-            Err(InsertionError::TopologyValidation {
-                source: TdsError::DuplicateSimplices { .. },
-            }) => {
-                assert_eq!(tri.tds.number_of_simplices(), original_simplex_count);
+            Err(error) => {
+                assert_eq!(
+                    tri.tds, before_repair,
+                    "every typed repair failure must restore the pre-call TDS: {error:?}"
+                );
+                assert_eq!(tri.tds.topology_owner_id(), owner_before);
+                assert_eq!(tri.tds.generation(), generation_before);
             }
-            Err(error) => panic!("unexpected duplicate-simplex repair error: {error:?}"),
         }
     }
 

@@ -563,11 +563,11 @@ cargo bench --profile perf --bench topology_guarantee_construction -- --noplot
 cargo bench --profile perf --bench topology_guarantee_construction -- "topology_guarantee_construction/4d"
 ```
 
-This suite compares construction cost under:
+This suite compares construction cost under independent topology guarantees and audit cadences:
 
-- `TopologyGuarantee::Pseudomanifold`
-- `TopologyGuarantee::PLManifold`
-- `TopologyGuarantee::PLManifoldStrict`
+- `TopologyGuarantee::Pseudomanifold` with `ValidationPolicy::OnSuspicion`
+- `TopologyGuarantee::PLManifold` with `ValidationPolicy::ExplicitOnly`
+- `TopologyGuarantee::PLManifold` with `ValidationPolicy::Always`
 
 It is manual-only and useful when changing insertion, repair, or validation
 paths that affect topology guarantees.

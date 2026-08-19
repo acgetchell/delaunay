@@ -56,11 +56,11 @@ use delaunay::prelude::validation::ValidationPolicy;
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
-// Enforce stricter topology checks.
-dt.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
+// Enforce the PL-manifold mathematical contract.
+dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)?;
 
-// In tests/debugging, validate global Level 3 and changed-scope Level 4 after every insertion.
-dt.set_validation_policy(ValidationPolicy::Always);
+// In tests/debugging, validate global Levels 1–4 after every insertion.
+dt.try_set_validation_policy(ValidationPolicy::Always)?;
 ```
 
 ### What the topology guarantees mean (quick summary)
@@ -69,10 +69,9 @@ dt.set_validation_policy(ValidationPolicy::Always);
   validates facet degree (each facet is incident to 1 or 2 simplices) and a closed boundary
   ("no boundary of boundary").
 - `TopologyGuarantee::PLManifold` *(default)*:
-  adds **ridge-link validation during insertion** and requires a **vertex-link validation pass at
-  construction completion** to certify full PL-manifoldness.
-- `TopologyGuarantee::PLManifoldStrict`:
-  runs **vertex-link validation after every insertion** (slowest, maximum safety).
+  adds **ridge- and vertex-link validation**. Every full Level 3 audit checks the
+  same PL-manifold contract; `ValidationPolicy::Always` repeats complete Levels
+  1–4 audits after every mutation.
 
 See [`validation.md`](validation.md) for the precise invariants and which methods validate which
 levels.
@@ -91,6 +90,19 @@ insertion keeps the invariant-preserving repair cadence fixed at every
 insertion. `DelaunayRepairPolicy` remains configurable through
 `ConstructionOptions` while a batch candidate is unpublished; the terminal
 still certifies Level 5 before returning it.
+
+At the domain boundary, the strict terminal composes three proof-bearing
+operations: construct or deserialize and certify a Levels 1–2 `Tds`; consume it
+to prove Level 3 topology and Level 4 realization in `Triangulation`; then run
+bounded flip repair and Level 5 certification before publishing
+`DelaunayTriangulation`. Each promotion checks only the invariant newly owned
+by that layer. Local repairs may be interleaved with insertion as a performance
+optimization, but no intermediate state is stored in the stronger owner. The
+mathematical basis is incremental topological flipping for regular
+triangulations; the implementation retains explicit work budgets and typed
+non-convergence because the cited result is not an unconditional bound for
+every local schedule and supported geometry. See
+[Bistellar (Pachner) Moves and Delaunay Repair](../REFERENCES.md#bistellar-pachner-moves-and-delaunay-repair).
 
 The consuming `delaunayize` conversion requires `K: ExactPredicates` at
 compile time. `AdaptiveKernel` and `RobustKernel` implement this trait;
@@ -124,6 +136,7 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
 use delaunay::prelude::geometry::CoordinateConversionError;
+use delaunay::RefinementError;
 
 #[derive(Debug, thiserror::Error)]
 enum ConversionExampleError {
@@ -144,7 +157,8 @@ fn main() -> Result<(), ConversionExampleError> {
     ];
 
     let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
-    let converted = delaunayize(tri, DelaunayizeConfig::default())?;
+    let converted = delaunayize(tri, DelaunayizeConfig::default())
+        .map_err(RefinementError::into_reason)?;
     assert!(converted.triangulation.validate().is_ok());
     Ok(())
 }
@@ -153,8 +167,10 @@ fn main() -> Result<(), ConversionExampleError> {
 ### Topology and kernel requirements
 
 Flip-based conversion requires a PL-manifold topology guarantee. Passing a
-`Triangulation` carrying `TopologyGuarantee::Pseudomanifold` returns
-`DelaunayizeError::FlipTopologyNotAdmissible`.
+`Triangulation` carrying `TopologyGuarantee::Pseudomanifold` returns a
+`DelaunayizeRefinementError` whose reason is
+`DelaunayizeError::FlipTopologyNotAdmissible` and whose owner is the unchanged
+input triangulation.
 
 Additionally, `delaunayize` requires `K: ExactPredicates` (compile-time bound).
 The default `AdaptiveKernel` satisfies this. `FastKernel` does not — its automatic
@@ -211,13 +227,17 @@ fn main() -> Result<(), DiagnosticExampleError> {
 
     match delaunayize(tri, DelaunayizeConfig::default()) {
         Ok(_converted) => {}
-        Err(DelaunayizeError::DelaunayRepairFailed {
-            source: DelaunayRepairError::NonConvergent { diagnostics, .. },
-        }) => {
-            eprintln!("repair non-convergent: {diagnostics}");
-        }
-        Err(err) => {
-            eprintln!("repair failed: {err}");
+        Err(failure) => {
+            let (tri, reason) = failure.into_parts();
+            match reason {
+                DelaunayizeError::DelaunayRepairFailed {
+                    source: DelaunayRepairError::NonConvergent { diagnostics, .. },
+                } => {
+                    eprintln!("repair non-convergent: {diagnostics}");
+                    assert!(tri.validate_realization().is_ok());
+                }
+                reason => eprintln!("repair failed: {reason}"),
+            }
         }
     }
     Ok(())
@@ -282,6 +302,7 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
 use delaunay::prelude::geometry::CoordinateConversionError;
+use delaunay::RefinementError;
 
 #[derive(Debug, thiserror::Error)]
 enum RepairExampleError {
@@ -305,7 +326,8 @@ fn main() -> Result<(), RepairExampleError> {
     let converted = delaunayize(
         tri,
         DelaunayizeConfig::default().with_fallback_rebuild(true),
-    )?;
+    )
+    .map_err(RefinementError::into_reason)?;
     eprintln!("fallback rebuild used: {}", converted.outcome.used_fallback_rebuild);
     Ok(())
 }
@@ -557,7 +579,8 @@ fn main() -> DelaunayResult<()> {
     assert!(dt.validate().is_ok());
 
     // If you need Delaunay after edits (requires K: ExactPredicates), consume
-    // `dt` with `delaunayize(dt, DelaunayizeConfig::default())?`.
+    // `dt` with `delaunayize(dt, DelaunayizeConfig::default())`; failure
+    // returns `dt` for inspection or a differently configured retry.
     Ok(())
 }
 ```

@@ -515,7 +515,8 @@ mod tests {
 
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
+            .unwrap();
 
         let inserted_vertex = interior_vertex_for_k1_insert::<D>();
         let inserted_uuid = inserted_vertex.uuid();
@@ -537,7 +538,8 @@ mod tests {
 
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
+            .unwrap();
 
         let mut inserted_vertices = Vec::new();
         for point_index in 0..(D + 3) {
@@ -602,7 +604,8 @@ mod tests {
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
+            .unwrap();
         let original_vertex_count = dt.number_of_vertices();
         let original_simplex_count = dt.number_of_simplices();
 
@@ -734,7 +737,8 @@ mod tests {
         let deleted_uuid = vertices[7].uuid();
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
+            .unwrap();
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::EveryInsertion;
         dt.as_triangulation().validate().unwrap();
         dt.is_valid_delaunay().unwrap();
@@ -770,7 +774,8 @@ mod tests {
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         dt.is_valid_delaunay().unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
+            .unwrap();
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
 
         let vertex_key = dt

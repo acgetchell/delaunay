@@ -136,7 +136,7 @@ impl TopologicalOperation {
     #[must_use]
     pub const fn is_admissible_under(self, topology: TopologyGuarantee) -> bool {
         match topology {
-            TopologyGuarantee::PLManifold | TopologyGuarantee::PLManifoldStrict => true,
+            TopologyGuarantee::PLManifold => true,
             TopologyGuarantee::Pseudomanifold => !self.requires_pl_manifold(),
         }
     }
@@ -467,10 +467,6 @@ mod tests {
         assert!(!TopologicalOperation::DeleteVertex.requires_pl_manifold());
 
         assert!(TopologicalOperation::FacetFlip.is_admissible_under(TopologyGuarantee::PLManifold));
-        assert!(
-            TopologicalOperation::FacetFlip
-                .is_admissible_under(TopologyGuarantee::PLManifoldStrict)
-        );
         assert!(
             !TopologicalOperation::FacetFlip.is_admissible_under(TopologyGuarantee::Pseudomanifold)
         );

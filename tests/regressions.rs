@@ -6,11 +6,11 @@
 
 use delaunay::flips::{BistellarFlips, FlipError, SimplexKey};
 use delaunay::prelude::construction::{
-    ConstructionOptions, ConstructionStatistics, DelaunayRepairPolicy, DelaunayTriangulation,
+    ConstructionOptions, ConstructionStatistics, DelaunayTriangulation,
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     ExplicitConstructionError, InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex,
 };
-use delaunay::prelude::delaunayize::{DelaunayizeConfig, delaunayize};
+use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
 use delaunay::prelude::geometry::{CoordinateRange, Point, RobustKernel};
 use delaunay::prelude::insertion::{HullExtensionReason, InsertionError};
@@ -19,14 +19,67 @@ use delaunay::prelude::ordering::{
     hilbert_quantize_in_range,
 };
 use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
-use delaunay::prelude::tds::Tds;
+use delaunay::prelude::repair::DelaunayRepairError;
+use delaunay::prelude::tds::{InvariantError, Tds, TriangulationConstructionState};
+use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind};
 use delaunay::prelude::triangulation::Triangulation;
 use delaunay::prelude::validation::{
-    TriangulationRealizationValidationError, TriangulationValidationError,
+    DelaunayTdsRefinementError, DelaunayTriangulationValidationError,
+    TriangulationRealizationValidationError, TriangulationValidationError, ValidationPolicy,
 };
 use delaunay::vertex;
-use std::num::NonZeroUsize;
 use uuid::Uuid;
+
+#[test]
+fn regression_issue_557_triangulation_topology_setter_preserves_levels_one_through_four() {
+    let mut tri: Triangulation<_, (), (), 2> = DelaunayTriangulation::empty().into_triangulation();
+    let previous_topology = tri.global_topology();
+
+    let error = tri
+        .try_set_global_topology(GlobalTopology::Hyperbolic)
+        .expect_err("unsupported Level 4 topology metadata must be rejected");
+
+    assert!(matches!(
+        error,
+        InvariantError::Realization { source }
+            if matches!(
+                source,
+                TriangulationRealizationValidationError::UnsupportedTopology {
+                    topology: TopologyKind::Hyperbolic,
+                    dimension: 2,
+                }
+            )
+    ));
+    assert_eq!(tri.global_topology(), previous_topology);
+    tri.validate_realization()
+        .expect("failed topology metadata update must preserve the prior Levels 1-4 value");
+}
+
+#[test]
+fn regression_issue_557_delaunay_topology_setter_preserves_levels_one_through_five() {
+    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+    let previous_topology = dt.global_topology();
+
+    let error = dt
+        .try_set_global_topology(GlobalTopology::Hyperbolic)
+        .expect_err("unsupported Level 4 topology metadata must be rejected");
+
+    match error {
+        DelaunayTriangulationValidationError::Realization { source } => {
+            assert!(matches!(
+                source.as_ref(),
+                TriangulationRealizationValidationError::UnsupportedTopology {
+                    topology: TopologyKind::Hyperbolic,
+                    dimension: 2,
+                }
+            ));
+        }
+        other => panic!("expected a Level 4 realization error, got {other:?}"),
+    }
+    assert_eq!(dt.global_topology(), previous_topology);
+    dt.validate()
+        .expect("failed topology metadata update must preserve the prior Level 5 value");
+}
 
 /// Replays a full Hilbert ordering while keeping only the prefix that first
 /// exposed issue #307, so the regression stays fast and deterministic.
@@ -270,7 +323,7 @@ fn assert_exact_strip_construction_result(
         "{case} construction should preserve exact strip coordinate bits and labels; stats={stats:?}",
     );
     assert_triangulation_vertices_use_exact_time_labels(dt);
-    dt.validate()
+    dt.validate_realization()
         .expect("exact degenerate strip should satisfy Levels 1-4");
 }
 
@@ -280,16 +333,8 @@ fn regression_issue_447_exact_layered_strip_preserves_collinear_boundary_vertice
     let kernel = RobustKernel::<f64>::new();
     let input_signatures = sorted_vertex_signatures(&vertices);
     assert_strip_vertices_use_exact_time_labels(&vertices);
-    let exact_degenerate_options =
-        ConstructionOptions::default().without_final_delaunay_enforcement();
-    assert!(
-        !exact_degenerate_options.enforces_final_delaunay(),
-        "exact degenerate construction mode should document that Level 5 enforcement is disabled",
-    );
-
     let (default_dt, default_stats) = DelaunayTriangulationBuilder::new(&vertices)
         .simplex_data_type::<i32>()
-        .construction_options(exact_degenerate_options)
         .build_triangulation_with_kernel_and_statistics(&kernel)
         .expect("exact layered CDT strip point construction should succeed");
 
@@ -302,8 +347,7 @@ fn regression_issue_447_exact_layered_strip_preserves_collinear_boundary_vertice
 
     let input_options = ConstructionOptions::default()
         .with_insertion_order(InsertionOrderStrategy::Input)
-        .with_retry_policy(RetryPolicy::Disabled)
-        .without_final_delaunay_enforcement();
+        .with_retry_policy(RetryPolicy::Disabled);
     let (input_dt, input_stats) = DelaunayTriangulationBuilder::new(&vertices)
         .simplex_data_type::<i32>()
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
@@ -324,8 +368,7 @@ fn regression_issue_447_exact_layered_strip_preserves_collinear_boundary_vertice
         .construction_options(
             ConstructionOptions::default()
                 .with_insertion_order(InsertionOrderStrategy::Input)
-                .with_retry_policy(RetryPolicy::Disabled)
-                .without_final_delaunay_enforcement(),
+                .with_retry_policy(RetryPolicy::Disabled),
         )
         .build_triangulation_with_kernel(&kernel)
         .expect("non-stat exact layered CDT strip construction should honor non-enforcing policy");
@@ -342,12 +385,12 @@ fn regression_issue_447_exact_layered_strip_preserves_collinear_boundary_vertice
     );
     assert_triangulation_vertices_use_exact_time_labels(&no_stats_dt);
     no_stats_dt
-        .validate()
+        .validate_realization()
         .expect("non-stat exact strip should satisfy Levels 1-4");
 }
 
 #[test]
-fn regression_issue_447_explicit_exact_strip_default_strict_level5_fails() {
+fn regression_issue_447_explicit_exact_strip_attempts_repair_before_failing() {
     let vertices = exact_open_cdt_strip_vertices(5, 3);
     let simplices = exact_open_cdt_strip_simplices(5, 3);
 
@@ -355,16 +398,21 @@ fn regression_issue_447_explicit_exact_strip_default_strict_level5_fails() {
         .expect("exact CDT strip explicit simplex specs should validate")
         .simplex_data_type::<i32>()
         .build()
-        .expect_err("strict explicit construction should reject the non-Delaunay CDT strip");
+        .expect_err("bounded repair should report non-convergence for the constrained CDT strip");
 
+    let DelaunayTriangulationConstructionError::ExplicitConstruction {
+        source: ExplicitConstructionError::DelaunayRepair { source },
+    } = err
+    else {
+        panic!("strict explicit construction should preserve the repair failure, got: {err:?}");
+    };
     assert!(
         matches!(
-            err,
-            DelaunayTriangulationConstructionError::ExplicitConstruction {
-                source: ExplicitConstructionError::DelaunayValidation { .. }
-            }
+            source.as_ref(),
+            DelaunayRepairError::NonConvergent { diagnostics, .. }
+                if diagnostics.flips_performed > 0
         ),
-        "strict explicit construction should fail at Level 5 Delaunay validation, got: {err:?}",
+        "strict construction must attempt at least one flip before reporting non-convergence: {source:?}",
     );
 }
 
@@ -379,15 +427,8 @@ fn regression_issue_447_explicit_exact_strip_preserves_vertices_without_level5_e
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .expect("exact CDT strip explicit simplex specs should validate")
         .simplex_data_type::<i32>()
-        .construction_options(
-            ConstructionOptions::default()
-                .without_final_delaunay_enforcement()
-                .with_batch_repair_policy(DelaunayRepairPolicy::EveryN(
-                    NonZeroUsize::new(2).unwrap(),
-                )),
-        )
         .build_triangulation_with_kernel(&kernel)
-        .expect("explicit exact CDT strip should import under the non-enforcing policy");
+        .expect("explicit exact CDT strip should import through the Levels 1-4 terminal");
 
     assert_eq!(
         dt.number_of_vertices(),
@@ -405,7 +446,7 @@ fn regression_issue_447_explicit_exact_strip_preserves_vertices_without_level5_e
         "explicit construction should preserve exact strip coordinate bits and labels",
     );
     assert_triangulation_vertices_use_exact_time_labels(&dt);
-    dt.validate()
+    dt.validate_realization()
         .expect("explicit exact CDT strip should satisfy Levels 1-4");
     assert!(
         DelaunayTriangulation::try_from_triangulation(dt).is_err(),
@@ -724,13 +765,111 @@ fn evolve_periodic_fixture_without_delaunay(
     );
 }
 
+fn assert_composed_level_five_failure_returns_triangulation(
+    evolved_tds: Tds<u32, u32, 2>,
+    expected_snapshot: &serde_json::Value,
+    topology_guarantee: TopologyGuarantee,
+    global_topology: GlobalTopology<2>,
+) {
+    let composed_failure = DelaunayTriangulation::try_from_tds_with_topology_context(
+        evolved_tds,
+        RobustKernel::new(),
+        topology_guarantee,
+        global_topology,
+    )
+    .expect_err("strict reconstruction must continue to reject the non-Delaunay state");
+    let DelaunayTdsRefinementError::Delaunay { failure } = composed_failure else {
+        panic!("Levels 3-4 should succeed before composed Level 5 rejection");
+    };
+    assert_eq!(
+        serde_json::to_value(failure.owner().clone().into_tds())
+            .expect("composed recovery owner should serialize exactly"),
+        *expected_snapshot,
+        "composed strict construction must return the strongest proof owner reached"
+    );
+    failure
+        .owner()
+        .validate_realization()
+        .expect("composed Level 5 rejection must retain a valid Levels 1-4 owner");
+}
+
+fn assert_level_three_failure_returns_tds(
+    evolved_tds: Tds<u32, u32, 2>,
+    topology_guarantee: TopologyGuarantee,
+    global_topology: GlobalTopology<2>,
+) {
+    let mut invalid_snapshot = serde_json::to_value(evolved_tds)
+        .expect("valid evolved TDS should serialize for invalid-topology fixture setup");
+    let isolated_vertex = vertex!([0.42_f64, 0.42]; data = 999_u32)
+        .expect("isolated regression vertex should be valid by itself");
+    invalid_snapshot
+        .get_mut("vertices")
+        .and_then(serde_json::Value::as_array_mut)
+        .expect("serialized TDS should contain vertex records")
+        .push(
+            serde_json::to_value(isolated_vertex)
+                .expect("isolated regression vertex should serialize"),
+        );
+    let invalid_tds: Tds<u32, u32, 2> = serde_json::from_value(invalid_snapshot)
+        .expect("isolated vertex should preserve Levels 1-2 snapshot validity");
+    let expected_invalid_tds = serde_json::to_value(&invalid_tds)
+        .expect("invalid-topology Levels 1-2 owner should serialize exactly");
+    let invalid_error = Triangulation::try_from_tds_with_topology_context(
+        invalid_tds,
+        RobustKernel::new(),
+        topology_guarantee,
+        global_topology,
+    )
+    .expect_err("Levels 1-4 reconstruction must reject invalid toroidal topology");
+    assert!(
+        matches!(
+            invalid_error.reason(),
+            TriangulationRealizationValidationError::Triangulation { source }
+                if matches!(
+                    source.as_ref(),
+                    TriangulationValidationError::IsolatedVertex { .. }
+                )
+        ),
+        "invalid toroidal topology should report an isolated vertex: {invalid_error:?}"
+    );
+    invalid_error
+        .owner()
+        .validate()
+        .expect("failed Levels 3-4 reconstruction must return the valid Levels 1-2 owner");
+    assert_eq!(
+        serde_json::to_value(invalid_error.owner())
+            .expect("recovered Levels 1-2 owner should serialize exactly"),
+        expected_invalid_tds,
+        "failed Levels 3-4 reconstruction must return the unchanged TDS"
+    );
+}
+
+#[test]
+fn regression_issue_557_initial_simplex_publishes_a_valid_constructed_tds() {
+    let vertices = [
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+    ];
+
+    let tds = Triangulation::<RobustKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)
+        .expect("the 3D bootstrap should publish a complete TDS");
+
+    assert_eq!(
+        tds.construction_state(),
+        &TriangulationConstructionState::Constructed
+    );
+    tds.validate()
+        .expect("the published bootstrap TDS must carry the Levels 1–2 proof");
+}
+
 #[test]
 fn regression_issue_557_restores_evolved_toroidal_state_through_level_4() {
     let fresh = periodic_payload_fixture_t2();
-    assert!(
-        fresh.validate().is_ok(),
-        "fresh T^2 state must pass Levels 1-5"
-    );
+    fresh
+        .validate()
+        .expect("fresh T^2 state must pass Levels 1-5");
     assert!(fresh.global_topology().is_toroidal());
 
     let mut evolved = evolve_periodic_fixture_without_delaunay(&fresh);
@@ -740,7 +879,9 @@ fn regression_issue_557_restores_evolved_toroidal_state_through_level_4() {
             .set_simplex_data(simplex_key, Some(next_simplex_payload))
             .expect("evolved simplex payload assignment should preserve topology");
     }
-    assert!(evolved.validate_realization().is_ok());
+    evolved
+        .validate_realization()
+        .expect("evolved T^2 state must preserve Levels 1-4");
     assert!(DelaunayTriangulation::try_from_triangulation(evolved.clone()).is_err());
 
     let topology_guarantee = evolved.topology_guarantee();
@@ -768,10 +909,26 @@ fn regression_issue_557_restores_evolved_toroidal_state_through_level_4() {
         expected_snapshot,
         "reconstruction must preserve connectivity, periodic offsets, UUIDs, and payloads"
     );
-    assert!(restored.validate_realization().is_ok());
+    restored
+        .validate_realization()
+        .expect("restored T^2 state must preserve Levels 1-4");
 
-    DelaunayTriangulation::try_from_triangulation(restored.clone())
+    let strict_failure = DelaunayTriangulation::try_from_triangulation(restored)
         .expect_err("strict certification must reject the non-Delaunay triangulation");
+    let (restored, strict_reason) = strict_failure.into_parts();
+    assert!(matches!(
+        strict_reason,
+        DelaunayTriangulationValidationError::VerificationFailed { .. }
+    ));
+    assert_eq!(
+        serde_json::to_value(restored.clone().into_tds())
+            .expect("recovered triangulation storage should serialize exactly"),
+        expected_snapshot,
+        "failed Level 5 certification must return the unchanged Levels 1-4 owner"
+    );
+    restored
+        .validate_realization()
+        .expect("failed Level 5 certification must retain a valid Levels 1-4 owner");
 
     let converted = delaunayize(restored, DelaunayizeConfig::default())
         .expect("bounded toroidal flip repair should convert the realized triangulation");
@@ -785,43 +942,44 @@ fn regression_issue_557_restores_evolved_toroidal_state_through_level_4() {
         .validate()
         .expect("delaunayize must publish only a cumulative Levels 1-5 value");
 
-    DelaunayTriangulation::try_from_tds_with_topology_context(
+    assert_composed_level_five_failure_returns_triangulation(
         evolved_tds.clone(),
-        RobustKernel::new(),
+        &expected_snapshot,
         topology_guarantee,
         global_topology,
-    )
-    .expect_err("strict reconstruction must continue to reject the non-Delaunay state");
+    );
+    assert_level_three_failure_returns_tds(evolved_tds, topology_guarantee, global_topology);
+}
 
-    let mut invalid_snapshot = serde_json::to_value(evolved_tds)
-        .expect("valid evolved TDS should serialize for invalid-topology fixture setup");
-    let isolated_vertex = vertex!([0.42_f64, 0.42]; data = 999_u32)
-        .expect("isolated regression vertex should be valid by itself");
-    invalid_snapshot
-        .get_mut("vertices")
-        .and_then(serde_json::Value::as_array_mut)
-        .expect("serialized TDS should contain vertex records")
-        .push(
-            serde_json::to_value(isolated_vertex)
-                .expect("isolated regression vertex should serialize"),
-        );
-    let invalid_tds: Tds<u32, u32, 2> = serde_json::from_value(invalid_snapshot)
-        .expect("isolated vertex should preserve Levels 1-2 snapshot validity");
-    let invalid_error = Triangulation::try_from_tds_with_topology_context(
-        invalid_tds,
-        RobustKernel::new(),
-        topology_guarantee,
-        global_topology,
-    )
-    .expect_err("Levels 1-4 reconstruction must reject invalid toroidal topology");
+#[test]
+fn regression_issue_557_failed_delaunayize_returns_original_triangulation() {
+    let vertices = [vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
+    let triangulation = DelaunayTriangulationBuilder::new(&vertices)
+        .build()
+        .expect("one-dimensional fixture should construct")
+        .into_triangulation();
+    let expected_snapshot = serde_json::to_value(triangulation.clone().into_tds())
+        .expect("original Levels 1-4 owner should serialize exactly");
+
+    let failure = delaunayize(triangulation, DelaunayizeConfig::default())
+        .expect_err("flip repair is unsupported in one dimension without fallback");
+    let (triangulation, reason) = failure.into_parts();
+
     assert!(matches!(
-        invalid_error,
-        TriangulationRealizationValidationError::Triangulation { source }
-            if matches!(
-                source.as_ref(),
-                TriangulationValidationError::IsolatedVertex { .. }
-            )
+        reason,
+        DelaunayizeError::DelaunayRepairFailed {
+            source: DelaunayRepairError::Flip { source },
+        } if matches!(source.as_ref(), FlipError::UnsupportedDimension { dimension: 1 })
     ));
+    assert_eq!(
+        serde_json::to_value(triangulation.clone().into_tds())
+            .expect("recovered Levels 1-4 owner should serialize exactly"),
+        expected_snapshot,
+        "failed repairing refinement must return the unchanged triangulation"
+    );
+    triangulation
+        .validate_realization()
+        .expect("failed repairing refinement must retain a valid Levels 1-4 owner");
 }
 
 #[test]
@@ -978,7 +1136,8 @@ fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
         .with_insertion_order(InsertionOrderStrategy::Input)
         .with_retry_policy(RetryPolicy::Disabled);
     let (dt, stats) = DelaunayTriangulationBuilder::new(&vertices)
-        .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .validation_policy(ValidationPolicy::Always)
         .construction_options(options)
         .build_with_kernel_and_statistics(&kernel)
         .expect("4D bulk construction should not fail after repair orientation cleanup");
@@ -993,10 +1152,9 @@ fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
         dt.as_triangulation().is_valid_topology().is_ok(),
         "bulk repair must leave all simplices in positive geometric orientation",
     );
-    assert!(
-        dt.as_triangulation().validate().is_ok(),
-        "bulk repair must leave the triangulation structurally and topologically valid",
-    );
+    dt.as_triangulation()
+        .validate_realization()
+        .expect("bulk repair must leave the triangulation valid through Level 4");
 }
 
 /// The 4D 500-point seed `0xD225B8A07E274AE6` (ball radius 100) exhausted all
@@ -1058,9 +1216,7 @@ fn regression_issue_204_4d_500_local_repair_budget() {
         0,
         "#204 regression: no vertex should be skipped (seed 0x{seed:X})",
     );
-    assert!(
-        dt.as_triangulation().validate().is_ok(),
-        "#204 regression: triangulation must pass Levels 1–4 validation \
-         (seed 0x{seed:X})",
-    );
+    dt.as_triangulation()
+        .validate_realization()
+        .expect("#204 regression triangulation must pass Levels 1-4 validation");
 }

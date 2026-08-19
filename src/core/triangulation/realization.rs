@@ -14,7 +14,10 @@ use crate::core::collections::{
     SmallBuffer,
 };
 use crate::core::simplex::Simplex;
-use crate::core::tds::{InvariantError, InvariantKind, SimplexKey, Tds, TdsError, VertexKey};
+use crate::core::tds::{
+    InvariantError, InvariantKind, SimplexKey, Tds, TdsError, TriangulationConstructionState,
+    VertexKey,
+};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
@@ -30,6 +33,7 @@ use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateValidationError, InvalidCoordinateValue,
 };
+use crate::refinement::RefinementError;
 use crate::topology::traits::global_topology_model::{
     GlobalTopologyModel, GlobalTopologyModelError,
 };
@@ -116,6 +120,29 @@ impl From<PeriodicSimplexSpanError> for PeriodicDomainPeriodError {
     }
 }
 
+/// Preserves the typed lower-layer source when a Level 3 promotion check fails.
+///
+/// `Triangulation` promotion trusts the consumed [`Tds`] to carry its Levels
+/// 1–2 proof, but topology algorithms can still surface a structural error if
+/// an internal mutation violated that proof. Keeping the mapping centralized
+/// makes both promotion and cumulative audit paths report that bug without
+/// stringifying it.
+fn realization_error_from_invariant(
+    error: InvariantError,
+) -> TriangulationRealizationValidationError {
+    match error {
+        InvariantError::Tds { source } => source.into(),
+        InvariantError::Triangulation { source } => source.into(),
+        InvariantError::Realization { source } => source,
+        source @ InvariantError::Delaunay { source: _ } => {
+            TriangulationRealizationValidationError::UnexpectedValidationLayer {
+                kind: InvariantKind::DelaunayProperty,
+                source: Box::new(source),
+            }
+        }
+    }
+}
+
 /// Errors returned by realized-geometry validation (Level 4).
 ///
 /// This error type is independent of the Delaunay empty-circumsphere predicate:
@@ -125,6 +152,15 @@ impl From<PeriodicSimplexSpanError> for PeriodicDomainPeriodError {
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum TriangulationRealizationValidationError {
+    /// Raw storage is still in a partial construction state.
+    #[error(
+        "cannot restore a Levels 1-4 triangulation from an incomplete TDS containing {vertex_count} vertices"
+    )]
+    IncompleteConstruction {
+        /// Number of vertices recorded by the incomplete construction state.
+        vertex_count: usize,
+    },
+
     /// Lower-layer element or TDS structural validation failed (Levels 1-2).
     #[error("{source}")]
     Tds {
@@ -374,10 +410,20 @@ impl From<TriangulationValidationError> for TriangulationRealizationValidationEr
     }
 }
 
+/// Recoverable failure to refine a Levels 1–2 [`Tds`] into a [`Triangulation`].
+///
+/// The error retains the unchanged TDS so callers can adjust topology context
+/// or repair policy and retry Levels 3–4 certification without cloning it in
+/// advance.
+pub type TriangulationRefinementError<U, V, const D: usize> =
+    RefinementError<Tds<U, V, D>, TriangulationRealizationValidationError>;
+
 /// Discriminant for compact Level 4 realized-geometry validation summaries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum TriangulationRealizationValidationErrorKind {
+    /// Raw storage was not marked as completely constructed.
+    IncompleteConstruction,
     /// Lower-layer TDS validation failed.
     Tds,
     /// Lower-layer topology validation failed.
@@ -415,6 +461,9 @@ impl From<&TriangulationRealizationValidationError>
 {
     fn from(source: &TriangulationRealizationValidationError) -> Self {
         match source {
+            TriangulationRealizationValidationError::IncompleteConstruction { .. } => {
+                Self::IncompleteConstruction
+            }
             TriangulationRealizationValidationError::Tds { source: _ } => Self::Tds,
             TriangulationRealizationValidationError::Triangulation { source: _ } => {
                 Self::Triangulation
@@ -921,18 +970,22 @@ fn labeled_simplex_error_to_realized_simplex_error<const D: usize>(
 }
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
-    /// Restores a generic triangulation from raw storage and explicit topology context.
+    /// Promotes proof-bearing TDS storage with explicit topology context.
     ///
-    /// This is the checked boundary from a transport [`Tds`] into the
-    /// Levels 1–4 [`Triangulation`] domain. The topology context is installed
-    /// before cumulative structural, intrinsic-topology, and realized-geometry
-    /// validation. The Level 5 Delaunay property is deliberately outside this
-    /// constructor's contract.
+    /// This is the checked refinement boundary from a Levels 1–2 [`Tds`] into
+    /// the Levels 1–4 [`Triangulation`] domain. The consumed TDS already proves
+    /// element validity and combinatorial consistency. This constructor installs
+    /// the topology context, proves Level 3 intrinsic topology, and then proves
+    /// Level 4 realized geometry without repeating the TDS checks. The Level 5
+    /// Delaunay property is deliberately outside this constructor's contract.
     ///
     /// # Errors
     ///
-    /// Returns [`TriangulationRealizationValidationError`] if Levels 1–4 do not
-    /// hold under the supplied topology context.
+    /// Returns [`TriangulationRefinementError`] if the TDS is still an
+    /// incomplete construction or if Levels 3–4 do not hold under the supplied
+    /// topology context. The failure retains the unchanged Levels 1–2 owner. A
+    /// lower-layer TDS diagnostic can still be returned if an internal invariant
+    /// bug prevents the stronger checks from running.
     ///
     /// # Examples
     ///
@@ -960,7 +1013,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     topology_guarantee,
     ///     global_topology,
     /// )
-    /// .map_err(DelaunayTriangulationValidationError::from)?;
+    /// .map_err(|failure| {
+    ///     DelaunayTriangulationValidationError::from(failure.into_reason())
+    /// })?;
     /// assert_eq!(restored.number_of_vertices(), 3);
     /// assert!(restored.validate_realization().is_ok());
     /// # Ok(())
@@ -971,12 +1026,19 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         kernel: K,
         topology_guarantee: TopologyGuarantee,
         global_topology: GlobalTopology<D>,
-    ) -> Result<Self, TriangulationRealizationValidationError>
+    ) -> Result<Self, TriangulationRefinementError<U, V, D>>
     where
         K: Kernel<D, Scalar = f64>,
         U: DataType,
         V: DataType,
     {
+        if let TriangulationConstructionState::Incomplete(vertex_count) = tds.construction_state() {
+            let reason = TriangulationRealizationValidationError::IncompleteConstruction {
+                vertex_count: *vertex_count,
+            };
+            return Err(RefinementError::new(tds, reason));
+        }
+
         let triangulation = Self {
             kernel,
             tds,
@@ -984,7 +1046,15 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             validation_policy: topology_guarantee.default_validation_policy(),
             topology_guarantee,
         };
-        triangulation.validate_realization()?;
+        if let Err(reason) = triangulation
+            .is_valid_topology()
+            .map_err(realization_error_from_invariant)
+        {
+            return Err(RefinementError::new(triangulation.tds, reason));
+        }
+        if let Err(reason) = triangulation.is_valid_realization() {
+            return Err(RefinementError::new(triangulation.tds, reason));
+        }
         Ok(triangulation)
     }
 
@@ -1206,17 +1276,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         U: DataType,
         V: DataType,
     {
-        self.validate().map_err(|error| match error {
-            InvariantError::Tds { source } => source.into(),
-            InvariantError::Triangulation { source } => source.into(),
-            InvariantError::Realization { source } => source,
-            source @ InvariantError::Delaunay { source: _ } => {
-                TriangulationRealizationValidationError::UnexpectedValidationLayer {
-                    kind: InvariantKind::DelaunayProperty,
-                    source: Box::new(source),
-                }
-            }
-        })?;
+        self.validate().map_err(realization_error_from_invariant)?;
         self.is_valid_realization()
     }
 
@@ -2061,7 +2121,7 @@ fn sweep_and_prune_candidate_simplex_pairs<const D: usize, B>(
 mod tests {
     use super::*;
     use crate::builder::DelaunayTriangulationBuilder;
-    use crate::core::tds::{Tds, TriangulationConstructionState};
+    use crate::core::tds::Tds;
     use crate::core::triangulation::Triangulation;
     use crate::core::vertex::Vertex;
     use crate::delaunay_property_validation::DelaunayValidationError;
@@ -2074,6 +2134,27 @@ mod tests {
 
     fn test_vertex<const D: usize>(coords: [f64; D]) -> Vertex<(), D> {
         vertex!(coords).unwrap()
+    }
+
+    #[test]
+    fn restore_rejects_incomplete_tds_before_installing_domain_context() {
+        let tds = Tds::<(), (), 2>::empty();
+
+        let error = Triangulation::try_from_tds_with_topology_context(
+            tds,
+            FastKernel::new(),
+            TopologyGuarantee::PLManifold,
+            GlobalTopology::Euclidean,
+        )
+        .expect_err("incomplete transport storage must not become a Triangulation");
+
+        let (tds, reason) = error.into_parts();
+        assert_matches!(
+            reason,
+            TriangulationRealizationValidationError::IncompleteConstruction { vertex_count: 0 }
+        );
+        tds.validate()
+            .expect("failed Levels 3-4 refinement must return the valid Levels 1-2 owner");
     }
 
     fn tds_from_vertices_and_simplices<const D: usize>(
@@ -2108,7 +2189,7 @@ mod tests {
             simplex_keys.push(simplex_key);
         }
 
-        tds.construction_state = TriangulationConstructionState::Constructed;
+        tds.force_construction_complete_for_test();
         tds.assign_neighbors().unwrap();
         tds.assign_incident_simplices().unwrap();
         (tds, simplex_keys)

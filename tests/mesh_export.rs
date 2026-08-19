@@ -325,11 +325,6 @@ fn visualization_topology_schema_categories_are_stable() -> Result<(), MeshExpor
             VisualizationTopologyGuarantee::PLManifold,
             "PLManifold",
         ),
-        (
-            TopologyGuarantee::PLManifoldStrict,
-            VisualizationTopologyGuarantee::PLManifoldStrict,
-            "PLManifoldStrict",
-        ),
     ] {
         let converted = VisualizationTopologyGuarantee::from(source);
 
@@ -341,6 +336,16 @@ fn visualization_topology_schema_categories_are_stable() -> Result<(), MeshExpor
             expected
         );
     }
+
+    assert_eq!(
+        serde_json::from_value::<VisualizationTopologyGuarantee>(serde_json::json!(
+            "PLManifoldStrict"
+        ))?,
+        VisualizationTopologyGuarantee::Unknown {
+            actual: "PLManifoldStrict".to_owned(),
+        },
+        "removed schema values must not be silently reinterpreted",
+    );
 
     Ok(())
 }
@@ -425,13 +430,13 @@ fn mesh_export_validation_rejects_bad_metadata() -> Result<(), MeshExportTestErr
 
     let mut export = sample_export()?;
     export.metadata.topology_guarantee = VisualizationTopologyGuarantee::Unknown {
-        actual: "Triangulation".to_owned(),
+        actual: "PLManifoldStrict".to_owned(),
     };
     assert_validation_error(
         &export,
         VisualizationDataValidationError::InvalidTopologyGuarantee {
             actual: VisualizationTopologyGuarantee::Unknown {
-                actual: "Triangulation".to_owned(),
+                actual: "PLManifoldStrict".to_owned(),
             },
         },
     )

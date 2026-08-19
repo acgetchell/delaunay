@@ -426,7 +426,8 @@ fn assert_on_suspicion_sequence_valid<const D: usize>(
 ) -> Result<(), TestCaseError> {
     let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
-    dt.set_validation_policy(ValidationPolicy::OnSuspicion);
+    dt.try_set_validation_policy(ValidationPolicy::OnSuspicion)
+        .unwrap();
 
     for (idx, point) in points.into_iter().enumerate() {
         let result = dt.insert_best_effort_with_statistics(vertex!(point.into()).unwrap());

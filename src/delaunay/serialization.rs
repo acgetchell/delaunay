@@ -44,6 +44,7 @@ where
 /// # use delaunay::prelude::geometry::*;
 /// # use delaunay::prelude::tds::Tds;
 /// # use delaunay::prelude::construction::{DelaunayTriangulation, DelaunayTriangulationBuilder};
+/// # use delaunay::prelude::validation::DelaunayTdsRefinementError;
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
 /// #     #[error(transparent)]
@@ -66,7 +67,8 @@ where
 /// let json = serde_json::to_string(&dt)?;
 ///
 /// let tds: Tds<(), (), 3> = serde_json::from_str(&json)?;
-/// let dt_adaptive = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())?;
+/// let dt_adaptive = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
+///     .map_err(DelaunayTdsRefinementError::into_reason)?;
 /// # let _ = dt_adaptive;
 /// # Ok(())
 /// # }
@@ -89,7 +91,6 @@ mod tests {
     use super::*;
     use crate::core::operations::DelaunayInsertionState;
     use crate::core::simplex::Simplex;
-    use crate::core::tds::TriangulationConstructionState;
     use crate::core::triangulation::Triangulation;
     use crate::core::validation::{TopologyGuarantee, ValidationPolicy};
     use crate::geometry::kernel::AdaptiveKernel;
@@ -138,7 +139,7 @@ mod tests {
             Simplex::try_new_with_data(vec![v0, v2, v3], None).unwrap(),
         )
         .unwrap();
-        tds.construction_state = TriangulationConstructionState::Constructed;
+        tds.force_construction_complete_for_test();
         tds.assign_neighbors().unwrap();
         tds.assign_incident_simplices().unwrap();
         tds

@@ -85,12 +85,13 @@ toroidal, and spherical spaces.
   \centering
   \includegraphics[width=0.95\linewidth]
   {../docs/assets/validation/validation_hierarchy.png}
-  \caption{Overview of the validation hierarchy in
-  delaunay}\label{fig:validation-hierarchy}
-  \Description{The 5-level validation hierarchy in delaunay. Level 1:
-    Element Validity; Level 2: Combinatorial Consistency; Level 3: Intrinsic
-    PL Topology; Level 4: Valid Realization; Level 5: Geometric Predicate
-  Satisfaction.}
+  \caption{Overview of the validation hierarchy in delaunay: \texttt{Tds}
+    owns Levels 1--2, \texttt{Triangulation} adds Levels 3--4, and
+  \texttt{DelaunayTriangulation} adds Level 5.}
+  \label{fig:validation-hierarchy}
+  \Description{The five validation levels and their proof-bearing Rust
+    owners. Tds owns Levels 1--2, Triangulation adds Levels 3--4, and
+  DelaunayTriangulation adds Level 5.}
 \end{figure}
 
 \subsection{Level 1: Element Validity}
@@ -238,40 +239,49 @@ toroidal, and spherical spaces.
   \centering
   \includegraphics[width=0.88\linewidth]
   {../docs/assets/validation/validation_level_1_element_validity.png}
-  \caption{\AuthorTodo{Describe the Level 1 validation witness figure.}}
+  \caption{Level 1 Element Validity (\texttt{Tds}, cumulative Levels 1--2).
+  \AuthorTodo{Describe the validation witnesses shown in this panel.}}
   \label{fig:validation-level-1}
-  \Description{Author TODO accessible description of the Level 1 validation
-  witness figure.}
+  \Description{Level 1 Element Validity belongs to the cumulative Levels 1--2
+    proof owned by Tds. \AuthorTodo{Describe the validation witnesses shown in
+  this panel.}}
 \end{figure}
 
 \begin{figure}[p]
   \centering
   \includegraphics[width=0.88\linewidth]
   {../docs/assets/validation/validation_level_2_combinatorial_consistency.png}
-  \caption{\AuthorTodo{Describe the Level 2 validation witness figure.}}
+  \caption{Level 2 Combinatorial Consistency (\texttt{Tds}, cumulative Levels
+  1--2). \AuthorTodo{Describe the validation witnesses shown in this panel.}}
   \label{fig:validation-level-2}
-  \Description{Author TODO accessible description of the Level 2 validation
-  witness figure.}
+  \Description{Level 2 Combinatorial Consistency belongs to the cumulative
+    Levels 1--2 proof owned by Tds. \AuthorTodo{Describe the validation
+  witnesses shown in this panel.}}
 \end{figure}
 
 \begin{figure}[p]
   \centering
   \includegraphics[width=0.88\linewidth]
   {../docs/assets/validation/validation_level_3_intrinsic_pl_topology.png}
-  \caption{\AuthorTodo{Describe the Level 3 validation witness figure.}}
+  \caption{Level 3 Intrinsic PL Topology (\texttt{Triangulation}, cumulative
+    Levels 1--4). \AuthorTodo{Describe the validation witnesses shown in this
+  panel.}}
   \label{fig:validation-level-3}
-  \Description{Author TODO accessible description of the Level 3 validation
-  witness figure.}
+  \Description{Level 3 Intrinsic PL Topology belongs to the cumulative Levels
+    1--4 proof owned by Triangulation. \AuthorTodo{Describe the validation
+  witnesses shown in this panel.}}
 \end{figure}
 
 \begin{figure}[p]
   \centering
   \includegraphics[width=0.88\linewidth]
   {../docs/assets/validation/validation_level_4_valid_realization.png}
-  \caption{\AuthorTodo{Describe the Level 4 validation witness figure.}}
+  \caption{Level 4 Valid Realization (\texttt{Triangulation}, cumulative Levels
+  1--4). \AuthorTodo{Describe the validation witnesses shown in this panel.}}
   \label{fig:validation-level-4}
-  \Description{Author TODO accessible description of the Level 4 validation
-  witness figure.}
+  \Description{Level 4 Valid Realization belongs to the cumulative Levels 1--4
+    proof owned by Triangulation. \AuthorTodo{Describe the validation witnesses
+  shown in this panel.}}
 \end{figure}
 
 \clearpage
@@ -279,10 +289,13 @@ toroidal, and spherical spaces.
   \centering
   \includegraphics[width=0.52\linewidth]
   {../docs/assets/validation/validation_level_5_geometric_predicates.png}
-  \caption{\AuthorTodo{Describe the Level 5 validation witness figure.}}
+  \caption{Level 5 Geometric Predicate Satisfaction
+    (\texttt{DelaunayTriangulation}, cumulative Levels 1--5).
+  \AuthorTodo{Describe the validation witness shown in this panel.}}
   \label{fig:validation-level-5}
-  \Description{Author TODO accessible description of the Level 5 validation
-  witness figure.}
+  \Description{Level 5 Geometric Predicate Satisfaction belongs to the
+    cumulative Levels 1--5 proof owned by DelaunayTriangulation.
+  \AuthorTodo{Describe the validation witness shown in this panel.}}
 \end{figure}
 
 \begin{itemize}

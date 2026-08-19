@@ -27,9 +27,14 @@ into architecture docs; link to the command guide instead.
   is exposed through curated root modules such as `delaunay::tds`,
   `delaunay::collections`, `delaunay::algorithms`, and `delaunay::query`, not
   through a broad public `delaunay::core` module.
+- `src/core/tds/` owns the proof-bearing Levels 1–2 `Tds`, its private
+  canonical storage, and every checked storage transition. Higher layers do
+  not receive raw field access; this boundary is independent of where those
+  higher-level modules live in the source tree.
 - `src/core/triangulation/` owns the Levels 1–4 `Triangulation` model and all
   operations whose contracts require no Level 5 Delaunay proof, including
-  queries, flips, and Pachner moves.
+  queries, flips, and Pachner moves. It consumes checked TDS transitions and
+  owns the additional Level 3 topology and Level 4 realization conditions.
 - `src/delaunay/` owns the Levels 1–5 refinement and Delaunay-facing
   construction, insertion, deletion, validation, repair, serialization, and
   forwarding query APIs.
