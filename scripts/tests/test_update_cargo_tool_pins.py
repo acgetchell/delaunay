@@ -54,6 +54,14 @@ def test_update_pin_text_rejects_duplicate_assignment() -> None:
         update_cargo_tool_pins.update_pin_text(duplicated, update_cargo_tool_pins.parse_installed_packages(installed_output()))
 
 
+def test_parse_installed_packages_accepts_prerelease_with_build_metadata() -> None:
+    version = "1.2.3-rc.1+build.5"
+
+    installed = update_cargo_tool_pins.parse_installed_packages(installed_output(override=("rumdl", version)))
+
+    assert installed["rumdl"] == version
+
+
 def test_main_reports_missing_cargo_without_traceback(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
