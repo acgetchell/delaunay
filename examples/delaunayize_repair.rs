@@ -3,16 +3,17 @@
 //! # Delaunayize-by-Flips Repair Example
 //!
 //! This example demonstrates the **delaunayize-by-flips** workflow that
-//! performs bounded topology repair followed by flip-based Delaunay repair.
+//! consumes a Levels 1–4 triangulation and performs bounded flip-based
+//! Delaunay repair before Level 5 certification.
 //!
 //! The workflow has three steps:
 //!
-//! 1. **PL-manifold topology repair** — removes simplices that cause facet
-//!    over-sharing (codimension-1 facet degree > 2).
-//! 2. **Delaunay flip repair** — restores the empty-circumsphere property
-//!    via k=2/k=3 bistellar flips.
-//! 3. **Optional fallback rebuild** — rebuilds from the vertex set if both
-//!    repair passes fail.
+//! 1. **Levels 1–4 proof consumption** — accepts the validated
+//!    `Triangulation` domain value without repeating its encoded checks.
+//! 2. **Delaunay flip repair** — preserves Levels 1–4 transactionally while
+//!    restoring the empty-circumsphere property via k=2/k=3 bistellar flips.
+//! 3. **Optional fallback rebuild** — rebuilds from the vertex set if flip
+//!    repair fails.
 //!
 //! ## Usage
 //!
@@ -20,16 +21,15 @@
 //! cargo run --example delaunayize_repair
 //! ```
 
+use delaunay::RefinementError;
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    vertex,
 };
 use delaunay::prelude::delaunayize::*;
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::pachner::{FacetError, FlipError, PachnerMove, PachnerMoves};
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
-
-// For the generic print_outcome helper.
-use delaunay::prelude::DataType;
 
 #[derive(Debug, thiserror::Error)]
 enum DelaunayizeRepairExampleError {
@@ -86,7 +86,7 @@ fn already_delaunay_3d() -> Result<(), DelaunayizeRepairExampleError> {
         vertex![0.0, 0.0, 1.0]?,
         vertex![0.5, 0.5, 0.5]?,
     ];
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+    let dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     println!(
@@ -95,10 +95,11 @@ fn already_delaunay_3d() -> Result<(), DelaunayizeRepairExampleError> {
         dt.number_of_simplices()
     );
 
-    let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
-    print_outcome(&outcome);
+    let result = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default())
+        .map_err(RefinementError::into_reason)?;
+    print_outcome(&result.outcome);
 
-    dt.validate()?;
+    result.triangulation.validate()?;
     println!("  ✓ Full validation (Levels 1–5) passed");
     Ok(())
 }
@@ -119,7 +120,7 @@ fn already_delaunay_4d() -> Result<(), DelaunayizeRepairExampleError> {
         vertex![0.0, 0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 0.0, 1.0]?,
     ];
-    let mut dt: DelaunayTriangulation<_, (), (), 4> =
+    let dt: DelaunayTriangulation<_, (), (), 4> =
         DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     println!(
@@ -128,10 +129,11 @@ fn already_delaunay_4d() -> Result<(), DelaunayizeRepairExampleError> {
         dt.number_of_simplices()
     );
 
-    let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
-    print_outcome(&outcome);
+    let result = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default())
+        .map_err(RefinementError::into_reason)?;
+    print_outcome(&result.outcome);
 
-    dt.validate()?;
+    result.triangulation.validate()?;
     println!("  ✓ Full validation (Levels 1–5) passed");
     Ok(())
 }
@@ -156,7 +158,7 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
         vertex![1.0, 1.0]?,
         vertex![3.0, 1.0]?,
     ];
-    let mut dt: DelaunayTriangulation<_, (), (), 2> =
+    let dt: DelaunayTriangulation<_, (), (), 2> =
         DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     println!(
@@ -167,13 +169,17 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
     assert!(dt.validate().is_ok());
     println!("  ✓ Initially Delaunay");
 
+    // Topology-changing primitives require an explicit demotion to the
+    // Levels 1–4 owner.
+    let mut tri = dt.into_triangulation();
+
     // Collect interior facets and find one whose k=2 flip actually breaks Delaunay.
     let mut facets: Vec<_> = Vec::new();
-    for (ck, simplex) in dt.simplices() {
+    for (ck, simplex) in tri.simplices() {
         if let Some(neighbors) = simplex.neighbors() {
             for (i, n) in neighbors.enumerate() {
                 if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
-                    facets.push(dt.facet_handle(ck, idx)?);
+                    facets.push(tri.facet_handle(ck, idx)?);
                 }
             }
         }
@@ -181,11 +187,13 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
 
     let mut violating_facet = None;
     for facet in facets {
-        let mut trial = dt.clone();
+        let mut trial = tri.clone();
         let Ok(proposal) = trial.propose_pachner(PachnerMove::K2 { facet }) else {
             continue;
         };
-        if proposal.attempt_on(&mut trial).is_ok() && trial.is_valid_delaunay().is_err() {
+        if proposal.attempt_on(&mut trial).is_ok()
+            && DelaunayTriangulation::try_from_triangulation(trial).is_err()
+        {
             violating_facet = Some(facet);
             break;
         }
@@ -196,32 +204,37 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
         return Ok(());
     };
 
-    let selected_flip = dt
+    let selected_flip = tri
         .propose_pachner(PachnerMove::K2 { facet })?
-        .attempt_on(&mut dt)?;
+        .attempt_on(&mut tri)?;
     assert!(!selected_flip.new_simplices.is_empty());
-    match dt.is_valid_delaunay() {
-        Ok(()) => {
+    tri = match DelaunayTriangulation::try_from_triangulation(tri) {
+        Ok(_) => {
             println!(
                 "  Applied selected k=2 flip, but Delaunay property remained satisfied (unexpected)"
             );
             return Ok(());
         }
-        Err(err) => {
-            println!("  Applied k=2 flip; post-flip check confirms Delaunay violation: {err}");
+        Err(failure) => {
+            println!(
+                "  Applied k=2 flip; post-flip check confirms Delaunay violation: {}",
+                failure.reason()
+            );
+            failure.into_owner()
         }
-    }
+    };
 
     // Repair.
-    let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
-    print_outcome(&outcome);
+    let result =
+        delaunayize(tri, DelaunayizeConfig::default()).map_err(RefinementError::into_reason)?;
+    print_outcome(&result.outcome);
 
-    dt.validate()?;
+    result.triangulation.validate()?;
     println!("  ✓ Delaunay property restored");
     Ok(())
 }
 
-/// Custom configuration with tight budgets and fallback enabled.
+/// Custom configuration with an explicit flip budget and fallback enabled.
 #[expect(
     clippy::result_large_err,
     reason = "example preserves the crate's typed repair errors instead of erasing them"
@@ -237,40 +250,32 @@ fn custom_config_2d() -> Result<(), DelaunayizeRepairExampleError> {
         vertex![1.0, 1.0]?,
         vertex![0.5, 0.5]?,
     ];
-    let mut dt: DelaunayTriangulation<_, (), (), 2> =
+    let dt: DelaunayTriangulation<_, (), (), 2> =
         DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     let config = DelaunayizeConfig::default()
-        .with_topology_max_iterations(10)
-        .with_topology_max_simplices_removed(100)
+        .with_delaunay_max_flips(100)
         .with_fallback_rebuild(true);
 
     println!(
-        "  Config: max_iterations={}, max_simplices_removed={}, fallback={}",
-        config.topology_max_iterations,
-        config.topology_max_simplices_removed,
-        config.fallback_rebuild,
+        "  Config: max_flips={:?}, fallback={}",
+        config.delaunay_max_flips, config.fallback_rebuild,
     );
 
-    let outcome = delaunayize_by_flips(&mut dt, config)?;
-    print_outcome(&outcome);
+    let result =
+        delaunayize(dt.into_triangulation(), config).map_err(RefinementError::into_reason)?;
+    print_outcome(&result.outcome);
 
-    dt.validate()?;
+    result.triangulation.validate()?;
     println!(
         "  ✓ Valid 2D triangulation: {} vertices, {} simplices",
-        dt.number_of_vertices(),
-        dt.number_of_simplices(),
+        result.triangulation.number_of_vertices(),
+        result.triangulation.number_of_simplices(),
     );
     Ok(())
 }
 
-fn print_outcome<U: DataType, V: DataType, const D: usize>(outcome: &DelaunayizeOutcome<U, V, D>) {
-    println!(
-        "  Topology repair: succeeded={}, iterations={}, simplices_removed={}",
-        outcome.topology_repair.succeeded,
-        outcome.topology_repair.iterations,
-        outcome.topology_repair.simplices_removed,
-    );
+fn print_outcome(outcome: &DelaunayizeOutcome) {
     println!(
         "  Delaunay repair: facets_checked={}, flips_performed={}",
         outcome.delaunay_repair.facets_checked, outcome.delaunay_repair.flips_performed,

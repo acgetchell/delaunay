@@ -479,6 +479,12 @@ temporarily assembled state, then consume validation proof before converting to
 the final domain type. Other infallible `from_*` names remain acceptable only
 for total conversions, passive report/view extraction, or proof-bearing input.
 
+Candidate promotion should keep validation evidence attached to the candidate.
+Prefer a consuming `try_into_*` transition that validates `self` and publishes
+the stronger owner in one operation. Do not return detached, freely movable unit
+proofs from one method and accept them in a second promotion method: such a proof
+can accidentally be paired with a different candidate of the same Rust type.
+
 ### Vertex construction in public samples
 
 Prefer `vertex!` for user-facing vertex construction examples. This includes
@@ -579,13 +585,6 @@ Good:
 
 ```rust
 pub enum DelaunayizeError {
-    TopologyRepairFailed {
-        source: PlManifoldRepairError,
-    },
-    TopologyRepairFailedWithRebuild {
-        source: PlManifoldRepairError,
-        rebuild_error: DelaunayTriangulationConstructionError,
-    },
     DelaunayRepairFailed {
         source: DelaunayRepairError,
     },
@@ -593,12 +592,15 @@ pub enum DelaunayizeError {
         source: DelaunayRepairError,
         rebuild_error: DelaunayTriangulationConstructionError,
     },
+    DelaunayRepairFailedWithRebuildRestore {
+        source: DelaunayRepairError,
+        restore_error: SimplexDataRestoreError,
+    },
 }
 ```
 
-Each pair `Failed` / `FailedWithRebuild` is **orthogonal**: the caller
-always knows whether a fallback was attempted, and if so which specific
-rebuild error was produced.
+The variants are **orthogonal**: the caller always knows whether fallback was
+attempted and whether construction or payload restoration failed.
 
 ### Struct‑with‑named‑fields throughout
 
@@ -647,17 +649,17 @@ whichever field is annotated as the primary source.
 
 ```rust
 // Good: typed rebuild error preserved by value; primary source chain intact.
-TopologyRepairFailedWithRebuild {
+DelaunayRepairFailedWithRebuild {
     #[source]
-    source: PlManifoldRepairError,
+    source: DelaunayRepairError,
     rebuild_error: DelaunayTriangulationConstructionError,
 },
 ```
 
 ```rust
 // Bad: stringification erases the typed variant.
-TopologyRepairFailedWithRebuild {
-    source: PlManifoldRepairError,
+DelaunayRepairFailedWithRebuild {
+    source: DelaunayRepairError,
     rebuild_message: String,
 },
 ```

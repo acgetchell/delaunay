@@ -481,50 +481,52 @@ where
 /// use std::num::NonZeroUsize;
 ///
 /// # fn main() -> DelaunayResult<()> {
-/// # let Some(fifty) = NonZeroUsize::new(50) else {
+/// # let Some(three) = NonZeroUsize::new(3) else {
 /// #     return Ok(());
 /// # };
-/// # let Some(thirty) = NonZeroUsize::new(30) else {
+/// # let Some(four) = NonZeroUsize::new(4) else {
 /// #     return Ok(());
 /// # };
-/// # let Some(twenty) = NonZeroUsize::new(20) else {
+/// # let Some(five) = NonZeroUsize::new(5) else {
 /// #     return Ok(());
 /// # };
-/// // Generate a 2D triangulation with 50 points, no seed (random each time)
+/// // Generate a reproducible minimal 2D triangulation.
 /// let triangulation_2d = try_generate_random_triangulation::<(), (), 2>(
-///     fifty,
+///     three,
 ///     (-10.0, 10.0),
 ///     None,
-///     None
-/// );
+///     Some(7),
+/// )?;
 ///
-/// // Generate a 3D triangulation with 30 points, seeded for reproducibility  
+/// // Generate a reproducible minimal 3D triangulation.
 /// let triangulation_3d = try_generate_random_triangulation::<(), (), 3>(
-///     thirty,
+///     four,
 ///     (-5.0, 5.0),
 ///     None,
-///     Some(42)
-/// );
+///     Some(42),
+/// )?;
 ///
-/// // Generate a 4D triangulation with custom vertex data
+/// // Generate a minimal 4D triangulation with custom vertex data.
 /// let triangulation_4d = try_generate_random_triangulation::<i32, (), 4>(
-///     twenty,
+///     five,
 ///     (0.0, 1.0),
 ///     Some(123),
-///     Some(456)
-/// );
+///     Some(456),
+/// )?;
 ///
-/// // For string-like data, use fixed-size character arrays (Copy types)
+/// // For string-like data, use fixed-size character arrays (Copy types).
 /// let triangulation_with_strings = try_generate_random_triangulation::<[char; 8], (), 2>(
-///     twenty,
+///     three,
 ///     (0.0, 1.0),
 ///     Some(['v', 'e', 'r', 't', 'e', 'x', '_', 'A']),
-///     Some(789)
-/// );
+///     Some(789),
+/// )?;
 ///
 /// // Access triangulation-level counts
-/// let dt = triangulation_3d?;
-/// let vertex_count = dt.number_of_vertices();
+/// assert_eq!(triangulation_2d.number_of_vertices(), 3);
+/// assert_eq!(triangulation_3d.number_of_vertices(), 4);
+/// assert_eq!(triangulation_4d.number_of_vertices(), 5);
+/// assert_eq!(triangulation_with_strings.number_of_vertices(), 3);
 /// # Ok(())
 /// # }
 /// ```
@@ -610,11 +612,11 @@ where
 /// use std::num::NonZeroUsize;
 ///
 /// # fn main() -> DelaunayResult<()> {
-/// # let Some(twenty) = NonZeroUsize::new(20) else {
+/// # let Some(four) = NonZeroUsize::new(4) else {
 /// #     return Ok(());
 /// # };
 /// let dt = try_generate_random_triangulation_with_topology_guarantee::<(), (), 3>(
-///     twenty,
+///     four,
 ///     (-1.0, 1.0),
 ///     None,
 ///     Some(123),
@@ -691,7 +693,7 @@ where
 /// #     CoordinateRange::try_new(-1.0_f64, 1.0)
 /// # }
 /// # fn main() -> DelaunayResult<()> {
-/// # let Some(twelve) = NonZeroUsize::new(12) else {
+/// # let Some(four) = NonZeroUsize::new(4) else {
 /// #     return Ok(());
 /// # };
 /// let range = make_range().map_err(|source| {
@@ -702,7 +704,7 @@ where
 ///     }
 /// })?;
 /// let dt = generate_random_triangulation_in_range::<(), (), 3>(
-///     twelve,
+///     four,
 ///     range,
 ///     None,
 ///     Some(123),
@@ -775,7 +777,7 @@ where
 /// #     CoordinateRange::try_new(-1.0_f64, 1.0)
 /// # }
 /// # fn main() -> DelaunayResult<()> {
-/// # let Some(twelve) = NonZeroUsize::new(12) else {
+/// # let Some(four) = NonZeroUsize::new(4) else {
 /// #     return Ok(());
 /// # };
 /// let range = make_range().map_err(|source| {
@@ -786,7 +788,7 @@ where
 ///     }
 /// })?;
 /// let dt = generate_random_triangulation_in_range_with_topology_guarantee::<(), (), 3>(
-///     twelve,
+///     four,
 ///     range,
 ///     None,
 ///     Some(123),
@@ -877,7 +879,7 @@ where
 ///
 /// This builder provides a fluent API for constructing random triangulations with control over:
 /// - Insertion order strategy (`Input`, `Hilbert`)
-/// - Topology guarantee (`Pseudomanifold`, `PLManifold`, `PLManifoldStrict`)
+/// - Topology guarantee (`Pseudomanifold`, `PLManifold`)
 /// - Construction options (deduplication, retry policy)
 /// - Topology/Euler validation (the final triangulation must pass Level-3 checks)
 ///

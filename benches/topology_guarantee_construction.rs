@@ -1,11 +1,10 @@
 #![forbid(unsafe_code)]
 
-//! Benchmark: construction cost vs topology guarantee (2D–5D)
+//! Benchmark: construction cost vs topology guarantee and audit cadence (2D–5D)
 //!
-//! This benchmark compares `TopologyGuarantee::Pseudomanifold`, `TopologyGuarantee::PLManifold`
-//! (incremental: ridge-link during insertion-link at completion), and
-//! `TopologyGuarantee::PLManifoldStrict` (vertex-link after every insertion) for Delaunay
-//! triangulation construction.
+//! This benchmark compares pseudomanifold construction with suspicion-triggered
+//! audits and PL-manifold construction with either explicit-only or always-on
+//! full global audits.
 //!
 //! Intended for **manual** runs (not part of the CI performance suite).
 //!
@@ -70,15 +69,13 @@ fn bench_dimension<const D: usize>(
 
                     // Exercise topology validation cost under each guarantee while retaining
                     // the production repair policy so every measured result stays valid.
-                    dt.set_validation_policy(ValidationPolicy::Always);
-
                     for v in vertices {
                         if let Err(error) = dt.insert_with_statistics(*v) {
                             abort_benchmark(format_args!("insertion error: {error}"));
                         }
                     }
-                    // Completion-time PL-manifold certification when required.
-                    dt.as_triangulation().validate_at_completion().or_abort();
+                    // Cumulative Levels 1-3 certification under the active guarantee.
+                    dt.as_triangulation().validate().or_abort();
 
                     black_box(dt)
                 });
@@ -86,33 +83,7 @@ fn bench_dimension<const D: usize>(
         );
 
         group.bench_with_input(
-            BenchmarkId::new("pl_manifold_strict", n_points),
-            &vertices,
-            |b, vertices| {
-                b.iter(|| {
-                    let mut dt: DelaunayTriangulation<_, (), (), D> =
-                        DelaunayTriangulation::empty_with_topology_guarantee(
-                            TopologyGuarantee::PLManifoldStrict,
-                        );
-
-                    dt.set_validation_policy(ValidationPolicy::Always);
-
-                    for v in vertices {
-                        if let Err(error) = dt.insert_with_statistics(*v) {
-                            abort_benchmark(format_args!("insertion error: {error}"));
-                        }
-                    }
-
-                    // Completion-time PL-manifold certification when required.
-                    dt.as_triangulation().validate_at_completion().or_abort();
-
-                    black_box(dt)
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new("pl_manifold", n_points),
+            BenchmarkId::new("pl_manifold_always", n_points),
             &vertices,
             |b, vertices| {
                 b.iter(|| {
@@ -121,15 +92,40 @@ fn bench_dimension<const D: usize>(
                             TopologyGuarantee::PLManifold,
                         );
 
-                    dt.set_validation_policy(ValidationPolicy::Always);
+                    dt.try_set_validation_policy(ValidationPolicy::Always)
+                        .or_abort();
 
                     for v in vertices {
                         if let Err(error) = dt.insert_with_statistics(*v) {
                             abort_benchmark(format_args!("insertion error: {error}"));
                         }
                     }
-                    // Completion-time PL-manifold certification when required.
-                    dt.as_triangulation().validate_at_completion().or_abort();
+
+                    // Cumulative Levels 1-3 certification under the active guarantee.
+                    dt.as_triangulation().validate().or_abort();
+
+                    black_box(dt)
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("pl_manifold_explicit_only", n_points),
+            &vertices,
+            |b, vertices| {
+                b.iter(|| {
+                    let mut dt: DelaunayTriangulation<_, (), (), D> =
+                        DelaunayTriangulation::empty_with_topology_guarantee(
+                            TopologyGuarantee::PLManifold,
+                        );
+
+                    for v in vertices {
+                        if let Err(error) = dt.insert_with_statistics(*v) {
+                            abort_benchmark(format_args!("insertion error: {error}"));
+                        }
+                    }
+                    // Cumulative Levels 1-3 certification under the active guarantee.
+                    dt.as_triangulation().validate().or_abort();
 
                     black_box(dt)
                 });

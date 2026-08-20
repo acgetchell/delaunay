@@ -775,8 +775,7 @@ fn validation_demo_level_4() -> Result<ValidationDemoCase, CliError> {
 fn validation_demo_level_5() -> Result<ValidationDemoCase, CliError> {
     let coordinates = [[0.0, 0.0], [4.0, 0.0], [4.0, 2.0], [1.0, 2.0]];
     let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
-    let diagnostic =
-        explicit_builder_failure("Level 5 non-Delaunay diagonal", coordinates, &simplices)?;
+    let diagnostic = strict_delaunay_certification_failure(coordinates, &simplices)?;
     let mut visual = demo_visual(coordinates, simplices);
     visual.highlighted_simplices.push(0);
     visual.highlighted_edges.push([0, 2]);
@@ -791,13 +790,46 @@ fn validation_demo_level_5() -> Result<ValidationDemoCase, CliError> {
         layer: "Delaunay",
         title: "Interior point in a circumcircle",
         status: "failed_as_expected",
-        public_check: "DelaunayTriangulation::is_valid_delaunay",
-        public_reference: "tests/triangulation_builder.rs::test_explicit_non_delaunay_mesh",
+        public_check: "DelaunayTriangulation::try_from_triangulation",
+        public_reference: "tests/triangulation_builder.rs::test_relaxed_explicit_non_delaunay_mesh_succeeds_2d",
         input_summary: "Quadrilateral triangulated with diagonal AC instead of BD",
         explanation: "Point D lies inside the circumcircle of triangle ABC, so the chosen diagonal violates the local Delaunay property.",
         diagnostic,
         visual,
     })
+}
+
+/// Return the diagnostic from strict Level 5 certification of valid Levels 1–4 input.
+fn strict_delaunay_certification_failure<const N: usize>(
+    coordinates: [[f64; 2]; N],
+    simplices: &[Vec<usize>],
+) -> Result<String, CliError> {
+    const CASE: &str = "Level 5 non-Delaunay diagonal";
+
+    let vertices = demo_vertices(&coordinates)?;
+    let triangulation =
+        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, simplices)
+            .map_err(|source| CliError::ValidationDemoInvariant {
+                case: CASE,
+                message: format!(
+                    "explicit builder parse failed before the intended layer: {source}"
+                ),
+            })?
+            .build_triangulation()
+            .map_err(|source| CliError::ValidationDemoInvariant {
+                case: CASE,
+                message: format!(
+                    "Levels 1-4 construction failed before strict Level 5 certification: {source}"
+                ),
+            })?;
+
+    match DelaunayTriangulation::try_from_triangulation(triangulation) {
+        Ok(_) => Err(CliError::ValidationDemoInvariant {
+            case: CASE,
+            message: "expected strict Level 5 certification to fail, but it passed".to_owned(),
+        }),
+        Err(error) => Ok(stable_validation_demo_diagnostic(&error.to_string())),
+    }
 }
 
 /// Return the diagnostic from a public explicit-builder case that must fail.
@@ -1812,7 +1844,7 @@ fn run_pachner_round_trip_sequence<const D: usize>(
 
         match dt.propose_pachner(request) {
             Ok(proposal) => {
-                let Ok(forward) = proposal.attempt_topology_on(dt) else {
+                let Ok(forward) = proposal.attempt_on(dt) else {
                     counters.proposal_rejections = counters.proposal_rejections.saturating_add(1);
                     maybe_validate_stress_step(
                         dt,
@@ -1826,7 +1858,7 @@ fn run_pachner_round_trip_sequence<const D: usize>(
                 };
                 counters.accepted = counters.accepted.saturating_add(1);
                 let inverse = inverse_move_from_forward_result(dt, &forward)?;
-                let _inverse_result = dt.propose_pachner(inverse)?.attempt_topology_on(dt)?;
+                let _inverse_result = dt.propose_pachner(inverse)?.attempt_on(dt)?;
                 counters.accepted = counters.accepted.saturating_add(1);
             }
             Err(_) => {
@@ -1862,7 +1894,7 @@ fn run_pachner_random_walk_sequence<const D: usize>(
         };
 
         match dt.propose_pachner(request) {
-            Ok(proposal) => match proposal.attempt_topology_on(dt) {
+            Ok(proposal) => match proposal.attempt_on(dt) {
                 Ok(_) => {
                     counters.accepted = counters.accepted.saturating_add(1);
                 }
@@ -2760,6 +2792,10 @@ mod tests {
                 .all(|case| case.status == "failed_as_expected")
         );
         assert_eq!(export.cases[3].layer, "Valid realization");
+        assert_eq!(
+            export.cases[4].public_check,
+            "DelaunayTriangulation::try_from_triangulation"
+        );
     }
 
     #[test]

@@ -1248,10 +1248,10 @@ where
                 .simplex(simplex_key)
                 .is_some_and(|simplex| simplex.contains_vertex(v_key))
         });
-        if let Some(incident_simplex) = hint
-            && let Some(vertex) = self.tds.vertex_mut(v_key)
-        {
-            vertex.set_incident_simplex(Some(incident_simplex));
+        if let Some(incident_simplex) = hint {
+            self.tds
+                .set_incident_simplex_hint(v_key, incident_simplex)
+                .map_err(|source| InsertionError::TopologyValidation { source })?;
         }
 
         self.repair_stale_incident_simplices(&incident_repair_vertices)?;
@@ -1947,10 +1947,10 @@ where
                 .simplex(ck)
                 .is_some_and(|simplex| simplex.contains_vertex(v_key))
         });
-        if let Some(incident_simplex) = hint
-            && let Some(vertex) = self.tds.vertex_mut(v_key)
-        {
-            vertex.set_incident_simplex(Some(incident_simplex));
+        if let Some(incident_simplex) = hint {
+            self.tds
+                .set_incident_simplex_hint(v_key, incident_simplex)
+                .map_err(|source| InsertionError::TopologyValidation { source })?;
         }
 
         // Optional debug: validate neighbor pointers by forcing a full facet walk (no hint).
@@ -2807,10 +2807,10 @@ where
                         .simplex(ck)
                         .is_some_and(|simplex| simplex.contains_vertex(v_key))
                 });
-                if let Some(incident_simplex) = hint
-                    && let Some(vertex) = self.tds.vertex_mut(v_key)
-                {
-                    vertex.set_incident_simplex(Some(incident_simplex));
+                if let Some(incident_simplex) = hint {
+                    self.tds
+                        .set_incident_simplex_hint(v_key, incident_simplex)
+                        .map_err(|source| InsertionError::TopologyValidation { source })?;
                 }
 
                 #[cfg(debug_assertions)]
@@ -3279,7 +3279,7 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         {
-            let vertex = tri.tds.vertex_mut(vkey).unwrap();
+            let vertex = tri.tds.vertex_mut_for_test(vkey).unwrap();
             vertex.set_incident_simplex(Some(SimplexKey::default()));
         }
 

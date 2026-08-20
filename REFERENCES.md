@@ -132,6 +132,12 @@ This section contains the foundational algorithms and data structures that form 
   *European Journal of Combinatorics* 12, no. 2 (1991): 129-145.
   DOI: [10.1016/S0195-6698(13)80080-7](https://doi.org/10.1016/S0195-6698(13)80080-7)
 
+Edelsbrunner and Shah supply the regular-triangulation basis for the crate's
+incremental Delaunay flip-repair stage; Pachner supplies the PL-homeomorphism
+context for admissible bistellar moves. The implementation adds finite budgets,
+rollback, and final certification rather than interpreting either result as an
+unconditional convergence bound for every supported local repair schedule.
+
 ### Data Structures and Implementation References
 
 - Blandford, D.K., Blelloch, G.E., and Kadow, C. "Engineering a Compact Parallel Delaunay Algorithm in 3D."

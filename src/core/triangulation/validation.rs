@@ -576,10 +576,10 @@ fn invariant_error_from_topology_error(err: TopologyError) -> InvariantError {
 /// performance for stricter correctness checks during incremental operations.
 ///
 /// **Note**: [`TopologyGuarantee::PLManifold`] is incompatible with [`ValidationPolicy::Never`].
-/// `PLManifold` requires at least caller-owned completion validation to certify full
-/// PL-manifoldness. Use [`ValidationPolicy::ExplicitOnly`] when callers own explicit validation
-/// checkpoints, [`ValidationPolicy::OnSuspicion`] for suspicion-triggered validation, or
-/// [`ValidationPolicy::Always`] for maximum safety during incremental operations.
+/// Construction certifies the full PL-manifold proof before publishing the value. Use
+/// [`ValidationPolicy::ExplicitOnly`] when callers own later global audit checkpoints,
+/// [`ValidationPolicy::OnSuspicion`] for suspicion-triggered validation, or
+/// [`ValidationPolicy::Always`] for maximum diagnostic coverage during incremental operations.
 ///
 /// # Examples
 ///
@@ -600,10 +600,10 @@ pub enum ValidationPolicy {
     /// full validation checkpoints are owned by the caller.
     Never,
 
-    /// Do not run policy-triggered global topology/changed-scope realization validation during insertion.
+    /// Do not run policy-triggered global Levels 1–4 validation during insertion.
     ///
     /// Mandatory local topology checks required by the active [`TopologyGuarantee`] still run
-    /// during insertion, but suspicion-triggered global Level 3/changed-scope Level 4 validation is disabled.
+    /// during insertion, but suspicion-triggered global Levels 1–4 validation is disabled.
     ExplicitOnly,
 
     /// Validate only if the operation is suspicious (e.g. degeneracy).
@@ -641,18 +641,17 @@ impl Default for ValidationPolicy {
 /// Selects which topological invariants are checked by Level 3 validation.
 ///
 /// This enum specifies *what is checked* about the underlying simplicial complex when
-/// Level 3 validation runs. Whether Level 3 validation runs automatically after insertion
-/// is controlled by [`ValidationPolicy`].
+/// Level 3 validation runs. Whether a full global audit runs automatically after
+/// a mutation is controlled independently by [`ValidationPolicy`].
 ///
 /// - [`TopologyGuarantee::Pseudomanifold`] checks the codimension-1 adjacency condition:
 ///   each facet is incident to one or two simplices, and the codimension-2 boundary is closed.
 ///   This is sufficient for many geometric algorithms but does not guarantee local Euclidean structure.
 ///
-/// - [`TopologyGuarantee::PLManifold`] uses ridge-link validation during insertion and
-///   requires a vertex-link validation pass at construction completion to certify
-///   PL-manifoldness.
-/// - [`TopologyGuarantee::PLManifoldStrict`] runs vertex-link validation after every
-///   insertion for maximal safety (slowest).
+/// - [`TopologyGuarantee::PLManifold`] adds the ridge- and vertex-link conditions
+///   required to certify PL-manifoldness. Mutation paths enforce scoped
+///   postconditions on every commit; [`ValidationPolicy::Always`] additionally
+///   requests a full global audit after every mutation.
 ///
 /// # Example
 ///
@@ -665,6 +664,8 @@ impl Default for ValidationPolicy {
 /// #     Source(#[from] DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
 /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+/// #     #[error(transparent)]
+/// #     Validation(#[from] ValidationConfigurationError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
@@ -678,8 +679,8 @@ impl Default for ValidationPolicy {
 /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 ///
 /// // Optional: relax topology checks for speed (weaker guarantees).
-/// dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
-/// assert!(!dt.topology_guarantee().requires_vertex_links_at_completion());
+/// dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)?;
+/// assert!(!dt.topology_guarantee().requires_vertex_links());
 /// # Ok(())
 /// # }
 /// ```
@@ -690,17 +691,12 @@ pub enum TopologyGuarantee {
     /// - closed boundary ("no boundary of boundary")
     Pseudomanifold,
 
-    /// Validate PL-manifold invariants (incremental mode).
+    /// Validate PL-manifold invariants.
     ///
-    /// This includes all `Pseudomanifold` checks plus ridge-link validation during
-    /// insertion, with a required vertex-link validation at construction completion.
+    /// This includes all `Pseudomanifold` checks plus ridge- and vertex-link
+    /// validation. Mutation-time audit frequency is selected separately through
+    /// [`ValidationPolicy`].
     PLManifold,
-
-    /// Validate PL-manifold invariants with strict per-insertion checks.
-    ///
-    /// This includes all `Pseudomanifold` checks plus vertex-link validation
-    /// after every insertion (slowest, maximum safety).
-    PLManifoldStrict,
 }
 
 impl Default for TopologyGuarantee {
@@ -716,81 +712,38 @@ impl TopologyGuarantee {
     /// This is a `const` alternative to `<Self as Default>::default()` for `const fn` constructors.
     pub const DEFAULT: Self = Self::PLManifold;
 
-    /// Returns `true` if this topology guarantee requires vertex-link validation
-    /// after each insertion.
+    /// Returns `true` if this guarantee includes the PL-manifold vertex-link condition.
     #[inline]
     #[must_use]
-    pub const fn requires_vertex_links_during_insertion(self) -> bool {
-        matches!(self, Self::PLManifoldStrict)
-    }
-
-    /// Returns `true` if this topology guarantee requires vertex-link validation
-    /// at construction completion.
-    #[inline]
-    #[must_use]
-    pub const fn requires_vertex_links_at_completion(self) -> bool {
-        matches!(self, Self::PLManifold | Self::PLManifoldStrict)
-    }
-
-    /// Returns `true` if this topology guarantee requires pseudomanifold checks
-    /// during insertion.
-    ///
-    /// All current guarantees require the codimension-1 facet-degree and
-    /// codimension-2 closed-boundary conditions. Stronger guarantees layer
-    /// ridge-link and vertex-link validation on top of these checks.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::TopologyGuarantee;
-    ///
-    /// assert!(
-    ///     TopologyGuarantee::Pseudomanifold
-    ///         .requires_pseudomanifold_checks_during_insertion()
-    /// );
-    /// assert!(
-    ///     TopologyGuarantee::PLManifold
-    ///         .requires_pseudomanifold_checks_during_insertion()
-    /// );
-    /// ```
-    #[inline]
-    #[must_use]
-    pub const fn requires_pseudomanifold_checks_during_insertion(self) -> bool {
-        matches!(
-            self,
-            Self::Pseudomanifold | Self::PLManifold | Self::PLManifoldStrict
-        )
+    pub const fn requires_vertex_links(self) -> bool {
+        matches!(self, Self::PLManifold)
     }
 
     /// Returns `true` if this topology guarantee requires ridge-link validation.
     ///
-    /// Ridge-link validation is fast (O(local)) and catches many PL-manifold violations,
-    /// providing good error detection even with reduced validation frequency.
+    /// Ridge-link validation is a fast, necessary PL-manifold check. Mutation
+    /// paths use it as a changed-scope fail-fast guard, and comprehensive Level
+    /// 3 validation runs it before the stronger vertex-link check. Passing this
+    /// check alone does not certify a PL-manifold.
     #[inline]
     #[must_use]
     pub const fn requires_ridge_links(self) -> bool {
-        matches!(self, Self::PLManifold | Self::PLManifoldStrict)
+        matches!(self, Self::PLManifold)
     }
 
     /// Returns the [`ValidationPolicy`] that should be used by default for this guarantee.
     ///
-    /// [`PLManifoldStrict`](Self::PLManifoldStrict) uses [`Always`](ValidationPolicy::Always)
-    /// so that full Level-3 global validation (including vertex-link checks) runs
-    /// after every insertion — this is the strongest and slowest setting.
-    /// [`PLManifold`](Self::PLManifold) uses [`ExplicitOnly`](ValidationPolicy::ExplicitOnly)
-    /// because insertion-time ridge-link checks are mandatory but full vertex-link validation
-    /// is a caller-owned completion checkpoint. [`Pseudomanifold`](Self::Pseudomanifold)
-    /// uses [`OnSuspicion`](ValidationPolicy::OnSuspicion).
+    /// [`PLManifold`](Self::PLManifold) uses
+    /// [`ExplicitOnly`](ValidationPolicy::ExplicitOnly) because mandatory scoped
+    /// mutation postconditions preserve the proof while callers own full global
+    /// audit checkpoints. [`Pseudomanifold`](Self::Pseudomanifold) uses
+    /// [`OnSuspicion`](ValidationPolicy::OnSuspicion).
     ///
     /// # Examples
     ///
     /// ```rust
     /// use delaunay::prelude::{TopologyGuarantee, ValidationPolicy};
     ///
-    /// assert_eq!(
-    ///     TopologyGuarantee::PLManifoldStrict.default_validation_policy(),
-    ///     ValidationPolicy::Always,
-    /// );
     /// assert_eq!(
     ///     TopologyGuarantee::PLManifold.default_validation_policy(),
     ///     ValidationPolicy::ExplicitOnly,
@@ -800,7 +753,6 @@ impl TopologyGuarantee {
     #[must_use]
     pub const fn default_validation_policy(self) -> ValidationPolicy {
         match self {
-            Self::PLManifoldStrict => ValidationPolicy::Always,
             Self::PLManifold => ValidationPolicy::ExplicitOnly,
             Self::Pseudomanifold => ValidationPolicy::OnSuspicion,
         }
@@ -815,7 +767,7 @@ impl TopologyGuarantee {
     pub const fn is_compatible_with_policy(self, policy: ValidationPolicy) -> bool {
         match self {
             Self::Pseudomanifold => true,
-            Self::PLManifold | Self::PLManifoldStrict => !matches!(policy, ValidationPolicy::Never),
+            Self::PLManifold => !matches!(policy, ValidationPolicy::Never),
         }
     }
 }
@@ -841,7 +793,7 @@ impl TopologyGuarantee {
 ///     })
 /// );
 /// ```
-#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum ValidationConfigurationError {
     /// The requested validation policy cannot support the requested topology guarantee.
@@ -853,6 +805,16 @@ pub enum ValidationConfigurationError {
         topology_guarantee: TopologyGuarantee,
         /// Validation policy that would be active.
         validation_policy: ValidationPolicy,
+    },
+
+    /// A stronger topology guarantee could not be proven for the current triangulation.
+    #[error("cannot promote topology guarantee to {requested:?}: {source}")]
+    TopologyGuaranteeValidation {
+        /// Stronger topology guarantee requested by the caller.
+        requested: TopologyGuarantee,
+        /// Typed Level 3 validation failure under the requested guarantee.
+        #[source]
+        source: Box<InvariantError>,
     },
 }
 
@@ -876,7 +838,7 @@ const fn validate_configuration(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InsertionValidationWork {
     FullValidation,
-    RequiredTopologyLinks,
+    MandatoryMutationPostconditions,
 }
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
@@ -1179,16 +1141,16 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Sets runtime global topology metadata after validating it against current topology.
     ///
     /// The update is atomic: if the current triangulation does not satisfy the
-    /// requested global topology, the previous metadata is restored before the
-    /// error is returned.
+    /// requested global topology through Level 4, the previous metadata is
+    /// restored before the error is returned.
     ///
     /// # Errors
     ///
     /// Returns [`InvariantError::Tds`] if lower-level structure is invalid while
-    /// checking Intrinsic PL Topology, or [`InvariantError::Triangulation`] when Level 3
-    /// Intrinsic PL Topology violates the requested metadata, for example when Euclidean
-    /// boundary facets are relabeled as closed spherical or toroidal topology.
-    /// The previous topology metadata is restored before the error is returned.
+    /// checking Intrinsic PL Topology, [`InvariantError::Triangulation`] when
+    /// Level 3 violates the requested metadata, or [`InvariantError::Realization`]
+    /// when Level 4 cannot certify the requested realization model. The previous
+    /// topology metadata is restored before the error is returned.
     ///
     /// # Examples
     ///
@@ -1217,7 +1179,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         }
 
         self.global_topology = global_topology;
-        if let Err(err) = self.validate_topology_core() {
+        let validation = self
+            .validate_topology_core()
+            .and_then(|()| self.is_valid_realization().map_err(InvariantError::from));
+        if let Err(err) = validation {
             self.global_topology = previous;
             return Err(err);
         }
@@ -1257,15 +1222,21 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             self.global_topology,
         )?;
 
-        // 2c. Ridge-link validation for PLManifold/PLManifoldStrict (fast, catches many PL issues).
+        // 2c. Vertex incidence: reject isolated vertices before link checks so
+        // callers receive the direct storage diagnostic rather than a derived
+        // empty-link failure.
+        self.validate_no_isolated_vertices()?;
+
+        // 2d. Fail fast on the cheaper necessary ridge-link condition before
+        // constructing and certifying complete vertex links. Ridge links alone
+        // never establish the PL-manifold proof.
         if self.topology_guarantee.requires_ridge_links() {
             validate_ridge_links_in_tds(&self.tds)?;
         }
-        // 2d. PL-manifold vertex-link condition during insertion (strict mode).
-        if self
-            .topology_guarantee
-            .requires_vertex_links_during_insertion()
-        {
+        // 2e. A full Level-3 PL-manifold audit always includes vertex links.
+        // ValidationPolicy controls when this global audit runs; it does not
+        // weaken the mathematical guarantee being certified.
+        if self.topology_guarantee.requires_vertex_links() {
             validate_vertex_links_from_validated_facet_map(
                 &self.tds,
                 facet_to_simplices,
@@ -1273,21 +1244,14 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             )?;
         }
 
-        // 2e. Intrinsic orientability is independent of whether the orderings
+        // 2f. Intrinsic orientability is independent of whether the orderings
         // currently stored in the TDS happen to be coherent. PL-manifold
         // guarantees certify this additional property in supported dimensions.
-        if matches!(D, 2 | 3)
-            && self
-                .topology_guarantee
-                .requires_vertex_links_at_completion()
-        {
+        if matches!(D, 2 | 3) && self.topology_guarantee.requires_vertex_links() {
             self.orientation_witness()?;
         }
 
-        // 3. Vertex incidence (manifold invariant): every vertex must be incident to at least one simplex.
-        self.validate_no_isolated_vertices()?;
-
-        // 4. Euler characteristic using the topology module
+        // 3. Euler characteristic using the topology module
         let topology_result = validate_triangulation_euler_from_validated_facet_map(
             &self.tds,
             facet_to_simplices,
@@ -1500,37 +1464,14 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         Ok(())
     }
 
-    /// Sets the insertion-time global topology validation policy used by the triangulation.
-    ///
-    /// Prefer [`try_set_validation_policy`](Self::try_set_validation_policy) when callers need
-    /// typed feedback for rejected combinations. This compatibility setter leaves the existing
-    /// policy unchanged and emits a warning if the requested combination is incoherent.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::{Triangulation, ValidationPolicy};
-    /// use delaunay::prelude::geometry::FastKernel;
-    ///
-    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-    ///     Triangulation::new_empty(FastKernel::new());
-    ///
-    /// tri.set_validation_policy(ValidationPolicy::Always);
-    /// assert_eq!(tri.validation_policy(), ValidationPolicy::Always);
-    /// ```
-    #[inline]
-    pub fn set_validation_policy(&mut self, policy: ValidationPolicy) {
-        if let Err(err) = self.try_set_validation_policy(policy) {
-            tracing::warn!("{err}. Validation policy not updated.");
-        }
-    }
-
     /// Tries to set the topology guarantee used for Level 3 Intrinsic PL Topology validation.
     ///
     /// # Errors
     ///
     /// Returns [`ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy`] when the
-    /// requested guarantee cannot be represented with the current validation policy.
+    /// requested guarantee cannot be represented with the current validation policy. Strengthening
+    /// the guarantee can also return [`ValidationConfigurationError::TopologyGuaranteeValidation`]
+    /// when the stored domain value does not satisfy the requested Level 3 invariants.
     ///
     /// # Examples
     ///
@@ -1550,34 +1491,27 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     pub fn try_set_topology_guarantee(
         &mut self,
         guarantee: TopologyGuarantee,
-    ) -> Result<(), ValidationConfigurationError> {
+    ) -> Result<(), ValidationConfigurationError>
+    where
+        K: Kernel<D, Scalar = f64>,
+    {
         validate_configuration(guarantee, self.validation_policy)?;
-        self.topology_guarantee = guarantee;
-        Ok(())
-    }
-
-    /// Sets the topology guarantee used for Level 3 Intrinsic PL Topology validation.
-    ///
-    /// Prefer [`try_set_topology_guarantee`](Self::try_set_topology_guarantee) when callers need
-    /// typed feedback for rejected combinations. This compatibility setter leaves the existing
-    /// guarantee unchanged and emits a warning if the requested combination is incoherent.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::{TopologyGuarantee, Triangulation};
-    /// use delaunay::prelude::geometry::FastKernel;
-    ///
-    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-    ///     Triangulation::new_empty(FastKernel::new());
-    /// tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
-    /// assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
-    /// ```
-    #[inline]
-    pub fn set_topology_guarantee(&mut self, guarantee: TopologyGuarantee) {
-        if let Err(err) = self.try_set_topology_guarantee(guarantee) {
-            tracing::warn!("{err}. Topology guarantee not updated.");
+        let previous = self.topology_guarantee;
+        if previous == guarantee {
+            return Ok(());
         }
+
+        self.topology_guarantee = guarantee;
+        if matches!(guarantee, TopologyGuarantee::PLManifold)
+            && let Err(source) = self.is_valid_topology()
+        {
+            self.topology_guarantee = previous;
+            return Err(ValidationConfigurationError::TopologyGuaranteeValidation {
+                requested: guarantee,
+                source: Box::new(source),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -1650,14 +1584,10 @@ where
     /// - Codimension-1 pseudomanifold condition: each facet is one-sided or two-sided.
     /// - Topology-aware boundary manifoldness: true boundary facets must be closed ("no boundary of boundary").
     /// - Ridge-link validation (when `topology_guarantee.requires_ridge_links()`)
-    /// - Vertex-link validation during insertion (when `topology_guarantee.requires_vertex_links_during_insertion()`)
+    /// - Vertex-link validation for [`TopologyGuarantee::PLManifold`]
     /// - Connectedness (single component in the simplex neighbor graph)
     /// - No isolated vertices (every vertex must be incident to at least one simplex)
     /// - Euler characteristic
-    ///
-    /// For `TopologyGuarantee::PLManifold`, full PL-manifold certification requires
-    /// calling [`Triangulation::validate_at_completion`](Self::validate_at_completion)
-    /// (or [`Triangulation::validate`](Self::validate)) after batch construction.
     ///
     /// It intentionally does **not** validate lower layers (vertices/simplices or TDS structure).
     /// For cumulative validation, use [`Triangulation::validate`](Self::validate).
@@ -1819,91 +1749,11 @@ where
         }
     }
 
-    /// Validates vertex-link condition at construction completion.
-    ///
-    /// This should be called once after batch construction is complete to certify
-    /// full PL-manifoldness when using `TopologyGuarantee::PLManifold` (incremental mode).
-    ///
-    /// # Errors
-    ///
-    /// Returns an [`InvariantError`] if vertex-link validation fails
-    /// (e.g. a vertex link is not a PL-sphere/ball as required for PL-manifoldness).
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
-    /// };
-    /// use delaunay::DelaunayTriangulation;
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices = vec![
-    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
-    /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// assert!(dt.as_triangulation().validate_at_completion().is_ok());
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn validate_at_completion(&self) -> Result<(), InvariantError> {
-        if !self
-            .topology_guarantee
-            .requires_vertex_links_at_completion()
-        {
-            return Ok(());
-        }
-
-        if self.tds.number_of_simplices() == 0 {
-            return Ok(());
-        }
-
-        let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
-        let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)?;
-        self.validate_at_completion_from_validated_facet_map(facet_to_simplices)?;
-        Ok(())
-    }
-
-    fn validate_at_completion_from_validated_facet_map(
-        &self,
-        facet_to_simplices: ValidatedFacetDegreeMap<'_>,
-    ) -> Result<(), InvariantError> {
-        if !self
-            .topology_guarantee
-            .requires_vertex_links_at_completion()
-        {
-            return Ok(());
-        }
-
-        if self.tds.number_of_simplices() == 0 {
-            return Ok(());
-        }
-
-        validate_vertex_links_from_validated_facet_map(
-            &self.tds,
-            facet_to_simplices,
-            self.global_topology,
-        )?;
-        Ok(())
-    }
-
     /// Performs cumulative validation for Levels 1–3.
     ///
     /// This validates:
     /// - **Level 1–2** via [`Tds::validate`](crate::prelude::tds::Tds::validate)
     /// - **Level 3** via [`Triangulation::is_valid_topology`](Self::is_valid_topology)
-    /// - **Completion-time PL-manifold check** via [`Triangulation::validate_at_completion`](Self::validate_at_completion)
     ///
     /// # Errors
     ///
@@ -1949,8 +1799,7 @@ where
         self.validate_global_connectedness()?;
         let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
         let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)?;
-        self.validate_topology_core_from_validated_facet_map(facet_to_simplices)?;
-        self.validate_at_completion_from_validated_facet_map(facet_to_simplices)
+        self.validate_topology_core_from_validated_facet_map(facet_to_simplices)
     }
 
     /// Generate a comprehensive validation report for Levels 1–3.
@@ -2014,13 +1863,6 @@ where
             violations.extend(report.violations);
         }
 
-        if let Err(source) = self.validate_at_completion() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::Topology,
-                error: source,
-            });
-        }
-
         if violations.is_empty() {
             Ok(())
         } else {
@@ -2056,11 +1898,20 @@ where
         }
     }
 
-    /// Runs mandatory link checks required by the topology guarantee.
-    pub(crate) fn validate_required_topology_links(&self) -> Result<(), InvariantError> {
+    /// Runs mandatory mutation postconditions over the complete triangulation.
+    ///
+    /// This is the fallback when a mutation cannot report its changed simplex
+    /// scope. It validates pseudomanifold boundary conditions, the necessary
+    /// ridge-link condition for PL manifolds, and simplex orientation. It does
+    /// not replace comprehensive Level 3 vertex-link certification.
+    pub(crate) fn validate_mandatory_mutation_postconditions(&self) -> Result<(), InvariantError> {
         if self.tds.number_of_simplices() == 0 {
             return Ok(());
         }
+
+        let simplex_keys: SimplexKeyBuffer = self.tds.simplex_keys().collect();
+        self.tds
+            .validate_coherent_orientation_for_simplices(&simplex_keys)?;
 
         let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
         let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)?;
@@ -2074,21 +1925,9 @@ where
             validate_ridge_links_in_tds(&self.tds)?;
         }
 
-        if self
-            .topology_guarantee
-            .requires_vertex_links_during_insertion()
-        {
-            validate_vertex_links_from_validated_facet_map(
-                &self.tds,
-                facet_to_simplices,
-                self.global_topology,
-            )?;
-        }
-
         // Keep geometric orientation non-negotiable during incremental insertion,
         // even when global validation is throttled. Run this after topology
         // checks so topology diagnostics still surface first.
-        let simplex_keys: SimplexKeyBuffer = self.tds.simplex_keys().collect();
         self.validate_local_realization_orientation(&simplex_keys)
             .map_err(|source| InvariantError::Realization { source })?;
 
@@ -2189,17 +2028,18 @@ where
         Ok(())
     }
 
-    /// Runs mandatory topology checks over the local simplices touched by insertion.
+    /// Runs mandatory postconditions over the simplices touched by a mutation.
     ///
     /// Soundness boundary: the scoped path checks coherent orientation, local
     /// pseudomanifold facet incidence, ridge links, and geometric simplex
-    /// orientation. Those local checks are sufficient only when `simplices` is
-    /// non-empty and `topology_guarantee` does not require vertex-link checks
-    /// during insertion; otherwise this explicitly falls back to
-    /// [`validate_required_topology_links`](Self::validate_required_topology_links).
+    /// orientation. Those local checks preserve the affected mutation scope
+    /// when the pre-mutation value already carries the requested proof. An
+    /// Ridge links are a necessary fail-fast guard, not complete PL-manifold
+    /// certification. An empty scope explicitly falls back to
+    /// [`validate_mandatory_mutation_postconditions`](Self::validate_mandatory_mutation_postconditions).
     /// See `REFERENCES.md`, "Scoped Local Validation and Flips" \[1\], for the
     /// local-vs-global validation tradeoff and geometric conditioning context.
-    pub(crate) fn validate_required_topology_links_for_simplices(
+    pub(crate) fn validate_mandatory_mutation_postconditions_for_simplices(
         &self,
         simplices: &[SimplexKey],
     ) -> Result<(), InvariantError> {
@@ -2207,12 +2047,8 @@ where
             return Ok(());
         }
 
-        if simplices.is_empty()
-            || self
-                .topology_guarantee
-                .requires_vertex_links_during_insertion()
-        {
-            return self.validate_required_topology_links();
+        if simplices.is_empty() {
+            return self.validate_mandatory_mutation_postconditions();
         }
 
         self.tds
@@ -2238,16 +2074,10 @@ where
         }
 
         let should_validate = self.validation_policy.should_validate(suspicion);
-        let requires_required_topology_checks = self
-            .topology_guarantee
-            .requires_pseudomanifold_checks_during_insertion();
-
         if should_validate {
             Some(InsertionValidationWork::FullValidation)
-        } else if requires_required_topology_checks {
-            Some(InsertionValidationWork::RequiredTopologyLinks)
         } else {
-            None
+            Some(InsertionValidationWork::MandatoryMutationPostconditions)
         }
     }
 
@@ -2268,16 +2098,16 @@ where
         match work {
             InsertionValidationWork::FullValidation => {
                 self.validate()?;
-                match local_simplices {
-                    Some([]) | None => self.is_valid_realization(),
-                    Some(simplices) => self.validate_realization_for_simplices(simplices),
-                }
-                .map_err(|source| InvariantError::Realization { source })
+                self.is_valid_realization()
+                    .map_err(|source| InvariantError::Realization { source })
             }
-            InsertionValidationWork::RequiredTopologyLinks => local_simplices.map_or_else(
-                || self.validate_required_topology_links(),
-                |simplices| self.validate_required_topology_links_for_simplices(simplices),
-            ),
+            InsertionValidationWork::MandatoryMutationPostconditions => local_simplices
+                .map_or_else(
+                    || self.validate_mandatory_mutation_postconditions(),
+                    |simplices| {
+                        self.validate_mandatory_mutation_postconditions_for_simplices(simplices)
+                    },
+                ),
         }
     }
 
@@ -2366,9 +2196,7 @@ mod tests {
     use crate::core::operations::InsertionOutcome;
     use crate::core::realization::TriangulationRealizationValidationError;
     use crate::core::simplex::Simplex;
-    use crate::core::tds::{
-        GeometricError, NeighborValidationError, Tds, TriangulationConstructionState,
-    };
+    use crate::core::tds::{GeometricError, NeighborValidationError, Tds};
     use crate::core::vertex::Vertex;
     use crate::geometry::coordinate_range::CoordinateRange;
     use crate::geometry::kernel::FastKernel;
@@ -2775,7 +2603,7 @@ mod tests {
             );
         }
 
-        tds.construction_state = TriangulationConstructionState::Constructed;
+        tds.force_construction_complete_for_test();
         tds.assign_neighbors().unwrap();
         tds.assign_incident_simplices().unwrap();
 
@@ -2821,7 +2649,9 @@ mod tests {
             )
             .unwrap();
         for vk in [v0, v1, v2, v3] {
-            tds.vertex_mut(vk).unwrap().set_incident_simplex(Some(ck));
+            tds.vertex_mut_for_test(vk)
+                .unwrap()
+                .set_incident_simplex(Some(ck));
         }
 
         (
@@ -2851,7 +2681,9 @@ mod tests {
             )
             .unwrap();
         for vk in [v0, v1, v2, v3] {
-            tds.vertex_mut(vk).unwrap().set_incident_simplex(Some(ck));
+            tds.vertex_mut_for_test(vk)
+                .unwrap()
+                .set_incident_simplex(Some(ck));
         }
 
         (
@@ -3134,26 +2966,10 @@ mod tests {
     fn topology_guarantee_helper_matrix_and_policy_compatibility() {
         assert_eq!(TopologyGuarantee::default(), TopologyGuarantee::DEFAULT);
         assert_eq!(TopologyGuarantee::DEFAULT, TopologyGuarantee::PLManifold);
-        assert!(!TopologyGuarantee::Pseudomanifold.requires_vertex_links_during_insertion());
-        assert!(TopologyGuarantee::PLManifoldStrict.requires_vertex_links_during_insertion());
-        assert!(!TopologyGuarantee::Pseudomanifold.requires_vertex_links_at_completion());
-        assert!(TopologyGuarantee::PLManifold.requires_vertex_links_at_completion());
-        assert!(TopologyGuarantee::PLManifoldStrict.requires_vertex_links_at_completion());
-        assert!(
-            TopologyGuarantee::Pseudomanifold.requires_pseudomanifold_checks_during_insertion()
-        );
-        assert!(TopologyGuarantee::PLManifold.requires_pseudomanifold_checks_during_insertion());
-        assert!(
-            TopologyGuarantee::PLManifoldStrict.requires_pseudomanifold_checks_during_insertion()
-        );
+        assert!(!TopologyGuarantee::Pseudomanifold.requires_vertex_links());
+        assert!(TopologyGuarantee::PLManifold.requires_vertex_links());
         assert!(!TopologyGuarantee::Pseudomanifold.requires_ridge_links());
         assert!(TopologyGuarantee::PLManifold.requires_ridge_links());
-        assert!(TopologyGuarantee::PLManifoldStrict.requires_ridge_links());
-
-        assert_eq!(
-            TopologyGuarantee::PLManifoldStrict.default_validation_policy(),
-            ValidationPolicy::Always
-        );
         assert_eq!(
             TopologyGuarantee::PLManifold.default_validation_policy(),
             ValidationPolicy::ExplicitOnly
@@ -3181,22 +2997,12 @@ mod tests {
 
         assert!(!TopologyGuarantee::PLManifold.is_compatible_with_policy(ValidationPolicy::Never));
         assert!(
-            !TopologyGuarantee::PLManifoldStrict.is_compatible_with_policy(ValidationPolicy::Never)
-        );
-        assert!(
             TopologyGuarantee::PLManifold.is_compatible_with_policy(ValidationPolicy::ExplicitOnly)
-        );
-        assert!(
-            TopologyGuarantee::PLManifoldStrict
-                .is_compatible_with_policy(ValidationPolicy::ExplicitOnly)
         );
         assert!(
             TopologyGuarantee::PLManifold.is_compatible_with_policy(ValidationPolicy::OnSuspicion)
         );
         assert!(TopologyGuarantee::PLManifold.is_compatible_with_policy(ValidationPolicy::Always));
-        assert!(
-            TopologyGuarantee::PLManifoldStrict.is_compatible_with_policy(ValidationPolicy::Always)
-        );
     }
 
     macro_rules! test_validation_configuration_paths {
@@ -3210,8 +3016,10 @@ mod tests {
                         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
                         assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
 
-                        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
-                        tri.set_validation_policy(ValidationPolicy::Always);
+                        tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+                            .unwrap();
+                        tri.try_set_validation_policy(ValidationPolicy::Always)
+                            .unwrap();
 
                         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
                         assert_eq!(tri.validation_policy(), ValidationPolicy::Always);
@@ -3231,12 +3039,12 @@ mod tests {
                     }
 
                     #[test]
-                    fn [<incompatible_policy_rejected_even_when_completion_validation_succeeds_ $dim d>]() {
+                    fn [<incompatible_policy_rejected_even_when_vertex_link_validation_succeeds_ $dim d>]() {
                         let mut tri: Triangulation<FastKernel<f64>, (), (), $dim> =
                             Triangulation::new_empty(FastKernel::new());
 
                         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
-                        assert!(tri.validate_at_completion().is_ok());
+                        assert!(tri.validate_vertex_links().is_ok());
 
                         assert_eq!(
                             tri.try_set_validation_policy(ValidationPolicy::Never),
@@ -3249,12 +3057,10 @@ mod tests {
                         );
                         assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
 
-                        tri.set_validation_policy(ValidationPolicy::Never);
-                        assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
                     }
 
                     #[test]
-                    fn [<incompatible_guarantee_rejected_even_when_completion_validation_succeeds_ $dim d>]() {
+                    fn [<incompatible_guarantee_rejected_even_when_vertex_link_validation_succeeds_ $dim d>]() {
                         let mut tri: Triangulation<FastKernel<f64>, (), (), $dim> =
                             Triangulation::new_empty(FastKernel::new());
 
@@ -3264,25 +3070,23 @@ mod tests {
                             .unwrap();
                         assert_eq!(tri.validation_policy(), ValidationPolicy::Never);
                         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
-                        assert!(tri.validate_at_completion().is_ok());
+                        assert!(tri.validate_vertex_links().is_ok());
 
                         assert_eq!(
-                            tri.try_set_topology_guarantee(TopologyGuarantee::PLManifoldStrict),
+                            tri.try_set_topology_guarantee(TopologyGuarantee::PLManifold),
                             Err(
                                 ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
-                                    topology_guarantee: TopologyGuarantee::PLManifoldStrict,
+                                    topology_guarantee: TopologyGuarantee::PLManifold,
                                     validation_policy: ValidationPolicy::Never,
                                 }
                             )
                         );
                         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 
-                        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
-                        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
                     }
 
                     #[test]
-                    fn [<validate_at_completion_skips_for_pseudomanifold_ $dim d>]() {
+                    fn [<explicit_vertex_link_validation_accepts_simplex_pseudomanifold_ $dim d>]() {
                         let vertices = unit_simplex_vertices::<$dim>();
                         let tds =
                             Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
@@ -3290,37 +3094,34 @@ mod tests {
                         let mut tri =
                             Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
 
-                        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
-                        assert!(tri.validate_at_completion().is_ok());
+                        tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+                            .unwrap();
+                        assert!(tri.validate_vertex_links().is_ok());
                     }
 
                     #[test]
-                    fn [<validate_at_completion_reports_invalid_vertex_link_ $dim d>]() {
+                    fn [<explicit_vertex_link_validation_reports_invalid_link_ $dim d>]() {
                         let (tds, expected_vertex_key) = build_invalid_vertex_link_tds::<$dim>();
 
-                        let mut tri =
+                        let tri =
                             Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
-                        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
-
-                        match tri.validate_at_completion() {
-                            Err(InvariantError::Triangulation { source:
-                                TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. },
-                             }) => assert_eq!(vertex_key, expected_vertex_key),
+                        match tri.validate_vertex_links() {
+                            Err(ManifoldError::VertexLinkNotManifold { vertex_key, .. }) => {
+                                assert_eq!(vertex_key, expected_vertex_key);
+                            }
                             other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
                         }
                     }
 
                     #[test]
-                    fn [<incompatible_policy_rejected_when_completion_validation_fails_ $dim d>]() {
+                    fn [<incompatible_policy_rejected_when_vertex_link_validation_fails_ $dim d>]() {
                         let (tds, _) = build_invalid_vertex_link_tds::<$dim>();
                         let mut tri =
                             Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
 
                         assert_matches!(
-                            tri.validate_at_completion(),
-                            Err(InvariantError::Triangulation { source:
-                                TriangulationValidationError::VertexLinkNotManifold { .. }
-                             })
+                            tri.validate_vertex_links(),
+                            Err(ManifoldError::VertexLinkNotManifold { .. })
                         );
                         assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
                         assert_eq!(
@@ -3332,33 +3133,27 @@ mod tests {
                                 }
                             )
                         );
-                        tri.set_validation_policy(ValidationPolicy::Never);
-                        assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
                     }
 
                     #[test]
-                    fn [<incompatible_guarantee_rejected_when_completion_validation_fails_ $dim d>]() {
+                    fn [<incompatible_guarantee_rejected_when_pl_certification_fails_ $dim d>]() {
                         let (tds, _) = build_invalid_vertex_link_tds::<$dim>();
                         let mut tri =
                             Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
 
                         tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
                             .unwrap();
-                        tri.try_set_validation_policy(ValidationPolicy::Never)
+                        tri.try_set_validation_policy(ValidationPolicy::ExplicitOnly)
                             .unwrap();
                         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
-                        assert_eq!(tri.validation_policy(), ValidationPolicy::Never);
-                        assert_eq!(
-                            tri.try_set_topology_guarantee(TopologyGuarantee::PLManifoldStrict),
-                            Err(
-                                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
-                                    topology_guarantee: TopologyGuarantee::PLManifoldStrict,
-                                    validation_policy: ValidationPolicy::Never,
-                                }
-                            )
+                        assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
+                        assert_matches!(
+                            tri.try_set_topology_guarantee(TopologyGuarantee::PLManifold),
+                            Err(ValidationConfigurationError::TopologyGuaranteeValidation {
+                                requested: TopologyGuarantee::PLManifold,
+                                ..
+                            })
                         );
-                        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
-                        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
                     }
                 )+
             }
@@ -3372,7 +3167,8 @@ mod tests {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
 
-        tri.set_validation_policy(ValidationPolicy::Always);
+        tri.try_set_validation_policy(ValidationPolicy::Always)
+            .unwrap();
         let _ = tri
             .tds
             .insert_vertex_with_mapping(test_vertex([0.0, 0.0]))
@@ -3389,7 +3185,8 @@ mod tests {
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
-        tri.set_validation_policy(ValidationPolicy::Always);
+        tri.try_set_validation_policy(ValidationPolicy::Always)
+            .unwrap();
 
         match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None) {
             Err(InvariantError::Triangulation {
@@ -3403,8 +3200,9 @@ mod tests {
     fn validate_after_insertion_full_validation_includes_tds_layer() {
         let (mut tri, [v0, _, _, _], _) = build_single_tet();
         let uuid = tri.tds.vertex(v0).unwrap().uuid();
-        tri.tds.uuid_to_vertex_key.remove(&uuid);
-        tri.set_validation_policy(ValidationPolicy::Always);
+        tri.tds.remove_vertex_uuid_mapping_for_test(&uuid);
+        tri.try_set_validation_policy(ValidationPolicy::Always)
+            .unwrap();
 
         match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None) {
             Err(InvariantError::Tds {
@@ -3417,25 +3215,28 @@ mod tests {
     }
 
     #[test]
-    fn validation_after_insertion_work_matches_policy_and_link_requirements() {
+    fn validation_after_insertion_work_matches_policy_and_mandatory_postconditions() {
         let tds = build_disconnected_two_triangles_tds_2d();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
-        tri.set_validation_policy(ValidationPolicy::OnSuspicion);
-        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+        tri.try_set_validation_policy(ValidationPolicy::OnSuspicion)
+            .unwrap();
+        tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .unwrap();
         assert_eq!(
             tri.validation_after_insertion_work(SuspicionFlags::default()),
-            Some(InsertionValidationWork::RequiredTopologyLinks)
+            Some(InsertionValidationWork::MandatoryMutationPostconditions)
         );
 
-        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        tri.topology_guarantee = TopologyGuarantee::PLManifold;
         assert_eq!(
             tri.validation_after_insertion_work(SuspicionFlags::default()),
-            Some(InsertionValidationWork::RequiredTopologyLinks)
+            Some(InsertionValidationWork::MandatoryMutationPostconditions)
         );
 
-        tri.set_validation_policy(ValidationPolicy::Always);
+        tri.try_set_validation_policy(ValidationPolicy::Always)
+            .unwrap();
         assert_eq!(
             tri.validation_after_insertion_work(SuspicionFlags::default()),
             Some(InsertionValidationWork::FullValidation)
@@ -3634,7 +3435,7 @@ mod tests {
     fn validate_returns_invariant_error_from_tds_layer() {
         let (mut tri, [v0, _, _, _], _) = build_single_tet();
         let uuid = tri.tds.vertex(v0).unwrap().uuid();
-        tri.tds.uuid_to_vertex_key.remove(&uuid);
+        tri.tds.remove_vertex_uuid_mapping_for_test(&uuid);
 
         match tri.validate() {
             Err(InvariantError::Tds {
@@ -3801,11 +3602,10 @@ mod tests {
                 && simplex1_facet_index <= 2
                 && simplex2_facet_index <= 2
         );
-        let mut non_orientable = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(
+        let non_orientable = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(
             FastKernel::new(),
             build_mobius_strip_tds_2d(),
         );
-        non_orientable.set_topology_guarantee(TopologyGuarantee::PLManifold);
         assert_matches!(
             non_orientable.is_valid_topology(),
             Err(InvariantError::Triangulation {
@@ -3908,12 +3708,11 @@ mod tests {
         let tds = build_periodic_three_torus_tds();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
-        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
-        tri.try_set_global_topology(
+        // This test-only fixture is not proof-bearing until orientation is
+        // normalized, so install its topology context before crossing Level 4.
+        tri.global_topology =
             GlobalTopology::try_toroidal([1.0; 3], ToroidalConstructionMode::PeriodicImagePoint)
-                .unwrap(),
-        )
-        .unwrap();
+                .unwrap();
         tri.normalize_and_promote_positive_orientation().unwrap();
 
         assert!(tri.validate().is_ok(), "Levels 1-3 should pass");
@@ -3996,7 +3795,8 @@ mod tests {
 
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+        tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .unwrap();
 
         assert_matches!(
             tri.is_valid_topology(),
@@ -4005,7 +3805,7 @@ mod tests {
             })
         );
 
-        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
+        tri.topology_guarantee = TopologyGuarantee::PLManifold;
 
         match tri.is_valid_topology() {
             Err(InvariantError::Triangulation {
@@ -4078,7 +3878,7 @@ mod tests {
         )
         .unwrap();
 
-        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
+        tri.topology_guarantee = TopologyGuarantee::PLManifold;
 
         match tri.is_valid_topology() {
             Err(InvariantError::Triangulation {
@@ -4201,7 +4001,8 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
-        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+        tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .unwrap();
 
         let _isolated_vk = tri
             .tds
@@ -4434,7 +4235,7 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
         let uuid = tri.tds.vertices().next().unwrap().1.uuid();
-        tri.tds.uuid_to_vertex_key.remove(&uuid);
+        tri.tds.remove_vertex_uuid_mapping_for_test(&uuid);
 
         let report = tri.validation_report().unwrap_err();
         assert!(!report.violations.is_empty());
@@ -4491,8 +4292,10 @@ mod tests {
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
-        tri.set_validation_policy(ValidationPolicy::OnSuspicion);
-        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+        tri.try_set_validation_policy(ValidationPolicy::OnSuspicion)
+            .unwrap();
+        tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .unwrap();
 
         assert!(tri.is_valid_topology().is_err());
         tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None)
@@ -4505,8 +4308,10 @@ mod tests {
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
-        tri.set_validation_policy(ValidationPolicy::OnSuspicion);
-        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+        tri.try_set_validation_policy(ValidationPolicy::OnSuspicion)
+            .unwrap();
+        tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .unwrap();
 
         match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None) {
             Err(InvariantError::Triangulation {
@@ -4524,8 +4329,8 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
         let scope: SimplexKeyBuffer = tri.tds.simplex_keys().take(1).collect();
 
-        tri.set_validation_policy(ValidationPolicy::OnSuspicion);
-        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        tri.try_set_validation_policy(ValidationPolicy::OnSuspicion)
+            .unwrap();
 
         match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&scope)) {
             Err(InvariantError::Triangulation {
@@ -4536,32 +4341,32 @@ mod tests {
         }
     }
 
-    macro_rules! test_scoped_strict_validation_falls_back_to_global_vertex_links {
+    macro_rules! test_always_policy_runs_global_vertex_link_validation {
         ($($dim:expr),+ $(,)?) => {
             pastey::paste! {
                 $(
                     #[test]
-                    fn [<scoped_strict_validation_falls_back_to_global_vertex_links_ $dim d>]() {
+                    fn [<always_policy_runs_global_vertex_link_validation_ $dim d>]() {
                         let (tds, expected_vertex_key) = build_invalid_vertex_link_tds::<$dim>();
                         let mut tri =
                             Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
                         let scope: SimplexKeyBuffer = tri.tds.simplex_keys().take(1).collect();
                         assert!(!scope.is_empty());
 
-                        tri.validation_policy = ValidationPolicy::OnSuspicion;
-                        tri.topology_guarantee = TopologyGuarantee::PLManifoldStrict;
+                        tri.validation_policy = ValidationPolicy::Always;
+                        tri.topology_guarantee = TopologyGuarantee::PLManifold;
 
-                        match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&scope)) {
-                            Err(InvariantError::Triangulation { source:
-                                TriangulationValidationError::RidgeLinkNotManifold {
-                                    connected: false,
-                                    ..
-                                },
-                             }) if $dim == 2 => {}
-                            Err(InvariantError::Triangulation { source:
-                                TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. },
-                             }) => assert_eq!(vertex_key, expected_vertex_key),
-                            other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
+                        tri.validate_after_insertion_with_scope(
+                            SuspicionFlags::default(),
+                            Some(&scope),
+                        )
+                        .expect_err("Always must run a full audit beyond the local scope");
+
+                        match tri.validate_vertex_links() {
+                            Err(ManifoldError::VertexLinkNotManifold { vertex_key, .. }) => {
+                                assert_eq!(vertex_key, expected_vertex_key);
+                            }
+                            other => panic!("Expected focused VertexLinkNotManifold, got {other:?}"),
                         }
                     }
                 )+
@@ -4569,7 +4374,7 @@ mod tests {
         };
     }
 
-    test_scoped_strict_validation_falls_back_to_global_vertex_links!(2, 3, 4, 5);
+    test_always_policy_runs_global_vertex_link_validation!(2, 3, 4, 5);
 
     macro_rules! test_insertion_scoped_validation_preserves_full_validity {
         ($($dim:expr),+ $(,)?) => {
@@ -4584,8 +4389,8 @@ mod tests {
                         let mut tri =
                             Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
 
-                        tri.set_validation_policy(ValidationPolicy::OnSuspicion);
-                        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
+                        tri.try_set_validation_policy(ValidationPolicy::OnSuspicion)
+                            .unwrap();
 
                         let detail = tri
                             .insert_with_statistics_seeded_indexed_detailed(
@@ -4698,7 +4503,8 @@ mod tests {
     #[test]
     fn validate_after_insertion_full_validation_rejects_local_degenerate_simplex_realization() {
         let (mut tri, ck) = build_degenerate_tet();
-        tri.set_validation_policy(ValidationPolicy::Always);
+        tri.try_set_validation_policy(ValidationPolicy::Always)
+            .unwrap();
         let mut scope = SimplexKeyBuffer::new();
         scope.push(ck);
 
@@ -4723,7 +4529,8 @@ mod tests {
         let (tds, scope) = build_topologically_valid_self_overlapping_tds_2d();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        tri.set_validation_policy(ValidationPolicy::Always);
+        tri.try_set_validation_policy(ValidationPolicy::Always)
+            .unwrap();
 
         tri.is_valid_topology()
             .expect("fixture should isolate a Level 4 realization failure");
@@ -4746,7 +4553,8 @@ mod tests {
         let (tds, _) = build_topologically_valid_self_overlapping_tds_2d();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        tri.set_validation_policy(ValidationPolicy::Always);
+        tri.try_set_validation_policy(ValidationPolicy::Always)
+            .unwrap();
 
         tri.is_valid_topology()
             .expect("fixture should isolate a Level 4 realization failure");
@@ -4772,7 +4580,8 @@ mod tests {
         let (tds, scope) = build_topologically_valid_self_overlapping_tds_2d();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        tri.set_validation_policy(ValidationPolicy::Always);
+        tri.try_set_validation_policy(ValidationPolicy::Always)
+            .unwrap();
 
         tri.is_valid_topology()
             .expect("fixture should isolate a Level 4 realization failure");
@@ -4796,24 +4605,25 @@ mod tests {
     }
 
     #[test]
-    fn validate_at_completion_ok_for_pseudomanifold_empty() {
+    fn explicit_vertex_link_validation_accepts_empty_pseudomanifold() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
             Triangulation::new_empty(FastKernel::new());
-        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+        tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .unwrap();
 
-        assert!(tri.validate_at_completion().is_ok());
+        assert!(tri.validate_vertex_links().is_ok());
     }
 
     #[test]
-    fn validate_at_completion_ok_for_pl_manifold_no_simplices() {
+    fn explicit_vertex_link_validation_accepts_empty_pl_manifold() {
         let tri: Triangulation<FastKernel<f64>, (), (), 3> =
             Triangulation::new_empty(FastKernel::new());
 
-        assert!(tri.validate_at_completion().is_ok());
+        assert!(tri.validate_vertex_links().is_ok());
     }
 
     #[test]
-    fn pl_manifold_insertion_keeps_valid_topology_with_explicit_only_validation() {
+    fn pl_manifold_insertion_without_repair_preserves_delaunay_owner_or_rolls_back() {
         let bounds = CoordinateRange::try_new(-100.0_f64, 100.0).unwrap();
         let points = generate_random_points_in_range_seeded::<3>(25, bounds, 123)
             .expect("validated range should generate finite points");
@@ -4823,23 +4633,36 @@ mod tests {
 
         dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)
             .unwrap();
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
 
         for (i, point) in points.into_iter().enumerate() {
             let vertex = Vertex::from_validated_point(point, None);
-            let (outcome, stats) = dt
-                .insert_best_effort_with_statistics(vertex)
-                .unwrap_or_else(|err| panic!("Non-retryable insertion error at i={i}: {err:?}"));
+            let vertex_count_before = dt.number_of_vertices();
+            let simplex_count_before = dt.number_of_simplices();
+            let result = dt.insert_best_effort_with_statistics(vertex);
+            let (outcome, stats) = match result {
+                Ok(result) => result,
+                Err(InsertionError::DelaunayValidationFailed { .. }) => {
+                    assert_eq!(dt.number_of_vertices(), vertex_count_before);
+                    assert_eq!(dt.number_of_simplices(), simplex_count_before);
+                    dt.is_valid_delaunay()
+                        .expect("rejected insertion must restore the Level 5 owner");
+                    continue;
+                }
+                Err(error) => panic!("Non-retryable insertion error at i={i}: {error:?}"),
+            };
 
             if dt.number_of_simplices() > 0
-                && let Err(err) = dt.as_triangulation().validate()
+                && let Err(err) = dt.as_triangulation().validate_realization()
             {
                 panic!(
-                    "Topology invalid after insertion i={i} (outcome={outcome:?}, attempts={}, used_perturbation={}): {err}",
+                    "Realization invalid after insertion i={i} (outcome={outcome:?}, attempts={}, used_perturbation={}): {err}",
                     stats.attempts,
                     stats.used_perturbation()
                 );
             }
+            dt.is_valid_delaunay()
+                .unwrap_or_else(|err| panic!("Level 5 invalid after insertion i={i}: {err}"));
         }
     }
 
@@ -4859,8 +4682,9 @@ mod tests {
                 .unwrap();
             let mut tri =
                 Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-            tri.set_validation_policy(ValidationPolicy::OnSuspicion);
-            tri.set_topology_guarantee(guarantee);
+            tri.try_set_validation_policy(ValidationPolicy::OnSuspicion)
+                .unwrap();
+            tri.try_set_topology_guarantee(guarantee).unwrap();
 
             let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
             let detail = tri

@@ -734,6 +734,18 @@ pub enum TdsError {
         /// Description of what was being checked.
         context: String,
     },
+    /// Construction completion was requested before a full-dimensional simplex existed.
+    #[error(
+        "Cannot complete {dimension}D TDS construction with {vertex_count} vertices and {simplex_count} simplices"
+    )]
+    IncompleteConstruction {
+        /// Compile-time ambient dimension of the TDS.
+        dimension: usize,
+        /// Number of vertices currently stored.
+        vertex_count: usize,
+        /// Number of maximal simplices currently stored.
+        simplex_count: usize,
+    },
     /// An index exceeded the valid range for the target structure.
     #[error("Index out of bounds: index {index}, bound {bound} — {context}")]
     IndexOutOfBounds {
@@ -846,6 +858,8 @@ pub enum TdsErrorKind {
     VertexNotFound,
     /// A dimension/count invariant was violated.
     DimensionMismatch,
+    /// Construction completion was requested before the TDS was ready.
+    IncompleteConstruction,
     /// An index exceeded its valid bound.
     IndexOutOfBounds,
     /// Canonical incidence still referenced a removed simplex.
@@ -881,6 +895,7 @@ impl From<&TdsError> for TdsErrorKind {
             TdsError::SimplexNotFound { .. } => Self::SimplexNotFound,
             TdsError::VertexNotFound { .. } => Self::VertexNotFound,
             TdsError::DimensionMismatch { .. } => Self::DimensionMismatch,
+            TdsError::IncompleteConstruction { .. } => Self::IncompleteConstruction,
             TdsError::IndexOutOfBounds { .. } => Self::IndexOutOfBounds,
             TdsError::RemovedSimplexStillIncident { .. } => Self::RemovedSimplexStillIncident,
             TdsError::VertexIncidenceMismatch { .. } => Self::VertexIncidenceMismatch,
@@ -1400,6 +1415,14 @@ mod tests {
                 context: "simplex arity".to_string(),
             },
             TdsErrorKind::DimensionMismatch,
+        );
+        assert_tds_error_kind(
+            &TdsError::IncompleteConstruction {
+                dimension: 3,
+                vertex_count: 3,
+                simplex_count: 0,
+            },
+            TdsErrorKind::IncompleteConstruction,
         );
         assert_tds_error_kind(
             &TdsError::IndexOutOfBounds {

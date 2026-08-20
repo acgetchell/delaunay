@@ -538,12 +538,13 @@ implementations.
 cargo bench --profile perf --features bench --bench pl_manifold_repair -- --noplot
 ```
 
-This benchmark measures `repair_facet_oversharing` on controlled 3D fixtures
+This benchmark measures the internal facet-over-sharing stage on controlled 3D fixtures
 where each cluster has one codimension-1 facet shared by three tetrahedra. The
 repair removes the deliberately skinny third tetrahedron and then removes its
 unique apex as an orphan vertex.
 
-It also measures the targeted `repair_pl_manifold_topology` stages added for
+It also measures the targeted stages used by the public consuming
+`repair_pl_manifold_tds` transformation for
 boundary-ridge multiplicity, ridge-link, and vertex-link repair. Those cases use
 validated 2D/3D fixtures so fixture construction and contract checks stay
 outside Criterion's measured closures. Vertex-link cases use a smaller maximum
@@ -562,11 +563,11 @@ cargo bench --profile perf --bench topology_guarantee_construction -- --noplot
 cargo bench --profile perf --bench topology_guarantee_construction -- "topology_guarantee_construction/4d"
 ```
 
-This suite compares construction cost under:
+This suite compares construction cost under independent topology guarantees and audit cadences:
 
-- `TopologyGuarantee::Pseudomanifold`
-- `TopologyGuarantee::PLManifold`
-- `TopologyGuarantee::PLManifoldStrict`
+- `TopologyGuarantee::Pseudomanifold` with `ValidationPolicy::OnSuspicion`
+- `TopologyGuarantee::PLManifold` with `ValidationPolicy::ExplicitOnly`
+- `TopologyGuarantee::PLManifold` with `ValidationPolicy::Always`
 
 It is manual-only and useful when changing insertion, repair, or validation
 paths that affect topology guarantees.

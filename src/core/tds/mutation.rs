@@ -2,6 +2,7 @@
 
 use super::errors::{
     EntityKind, NeighborValidationError, TdsConstructionError, TdsError, TdsMutationError,
+    TriangulationConstructionState,
 };
 use super::incidence::SimplexIncidenceRemoval;
 use super::storage::{SimplexUuidSortKey, Tds};
@@ -11,7 +12,7 @@ use crate::core::collections::{
     SimplexRemovalBuffer, SmallBuffer, VertexKeySet, fast_hash_map_with_capacity,
     fast_hash_set_with_capacity,
 };
-use crate::core::simplex::{NeighborSlot, Simplex};
+use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::vertex::Vertex;
 use std::collections::VecDeque;
 
@@ -181,6 +182,27 @@ impl CandidateIncidentRecords {
 }
 
 impl<U, V, const D: usize> Tds<U, V, D> {
+    /// Audits Levels 1–2 before marking this TDS construction complete.
+    ///
+    /// Raw assembly workspaces remain `Incomplete` until their elements,
+    /// mappings, incidence, neighbors, and coherent orientation have all been
+    /// checked by the layer that owns those invariants. On failure, the
+    /// construction state is unchanged.
+    pub(crate) fn complete_construction(&mut self) -> Result<(), TdsError> {
+        let vertex_count = self.number_of_vertices();
+        let simplex_count = self.number_of_simplices();
+        if vertex_count < D + 1 || simplex_count == 0 {
+            return Err(TdsError::IncompleteConstruction {
+                dimension: D,
+                vertex_count,
+                simplex_count,
+            });
+        }
+        self.validate()?;
+        self.construction_state = TriangulationConstructionState::Constructed;
+        Ok(())
+    }
+
     /// Assigns neighbor relationships between simplices based on shared facets with semantic ordering.
     ///
     /// This method efficiently builds neighbor relationships by using the `facet_key_from_vertices`
@@ -608,15 +630,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             }
         }
         Ok(())
-    }
-
-    /// Inserts a simplex while intentionally bypassing topology safety checks in tests.
-    #[cfg(test)]
-    pub(crate) fn insert_simplex_bypassing_topology_checks_for_test(
-        &mut self,
-        simplex: Simplex<V, D>,
-    ) -> Result<SimplexKey, TdsConstructionError> {
-        self.insert_simplex_with_mapping_impl(simplex, SimplexInsertionTopologyCheck::Prechecked)
     }
 
     /// Sets the auxiliary data on a vertex, returning the previous value.
@@ -1436,6 +1449,24 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         Ok(())
     }
 
+    fn validate_existing_neighbor_buffer_arity(
+        simplex: &Simplex<V, D>,
+        context: &str,
+    ) -> Result<(), TdsError> {
+        if let Some(slots) = simplex.neighbor_slots()
+            && slots.len() != D + 1
+        {
+            return Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::LengthMismatch {
+                    actual: slots.len(),
+                    expected: D + 1,
+                    context: context.to_string(),
+                },
+            });
+        }
+        Ok(())
+    }
+
     fn reciprocal_neighbor_updates_for_neighbor_update(
         &self,
         simplex_key: SimplexKey,
@@ -1577,6 +1608,112 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         Ok(())
     }
 
+    /// Stages one locally checked neighbor slot inside an atomic topology edit.
+    ///
+    /// Cavity replacement and bistellar flips discover reciprocal links one at
+    /// a time while both the removed and replacement simplices are temporarily
+    /// present. Global facet incidence is therefore not publishable until the
+    /// enclosing edit commits. This TDS-owned primitive still rejects missing
+    /// simplices, invalid slots, non-periodic self-neighbors, malformed neighbor
+    /// buffers, and pairs that do not share the requested facet. The enclosing
+    /// topology operation must validate or roll back the completed edit before
+    /// returning a proof-bearing TDS.
+    pub(in crate::core) fn stage_neighbor_slot_for_topology_candidate(
+        &mut self,
+        simplex_key: SimplexKey,
+        facet_idx: usize,
+        requested_neighbor: Option<SimplexKey>,
+    ) -> Result<(), TdsMutationError> {
+        let simplex = self
+            .simplices
+            .get(simplex_key)
+            .ok_or_else(|| TdsError::SimplexNotFound {
+                simplex_key,
+                context: "staging a topology-candidate neighbor slot".to_string(),
+            })?;
+        let simplex_uuid = simplex.uuid();
+        let vertex_count = simplex.number_of_vertices();
+        if vertex_count != D + 1 {
+            return Err(TdsError::DimensionMismatch {
+                expected: D + 1,
+                actual: vertex_count,
+                context: format!("{D}-dimensional simplex vertex count"),
+            }
+            .into());
+        }
+        Self::validate_existing_neighbor_buffer_arity(
+            simplex,
+            "staging a topology-candidate neighbor slot",
+        )?;
+        if facet_idx >= vertex_count {
+            return Err(TdsError::IndexOutOfBounds {
+                index: facet_idx,
+                bound: vertex_count,
+                context: format!("facet slot for simplex {simplex_key:?}"),
+            }
+            .into());
+        }
+
+        if let Some(neighbor_key) = requested_neighbor {
+            if neighbor_key == simplex_key && !Self::allows_periodic_self_neighbor(simplex) {
+                return Err(TdsError::InvalidNeighbors {
+                    reason: NeighborValidationError::NonPeriodicSelfNeighbor {
+                        simplex_key,
+                        simplex_uuid,
+                        facet_index: facet_idx,
+                    },
+                }
+                .into());
+            }
+            let neighbor =
+                self.simplices
+                    .get(neighbor_key)
+                    .ok_or_else(|| TdsError::InvalidNeighbors {
+                        reason: NeighborValidationError::MissingNeighborSimplex {
+                            simplex_key,
+                            simplex_uuid,
+                            facet_index: facet_idx,
+                            neighbor_key,
+                            context: "staging a topology-candidate neighbor slot".to_string(),
+                        },
+                    })?;
+            let neighbor_vertex_count = neighbor.number_of_vertices();
+            if neighbor_vertex_count != D + 1 {
+                return Err(TdsError::DimensionMismatch {
+                    expected: D + 1,
+                    actual: neighbor_vertex_count,
+                    context: format!("{D}-dimensional neighbor simplex vertex count"),
+                }
+                .into());
+            }
+            Self::validate_existing_neighbor_buffer_arity(
+                neighbor,
+                "staging a topology-candidate neighbor slot",
+            )?;
+            if simplex.mirror_facet_index(facet_idx, neighbor).is_none() {
+                return Err(TdsError::InvalidNeighbors {
+                    reason: NeighborValidationError::MirrorFacetMissing {
+                        simplex_uuid,
+                        facet_index: facet_idx,
+                        neighbor_uuid: neighbor.uuid(),
+                        context: "staging a topology-candidate neighbor slot".to_string(),
+                    },
+                }
+                .into());
+            }
+        }
+
+        let simplex = self
+            .simplex_mut(simplex_key)
+            .ok_or_else(|| TdsError::SimplexNotFound {
+                simplex_key,
+                context: "committing a topology-candidate neighbor slot".to_string(),
+            })?;
+        Self::set_neighbor_slot(simplex, facet_idx, requested_neighbor)?;
+        self.bump_generation();
+        Ok(())
+    }
+
     /// Sets neighbor relationships using simplex keys directly.
     ///
     /// # Positional Semantics (Critical Topological Invariant)
@@ -1697,6 +1834,124 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         Ok(())
     }
 
+    /// Repairs a complete neighbor buffer from canonical facet incidence.
+    ///
+    /// Unlike [`Self::set_neighbors_by_key`], this recovery transition does not
+    /// require the old reciprocal pointers to be trustworthy. It validates the
+    /// proposed buffer against canonical simplex incidence before writing,
+    /// removes any stale back-references that can still be resolved, and then
+    /// installs the proven reciprocal links. All fallible checks happen before
+    /// the first write so a rejected repair leaves the TDS unchanged.
+    pub(in crate::core) fn repair_neighbors_by_key_from_facet_incidence(
+        &mut self,
+        simplex_key: SimplexKey,
+        neighbors: &[Option<SimplexKey>],
+    ) -> Result<(), TdsMutationError> {
+        self.validate_neighbor_topology(simplex_key, neighbors)?;
+        self.validate_neighbor_update_matches_facet_incidence(simplex_key, neighbors)?;
+
+        let simplex = self
+            .simplices
+            .get(simplex_key)
+            .ok_or_else(|| TdsError::SimplexNotFound {
+                simplex_key,
+                context: "repairing neighbors from facet incidence".to_string(),
+            })?;
+        let simplex_uuid = simplex.uuid();
+        let old_neighbors: Vec<Option<SimplexKey>> = simplex
+            .neighbor_keys()
+            .map_or_else(|| vec![None; D + 1], Iterator::collect);
+
+        let mut stale_back_references = Vec::new();
+        for old_neighbor_key in old_neighbors.into_iter().flatten() {
+            if old_neighbor_key == simplex_key || neighbors.contains(&Some(old_neighbor_key)) {
+                continue;
+            }
+            let Some(old_neighbor) = self.simplices.get(old_neighbor_key) else {
+                continue;
+            };
+            Self::validate_existing_neighbor_buffer_arity(
+                old_neighbor,
+                "checking stale reciprocal slots before neighbor repair",
+            )?;
+            if let Some(old_neighbor_keys) = old_neighbor.neighbor_keys() {
+                for (mirror_idx, back_reference) in old_neighbor_keys.enumerate() {
+                    if back_reference == Some(simplex_key) {
+                        stale_back_references.push((old_neighbor_key, mirror_idx));
+                    }
+                }
+            }
+        }
+
+        let mut new_back_references = Vec::new();
+        for (facet_idx, neighbor_key) in neighbors.iter().copied().enumerate() {
+            let Some(neighbor_key) = neighbor_key else {
+                continue;
+            };
+            if neighbor_key == simplex_key {
+                continue;
+            }
+            let neighbor =
+                self.simplices
+                    .get(neighbor_key)
+                    .ok_or_else(|| TdsError::InvalidNeighbors {
+                        reason: NeighborValidationError::MissingNeighborSimplex {
+                            simplex_key,
+                            simplex_uuid,
+                            facet_index: facet_idx,
+                            neighbor_key,
+                            context: "checking reciprocal slots before neighbor repair".to_string(),
+                        },
+                    })?;
+            Self::validate_existing_neighbor_buffer_arity(
+                neighbor,
+                "checking reciprocal slots before neighbor repair",
+            )?;
+            let mirror_idx = simplex
+                .mirror_facet_index(facet_idx, neighbor)
+                .ok_or_else(|| TdsError::InvalidNeighbors {
+                    reason: NeighborValidationError::MirrorFacetMissing {
+                        simplex_uuid,
+                        facet_index: facet_idx,
+                        neighbor_uuid: neighbor.uuid(),
+                        context: "checking reciprocal slots before neighbor repair".to_string(),
+                    },
+                })?;
+            new_back_references.push((neighbor_key, mirror_idx));
+        }
+
+        let simplex = self
+            .simplex_mut(simplex_key)
+            .ok_or_else(|| TdsError::SimplexNotFound {
+                simplex_key,
+                context: "committing neighbor repair".to_string(),
+            })?;
+        Self::set_simplex_neighbors_normalized(simplex, neighbors)?;
+        for (neighbor_key, mirror_idx) in stale_back_references {
+            let neighbor =
+                self.simplices
+                    .get_mut(neighbor_key)
+                    .ok_or_else(|| TdsError::SimplexNotFound {
+                        simplex_key: neighbor_key,
+                        context: "committing stale reciprocal cleanup".to_string(),
+                    })?;
+            Self::set_neighbor_slot(neighbor, mirror_idx, None)?;
+        }
+        for (neighbor_key, mirror_idx) in new_back_references {
+            let neighbor =
+                self.simplices
+                    .get_mut(neighbor_key)
+                    .ok_or_else(|| TdsError::SimplexNotFound {
+                        simplex_key: neighbor_key,
+                        context: "committing reciprocal neighbor repair".to_string(),
+                    })?;
+            Self::set_neighbor_slot(neighbor, mirror_idx, Some(simplex_key))?;
+        }
+
+        self.bump_generation();
+        Ok(())
+    }
+
     /// Assigns incident simplices to vertices in the triangulation.
     ///
     /// This method establishes a mapping from each vertex to one of the simplices that contains it,
@@ -1789,19 +2044,128 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         Ok(())
     }
 
-    /// Clears all neighbor relationships between simplices in the triangulation.
+    /// Updates one derived incident-simplex hint after proving it against canonical incidence.
     ///
-    /// This intentionally leaves the TDS below Level-2 structural validity until
-    /// neighbors are rebuilt. It is crate-internal so callers cannot observe or
-    /// depend on invalid intermediate topology through the public API.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn clear_all_neighbors(&mut self) {
-        for simplex in self.simplices.values_mut() {
-            simplex.clear_neighbors();
+    /// Higher-level triangulation algorithms use this instead of borrowing a
+    /// mutable [`Vertex`] from TDS storage. The complete incidence relation
+    /// remains canonical in `vertex_to_simplices`; this method only publishes a
+    /// hint after the named simplex is live, contains the vertex, and appears in
+    /// that canonical relation.
+    pub(crate) fn set_incident_simplex_hint(
+        &mut self,
+        vertex_key: VertexKey,
+        simplex_key: SimplexKey,
+    ) -> Result<(), TdsError> {
+        if !self.vertices.contains_key(vertex_key) {
+            return Err(TdsError::VertexNotFound {
+                vertex_key,
+                context: "setting incident-simplex hint".to_string(),
+            });
         }
-        // Topology changed; invalidate caches.
+
+        let simplex = self
+            .simplices
+            .get(simplex_key)
+            .ok_or_else(|| TdsError::SimplexNotFound {
+                simplex_key,
+                context: format!("incident-simplex hint for vertex {vertex_key:?}"),
+            })?;
+        if !simplex.contains_vertex(vertex_key)
+            || !self
+                .vertex_to_simplices
+                .simplex_keys(vertex_key)
+                .any(|candidate| candidate == simplex_key)
+        {
+            return Err(TdsError::VertexIncidenceMismatch {
+                vertex_key,
+                simplex_key,
+            });
+        }
+
+        let vertex = self
+            .vertices
+            .get_mut(vertex_key)
+            .ok_or_else(|| TdsError::VertexNotFound {
+                vertex_key,
+                context: "committing incident-simplex hint".to_string(),
+            })?;
+        vertex.set_incident_simplex(Some(simplex_key));
+        Ok(())
+    }
+
+    /// Reverses the stored orientation of a checked simplex set.
+    ///
+    /// This is the narrow TDS-owned primitive used by triangulation-level
+    /// geometric orientation repair. It validates every target before the
+    /// write phase, swaps vertices together with their aligned neighbor and
+    /// periodic-offset slots, and invalidates generation-keyed views exactly
+    /// once. Callers must restore coherent relative orientation with
+    /// [`Self::normalize_coherent_orientation`] before publishing the enclosing
+    /// topology transition.
+    pub(crate) fn reverse_simplex_orientations(
+        &mut self,
+        simplex_keys: &[SimplexKey],
+    ) -> Result<(), TdsError> {
+        if simplex_keys.is_empty() {
+            return Ok(());
+        }
+
+        let mut targets = SimplexKeySet::default();
+        targets.reserve(simplex_keys.len());
+        for &simplex_key in simplex_keys {
+            if !targets.insert(simplex_key) {
+                continue;
+            }
+            let simplex =
+                self.simplices
+                    .get(simplex_key)
+                    .ok_or_else(|| TdsError::SimplexNotFound {
+                        simplex_key,
+                        context: "checking orientation-reversal target".to_string(),
+                    })?;
+            let vertex_count = simplex.number_of_vertices();
+            if vertex_count < 2 {
+                return Err(TdsError::DimensionMismatch {
+                    expected: 2,
+                    actual: vertex_count,
+                    context: format!(
+                        "simplex {simplex_key:?} needs at least two vertices for orientation reversal"
+                    ),
+                });
+            }
+            if vertex_count != D + 1 {
+                return Err(TdsError::DimensionMismatch {
+                    expected: D + 1,
+                    actual: vertex_count,
+                    context: format!(
+                        "{D}-dimensional orientation-reversal target simplex vertex count"
+                    ),
+                });
+            }
+            Self::validate_existing_neighbor_buffer_arity(
+                simplex,
+                "checking orientation-reversal target",
+            )?;
+            if let Some(offsets) = simplex.periodic_vertex_offsets()
+                && offsets.len() != vertex_count
+            {
+                return Err(TdsError::InvalidSimplex {
+                    simplex_id: simplex.uuid(),
+                    source: SimplexValidationError::PeriodicOffsetLengthMismatch {
+                        expected: vertex_count,
+                        found: offsets.len(),
+                    },
+                });
+            }
+        }
+
+        for (simplex_key, simplex) in &mut self.simplices {
+            if targets.contains(&simplex_key) {
+                simplex.swap_vertex_slots(0, 1);
+            }
+        }
         self.bump_generation();
+        Ok(())
     }
 
     pub(crate) fn normalize_coherent_orientation(&mut self) -> Result<(), TdsError> {
@@ -2095,6 +2459,48 @@ mod tests {
     use slotmap::KeyData;
     use std::assert_matches;
     use uuid::Uuid;
+
+    #[test]
+    fn complete_construction_rejects_an_incomplete_tds_without_changing_state() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+
+        let error = tds.complete_construction().unwrap_err();
+
+        assert_matches!(
+            error,
+            TdsError::IncompleteConstruction {
+                dimension: 2,
+                vertex_count: 0,
+                simplex_count: 0,
+            }
+        );
+        assert_matches!(
+            tds.construction_state(),
+            TriangulationConstructionState::Incomplete(0)
+        );
+    }
+
+    impl<U, V, const D: usize> Tds<U, V, D> {
+        /// Inserts a simplex while deliberately bypassing topology safety checks.
+        pub(crate) fn insert_simplex_bypassing_topology_checks_for_test(
+            &mut self,
+            simplex: Simplex<V, D>,
+        ) -> Result<SimplexKey, TdsConstructionError> {
+            self.insert_simplex_with_mapping_impl(
+                simplex,
+                SimplexInsertionTopologyCheck::Prechecked,
+            )
+        }
+
+        /// Clears all neighbor relationships for malformed-state fixtures.
+        #[inline]
+        pub(crate) fn clear_all_neighbors(&mut self) {
+            for simplex in self.simplices.values_mut() {
+                simplex.clear_neighbors();
+            }
+            self.bump_generation();
+        }
+    }
 
     // =============================================================================
     // TEST HELPER FUNCTIONS
@@ -2785,16 +3191,16 @@ mod tests {
         tds.assign_neighbors().unwrap();
 
         // Force deterministic incident_simplex pointers that require repair.
-        tds.vertex_mut(a)
+        tds.vertex_mut_for_test(a)
             .unwrap()
             .set_incident_simplex(Some(simplex1));
-        tds.vertex_mut(b)
+        tds.vertex_mut_for_test(b)
             .unwrap()
             .set_incident_simplex(Some(simplex1));
-        tds.vertex_mut(c)
+        tds.vertex_mut_for_test(c)
             .unwrap()
             .set_incident_simplex(Some(simplex1));
-        tds.vertex_mut(d)
+        tds.vertex_mut_for_test(d)
             .unwrap()
             .set_incident_simplex(Some(simplex2));
 
@@ -2851,7 +3257,7 @@ mod tests {
         // Manually set a stale incident-simplex hint. Canonical isolation is
         // defined by the maintained vertex→simplices index, not this optional hint.
         let fake_simplex_key = SimplexKey::from(KeyData::from_ffi(1));
-        tds.vertex_mut(vk)
+        tds.vertex_mut_for_test(vk)
             .unwrap()
             .set_incident_simplex(Some(fake_simplex_key));
 
@@ -2921,16 +3327,16 @@ mod tests {
         // - ORIGIN points at simplex1 so star discovery can use the neighbor-walk fast path.
         // - EAST/NORTH point at simplex1 so removal must repair them to simplex2.
         // - DIAGONAL points at simplex2 and should remain valid.
-        tds.vertex_mut(origin_key)
+        tds.vertex_mut_for_test(origin_key)
             .unwrap()
             .set_incident_simplex(Some(simplex1));
-        tds.vertex_mut(east_key)
+        tds.vertex_mut_for_test(east_key)
             .unwrap()
             .set_incident_simplex(Some(simplex1));
-        tds.vertex_mut(north_key)
+        tds.vertex_mut_for_test(north_key)
             .unwrap()
             .set_incident_simplex(Some(simplex1));
-        tds.vertex_mut(diagonal_key)
+        tds.vertex_mut_for_test(diagonal_key)
             .unwrap()
             .set_incident_simplex(Some(simplex2));
 
@@ -3010,6 +3416,371 @@ mod tests {
             .into_inner();
         assert_matches!(err, TdsError::InvalidNeighbors { .. });
     }
+
+    struct StageNeighborSlotFixture<const D: usize> {
+        tds: Tds<(), (), D>,
+        simplex_only_vertex: VertexKey,
+        neighbor_only_vertex: VertexKey,
+        simplex_key: SimplexKey,
+        neighbor_key: SimplexKey,
+    }
+
+    /// Builds adjacent simplices for neighbor-slot rejection tests.
+    fn stage_neighbor_slot_fixture<const D: usize>() -> StageNeighborSlotFixture<D> {
+        assert!((2..=5).contains(&D));
+
+        let mut tds: Tds<(), (), D> = Tds::empty();
+        let mut shared_vertices = Vec::with_capacity(D);
+        for shared_index in 0..D {
+            let mut coordinates = [0.0; D];
+            if shared_index > 0 {
+                coordinates[shared_index - 1] = 1.0;
+            }
+            shared_vertices.push(
+                tds.insert_vertex_with_mapping(vertex!(coordinates).unwrap())
+                    .unwrap(),
+            );
+        }
+
+        let mut simplex_only_coordinates = [0.0; D];
+        simplex_only_coordinates[D - 1] = 1.0;
+        let simplex_only_vertex = tds
+            .insert_vertex_with_mapping(vertex!(simplex_only_coordinates).unwrap())
+            .unwrap();
+        let mut neighbor_only_coordinates = [0.0; D];
+        neighbor_only_coordinates[D - 1] = -1.0;
+        let neighbor_only_vertex = tds
+            .insert_vertex_with_mapping(vertex!(neighbor_only_coordinates).unwrap())
+            .unwrap();
+
+        let mut simplex_vertices = shared_vertices.clone();
+        simplex_vertices.push(simplex_only_vertex);
+        let simplex_key = tds
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(simplex_vertices, None).unwrap(),
+            )
+            .unwrap();
+        shared_vertices.reverse();
+        shared_vertices.push(neighbor_only_vertex);
+        let neighbor_key = tds
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(shared_vertices, None).unwrap())
+            .unwrap();
+
+        StageNeighborSlotFixture {
+            tds,
+            simplex_only_vertex,
+            neighbor_only_vertex,
+            simplex_key,
+            neighbor_key,
+        }
+    }
+
+    fn assert_reverse_simplex_orientations_rejects_malformed_neighbors_without_mutation<
+        const D: usize,
+    >() {
+        let StageNeighborSlotFixture {
+            mut tds,
+            simplex_key,
+            neighbor_key,
+            ..
+        } = stage_neighbor_slot_fixture::<D>();
+        let neighbor = tds.simplex_mut(neighbor_key).unwrap();
+        neighbor
+            .set_neighbors_from_keys(vec![None; D + 1])
+            .expect("test neighbor buffer should match simplex arity");
+        neighbor.neighbor_slots_mut().unwrap().truncate(D);
+
+        let simplex_vertices_before = tds.simplex(simplex_key).unwrap().vertices().to_vec();
+        let neighbor_vertices_before = tds.simplex(neighbor_key).unwrap().vertices().to_vec();
+        let neighbor_slots_before = tds
+            .simplex(neighbor_key)
+            .unwrap()
+            .neighbor_slots()
+            .unwrap()
+            .clone();
+        let generation = tds.generation();
+
+        let error = tds
+            .reverse_simplex_orientations(&[simplex_key, neighbor_key])
+            .unwrap_err();
+
+        assert_matches!(
+            error,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::LengthMismatch {
+                    actual,
+                    expected,
+                    ..
+                }
+            } if actual == D && expected == D + 1
+        );
+        assert_eq!(
+            tds.simplex(simplex_key).unwrap().vertices(),
+            simplex_vertices_before
+        );
+        assert_eq!(
+            tds.simplex(neighbor_key).unwrap().vertices(),
+            neighbor_vertices_before
+        );
+        assert_eq!(
+            tds.simplex(neighbor_key).unwrap().neighbor_slots(),
+            Some(&neighbor_slots_before)
+        );
+        assert_eq!(tds.generation(), generation);
+    }
+
+    fn assert_reverse_simplex_orientations_rejects_misaligned_offsets_without_mutation<
+        const D: usize,
+    >() {
+        let StageNeighborSlotFixture {
+            mut tds,
+            simplex_key,
+            neighbor_key,
+            ..
+        } = stage_neighbor_slot_fixture::<D>();
+        tds.simplex_mut(neighbor_key)
+            .unwrap()
+            .periodic_vertex_offsets = Some(vec![[0_i8; D]; D].into());
+
+        let simplex_vertices_before = tds.simplex(simplex_key).unwrap().vertices().to_vec();
+        let neighbor_vertices_before = tds.simplex(neighbor_key).unwrap().vertices().to_vec();
+        let offsets_before = tds
+            .simplex(neighbor_key)
+            .unwrap()
+            .periodic_vertex_offsets()
+            .unwrap()
+            .to_vec();
+        let generation = tds.generation();
+
+        let error = tds
+            .reverse_simplex_orientations(&[simplex_key, neighbor_key])
+            .unwrap_err();
+
+        assert_matches!(
+            error,
+            TdsError::InvalidSimplex {
+                source: SimplexValidationError::PeriodicOffsetLengthMismatch {
+                    expected,
+                    found,
+                },
+                ..
+            } if expected == D + 1 && found == D
+        );
+        assert_eq!(
+            tds.simplex(simplex_key).unwrap().vertices(),
+            simplex_vertices_before
+        );
+        assert_eq!(
+            tds.simplex(neighbor_key).unwrap().vertices(),
+            neighbor_vertices_before
+        );
+        assert_eq!(
+            tds.simplex(neighbor_key).unwrap().periodic_vertex_offsets(),
+            Some(offsets_before.as_slice())
+        );
+        assert_eq!(tds.generation(), generation);
+    }
+
+    fn assert_stage_neighbor_slot_rejects_invalid_candidates_without_mutation<const D: usize>() {
+        let StageNeighborSlotFixture {
+            mut tds,
+            simplex_key,
+            neighbor_key,
+            ..
+        } = stage_neighbor_slot_fixture::<D>();
+        let generation = tds.generation();
+        let missing_key = SimplexKey::from(KeyData::from_ffi(0xDEAD));
+
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(missing_key, 0, None)
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::SimplexNotFound { simplex_key, .. } if simplex_key == missing_key
+        );
+
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, D + 1, None)
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::IndexOutOfBounds {
+                index,
+                bound,
+                ..
+            } if index == D + 1 && bound == D + 1
+        );
+
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, 0, Some(simplex_key))
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::NonPeriodicSelfNeighbor {
+                    simplex_key: rejected,
+                    facet_index: 0,
+                    ..
+                }
+            } if rejected == simplex_key
+        );
+
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, 0, Some(missing_key))
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::MissingNeighborSimplex {
+                    neighbor_key: missing,
+                    facet_index: 0,
+                    ..
+                }
+            } if missing == missing_key
+        );
+
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, 0, Some(neighbor_key))
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::MirrorFacetMissing { facet_index: 0, .. }
+            }
+        );
+        assert_eq!(tds.generation(), generation);
+    }
+
+    fn assert_stage_neighbor_slot_rejects_malformed_simplices_and_buffers_without_mutation<
+        const D: usize,
+    >() {
+        let StageNeighborSlotFixture {
+            mut tds,
+            simplex_only_vertex,
+            neighbor_only_vertex,
+            simplex_key,
+            neighbor_key,
+        } = stage_neighbor_slot_fixture::<D>();
+        let generation = tds.generation();
+
+        let simplex = tds.simplex_mut(simplex_key).unwrap();
+        simplex
+            .set_neighbors_from_keys(vec![None; D + 1])
+            .expect("test neighbor buffer should match simplex arity");
+        simplex.neighbor_slots_mut().unwrap().truncate(D);
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, D, Some(neighbor_key))
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::LengthMismatch {
+                    actual,
+                    expected,
+                    ..
+                }
+            } if actual == D && expected == D + 1
+        );
+
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .set_neighbors_from_keys(vec![None; D + 1])
+            .expect("test neighbor buffer should match simplex arity");
+        let neighbor = tds.simplex_mut(neighbor_key).unwrap();
+        neighbor
+            .set_neighbors_from_keys(vec![None; D + 1])
+            .expect("test neighbor buffer should match simplex arity");
+        neighbor.neighbor_slots_mut().unwrap().truncate(D);
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, D, Some(neighbor_key))
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::LengthMismatch {
+                    actual,
+                    expected,
+                    ..
+                }
+            } if actual == D && expected == D + 1
+        );
+
+        tds.simplex_mut(neighbor_key)
+            .unwrap()
+            .set_neighbors_from_keys(vec![None; D + 1])
+            .expect("test neighbor buffer should match simplex arity");
+        tds.simplex_mut(neighbor_key)
+            .unwrap()
+            .push_vertex_key(simplex_only_vertex);
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, D, Some(neighbor_key))
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::DimensionMismatch {
+                expected,
+                actual,
+                ..
+            } if expected == D + 1 && actual == D + 2
+        );
+
+        tds.push_first_simplex_vertex_key_storage_only_for_test(neighbor_only_vertex);
+        assert_eq!(
+            tds.simplex(simplex_key).unwrap().number_of_vertices(),
+            D + 2
+        );
+        let error = tds
+            .stage_neighbor_slot_for_topology_candidate(simplex_key, D, None)
+            .unwrap_err()
+            .into_inner();
+        assert_matches!(
+            error,
+            TdsError::DimensionMismatch {
+                expected,
+                actual,
+                ..
+            } if expected == D + 1 && actual == D + 2
+        );
+        assert_eq!(tds.generation(), generation);
+    }
+
+    macro_rules! generate_stage_neighbor_slot_tests {
+        ($($dim:expr),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<reverse_simplex_orientations_rejects_malformed_neighbors_without_mutation_ $dim d>]() {
+                        assert_reverse_simplex_orientations_rejects_malformed_neighbors_without_mutation::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<reverse_simplex_orientations_rejects_misaligned_offsets_without_mutation_ $dim d>]() {
+                        assert_reverse_simplex_orientations_rejects_misaligned_offsets_without_mutation::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<stage_neighbor_slot_rejects_invalid_candidates_without_mutation_ $dim d>]() {
+                        assert_stage_neighbor_slot_rejects_invalid_candidates_without_mutation::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<stage_neighbor_slot_rejects_malformed_simplices_and_buffers_without_mutation_ $dim d>]() {
+                        assert_stage_neighbor_slot_rejects_malformed_simplices_and_buffers_without_mutation::<$dim>();
+                    }
+                )+
+            }
+        };
+    }
+
+    generate_stage_neighbor_slot_tests!(2, 3, 4, 5);
 
     #[test]
     fn test_set_neighbors_by_key_updates_reciprocal_back_reference() {
@@ -3168,13 +3939,49 @@ mod tests {
             .unwrap();
 
         // Corrupt incident_simplex and ensure it gets cleared.
-        tds.vertex_mut(vkey)
+        tds.vertex_mut_for_test(vkey)
             .unwrap()
             .set_incident_simplex(Some(SimplexKey::from(KeyData::from_ffi(u64::MAX))));
         assert!(tds.vertex(vkey).unwrap().incident_simplex().is_some());
 
         tds.assign_incident_simplices().unwrap();
         assert!(tds.vertex(vkey).unwrap().incident_simplex().is_none());
+    }
+
+    #[test]
+    fn set_incident_simplex_hint_accepts_only_canonical_incidence() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let a = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
+            .unwrap();
+        let isolated = tds
+            .insert_vertex_with_mapping(vertex!([2.0, 2.0]).unwrap())
+            .unwrap();
+        let simplex = tds
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
+            .unwrap();
+
+        tds.set_incident_simplex_hint(a, simplex).unwrap();
+        assert_eq!(tds.vertex(a).unwrap().incident_simplex(), Some(simplex));
+
+        let error = tds
+            .set_incident_simplex_hint(isolated, simplex)
+            .unwrap_err();
+        assert_matches!(
+            error,
+            TdsError::VertexIncidenceMismatch {
+                vertex_key,
+                simplex_key,
+            } if vertex_key == isolated && simplex_key == simplex
+        );
+        assert!(tds.vertex(isolated).unwrap().incident_simplex().is_none());
+        tds.validate().unwrap();
     }
 
     // =========================================================================

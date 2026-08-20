@@ -304,6 +304,9 @@ property families retain that default coverage with a Windows-only 60-second
 override because their release runtimes sit at the 10-second boundary on
 Windows runners; non-Windows platforms keep the normal budget. `test-cli` owns
 the feature-gated CLI tests, and `test-rust` composes every Rust test class once.
+The LLVM-instrumented coverage profile retains its 300-second default watchdog
+and grants a 1,200-second override only to the three compact `T^3` builder cases
+that exercise periodic-image construction.
 
 ```bash
 just ci
@@ -672,7 +675,9 @@ common Homebrew metadata
 directories, including the active SDK metadata used for system compression
 libraries, before it asks for a manual `PKG_CONFIG_PATH`. An already-correct
 Tectonic installation does not require those native build prerequisites. Paper
-CI installs the platform native package set explicitly.
+CI installs the platform native package set explicitly, caches Tectonic's
+versioned user bundle directory, and warms a cold bundle cache with bounded
+download retries before starting the paper build.
 
 Reviewer-facing validation diagrams under `docs/assets/validation/` use the
 same deterministic notebook with a separate explicit output switch:

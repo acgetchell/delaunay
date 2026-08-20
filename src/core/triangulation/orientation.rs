@@ -22,6 +22,25 @@ use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::topology::traits::global_topology_model::GlobalTopologyModel;
 
+const POSITIVE_ORIENTATION_PROMOTION_MAX_PASSES: usize = 3;
+
+fn negative_orientation_error<V, const D: usize>(
+    simplex_key: SimplexKey,
+    simplex: &Simplex<V, D>,
+    scope_label: &str,
+) -> TdsError {
+    let vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        simplex.vertices().iter().copied().collect();
+    TdsError::Geometric {
+        source: GeometricError::NegativeOrientation {
+            message: format!(
+                "Simplex {:?} (key {simplex_key:?}, vertices {vertex_keys:?}) has negative {scope_label} orientation; expected positive canonical orientation",
+                simplex.uuid(),
+            ),
+        },
+    }
+}
+
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
     K: Kernel<D, Scalar = f64>,
@@ -155,14 +174,11 @@ where
                     "negative geometric orientation detected during validation",
                 );
 
-                return Err(TdsError::Geometric {
-                    source: GeometricError::NegativeOrientation {
-                        message: format!(
-                            "Simplex {:?} (key {simplex_key:?}, vertices {vertex_keys:?}) has negative geometric orientation; expected positive canonical orientation",
-                            simplex.uuid(),
-                        ),
-                    },
-                });
+                return Err(negative_orientation_error(
+                    simplex_key,
+                    simplex,
+                    "geometric",
+                ));
             }
         }
 
@@ -199,14 +215,11 @@ where
                     "negative geometric orientation detected during local validation",
                 );
 
-                return Err(TdsError::Geometric {
-                    source: GeometricError::NegativeOrientation {
-                        message: format!(
-                            "Simplex {:?} (key {simplex_key:?}, vertices {vertex_keys:?}) has negative geometric orientation; expected positive canonical orientation",
-                            simplex.uuid(),
-                        ),
-                    },
-                });
+                return Err(negative_orientation_error(
+                    simplex_key,
+                    simplex,
+                    "geometric",
+                ));
             }
         }
 
@@ -247,20 +260,7 @@ where
             return Ok(false);
         }
 
-        for simplex_key in negative_simplices {
-            let simplex =
-                self.tds
-                    .simplex_mut(simplex_key)
-                    .ok_or_else(|| TdsError::SimplexNotFound {
-                        simplex_key,
-                        context: "applying positive-orientation promotion".to_string(),
-                    })?;
-            if simplex.number_of_vertices() >= 2 {
-                simplex.swap_vertex_slots(0, 1);
-            }
-        }
-
-        self.tds.mark_topology_modified();
+        self.tds.reverse_simplex_orientations(&negative_simplices)?;
         Ok(true)
     }
 
@@ -347,26 +347,9 @@ where
             }
         }
 
-        let mut flipped_any = false;
-        for simplex_key in simplices_to_flip {
-            let simplex =
-                self.tds
-                    .simplex_mut(simplex_key)
-                    .ok_or_else(|| TdsError::SimplexNotFound {
-                        simplex_key,
-                        context: "applying component orientation-sign canonicalization".to_string(),
-                    })?;
-            if simplex.number_of_vertices() >= 2 {
-                simplex.swap_vertex_slots(0, 1);
-                flipped_any = true;
-            }
-        }
-
-        if flipped_any {
-            self.tds.mark_topology_modified();
-        }
-
-        Ok(())
+        self.tds
+            .reverse_simplex_orientations(&simplices_to_flip)
+            .map_err(InsertionError::from)
     }
 
     /// Normalizes coherent orientation and promotes geometric orientation to the positive sign.
@@ -383,7 +366,7 @@ where
         self.tds.normalize_coherent_orientation()?;
         self.canonicalize_component_orientation_signs()?;
 
-        for _ in 0..3 {
+        for _ in 0..POSITIVE_ORIENTATION_PROMOTION_MAX_PASSES {
             if !self.promote_simplices_to_positive_orientation()? {
                 break;
             }
@@ -421,10 +404,6 @@ where
     }
 
     /// Canonicalize a set of newly created simplices to positive geometric orientation.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "debug-only orientation diagnostics with dedup add conditional branches"
-    )]
     pub(crate) fn canonicalize_positive_orientation_for_simplices(
         &mut self,
         simplices: &SimplexKeyBuffer,
@@ -463,24 +442,8 @@ where
                     None
                 };
 
-                let simplex =
-                    self.tds
-                        .simplex_mut(simplex_key)
-                        .ok_or_else(|| TdsError::SimplexNotFound {
-                            simplex_key,
-                            context: "applying insertion orientation canonicalization".to_string(),
-                        })?;
-                if simplex.number_of_vertices() < 2 {
-                    return Err(TdsError::DimensionMismatch {
-                        expected: 2,
-                        actual: simplex.number_of_vertices(),
-                        context: format!(
-                            "simplex {simplex_key:?} needs >= 2 vertices for orientation canonicalization"
-                        ),
-                    }
-                    .into());
-                }
-                simplex.swap_vertex_slots(0, 1);
+                self.tds
+                    .reverse_simplex_orientations(std::slice::from_ref(&simplex_key))?;
 
                 #[cfg(debug_assertions)]
                 if debug_orientation {

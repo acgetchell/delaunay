@@ -5,33 +5,54 @@ policy, and architecture principles. For import guidance, see
 [`prelude_reference.md`](prelude_reference.md). For file-internal section
 ordering, see [`module_patterns.md`](module_patterns.md).
 
+## Shared Refinement Boundary
+
+- `src/refinement.rs` - generic recoverable `RefinementError<T, E>` carrier for
+  consuming transitions between proof-bearing owners. It keeps the accepted
+  lower-layer owner attached to the typed rejection reason on failure.
+
 ## Core Layer
 
 `src/core/` contains triangulation data structures and algorithm machinery:
 
-- `tds/storage.rs` - main `Tds` storage, accessors, identity helpers, and
-  construction tests.
+- `tds/storage.rs` - proof-bearing Levels 1–2 `Tds` storage, read-only
+  accessors, identity helpers, and construction tests. Canonical fields remain
+  visible only inside `core::tds`.
 - `tds/errors.rs` - TDS error/report vocabulary re-export boundary.
 - `tds/equality.rs` - TDS equality implementation and stable simplex identity
   helpers.
 - `tds/incidence.rs` - invariant-bearing vertex-to-simplices incidence index.
 - `tds/keys.rs` - slotmap-backed `VertexKey` and `SimplexKey` handle types.
-- `tds/mutation.rs` - TDS topology mutation, orientation repair, and neighbor
-  maintenance.
+- `tds/mutation.rs` - checked TDS topology transitions, construction
+  completion, orientation repair, incidence updates, and neighbor maintenance.
+  Higher proof owners delegate storage edits here.
 - `tds/snapshot.rs` - persistence boundary from raw codec records into
   validated UUID snapshots before hydration allocates fresh slotmap keys.
 - `tds/validation.rs` - Level 2 Combinatorial Consistency validation and adjacency checks.
-- `triangulation.rs` - generic triangulation layer with kernel.
-- `construction.rs` - generic construction helpers and initial-simplex setup.
-- `insertion.rs` - generic transactional insertion, duplicate detection, and
+- `triangulation/model.rs` - proof-bearing Levels 1–4 `Triangulation` domain
+  owner and kernel/topology metadata. It owns a Levels 1–2 `Tds` without raw
+  mutable access to its canonical storage.
+- `triangulation/construction.rs` - generic construction helpers and
+  initial-simplex setup.
+- `triangulation/insertion.rs` - generic transactional insertion, duplicate detection, and
   insertion telemetry.
-- `orientation.rs` - simplex orientation validation, lifted-coordinate
+- `triangulation/orientation.rs` - simplex orientation validation, lifted-coordinate
   handling, and positive-orientation canonicalization.
-- `query.rs` - read-only generic triangulation accessors, adjacency indices,
-  and topology traversal helpers.
-- `repair.rs` - generic local topology repair, stale incident-simplex repair,
+- `triangulation/query.rs` - read-only generic triangulation accessors,
+  adjacency indices, barycenters, and topology traversal helpers.
+- `triangulation/repair.rs` - generic local topology repair, stale incident-simplex repair,
   and vertex-deletion cavity retriangulation.
-- `validation.rs` - generic validation vocabulary and Level 3 orchestration.
+- `triangulation/rollback.rs` - rollback guards for generic mutation windows.
+- `tds/rollback.rs` - canonical TDS snapshot ownership plus the shared
+  transaction window used by nested proof refinements without duplicate
+  snapshots.
+- `triangulation/validation.rs` - generic validation vocabulary and Level 3 orchestration.
+- `triangulation/realization.rs` - Level 4 realization validation and the
+  checked TDS-to-`Triangulation` restoration boundary.
+- `triangulation/flips.rs` - public primitive bistellar-edit contract, defined
+  only for the generic triangulation owner.
+- `triangulation/pachner.rs` - composed Pachner workflow over generic
+  triangulations.
 - `vertex.rs`, `simplex.rs`, and `facet.rs` - core geometric primitives.
 - `edge.rs` - canonical `EdgeKey` for topology traversal.
 - `adjacency.rs` - optional lifetime-bound topology indexes:
@@ -103,17 +124,16 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
   helpers.
 - `triangulation.rs` - `DelaunayTriangulation` storage type and insertion-state
   cache.
-- `delaunayize.rs` - bounded topology repair plus flip-based Delaunay repair,
-  with optional fallback rebuild.
-- `flips.rs` - high-level bistellar flip primitive trait and supporting public
-  types.
-- `pachner.rs` - unified Pachner move enum, result, and dispatch trait over the
-  primitive flip layer.
+- `delaunayize.rs` - consuming flip-based promotion from a Levels 1–4
+  `Triangulation` to a Levels 1–5 `DelaunayTriangulation`, with optional
+  fallback rebuild. Raw-TDS PL-manifold repair remains an orthogonal core
+  transformation before Levels 1–4 restoration.
 - `locality.rs` - local seed/frontier helpers for Hilbert-local construction
   and repair.
 - `repair.rs` - Delaunay repair policies, rebuild config, and repair outcomes.
-- `serialization.rs` - conversion to/from `Tds` with topology metadata reset
-  rules.
+- `serialization.rs` - versioned owner-level persistence that stores the
+  canonical `Tds` plus topology guarantee, global topology, and validation
+  policy, then re-proves Levels 3–5 during restoration.
 - `spherical.rs` - bounded `S^2`/`S^3` construction,
   realization-validation, and empty-cap Delaunay backend using the topology
   space coordinate/metric backend.
@@ -123,10 +143,12 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
   repair-oriented violation reports used by Level 5 validation APIs.
 
 `src/lib.rs` wires public modules, root re-exports, focused preludes, and the
-crate-level documentation map. Delaunay-facing modules are exposed directly as
+crate-level documentation map. Public workflow modules are exposed directly as
 `delaunay::builder`, `delaunay::construction`, `delaunay::flips`,
-`delaunay::repair`, `delaunay::validation`, and focused preludes rather than
-through a nested `delaunay::delaunay` facade.
+`delaunay::pachner`, `delaunay::repair`, `delaunay::validation`, and focused
+preludes rather than through a nested `delaunay::delaunay` facade. The physical
+location of `flips` and `pachner` under `core/triangulation/` records that these
+operations require only the Levels 1–4 owner.
 
 ## I/O And Export Layer
 
@@ -136,9 +158,10 @@ through a nested `delaunay::delaunay` facade.
   visualization tools, analysis pipelines, and downstream crates.
 
 This layer is distinct from the TDS snapshot/hydration boundary. TDS serde
-remains the canonical validated persistence path; `io::visualization` exposes
-stable UUID-based records for consumers that should not depend on runtime
-slotmap handles.
+persists the Levels 1–2 owner; Delaunay serde wraps that snapshot with the
+higher-layer proof context needed for validated restoration.
+`io::visualization` exposes stable UUID-based records for consumers that should
+not depend on runtime slotmap handles.
 
 ## Topology Layer
 

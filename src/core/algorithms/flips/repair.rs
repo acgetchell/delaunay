@@ -1,4 +1,11 @@
 //! Queued flip-based Delaunay verification, repair, and diagnostics.
+//!
+//! Incremental topological flipping for regular triangulations provides the
+//! mathematical basis for this repair strategy \[4]. The implementation adds
+//! explicit PL-manifold preconditions, finite work budgets, rollback, and final
+//! certification; the theorem does not turn every arbitrary higher-dimensional
+//! local flip schedule into an unconditional convergence guarantee. See
+//! `REFERENCES.md` for the numbered bibliography.
 
 #![forbid(unsafe_code)]
 
@@ -8,18 +15,19 @@ use super::{
     FacetHandle, FastHashMap, FastHashSet, FlipDirection, FlipError, FlipSignature, GlobalTopology,
     GlobalTopologyModelAdapter, Instant, Kernel, LastAppliedFlip, MAX_REPEAT_SIGNATURE,
     RepairAttemptConfig, RepairDiagnostics, RepairQueueOrder, RepairQueues, RidgeHandle,
-    RobustKernel, SimplexKey, SimplexKeyBuffer, Tds, TdsRollbackTransaction, TopologicalOperation,
-    TopologyGuarantee, TriangleHandle, Triangulation, VecDeque, VertexKey, apply_delaunay_flip_k2,
-    build_k2_flip_context, build_k2_flip_context_from_edge, build_k3_flip_context,
-    build_k3_flip_context_from_triangle, debug_postcondition_facet_context, debug_ridge_context,
-    default_max_flips, delaunay_violation_k2_for_facet, delaunay_violation_k3_for_ridge,
-    duration_nanos_saturating, emit_repair_debug_summary, enqueue_facet, enqueue_simplex_facets,
-    env, facet_key_from_vertices, facet_vertices_from_simplex, flip_signature,
-    flip_would_create_degenerate_simplex, is_delaunay_violation_k2, is_delaunay_violation_k3,
-    k2_flip_would_create_degenerate_simplex, non_convergent_error, pop_queue,
-    removed_simplex_frame, repair_ridge_debug_enabled, repair_trace_enabled,
-    ridge_vertices_from_simplex, run_next_edge_repair_step, run_next_facet_repair_step,
-    run_next_ridge_repair_step, run_next_triangle_repair_step, seed_repair_queues,
+    RobustKernel, SimplexKey, SimplexKeyBuffer, Tds, TdsRollbackTransaction, TdsRollbackWindow,
+    TopologicalOperation, TopologyGuarantee, TriangleHandle, Triangulation, VecDeque, VertexKey,
+    apply_delaunay_flip_k2, build_k2_flip_context, build_k2_flip_context_from_edge,
+    build_k3_flip_context, build_k3_flip_context_from_triangle, debug_postcondition_facet_context,
+    debug_ridge_context, default_max_flips, delaunay_violation_k2_for_facet,
+    delaunay_violation_k3_for_ridge, duration_nanos_saturating, emit_repair_debug_summary,
+    enqueue_facet, enqueue_simplex_facets, env, facet_key_from_vertices,
+    facet_vertices_from_simplex, flip_signature, flip_would_create_degenerate_simplex,
+    is_delaunay_violation_k2, is_delaunay_violation_k3, k2_flip_would_create_degenerate_simplex,
+    non_convergent_error, pop_queue, removed_simplex_frame, repair_ridge_debug_enabled,
+    repair_trace_enabled, ridge_vertices_from_simplex, run_next_edge_repair_step,
+    run_next_facet_repair_step, run_next_ridge_repair_step, run_next_triangle_repair_step,
+    seed_repair_queues,
 };
 
 /// Run a single flip-repair attempt using k=2 (and k=3 in 3D+).
@@ -27,6 +35,7 @@ pub(super) fn repair_delaunay_with_flips_k2_k3_attempt<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     kernel: &K,
     seed_simplices: Option<&[SimplexKey]>,
+    global_topology: GlobalTopology<D>,
     config: &RepairAttemptConfig,
 ) -> Result<RepairAttemptOutcome, DelaunayRepairError>
 where
@@ -34,7 +43,14 @@ where
     U: DataType,
     V: DataType,
 {
-    repair_delaunay_with_flips_k2_k3_attempt_timed(tds, kernel, seed_simplices, config, None)
+    repair_delaunay_with_flips_k2_k3_attempt_timed(
+        tds,
+        kernel,
+        seed_simplices,
+        global_topology,
+        config,
+        None,
+    )
 }
 
 /// Run a single flip-repair attempt while reporting queue-family timings.
@@ -46,6 +62,7 @@ pub(super) fn repair_delaunay_with_flips_k2_k3_attempt_timed<K, U, V, const D: u
     tds: &mut Tds<U, V, D>,
     kernel: &K,
     seed_simplices: Option<&[SimplexKey]>,
+    global_topology: GlobalTopology<D>,
     config: &RepairAttemptConfig,
     mut timing: Option<&mut LocalRepairPhaseTiming>,
 ) -> Result<RepairAttemptOutcome, DelaunayRepairError>
@@ -57,8 +74,15 @@ where
     if D < 2 {
         return Err(FlipError::UnsupportedDimension { dimension: D }.into());
     }
+    let topology_model = global_topology.model();
     if D == 2 {
-        return repair_delaunay_with_flips_k2_attempt(tds, kernel, seed_simplices, config);
+        return repair_delaunay_with_flips_k2_attempt(
+            tds,
+            kernel,
+            seed_simplices,
+            &topology_model,
+            config,
+        );
     }
 
     let max_flips = config
@@ -100,6 +124,7 @@ where
                 run_next_ridge_repair_step(
                     tds,
                     kernel,
+                    &topology_model,
                     &mut queues,
                     &mut stats,
                     max_flips,
@@ -116,6 +141,7 @@ where
                     run_next_edge_repair_step(
                         tds,
                         kernel,
+                        &topology_model,
                         &mut queues,
                         &mut stats,
                         max_flips,
@@ -133,6 +159,7 @@ where
                     run_next_triangle_repair_step(
                         tds,
                         kernel,
+                        &topology_model,
                         &mut queues,
                         &mut stats,
                         max_flips,
@@ -154,6 +181,7 @@ where
             run_next_facet_repair_step(
                 tds,
                 kernel,
+                &topology_model,
                 &mut queues,
                 &mut stats,
                 max_flips,
@@ -173,6 +201,7 @@ where
             run_next_ridge_repair_step(
                 tds,
                 kernel,
+                &topology_model,
                 &mut queues,
                 &mut stats,
                 max_flips,
@@ -189,6 +218,7 @@ where
                 run_next_edge_repair_step(
                     tds,
                     kernel,
+                    &topology_model,
                     &mut queues,
                     &mut stats,
                     max_flips,
@@ -206,6 +236,7 @@ where
                 run_next_triangle_repair_step(
                     tds,
                     kernel,
+                    &topology_model,
                     &mut queues,
                     &mut stats,
                     max_flips,
@@ -625,6 +656,7 @@ pub(super) fn repair_delaunay_with_flips_k2_attempt<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     kernel: &K,
     seed_simplices: Option<&[SimplexKey]>,
+    topology_model: &GlobalTopologyModelAdapter<D>,
     config: &RepairAttemptConfig,
 ) -> Result<RepairAttemptOutcome, DelaunayRepairError>
 where
@@ -649,8 +681,6 @@ where
     let mut touched_simplices = SimplexKeyBuffer::new();
     let mut touched_simplex_set = FastHashSet::<SimplexKey>::default();
     let used_full_reseed = seed_simplices.is_none();
-    let topology_model = GlobalTopology::DEFAULT.model();
-
     if let Some(seeds) = seed_simplices {
         for &simplex_key in seeds {
             enqueue_simplex_facets(
@@ -714,7 +744,7 @@ where
         let violates = match is_delaunay_violation_k2(
             tds,
             kernel,
-            &topology_model,
+            topology_model,
             &context,
             config,
             &mut diagnostics,
@@ -847,6 +877,7 @@ pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
     kernel: &K,
     seed_simplices: Option<&[SimplexKey]>,
     topology: TopologyGuarantee,
+    global_topology: GlobalTopology<D>,
     max_flips_override: Option<usize>,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
@@ -854,44 +885,59 @@ where
     U: DataType,
     V: DataType,
 {
-    repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_simplices, topology, max_flips_override)
-        .map(|run| run.stats)
+    repair_delaunay_with_flips_k2_k3_run(
+        tds,
+        kernel,
+        seed_simplices,
+        topology,
+        global_topology,
+        max_flips_override,
+    )
+    .map(|run| run.stats)
 }
 
-pub(super) fn run_full_reseed_retry<K, U, V, const D: usize>(
-    transaction: &mut TdsRollbackTransaction<'_, U, V, D>,
+pub(super) fn run_full_reseed_retry<K, U, V, W, const D: usize>(
+    transaction: &mut W,
     kernel: &K,
+    global_topology: GlobalTopology<D>,
     config: &RepairAttemptConfig,
 ) -> Result<DelaunayRepairRun, DelaunayRepairError>
 where
     K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
+    W: TdsRollbackWindow<U, V, D>,
 {
-    transaction.restore();
+    transaction.restore_rollback_tds();
     let retry_seed_simplices = None;
+    let topology_model = global_topology.model();
     let attempt_result = if D == 2 {
         repair_delaunay_with_flips_k2_attempt(
-            transaction.tds_mut(),
+            transaction.rollback_tds_mut(),
             kernel,
             retry_seed_simplices,
+            &topology_model,
             config,
         )
     } else {
         repair_delaunay_with_flips_k2_k3_attempt(
-            transaction.tds_mut(),
+            transaction.rollback_tds_mut(),
             kernel,
             retry_seed_simplices,
+            global_topology,
             config,
         )
     };
 
     let outcome = attempt_result?;
-    verify_repair_postcondition(
-        transaction.tds_mut(),
+    verify_repair_postcondition_with_topology(
+        transaction.rollback_tds_mut(),
         kernel,
         retry_seed_simplices,
+        global_topology,
+        PostconditionMode::Repair,
         outcome.last_applied_flip.as_ref(),
+        ConnectivityPostcondition::Check,
     )?;
     Ok(repair_run_from_attempt(outcome))
 }
@@ -907,12 +953,52 @@ pub(crate) fn repair_delaunay_with_flips_k2_k3_run<K, U, V, const D: usize>(
     kernel: &K,
     seed_simplices: Option<&[SimplexKey]>,
     topology: TopologyGuarantee,
+    global_topology: GlobalTopology<D>,
     max_flips_override: Option<usize>,
 ) -> Result<DelaunayRepairRun, DelaunayRepairError>
 where
     K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
+{
+    let mut transaction = TdsRollbackTransaction::begin(tds);
+    match repair_delaunay_with_flips_k2_k3_run_in_transaction(
+        &mut transaction,
+        kernel,
+        seed_simplices,
+        topology,
+        global_topology,
+        max_flips_override,
+    ) {
+        Ok(run) => {
+            transaction.commit();
+            Ok(run)
+        }
+        Err(error) => {
+            transaction.rollback();
+            Err(error)
+        }
+    }
+}
+
+/// Runs Delaunay repair inside a rollback window owned by the caller.
+///
+/// This lets a higher proof transition retain the same snapshot through
+/// orientation normalization and final Level 5 certification. The caller must
+/// commit on complete success or roll back before publishing any failure.
+pub(crate) fn repair_delaunay_with_flips_k2_k3_run_in_transaction<K, U, V, W, const D: usize>(
+    transaction: &mut W,
+    kernel: &K,
+    seed_simplices: Option<&[SimplexKey]>,
+    topology: TopologyGuarantee,
+    global_topology: GlobalTopology<D>,
+    max_flips_override: Option<usize>,
+) -> Result<DelaunayRepairRun, DelaunayRepairError>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+    W: TdsRollbackWindow<U, V, D>,
 {
     if D < 2 {
         return Err(FlipError::UnsupportedDimension { dimension: D }.into());
@@ -943,37 +1029,40 @@ where
         max_flips_override,
     };
 
-    // Snapshot the pre-repair state so a failed attempt doesn't poison retries.
-    let mut transaction = TdsRollbackTransaction::begin(tds);
+    let topology_model = global_topology.model();
 
     let attempt1_result = if D == 2 {
         repair_delaunay_with_flips_k2_attempt(
-            transaction.tds_mut(),
+            transaction.rollback_tds_mut(),
             kernel,
             seed_simplices,
+            &topology_model,
             &attempt1,
         )
     } else {
         repair_delaunay_with_flips_k2_k3_attempt(
-            transaction.tds_mut(),
+            transaction.rollback_tds_mut(),
             kernel,
             seed_simplices,
+            global_topology,
             &attempt1,
         )
     };
 
     match attempt1_result {
         Ok(outcome) => {
-            if verify_repair_postcondition(
-                transaction.tds_mut(),
+            if verify_repair_postcondition_with_topology(
+                transaction.rollback_tds_mut(),
                 kernel,
                 seed_simplices,
+                global_topology,
+                PostconditionMode::Repair,
                 outcome.last_applied_flip.as_ref(),
+                ConnectivityPostcondition::Check,
             )
             .is_ok()
             {
                 let run = repair_run_from_attempt(outcome);
-                transaction.commit();
                 return Ok(run);
             }
             if repair_trace_enabled() {
@@ -990,22 +1079,12 @@ where
             }
         }
         Err(err) => {
-            transaction.rollback();
             return Err(err);
         }
     }
 
     // Retry with LIFO + full reseed.
-    match run_full_reseed_retry(&mut transaction, kernel, &attempt2) {
-        Ok(run) => {
-            transaction.commit();
-            Ok(run)
-        }
-        Err(err) => {
-            transaction.rollback();
-            Err(err)
-        }
-    }
+    run_full_reseed_retry(transaction, kernel, global_topology, &attempt2)
 }
 
 /// Run a seeded, bounded Delaunay repair capped to a specific set of simplices.
@@ -1066,6 +1145,8 @@ where
     V: DataType,
 {
     let mut phase_timing = LocalRepairPhaseTiming::default();
+    let global_topology = GlobalTopology::DEFAULT;
+    let topology_model = global_topology.model();
     // Two-attempt strategy: FIFO then LIFO queue ordering.
     // Predicate correctness depends on the caller supplying a kernel with
     // exact predicates (e.g. `AdaptiveKernel` or `RobustKernel`);
@@ -1091,6 +1172,7 @@ where
             transaction.tds_mut(),
             kernel,
             Some(seed_simplices),
+            &topology_model,
             &attempt1,
         )
     } else {
@@ -1098,6 +1180,7 @@ where
             transaction.tds_mut(),
             kernel,
             Some(seed_simplices),
+            global_topology,
             &attempt1,
             Some(&mut phase_timing),
         )
@@ -1159,6 +1242,7 @@ where
             transaction.tds_mut(),
             kernel,
             Some(seed_simplices),
+            &topology_model,
             &attempt2,
         )
     } else {
@@ -1166,6 +1250,7 @@ where
             transaction.tds_mut(),
             kernel,
             Some(seed_simplices),
+            global_topology,
             &attempt2,
             Some(&mut phase_timing),
         )
@@ -1227,31 +1312,6 @@ where
 ///
 /// Public callers should use
 /// [`DelaunayTriangulation::verify_via_flip_predicates`](crate::DelaunayTriangulation::verify_via_flip_predicates)
-/// so the kernel and global topology come from the owning triangulation rather
-/// than being paired manually with a raw TDS.
-///
-/// This helper remains available inside the crate for low-level repair fixtures
-/// that intentionally construct temporary TDS states before wrapping them in an
-/// owner.
-///
-/// # Errors
-///
-/// Returns [`DelaunayRepairError::PostconditionFailed`] if any flip predicate detects
-/// a Delaunay violation, or [`DelaunayRepairError::VerificationFailed`] if a
-/// local predicate cannot be evaluated.
-#[cfg(test)]
-pub(crate) fn verify_tds_via_flip_predicates<K, U, V, const D: usize>(
-    tds: &Tds<U, V, D>,
-    kernel: &K,
-) -> Result<(), DelaunayRepairError>
-where
-    K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
-{
-    verify_delaunay_with_topology(tds, kernel, GlobalTopology::DEFAULT)
-}
-
 /// Crate-internal triangulation verifier for the Delaunay property via local flip predicates.
 ///
 /// Public Delaunay owners expose this as
@@ -1272,10 +1332,18 @@ where
     U: DataType,
     V: DataType,
 {
-    verify_delaunay_with_topology(
+    // `Triangulation` already proves connectivity as part of Levels 1–4.
+    // Promotion to `DelaunayTriangulation` therefore replays only the local
+    // Level 5 predicates instead of treating the proof-bearing owner as raw
+    // TDS input and paying for a redundant whole-complex traversal.
+    verify_repair_postcondition_with_topology(
         &triangulation.tds,
         &triangulation.kernel,
+        None,
         triangulation.global_topology,
+        PostconditionMode::Strict,
+        None,
+        ConnectivityPostcondition::Defer,
     )
 }
 
@@ -1323,30 +1391,6 @@ where
         global_topology,
         PostconditionMode::Strict,
         None,
-        ConnectivityPostcondition::Check,
-    )
-}
-
-/// Keeps legacy Euclidean repair checks on the same validation path as the
-/// topology-aware verifier.
-pub(super) fn verify_repair_postcondition<K, U, V, const D: usize>(
-    tds: &Tds<U, V, D>,
-    kernel: &K,
-    seed_simplices: Option<&[SimplexKey]>,
-    last_applied_flip: Option<&LastAppliedFlip>,
-) -> Result<(), DelaunayRepairError>
-where
-    K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
-{
-    verify_repair_postcondition_with_topology(
-        tds,
-        kernel,
-        seed_simplices,
-        GlobalTopology::DEFAULT,
-        PostconditionMode::Repair,
-        last_applied_flip,
         ConnectivityPostcondition::Check,
     )
 }
@@ -1929,6 +1973,7 @@ pub(super) const FLIP_SIGNATURE_WINDOW: usize = 4096;
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::init_tracing;
     use super::super::*;
     use super::*;
     use crate::DelaunayTriangulation;
@@ -1940,6 +1985,19 @@ mod tests {
     use slotmap::KeyData;
     use std::assert_matches;
     use std::iter::once;
+
+    /// Verifies a deliberately raw TDS fixture through local Delaunay predicates.
+    fn verify_tds_via_flip_predicates<K, U, V, const D: usize>(
+        tds: &Tds<U, V, D>,
+        kernel: &K,
+    ) -> Result<(), DelaunayRepairError>
+    where
+        K: Kernel<D, Scalar = f64>,
+        U: DataType,
+        V: DataType,
+    {
+        verify_delaunay_with_topology(tds, kernel, GlobalTopology::DEFAULT)
+    }
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct TopologySnapshot {
         vertices: Vec<Uuid>,
@@ -2083,6 +2141,7 @@ mod tests {
             &kernel,
             None,
             TopologyGuarantee::PLManifold,
+            GlobalTopology::DEFAULT,
             None,
         )
         .unwrap();
@@ -2145,6 +2204,7 @@ mod tests {
             &kernel,
             None,
             TopologyGuarantee::PLManifold,
+            GlobalTopology::DEFAULT,
             Some(0),
         );
         match result {
@@ -2220,6 +2280,7 @@ mod tests {
             &kernel,
             None,
             TopologyGuarantee::PLManifold,
+            GlobalTopology::DEFAULT,
             Some(0),
         );
         match result {
@@ -2296,6 +2357,7 @@ mod tests {
             &kernel,
             None,
             TopologyGuarantee::PLManifold,
+            GlobalTopology::DEFAULT,
             None,
         );
 
@@ -2362,9 +2424,15 @@ mod tests {
         };
         let empty_seeds: &[SimplexKey] = &[];
 
-        let outcome =
-            repair_delaunay_with_flips_k2_attempt(&mut tds, &kernel, Some(empty_seeds), &config)
-                .unwrap();
+        let topology_model = GlobalTopology::DEFAULT.model();
+        let outcome = repair_delaunay_with_flips_k2_attempt(
+            &mut tds,
+            &kernel,
+            Some(empty_seeds),
+            &topology_model,
+            &config,
+        )
+        .unwrap();
 
         assert!(!outcome.used_full_reseed);
         assert_eq!(outcome.stats.facets_checked, 0);
@@ -2392,6 +2460,7 @@ mod tests {
             &kernel,
             Some(&[seed_simplex]),
             TopologyGuarantee::PLManifold,
+            GlobalTopology::DEFAULT,
             None,
         )
         .unwrap();

@@ -59,13 +59,17 @@ mod cli_tests {
         );
     }
 
+    fn generated_triangulation_tds(json: &Value) -> &Value {
+        assert_eq!(json["schema_version"], 1);
+        json.get("tds")
+            .expect("triangulation JSON should include the proof owner's TDS")
+    }
+
     fn assert_generated_triangulation_json(json: &Value, vertex_count: usize) {
-        assert_eq!(
-            json["vertices"].as_array().map(Vec::len),
-            Some(vertex_count)
-        );
+        let tds = generated_triangulation_tds(json);
+        assert_eq!(tds["vertices"].as_array().map(Vec::len), Some(vertex_count));
         assert!(
-            json["simplex_vertices"]
+            tds["simplex_vertices"]
                 .as_object()
                 .is_some_and(|simplex_vertices| !simplex_vertices.is_empty())
         );
@@ -138,7 +142,7 @@ mod cli_tests {
         assert_success(&output);
 
         let json = stdout_json(&output);
-        let vertices = json["vertices"]
+        let vertices = generated_triangulation_tds(&json)["vertices"]
             .as_array()
             .expect("triangulation JSON should include vertices");
         assert_eq!(vertices.len(), 8);

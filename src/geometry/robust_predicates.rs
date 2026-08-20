@@ -23,22 +23,39 @@ static PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
     LazyLock::new(|| std::env::var_os("DELAUNAY_STRICT_INSPHERE_CONSISTENCY").is_some());
 
 #[cfg(test)]
-thread_local! {
-    static STRICT_INSPHERE_CONSISTENCY_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
-        const { std::cell::Cell::new(None) };
-}
+mod test_support {
+    use std::cell::Cell;
 
-#[cfg(test)]
-struct StrictInsphereConsistencyOverrideGuard {
-    previous: Option<bool>,
-}
+    thread_local! {
+        static STRICT_INSPHERE_CONSISTENCY_OVERRIDE: Cell<Option<bool>> =
+            const { Cell::new(None) };
+    }
 
-#[cfg(test)]
-impl Drop for StrictInsphereConsistencyOverrideGuard {
-    fn drop(&mut self) {
-        STRICT_INSPHERE_CONSISTENCY_TEST_OVERRIDE.with(|override_value| {
-            override_value.set(self.previous);
+    pub(super) struct StrictInsphereConsistencyOverrideGuard {
+        previous: Option<bool>,
+    }
+
+    impl Drop for StrictInsphereConsistencyOverrideGuard {
+        fn drop(&mut self) {
+            STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(|override_value| {
+                override_value.set(self.previous);
+            });
+        }
+    }
+
+    pub(super) fn strict_insphere_consistency_override() -> Option<bool> {
+        STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(Cell::get)
+    }
+
+    pub(super) fn set_strict_insphere_consistency(
+        enabled: bool,
+    ) -> StrictInsphereConsistencyOverrideGuard {
+        let previous = STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(|override_value| {
+            let previous = override_value.get();
+            override_value.set(Some(enabled));
+            previous
         });
+        StrictInsphereConsistencyOverrideGuard { previous }
     }
 }
 
@@ -49,24 +66,11 @@ impl Drop for StrictInsphereConsistencyOverrideGuard {
 /// branch coverage does not depend on process-wide environment mutation.
 fn strict_insphere_consistency_enabled() -> bool {
     #[cfg(test)]
-    if let Some(enabled) = STRICT_INSPHERE_CONSISTENCY_TEST_OVERRIDE.with(std::cell::Cell::get) {
+    if let Some(enabled) = test_support::strict_insphere_consistency_override() {
         return enabled;
     }
 
     *PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY
-}
-
-/// Overrides strict insphere consistency diagnostics for the current test thread.
-#[cfg(test)]
-fn set_strict_insphere_consistency_for_current_test(
-    enabled: bool,
-) -> StrictInsphereConsistencyOverrideGuard {
-    let previous = STRICT_INSPHERE_CONSISTENCY_TEST_OVERRIDE.with(|override_value| {
-        let previous = override_value.get();
-        override_value.set(Some(enabled));
-        previous
-    });
-    StrictInsphereConsistencyOverrideGuard { previous }
 }
 
 /// Result of consistency verification between different insphere methods.
@@ -508,6 +512,7 @@ fn verify_insphere_consistency<const D: usize>(
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::set_strict_insphere_consistency;
     use super::*;
     use crate::geometry::matrix::{Matrix, matrix_get};
     use crate::geometry::point::Point;
@@ -707,12 +712,11 @@ mod tests {
         assert_eq!(strict_insphere_consistency_enabled(), process_wide_setting);
 
         {
-            let _guard = set_strict_insphere_consistency_for_current_test(!process_wide_setting);
+            let _guard = set_strict_insphere_consistency(!process_wide_setting);
             assert_eq!(strict_insphere_consistency_enabled(), !process_wide_setting);
 
             {
-                let _nested_guard =
-                    set_strict_insphere_consistency_for_current_test(process_wide_setting);
+                let _nested_guard = set_strict_insphere_consistency(process_wide_setting);
                 assert_eq!(strict_insphere_consistency_enabled(), process_wide_setting);
             }
             assert_eq!(strict_insphere_consistency_enabled(), !process_wide_setting);
@@ -728,7 +732,7 @@ mod tests {
 
     #[test]
     fn test_strict_insphere_consistency_override_exercises_error_path() {
-        let _guard = set_strict_insphere_consistency_for_current_test(true);
+        let _guard = set_strict_insphere_consistency(true);
         let simplex = vec![
             Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),

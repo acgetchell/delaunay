@@ -130,8 +130,6 @@ pub enum VisualizationTopologyGuarantee {
     Pseudomanifold,
     /// PL-manifold guarantee.
     PLManifold,
-    /// Strict PL-manifold guarantee.
-    PLManifoldStrict,
     /// Unknown topology-guarantee text from an external JSON producer.
     Unknown {
         /// Raw schema text that did not match a known v1 topology guarantee.
@@ -145,7 +143,6 @@ impl VisualizationTopologyGuarantee {
         match self {
             Self::Pseudomanifold => "Pseudomanifold",
             Self::PLManifold => "PLManifold",
-            Self::PLManifoldStrict => "PLManifoldStrict",
             Self::Unknown { actual } => actual,
         }
     }
@@ -153,7 +150,7 @@ impl VisualizationTopologyGuarantee {
     /// Reports whether this topology-guarantee value is part of the v1 schema.
     const fn is_supported(&self) -> bool {
         match self {
-            Self::Pseudomanifold | Self::PLManifold | Self::PLManifoldStrict => true,
+            Self::Pseudomanifold | Self::PLManifold => true,
             Self::Unknown { .. } => false,
         }
     }
@@ -164,7 +161,6 @@ impl From<TopologyGuarantee> for VisualizationTopologyGuarantee {
         match guarantee {
             TopologyGuarantee::Pseudomanifold => Self::Pseudomanifold,
             TopologyGuarantee::PLManifold => Self::PLManifold,
-            TopologyGuarantee::PLManifoldStrict => Self::PLManifoldStrict,
         }
     }
 }
@@ -193,7 +189,6 @@ impl<'de> Deserialize<'de> for VisualizationTopologyGuarantee {
         Ok(match actual.as_str() {
             "Pseudomanifold" => Self::Pseudomanifold,
             "PLManifold" => Self::PLManifold,
-            "PLManifoldStrict" => Self::PLManifoldStrict,
             _ => Self::Unknown { actual },
         })
     }
@@ -743,9 +738,7 @@ pub enum VisualizationDataValidationError {
         actual: VisualizationTopologyKind,
     },
     /// Metadata topology guarantee is not one of the v1 schema names.
-    #[error(
-        "unsupported topology guarantee {actual}; expected one of Pseudomanifold, PLManifold, PLManifoldStrict"
-    )]
+    #[error("unsupported topology guarantee {actual}; expected one of Pseudomanifold, PLManifold")]
     InvalidTopologyGuarantee {
         /// Actual topology-guarantee schema category.
         actual: VisualizationTopologyGuarantee,

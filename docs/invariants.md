@@ -114,7 +114,7 @@ operation has certified which part of the structure:
    vertex/simplex mappings, reciprocal neighbor pointers, bounded facet sharing, no duplicate
    simplices, simplex/ridge connectivity, and coherent combinatorial orientation.
 3. **Level 3 — Intrinsic PL Topology**: the abstract simplicial complex satisfies the requested
-   `TopologyGuarantee` (pseudomanifold, PL manifold, or strict PL manifold) through incidence,
+   `TopologyGuarantee` (pseudomanifold or PL manifold) through incidence,
    connected components, Euler-characteristic, link, and supported 2D/3D orientability checks.
 4. **Level 4 — Valid Realization**: the complex is geometrically valid in the chosen coordinate
    model. `Triangulation::is_valid_realization()` owns realization-only fast-fail validation, and
@@ -135,10 +135,26 @@ for an already-formed Delaunay triangulation.
 Cumulative validation is exposed through the `validate` / `validation_report` APIs described in
 [`docs/validation.md`](validation.md).
 
-Automatic validation during construction is intentionally topology-oriented: `ValidationPolicy`
-controls Level 3 checks during insertion and can enable local insertion-time realization checks.
-Full/global Level 4 realization certification and Level 5 geometric-predicate validation remain
-explicit certification steps for workflows that need them.
+The domain owners follow the same layering. A published `Tds` carries the
+Levels 1–2 proof, including when it is still an incomplete but structurally
+valid construction. Its canonical storage fields are visible only inside the
+TDS module; every edit that crosses a published domain boundary is a checked
+TDS transition that either preserves Levels 1–2 or reports a typed error
+without publishing the failed state. Crate-private assembly workspaces may
+stage several TDS-owned operations, but must call the checked completion
+transition before the value can escape.
+`Triangulation::try_from_tds_with_topology_context` consumes that proof and
+checks only the missing Level 3 topology and Level 4 realization conditions.
+`DelaunayTriangulation::try_from_triangulation` then consumes the Levels 1–4
+proof and checks only Level 5. A failed refinement returns the unchanged
+lower-layer owner with its typed rejection reason, so callers can retry with a
+different policy without cloning canonical storage before the attempt.
+Explicit cumulative audit methods intentionally recheck lower layers for
+diagnostics; proof-consuming constructors do not.
+
+Every construction mutation enforces changed-scope Levels 1–4 postconditions. `ValidationPolicy`
+independently controls when construction repeats a full global Levels 1–4 audit. Level 5
+geometric-predicate validation remains a separate certification step.
 
 ---
 
@@ -231,9 +247,16 @@ condition:[^deberg2008][^edelsbrunner2001]
 This is a **geometric** invariant: it depends on the realization coordinates and on robust evaluation
 of orientation / in-sphere predicates.[^shewchuk1997]
 
-The key assumption behind local repair is that *regular triangulations* (including Delaunay triangulations)
-can be related by sequences of bistellar flips, and that PL-manifoldness keeps those local moves well-defined
-in the combinatorial/PL category.[^edelshah1996][^pachner1991]
+Edelsbrunner and Shah establish incremental topological flipping for regular
+triangulations; Delaunay triangulations are regular, so that result supplies the
+mathematical basis for the crate's flip-repair stage.[^edelshah1996] Pachner's
+theorem separately characterizes PL-homeomorphic manifolds through bistellar
+moves, which is why the repair boundary requires a PL-manifold proof rather than
+mere pseudomanifold incidence.[^pachner1991] These results do not promise that
+every arbitrary local queue order on every supported higher-dimensional input
+will reach a Delaunay triangulation within a fixed engineering budget. The crate
+therefore treats repair as bounded and fallible, rolls back failed attempts, and
+publishes the Level 5 owner only after certification.
 
 The smallest executable check of that move system is the crate’s n=1 ergodicity contract: for a
 selected admissible Pachner move, applying the move and then its inverse must recover the same
@@ -299,21 +322,19 @@ simplicial complexes for geometry:
 Piecewise-linear (PL) manifoldness is strictly stronger than the pseudomanifold conditions. The public API exposes this
 via `TopologyGuarantee`, re-exported at the crate root and in
 `delaunay::prelude::construction` (source:
-[`src/core/validation.rs`](../src/core/validation.rs)):
+[`src/core/triangulation/validation.rs`](../src/core/triangulation/validation.rs)):
 
 - `TopologyGuarantee::Pseudomanifold`
   checks the codimension-1 incidence conditions (plus boundary consistency, connectedness,
   isolated-vertex checks, and Euler characteristic checks).
-- `TopologyGuarantee::PLManifold` and
-  `TopologyGuarantee::PLManifoldStrict`
-  add **link-based** conditions (ridge links and/or vertex links) that are characteristic of
+- `TopologyGuarantee::PLManifold`
+  adds **link-based** conditions (ridge and vertex links) that are characteristic of
   PL-manifolds. In PL topology, requiring the links of simplices to be spheres (or balls at the
   boundary) is equivalent to the standard manifold condition that every point has a locally
   Euclidean neighborhood (up to PL homeomorphism).[^hatcher2002][^rourke-sanderson]
 
-The precise **when/where** of these checks (during insertion vs at completion) is described in the
-crate-level API docs and implemented by the validation stack; this document focuses on the rationale
-and intuition.
+`ValidationPolicy` independently controls when a complete global audit is repeated. It does not
+change which mathematical invariants the domain type carries.
 
 ---
 
@@ -338,11 +359,11 @@ checks alone. However, constructing and validating full vertex links is
 computationally expensive, as it requires enumerating the complete star of each
 vertex and verifying topological properties of the resulting complex.
 
-For this reason, the `delaunay` crate defers vertex-link validation until
-construction completion by default. When stronger guarantees are required,
-`TopologyGuarantee::PLManifoldStrict`
-enables vertex-link validation after every insertion, trading performance for earlier detection and
-improved diagnosability.
+Construction proves vertex-link validity before publishing a `PLManifold` triangulation. Legal
+bistellar moves preserve that PL-manifold class while changed-scope postconditions guard every
+commit. `ValidationPolicy::Always` trades performance for a complete global Levels 1–4 audit after
+every mutation, providing earlier detection and improved diagnosability without inventing a second
+mathematical guarantee.
 
 The owner-level public API exposes this certification as
 `Triangulation::validate_vertex_links()` and
@@ -367,10 +388,13 @@ This detects the majority of topological failures early, while keeping per‑ste
 cost low. Because ridge links are small and localized, they can be checked
 efficiently without scanning the full star of each vertex.
 
-Ridge‑link validation is *necessary but not sufficient* to fully guarantee
+Ridge‑link validation is *necessary but not sufficient* to guarantee
 PL‑manifoldness. Certain global or vertex‑local pathologies are only detectable
-via vertex‑link validation, which is why vertex‑link checks are deferred until
-construction completion by default.
+via vertex‑link validation. Construction therefore certifies vertex links before
+publishing a `PLManifold` value, and every later full Level 3 audit repeats that
+certification. Within a full audit, ridge links run first as a cheap fail-fast;
+between audits, mutations check ridge links over their changed scope before
+committing. Ridge links never substitute for vertex-link certification.
 
 The public owner methods are `Triangulation::validate_ridge_links()`,
 `Triangulation::validate_ridge_links_for_simplices()`, and matching
@@ -410,14 +434,14 @@ The implementation uses a **hybrid validation strategy** intended to balance:
 
 At a high level:
 
-- **Ridge-link validation during insertion** is used as an inexpensive, local safety check. Ridge
+- **Ridge-link validation during mutations** is used as an inexpensive, local safety check. Ridge
   links are small, local objects, and validating them catches many PL-manifold violations early.
-- **Vertex-link validation** is stronger but significantly more expensive. The default strategy is
-  to defer full vertex-link certification until construction completion.
-- **Strict mode**
-  (`TopologyGuarantee::PLManifoldStrict`)
-  runs vertex-link validation after each insertion, trading performance for earlier detection and
-  improved diagnosability.
+  Full Level 3 audits also run this check first so common failures avoid the more expensive
+  vertex-link construction.
+- **Vertex-link validation** is stronger but significantly more expensive. It is part of every full
+  `PLManifold` Level 3 audit.
+- **Always-on auditing** (`ValidationPolicy::Always`) repeats the complete Levels 1–4 audit after
+  each mutation, trading performance for earlier detection and improved diagnosability.
 
 ### Incremental insertion algorithm (cavity-based)
 
@@ -452,8 +476,8 @@ geometric interpretation is undefined.
 ### Tradeoffs
 
 - Ridge-link checks are “cheap and local” and therefore viable as an insertion-time safety-net.
-- Vertex-link checks are “expensive and global” and therefore better suited to completion-time
-  certification unless strict guarantees are required.
+- Vertex-link checks are “expensive and global”; `ValidationPolicy` controls how often a complete
+  audit repeats after the construction boundary has already certified the PL-manifold proof.
 - Ordering heuristics (Hilbert) can improve locality and reduce cavity size, improving
   robustness in practice without changing the formal correctness contract.
 

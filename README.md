@@ -211,6 +211,12 @@ their realizations may intersect only in shared abstract faces. The bounded sphe
 separately certifies model-specific simplex nondegeneracy in `S^D \subset R^(D+1)`. Level 5 certifies
 geometric optimality or predicate satisfaction, currently the Delaunay empty-circumsphere property.
 
+The public domain hierarchy mirrors those proofs: `Tds` owns Levels 1–2,
+`Triangulation` consumes a validated TDS and adds Levels 3–4, and
+`DelaunayTriangulation` consumes a realized triangulation and adds Level 5.
+Canonical TDS mutation stays behind checked TDS operations, so higher owners
+cannot bypass lower-layer invariants.
+
 Correctness evidence comes from the invariant model, exact predicate fallbacks, deterministic
 Simulation of Simplicity, validation reports, property tests, regression tests, and public examples.
 Performance evidence is separate: Hilbert ordering, allocation-conscious data structures,
@@ -239,7 +245,7 @@ For the detailed contract, see [`docs/validation.md`](docs/validation.md),
 | 1-5 | Cumulative diagnostics | `dt.validate()` / `dt.validation_report()` |
 
 `TopologyGuarantee` controls which Level 3 Intrinsic PL Topology invariants are enforced. `ValidationPolicy`
-controls when Level 3 checks run during incremental insertion. Level 4 realization validation is
+controls when cumulative Levels 1–4 audits run during incremental insertion. Level 4 realization validation is
 backend-specific: Euclidean and toroidal paths validate affine-chart realizations, with toroidal
 checks lifted to periodic covering-space charts, while the spherical prototype validates simplices on
 `S^D \subset R^(D+1)`. Level 5 geometric predicates are likewise

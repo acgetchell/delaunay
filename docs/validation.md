@@ -15,31 +15,45 @@ write only under `target/`.
 The [reviewer artifact guide](../papers/ARTIFACT.md) indexes this notebook
 workflow and its paper-claim mapping.
 
-<img src="assets/validation/validation_hierarchy.png" alt="Five-level validation hierarchy" width="760">
+<img src="assets/validation/validation_hierarchy.png"
+     alt="Five-level validation hierarchy: Tds owns Levels 1–2, Triangulation adds Levels 3–4, and DelaunayTriangulation adds Level 5"
+     width="760">
 
-The Level 3–5 panels make the critical separation explicit: intrinsic topology
-can be valid while a realization overlaps, and a valid realization can
-still violate the Delaunay empty-circumsphere predicate.
+The figures label the proof-bearing ownership boundary directly: `Tds` owns
+Levels 1–2, `Triangulation` adds Levels 3–4, and `DelaunayTriangulation` adds
+Level 5. The Level 3–5 panels also make the critical separation explicit:
+intrinsic topology can be valid while a realization overlaps, and a valid
+realization can still violate the Delaunay empty-circumsphere predicate.
 
 ### Level 1 — Element Validity
 
-<img src="assets/validation/validation_level_1_element_validity.png" alt="Level 1 element-validity checks" width="720">
+<img src="assets/validation/validation_level_1_element_validity.png"
+     alt="Level 1 element-validity checks within the cumulative Levels 1–2 proof owned by Tds"
+     width="720">
 
 ### Level 2 — Combinatorial Consistency
 
-<img src="assets/validation/validation_level_2_combinatorial_consistency.png" alt="Level 2 combinatorial-consistency checks" width="720">
+<img src="assets/validation/validation_level_2_combinatorial_consistency.png"
+     alt="Level 2 combinatorial-consistency checks within the cumulative Levels 1–2 proof owned by Tds"
+     width="720">
 
 ### Level 3 — Intrinsic PL Topology
 
-<img src="assets/validation/validation_level_3_intrinsic_pl_topology.png" alt="Level 3 intrinsic PL-topology checks" width="720">
+<img src="assets/validation/validation_level_3_intrinsic_pl_topology.png"
+     alt="Level 3 intrinsic PL-topology checks within the cumulative Levels 1–4 proof owned by Triangulation"
+     width="720">
 
 ### Level 4 — Valid Realization
 
-<img src="assets/validation/validation_level_4_valid_realization.png" alt="Level 4 valid-realization checks" width="720">
+<img src="assets/validation/validation_level_4_valid_realization.png"
+     alt="Level 4 valid-realization checks within the cumulative Levels 1–4 proof owned by Triangulation"
+     width="720">
 
 ### Level 5 — Geometric Predicates
 
-<img src="assets/validation/validation_level_5_geometric_predicates.png" alt="Level 5 geometric-predicate check" width="420">
+<img src="assets/validation/validation_level_5_geometric_predicates.png"
+     alt="Level 5 geometric-predicate check within the cumulative Levels 1–5 proof owned by DelaunayTriangulation"
+     width="420">
 
 For the theoretical background, rationale, and implementation pointers behind the invariants, see
 [`invariants.md`](invariants.md).
@@ -125,17 +139,17 @@ as a full audit and as input to future repair workflows.
 The library always provides **explicit** validation APIs (Levels 1–5) that you can call when you need them.
 
 Separately, incremental construction (`new()` / `insert*()`) can run an **automatic**
-global Level 3 intrinsic-topology pass plus changed-scope Level 4 realization guards after an insertion attempt,
-controlled by a `ValidationPolicy` on the triangulation.
+global Levels 1–4 audit after an insertion attempt, controlled by a `ValidationPolicy`
+on the triangulation.
 
 This is a performance vs certainty knob: Level 3 (`Triangulation::is_valid_topology()`) and full
 pairwise Level 4 (`Triangulation::is_valid_realization()`) are relatively expensive. The default depends
 on the topology guarantee chosen for the incremental construction path:
 
 - `TopologyGuarantee::PLManifold` starts with `ValidationPolicy::ExplicitOnly`, so normal insertions
-  preserve local invariants and callers request global Level 3 / Level 4 checks explicitly.
+  preserve changed-scope invariants and callers request global Levels 1–4 checks explicitly.
 - `TopologyGuarantee::Pseudomanifold` starts with `ValidationPolicy::OnSuspicion`, so automatic
-  global topology and changed-scope realization checks run only when an insertion reports a suspicious
+  global Levels 1–4 audits run only when an insertion reports a suspicious
   local condition.
 
 ### What is validated automatically?
@@ -146,8 +160,8 @@ When the policy triggers automatic validation, it runs **Level 3**
 
 - Codimension-1 manifoldness (facet degree: 1 or 2 incident simplices per facet)
 - Codimension-2 boundary manifoldness (the boundary is closed; "no boundary of boundary")
-- Ridge-link validation (when `TopologyGuarantee::PLManifold` or `TopologyGuarantee::PLManifoldStrict`)
-- Vertex-link validation during insertion (when `TopologyGuarantee::PLManifoldStrict`)
+- Ridge-link fail-fast followed by comprehensive vertex-link validation (when
+  `TopologyGuarantee::PLManifold`); ridge links alone do not certify this level
 - Intrinsic orientability for 2D/3D PL-manifold guarantees, including ordinary
   and periodic quotient parity constraints
 - Connectedness (single component)
@@ -157,22 +171,24 @@ When the policy triggers automatic validation, it runs **Level 3**
 Note: neighbor-pointer consistency is a **Level 2 Combinatorial Consistency** invariant checked by
 `Tds::is_valid()` / `Tds::validate()`, and is intentionally not part of Level 3.
 
-The same automatic validation pass then runs **Level 4 realization** guards for the changed simplex
-scope. It always checks changed affine-chart simplices for positive orientation and degeneracy, then
-checks changed-vs-current pairwise intersections. It does **not** rescan old-vs-old simplex pairs. It
-also does **not** run Level 5
+The same automatic validation pass then runs the complete **Level 4 realization** audit. Every
+mutating operation preserves the proof-layer postconditions applicable to its topology guarantee:
+changed-scope pseudomanifold and realization checks run on every commit, while ridge-link checks
+are additionally required for `TopologyGuarantee::PLManifold`. A policy-triggered audit rescans
+the whole realized complex and includes vertex-link certification for the PL-manifold guarantee.
+It does **not** run Level 5
 Delaunay empty-circumsphere validation. If you need complete Level 4 realization validation or a Level 5
 geometric-predicate check, call `dt.as_triangulation().validate_realization()`, `dt.is_valid_delaunay()`,
 `dt.delaunay_report()`, or `dt.validate()` explicitly.
 
-### Default: derived from `TopologyGuarantee`
+### Defaults and explicit overrides
 
-The initial policy is derived from the active `TopologyGuarantee`: `PLManifold`
-uses `ValidationPolicy::ExplicitOnly`, `PLManifoldStrict` uses
-`ValidationPolicy::Always`, and `Pseudomanifold` uses
-`ValidationPolicy::OnSuspicion`.
+Without an explicit builder override, the initial policy is derived from the active
+`TopologyGuarantee`: `PLManifold` uses `ValidationPolicy::ExplicitOnly`, and
+`Pseudomanifold` uses `ValidationPolicy::OnSuspicion`. Use
+`DelaunayTriangulationBuilder::validation_policy(...)` to select cadence independently.
 
-With `ValidationPolicy::OnSuspicion`, global Level 3 plus changed-scope Level 4 guards run only when
+With `ValidationPolicy::OnSuspicion`, global Levels 1–4 audits run only when
 insertion deviates from the happy-path and trips internal **suspicion flags**, e.g.:
 
 - A perturbation retry was required (geometric degeneracy).
@@ -182,17 +198,16 @@ insertion deviates from the happy-path and trips internal **suspicion flags**, e
 
 ### Available policies
 
-- `ValidationPolicy::Never`: never run automatic global Level 3/changed-scope Level 4 checks; compatible only with
+- `ValidationPolicy::Never`: never run automatic global Levels 1–4 audits; compatible only with
   `TopologyGuarantee::Pseudomanifold`.
 - `ValidationPolicy::ExplicitOnly` *(default for `PLManifold`)*: do not run policy-triggered
-  global Level 3/changed-scope Level 4 checks during insertion; caller-owned explicit validation
-  APIs remain available, and insertion still keeps topology checks required by the active
-  `TopologyGuarantee`.
-- `ValidationPolicy::OnSuspicion` *(default for `Pseudomanifold`)*: run global Level 3/changed-scope Level 4 checks
+  global Levels 1–4 audits during insertion; caller-owned explicit validation APIs remain available,
+  and every mutation still enforces changed-scope postconditions required by the active domain proof.
+- `ValidationPolicy::OnSuspicion` *(default for `Pseudomanifold`)*: run global Levels 1–4 audits
   only when insertion is suspicious.
-- `ValidationPolicy::Always`: run global Level 3/changed-scope Level 4 checks after every insertion attempt
+- `ValidationPolicy::Always`: run global Levels 1–4 audits after every insertion attempt
   (slowest, best for tests).
-- `ValidationPolicy::DebugOnly`: always run global Level 3/changed-scope Level 4 checks in debug builds; in release
+- `ValidationPolicy::DebugOnly`: always run global Levels 1–4 audits in debug builds; in release
   behaves like `OnSuspicion`.
 
 ### Example: configuring validation policy
@@ -217,7 +232,7 @@ fn main() -> DelaunayResult<()> {
     assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
 
     // For test/debug: validate topology after every insertion.
-    dt.set_validation_policy(ValidationPolicy::Always);
+    dt.try_set_validation_policy(ValidationPolicy::Always)?;
 
     // For caller-owned full validation checkpoints with the default PL-manifold guarantee.
     dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)?;
@@ -235,23 +250,19 @@ fn main() -> DelaunayResult<()> {
 
 Level 3 Intrinsic PL Topology validation can be configured to enforce either:
 
-- **PL-manifold** invariants (default, uses ridge-link checks during insertion and
-  requires completion-time vertex-link validation), or
+- **PL-manifold** invariants (default, including ridge- and vertex-link checks), or
 - **Pseudomanifold / manifold-with-boundary** invariants (relaxed mode).
 
 This is separate from [`ValidationPolicy`](#automatic-validation-during-incremental-insertion-validationpolicy),
 which controls *when* Level 3 is run automatically during incremental insertion.
-The builder keeps these axes coherent by deriving the initial validation policy
-from `TopologyGuarantee`: `PLManifoldStrict` starts with `ValidationPolicy::Always`,
-`PLManifold` starts with `ValidationPolicy::ExplicitOnly`, and
-`Pseudomanifold` starts with `ValidationPolicy::OnSuspicion`.
+The builder derives a default policy from `TopologyGuarantee`, but exposes
+`.validation_policy(...)` so callers can select the cadence independently.
 
 ### Default: `PLManifold`
 
-`PLManifold` uses fast ridge-link validation during insertion and requires a
-vertex-link validation pass at construction completion to certify full
-PL-manifoldness. You can trigger that final certification via
-`Triangulation::validate_at_completion()` (or `Triangulation::validate()`).
+`PLManifold` certifies ridge links, vertex links, and the other Level 3 invariants
+before construction publishes the domain value. `Triangulation::validate()`
+repeats the cumulative Levels 1–3 audit; `validate_realization()` adds Level 4.
 
 ```rust
 use delaunay::prelude::construction::{
@@ -271,7 +282,7 @@ fn main() -> DelaunayResult<()> {
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 
     // Optional: relax topology checks for speed (weaker guarantees).
-    dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+    dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)?;
 
     // Now Level 3 skips vertex-link validation entirely.
     assert!(dt.as_triangulation().is_valid_topology().is_ok());
@@ -279,10 +290,59 @@ fn main() -> DelaunayResult<()> {
 }
 ```
 
-### Strict: `PLManifoldStrict`
+### Always-on audits: `ValidationPolicy::Always`
 
-`PLManifoldStrict` runs full vertex-link validation after every insertion. This
-matches the legacy `PLManifold` behavior (slowest, maximum safety).
+Select `.validation_policy(ValidationPolicy::Always)` when tests or diagnostic
+workloads should repeat complete Levels 1–4 validation after every insertion.
+The resulting domain guarantee remains `TopologyGuarantee::PLManifold`.
+
+---
+
+## Strict construction and realized-state reconstruction
+
+Fresh Delaunay construction and restoration of evolved state have different
+validation boundaries:
+
+- Builder construction and
+  `DelaunayTriangulation::try_from_tds_with_topology_context` are strict. The
+  TDS supplies Levels 1–2; the composed promotions check Levels 3–4 and Level 5
+  before returning an owner with the cumulative Levels 1–5 guarantee.
+- `Triangulation::try_from_tds_with_topology_context` restores the supplied
+  `TopologyGuarantee` and `GlobalTopology`. The consumed `Tds` already proves
+  Levels 1–2, so promotion checks only Level 3 intrinsic topology and Level 4
+  realization. The returned value therefore carries the cumulative Levels
+  1–4 guarantee without repeating lower-layer validation. It preserves the
+  input TDS exactly and neither checks nor repairs Level 5. A
+  `TriangulationRefinementError` retains the unchanged `Tds` together with its
+  `TriangulationRealizationValidationError`, keeping this boundary independent
+  of Delaunay-only variants.
+- `DelaunayTriangulation::try_from_triangulation` performs strict no-repair
+  Level 5 certification. `delaunayize` and `delaunayize_by_flips` consume a
+  Levels 1–4 triangulation, perform bounded repair, and return a Levels 1–5
+  owner only after Level 5 certification. The input type supplies the lower
+  four proofs; successful transactional flips preserve them rather than
+  causing the conversion boundary to revalidate them. Their flip stage follows the
+  regular-triangulation framework cited under
+  [Bistellar (Pachner) Moves and Delaunay Repair](../REFERENCES.md#bistellar-pachner-moves-and-delaunay-repair),
+  while typed budget exhaustion and rollback define the narrower executable
+  contract.
+
+All consuming promotions are recoverable. `RefinementError<T, E>` couples the
+still-valid lower-layer owner `T` to the typed rejection reason `E`; callers can
+borrow either part or consume the carrier with `into_parts()`. The composed
+`Tds`-to-`DelaunayTriangulation` constructors use
+`DelaunayTdsRefinementError` to identify whether rejection occurred before or
+after the intermediate `Triangulation` proof was established. Repairing
+promotion keeps one rollback snapshot alive through flips, orientation
+normalization, and final Level 5 certification, and returns the restored
+Levels 1–4 owner on every failure.
+
+Use the realized-state boundary for checkpoints created after valid local moves
+when Delaunay optimality is not an invariant of the evolved model. Use
+`delaunay_violation_report` for Level 5 diagnostics without promotion, or one
+of the explicit conversion boundaries when a Delaunay owner is required.
+Malformed storage, invalid intrinsic topology, and invalid realization remain
+structured reconstruction errors.
 
 ---
 
@@ -388,6 +448,22 @@ assert!(v.is_valid().is_ok());
 
 Validates the combinatorial structure of the simplicial complex as represented
 by the Triangulation Data Structure.
+
+`Tds` is the proof-bearing owner for Levels 1–2, not a raw transport DTO.
+Deserialization and raw assembly validate before publishing it. Canonical
+storage is private to the TDS module, and checked TDS methods own element,
+mapping, incidence, neighbor, orientation, and construction-state mutations.
+Higher owners may query the TDS or request those checked transitions, but they
+cannot obtain mutable storage or edit its fields directly. An incomplete
+`Tds` can still be valid at Levels 1–2; construction completion additionally
+requires a full-dimensional simplex and an atomic cumulative audit.
+
+The serde boundaries mirror those proof owners. Serializing `Tds` produces a
+Levels 1–2 snapshot. Serializing `DelaunayTriangulation` produces a versioned
+owner checkpoint containing that TDS plus its topology guarantee, global
+topology, and validation policy. Loading the owner checkpoint reparses topology
+metadata and re-proves Levels 3–5; a legacy TDS-only payload is rejected instead
+of silently acquiring default higher-layer context.
 
 ### Methods
 
@@ -518,13 +594,11 @@ certification.
 2. **Codimension-2 boundary manifoldness (closed boundary)**: Each (d−2)-ridge on the boundary must be incident to exactly 2 boundary facets
    - This is the "no boundary of boundary" condition
    - Interior ridges can have higher degree; only boundary ridges are constrained
-3. **PL-manifold ridge-link condition** (when `TopologyGuarantee::PLManifold` or
-   `TopologyGuarantee::PLManifoldStrict`):
+3. **PL-manifold ridge-link condition** (when `TopologyGuarantee::PLManifold`):
    The link of every checked ridge is a connected path or cycle. Use
    `dt.validate_ridge_links()` for a global explicit check, or
    `dt.validate_ridge_links_for_simplices(touched)` after a local edit.
-4. **PL-manifold vertex-link condition** (when `TopologyGuarantee::PLManifold` certifies
-   construction completion, or when `TopologyGuarantee::PLManifoldStrict` checks every insertion):
+4. **PL-manifold vertex-link condition** (when `TopologyGuarantee::PLManifold`):
    For every vertex `v`, the link `Lk(v)` must be a (D−1)-sphere (interior vertex) or (D−1)-ball (boundary vertex).
    Use `dt.validate_vertex_links()` for an explicit owner-level check.
 5. **Intrinsic orientability** (for the 2D/3D PL-manifold guarantees):
@@ -686,12 +760,10 @@ positive geometric orientation before the edited state is accepted. Level 4 real
 then certifies that affine-chart maximal simplices have positive sign and nonzero volume, and that
 realized simplices do not fold or overlap outside shared faces.
 
-A local move can satisfy one contract while violating the other. The ordinary `PachnerProposal::attempt_on`
-path canonicalizes replacement simplex orientation, preserves realized-geometry validity, and rolls
-back with typed `FlipError` or validation errors if the repaired state still violates the contract.
-The hidden `attempt_topology_on` path is narrower: it is reserved for diagnostics and benchmarks that
-intentionally validate topology-scope invariants without paying the Level 4 overlap scan after every
-move.
+A local move can satisfy one contract while violating the other.
+`PachnerProposal::attempt_on` canonicalizes replacement simplex orientation, checks changed-scope
+topology and realized geometry, and rolls back with a typed `FlipError` if the repaired state still
+violates the Levels 1–4 contract. A `Triangulation` mutation has no topology-only committing bypass.
 
 ### Example
 
@@ -757,10 +829,11 @@ enough for future regular, weighted, Gabriel, alpha, constrained, or related pre
   higher dimensions by default. Delaunay validation can still fail if repair is disabled, if repair
   fails to converge, or if inputs are highly degenerate/duplicate-heavy. See
   [Issue #120 Investigation](archive/issue_120_investigation.md).
-- **Heuristic fallback**: If flip-based repair does not converge, you can opt into a heuristic
-  rebuild fallback via `DelaunayTriangulation::repair_delaunay_with_flips_advanced`.
-  This requires `TopologyGuarantee::PLManifold` and `K: ExactPredicates`, and records the
-  shuffle/perturbation seeds used. See [Numerical Robustness Guide](numerical_robustness_guide.md).
+- **Fallback rebuild**: If flip-based conversion does not converge, a Levels
+  1–4 `Triangulation` can opt into bounded rebuild recovery through
+  `delaunayize(tri, DelaunayizeConfig::default().with_fallback_rebuild(true))`.
+  This requires `TopologyGuarantee::PLManifold` and `K: ExactPredicates`.
+  See [Numerical Robustness Guide](numerical_robustness_guide.md).
 
 ### Complexity
 
@@ -775,6 +848,12 @@ enough for future regular, weighted, Gabriel, alpha, constrained, or related pre
     O(simplices) Level 5 path, or Levels 1-4 plus the O(simplices × vertices) Level 5 fallback.
 - **Space**: O(1) validation workspace for the local verifier; report output and fallback working sets
   scale with the number of reported violations.
+
+Strict proof promotions move their input owners and do not clone canonical TDS
+storage. `delaunayize` requires O(vertices + simplices) rollback storage while
+repair is in progress; the same single snapshot serves retry, final
+certification, and recovery rather than nesting a second transaction. Enabling
+fallback rebuild additionally snapshots vertices and simplex payload identity.
 
 ### When to Use
 
@@ -1002,10 +1081,11 @@ but the validator itself does not mutate the triangulation.
 **Likely Cause**: Repair disabled or non-convergent, geometric degeneracy, numerical precision,
 or missing higher-dimensional flip coverage
 **Fix**: Keep flip repair enabled, handle insertion errors, check for near-coplanar/collinear points,
-and consider using `RobustKernel` or `AdaptiveKernel` instead of `FastKernel` (explicit repair
-methods require `K: ExactPredicates`, which `FastKernel` does not implement). If repair fails to
-converge, consider the opt-in heuristic rebuild fallback via
-`dt.repair_delaunay_with_flips_advanced(...)` (requires PL-manifold + `ExactPredicates`).
+and consider using `RobustKernel` or `AdaptiveKernel` instead of `FastKernel`
+(`delaunayize` requires `K: ExactPredicates`, which `FastKernel` does not
+implement). If conversion fails to converge, enable the opt-in rebuild through
+`DelaunayizeConfig::default().with_fallback_rebuild(true)` (requires
+PL-manifold + `ExactPredicates`).
 
 ---
 

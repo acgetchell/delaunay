@@ -13,6 +13,7 @@ use delaunay::prelude::construction::{
     DelaunayConstructionFailure, DelaunayTriangulation, DelaunayTriangulationBuilder,
     DelaunayTriangulationConstructionError, TopologyGuarantee, Vertex,
 };
+use delaunay::prelude::delaunayize::{DelaunayizeConfig, delaunayize};
 use delaunay::prelude::generators::{
     RandomPointCount, generate_random_points_in_ball_seeded,
     try_generate_random_triangulation_with_topology_guarantee,
@@ -257,41 +258,35 @@ fn debug_issue_120_empty_circumsphere_5d() {
         .unwrap(),
     ];
 
-    let mut dt: DelaunayTriangulation<_, (), (), 5> = DelaunayTriangulation::builder(&vertices)
+    let tri = DelaunayTriangulation::builder(&vertices)
         .topology_guarantee(TopologyGuarantee::PLManifold)
-        .build()
+        .build_triangulation()
         .unwrap_or_else(|err| panic!("5D debug configuration failed to construct: {err}"));
-    match dt.repair_delaunay_with_flips() {
-        Ok(stats) => {
-            test_debug_info!(
-                "[Issue #120 debug] repair_delaunay_with_flips stats: checked={}, flips={}, max_queue={}",
-                stats.facets_checked,
-                stats.flips_performed,
-                stats.max_queue_len
-            );
-        }
-        Err(err) => {
-            test_debug_warn!("[Issue #120 debug] repair_delaunay_with_flips error: {err}");
-        }
-    }
-    let mut dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 5> =
-        DelaunayTriangulation::builder(&vertices)
-            .topology_guarantee(TopologyGuarantee::PLManifold)
-            .build_with_kernel(&RobustKernel::new())
-            .unwrap_or_else(|err| panic!("5D robust fixture should validate: {err}"));
-    match dt_robust.repair_delaunay_with_flips() {
-        Ok(stats) => {
-            test_debug_info!(
-                "[Issue #120 debug] robust repair stats: checked={}, flips={}, max_queue={}",
-                stats.facets_checked,
-                stats.flips_performed,
-                stats.max_queue_len
-            );
-        }
-        Err(err) => {
-            test_debug_warn!("[Issue #120 debug] robust repair error: {err}");
-        }
-    }
+    let converted = delaunayize(tri, DelaunayizeConfig::default())
+        .unwrap_or_else(|err| panic!("5D debug conversion failed: {err}"));
+    let stats = &converted.outcome.delaunay_repair;
+    test_debug_info!(
+        "[Issue #120 debug] delaunayize stats: checked={}, flips={}, max_queue={}",
+        stats.facets_checked,
+        stats.flips_performed,
+        stats.max_queue_len
+    );
+    let dt = converted.triangulation;
+
+    let tri_robust = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build_triangulation_with_kernel(&RobustKernel::new())
+        .unwrap_or_else(|err| panic!("5D robust fixture should realize: {err}"));
+    let converted_robust = delaunayize(tri_robust, DelaunayizeConfig::default())
+        .unwrap_or_else(|err| panic!("5D robust fixture should convert: {err}"));
+    let robust_stats = &converted_robust.outcome.delaunay_repair;
+    test_debug_info!(
+        "[Issue #120 debug] robust delaunayize stats: checked={}, flips={}, max_queue={}",
+        robust_stats.facets_checked,
+        robust_stats.flips_performed,
+        robust_stats.max_queue_len
+    );
+    let dt_robust = converted_robust.triangulation;
     if let Err(err) = dt_robust.is_valid_delaunay() {
         test_debug_warn!("[Issue #120 debug] robust triangulation still invalid: {err:?}");
     }
@@ -941,10 +936,13 @@ fn regression_issue_228_exact_predicate_paths_3d_fast() {
         .map(|p| vertex!(p.into()).unwrap())
         .collect();
 
-    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
-        .topology_guarantee(TopologyGuarantee::Pseudomanifold)
-        .build()
-        .expect("3D exact-predicate fast regression construction must not fail (#228)");
+    let triangulation = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build_triangulation()
+        .expect("3D exact-predicate fast regression must cross the Levels 1-4 boundary (#228)");
+    let dt = delaunayize(triangulation, DelaunayizeConfig::default())
+        .expect("3D exact-predicate fast regression repair must not fail (#228)")
+        .triangulation;
 
     let delaunay_result = dt.verify_via_flip_predicates();
     assert!(

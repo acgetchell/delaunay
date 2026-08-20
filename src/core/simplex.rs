@@ -1031,22 +1031,6 @@ impl<V, const D: usize> Simplex<V, D> {
         mirror_idx
     }
 
-    /// Adds a vertex key in tests that deliberately construct invalid topology.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn push_vertex_key(&mut self, vertex_key: VertexKey) {
-        self.vertices.push(vertex_key);
-        self.periodic_vertex_offsets = None;
-    }
-
-    /// Clears vertex keys in tests that deliberately construct invalid topology.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn clear_vertex_keys(&mut self) {
-        self.vertices.clear();
-        self.periodic_vertex_offsets = None;
-    }
-
     /// Swaps two vertex slots and keeps aligned per-slot buffers consistent.
     ///
     /// This updates:
@@ -1231,22 +1215,6 @@ impl<V, const D: usize> Simplex<V, D> {
     #[must_use]
     pub const fn data(&self) -> Option<&V> {
         self.data.as_ref()
-    }
-
-    /// Clears the neighbors of the [Simplex].
-    ///
-    /// **Internal API**: This method is `pub(crate)` to enforce that all neighbor
-    /// modifications go through validated TDS methods. External code should use
-    /// triangulation-level repair or rebuild APIs rather than clearing neighbor state.
-    ///
-    /// This method sets the `neighbors` field to `None`, effectively removing all
-    /// neighbor relationships. This is useful for benchmarking neighbor assignment
-    /// or when rebuilding neighbor relationships from scratch.
-    ///
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn clear_neighbors(&mut self) {
-        self.neighbors = None;
     }
 
     /// Returns the UUIDs of the vertices in this simplex.
@@ -1916,9 +1884,32 @@ mod tests {
         collections::{HashSet, hash_map::DefaultHasher},
         hash::Hasher,
     };
+
+    impl<V, const D: usize> Simplex<V, D> {
+        /// Adds a vertex key in deliberately malformed topology fixtures.
+        #[inline]
+        pub(crate) fn push_vertex_key(&mut self, vertex_key: VertexKey) {
+            self.vertices.push(vertex_key);
+            self.periodic_vertex_offsets = None;
+        }
+
+        /// Clears vertex keys in deliberately malformed topology fixtures.
+        #[inline]
+        pub(crate) fn clear_vertex_keys(&mut self) {
+            self.vertices.clear();
+            self.periodic_vertex_offsets = None;
+        }
+
+        /// Clears neighbor state in deliberately malformed topology fixtures.
+        #[inline]
+        pub(crate) fn clear_neighbors(&mut self) {
+            self.neighbors = None;
+        }
+    }
     // Type aliases for commonly used types to reduce repetition
     type TestVertex3D = Vertex<(), 3>;
     type TestVertex2D = Vertex<(), 2>;
+    type CanonicalSimplexRecord = (Uuid, Vec<Uuid>, Option<Vec<Option<Uuid>>>);
 
     struct NonDataType(String);
 
@@ -1936,6 +1927,40 @@ mod tests {
             data: Some(data),
             periodic_vertex_offsets: None,
         }
+    }
+
+    /// Captures stable simplex incidence so snapshot hydration can be compared across fresh keys.
+    fn canonical_simplex_records(
+        dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>,
+    ) -> Vec<CanonicalSimplexRecord> {
+        let mut records: Vec<_> = dt
+            .simplices()
+            .map(|(_, simplex)| {
+                let vertices = simplex
+                    .vertices()
+                    .iter()
+                    .map(|&vertex_key| {
+                        dt.vertex(vertex_key)
+                            .expect("simplex should reference a live vertex")
+                            .uuid()
+                    })
+                    .collect();
+                let neighbors = simplex.neighbors().map(|neighbor_keys| {
+                    neighbor_keys
+                        .map(|neighbor_key| {
+                            neighbor_key.map(|key| {
+                                dt.simplex(key)
+                                    .expect("neighbor should reference a live simplex")
+                                    .uuid()
+                            })
+                        })
+                        .collect()
+                });
+                (simplex.uuid(), vertices, neighbors)
+            })
+            .collect();
+        records.sort_unstable_by_key(|(simplex_uuid, _, _)| *simplex_uuid);
+        records
     }
 
     /// Creates distinct synthetic vertex keys for tests.
@@ -3147,18 +3172,25 @@ mod tests {
     #[test]
     fn simplex_to_and_from_json() {
         // Test serialization through TDS context.
-        // Use a non-degenerate 3D tetrahedron so `DelaunayTriangulationBuilder::build` can construct a
-        // valid initial simplex.
+        // Use a non-degenerate 3D tetrahedron with an interior point so the
+        // snapshot contains multiple simplices and non-boundary neighbors.
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.2, 0.2, 0.2]).unwrap(),
         ];
         let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let expected_vertices = dt.number_of_vertices();
+        let expected_simplices = dt.number_of_simplices();
+        let expected_dimension = dt.dim();
+        let expected_simplex_records = canonical_simplex_records(&dt);
 
-        // Serialize the entire DT (includes simplices with proper context)
-        let serialized = serde_json::to_string(&dt).unwrap();
+        // Exercise the TDS snapshot boundary directly. Delaunay owner
+        // checkpoints use a distinct versioned envelope with proof context.
+        let tds = dt.into_triangulation().into_tds();
+        let serialized = serde_json::to_string(&tds).unwrap();
         assert!(serialized.contains("vertices"));
         assert!(serialized.contains("simplices"));
 
@@ -3168,9 +3200,14 @@ mod tests {
             .expect("serialized Delaunay TDS should validate");
 
         // Verify DT properties match
-        assert_eq!(deserialized.number_of_vertices(), dt.number_of_vertices());
-        assert_eq!(deserialized.number_of_simplices(), dt.number_of_simplices());
-        assert_eq!(deserialized.dim(), dt.dim());
+        assert_eq!(deserialized.number_of_vertices(), expected_vertices);
+        assert_eq!(deserialized.number_of_simplices(), expected_simplices);
+        assert_eq!(deserialized.dim(), expected_dimension);
+        assert!(deserialized.validation_report().is_ok());
+        assert_eq!(
+            canonical_simplex_records(&deserialized),
+            expected_simplex_records
+        );
 
         // Verify simplices within DT can be accessed
         assert_ne!(deserialized.number_of_simplices(), 0);

@@ -813,36 +813,6 @@ impl<U, V, const D: usize> RawTdsSnapshot<U, V, D> {
 }
 
 impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
-    /// Converts a valid live key-based TDS into an owned snapshot for mutation tests.
-    ///
-    /// Production serialization uses the borrowed `from_tds` path below so non-`Copy`
-    /// payloads can still cross the public [`Tds`] codec boundary.
-    #[cfg(test)]
-    fn try_from_tds_owned(tds: &Tds<U, V, D>) -> Result<Self, TdsSnapshotError>
-    where
-        U: Copy,
-        V: Copy,
-    {
-        tds.validate()
-            .map_err(|source| TdsSnapshotError::SourceValidationFailed { source })?;
-
-        let vertices = tds
-            .vertices()
-            .map(|(_vertex_key, vertex)| *vertex)
-            .collect();
-        let simplices = tds
-            .simplices()
-            .map(|(_simplex_key, simplex)| {
-                TdsSnapshotSimplex::try_from_simplex_with_data(tds, simplex, simplex.data)
-            })
-            .collect::<Result<Vec<_>, TdsSnapshotError>>()?;
-
-        Ok(Self {
-            vertices,
-            simplices,
-        })
-    }
-
     /// Converts this validated snapshot into the raw serializable shape.
     fn into_raw(self) -> RawTdsSnapshot<U, V, D> {
         let mut raw_simplices = Vec::with_capacity(self.simplices.len());
@@ -1242,6 +1212,34 @@ mod tests {
     use proptest::prelude::*;
     use slotmap::KeyData;
     use std::assert_matches;
+
+    impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
+        /// Converts a valid live key-based TDS into an owned mutation fixture.
+        fn try_from_tds_owned(tds: &Tds<U, V, D>) -> Result<Self, TdsSnapshotError>
+        where
+            U: Copy,
+            V: Copy,
+        {
+            tds.validate()
+                .map_err(|source| TdsSnapshotError::SourceValidationFailed { source })?;
+
+            let vertices = tds
+                .vertices()
+                .map(|(_vertex_key, vertex)| *vertex)
+                .collect();
+            let simplices = tds
+                .simplices()
+                .map(|(_simplex_key, simplex)| {
+                    TdsSnapshotSimplex::try_from_simplex_with_data(tds, simplex, simplex.data)
+                })
+                .collect::<Result<Vec<_>, TdsSnapshotError>>()?;
+
+            Ok(Self {
+                vertices,
+                simplices,
+            })
+        }
+    }
 
     fn initial_simplex_vertices_3d() -> [Vertex<(), 3>; 4] {
         [

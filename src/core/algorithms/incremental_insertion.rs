@@ -40,7 +40,7 @@ use crate::core::construction::{
 };
 use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::realization::TriangulationRealizationValidationError;
-use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
+use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
     DelaunayValidationErrorKind, EntityKind, GeometricError, InvariantError,
     NeighborValidationError, SimplexKey, Tds, TdsConstructionError, TdsError, TdsErrorKind,
@@ -366,6 +366,19 @@ pub enum TdsValidationFailure {
         context: String,
     },
 
+    /// Construction completion was requested before a full-dimensional simplex existed.
+    #[error(
+        "cannot complete {dimension}D TDS construction with {vertex_count} vertices and {simplex_count} simplices"
+    )]
+    IncompleteConstruction {
+        /// Compile-time ambient dimension of the TDS.
+        dimension: usize,
+        /// Number of vertices currently stored.
+        vertex_count: usize,
+        /// Number of maximal simplices currently stored.
+        simplex_count: usize,
+    },
+
     /// An index exceeded the valid range.
     #[error("index out of bounds: index {index}, bound {bound}: {context}")]
     IndexOutOfBounds {
@@ -547,6 +560,15 @@ impl From<TdsError> for TdsValidationFailure {
                 expected,
                 actual,
                 context,
+            },
+            TdsError::IncompleteConstruction {
+                dimension,
+                vertex_count,
+                simplex_count,
+            } => Self::IncompleteConstruction {
+                dimension,
+                vertex_count,
+                simplex_count,
             },
             TdsError::IndexOutOfBounds {
                 index,
@@ -794,6 +816,27 @@ pub enum InitialSimplexConstructionError {
         source: SimplexValidationError,
     },
 
+    /// Too many vertices were supplied for one bootstrap simplex.
+    #[error(
+        "excess vertices for {dimension}D initial simplex: got {actual}, expected exactly {expected}"
+    )]
+    ExcessVertices {
+        /// Attempted dimension.
+        dimension: usize,
+        /// Required initial-simplex vertex count.
+        expected: usize,
+        /// Supplied initial-simplex vertex count.
+        actual: usize,
+    },
+
+    /// The exact bootstrap orientation predicate failed.
+    #[error("initial-simplex orientation predicate failed: {source}")]
+    OrientationPredicate {
+        /// Typed predicate-boundary conversion failure.
+        #[source]
+        source: CoordinateConversionError,
+    },
+
     /// Geometric degeneracy prevented bootstrap construction.
     #[error("geometric degeneracy while building initial simplex: {message}")]
     GeometricDegeneracy {
@@ -944,6 +987,18 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
             }
             TriangulationConstructionError::InsufficientVertices { dimension, source } => {
                 Self::InsufficientVertices { dimension, source }
+            }
+            TriangulationConstructionError::ExcessVertices {
+                dimension,
+                expected,
+                actual,
+            } => Self::ExcessVertices {
+                dimension,
+                expected,
+                actual,
+            },
+            TriangulationConstructionError::InitialSimplexOrientationPredicate { source } => {
+                Self::OrientationPredicate { source }
             }
             TriangulationConstructionError::GeometricDegeneracy { message } => {
                 Self::GeometricDegeneracy { message }
@@ -2035,6 +2090,8 @@ impl InsertionError {
                 InitialSimplexConstructionError::DuplicateUuid { .. }
                 | InitialSimplexConstructionError::FailedToCreateSimplex { .. }
                 | InitialSimplexConstructionError::InsufficientVertices { .. }
+                | InitialSimplexConstructionError::ExcessVertices { .. }
+                | InitialSimplexConstructionError::OrientationPredicate { .. }
                 | InitialSimplexConstructionError::InternalInconsistency { .. }
                 | InitialSimplexConstructionError::DuplicateCoordinates { .. }
                 | InitialSimplexConstructionError::LocalRepairBudgetExceeded { .. }
@@ -2980,7 +3037,7 @@ where
     V: DataType,
 {
     let simplex = tds
-        .simplex_mut(simplex_key)
+        .simplex(simplex_key)
         .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
     let facet_idx = usize::from(facet_idx);
     if facet_idx >= simplex.number_of_vertices() {
@@ -2992,27 +3049,9 @@ where
         .into());
     }
 
-    if simplex.neighbor_slots().is_none() {
-        set_simplex_neighbors_from_keys(simplex, (0..=D).map(|_| None))?;
-    }
-    let simplex_id = simplex.uuid();
-    let neighbors = simplex
-        .try_ensure_neighbors_buffer_mut()
-        .map_err(|source| TdsError::InvalidSimplex { simplex_id, source })?;
-    neighbors[facet_idx] = NeighborSlot::from_neighbor_key(neighbor);
-
+    tds.stage_neighbor_slot_for_topology_candidate(simplex_key, facet_idx, neighbor)
+        .map_err(TdsError::from)?;
     Ok(())
-}
-
-/// Installs a fully assigned neighbor buffer and preserves typed simplex context on arity errors.
-fn set_simplex_neighbors_from_keys<V, const D: usize>(
-    simplex: &mut Simplex<V, D>,
-    neighbors: impl IntoIterator<Item = Option<SimplexKey>>,
-) -> Result<(), InsertionError> {
-    let simplex_id = simplex.uuid();
-    simplex
-        .set_neighbors_from_keys(neighbors)
-        .map_err(|source| TdsError::InvalidSimplex { simplex_id, source }.into())
 }
 
 /// Hash a facet from sorted vertex keys.
@@ -3255,10 +3294,8 @@ where
             continue;
         }
 
-        let simplex = tds
-            .simplex_mut(simplex_key)
-            .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
-        set_simplex_neighbors_from_keys(simplex, rebuilt_neighbors)?;
+        tds.repair_neighbors_by_key_from_facet_incidence(simplex_key, &rebuilt_neighbors)
+            .map_err(TdsError::from)?;
     }
 
     #[cfg(debug_assertions)]
@@ -3414,11 +3451,8 @@ where
                 .count(),
         );
 
-        let simplex = tds
-            .simplex_mut(simplex_key)
-            .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
-
-        set_simplex_neighbors_from_keys(simplex, rebuilt)?;
+        tds.repair_neighbors_by_key_from_facet_incidence(simplex_key, &rebuilt)
+            .map_err(TdsError::from)?;
     }
 
     #[cfg(debug_assertions)]
@@ -4716,6 +4750,30 @@ mod tests {
             }
         }
         None
+    }
+
+    /// Overwrites one neighbor slot so repair tests can construct invalid input.
+    fn overwrite_neighbor_slot_for_test<U, V, const D: usize>(
+        tds: &mut Tds<U, V, D>,
+        simplex_key: SimplexKey,
+        facet_idx: u8,
+        neighbor: Option<SimplexKey>,
+    ) where
+        U: DataType,
+        V: DataType,
+    {
+        let simplex = tds
+            .simplex_mut(simplex_key)
+            .expect("test fixture simplex should exist");
+        let mut neighbors: SmallBuffer<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE> = simplex
+            .neighbor_keys()
+            .map_or_else(|| SmallBuffer::from_elem(None, D + 1), Iterator::collect);
+        neighbors.resize(D + 1, None);
+        neighbors[usize::from(facet_idx)] = neighbor;
+        simplex
+            .set_neighbors_from_keys(neighbors)
+            .expect("test fixture neighbor buffer should match simplex arity");
+        tds.mark_topology_modified_for_test();
     }
 
     #[test]
@@ -6464,7 +6522,7 @@ mod tests {
                     let (simplex_key, facet_idx, neighbor_key, _) =
                         first_neighbor_pair(tds).expect("test triangulation should have adjacent simplices");
 
-                    set_neighbor(tds, simplex_key, facet_idx, None).unwrap();
+                    overwrite_neighbor_slot_for_test(tds, simplex_key, facet_idx, None);
                     let repaired = repair_neighbor_pointers_local(tds, &[simplex_key], Some(&[neighbor_key]))
                         .expect("local repair should reconstruct the missing slot");
 
@@ -6614,7 +6672,7 @@ mod tests {
         let stale_neighbor = SimplexKey::from(KeyData::from_ffi(u64::MAX - 7));
         assert!(!tds.contains_simplex(stale_neighbor));
 
-        set_neighbor(tds, simplex_key, facet_idx, Some(stale_neighbor)).unwrap();
+        overwrite_neighbor_slot_for_test(tds, simplex_key, facet_idx, Some(stale_neighbor));
         let repaired = repair_neighbor_pointers_local(tds, &[simplex_key], Some(&[neighbor_key]))
             .expect("local repair should replace a stale neighbor slot");
 
@@ -6675,8 +6733,13 @@ mod tests {
                 .is_none()
         );
 
-        set_neighbor(&mut tds, c1, shared_facet_idx_u8, Some(wrong_live_neighbor)).unwrap();
-        set_neighbor(&mut tds, c2, shared_facet_idx_u8, Some(c1)).unwrap();
+        overwrite_neighbor_slot_for_test(
+            &mut tds,
+            c1,
+            shared_facet_idx_u8,
+            Some(wrong_live_neighbor),
+        );
+        overwrite_neighbor_slot_for_test(&mut tds, c2, shared_facet_idx_u8, Some(c1));
 
         let repaired = repair_neighbor_pointers_local(&mut tds, &[c1], Some(&[c2]))
             .expect("local repair should replace a live neighbor across the wrong facet");
@@ -6700,7 +6763,7 @@ mod tests {
         let (simplex_key, facet_idx, _neighbor_key, _) =
             first_neighbor_pair(tds).expect("test triangulation should have adjacent simplices");
 
-        set_neighbor(tds, simplex_key, facet_idx, None).unwrap();
+        overwrite_neighbor_slot_for_test(tds, simplex_key, facet_idx, None);
         let repaired = repair_neighbor_pointers_local(tds, &[], None)
             .expect("local repair should ignore unseeded damage");
 

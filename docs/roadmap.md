@@ -22,8 +22,9 @@ Key takeaways from v0.7.8:
 - Compact `T^3` quotients are validated through topology and Delaunay
   checks before being returned; higher-dimensional quotient construction fails
   fast until scalable follow-up work lands.
-- `delaunayize_by_flips` preserves the incoming triangulation on topology
-  repair failure unless fallback rebuild succeeds.
+- `delaunayize` now consumes a Levels 1–4 triangulation, keeps intermediate
+  flip-repair state private, and publishes only a Levels 1–5 result; raw-TDS
+  PL-manifold repair is an orthogonal pre-restoration workflow.
 - The release benchmark summary remains the current public performance snapshot
   for construction throughput, generated simplex counts, and circumsphere
   predicate behavior.
