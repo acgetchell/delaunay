@@ -29,7 +29,7 @@ Treat partial items as still open until their acceptance notes are satisfied.
 ## High-Value Improvements
 
 - [x] **6. Split very large source files.**
-  `core/triangulation.rs` and the Delaunay-facing layer have been split into
+  the triangulation and Delaunay-facing layers have been split into
   orthogonal construction, insertion, query, repair, orientation, validation,
   and serialization modules. The bistellar-flip implementation is likewise
   split across `core/algorithms/flips/`; if future review warrants another
@@ -154,7 +154,7 @@ Treat partial items as still open until their acceptance notes are satisfied.
 - [x] **B. Remove stale deprecated-warning comment in `lib.rs`.**
   The crate-level migration comment was removed along with the deprecated
   mutable triangulation escape hatch.
-- [x] **C. Relabel safe-code `SAFETY` comments in `tds/storage.rs`.**
+- [x] **C. Relabel safe-code `SAFETY` comments in `tds/model.rs`.**
   UUID index-map consistency comments now use `INVARIANT` where no unsafe
   reasoning is involved.
 - [x] **D. Remove allocation from `geometry/sos.rs` predicate helper.**

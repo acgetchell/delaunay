@@ -639,67 +639,6 @@ fn test_regression_non_manifold_nearby_seeds() {
 }
 
 // =========================================================================
-// Edge Cases - Minimal Configurations
-// =========================================================================
-
-#[test]
-fn test_exact_minimum_vertices_2d() {
-    // Exactly D+1 = 3 vertices for 2D
-    let vertices = vec![
-        vertex!([0.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0]).unwrap(),
-    ];
-
-    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
-        .topology_guarantee(TopologyGuarantee::PLManifold)
-        .build()
-        .unwrap();
-
-    assert_eq!(dt.number_of_vertices(), 3);
-    assert_eq!(dt.number_of_simplices(), 1);
-}
-
-#[test]
-fn test_exact_minimum_vertices_3d() {
-    // Exactly D+1 = 4 vertices for 3D
-    let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0, 0.0]).unwrap(),
-        vertex!([0.0, 0.0, 1.0]).unwrap(),
-    ];
-
-    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
-        .topology_guarantee(TopologyGuarantee::PLManifold)
-        .build()
-        .unwrap();
-
-    assert_eq!(dt.number_of_vertices(), 4);
-    assert_eq!(dt.number_of_simplices(), 1);
-}
-
-#[test]
-fn test_exact_minimum_vertices_4d() {
-    // Exactly D+1 = 5 vertices for 4D
-    let vertices = vec![
-        vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
-        vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
-        vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
-    ];
-
-    let dt: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::builder(&vertices)
-        .topology_guarantee(TopologyGuarantee::PLManifold)
-        .build()
-        .unwrap();
-
-    assert_eq!(dt.number_of_vertices(), 5);
-    assert_eq!(dt.number_of_simplices(), 1);
-}
-
-// =========================================================================
 // Edge Cases - Interior/Exterior Points
 // =========================================================================
 

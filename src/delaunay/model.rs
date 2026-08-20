@@ -8,7 +8,7 @@
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::operations::DelaunayInsertionState;
 use crate::core::tds::{TopologyOwner, TopologyOwnerId};
-use crate::core::triangulation::Triangulation;
+use crate::triangulation::Triangulation;
 
 /// Provenance required for replacing a global Euclidean empty-sphere scan with
 /// local robust flip predicates.
@@ -125,5 +125,42 @@ impl<K, U, V, const D: usize> TopologyOwner for DelaunayTriangulation<K, U, V, D
     #[inline]
     fn topology_generation(&self) -> u64 {
         self.tri.topology_generation()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geometry::kernel::FastKernel;
+    use crate::vertex;
+
+    #[test]
+    fn euclidean_report_domain_only_certifies_complete_point_sets() {
+        assert!(EuclideanDelaunayReportDomain::CompletePointSet.supports_local_certificate());
+        assert!(!EuclideanDelaunayReportDomain::Unproven.supports_local_certificate());
+    }
+
+    #[test]
+    fn topology_owner_identity_and_generation_delegate_to_triangulation() {
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> = DelaunayTriangulation {
+            tri: Triangulation::new_empty(FastKernel::new()),
+            insertion_state: DelaunayInsertionState::new(),
+            spatial_index: None,
+            euclidean_report_domain: EuclideanDelaunayReportDomain::Unproven,
+        };
+        let owner_id = dt.tri.topology_owner_id();
+        let initial_generation = dt.tri.topology_generation();
+
+        assert_eq!(dt.topology_owner_id(), owner_id);
+        assert_eq!(dt.topology_generation(), initial_generation);
+
+        dt.tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+            .unwrap();
+
+        assert_eq!(dt.topology_owner_id(), owner_id);
+        assert_eq!(dt.topology_generation(), dt.tri.topology_generation());
+        assert!(dt.topology_generation() > initial_generation);
     }
 }

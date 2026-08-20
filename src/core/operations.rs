@@ -11,8 +11,8 @@
 
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::tds::{SimplexKey, VertexKey};
-use crate::core::validation::TopologyGuarantee;
 use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
+use crate::triangulation::validation::TopologyGuarantee;
 
 /// Semantic classification of topological modifications to a triangulation.
 ///

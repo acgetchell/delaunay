@@ -75,7 +75,7 @@ pub enum TopologyIndexBuildError {
 #[must_use]
 pub struct IncidenceView<'tds> {
     /// Borrowed canonical vertex → incident simplices relation.
-    pub(in crate::core) vertex_to_simplices: &'tds VertexIncidenceIndex,
+    pub(crate) vertex_to_simplices: &'tds VertexIncidenceIndex,
 }
 
 /// Derived vertex→edge index for one triangulation snapshot.
@@ -91,14 +91,14 @@ pub struct IncidenceView<'tds> {
 #[must_use]
 pub struct EdgeIndex<'tds> {
     /// Vertex → incident edges.
-    pub(in crate::core) vertex_to_edges:
+    pub(crate) vertex_to_edges:
         FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
 
     /// Number of unique edges in the triangulation snapshot.
-    pub(in crate::core) edge_count: usize,
+    pub(crate) edge_count: usize,
 
     /// Borrowed canonical incidence relation that ties this index to the source TDS snapshot.
-    pub(in crate::core) _source_incidence: &'tds VertexIncidenceIndex,
+    pub(crate) _source_incidence: &'tds VertexIncidenceIndex,
 }
 
 /// Derived simplex→neighbor index for one triangulation snapshot.
@@ -114,11 +114,11 @@ pub struct EdgeIndex<'tds> {
 #[must_use]
 pub struct SimplexNeighborIndex<'tds> {
     /// Simplex → neighboring simplices (boundary facets omitted).
-    pub(in crate::core) simplex_to_neighbors:
+    pub(crate) simplex_to_neighbors:
         FastHashMap<SimplexKey, SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
 
     /// Borrowed canonical incidence relation that ties this index to the source TDS snapshot.
-    pub(in crate::core) _source_incidence: &'tds VertexIncidenceIndex,
+    pub(crate) _source_incidence: &'tds VertexIncidenceIndex,
 }
 
 /// Borrowed adjacency view for one triangulation snapshot.
@@ -173,7 +173,7 @@ pub struct TriangulationAdjacency<'tds> {
 impl<'tds> TriangulationAdjacency<'tds> {
     /// Wraps the split topology views as the lifetime-bound composite API.
     #[inline]
-    pub(in crate::core) const fn from_parts(
+    pub(crate) const fn from_parts(
         incidence: IncidenceView<'tds>,
         edges: EdgeIndex<'tds>,
         simplex_neighbors: SimplexNeighborIndex<'tds>,

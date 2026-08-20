@@ -14,15 +14,17 @@ use crate::construction::{
     ConstructionOptions, DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
     InsertionOrderStrategy, RetryPolicy,
 };
-use crate::core::construction::{FinalTopologyValidationContext, TriangulationConstructionError};
 use crate::core::simplex::SimplexValidationError;
 use crate::core::traits::data_type::DataType;
-use crate::core::validation::TopologyGuarantee;
 use crate::core::vertex::Vertex;
+use crate::delaunay_model::DelaunayTriangulation;
 use crate::geometry::coordinate_range::{CoordinateRange, CoordinateRangeError};
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
-use crate::triangulation::DelaunayTriangulation;
+use crate::triangulation::construction::{
+    FinalTopologyValidationContext, TriangulationConstructionError,
+};
+use crate::triangulation::validation::TopologyGuarantee;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;

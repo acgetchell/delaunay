@@ -296,11 +296,11 @@ mod tests {
     use super::FacetIncidenceAnalysis;
     use crate::core::collections::{FacetToSimplicesMap, SmallBuffer};
     use crate::core::facet::{FacetError, FacetHandle, FacetToSimplicesIndex, FacetView};
-    use crate::core::query::QueryError;
     use crate::core::simplex::Simplex;
     use crate::core::tds::{SimplexKey, Tds, TdsError};
+    use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::point::Point;
-    use crate::triangulation::DelaunayTriangulation;
+    use crate::triangulation::query::QueryError;
     use crate::try_vertices_from_points;
     use crate::vertex;
     use std::assert_matches;

@@ -40,12 +40,12 @@ This matters for large-scale investigations that need to run under
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_INSERT_TRACE` | presence | `triangulation.rs` | `[release]` Per-insertion summary (vertex index, location, conflict size, suspicion flags) |
-| `DELAUNAY_BULK_PROGRESS_EVERY` | **value** (integer) | `delaunay/triangulation.rs` | `[release]` Periodic batch progress for post-simplex bulk vertices. |
-| `DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE` | presence | `triangulation.rs` | `[release]` One-shot trace of first cavity reduction chain + re-extractions. |
-| `DELAUNAY_DEBUG_RETRYABLE_SKIP` | presence | `triangulation.rs` | `[release]` Retryable conflict skip trace with attempt and rollback context. |
-| `DELAUNAY_DEBUG_SHUFFLE` | presence | `triangulation.rs` | Logs vertex shuffle order during batch construction |
-| `DELAUNAY_DUPLICATE_METRICS` | presence | `delaunay/triangulation.rs` | `[release]` Duplicate-detection metrics (spatial hash grid stats) |
+| `DELAUNAY_INSERT_TRACE` | presence | `delaunay/construction.rs` | `[release]` Per-insertion summary (vertex index, location, conflict size, suspicion flags) |
+| `DELAUNAY_BULK_PROGRESS_EVERY` | **value** (integer) | `delaunay/construction.rs` | `[release]` Periodic batch progress for post-simplex bulk vertices. |
+| `DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE` | presence | `triangulation/insertion.rs` | `[release]` One-shot cavity-reduction trace. |
+| `DELAUNAY_DEBUG_RETRYABLE_SKIP` | presence | `triangulation/insertion.rs` | `[release]` Retryable conflict skip trace with attempt and rollback context. |
+| `DELAUNAY_DEBUG_SHUFFLE` | presence | `delaunay/construction.rs` | Logs vertex shuffle order during batch construction |
+| `DELAUNAY_DUPLICATE_METRICS` | presence | `triangulation/insertion.rs` | `[release]` Duplicate-detection metrics (spatial hash grid stats) |
 
 ## Point Location
 

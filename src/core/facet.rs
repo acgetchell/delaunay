@@ -2225,11 +2225,11 @@ mod tests {
         ConstructionOptions, InitialSimplexStrategy, InsertionOrderStrategy,
     };
     use crate::core::tds::{Tds, VertexKey};
-    use crate::core::triangulation::Triangulation;
-    use crate::core::validation::TopologyGuarantee;
     use crate::core::vertex::Vertex;
+    use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::AdaptiveKernel;
-    use crate::triangulation::DelaunayTriangulation;
+    use crate::triangulation::Triangulation;
+    use crate::triangulation::validation::TopologyGuarantee;
     use crate::vertex;
     use slotmap::{KeyData, SlotMap};
     use std::assert_matches;

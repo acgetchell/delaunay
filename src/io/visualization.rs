@@ -9,11 +9,11 @@
 use crate::core::collections::NeighborBuffer;
 use crate::core::simplex::NeighborSlot;
 use crate::core::tds::{SimplexKey, Tds, VertexKey};
-use crate::core::validation::TopologyGuarantee;
 use crate::core::vertex::Vertex;
+use crate::delaunay_model::DelaunayTriangulation;
 use crate::geometry::traits::coordinate::InvalidCoordinateValue;
 use crate::topology::traits::topological_space::TopologyKind;
-use crate::triangulation::DelaunayTriangulation;
+use crate::triangulation::validation::TopologyGuarantee;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::{HashMap, HashSet},

@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 use crate::core::tds::{Tds, TdsOwnerRollbackTransaction, TdsRollbackOwner, TdsRollbackWindow};
-use crate::core::triangulation::Triangulation;
+use crate::triangulation::Triangulation;
 
 impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for Triangulation<K, U, V, D> {
     fn rollback_tds(&self) -> &Tds<U, V, D> {
@@ -18,7 +18,7 @@ impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for Triangulation<K, U, 
 /// Scoped rollback guard for a `Triangulation` mutation that snapshots only
 /// the owned TDS while allowing method-level mutation through the owner.
 #[must_use = "rollback transactions restore on drop unless explicitly committed or rolled back"]
-pub(crate) struct TriangulationRollbackTransaction<'tri, K, U, V, const D: usize>
+pub struct TriangulationRollbackTransaction<'tri, K, U, V, const D: usize>
 where
     U: Clone,
     V: Clone,

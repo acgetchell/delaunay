@@ -2226,12 +2226,12 @@ mod tests {
     use crate::core::algorithms::incremental_insertion::DelaunayRepairFailureContext;
     use crate::core::algorithms::locate::LocateResult;
     use crate::core::collections::{SimplexVertexKeyBuffer, SimplexVertexUuidBuffer, Uuid};
-    use crate::core::realization::TriangulationRealizationSimplexDetail;
     use crate::core::tds::TdsError;
-    use crate::core::validation::TopologyGuarantee;
     use crate::geometry::traits::coordinate::CoordinateConversionValue;
     use crate::repair::DelaunayRepairOperation;
     use crate::topology::traits::topological_space::TopologyKind;
+    use crate::triangulation::realization::TriangulationRealizationSimplexDetail;
+    use crate::triangulation::validation::TopologyGuarantee;
     use slotmap::KeyData;
     use std::assert_matches;
     use std::{

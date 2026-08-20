@@ -4,9 +4,9 @@
 
 use crate::core::facet::FacetError;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::Triangulation;
 use crate::geometry::algorithms::convex_hull::{ConvexHull, ConvexHullConstructionError};
 use crate::geometry::point::Point;
+use crate::triangulation::Triangulation;
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::{BuildHasher, Hash};
@@ -641,8 +641,8 @@ mod tests {
     use std::assert_matches;
 
     use crate::core::tds::VertexKey;
+    use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::FastKernel;
-    use crate::triangulation::DelaunayTriangulation;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
 

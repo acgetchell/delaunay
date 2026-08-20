@@ -74,6 +74,24 @@ Unit tests validate:
 
 They should be small, deterministic, and fast.
 
+Every source module should unit-test all reasonably testable behavior that it
+owns. Keep those tests in the owning source file, in a `#[cfg(test)] mod tests`
+block at the end of the file after all production items. Place a test at the
+lowest layer that owns the behavior: do not construct a `Triangulation` or
+`DelaunayTriangulation` merely to test a TDS invariant, and do not leave
+construction-, query-, validation-, or algorithm-specific tests in a model
+module solely because they exercise the model type. A narrowly shared
+`#[cfg(test)] mod test_support` may immediately precede the owning test module
+when private storage access is necessary. Cross-module workflows and public API
+contracts belong in integration tests instead.
+
+Do not keep duplicate tests of the same contract in another source module or
+integration test. Prefer the focused unit test in the module that owns the
+behavior and retire the duplicate. Tests at multiple layers are justified only
+when each supplies distinct boundary evidence, such as a private invariant unit
+test plus a public API integration test; their names and assertions should make
+that distinction explicit.
+
 ---
 
 ### Integration Tests

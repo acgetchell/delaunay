@@ -1334,7 +1334,7 @@ mod tests {
     use std::assert_matches;
 
     use super::*;
-    use crate::triangulation::DelaunayTriangulation;
+    use crate::delaunay_model::DelaunayTriangulation;
     use crate::vertex;
     use slotmap::KeyData;
 

@@ -96,20 +96,15 @@ use crate::core::collections::{
     Entry, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, PeriodicOffsetBuffer, SimplexVertexKeyBuffer,
     SmallBuffer, Uuid, VertexKeySet,
 };
-use crate::core::construction::{
-    FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
-};
 use crate::core::facet::facet_key_from_vertices;
-use crate::core::realization::TriangulationRealizationValidationError;
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
     InvariantError, SimplexKey, Tds, TdsConstructionError, TdsError, TdsMutationError, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::Triangulation;
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
-use crate::core::validation::{TopologyGuarantee, ValidationConfigurationError, ValidationPolicy};
 use crate::core::vertex::Vertex;
+use crate::delaunay_model::DelaunayTriangulation;
 use crate::delaunay_property_validation::is_delaunay_property_only;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
@@ -118,7 +113,14 @@ use crate::topology::traits::global_topology_model::GlobalTopologyModel;
 use crate::topology::traits::topological_space::{
     GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
 };
-use crate::triangulation::DelaunayTriangulation;
+use crate::triangulation::Triangulation;
+use crate::triangulation::construction::{
+    FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
+};
+use crate::triangulation::realization::TriangulationRealizationValidationError;
+use crate::triangulation::validation::{
+    TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
+};
 use crate::validation::{
     DelaunayTriangulationValidationError, TriangulationAssemblyCandidate,
     TriangulationAssemblyError,
@@ -3869,7 +3871,6 @@ mod tests {
     use crate::core::algorithms::incremental_insertion::{
         TdsConstructionFailure, TdsValidationFailure,
     };
-    use crate::core::construction::PeriodicQuotientFacetKeyDerivationFailure;
     use crate::core::simplex::SimplexValidationError;
     use crate::core::tds::TdsConstructionError;
     use crate::geometry::kernel::RobustKernel;
@@ -3880,6 +3881,7 @@ mod tests {
     use crate::topology::traits::topological_space::{
         GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
     };
+    use crate::triangulation::construction::PeriodicQuotientFacetKeyDerivationFailure;
     use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::Key;

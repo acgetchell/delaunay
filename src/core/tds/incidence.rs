@@ -82,7 +82,7 @@ impl VertexIncidenceIndex {
 
     /// Returns the number of incident simplices for `vertex_key`.
     #[must_use]
-    pub(in crate::core) fn number_of_simplices(&self, vertex_key: VertexKey) -> usize {
+    pub(crate) fn number_of_simplices(&self, vertex_key: VertexKey) -> usize {
         let Some(incident_simplices) = self.map.get(&vertex_key) else {
             return 0;
         };
@@ -302,13 +302,13 @@ mod tests {
     impl VertexIncidenceIndex {
         /// Returns `true` when a fixture index has no vertex entries.
         #[must_use]
-        pub(in crate::core) fn is_empty(&self) -> bool {
+        pub(crate) fn is_empty(&self) -> bool {
             self.map.is_empty()
         }
 
         /// Returns whether a fixture index contains `vertex_key`.
         #[must_use]
-        pub(in crate::core) fn contains_vertex(&self, vertex_key: VertexKey) -> bool {
+        pub(crate) fn contains_vertex(&self, vertex_key: VertexKey) -> bool {
             self.map.contains_key(&vertex_key)
         }
 

@@ -72,17 +72,17 @@ use crate::builder::DelaunayTriangulationBuilder;
 use crate::core::algorithms::flips::repair_delaunay_with_flips_k2_k3_run_in_transaction;
 use crate::core::collections::{Entry, FastHashMap, SimplexVertexUuidBuffer};
 use crate::core::operations::TopologicalOperation;
-use crate::core::rollback::TriangulationRollbackTransaction;
 use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, TdsMutationError};
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::Triangulation;
-use crate::core::validation::TopologyGuarantee;
 use crate::core::vertex::Vertex;
+use crate::delaunay_model::DelaunayTriangulation;
 use crate::geometry::kernel::ExactPredicates;
 use crate::refinement::RefinementError;
 use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
-use crate::triangulation::DelaunayTriangulation;
+use crate::triangulation::Triangulation;
+use crate::triangulation::rollback::TriangulationRollbackTransaction;
+use crate::triangulation::validation::TopologyGuarantee;
 use crate::validation::{
     DelaunayTriangulationCandidate, DelaunayTriangulationValidationError,
     validate_level_five_for_refinement,

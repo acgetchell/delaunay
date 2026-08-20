@@ -80,7 +80,7 @@ Key combinatorial objects:
   vertex.
 - **Adjacency / neighbors**: two simplices are neighbors if they share a facet. The triangulation data
   structure (TDS) stores neighbor pointers across facets (see
-  [`src/core/tds/storage.rs`](../src/core/tds/storage.rs),
+  [`src/core/tds/model.rs`](../src/core/tds/model.rs),
   [`src/core/tds/mutation.rs`](../src/core/tds/mutation.rs),
   [`src/core/tds/validation.rs`](../src/core/tds/validation.rs), and CGAL’s
   [TDS_3](https://doc.cgal.org/latest/TDS_3/index.html)).[^cgal-tds3][^impl-tds]
@@ -322,7 +322,7 @@ simplicial complexes for geometry:
 Piecewise-linear (PL) manifoldness is strictly stronger than the pseudomanifold conditions. The public API exposes this
 via `TopologyGuarantee`, re-exported at the crate root and in
 `delaunay::prelude::construction` (source:
-[`src/core/triangulation/validation.rs`](../src/core/triangulation/validation.rs)):
+[`src/triangulation/validation.rs`](../src/triangulation/validation.rs)):
 
 - `TopologyGuarantee::Pseudomanifold`
   checks the codimension-1 incidence conditions (plus boundary consistency, connectedness,
@@ -583,7 +583,7 @@ For the project-wide bibliography (including references not cited here), see [`R
     DOI: <https://doi.org/10.1017/CBO9780511530067>.
 [^cgal-tds3]: CGAL Project. *Triangulation Data Structure* (TDS_3) documentation.
     <https://doc.cgal.org/latest/TDS_3/index.html>.
-[^impl-tds]: Implementation: [src/core/tds/storage.rs](../src/core/tds/storage.rs),
+[^impl-tds]: Implementation: [src/core/tds/model.rs](../src/core/tds/model.rs),
     [src/core/tds/mutation.rs](../src/core/tds/mutation.rs),
     [src/core/tds/incidence.rs](../src/core/tds/incidence.rs), and
     [src/core/tds/validation.rs](../src/core/tds/validation.rs).

@@ -6,7 +6,7 @@ use super::errors::{
     EntityKind, InvariantKind, InvariantViolation, NeighborValidationError,
     SharedFacetMismatchSide, TdsError, TriangulationValidationReport,
 };
-use super::storage::{SimplexUuidSortKey, Tds};
+use super::model::{SimplexUuidSortKey, Tds};
 use super::{SimplexKey, VertexKey};
 use crate::core::collections::{
     FacetToSimplicesMap, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer,
@@ -340,7 +340,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// This checks the full exact incidence relation. It is distinct from
     /// [`Self::validate_vertex_incidence`], which only validates each vertex's single
     /// optional `incident_simplex` hint.
-    pub(in crate::core) fn validate_vertex_to_simplices_index(&self) -> Result<(), TdsError> {
+    pub(crate) fn validate_vertex_to_simplices_index(&self) -> Result<(), TdsError> {
         let vertex_to_simplices = self.vertex_to_simplices.as_map();
 
         if vertex_to_simplices.len() != self.vertices.len() {

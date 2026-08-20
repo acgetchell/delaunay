@@ -47,7 +47,7 @@ use crate::core::adjacency::TopologyIndexBuildError;
 use crate::core::algorithms::flips::{
     DelaunayRepairError, DelaunayRepairStats, FlipError, LocalRepairPhaseTiming,
     repair_delaunay_local_single_pass, repair_delaunay_local_single_pass_timed,
-    repair_delaunay_with_flips_k2_k3, verify_triangulation_via_flip_predicates,
+    repair_delaunay_with_flips_k2_k3, verify_tds_via_flip_predicates_assuming_connected,
 };
 use crate::core::algorithms::incremental_insertion::{
     CavityFillingError, DelaunayRepairFailureContext, HullExtensionReason, InsertionError,
@@ -60,32 +60,24 @@ use crate::core::collections::{
     FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SecureHashMap, SimplexKeyBuffer,
     SmallBuffer,
 };
-use crate::core::construction::{
-    FinalDelaunayValidationContext, FinalTopologyValidationContext,
-    PeriodicQuotientFacetKeyDerivationFailure, TriangulationConstructionError,
-};
 use crate::core::edge::EdgeKeyError;
 use crate::core::facet::FacetError;
-use crate::core::insertion::record_duplicate_detection_metrics;
 use crate::core::operations::{
     DelaunayInsertionState, InsertionOutcome, InsertionResult, InsertionStatistics,
     InsertionTelemetryMode, RepairDecision, TopologicalOperation,
 };
-use crate::core::realization::TriangulationRealizationValidationError;
 use crate::core::simplex::SimplexValidationError;
 use crate::core::tds::{
     InvariantError, SimplexKey, Tds, TdsConstructionError, TdsError, TdsMutationError,
 };
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::Triangulation;
 use crate::core::util::{
     DeduplicationError, HilbertBitDepth, coords_equal_exact, coords_within_epsilon,
     hilbert_quantize_batch_in_range, stable_hash_u64_slice,
 };
-use crate::core::validation::{
-    TopologyGuarantee, TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
-};
 use crate::core::vertex::Vertex;
+use crate::delaunay_model::DelaunayTriangulation;
+use crate::delaunay_model::EuclideanDelaunayReportDomain;
 use crate::delaunay_property_validation::DelaunayValidationError;
 use crate::deletion::DeleteVertexError;
 use crate::diagnostics::{BatchLocalRepairTrigger, ConstructionTelemetry, LocalRepairSample};
@@ -100,9 +92,6 @@ use crate::geometry::util::{
     simplex_volume,
 };
 use crate::io::visualization::{VisualizationDataValidationError, VisualizationExportError};
-use crate::locality::{
-    accumulate_live_simplex_seeds, clear_simplex_seed_set, retain_live_simplex_seeds,
-};
 use crate::query::{QueryError, SimplexBarycenterError, SimplexDataFillError};
 use crate::repair::DelaunayRepairPolicy;
 use crate::topology::manifold::ManifoldError;
@@ -110,8 +99,19 @@ use crate::topology::traits::{
     GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalConstructionMode,
     ToroidalDomainError,
 };
-use crate::triangulation::DelaunayTriangulation;
-use crate::triangulation::EuclideanDelaunayReportDomain;
+use crate::triangulation::Triangulation;
+use crate::triangulation::construction::{
+    FinalDelaunayValidationContext, FinalTopologyValidationContext,
+    PeriodicQuotientFacetKeyDerivationFailure, TriangulationConstructionError,
+};
+use crate::triangulation::insertion::record_duplicate_detection_metrics;
+use crate::triangulation::locality::{
+    accumulate_live_simplex_seeds, clear_simplex_seed_set, retain_live_simplex_seeds,
+};
+use crate::triangulation::realization::TriangulationRealizationValidationError;
+use crate::triangulation::validation::{
+    TopologyGuarantee, TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
+};
 use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
 use core::{cmp::Ordering, fmt};
 use num_traits::ToPrimitive;
@@ -3455,7 +3455,11 @@ where
 
     /// Runs the construction-time local Level 5 predicate check.
     fn verify_via_flip_predicates(&self) -> Result<(), DelaunayRepairError> {
-        verify_triangulation_via_flip_predicates(&self.tri)
+        verify_tds_via_flip_predicates_assuming_connected(
+            &self.tri.tds,
+            &self.tri.kernel,
+            self.tri.global_topology,
+        )
     }
 
     /// Proves Level 5 for retry selection and retains that evidence for publication.
@@ -6180,9 +6184,6 @@ mod tests {
         EntityKind, GeometricError, InvariantError, SimplexKey, TriangulationConstructionState,
         VertexKey,
     };
-    use crate::core::validation::{
-        TopologyGuarantee, TriangulationValidationError, ValidationPolicy,
-    };
     use crate::diagnostics::BatchLocalRepairTrigger;
     use crate::geometry::coordinate_range::{CoordinateRangeError, CoordinateRangeOrdering};
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
@@ -6195,6 +6196,9 @@ mod tests {
     use crate::repair::DelaunayRepairPolicy;
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::topology::traits::topological_space::TopologyKind;
+    use crate::triangulation::validation::{
+        TopologyGuarantee, TriangulationValidationError, ValidationPolicy,
+    };
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use crate::vertex;
     use slotmap::KeyData;
@@ -6406,6 +6410,39 @@ mod tests {
                 .with_test_writer()
                 .try_init();
         });
+    }
+
+    #[test]
+    fn test_delaunay_constructors_default_to_pl_manifold_mode() {
+        init_tracing();
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+        ];
+
+        let dt_new: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        assert_eq!(dt_new.topology_guarantee(), TopologyGuarantee::PLManifold);
+
+        let dt_empty: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+        assert_eq!(dt_empty.topology_guarantee(), TopologyGuarantee::PLManifold);
+
+        let dt_with_kernel: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulationBuilder::new(&vertices)
+                .build()
+                .unwrap();
+        assert_eq!(
+            dt_with_kernel.topology_guarantee(),
+            TopologyGuarantee::PLManifold
+        );
+
+        let dt_from_tds: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::try_from_tds(dt_new.tds().clone(), FastKernel::new()).unwrap();
+        assert_eq!(
+            dt_from_tds.topology_guarantee(),
+            TopologyGuarantee::PLManifold
+        );
     }
 
     struct ForceRepairNonconvergentGuard {
@@ -7971,6 +8008,17 @@ mod tests {
         assert_eq!(stats.attempts_histogram.get(1).copied().unwrap_or(0), D + 1);
     }
 
+    fn assert_exact_minimum_vertices<const D: usize>() {
+        init_tracing();
+        let vertices = simplex_vertices::<D>();
+
+        let dt: DelaunayTriangulation<_, (), (), D> =
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
+
+        assert_eq!(dt.number_of_vertices(), D + 1);
+        assert_eq!(dt.number_of_simplices(), 1);
+    }
+
     fn assert_constructed_tds_state<const D: usize>() {
         init_tracing();
         let vertices = simplex_vertices::<D>();
@@ -8057,6 +8105,11 @@ mod tests {
                 #[test]
                 fn [<test_builder_with_statistics_counts_initial_simplex_ $dim d>]() {
                     assert_initial_simplex_statistics::<$dim>();
+                }
+
+                #[test]
+                fn [<test_exact_minimum_vertices_ $dim d>]() {
+                    assert_exact_minimum_vertices::<$dim>();
                 }
 
                 #[test]

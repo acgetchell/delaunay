@@ -15,9 +15,9 @@
 use crate::core::tds::{
     SimplexKey, Tds, TdsMutationError, TopologyOwner, TopologyOwnerId, VertexKey,
 };
-use crate::core::validation::{TopologyGuarantee, ValidationPolicy};
 use crate::geometry::kernel::Kernel;
 use crate::topology::traits::topological_space::GlobalTopology;
+use crate::triangulation::validation::{TopologyGuarantee, ValidationPolicy};
 
 /// Proof-bearing Levels 1–4 triangulation.
 ///
@@ -293,6 +293,7 @@ mod tests {
     use super::*;
     use crate::core::tds::TdsError;
     use crate::geometry::kernel::FastKernel;
+    use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
 
@@ -324,6 +325,43 @@ mod tests {
             tri.validation_policy,
             TopologyGuarantee::DEFAULT.default_validation_policy()
         );
+    }
+
+    #[test]
+    fn explicit_empty_context_sets_requested_topology_and_policy() {
+        let tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty_with_topology_context(
+                FastKernel::new(),
+                TopologyGuarantee::Pseudomanifold,
+                GlobalTopology::Spherical,
+            );
+
+        assert_eq!(tri.global_topology, GlobalTopology::Spherical);
+        assert_eq!(tri.topology_guarantee, TopologyGuarantee::Pseudomanifold);
+        assert_eq!(
+            tri.validation_policy,
+            TopologyGuarantee::Pseudomanifold.default_validation_policy()
+        );
+    }
+
+    #[test]
+    fn topology_owner_and_demotion_preserve_canonical_tds() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+        let owner_id = tri.topology_owner_id();
+        let initial_generation = tri.topology_generation();
+
+        tri.tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+            .unwrap();
+
+        assert_eq!(tri.tds().topology_owner_id(), owner_id);
+        assert_eq!(tri.topology_generation(), tri.tds().generation());
+        assert!(tri.topology_generation() > initial_generation);
+
+        let tds = tri.into_tds();
+        assert_eq!(tds.topology_owner_id(), owner_id);
+        assert_eq!(tds.number_of_vertices(), 1);
     }
 
     #[test]

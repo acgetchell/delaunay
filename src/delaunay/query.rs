@@ -19,17 +19,14 @@ use crate::core::facet::{
     AllFacetsIter, BoundaryFacetsIter, FacetError, FacetHandle, FacetToSimplicesIndex, FacetView,
     SimplexFacetsIter,
 };
-use crate::core::query::QueryError;
-use crate::core::query::SimplexBarycenterError;
 use crate::core::simplex::Simplex;
 use crate::core::tds::{
     InvariantError, InvariantViolation, SimplexKey, Tds, TdsError, TdsMutationError,
     TriangulationValidationReport, VertexKey,
 };
 use crate::core::traits::data_type::{DataCopy, DataType};
-use crate::core::triangulation::Triangulation;
-use crate::core::validation::{TopologyGuarantee, ValidationConfigurationError, ValidationPolicy};
 use crate::core::vertex::Vertex;
+use crate::delaunay_model::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::repair::DelaunayCheckPolicy;
@@ -40,7 +37,11 @@ use crate::topology::characteristics::{
 use crate::topology::manifold::ManifoldError;
 use crate::topology::ridge::{RidgeCandidate, RidgeQuery, RidgeView};
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, TopologyKind};
-use crate::triangulation::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
+use crate::triangulation::Triangulation;
+use crate::triangulation::query::{QueryError, SimplexBarycenterError};
+use crate::triangulation::validation::{
+    TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
+};
 use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
 
@@ -2559,14 +2560,14 @@ mod tests {
     use crate::builder::DelaunayTriangulationBuilder;
     use crate::construction::{DelaunayError, DelaunayResult};
     use crate::core::operations::DelaunayInsertionState;
-    use crate::core::realization::TriangulationRealizationValidationError;
     use crate::core::tds::TdsError;
-    use crate::core::validation::TriangulationValidationError;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{CoordinateValidationError, InvalidCoordinateValue};
     use crate::geometry::util::safe_usize_to_scalar;
     use crate::topology::traits::GlobalTopologyModelError;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
+    use crate::triangulation::realization::TriangulationRealizationValidationError;
+    use crate::triangulation::validation::TriangulationValidationError;
     use crate::validation::DelaunayTriangulationCandidate;
     use crate::vertex;
     use approx::assert_relative_eq;
@@ -2948,40 +2949,6 @@ mod tests {
                 && vertex_key == overflowing_vertex_key
                 && value.is_infinite()
                 && value.is_sign_positive()
-        );
-    }
-
-    #[test]
-    fn test_delaunay_constructors_default_to_pl_manifold_mode() {
-        init_tracing();
-        let vertices: Vec<Vertex<(), 2>> = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-        ];
-
-        let dt_new: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        assert_eq!(dt_new.topology_guarantee(), TopologyGuarantee::PLManifold);
-
-        let dt_empty: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
-        assert_eq!(dt_empty.topology_guarantee(), TopologyGuarantee::PLManifold);
-
-        let dt_with_kernel: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .build()
-                .unwrap();
-
-        assert_eq!(
-            dt_with_kernel.topology_guarantee(),
-            TopologyGuarantee::PLManifold
-        );
-
-        let dt_from_tds: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_from_tds(dt_new.tds().clone(), FastKernel::new()).unwrap();
-        assert_eq!(
-            dt_from_tds.topology_guarantee(),
-            TopologyGuarantee::PLManifold
         );
     }
 
@@ -3562,37 +3529,6 @@ mod tests {
     }
 
     #[test]
-    fn test_new_with_exact_minimum_vertices() {
-        init_tracing();
-        // 2D: exactly 3 vertices (minimum for 2D simplex)
-        let vertices_2d = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-        ];
-        let dt_2d: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices_2d)
-                .build()
-                .unwrap();
-        assert_eq!(dt_2d.number_of_vertices(), 3);
-        assert_eq!(dt_2d.number_of_simplices(), 1);
-
-        // 3D: exactly 4 vertices (minimum for 3D simplex)
-        let vertices_3d = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let dt_3d: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices_3d)
-                .build()
-                .unwrap();
-        assert_eq!(dt_3d.number_of_vertices(), 4);
-        assert_eq!(dt_3d.number_of_simplices(), 1);
-    }
-
-    #[test]
     fn test_tds_accessor_provides_readonly_access() {
         init_tracing();
         let vertices = vec![
@@ -3611,30 +3547,6 @@ mod tests {
         // Verify we can call other TDS methods
         assert!(tds.is_valid().is_ok());
         assert!(tds.simplex_keys().next().is_some());
-    }
-
-    #[test]
-    fn test_internal_tds_access() {
-        init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-        assert_eq!(dt.number_of_vertices(), 4);
-
-        // Internal code can access TDS directly for mutations
-        let tds = &mut dt.tri.tds;
-        assert_eq!(tds.number_of_vertices(), 4);
-        assert_eq!(tds.number_of_simplices(), 1);
-
-        // Can call mutating methods like remove_duplicate_simplices
-        let result = tds.remove_duplicate_simplices();
-        assert!(result.is_ok());
     }
 
     #[test]

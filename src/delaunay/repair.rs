@@ -16,9 +16,9 @@ use crate::core::algorithms::flips::{
 use crate::core::operations::{RepairDecision, TopologicalOperation};
 use crate::core::tds::SimplexKey;
 use crate::core::traits::data_type::DataType;
-use crate::core::validation::TopologyGuarantee;
+use crate::delaunay_model::DelaunayTriangulation;
 use crate::geometry::kernel::{Kernel, RobustKernel};
-use crate::triangulation::DelaunayTriangulation;
+use crate::triangulation::validation::TopologyGuarantee;
 use std::{fmt, num::NonZeroUsize};
 
 #[cfg(test)]
@@ -942,11 +942,11 @@ mod tests {
     use crate::core::operations::InsertionOutcome;
     use crate::core::simplex::Simplex;
     use crate::core::tds::Tds;
-    use crate::core::validation::TopologyGuarantee;
     use crate::core::vertex::Vertex;
+    use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
     use crate::topology::traits::topological_space::GlobalTopology;
-    use crate::triangulation::DelaunayTriangulation;
+    use crate::triangulation::validation::TopologyGuarantee;
     use crate::validation::DelaunayTriangulationCandidate;
     use crate::vertex;
     use std::{assert_matches, cell::Cell, num::NonZeroUsize, sync::Once};

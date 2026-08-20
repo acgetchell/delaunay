@@ -1,7 +1,7 @@
 //! Generic triangulation construction helpers.
 //!
 //! This module owns the generic construction vocabulary for
-//! [`Triangulation`](crate::prelude::triangulation::Triangulation)
+//! [`Triangulation`]
 //! and the initial-simplex bootstrap used before incremental insertion takes
 //! over. Mutation-heavy insertion and repair orchestration remain implemented
 //! with the triangulation type until they can be split into narrower modules.
@@ -13,15 +13,12 @@ use crate::core::algorithms::incremental_insertion::{
 };
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
-use crate::core::realization::TriangulationRealizationValidationError;
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
     InvariantError, SimplexKey, Tds, TdsConstructionError, TdsError, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::Triangulation;
 use crate::core::util::PeriodicFacetKeyDerivationError;
-use crate::core::validation::TriangulationValidationError;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
@@ -31,6 +28,9 @@ use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateValidationError, CoordinateValues,
 };
 use crate::topology::traits::topological_space::TopologyKind;
+use crate::triangulation::Triangulation;
+use crate::triangulation::realization::TriangulationRealizationValidationError;
+use crate::triangulation::validation::TriangulationValidationError;
 use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
 

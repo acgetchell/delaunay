@@ -2153,9 +2153,9 @@ mod tests {
 
     use crate::core::facet::{FacetError, FacetHandle, FacetView};
     use crate::core::simplex::Simplex;
-    use crate::core::triangulation::Triangulation;
     use crate::geometry::kernel::FastKernel;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
+    use crate::triangulation::Triangulation;
 
     use slotmap::KeyData;
 

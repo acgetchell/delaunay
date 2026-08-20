@@ -1,6 +1,6 @@
 //! Realized-geometry validation for generic triangulations.
 //!
-//! This module owns Level 4 validation for generic [`Triangulation`](crate::Triangulation):
+//! This module owns Level 4 validation for generic [`Triangulation`]:
 //! after the TDS and topology layers have certified a valid oriented simplicial
 //! complex, the realization layer verifies that maximal simplices are nondegenerate
 //! and intersect only in their shared faces in the topology's active coordinate chart.
@@ -19,8 +19,6 @@ use crate::core::tds::{
     VertexKey,
 };
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::Triangulation;
-use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
@@ -38,6 +36,8 @@ use crate::topology::traits::global_topology_model::{
     GlobalTopologyModel, GlobalTopologyModelError,
 };
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
+use crate::triangulation::Triangulation;
+use crate::triangulation::validation::{TopologyGuarantee, TriangulationValidationError};
 use num_traits::ToPrimitive;
 use thiserror::Error;
 use uuid::Uuid;
@@ -2122,11 +2122,11 @@ mod tests {
     use super::*;
     use crate::builder::DelaunayTriangulationBuilder;
     use crate::core::tds::Tds;
-    use crate::core::triangulation::Triangulation;
     use crate::core::vertex::Vertex;
     use crate::delaunay_property_validation::DelaunayValidationError;
     use crate::geometry::kernel::FastKernel;
     use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
+    use crate::triangulation::Triangulation;
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use crate::vertex;
     use approx::assert_abs_diff_eq;

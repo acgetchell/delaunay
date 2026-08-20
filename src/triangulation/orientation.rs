@@ -1,4 +1,4 @@
-//! Geometric orientation orchestration for generic [`Triangulation`](crate::Triangulation).
+//! Geometric orientation orchestration for generic [`Triangulation`].
 //!
 //! This module owns triangulation-level orientation work: collecting lifted simplex
 //! points from the TDS, validating geometric orientation, canonicalizing simplex
@@ -14,13 +14,13 @@ use crate::core::collections::{
 };
 use crate::core::simplex::Simplex;
 use crate::core::tds::{GeometricError, SimplexKey, TdsError, VertexKey};
-use crate::core::triangulation::Triangulation;
-use crate::core::validation::TriangulationValidationError;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::topology::traits::global_topology_model::GlobalTopologyModel;
+use crate::triangulation::Triangulation;
+use crate::triangulation::validation::TriangulationValidationError;
 
 const POSITIVE_ORIENTATION_PROMOTION_MAX_PASSES: usize = 3;
 

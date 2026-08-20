@@ -836,8 +836,8 @@ mod tests {
     use super::*;
     use crate::{
         core::{traits::facet_incidence_analysis::FacetIncidenceAnalysis, vertex::Vertex},
+        delaunay_model::DelaunayTriangulation,
         geometry::{matrix::LaError, point::Point, traits::coordinate::InvalidCoordinateValue},
-        triangulation::DelaunayTriangulation,
         vertex,
     };
     use approx::assert_relative_eq;

@@ -1,4 +1,4 @@
-//! Read-only queries for generic [`Triangulation`](crate::Triangulation).
+//! Read-only queries for generic [`Triangulation`].
 //!
 //! This module owns zero-mutation accessors and topology traversal helpers for
 //! the generic triangulation layer. Mutation APIs stay with the construction and
@@ -24,7 +24,6 @@ use crate::core::facet::{
 };
 use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, TdsError, VertexKey};
-use crate::core::triangulation::Triangulation;
 use crate::core::util::usize_to_u8;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -39,6 +38,7 @@ use crate::topology::ridge::{
 use crate::topology::traits::{
     GlobalTopologyModelError, global_topology_model::GlobalTopologyModel,
 };
+use crate::triangulation::Triangulation;
 
 /// Errors returned by read-only triangulation queries.
 ///
@@ -2276,8 +2276,8 @@ impl<K, U, V> Triangulation<K, U, V, 2> {
 mod tests {
     use super::*;
     use crate::core::tds::Tds;
+    use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::FastKernel;
-    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
 
     use slotmap::KeyData;
