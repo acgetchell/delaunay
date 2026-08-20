@@ -75,7 +75,7 @@ pub enum TopologyIndexBuildError {
 #[must_use]
 pub struct IncidenceView<'tds> {
     /// Borrowed canonical vertex → incident simplices relation.
-    pub(crate) vertex_to_simplices: &'tds VertexIncidenceIndex,
+    pub(in crate::core) vertex_to_simplices: &'tds VertexIncidenceIndex,
 }
 
 /// Derived vertex→edge index for one triangulation snapshot.
@@ -98,7 +98,7 @@ pub struct EdgeIndex<'tds> {
     pub(in crate::core) edge_count: usize,
 
     /// Borrowed canonical incidence relation that ties this index to the source TDS snapshot.
-    pub(crate) _source_incidence: &'tds VertexIncidenceIndex,
+    pub(in crate::core) _source_incidence: &'tds VertexIncidenceIndex,
 }
 
 /// Derived simplex→neighbor index for one triangulation snapshot.
@@ -114,11 +114,11 @@ pub struct EdgeIndex<'tds> {
 #[must_use]
 pub struct SimplexNeighborIndex<'tds> {
     /// Simplex → neighboring simplices (boundary facets omitted).
-    pub(crate) simplex_to_neighbors:
+    pub(in crate::core) simplex_to_neighbors:
         FastHashMap<SimplexKey, SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
 
     /// Borrowed canonical incidence relation that ties this index to the source TDS snapshot.
-    pub(crate) _source_incidence: &'tds VertexIncidenceIndex,
+    pub(in crate::core) _source_incidence: &'tds VertexIncidenceIndex,
 }
 
 /// Borrowed adjacency view for one triangulation snapshot.
@@ -262,7 +262,21 @@ impl<'tds> TriangulationAdjacency<'tds> {
     }
 }
 
-impl IncidenceView<'_> {
+impl<'tds> IncidenceView<'tds> {
+    /// Wraps the canonical incidence relation after validation by the owning triangulation.
+    #[inline]
+    pub(crate) const fn from_validated(vertex_to_simplices: &'tds VertexIncidenceIndex) -> Self {
+        Self {
+            vertex_to_simplices,
+        }
+    }
+
+    /// Borrows the validated vertex-to-simplices mapping for crate-internal queries.
+    #[inline]
+    pub(crate) const fn vertex_to_simplices(&self) -> &VertexIncidenceIndex {
+        self.vertex_to_simplices
+    }
+
     /// Returns an iterator over all simplices incident to `v`.
     ///
     /// If `v` is not present in this view, the iterator is empty.
@@ -270,7 +284,7 @@ impl IncidenceView<'_> {
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
     pub fn adjacent_simplices(&self, v: VertexKey) -> impl Iterator<Item = SimplexKey> + '_ {
-        self.vertex_to_simplices.simplex_keys(v)
+        self.vertex_to_simplices().simplex_keys(v)
     }
 
     /// Returns the number of simplices incident to `v`.
@@ -279,7 +293,7 @@ impl IncidenceView<'_> {
     #[must_use]
     #[inline]
     pub fn number_of_adjacent_simplices(&self, v: VertexKey) -> usize {
-        self.vertex_to_simplices.number_of_simplices(v)
+        self.vertex_to_simplices().number_of_simplices(v)
     }
 }
 
@@ -352,14 +366,37 @@ impl<'tds> EdgeIndex<'tds> {
     }
 }
 
-impl SimplexNeighborIndex<'_> {
+impl<'tds> SimplexNeighborIndex<'tds> {
+    /// Assembles an index from parts derived and validated by the owning triangulation.
+    #[inline]
+    pub(crate) const fn from_validated_parts(
+        simplex_to_neighbors: FastHashMap<
+            SimplexKey,
+            SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+        >,
+        source_incidence: &'tds VertexIncidenceIndex,
+    ) -> Self {
+        Self {
+            simplex_to_neighbors,
+            _source_incidence: source_incidence,
+        }
+    }
+
+    /// Borrows the validated simplex-to-neighbors mapping for crate-internal queries.
+    #[inline]
+    pub(crate) const fn simplex_to_neighbors(
+        &self,
+    ) -> &FastHashMap<SimplexKey, SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>> {
+        &self.simplex_to_neighbors
+    }
+
     /// Returns an iterator over all neighbors of a simplex.
     ///
     /// If `c` is not present in this index, the iterator is empty.
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
     pub fn simplex_neighbors(&self, c: SimplexKey) -> impl Iterator<Item = SimplexKey> + '_ {
-        self.simplex_to_neighbors
+        self.simplex_to_neighbors()
             .get(&c)
             .into_iter()
             .flat_map(|neighbors| neighbors.iter().copied())
@@ -371,7 +408,7 @@ impl SimplexNeighborIndex<'_> {
     #[must_use]
     #[inline]
     pub fn number_of_simplex_neighbors(&self, c: SimplexKey) -> usize {
-        self.simplex_to_neighbors
+        self.simplex_to_neighbors()
             .get(&c)
             .map_or(0, SmallBuffer::len)
     }

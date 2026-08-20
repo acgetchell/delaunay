@@ -89,7 +89,7 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          uv run benchmark-utils determine-ref
+          uv run --locked benchmark-utils determine-ref
 
       - name: Validate checkout ref namespace
         env:
@@ -131,7 +131,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          channel="$(uv run python - <<'PY'
+          channel="$(uv run --locked python - <<'PY'
           from pathlib import Path
           import tomllib
 
@@ -154,14 +154,14 @@ jobs:
           echo "🚀 Generating performance baseline for ref ${BASELINE_REF}"
 
           # Generate baseline using fixed tooling (this checkout) against the target checkout.
-          uv run benchmark-utils generate-baseline \
+          uv run --locked benchmark-utils generate-baseline \
             --project-root bench-target \
             --ref "${BASELINE_REF}"
 
           echo "✅ Baseline generated successfully"
 
           # Display baseline summary
-          uv run benchmark-utils display-summary \
+          uv run --locked benchmark-utils display-summary \
             --baseline "bench-target/baseline-artifact/baseline_results.txt"
 
       - name: Prepare baseline artifact
@@ -172,12 +172,12 @@ jobs:
           set -euo pipefail
 
           # Create metadata file in the target checkout so it is included in the uploaded artifact.
-          uv run benchmark-utils create-metadata \
+          uv run --locked benchmark-utils create-metadata \
             --ref "${BASELINE_REF}" \
             --output-dir "bench-target/baseline-artifact"
 
           # Extract the baseline commit from the baseline file for human-readable logging.
-          baseline_commit="$(uv run python - <<'PY'
+          baseline_commit="$(uv run --locked python - <<'PY'
           from pathlib import Path
           import re
 
@@ -198,7 +198,7 @@ jobs:
         id: safe_name
         env:
           BASELINE_REF: ${{ steps.ref_info.outputs.ref_name }}
-        run: uv run benchmark-utils sanitize-artifact-name --ref "$BASELINE_REF"
+        run: uv run --locked benchmark-utils sanitize-artifact-name --ref "$BASELINE_REF"
 
       - name: Upload baseline artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

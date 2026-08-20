@@ -1,12 +1,13 @@
-# Production Review Remediation Checklist
+# Production Review Remediation Checklist (May 2026)
 
-This checklist tracks the May 2026 `rust-production-review` baseline audit.
-Treat partial items as still open until their acceptance notes are satisfied.
+This archived checklist records the completed May 2026
+`rust-production-review` baseline audit and its remediation status.
 
 ## Status Legend
 
-- [x] Closed in the current patch.
-- [ ] Open, including partial mitigations that need follow-up work.
+- Checked items were completed before archival.
+- Unchecked items would identify work that remained incomplete at archival;
+  none remain below.
 
 ## Critical Issues
 

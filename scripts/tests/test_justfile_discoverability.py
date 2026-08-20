@@ -17,6 +17,7 @@ HELPER_JUSTFILE = REPO_ROOT / "just" / "helpers.just"
 RECIPE_DECLARATION = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)(?:\s+.*?)?:(?=\s|$)", re.MULTILINE)
 WORKFLOW_VERSION_LOOKUP = re.compile(r"just --evaluate ([a-z0-9_]+_version)")
 RELEASE_SIGNAL_TARGETS = re.compile(r"^\s*release-signal\)\s*\n\s*targets=\(([^)]*)\)", re.MULTILINE)
+UNLOCKED_UV_RUN = re.compile(r"\buv\s+run\b(?!\s+--locked\b)")
 
 
 def run_just(*args: str) -> subprocess.CompletedProcess[str]:
@@ -143,6 +144,55 @@ def test_uv_backed_recipes_reuse_pinned_guard() -> None:
     for name in ("_ensure-actionlint", "_ensure-shellcheck", "_ensure-shfmt", "_ensure-yamllint", "setup-tools", "update-cargo-tools"):
         dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
         assert "_ensure-uv" in dependencies, name
+
+
+def test_validation_and_benchmark_uv_runs_are_locked() -> None:
+    """Validation guards and benchmark workflows must reject lockfile drift."""
+    paths = (
+        HELPER_JUSTFILE,
+        REPO_ROOT / ".github" / "workflows" / "benchmarks.yml",
+        REPO_ROOT / ".github" / "workflows" / "generate-baseline.yml",
+        REPO_ROOT / ".github" / "workflows" / "release-benchmarks.yml",
+    )
+
+    for path in paths:
+        unlocked = UNLOCKED_UV_RUN.findall(path.read_text(encoding="utf-8"))
+        assert unlocked == [], path
+
+
+def test_performance_workflow_tracks_every_harness_input() -> None:
+    """Performance checks should run when their code or toolchain changes."""
+    workflow = (REPO_ROOT / ".github" / "workflows" / "benchmarks.yml").read_text(encoding="utf-8")
+    required_paths = (
+        ".python-version",
+        "pyproject.toml",
+        "rust-toolchain.toml",
+        "scripts/benchmark_models.py",
+        "scripts/benchmark_utils.py",
+        "scripts/hardware_utils.py",
+        "scripts/subprocess_utils.py",
+        "uv.lock",
+    )
+
+    for path in required_paths:
+        assert workflow.count(f'- "{path}"') == 2, path
+
+
+def test_paper_workflow_tracks_validation_figure_producers() -> None:
+    """Paper checks should run when Rust or notebook figure producers change."""
+    workflow = (REPO_ROOT / ".github" / "workflows" / "papers.yml").read_text(encoding="utf-8")
+    required_paths = (
+        ".python-version",
+        "Cargo.lock",
+        "Cargo.toml",
+        "just/**",
+        "rust-toolchain.toml",
+        "scripts/notebook_validation_rendering.py",
+        "src/**",
+    )
+
+    for path in required_paths:
+        assert workflow.count(f'- "{path}"') == 2, path
 
 
 def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:

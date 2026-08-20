@@ -62,6 +62,7 @@ py-modules = [
     "notebook_check",
     "notebook_utils",
     "notebook_validation",
+    "notebook_validation_rendering",
     "notebook_visualization",
     "paper_check",
     "paper_pdf_normalize",

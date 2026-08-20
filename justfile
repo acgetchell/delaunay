@@ -614,7 +614,7 @@ paper-clean:
 # Build the CLI used by paper notebooks before nbconvert starts its execution timer.
 [group('notebooks and papers')]
 paper-cli:
-    cargo build --profile perf --features cli --bin delaunay
+    cargo build --locked --profile perf --features cli --bin delaunay
 
 # Check the target-built PDF for basic readability.
 [group('notebooks and papers')]

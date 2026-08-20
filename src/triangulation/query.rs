@@ -1912,9 +1912,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             .validate_vertex_to_simplices_index()
             .map_err(|source| TopologyIndexBuildError::InvalidVertexIncidenceIndex { source })?;
 
-        Ok(IncidenceView {
-            vertex_to_simplices: self.tds.vertex_to_simplices_index(),
-        })
+        Ok(IncidenceView::from_validated(
+            self.tds.vertex_to_simplices_index(),
+        ))
     }
 
     /// Builds only the derived vertex→edge index for this triangulation snapshot.
@@ -2021,10 +2021,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             }
         }
 
-        Ok(SimplexNeighborIndex {
+        Ok(SimplexNeighborIndex::from_validated_parts(
             simplex_to_neighbors,
-            _source_incidence: self.tds.vertex_to_simplices_index(),
-        })
+            self.tds.vertex_to_simplices_index(),
+        ))
     }
 
     #[must_use]
@@ -2890,7 +2890,7 @@ mod tests {
         assert_eq!(simplex_keys.len(), 2);
         for &simplex_key in &simplex_keys {
             let neighbors = neighbor_index
-                .simplex_to_neighbors
+                .simplex_to_neighbors()
                 .get(&simplex_key)
                 .unwrap();
             assert_eq!(neighbors.len(), 1);
@@ -2899,10 +2899,10 @@ mod tests {
         }
 
         for (vertex_key, _) in tri.vertices() {
-            assert!(incidence.vertex_to_simplices.contains_vertex(vertex_key));
+            assert!(incidence.vertex_to_simplices().contains_vertex(vertex_key));
             assert!(
                 incidence
-                    .vertex_to_simplices
+                    .vertex_to_simplices()
                     .number_of_simplices(vertex_key)
                     > 0
             );
@@ -3030,8 +3030,8 @@ mod tests {
         let incidence = tri.incidence().unwrap();
         let edge_index = tri.build_edge_index().unwrap();
         let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
-        assert!(incidence.vertex_to_simplices.is_empty());
-        assert!(neighbor_index.simplex_to_neighbors.is_empty());
+        assert!(incidence.vertex_to_simplices().is_empty());
+        assert!(neighbor_index.simplex_to_neighbors().is_empty());
         assert!(edge_index.vertex_to_edges().is_empty());
     }
 
@@ -3056,12 +3056,12 @@ mod tests {
 
         assert!(
             incidence
-                .vertex_to_simplices
+                .vertex_to_simplices()
                 .contains_vertex(isolated_vertex)
         );
         assert_eq!(
             incidence
-                .vertex_to_simplices
+                .vertex_to_simplices()
                 .number_of_simplices(isolated_vertex),
             0
         );

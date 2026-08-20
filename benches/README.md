@@ -112,7 +112,7 @@ allocation checks, or targeted diagnostics.
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex deletion |
 | `locate.rs` | Point-location facet-walk latency (no-hint vs exact-hint) | 2D-5D fixed cases | ~1-3 min | Locate/walk tuning |
 | `tds_clone.rs` | `Tds::clone()` snapshot cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback design baselines |
-| `topology_guarantee_construction.rs` | Cost of topology guarantee modes | 2D-5D construction cases | ~45-60 min | Manual topology policy work |
+| `topology_guarantee_construction.rs` | Cost of PL-manifold validation audit cadences | 2D-5D construction cases | ~45-60 min | Manual topology policy work |
 
 ## Selection Guide
 
@@ -261,7 +261,7 @@ topology policy suite. Use `just bench-compare <baseline>` to render
 `target/bench-reports/performance.md` from existing Criterion `new` output and a
 saved baseline such as `last` or `v0.7.8`. If the baseline and current
 checkouts are easy to confuse, prefer `just perf-local`. Use
-`uv run benchmark-utils bench-compare --scope all-benches` only when you
+`uv run --locked benchmark-utils bench-compare --scope all-benches` only when you
 explicitly want an exploratory report over every Criterion result already
 present under `target/criterion/`.
 
@@ -556,21 +556,26 @@ reject over-shared facets and targeted non-PL-manifold topology. `TopologyGuaran
 is not a bypass for these fixtures: pseudomanifold topology still requires
 facet degree 1 or 2.
 
-## Topology Guarantee Construction
+## Topology Validation Policy Construction
 
 ```bash
 cargo bench --profile perf --bench topology_guarantee_construction -- --noplot
 cargo bench --profile perf --bench topology_guarantee_construction -- "topology_guarantee_construction/4d"
 ```
 
-This suite compares construction cost under independent topology guarantees and audit cadences:
+This suite compares PL-manifold construction cost under two audit cadences:
 
-- `TopologyGuarantee::Pseudomanifold` with `ValidationPolicy::OnSuspicion`
 - `TopologyGuarantee::PLManifold` with `ValidationPolicy::ExplicitOnly`
 - `TopologyGuarantee::PLManifold` with `ValidationPolicy::Always`
 
-It is manual-only and useful when changing insertion, repair, or validation
-paths that affect topology guarantees.
+The pseudomanifold mode is excluded because its weaker Level 3 proof cannot
+authorize every repair needed to preserve the Level 5 Delaunay invariant on
+these large random construction fixtures.
+
+Each mode is validated once as an untimed preflight; Criterion measures only
+construction and the selected insertion-time audit cadence. The suite is
+excluded from the pull-request regression set, remains available for manual
+topology-policy work, and is also archived by the release benchmark workflow.
 
 ## Generated Summaries
 
@@ -585,15 +590,15 @@ for the single curated release-to-release comparison that should stay visible in
 active docs.
 
 ```bash
-uv run benchmark-utils generate-summary
-uv run benchmark-utils generate-summary --run-benchmarks --profile perf
-uv run benchmark-utils bench-compare last
-uv run benchmark-utils performance-local
-uv run benchmark-utils performance-github-assets
-uv run benchmark-utils performance-release
-uv run benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt
-uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
-uv run benchmark-utils compare-tags --old-tag vX.Y.Z --new-tag vA.B.C
+uv run --locked benchmark-utils generate-summary
+uv run --locked benchmark-utils generate-summary --run-benchmarks --profile perf
+uv run --locked benchmark-utils bench-compare last
+uv run --locked benchmark-utils performance-local
+uv run --locked benchmark-utils performance-github-assets
+uv run --locked benchmark-utils performance-release
+uv run --locked benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt
+uv run --locked benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
+uv run --locked benchmark-utils compare-tags --old-tag vX.Y.Z --new-tag vA.B.C
 ```
 
 Generated summaries should come from fresh perf-profile runs when they are used

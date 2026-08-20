@@ -78,7 +78,7 @@ jobs:
           fi
 
           mkdir -p release-benchmark-artifacts
-          uv run benchmark-utils generate-summary \
+          uv run --locked benchmark-utils generate-summary \
             --run-benchmarks \
             --strict \
             --profile perf \
@@ -88,7 +88,7 @@ jobs:
           cargo bench --profile perf --bench topology_guarantee_construction
           cargo bench --profile perf --bench locate
           cargo bench --profile perf --bench realization_validation
-          uv run benchmark-utils write-baseline \
+          uv run --locked benchmark-utils write-baseline \
             --ref "$RELEASE_TAG" \
             --output release-benchmark-artifacts/baseline_results.txt
 
@@ -108,7 +108,7 @@ jobs:
           cp -r target/criterion release-benchmark-artifacts/criterion
           release_commit="$(git rev-parse HEAD)"
           export RELEASE_SHA="$release_commit"
-          uv run python - <<'PY'
+          uv run --locked python - <<'PY'
           import json
           import os
           from datetime import UTC, datetime
