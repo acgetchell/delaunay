@@ -512,16 +512,15 @@ pub(crate) fn simplex_orientation_fast_filter_sign<const D: usize>(
 ///
 /// # Performance
 ///
-/// Benchmarks show that [`insphere_lifted`] is significantly faster across all dimensions:
-/// - **3D**: 5.3x faster than [`insphere`], 2.5x faster than `insphere_distance`
-/// - **4D-5D**: 1.6-2.9x faster than [`insphere`], comparable to `insphere_distance`
-/// - **2D**: `insphere_distance` is 2x slower than [`insphere`] or [`insphere_lifted`]
+/// Current repository benchmarks favor [`insphere_lifted`] for fixed
+/// non-boundary 2D/3D workloads, while this distance-based method can be faster
+/// in 4D/5D. The result depends on dimension, conditioning, and how often a
+/// filtered determinant needs its exact fallback, so benchmark the intended
+/// workload rather than assuming one implementation is universally fastest.
 ///
-/// **Recommendation**: Use [`insphere_lifted`] for optimal performance in production code.
-/// Note that `insphere_lifted` is a fast floating-point predicate that may be less robust
-/// than [`crate::geometry::robust_predicates::robust_insphere`] for nearly-degenerate
-/// configurations; for 3D+ triangulations requiring numerical robustness, use
-/// [`crate::geometry::kernel::RobustKernel`].
+/// Use [`insphere_lifted`] when a provably correct determinant sign is required.
+/// This method is tolerance-based and is useful when the circumcenter is also
+/// needed or when its higher-dimensional benchmark profile fits the workload.
 ///
 /// # Algorithm
 ///
@@ -538,8 +537,9 @@ pub(crate) fn simplex_orientation_fast_filter_sign<const D: usize>(
 /// - Distance computation in potentially high-dimensional space
 /// - Multiple coordinate transformations
 ///
-/// For better numerical stability and performance, prefer [`insphere_lifted`] which uses
-/// a determinant-based approach with relative coordinates.
+/// For an exact classification near the decision boundary, prefer
+/// [`insphere_lifted`], which uses a filtered-exact determinant with relative
+/// coordinates.
 ///
 /// # Arguments
 ///
@@ -616,14 +616,11 @@ pub fn insphere_distance<const D: usize>(
 ///
 /// # Performance
 ///
-/// For optimal performance, prefer [`insphere_lifted`] which is significantly faster:
-/// - **3D**: 5.3x faster than `insphere` (15.5 ns vs 81.7 ns)
-/// - **4D-5D**: 1.6x faster than `insphere`
-///
-/// The performance advantage comes from `insphere_lifted`'s use of relative coordinates and
-/// la-stack's closed-form determinants for D=1-4. Inconclusive fast-filter
-/// results fall back to an exact determinant sign, including nearly degenerate
-/// configurations.
+/// The relative-coordinate matrix used by [`insphere_lifted`] is smaller and
+/// performs well in the repository's fixed 2D/3D non-boundary benchmarks.
+/// Performance is workload- and dimension-dependent; benchmark both exact
+/// determinant formulations for the target data. Inconclusive fast-filter
+/// results in either formulation fall back to an exact determinant sign.
 ///
 /// # Algorithm
 ///
@@ -797,24 +794,23 @@ pub fn insphere<const D: usize>(
 
 /// Check if a point is contained within the circumsphere of a simplex using the lifted paraboloid determinant method.
 ///
-/// **This is the recommended high-performance implementation** of the insphere predicate.
-/// It provides excellent numerical stability and is significantly faster than other methods.
+/// This is the recommended exact relative-coordinate implementation of the
+/// insphere predicate.
 ///
 /// # Performance
 ///
-/// Benchmarks demonstrate superior performance across all dimensions:
-/// - **3D**: 5.3x faster than [`insphere`] (15.5 ns vs 81.7 ns)
-/// - **3D**: 2.5x faster than [`insphere_distance`] (15.5 ns vs 38.3 ns)
-/// - **4D-5D**: 1.6x faster than [`insphere`], comparable to [`insphere_distance`]
-/// - **2D**: Similar performance to [`insphere`] (8.5 ns vs 12.6 ns)
+/// Current repository benchmarks favor this method for fixed non-boundary
+/// 2D/3D inputs. [`insphere_distance`] can be faster in 4D/5D, but it uses a
+/// tolerance rather than an exact determinant sign. Benchmark representative
+/// inputs before selecting an implementation solely for performance.
 ///
 /// The performance gains come from:
 /// 1. Using relative coordinates which reduce numerical magnitude
 /// 2. Computing smaller (D+1)×(D+1) determinants instead of (D+2)×(D+2)
 /// 3. Benefiting from la-stack's closed-form determinants for D=1-4
 ///
-/// This method combines the numerical stability of determinant-based predicates with
-/// optimal performance, making it ideal for production use.
+/// This method combines an exact determinant contract with a compact
+/// relative-coordinate formulation.
 ///
 /// # Robustness
 ///
@@ -1703,40 +1699,34 @@ mod tests {
         let test_cases = [
             (
                 Point::try_new([0.1, 0.1]).expect("finite point coordinates"),
-                "inside",
+                InSphere::INSIDE,
             ), // Clearly inside
             (
                 Point::try_new([10.0, 10.0]).expect("finite point coordinates"),
-                "outside",
+                InSphere::OUTSIDE,
             ), // Clearly outside
             (
                 Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
-                "boundary",
+                InSphere::BOUNDARY,
             ), // Vertex (on boundary)
             (
-                Point::try_new([0.5, 0.0]).expect("finite point coordinates"),
-                "boundary",
-            ), // Edge midpoint
+                Point::try_new([1.0, 1.0]).expect("finite point coordinates"),
+                InSphere::BOUNDARY,
+            ), // Opposite point on the circumcircle
         ];
 
-        for (test_point, description) in &test_cases {
+        for (test_point, expected) in &test_cases {
             let result_std = insphere(&simplex, *test_point).unwrap();
             let result_lifted = insphere_lifted(&simplex, *test_point).unwrap();
             let result_distance = insphere_distance(&simplex, *test_point).unwrap();
 
             tracing::debug!(
-                "2D {description}: std={result_std:?}, lifted={result_lifted:?}, distance={result_distance:?}"
+                "2D {expected:?}: std={result_std:?}, lifted={result_lifted:?}, distance={result_distance:?}"
             );
 
-            // All methods should agree (with some tolerance for boundary cases)
-            if *description != "boundary" {
-                // Note: 2D has known issues with insphere_lifted that need further investigation
-                // assert_eq!(result_std, result_lifted, "2D {}: std vs lifted mismatch", description);
-                assert_eq!(
-                    result_std, result_distance,
-                    "2D {description}: std vs distance mismatch"
-                );
-            }
+            assert_eq!(result_std, *expected, "standard determinant mismatch");
+            assert_eq!(result_lifted, *expected, "lifted determinant mismatch");
+            assert_eq!(result_distance, *expected, "distance method mismatch");
         }
     }
 

@@ -4,6 +4,7 @@
 //! - Circumcenter equidistance (all simplex vertices equidistant from circumcenter)
 //! - Circumradius consistency (distance from circumcenter to any vertex)
 //! - Circumradius agreement between direct and precomputed-center code paths
+//! - Exact in-sphere agreement between absolute and relative determinant paths
 //! - Volume positivity for non-degenerate simplices
 //! - Distance and norm properties (triangle inequality, scaling, non-negativity)
 //! - Inradius positivity for non-degenerate simplices
@@ -148,6 +149,48 @@ macro_rules! test_geometry_properties {
                     prop_assert!(direct > 0.0, "direct radius must be positive");
                     prop_assert!(with_center > 0.0, "precomputed-center radius must be positive");
                     prop_assert_relative_close(with_center, direct)?;
+                }
+
+                /// Property: The absolute and relative filtered-exact in-sphere
+                /// predicates agree for well-conditioned simplices.
+                #[test]
+                fn [<prop_insphere_lifted_agrees_with_insphere_ $dim d>](
+                    base in prop::array::[<uniform $dim>](finite_coordinate()),
+                    side_lengths in prop::array::[<uniform $dim>](well_conditioned_edge_length()),
+                    query in prop::array::[<uniform $dim>](finite_coordinate())
+                ) {
+                    let simplex = axis_aligned_simplex::<$dim>(base, side_lengths);
+                    let test_point = Point::try_new(query).expect("finite point coordinates");
+                    let absolute = insphere(&simplex, test_point).map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{dim}D absolute in-sphere predicate failed: {error:?}",
+                            dim = $dim,
+                        ))
+                    })?;
+                    let relative = insphere_lifted(&simplex, test_point).map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{dim}D relative in-sphere predicate failed: {error:?}",
+                            dim = $dim,
+                        ))
+                    })?;
+                    prop_assert_eq!(relative, absolute);
+
+                    let mut reversed = simplex;
+                    reversed.swap(0, 1);
+                    let reversed_absolute = insphere(&reversed, test_point).map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{dim}D reversed absolute in-sphere predicate failed: {error:?}",
+                            dim = $dim,
+                        ))
+                    })?;
+                    let reversed_relative = insphere_lifted(&reversed, test_point).map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{dim}D reversed relative in-sphere predicate failed: {error:?}",
+                            dim = $dim,
+                        ))
+                    })?;
+                    prop_assert_eq!(reversed_absolute, absolute);
+                    prop_assert_eq!(reversed_relative, relative);
                 }
 
                 /// Property: Volume of non-degenerate simplex is positive

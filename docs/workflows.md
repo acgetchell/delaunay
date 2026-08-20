@@ -105,8 +105,8 @@ every local schedule and supported geometry. See
 [Bistellar (Pachner) Moves and Delaunay Repair](../REFERENCES.md#bistellar-pachner-moves-and-delaunay-repair).
 
 The consuming `delaunayize` conversion requires `K: ExactPredicates` at
-compile time. `AdaptiveKernel` and `RobustKernel` implement this trait;
-`FastKernel` does not. See
+compile time. `AdaptiveKernel`, `RobustKernel`, and `FastKernel` implement this
+trait through D ≤ 5. See
 [`numerical_robustness_guide.md`](numerical_robustness_guide.md) for kernel selection guidance.
 
 ```rust
@@ -173,9 +173,10 @@ Flip-based conversion requires a PL-manifold topology guarantee. Passing a
 input triangulation.
 
 Additionally, `delaunayize` requires `K: ExactPredicates` (compile-time bound).
-The default `AdaptiveKernel` satisfies this. `FastKernel` does not — its automatic
-insertion-time repair uses a `RobustKernel` fallback internally, but consuming
-conversion of a `Triangulation<FastKernel<…>, …>` is not available.
+The default `AdaptiveKernel`, `RobustKernel`, and `FastKernel` satisfy this
+through D ≤ 5. Their policies differ in tie handling, diagnostics, and
+higher-dimensional fallback rather than in the exactness of a returned sign
+inside that supported envelope.
 
 ### Repair attempts and diagnostics
 

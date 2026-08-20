@@ -62,6 +62,17 @@ def test_parse_installed_packages_accepts_prerelease_with_build_metadata() -> No
     assert installed["rumdl"] == version
 
 
+def test_reconcile_pins_preserves_prerelease_with_build_metadata(tmp_path: Path) -> None:
+    version = "1.2.3-rc.1+build.5"
+    justfile = tmp_path / "justfile"
+    justfile.write_text(justfile_text(), encoding="utf-8")
+
+    changes = update_cargo_tool_pins.reconcile_pins(justfile, installed_output(override=("rumdl", version)))
+
+    assert changes == {"rumdl_version": ("1.2.3", version)}
+    assert f'rumdl_version := "{version}"' in justfile.read_text(encoding="utf-8").splitlines()
+
+
 def test_main_reports_missing_cargo_without_traceback(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

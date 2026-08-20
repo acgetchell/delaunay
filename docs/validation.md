@@ -1081,9 +1081,10 @@ but the validator itself does not mutate the triangulation.
 **Likely Cause**: Repair disabled or non-convergent, geometric degeneracy, numerical precision,
 or missing higher-dimensional flip coverage
 **Fix**: Keep flip repair enabled, handle insertion errors, check for near-coplanar/collinear points,
-and consider using `RobustKernel` or `AdaptiveKernel` instead of `FastKernel`
-(`delaunayize` requires `K: ExactPredicates`, which `FastKernel` does not
-implement). If conversion fails to converge, enable the opt-in rebuild through
+and select the kernel whose tie-handling and diagnostic policy matches the
+workflow. `delaunayize` requires `K: ExactPredicates`; `AdaptiveKernel`,
+`RobustKernel`, and `FastKernel` satisfy that bound through D ≤ 5. If conversion
+fails to converge, enable the opt-in rebuild through
 `DelaunayizeConfig::default().with_fallback_rebuild(true)` (requires
 PL-manifold + `ExactPredicates`).
 

@@ -12,7 +12,9 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
-use delaunay::prelude::geometry::{CoordinateRange, Point, RobustKernel};
+use delaunay::prelude::geometry::{
+    CoordinateRange, InSphere, Point, RobustKernel, insphere, insphere_lifted,
+};
 use delaunay::prelude::insertion::{HullExtensionReason, InsertionError};
 use delaunay::prelude::ordering::{
     HilbertBitDepth, hilbert_indices_prequantized, hilbert_quantize_batch_in_range,
@@ -29,6 +31,34 @@ use delaunay::prelude::validation::{
 };
 use delaunay::vertex;
 use uuid::Uuid;
+
+#[test]
+fn regression_exact_insphere_methods_agree_on_clean_2d_boundary_and_interior() {
+    let simplex = [
+        Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
+    ];
+    let edge_midpoint = Point::try_new([0.5, 0.0]).expect("finite point coordinates");
+    let opposite_boundary = Point::try_new([1.0, 1.0]).expect("finite point coordinates");
+
+    assert_eq!(
+        insphere(&simplex, edge_midpoint).expect("absolute predicate should succeed"),
+        InSphere::INSIDE
+    );
+    assert_eq!(
+        insphere_lifted(&simplex, edge_midpoint).expect("relative predicate should succeed"),
+        InSphere::INSIDE
+    );
+    assert_eq!(
+        insphere(&simplex, opposite_boundary).expect("absolute predicate should succeed"),
+        InSphere::BOUNDARY
+    );
+    assert_eq!(
+        insphere_lifted(&simplex, opposite_boundary).expect("relative predicate should succeed"),
+        InSphere::BOUNDARY
+    );
+}
 
 #[test]
 fn regression_issue_557_builder_validation_policy_is_order_independent() {

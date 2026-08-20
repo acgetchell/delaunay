@@ -526,6 +526,7 @@ notebooks = [
     { name = "nbclient" },
     { name = "nbconvert" },
     { name = "nbformat" },
+    { name = "numpy" },
     { name = "plotly" },
     { name = "polars" },
 ]
@@ -554,6 +555,7 @@ notebooks = [
     { name = "nbclient", specifier = ">=0.11.0" },
     { name = "nbconvert", specifier = ">=7.17.1" },
     { name = "nbformat", specifier = ">=5.10.4" },
+    { name = "numpy", specifier = ">=2.5.2" },
     { name = "plotly", specifier = ">=6.9.0" },
     { name = "polars", specifier = ">=1.43.2" },
 ]
