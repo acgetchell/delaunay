@@ -158,9 +158,13 @@ def _bounded_index(index: int, upper_bound: int, context: str) -> None:
 
 
 def _validate_visual_indices(visual: ValidationVisual, context: str) -> None:
-    for simplex_index, simplex in enumerate((*visual.simplices, *visual.duplicate_simplices)):
-        for offset, point_index in enumerate(simplex):
-            _bounded_index(point_index, len(visual.points), f"{context}.simplices[{simplex_index}][{offset}]")
+    for field, simplices in (
+        ("simplices", visual.simplices),
+        ("duplicate_simplices", visual.duplicate_simplices),
+    ):
+        for simplex_index, simplex in enumerate(simplices):
+            for offset, point_index in enumerate(simplex):
+                _bounded_index(point_index, len(visual.points), f"{context}.{field}[{simplex_index}][{offset}]")
     for simplex_index in visual.highlighted_simplices:
         _bounded_index(simplex_index, len(visual.simplices), f"{context}.highlighted_simplices")
     for edge_index, edge in enumerate(visual.highlighted_edges):
@@ -191,12 +195,11 @@ def _visual(raw_visual: Any, context: str) -> ValidationVisual:
     return parsed
 
 
-def _case(raw_case: Any, index: int) -> ValidationCase:
-    context = "valid_baseline" if index < 0 else f"cases[{index}]"
+def _case(raw_case: Any, context: str, *, expected_level: int) -> ValidationCase:
     case = _object(raw_case, context)
     level = _integer(case.get("level"), f"{context}.level")
-    if level not in {1, 2, 3, 4, 5}:
-        raise ValueError(f"{context}.level must be in [1, 5], got {level}")
+    if level != expected_level:
+        raise ValueError(f"{context}.level must be {expected_level}, got {level}")
     return ValidationCase(
         level=level,
         layer=_string(case.get("layer"), f"{context}.layer"),
@@ -224,9 +227,9 @@ def load_validation_demo(path: Path) -> tuple[ValidationCase, tuple[ValidationCa
     for field, expected in expected_metadata.items():
         if root.get(field) != expected:
             raise ValueError(f"unexpected validation-demo {field}: expected {expected!r}, got {root.get(field)!r}")
-    baseline = _case(root.get("valid_baseline"), -1)
-    cases = tuple(_case(raw_case, index) for index, raw_case in enumerate(_list(root.get("cases"), "cases")))
-    levels = [case.level for case in cases]
-    if levels != [1, 2, 3, 4, 5]:
-        raise ValueError(f"expected validation levels [1, 2, 3, 4, 5], got {levels}")
+    baseline = _case(root.get("valid_baseline"), "valid_baseline", expected_level=0)
+    raw_cases = _list(root.get("cases"), "cases")
+    if len(raw_cases) != 5:
+        raise ValueError(f"expected exactly five validation cases, got {len(raw_cases)}")
+    cases = tuple(_case(raw_case, f"cases[{index}]", expected_level=index + 1) for index, raw_case in enumerate(raw_cases))
     return baseline, cases

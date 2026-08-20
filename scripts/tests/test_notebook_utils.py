@@ -40,6 +40,71 @@ def test_tracked_figure_path_accepts_only_exact_repo_relative_target(tmp_path: P
         notebook_utils.tracked_figure_path_from_env("NOTEBOOK_FIGURE", tmp_path, tmp_path / "target/hero.png", expected_relative)
 
 
+def test_delaunay_command_prefix_uses_configured_relative_binary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    binary = tmp_path / "tools" / "delaunay"
+    binary.parent.mkdir()
+    binary.touch()
+    monkeypatch.setenv("DELAUNAY_BINARY", "tools/delaunay")
+
+    assert notebook_utils.delaunay_command_prefix(tmp_path) == [str(binary)]
+
+
+def test_delaunay_command_prefix_rejects_empty_configured_binary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DELAUNAY_BINARY", "")
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        notebook_utils.delaunay_command_prefix(tmp_path)
+
+
+def test_delaunay_command_prefix_rejects_missing_configured_binary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DELAUNAY_BINARY", "tools/missing")
+
+    with pytest.raises(FileNotFoundError, match="does not point to a file"):
+        notebook_utils.delaunay_command_prefix(tmp_path)
+
+
+def test_delaunay_command_prefix_uses_required_built_binary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DELAUNAY_BINARY", raising=False)
+    binary_name = "delaunay.exe" if notebook_utils.os.name == "nt" else "delaunay"
+    binary = tmp_path / "target" / "perf" / binary_name
+    binary.parent.mkdir(parents=True)
+    binary.touch()
+
+    assert notebook_utils.delaunay_command_prefix(tmp_path, require_built_binary=True) == [str(binary)]
+
+
+def test_delaunay_command_prefix_rejects_missing_required_binary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DELAUNAY_BINARY", raising=False)
+
+    with pytest.raises(FileNotFoundError, match="build the notebook CLI first"):
+        notebook_utils.delaunay_command_prefix(tmp_path, require_built_binary=True)
+
+
+def test_delaunay_command_prefix_falls_back_to_cargo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DELAUNAY_BINARY", raising=False)
+    monkeypatch.setattr(notebook_utils.shutil, "which", lambda executable: "/tools/cargo" if executable == "cargo" else None)
+
+    assert notebook_utils.delaunay_command_prefix(tmp_path) == [
+        "/tools/cargo",
+        "run",
+        "--profile",
+        "perf",
+        "--features",
+        "cli",
+        "--bin",
+        "delaunay",
+        "--",
+    ]
+
+
+def test_delaunay_command_prefix_rejects_missing_cargo_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DELAUNAY_BINARY", raising=False)
+    monkeypatch.setattr(notebook_utils.shutil, "which", lambda _executable: None)
+
+    with pytest.raises(RuntimeError, match="cargo executable was not found"):
+        notebook_utils.delaunay_command_prefix(tmp_path)
+
+
 def test_run_command_rejects_nonzero_exit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     completed = subprocess.CompletedProcess(args=["tool"], returncode=7, stdout="out", stderr="err")
 

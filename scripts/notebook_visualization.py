@@ -115,6 +115,8 @@ def _simplex_vertex_map(data: JsonObject) -> dict[str, SimplexVertices]:
         if simplex_id in simplices:
             raise ValueError(f"duplicate simplex ID: {simplex_id}")
         typed_ids = cast("list[str]", vertex_ids)
+        if len(set(typed_ids)) != 4:
+            raise ValueError(f"simplex {simplex_id!r} must contain four distinct vertex IDs")
         simplices[simplex_id] = (typed_ids[0], typed_ids[1], typed_ids[2], typed_ids[3])
     return simplices
 
@@ -148,6 +150,39 @@ def _simplex_neighbor_map(data: JsonObject, simplices: dict[str, SimplexVertices
     return {simplex_id: (values[0], values[1], values[2], values[3]) for simplex_id, values in slots.items()}
 
 
+def _validate_adjacency_facets(simplices: dict[str, SimplexVertices], neighbors: dict[str, NeighborSlots]) -> None:
+    """Validate neighbor facet compatibility and reciprocal records."""
+    neighbor_edge_counts: dict[tuple[str, str], int] = {}
+    for simplex_id, slots in neighbors.items():
+        source_vertices = simplices[simplex_id]
+        for facet_index, neighbor_id in enumerate(slots):
+            if neighbor_id is None:
+                continue
+            neighbor_vertices = simplices[neighbor_id]
+            missing_facet_vertex = next(
+                (vertex_id for vertex_index, vertex_id in enumerate(source_vertices) if vertex_index != facet_index and vertex_id not in neighbor_vertices),
+                None,
+            )
+            if missing_facet_vertex is not None:
+                raise ValueError(
+                    f"adjacency for simplex {simplex_id!r} facet {facet_index} references neighbor {neighbor_id!r}, "
+                    f"but source facet vertex {missing_facet_vertex!r} is absent from the neighbor"
+                )
+            edge = (simplex_id, neighbor_id)
+            neighbor_edge_counts[edge] = neighbor_edge_counts.get(edge, 0) + 1
+
+    for simplex_id, slots in neighbors.items():
+        for facet_index, neighbor_id in enumerate(slots):
+            if neighbor_id is None:
+                continue
+            reciprocal_count = neighbor_edge_counts.get((neighbor_id, simplex_id), 0)
+            if reciprocal_count == 0 or (neighbor_id == simplex_id and reciprocal_count == 1):
+                raise ValueError(
+                    f"adjacency for simplex {simplex_id!r} facet {facet_index} references neighbor {neighbor_id!r}, "
+                    "but the neighbor does not provide a distinct reciprocal adjacency"
+                )
+
+
 def _validate_references(coordinates: dict[str, Point3], simplices: dict[str, SimplexVertices], neighbors: dict[str, NeighborSlots]) -> None:
     missing_vertices = sorted({vertex_id for vertex_ids in simplices.values() for vertex_id in vertex_ids if vertex_id not in coordinates})
     if missing_vertices:
@@ -157,6 +192,7 @@ def _validate_references(coordinates: dict[str, Point3], simplices: dict[str, Si
     )
     if unknown_neighbors:
         raise KeyError(f"adjacency references {len(unknown_neighbors)} unknown simplex ID(s), first: {unknown_neighbors[:5]}")
+    _validate_adjacency_facets(simplices, neighbors)
 
 
 def unique_edges(simplices: dict[str, SimplexVertices]) -> list[Edge]:

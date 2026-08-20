@@ -227,9 +227,11 @@ match outcome {
 ### Flip-based repair and Delaunay verification (v0.7.3+)
 
 `DelaunayTriangulation` runs flip-based repair passes to restore the local Delaunay property
-after insertion. The repair code uses the same kernel predicates as the insertion path —
-there is no separate "robust predicate override". This unified predicate pipeline ensures
-consistent sign decisions and eliminates flip cycles caused by predicate disagreements.
+after insertion. The primary pass uses the caller's kernel, matching the insertion path. If
+that pass is non-convergent or fails its postcondition, insertion replays repair with
+`RobustKernel` before returning an error. Each pass therefore uses one consistent predicate
+policy; the robust replay is an explicit fallback attempt rather than an in-place predicate
+override.
 
 Since v0.7.3, the exact flip-repair boundary requires `K: ExactPredicates` at
 compile time. `AdaptiveKernel`, `RobustKernel`, and `FastKernel` satisfy that

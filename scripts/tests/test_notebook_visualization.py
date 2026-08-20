@@ -47,3 +47,65 @@ def test_load_visualization_3d_rejects_unknown_vertex_reference(tmp_path: Path) 
 
     with pytest.raises(KeyError, match="unknown vertex"):
         load_visualization_3d(path)
+
+
+def test_load_visualization_3d_rejects_repeated_simplex_vertex(tmp_path: Path) -> None:
+    path = tmp_path / "visualization.json"
+    artifact = visualization_artifact()
+    artifact["simplices"][0]["vertex_ids"][1] = "a"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="four distinct vertex IDs"):
+        load_visualization_3d(path)
+
+
+def test_load_visualization_3d_rejects_facet_incompatible_neighbor(tmp_path: Path) -> None:
+    path = tmp_path / "visualization.json"
+    artifact = visualization_artifact()
+    artifact["vertices"].append({"id": "e", "coordinates": [1.0, 1.0, 1.0]})
+    artifact["simplices"].append({"id": "other", "vertex_ids": ["e", "a", "b", "c"]})
+    artifact["adjacency"][0]["neighbor_simplex_id"] = "other"
+    artifact["adjacency"].extend({"simplex_id": "other", "facet_index": index, "neighbor_simplex_id": "tet" if index == 0 else None} for index in range(4))
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"source facet vertex .* is absent from the neighbor"):
+        load_visualization_3d(path)
+
+
+def test_load_visualization_3d_rejects_nonreciprocal_self_neighbor(tmp_path: Path) -> None:
+    path = tmp_path / "visualization.json"
+    artifact = visualization_artifact()
+    artifact["adjacency"][0]["neighbor_simplex_id"] = "tet"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="distinct reciprocal adjacency"):
+        load_visualization_3d(path)
+
+
+def test_load_visualization_3d_rejects_nonreciprocal_ordinary_neighbor(tmp_path: Path) -> None:
+    path = tmp_path / "visualization.json"
+    artifact = visualization_artifact()
+    artifact["vertices"].append({"id": "e", "coordinates": [1.0, 1.0, 1.0]})
+    artifact["simplices"].append({"id": "other", "vertex_ids": ["e", "b", "c", "d"]})
+    artifact["adjacency"][0]["neighbor_simplex_id"] = "other"
+    artifact["adjacency"].extend({"simplex_id": "other", "facet_index": index, "neighbor_simplex_id": None} for index in range(4))
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="distinct reciprocal adjacency"):
+        load_visualization_3d(path)
+
+
+def test_load_visualization_3d_accepts_reciprocal_facet_neighbors(tmp_path: Path) -> None:
+    path = tmp_path / "visualization.json"
+    artifact = visualization_artifact()
+    artifact["vertices"].append({"id": "e", "coordinates": [1.0, 1.0, 1.0]})
+    artifact["simplices"].append({"id": "other", "vertex_ids": ["e", "b", "c", "d"]})
+    artifact["adjacency"][0]["neighbor_simplex_id"] = "other"
+    artifact["adjacency"].extend({"simplex_id": "other", "facet_index": index, "neighbor_simplex_id": "tet" if index == 0 else None} for index in range(4))
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+
+    loaded = load_visualization_3d(path)
+
+    assert loaded.neighbors["tet"][0] == "other"
+    assert loaded.neighbors["other"][0] == "tet"
+    assert len(loaded.boundary_faces) == 6

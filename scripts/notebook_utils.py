@@ -101,11 +101,16 @@ def repo_output_path_env(name: str, root: Path, default: Path) -> Path:
     return path if path.is_absolute() else root / path
 
 
-def tracked_figure_path_from_env(name: str, root: Path, default: Path, expected_relative: Path) -> Path:
-    """Return scratch output unless the exact tracked repository path is enabled."""
+def _tracked_figure_target_from_env[MissingTrackedTarget](
+    name: str,
+    root: Path,
+    expected_relative: Path,
+    absent: MissingTrackedTarget,
+) -> Path | MissingTrackedTarget:
+    """Validate an optional exact repo-relative tracked-figure target."""
     configured = os.environ.get(name)
     if configured is None:
-        return default
+        return absent
     if not configured.strip():
         raise ValueError(f"{name} must not be empty")
     path = Path(configured)
@@ -113,20 +118,16 @@ def tracked_figure_path_from_env(name: str, root: Path, default: Path, expected_
     if path.is_absolute() or (root / path).resolve() != expected:
         raise ValueError(f"{name} must be the repo-relative path {expected_relative.as_posix()!r}")
     return expected
+
+
+def tracked_figure_path_from_env(name: str, root: Path, default: Path, expected_relative: Path) -> Path:
+    """Return scratch output unless the exact tracked repository path is enabled."""
+    return _tracked_figure_target_from_env(name, root, expected_relative, default)
 
 
 def tracked_figure_dir_from_env(name: str, root: Path, expected_relative: Path) -> Path | None:
     """Return an exact tracked figure directory only when explicitly enabled."""
-    configured = os.environ.get(name)
-    if configured is None:
-        return None
-    if not configured.strip():
-        raise ValueError(f"{name} must not be empty")
-    path = Path(configured)
-    expected = (root / expected_relative).resolve()
-    if path.is_absolute() or (root / path).resolve() != expected:
-        raise ValueError(f"{name} must be the repo-relative path {expected_relative.as_posix()!r}")
-    return expected
+    return _tracked_figure_target_from_env(name, root, expected_relative, None)
 
 
 def delaunay_command_prefix(root: Path, *, require_built_binary: bool = False) -> list[str]:
