@@ -215,9 +215,8 @@ contracts to concrete artifact evidence.
 
 ### Level 2 — Combinatorial Consistency
 
-- Implementation: [`tds/validation.rs`](../src/core/tds/validation.rs),
-  [`adjacency.rs`](../src/core/adjacency.rs), and
-  [`orientation.rs`](../src/triangulation/orientation.rs)
+- Implementation: [`tds/validation.rs`](../src/core/tds/validation.rs) and
+  [`adjacency.rs`](../src/core/adjacency.rs)
 - Representative tests: [`proptest_tds.rs`](../tests/proptest_tds.rs),
   [`proptest_triangulation.rs`](../tests/proptest_triangulation.rs), and
   [`public_topology_api.rs`](../tests/public_topology_api.rs)

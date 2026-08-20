@@ -91,11 +91,11 @@ pub struct IncidenceView<'tds> {
 #[must_use]
 pub struct EdgeIndex<'tds> {
     /// Vertex → incident edges.
-    pub(crate) vertex_to_edges:
+    pub(in crate::core) vertex_to_edges:
         FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
 
     /// Number of unique edges in the triangulation snapshot.
-    pub(crate) edge_count: usize,
+    pub(in crate::core) edge_count: usize,
 
     /// Borrowed canonical incidence relation that ties this index to the source TDS snapshot.
     pub(crate) _source_incidence: &'tds VertexIncidenceIndex,
@@ -283,14 +283,42 @@ impl IncidenceView<'_> {
     }
 }
 
-impl EdgeIndex<'_> {
+impl<'tds> EdgeIndex<'tds> {
+    /// Assembles an index from parts derived and validated by the owning triangulation.
+    #[inline]
+    pub(crate) const fn from_validated_parts(
+        vertex_to_edges: FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+        edge_count: usize,
+        source_incidence: &'tds VertexIncidenceIndex,
+    ) -> Self {
+        Self {
+            vertex_to_edges,
+            edge_count,
+            _source_incidence: source_incidence,
+        }
+    }
+
+    /// Borrows the validated vertex-to-edge mapping for crate-internal queries.
+    #[inline]
+    pub(crate) const fn vertex_to_edges(
+        &self,
+    ) -> &FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>> {
+        &self.vertex_to_edges
+    }
+
+    /// Returns the validated edge count for crate-internal queries.
+    #[inline]
+    pub(crate) const fn edge_count(&self) -> usize {
+        self.edge_count
+    }
+
     /// Returns an iterator over all unique edges incident to `v`.
     ///
     /// If `v` is not present in this index, the iterator is empty.
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
     pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey> + '_ {
-        self.vertex_to_edges
+        self.vertex_to_edges()
             .get(&v)
             .into_iter()
             .flat_map(|edges| edges.iter().copied())
@@ -302,7 +330,7 @@ impl EdgeIndex<'_> {
     #[must_use]
     #[inline]
     pub fn number_of_incident_edges(&self, v: VertexKey) -> usize {
-        self.vertex_to_edges.get(&v).map_or(0, SmallBuffer::len)
+        self.vertex_to_edges().get(&v).map_or(0, SmallBuffer::len)
     }
 
     /// Returns an iterator over all unique edges in the triangulation snapshot.
@@ -311,7 +339,7 @@ impl EdgeIndex<'_> {
     /// `v0()` endpoint. Iteration order is not specified.
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
-        self.vertex_to_edges.iter().flat_map(|(vk, edges)| {
+        self.vertex_to_edges().iter().flat_map(|(vk, edges)| {
             let vk = *vk;
             edges.iter().copied().filter(move |edge| edge.v0() == vk)
         })
@@ -320,7 +348,7 @@ impl EdgeIndex<'_> {
     /// Returns the number of unique edges in the triangulation snapshot.
     #[must_use]
     pub const fn number_of_edges(&self) -> usize {
-        self.edge_count
+        self.edge_count()
     }
 }
 

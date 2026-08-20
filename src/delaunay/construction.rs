@@ -6430,7 +6430,7 @@ mod tests {
 
         let dt_with_kernel: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulationBuilder::new(&vertices)
-                .build()
+                .build_with_kernel(&FastKernel::new())
                 .unwrap();
         assert_eq!(
             dt_with_kernel.topology_guarantee(),

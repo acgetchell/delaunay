@@ -1968,11 +1968,11 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             vertex_to_edges.entry(vk).or_default();
         }
 
-        Ok(EdgeIndex {
-            edge_count: seen_edges.len(),
+        Ok(EdgeIndex::from_validated_parts(
             vertex_to_edges,
-            _source_incidence: self.tds.vertex_to_simplices_index(),
-        })
+            seen_edges.len(),
+            self.tds.vertex_to_simplices_index(),
+        ))
     }
 
     /// Builds only the derived simplex→neighbor index for this triangulation snapshot.
@@ -2907,7 +2907,7 @@ mod tests {
                     > 0
             );
 
-            let edges = edge_index.vertex_to_edges.get(&vertex_key).unwrap();
+            let edges = edge_index.vertex_to_edges().get(&vertex_key).unwrap();
             assert!(!edges.is_empty());
             assert!(edges.iter().all(
                 |edge| matches!(edge.endpoints(), (a, b) if a == vertex_key || b == vertex_key)
@@ -3032,7 +3032,7 @@ mod tests {
         let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
         assert!(incidence.vertex_to_simplices.is_empty());
         assert!(neighbor_index.simplex_to_neighbors.is_empty());
-        assert!(edge_index.vertex_to_edges.is_empty());
+        assert!(edge_index.vertex_to_edges().is_empty());
     }
 
     #[test]
@@ -3067,7 +3067,7 @@ mod tests {
         );
         assert!(
             edge_index
-                .vertex_to_edges
+                .vertex_to_edges()
                 .get(&isolated_vertex)
                 .is_some_and(SmallBuffer::is_empty)
         );
