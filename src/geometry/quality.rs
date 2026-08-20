@@ -37,7 +37,6 @@
 use crate::core::{
     collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer},
     tds::{SimplexKey, TdsError, VertexKey},
-    triangulation::Triangulation,
 };
 use crate::geometry::{
     kernel::Kernel,
@@ -45,6 +44,7 @@ use crate::geometry::{
     traits::coordinate::CoordinateConversionValue,
     util::{CircumcenterError, circumradius, hypot, inradius as simplex_inradius, simplex_volume},
 };
+use crate::triangulation::Triangulation;
 use core::{array, fmt};
 use num_traits::One;
 use thiserror::Error;
@@ -579,9 +579,9 @@ mod tests {
     };
     use crate::core::simplex::Simplex;
     use crate::core::tds::Tds;
-    use crate::core::triangulation::Triangulation;
+    use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::FastKernel;
-    use crate::triangulation::DelaunayTriangulation;
+    use crate::triangulation::Triangulation;
     use crate::vertex;
     use approx::assert_relative_eq;
     use std::{array, assert_matches};

@@ -395,7 +395,7 @@ suite for local saved-baseline comparisons. It runs
 `locate`, and `realization_validation`, leaving `target/criterion/new` data suitable for
 `just bench-compare`. The manual `topology_guarantee_construction` suite remains
 available through `just bench-save-baseline <tag> topology` and
-`uv run benchmark-utils perf-local --suite topology`. Save the previous release
+`cargo bench --locked --profile perf --bench topology_guarantee_construction`. Save the previous release
 signal as `last` with `just bench-save-baseline last` from the baseline
 checkout, or save an explicit baseline name with the same recipe. Use
 `just perf-local` when you want the tool to manage isolated
@@ -413,7 +413,7 @@ just bench-compare last
 If you saved the baseline with an explicit release tag instead, pass that tag
 to the report step, for example `just bench-compare v0.7.8`.
 
-Use lower-level `uv run benchmark-utils bench-compare --scope all-benches` only
+Use lower-level `uv run --locked benchmark-utils bench-compare --scope all-benches` only
 when you explicitly want an exploratory report over every Criterion result
 already present under `target/criterion/`.
 
@@ -509,12 +509,12 @@ baseline.
 terminal-status convention, but remains stricter: individual benchmark
 regressions still make release-style comparisons fail.
 
-For lower-level workflows, `uv run benchmark-utils ensure-ref-baseline --ref
+For lower-level workflows, `uv run --locked benchmark-utils ensure-ref-baseline --ref
 <ref> --dev` prints the cached/generated same-machine baseline path for a branch
-or version tag, and `uv run benchmark-utils fetch-baseline --ref <ref>` downloads
+or version tag, and `uv run --locked benchmark-utils fetch-baseline --ref <ref>` downloads
 the manual compatibility GitHub Actions artifact instead. Use the generated
 local baseline for same-machine regression checks; use the downloaded artifact
-only when you explicitly want CI-runner parity. `uv run benchmark-utils
+only when you explicitly want CI-runner parity. `uv run --locked benchmark-utils
 compare-ref --ref <ref>` writes
 `benches/worktree_vs_<ref>_compare_results.txt` unless `--output` is supplied.
 

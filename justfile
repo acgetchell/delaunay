@@ -614,7 +614,7 @@ paper-clean:
 # Build the CLI used by paper notebooks before nbconvert starts its execution timer.
 [group('notebooks and papers')]
 paper-cli:
-    cargo build --profile perf --features cli --bin delaunay
+    cargo build --locked --profile perf --features cli --bin delaunay
 
 # Check the target-built PDF for basic readability.
 [group('notebooks and papers')]
@@ -1085,7 +1085,7 @@ python-sync: _ensure-uv
 # Type-check Python support code with ty.
 [group('validation')]
 python-typecheck: _ensure-uv
-    uv run --locked ty check scripts/ --error all
+    uv run --locked --group notebooks ty check scripts/ --error all
 
 # Run the opt-in companion binary with the CLI feature and perf profile.
 [group('build and setup')]

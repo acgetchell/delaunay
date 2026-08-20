@@ -1355,7 +1355,7 @@ gen_insertion_order_robustness_test!(2, 6, 10);
 // Coverage note:
 // - The filters below intentionally trade breadth for determinism and debuggability.
 // - Degenerate/perturbation paths are exercised by unit regressions in
-//   `src/core/triangulation/` and the curated edge-case suites in
+//   `src/triangulation/` and the curated edge-case suites in
 //   [`tests/delaunay_edge_cases.rs`](tests/delaunay_edge_cases.rs:1) /
 //   [`tests/delaunay_incremental_insertion.rs`](tests/delaunay_incremental_insertion.rs:1).
 // - If these filters start rejecting a large fraction of generated cases, that is a signal

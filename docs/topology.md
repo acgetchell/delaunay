@@ -21,11 +21,10 @@ Relevant modules (lexicographically sorted):
 src/
 ├── core/
 │   ├── facet_incidence.rs
-│   ├── query.rs
-│   ├── triangulation.rs
-│   └── validation.rs
+│   └── tds/
+│       └── validation.rs
 ├── delaunay/
-│   ├── flips.rs
+│   ├── query.rs
 │   ├── repair.rs
 │   └── validation.rs
 ├── geometry/
@@ -43,6 +42,10 @@ src/
 │   └── traits/
 │       ├── global_topology_model.rs
 │       └── topological_space.rs
+└── triangulation/
+    ├── flips.rs
+    ├── query.rs
+    └── validation.rs
 ```
 
 Notes:
@@ -105,10 +108,10 @@ identities, including explicit self-identifications.
 Implementation pointers:
 
 - Level 3 entry points and validation vocabulary:
-  `src/core/triangulation/validation.rs`
+  `src/triangulation/validation.rs`
   (`Triangulation::is_valid_topology`, `Triangulation::orientation_witness`,
   `OrientationWitness`, and `Triangulation::validate`)
-- Owner-level topology validators: `src/core/triangulation/validation.rs` and
+- Owner-level topology validators: `src/triangulation/validation.rs` and
   `src/delaunay/query.rs`
   (`Triangulation::validate_ridge_links`,
   `Triangulation::validate_ridge_links_for_simplices`,
@@ -323,9 +326,9 @@ PL-topology validation separate from spherical Level 4/5 geometry. Full
 spherical integration across `S^2`-`S^5` and hyperbolic integration remain future
 work.
 
-## Triangulation editing (`src/core/triangulation/`)
+## Triangulation editing (`src/triangulation/`)
 
-`src/core/triangulation/flips.rs` exposes explicit bistellar-flip editing APIs
+`src/triangulation/flips.rs` exposes explicit bistellar-flip editing APIs
 (`BistellarFlips`) built on `core::algorithms::flips`. These operations:
 
 - change the combinatorial triangulation while preserving the certified

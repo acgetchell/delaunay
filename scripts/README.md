@@ -2,7 +2,7 @@
 
 This directory contains Python and shell tooling used by the `delaunay`
 repository. Prefer `just` recipes for validation and tests, and use the
-`uv run ...` entrypoints documented here when invoking an individual utility
+`uv run --locked ...` entrypoints documented here when invoking an individual utility
 directly.
 
 ## Prerequisites
@@ -27,10 +27,10 @@ just changelog
 just changelog-unreleased vX.Y.Z
 just tag vX.Y.Z
 
-uv run check-docs-version-sync --help
-uv run postprocess-changelog --help
-uv run archive-changelog --help
-uv run tag-release vX.Y.Z --help
+uv run --locked check-docs-version-sync --help
+uv run --locked postprocess-changelog --help
+uv run --locked archive-changelog --help
+uv run --locked tag-release vX.Y.Z --help
 ```
 
 `just changelog` runs `git-cliff`, applies markdown hygiene, and archives
@@ -49,7 +49,7 @@ create the annotated release tag from the matching changelog section.
 just notebook-check
 just notebook-execute notebooks/00_quickstart.ipynb
 just notebook-reset-from-git
-uv run --group dev --group notebooks notebook-check --help
+uv run --locked --group dev --group notebooks notebook-check --help
 ```
 
 `notebook-check` validates notebook JSON, rejects committed outputs and
@@ -64,14 +64,14 @@ notebook artifacts and Jupyter checkpoints.
 ### Benchmark utilities
 
 ```bash
-uv run benchmark-utils generate-baseline
-uv run benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt
-uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
-uv run benchmark-utils bench-compare last
-uv run benchmark-utils generate-summary --run-benchmarks --profile perf
-uv run benchmark-utils performance-local
-uv run benchmark-utils performance-github-assets
-uv run benchmark-utils performance-release
+uv run --locked benchmark-utils generate-baseline
+uv run --locked benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt
+uv run --locked benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
+uv run --locked benchmark-utils bench-compare last
+uv run --locked benchmark-utils generate-summary --run-benchmarks --profile perf
+uv run --locked benchmark-utils performance-local
+uv run --locked benchmark-utils performance-github-assets
+uv run --locked benchmark-utils performance-release
 ```
 
 `benchmark-utils` handles Criterion baseline generation and packaging,
@@ -97,21 +97,19 @@ total matched-time regressions or execution errors.
 ### Hardware utilities
 
 ```bash
-uv run hardware-utils info
-uv run hardware-utils kv
-uv run hardware-utils info --json
+uv run --locked hardware-utils info
+uv run --locked hardware-utils kv
+uv run --locked hardware-utils info --json
 ```
 
-### Coverage utilities
+### Coverage workflow
 
 ```bash
 just coverage-ci
-uv run coverage-report --help
-uv run coverage_report --help
 ```
 
-`coverage-report` summarizes the Cobertura XML produced by `just coverage-ci`.
-`coverage_report` is kept as a backwards-compatible alias.
+`just coverage-ci` writes the Cobertura XML consumed by CI to
+`coverage/cobertura.xml`.
 
 ### Tool-pin maintenance
 

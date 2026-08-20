@@ -2,11 +2,62 @@
 
 use num_traits::NumCast;
 
+// ruleid: delaunay.rust.delaunay-defined-only-in-canonical-model
 pub struct DelaunayTriangulation<K, U, V, const D: usize>(K, U, V);
+// ruleid: delaunay.rust.triangulation-defined-only-in-canonical-model
 pub struct Triangulation<K, U, V, const D: usize>(K, U, V);
+// ruleid: delaunay.rust.tds-defined-only-in-canonical-model
 pub struct Tds<U, V, const D: usize>(U, V);
+// ok: delaunay.rust.delaunay-defined-only-in-canonical-model
+pub struct DelaunayTriangulationCandidate<K, U, V, const D: usize>(K, U, V);
+// ok: delaunay.rust.triangulation-defined-only-in-canonical-model
+pub struct TriangulationCandidate<K, U, V, const D: usize>(K, U, V);
+// ok: delaunay.rust.tds-defined-only-in-canonical-model
+pub struct TdsCandidate<U, V, const D: usize>(U, V);
 pub trait BistellarFlips<const D: usize> {}
 pub trait PachnerMoves<const D: usize> {}
+
+// ruleid: delaunay.rust.core-must-not-import-triangulation-owner
+use crate::triangulation::Triangulation as ForbiddenCoreTriangulationOwner;
+// ruleid: delaunay.rust.core-must-not-import-triangulation-owner
+use crate::triangulation::{
+    Triangulation as ForbiddenGroupedCoreOwner,
+    validation::ValidationPolicy,
+};
+// ruleid: delaunay.rust.core-must-not-import-triangulation-owner
+pub use crate::Triangulation as ForbiddenReexportedCoreOwner;
+type ForbiddenQualifiedCoreOwner<K, U, V, const D: usize> =
+    // ruleid: delaunay.rust.core-must-not-import-triangulation-owner
+    crate::triangulation::Triangulation<K, U, V, D>;
+// ruleid: delaunay.rust.lower-layers-must-not-import-delaunay-owner
+use crate::delaunay_model::DelaunayTriangulation as ForbiddenLowerDelaunayOwner;
+// ruleid: delaunay.rust.lower-layers-must-not-import-delaunay-owner
+use crate::{
+    DelaunayTriangulation as ForbiddenGroupedLowerOwner,
+    core::tds::Tds as GroupedTds,
+};
+// ruleid: delaunay.rust.lower-layers-must-not-import-delaunay-owner
+pub use crate::delaunay_model::DelaunayTriangulation as ForbiddenReexportedLowerOwner;
+type ForbiddenQualifiedLowerOwner<K, U, V, const D: usize> =
+    // ruleid: delaunay.rust.lower-layers-must-not-import-delaunay-owner
+    crate::delaunay_model::DelaunayTriangulation<K, U, V, D>;
+// ok: delaunay.rust.core-must-not-import-triangulation-owner
+// ok: delaunay.rust.lower-layers-must-not-import-delaunay-owner
+use crate::core::tds::Tds as AllowedLowerTdsOwner;
+
+// ok: delaunay.rust.core-must-not-import-triangulation-owner
+/// Public documentation may link to [`Triangulation`](crate::Triangulation).
+// ok: delaunay.rust.lower-layers-must-not-import-delaunay-owner
+/// Public documentation may link to [`DelaunayTriangulation`](crate::DelaunayTriangulation).
+struct LowerLayerDocumentationLinks;
+
+#[cfg(test)]
+mod allowed_higher_owner_test_fixtures {
+    // ok: delaunay.rust.core-must-not-import-triangulation-owner
+    use crate::triangulation::Triangulation;
+    // ok: delaunay.rust.lower-layers-must-not-import-delaunay-owner
+    use crate::delaunay_model::DelaunayTriangulation;
+}
 
 // ruleid: delaunay.rust.no-topology-edit-traits-for-delaunay-owner
 impl<K, U, V, const D: usize> BistellarFlips<D> for DelaunayTriangulation<K, U, V, D> {}
@@ -1227,6 +1278,7 @@ pub mod tds_snapshot {}
 // ruleid: delaunay.rust.no-public-tds-snapshot-internals
 pub use crate::core::tds::tds_snapshot::TdsSnapshot;
 
+// ruleid: delaunay.rust.tds-defined-only-in-canonical-model
 pub struct Tds {
     vertices: StorageMap<VertexKey, Vertex<(), 3>>,
 }

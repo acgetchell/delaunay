@@ -6,10 +6,10 @@
 use super::{SimplexKey, VertexKey};
 use crate::core::algorithms::flips::{FlipError, FlipNeighborWiringError};
 use crate::core::facet::FacetError;
-use crate::core::realization::TriangulationRealizationValidationError;
 use crate::core::simplex::SimplexValidationError;
-use crate::core::validation::TriangulationValidationError;
 use crate::core::vertex::VertexValidationError;
+use crate::triangulation::realization::TriangulationRealizationValidationError;
+use crate::triangulation::validation::TriangulationValidationError;
 use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
 use uuid::Uuid;
@@ -1235,11 +1235,11 @@ mod tests {
     use crate::core::facet::FacetError;
     use crate::core::simplex::SimplexValidationError;
     use crate::core::util::uuid::UuidValidationError;
-    use crate::core::validation::TriangulationValidationError;
     use crate::core::vertex::VertexValidationError;
     use crate::repair::DelaunayRepairOperation;
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::topology::traits::topological_space::TopologyKind;
+    use crate::triangulation::validation::TriangulationValidationError;
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use slotmap::KeyData;
     use std::{assert_matches, iter};

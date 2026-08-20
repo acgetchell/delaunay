@@ -1,4 +1,4 @@
-//! Generic validation orchestration for [`Triangulation`](crate::Triangulation).
+//! Generic validation orchestration for [`Triangulation`].
 //!
 //! This module owns the generic validation vocabulary and the cumulative
 //! triangulation-level validation pipeline:
@@ -9,9 +9,9 @@
 //!   [`Simplex::is_valid`](crate::prelude::tds::Simplex::is_valid) /
 //!   [`Simplex::simplex_report`](crate::prelude::tds::Simplex::simplex_report).
 //! - **Level 2** Combinatorial Consistency remains implemented by
-//!   [`Tds`](crate::prelude::tds::Tds).
+//!   [`Tds`].
 //! - **Level 3** Intrinsic PL Topology validation is orchestrated here for
-//!   [`Triangulation`](crate::Triangulation).
+//!   [`Triangulation`].
 //! - **Level 4** Valid Realization validation is implemented by
 //!   [`Triangulation::validate_realization`](crate::Triangulation::validate_realization).
 //!
@@ -83,10 +83,10 @@
 //!
 //! ## Topology guarantees
 //!
-//! [`TopologyGuarantee`](crate::prelude::validation::TopologyGuarantee) selects
+//! [`TopologyGuarantee`] selects
 //! which **manifoldness** invariants are checked by Level 3 Intrinsic PL Topology validation.
 //! Whether those checks run automatically after insertion is controlled by
-//! [`ValidationPolicy`](crate::prelude::validation::ValidationPolicy).
+//! [`ValidationPolicy`].
 //!
 //! Level 3 validation always checks:
 //! - Codimension-1 facet degree (pseudomanifold condition: one-sided or two-sided incidence)
@@ -96,7 +96,7 @@
 //! - Euler characteristic
 //!
 //! With
-//! [`TopologyGuarantee::PLManifold`](crate::prelude::validation::TopologyGuarantee::PLManifold),
+//! [`TopologyGuarantee::PLManifold`],
 //! Level 3 validation additionally checks the canonical **vertex-link** PL-manifoldness condition via
 //! [`crate::topology::manifold::validate_vertex_links`].
 //!
@@ -119,7 +119,6 @@ use crate::core::tds::{
     TriangulationValidationReport, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::Triangulation;
 use crate::geometry::kernel::Kernel;
 use crate::topology::characteristics::euler::{
     FVector, TopologyClassification, classify_triangulation, count_boundary_simplices,
@@ -138,6 +137,7 @@ use crate::topology::manifold::{
     validate_vertex_links_from_validated_facet_map,
 };
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, TopologyKind};
+use crate::triangulation::Triangulation;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -151,10 +151,7 @@ use uuid::Uuid;
 /// - `RealizationValidationFailed { source }` → `InvariantError::Realization { source }` (Level 4 preserved)
 /// - `DelaunayValidationFailed { source }` → `InvariantError::Delaunay { source }` (Level 5 preserved)
 /// - All other variants → `InvariantError::Tds { source: InconsistentDataStructure { .. } }` with `context`
-pub(crate) fn insertion_error_to_invariant_error(
-    error: InsertionError,
-    context: &str,
-) -> InvariantError {
+pub fn insertion_error_to_invariant_error(error: InsertionError, context: &str) -> InvariantError {
     match error {
         InsertionError::TopologyValidation { source } => InvariantError::Tds { source },
         InsertionError::TopologyValidationFailed { source, .. } => {
@@ -836,7 +833,7 @@ const fn validate_configuration(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum InsertionValidationWork {
+pub enum InsertionValidationWork {
     FullValidation,
     MandatoryMutationPostconditions,
 }
@@ -2194,17 +2191,17 @@ mod tests {
     use crate::core::collections::{NeighborBuffer, SimplexVertexKeyBuffer};
     use crate::core::facet::FacetError;
     use crate::core::operations::InsertionOutcome;
-    use crate::core::realization::TriangulationRealizationValidationError;
     use crate::core::simplex::Simplex;
     use crate::core::tds::{GeometricError, NeighborValidationError, Tds};
     use crate::core::vertex::Vertex;
+    use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::coordinate_range::CoordinateRange;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
     use crate::geometry::util::generate_random_points_in_range_seeded;
     use crate::repair::DelaunayRepairPolicy;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
-    use crate::triangulation::DelaunayTriangulation;
+    use crate::triangulation::realization::TriangulationRealizationValidationError;
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use crate::vertex;
     use slotmap::KeyData;

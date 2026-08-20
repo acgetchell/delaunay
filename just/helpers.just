@@ -28,7 +28,7 @@ _bench-pachner-stress samples:
 _ensure-actionlint: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run actionlint -version >/dev/null
+    uv run --locked actionlint -version >/dev/null
 
 _ensure-cargo-edit: (_ensure-pinned-cargo-tool "cargo-upgrade" "cargo-edit" cargo_edit_version "upgrade")
 
@@ -79,12 +79,12 @@ _ensure-samply: (_ensure-pinned-cargo-tool "samply" "samply" samply_version)
 _ensure-shellcheck: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run shellcheck --version >/dev/null
+    uv run --locked shellcheck --version >/dev/null
 
 _ensure-shfmt: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run shfmt --version >/dev/null
+    uv run --locked shfmt --version >/dev/null
 
 _ensure-taplo: (_ensure-pinned-cargo-tool "taplo" "taplo-cli" taplo_version)
 
@@ -110,7 +110,7 @@ _ensure-uv:
 _ensure-yamllint: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run yamllint --version >/dev/null
+    uv run --locked yamllint --version >/dev/null
 
 _ensure-zizmor: (_ensure-pinned-cargo-tool "zizmor" "zizmor" zizmor_version)
 

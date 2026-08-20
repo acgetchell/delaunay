@@ -16,7 +16,7 @@ use super::{
     GlobalTopologyModelAdapter, Instant, Kernel, LastAppliedFlip, MAX_REPEAT_SIGNATURE,
     RepairAttemptConfig, RepairDiagnostics, RepairQueueOrder, RepairQueues, RidgeHandle,
     RobustKernel, SimplexKey, SimplexKeyBuffer, Tds, TdsRollbackTransaction, TdsRollbackWindow,
-    TopologicalOperation, TopologyGuarantee, TriangleHandle, Triangulation, VecDeque, VertexKey,
+    TopologicalOperation, TopologyGuarantee, TriangleHandle, VecDeque, VertexKey,
     apply_delaunay_flip_k2, build_k2_flip_context, build_k2_flip_context_from_edge,
     build_k3_flip_context, build_k3_flip_context_from_triangle, debug_postcondition_facet_context,
     debug_ridge_context, default_max_flips, delaunay_violation_k2_for_facet,
@@ -1310,37 +1310,37 @@ where
 
 /// Crate-internal TDS verifier for the Delaunay property via local flip predicates.
 ///
-/// Public callers should use
-/// [`DelaunayTriangulation::verify_via_flip_predicates`](crate::DelaunayTriangulation::verify_via_flip_predicates)
-/// Crate-internal triangulation verifier for the Delaunay property via local flip predicates.
-///
 /// Public Delaunay owners expose this as
 /// [`DelaunayTriangulation::verify_via_flip_predicates`](crate::DelaunayTriangulation::verify_via_flip_predicates).
-/// Keeping this helper crate-private prevents callers from pairing arbitrary
-/// triangulations with a Delaunay-only API boundary.
+/// The caller must hold a Levels 3–4 [`Triangulation`](crate::Triangulation)
+/// proof for `tds`, `kernel`, and `global_topology`; the explicit
+/// `assuming_connected` name keeps that precondition visible while allowing
+/// this TDS-level helper to remain independent of the stronger owner.
 ///
 /// # Errors
 ///
 /// Returns [`DelaunayRepairError::PostconditionFailed`] if any flip predicate detects
 /// a Delaunay violation, or [`DelaunayRepairError::VerificationFailed`] if
 /// verification cannot evaluate the local predicates.
-pub(crate) fn verify_triangulation_via_flip_predicates<K, U, V, const D: usize>(
-    triangulation: &Triangulation<K, U, V, D>,
+pub(crate) fn verify_tds_via_flip_predicates_assuming_connected<K, U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    kernel: &K,
+    global_topology: GlobalTopology<D>,
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
-    // `Triangulation` already proves connectivity as part of Levels 1–4.
+    // The caller's `Triangulation` already proves connectivity as part of Levels 1–4.
     // Promotion to `DelaunayTriangulation` therefore replays only the local
     // Level 5 predicates instead of treating the proof-bearing owner as raw
     // TDS input and paying for a redundant whole-complex traversal.
     verify_repair_postcondition_with_topology(
-        &triangulation.tds,
-        &triangulation.kernel,
+        tds,
+        kernel,
         None,
-        triangulation.global_topology,
+        global_topology,
         PostconditionMode::Strict,
         None,
         ConnectivityPostcondition::Defer,
@@ -1979,8 +1979,8 @@ mod tests {
     use crate::DelaunayTriangulation;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::collections::Uuid;
-    use crate::core::validation::TopologyGuarantee;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
+    use crate::triangulation::validation::TopologyGuarantee;
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;

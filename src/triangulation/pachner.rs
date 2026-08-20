@@ -2,13 +2,13 @@
 //!
 //! This module is the local editing layer above the explicit bistellar flip
 //! primitives in [`crate::flips`]. It lets callers choose a local
-//! [`PachnerMove`](crate::pachner::PachnerMove) request first, parse it into a
-//! provenanced [`PachnerProposal`](crate::pachner::PachnerProposal), and then
+//! [`PachnerMove`] request first, parse it into a provenanced
+//! [`PachnerProposal`], and then
 //! attempt the proposal through a fluent terminal method while preserving the
 //! primitive flip APIs for deterministic editing workflows. Move requests that
 //! contain topology handles are raw detached input: use borrowed topology views
 //! for immediate observation, and collapse them to
-//! [`PachnerMove`](crate::pachner::PachnerMove) only when a queued or randomized
+//! [`PachnerMove`] only when a queued or randomized
 //! workflow needs a storable request.
 
 #![forbid(unsafe_code)]
@@ -780,7 +780,7 @@ mod tests {
     use slotmap::KeyData;
 
     use super::*;
-    use crate::core::triangulation::Triangulation;
+    use crate::triangulation::Triangulation;
     use crate::{
         DelaunayTriangulationBuilder, TopologyGuarantee, geometry::kernel::AdaptiveKernel, vertex,
     };

@@ -599,9 +599,9 @@ Canonical set extraction functions for comparing triangulation topology:
 ```rust
 use delaunay::prelude::query::{
     extract_vertex_coordinate_set,    // HashSet<Point<D>>
-    extract_edge_set,                  // HashSet<(u128, u128)>
+    extract_edge_set,                  // Result<HashSet<(u128, u128)>, FacetError>
     extract_facet_identifier_set,      // Result<HashSet<u64>, FacetError>
-    extract_hull_facet_set,            // HashSet<u64>
+    extract_hull_facet_set,            // Result<HashSet<u64>, ConvexHullConstructionError>
 };
 ```
 
@@ -686,8 +686,8 @@ assert_jaccard_gte!(
 ```rust
 use delaunay::prelude::query::extract_edge_set;
 
-let edges_a = extract_edge_set(tri_a);
-let edges_b = extract_edge_set(tri_b);
+let edges_a = extract_edge_set(tri_a)?;
+let edges_b = extract_edge_set(tri_b)?;
 
 assert_jaccard_gte!(
     &edges_a,
@@ -700,14 +700,13 @@ assert_jaccard_gte!(
 #### Hull Facet Topology
 
 ```rust
-use delaunay::prelude::query::extract_hull_facet_set;
-use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+use delaunay::prelude::query::{ConvexHull, extract_hull_facet_set};
 
-let hull1 = ConvexHull::try_from_triangulation(&tds)?;
-let hull2 = ConvexHull::try_from_triangulation(&tds)?;
+let hull1 = ConvexHull::try_from_triangulation(tri)?;
+let hull2 = ConvexHull::try_from_triangulation(tri)?;
 
-let facets1 = extract_hull_facet_set(&hull1, &tds);
-let facets2 = extract_hull_facet_set(&hull2, &tds);
+let facets1 = extract_hull_facet_set(&hull1, tri)?;
+let facets2 = extract_hull_facet_set(&hull2, tri)?;
 
 assert_jaccard_gte!(
     &facets1,

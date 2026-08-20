@@ -22,43 +22,6 @@ use std::sync::LazyLock;
 static PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
     LazyLock::new(|| std::env::var_os("DELAUNAY_STRICT_INSPHERE_CONSISTENCY").is_some());
 
-#[cfg(test)]
-mod test_support {
-    use std::cell::Cell;
-
-    thread_local! {
-        static STRICT_INSPHERE_CONSISTENCY_OVERRIDE: Cell<Option<bool>> =
-            const { Cell::new(None) };
-    }
-
-    pub(super) struct StrictInsphereConsistencyOverrideGuard {
-        previous: Option<bool>,
-    }
-
-    impl Drop for StrictInsphereConsistencyOverrideGuard {
-        fn drop(&mut self) {
-            STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(|override_value| {
-                override_value.set(self.previous);
-            });
-        }
-    }
-
-    pub(super) fn strict_insphere_consistency_override() -> Option<bool> {
-        STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(Cell::get)
-    }
-
-    pub(super) fn set_strict_insphere_consistency(
-        enabled: bool,
-    ) -> StrictInsphereConsistencyOverrideGuard {
-        let previous = STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(|override_value| {
-            let previous = override_value.get();
-            override_value.set(Some(enabled));
-            previous
-        });
-        StrictInsphereConsistencyOverrideGuard { previous }
-    }
-}
-
 /// Returns whether strict insphere consistency diagnostics are active.
 ///
 /// Production code reads `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` once per
@@ -508,6 +471,43 @@ fn verify_insphere_consistency<const D: usize>(
             }
         },
     )
+}
+
+#[cfg(test)]
+mod test_support {
+    use std::cell::Cell;
+
+    thread_local! {
+        static STRICT_INSPHERE_CONSISTENCY_OVERRIDE: Cell<Option<bool>> =
+            const { Cell::new(None) };
+    }
+
+    pub(super) struct StrictInsphereConsistencyOverrideGuard {
+        previous: Option<bool>,
+    }
+
+    impl Drop for StrictInsphereConsistencyOverrideGuard {
+        fn drop(&mut self) {
+            STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(|override_value| {
+                override_value.set(self.previous);
+            });
+        }
+    }
+
+    pub(super) fn strict_insphere_consistency_override() -> Option<bool> {
+        STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(Cell::get)
+    }
+
+    pub(super) fn set_strict_insphere_consistency(
+        enabled: bool,
+    ) -> StrictInsphereConsistencyOverrideGuard {
+        let previous = STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(|override_value| {
+            let previous = override_value.get();
+            override_value.set(Some(enabled));
+            previous
+        });
+        StrictInsphereConsistencyOverrideGuard { previous }
+    }
 }
 
 #[cfg(test)]

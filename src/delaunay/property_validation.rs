@@ -703,12 +703,12 @@ mod tests {
     use super::*;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::simplex::{NeighborSlot, Simplex};
-    use crate::core::triangulation::Triangulation;
     use crate::core::vertex::Vertex;
+    use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::{CoordinateConversionError, InvalidCoordinateValue};
-    use crate::triangulation::DelaunayTriangulation;
+    use crate::triangulation::Triangulation;
     use crate::vertex;
     use slotmap::KeyData;
     use std::{assert_matches, ptr, sync::Once};

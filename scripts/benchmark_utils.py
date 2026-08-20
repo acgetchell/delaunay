@@ -27,6 +27,7 @@ import tempfile
 import time
 import tomllib
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import product
@@ -3597,6 +3598,79 @@ class LocalRefBaselineGenerator:
         self.project_root = project_root
         self.remote = remote
 
+    @staticmethod
+    def _restore_artifact_pair(
+        published_files: tuple[tuple[bool, Path], ...],
+        backups: tuple[tuple[bool, Path, Path], ...],
+    ) -> list[OSError]:
+        """Restore the prior artifact pair and return any rollback failures."""
+        rollback_errors: list[OSError] = []
+        for published, live_file in published_files:
+            if published:
+                try:
+                    live_file.unlink(missing_ok=True)
+                except OSError as rollback_error:
+                    rollback_errors.append(rollback_error)
+
+        for backed_up, backup_file, live_file in backups:
+            if backed_up:
+                try:
+                    backup_file.replace(live_file)
+                except OSError as rollback_error:
+                    rollback_errors.append(rollback_error)
+
+        return rollback_errors
+
+    @staticmethod
+    def _publish_artifact_pair(
+        staged_results: Path,
+        staged_metadata: Path,
+        output_file: Path,
+        metadata_file: Path,
+    ) -> None:
+        """Publish a staged baseline/metadata pair, restoring the prior pair on failure."""
+        backup_dir = Path(tempfile.mkdtemp(prefix=".delaunay-baseline-backup-", dir=output_file.parent))
+        backup_results = backup_dir / output_file.name
+        backup_metadata = backup_dir / metadata_file.name
+        backed_up_results = False
+        backed_up_metadata = False
+        published_results = False
+        published_metadata = False
+
+        try:
+            if output_file.exists():
+                output_file.replace(backup_results)
+                backed_up_results = True
+            if metadata_file.exists():
+                metadata_file.replace(backup_metadata)
+                backed_up_metadata = True
+
+            staged_results.replace(output_file)
+            published_results = True
+            staged_metadata.replace(metadata_file)
+            published_metadata = True
+        except OSError as publish_error:
+            rollback_errors = LocalRefBaselineGenerator._restore_artifact_pair(
+                (
+                    (published_results, output_file),
+                    (published_metadata, metadata_file),
+                ),
+                (
+                    (backed_up_results, backup_results, output_file),
+                    (backed_up_metadata, backup_metadata, metadata_file),
+                ),
+            )
+
+            if rollback_errors:
+                details = "; ".join(str(error) for error in rollback_errors)
+                msg = f"Failed to publish baseline artifacts and restore the prior pair: {details}"
+                raise RuntimeError(msg) from publish_error
+
+            shutil.rmtree(backup_dir, ignore_errors=True)
+            raise
+
+        shutil.rmtree(backup_dir, ignore_errors=True)
+
     def generate_for_ref(
         self,
         *,
@@ -3613,44 +3687,59 @@ class LocalRefBaselineGenerator:
         remote_url = get_git_remote_url(remote=self.remote, cwd=self.project_root)
         out_dir.mkdir(parents=True, exist_ok=True)
         output_file = out_dir / "baseline_results.txt"
-        tmp_output_file = out_dir / "baseline_results.txt.tmp"
-        tmp_output_file.unlink(missing_ok=True)
+        metadata_file = out_dir / "metadata.json"
 
-        with tempfile.TemporaryDirectory(prefix="delaunay-baseline-") as temp_dir:
-            checkout_dir = Path(temp_dir) / "checkout"
-            print(f"📥 Checking out {ref_name} from {self.remote} into a temporary directory...", file=sys.stderr)
-            run_git_command(
-                ["clone", "--no-checkout", "--filter=blob:none", remote_url, str(checkout_dir)],
-                cwd=Path(temp_dir),
-                timeout=300,
+        with tempfile.TemporaryDirectory(
+            prefix=f".{out_dir.name}-staging-",
+            dir=out_dir.parent,
+        ) as staging_dir_name:
+            staging_dir = Path(staging_dir_name)
+            staged_output_file = staging_dir / output_file.name
+
+            with tempfile.TemporaryDirectory(prefix="delaunay-baseline-") as temp_dir:
+                checkout_dir = Path(temp_dir) / "checkout"
+                print(f"📥 Checking out {ref_name} from {self.remote} into a temporary directory...", file=sys.stderr)
+                run_git_command(
+                    ["clone", "--no-checkout", "--filter=blob:none", remote_url, str(checkout_dir)],
+                    cwd=Path(temp_dir),
+                    timeout=300,
+                )
+                run_git_command(["fetch", "--depth", "1", "origin", ref_name], cwd=checkout_dir, timeout=300)
+                run_git_command(["checkout", "--detach", "FETCH_HEAD"], cwd=checkout_dir, timeout=120)
+
+                baseline_commit = get_git_commit_hash(cwd=checkout_dir)
+                print(f"🚀 Generating local baseline for {ref_name} at {baseline_commit}...", file=sys.stderr)
+                generator = BaselineGenerator(checkout_dir, ref_name=ref_name)
+                success = generator.generate_baseline(
+                    dev_mode=dev_mode,
+                    output_file=staged_output_file,
+                    bench_timeout=bench_timeout,
+                )
+
+            if not success:
+                msg = f"Failed to generate baseline for ref {ref_name}"
+                raise RuntimeError(msg)
+
+            metadata_success = WorkflowHelper.create_metadata(
+                ref_name,
+                staging_dir,
+                BaselineArtifactMetadata(
+                    commit_sha=baseline_commit,
+                    run_id="local",
+                    runner_os=platform.system() or "unknown",
+                    runner_arch=platform.machine() or "unknown",
+                ),
             )
-            run_git_command(["fetch", "--depth", "1", "origin", ref_name], cwd=checkout_dir, timeout=300)
-            run_git_command(["checkout", "--detach", "FETCH_HEAD"], cwd=checkout_dir, timeout=120)
+            if not metadata_success:
+                msg = f"Failed to write metadata for baseline ref {ref_name}"
+                raise RuntimeError(msg)
 
-            baseline_commit = get_git_commit_hash(cwd=checkout_dir)
-            print(f"🚀 Generating local baseline for {ref_name} at {baseline_commit}...", file=sys.stderr)
-            generator = BaselineGenerator(checkout_dir, ref_name=ref_name)
-            success = generator.generate_baseline(dev_mode=dev_mode, output_file=tmp_output_file, bench_timeout=bench_timeout)
-
-        if not success:
-            tmp_output_file.unlink(missing_ok=True)
-            msg = f"Failed to generate baseline for ref {ref_name}"
-            raise RuntimeError(msg)
-
-        tmp_output_file.replace(output_file)
-        metadata_success = WorkflowHelper.create_metadata(
-            ref_name,
-            out_dir,
-            BaselineArtifactMetadata(
-                commit_sha=baseline_commit,
-                run_id="local",
-                runner_os=platform.system() or "unknown",
-                runner_arch=platform.machine() or "unknown",
-            ),
-        )
-        if not metadata_success:
-            msg = f"Failed to write metadata for baseline ref {ref_name}"
-            raise RuntimeError(msg)
+            self._publish_artifact_pair(
+                staged_output_file,
+                staging_dir / metadata_file.name,
+                output_file,
+                metadata_file,
+            )
 
         print(f"✅ Local baseline ready: {output_file}", file=sys.stderr)
         return output_file
@@ -4690,17 +4779,24 @@ class WorkflowHelper:
             if _is_semver_tag_ref(ref_name):
                 metadata["tag"] = ref_name
 
-            # Write metadata file
+            # Write metadata through a same-directory temporary so an interrupted
+            # write cannot truncate a previously published metadata file.
             output_dir.mkdir(parents=True, exist_ok=True)
             metadata_file = output_dir / "metadata.json"
+            tmp_metadata_file = output_dir / "metadata.json.tmp"
+            tmp_metadata_file.unlink(missing_ok=True)
 
-            with metadata_file.open("w", encoding="utf-8") as f:
+            with tmp_metadata_file.open("w", encoding="utf-8") as f:
                 json.dump(metadata, f, indent=2)
+            tmp_metadata_file.replace(metadata_file)
 
             print(f"📦 Created metadata file: {metadata_file}", file=sys.stderr)
             return True
 
         except (OSError, TypeError, ValueError) as e:
+            tmp_metadata_file = output_dir / "metadata.json.tmp"
+            with suppress(OSError):
+                tmp_metadata_file.unlink(missing_ok=True)
             print(f"❌ Failed to create metadata: {e}", file=sys.stderr)
             return False
 

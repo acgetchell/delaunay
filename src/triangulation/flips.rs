@@ -36,11 +36,11 @@ use crate::core::algorithms::flips::{
 };
 use crate::core::operations::SuspicionFlags;
 use crate::core::operations::TopologicalOperation;
-use crate::core::rollback::TriangulationRollbackTransaction;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
+use crate::triangulation::Triangulation;
+use crate::triangulation::rollback::TriangulationRollbackTransaction;
 
 /// Applies a high-level flip transaction and preserves topology/realization invariants.
 fn apply_realized_flip<K, U, V, const D: usize>(

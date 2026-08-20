@@ -291,7 +291,7 @@ the vast majority of exact and near-duplicate vertices before any insertion
 occurs, regardless of `DedupPolicy`.
 
 See `order_vertices_hilbert` (called from `order_vertices_by_strategy`) in
-[`src/delaunay/triangulation.rs`](../src/delaunay/triangulation.rs).
+[`src/delaunay/construction.rs`](../src/delaunay/construction.rs).
 
 ### Layer 2: Per-insertion duplicate coordinate check
 
@@ -317,7 +317,7 @@ This layer catches duplicates that survive Hilbert dedup (e.g. when using
 `InsertionOrderStrategy::Input`) and also protects single-vertex `insert_vertex()` calls.
 
 See `duplicate_coordinates_error` in
-[`src/core/triangulation/insertion.rs`](../src/core/triangulation/insertion.rs).
+[`src/triangulation/insertion.rs`](../src/triangulation/insertion.rs).
 
 ### Layer 3: Simplex-level coordinate uniqueness validation
 

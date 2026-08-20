@@ -50,10 +50,8 @@ use crate::core::collections::{
     FacetToSimplicesMap, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
 use crate::core::facet::{FacetError, FacetHandle, FacetView};
-use crate::core::query::QueryError;
 use crate::core::tds::{Tds, TdsError};
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::Triangulation;
 use crate::core::util::checked_facet_key_from_vertex_keys;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -63,6 +61,8 @@ use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateValidationError, DEFAULT_TOLERANCE_F64,
 };
 use crate::geometry::util::{safe_usize_to_scalar, squared_norm};
+use crate::triangulation::Triangulation;
+use crate::triangulation::query::QueryError;
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
 use thiserror::Error;
@@ -2017,11 +2017,11 @@ mod tests {
     use crate::core::algorithms::incremental_insertion::InsertionError;
     use crate::core::tds::{Tds, TdsError};
     use crate::core::util::{checked_facet_key_from_vertex_keys, facet_view_to_vertices};
+    use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::traits::coordinate::{
         CoordinateConversionError, CoordinateConversionValue, InvalidCoordinateValue,
     };
-    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use num_traits::NumCast;
     use std::assert_matches;

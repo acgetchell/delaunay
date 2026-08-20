@@ -5,7 +5,7 @@ use super::errors::{
     TriangulationConstructionState,
 };
 use super::incidence::SimplexIncidenceRemoval;
-use super::storage::{SimplexUuidSortKey, Tds};
+use super::model::{SimplexUuidSortKey, Tds};
 use super::{SimplexKey, TdsRollbackTransaction, VertexKey};
 use crate::core::collections::{
     CLEANUP_OPERATION_BUFFER_SIZE, Entry, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeySet,

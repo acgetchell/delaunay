@@ -4,12 +4,14 @@
 
 use crate::core::tds::Tds;
 use crate::core::traits::data_type::{DataSerialize, DataType};
-use crate::core::validation::{TopologyGuarantee, ValidationConfigurationError, ValidationPolicy};
+use crate::delaunay_model::DelaunayTriangulation;
 use crate::geometry::kernel::RobustKernel;
 use crate::topology::traits::topological_space::{
     GlobalTopology, ToroidalConstructionMode, ToroidalDomainError,
 };
-use crate::triangulation::DelaunayTriangulation;
+use crate::triangulation::validation::{
+    TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
@@ -322,10 +324,10 @@ mod tests {
     use super::*;
     use crate::core::operations::DelaunayInsertionState;
     use crate::core::simplex::Simplex;
-    use crate::core::triangulation::Triangulation;
-    use crate::core::validation::{TopologyGuarantee, ValidationPolicy};
+    use crate::delaunay_model::EuclideanDelaunayReportDomain;
     use crate::topology::traits::topological_space::GlobalTopology;
-    use crate::triangulation::EuclideanDelaunayReportDomain;
+    use crate::triangulation::Triangulation;
+    use crate::triangulation::validation::{TopologyGuarantee, ValidationPolicy};
     use crate::vertex;
     use std::sync::Once;
 

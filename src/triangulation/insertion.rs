@@ -2,7 +2,7 @@
 //!
 //! This module owns transactional vertex insertion, duplicate-coordinate
 //! detection, perturbation retry, conflict-region shaping, cavity insertion,
-//! and insertion telemetry for [`Triangulation`](crate::prelude::triangulation::Triangulation).
+//! and insertion telemetry for [`Triangulation`].
 
 #![forbid(unsafe_code)]
 
@@ -28,21 +28,21 @@ use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, InsertionTelemetry,
     InsertionTelemetryMode, SuspicionFlags,
 };
-use crate::core::realization::TriangulationRealizationValidationError;
-use crate::core::rollback::TriangulationRollbackTransaction;
 #[cfg(debug_assertions)]
 use crate::core::simplex::Simplex;
 use crate::core::tds::{InvariantError, SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateValues, DEFAULT_TOLERANCE_F64};
-use crate::locality::{
+use crate::triangulation::Triangulation;
+use crate::triangulation::locality::{
     append_live_unique_simplex_seeds, collect_local_exterior_conflict_seed_simplices,
     replace_simplices_and_record_removed, retain_simplices_and_record_removed,
 };
+use crate::triangulation::realization::TriangulationRealizationValidationError;
+use crate::triangulation::rollback::TriangulationRollbackTransaction;
 use std::borrow::Cow;
 use std::env;
 use std::sync::{
@@ -306,7 +306,7 @@ pub struct DuplicateDetectionMetrics {
     pub grid_candidates: u64,
 }
 
-pub(crate) fn record_duplicate_detection_metrics(
+pub fn record_duplicate_detection_metrics(
     used_grid: bool,
     candidate_count: usize,
     fell_back: bool,
@@ -375,7 +375,7 @@ enum InsertionSite<'a> {
 
 /// Internal insertion result that preserves the user-facing outcome plus
 /// hidden repair seeding used by batch/debug construction paths.
-pub(crate) struct DetailedInsertionResult {
+pub struct DetailedInsertionResult {
     /// Public insertion outcome returned to higher layers.
     pub outcome: InsertionOutcome,
     /// Public statistics collected while attempting the insertion.
@@ -2880,6 +2880,7 @@ mod tests {
             algorithms::locate::InternalInconsistencySite,
             collections::spatial_hash_grid::HashGridIndex, simplex::Simplex,
         },
+        delaunay_model::DelaunayTriangulation,
         geometry::{
             kernel::{AdaptiveKernel, FastKernel},
             point::Point,
@@ -2888,7 +2889,6 @@ mod tests {
                 F64_MANTISSA_DIGITS,
             },
         },
-        triangulation::DelaunayTriangulation,
         vertex,
     };
     use slotmap::KeyData;

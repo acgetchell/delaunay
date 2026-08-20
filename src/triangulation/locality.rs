@@ -166,10 +166,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::triangulation::Triangulation;
+    use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
-    use crate::triangulation::DelaunayTriangulation;
+    use crate::triangulation::Triangulation;
     use crate::vertex;
     use slotmap::KeyData;
 

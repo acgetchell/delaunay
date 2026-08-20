@@ -1,7 +1,7 @@
 //! Local topology repair for generic triangulations.
 //!
 //! This module owns local facet issue detection/repair, stale incident-simplex
-//! repair, and vertex-removal cavity retriangulation for [`Triangulation`](crate::prelude::triangulation::Triangulation).
+//! repair, and vertex-removal cavity retriangulation for [`Triangulation`].
 
 #![forbid(unsafe_code)]
 
@@ -16,13 +16,15 @@ use crate::core::collections::{
     SimplexKeyBuffer, SimplexKeySet, SmallBuffer, VertexKeySet, fast_hash_set_with_capacity,
 };
 use crate::core::facet::FacetHandle;
-use crate::core::rollback::TriangulationRollbackTransaction;
 use crate::core::tds::{InvariantError, SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::Triangulation;
-use crate::core::validation::{TriangulationValidationError, insertion_error_to_invariant_error};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::quality::{QualityError, QualitySimplexVerticesError, radius_ratio};
+use crate::triangulation::Triangulation;
+use crate::triangulation::rollback::TriangulationRollbackTransaction;
+use crate::triangulation::validation::{
+    TriangulationValidationError, insertion_error_to_invariant_error,
+};
 use std::env;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
@@ -40,7 +42,7 @@ type IncidentSimplexRepairUpdates =
 /// Insertion and local repair usually touch only a handful of vertices. Keeping
 /// this scope as a small buffer preserves the explicit affected-vertex contract
 /// without adding hash-table allocation to every insertion.
-pub(crate) type IncidentRepairVertexBuffer = SmallBuffer<VertexKey, CLEANUP_OPERATION_BUFFER_SIZE>;
+pub type IncidentRepairVertexBuffer = SmallBuffer<VertexKey, CLEANUP_OPERATION_BUFFER_SIZE>;
 
 /// Deferred vertex-hint update computed from the canonical incidence index.
 #[derive(Clone, Debug)]
@@ -108,7 +110,7 @@ fn quality_error_to_tds_error(simplex_key: SimplexKey, error: QualityError) -> T
 /// Internal result from over-shared-facet repair, including the surviving frontier
 /// that should seed local neighbor-pointer repair.
 #[derive(Debug)]
-pub(crate) struct LocalFacetRepairOutcome {
+pub struct LocalFacetRepairOutcome {
     /// Number of simplices actually removed from the TDS.
     pub(crate) removed_count: usize,
     /// Simplices selected for removal before they were deleted.
@@ -129,7 +131,7 @@ pub(crate) struct LocalFacetRepairOutcome {
 /// Internal result from vertex deletion, including local simplices that should
 /// seed downstream Delaunay repair.
 #[derive(Debug)]
-pub(crate) struct VertexRemovalOutcome {
+pub struct VertexRemovalOutcome {
     /// Number of simplices actually removed from the TDS.
     pub(crate) simplices_removed: usize,
     /// Live local simplices whose facets, ridges, or neighbors changed.

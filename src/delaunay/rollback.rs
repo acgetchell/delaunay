@@ -5,7 +5,7 @@
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::operations::DelaunayInsertionState;
 use crate::core::tds::{Tds, TdsOwnerRollbackTransaction, TdsRollbackOwner};
-use crate::triangulation::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
+use crate::delaunay_model::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
 
 impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for DelaunayTriangulation<K, U, V, D> {
     fn rollback_tds(&self) -> &Tds<U, V, D> {

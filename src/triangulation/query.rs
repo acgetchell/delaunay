@@ -1,4 +1,4 @@
-//! Read-only queries for generic [`Triangulation`](crate::Triangulation).
+//! Read-only queries for generic [`Triangulation`].
 //!
 //! This module owns zero-mutation accessors and topology traversal helpers for
 //! the generic triangulation layer. Mutation APIs stay with the construction and
@@ -24,7 +24,6 @@ use crate::core::facet::{
 };
 use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, TdsError, VertexKey};
-use crate::core::triangulation::Triangulation;
 use crate::core::util::usize_to_u8;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -39,6 +38,7 @@ use crate::topology::ridge::{
 use crate::topology::traits::{
     GlobalTopologyModelError, global_topology_model::GlobalTopologyModel,
 };
+use crate::triangulation::Triangulation;
 
 /// Errors returned by read-only triangulation queries.
 ///
@@ -1912,9 +1912,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             .validate_vertex_to_simplices_index()
             .map_err(|source| TopologyIndexBuildError::InvalidVertexIncidenceIndex { source })?;
 
-        Ok(IncidenceView {
-            vertex_to_simplices: self.tds.vertex_to_simplices_index(),
-        })
+        Ok(IncidenceView::from_validated(
+            self.tds.vertex_to_simplices_index(),
+        ))
     }
 
     /// Builds only the derived vertex→edge index for this triangulation snapshot.
@@ -1968,11 +1968,11 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             vertex_to_edges.entry(vk).or_default();
         }
 
-        Ok(EdgeIndex {
-            edge_count: seen_edges.len(),
+        Ok(EdgeIndex::from_validated_parts(
             vertex_to_edges,
-            _source_incidence: self.tds.vertex_to_simplices_index(),
-        })
+            seen_edges.len(),
+            self.tds.vertex_to_simplices_index(),
+        ))
     }
 
     /// Builds only the derived simplex→neighbor index for this triangulation snapshot.
@@ -2021,10 +2021,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             }
         }
 
-        Ok(SimplexNeighborIndex {
+        Ok(SimplexNeighborIndex::from_validated_parts(
             simplex_to_neighbors,
-            _source_incidence: self.tds.vertex_to_simplices_index(),
-        })
+            self.tds.vertex_to_simplices_index(),
+        ))
     }
 
     #[must_use]
@@ -2276,8 +2276,8 @@ impl<K, U, V> Triangulation<K, U, V, 2> {
 mod tests {
     use super::*;
     use crate::core::tds::Tds;
+    use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::FastKernel;
-    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
 
     use slotmap::KeyData;
@@ -2890,7 +2890,7 @@ mod tests {
         assert_eq!(simplex_keys.len(), 2);
         for &simplex_key in &simplex_keys {
             let neighbors = neighbor_index
-                .simplex_to_neighbors
+                .simplex_to_neighbors()
                 .get(&simplex_key)
                 .unwrap();
             assert_eq!(neighbors.len(), 1);
@@ -2899,15 +2899,15 @@ mod tests {
         }
 
         for (vertex_key, _) in tri.vertices() {
-            assert!(incidence.vertex_to_simplices.contains_vertex(vertex_key));
+            assert!(incidence.vertex_to_simplices().contains_vertex(vertex_key));
             assert!(
                 incidence
-                    .vertex_to_simplices
+                    .vertex_to_simplices()
                     .number_of_simplices(vertex_key)
                     > 0
             );
 
-            let edges = edge_index.vertex_to_edges.get(&vertex_key).unwrap();
+            let edges = edge_index.vertex_to_edges().get(&vertex_key).unwrap();
             assert!(!edges.is_empty());
             assert!(edges.iter().all(
                 |edge| matches!(edge.endpoints(), (a, b) if a == vertex_key || b == vertex_key)
@@ -3030,9 +3030,9 @@ mod tests {
         let incidence = tri.incidence().unwrap();
         let edge_index = tri.build_edge_index().unwrap();
         let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
-        assert!(incidence.vertex_to_simplices.is_empty());
-        assert!(neighbor_index.simplex_to_neighbors.is_empty());
-        assert!(edge_index.vertex_to_edges.is_empty());
+        assert!(incidence.vertex_to_simplices().is_empty());
+        assert!(neighbor_index.simplex_to_neighbors().is_empty());
+        assert!(edge_index.vertex_to_edges().is_empty());
     }
 
     #[test]
@@ -3056,18 +3056,18 @@ mod tests {
 
         assert!(
             incidence
-                .vertex_to_simplices
+                .vertex_to_simplices()
                 .contains_vertex(isolated_vertex)
         );
         assert_eq!(
             incidence
-                .vertex_to_simplices
+                .vertex_to_simplices()
                 .number_of_simplices(isolated_vertex),
             0
         );
         assert!(
             edge_index
-                .vertex_to_edges
+                .vertex_to_edges()
                 .get(&isolated_vertex)
                 .is_some_and(SmallBuffer::is_empty)
         );

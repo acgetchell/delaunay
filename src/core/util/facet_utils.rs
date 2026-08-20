@@ -139,7 +139,7 @@ mod tests {
     use crate::vertex;
 
     use crate::core::collections::FastHashSet;
-    use crate::triangulation::DelaunayTriangulation;
+    use crate::delaunay_model::DelaunayTriangulation;
     use std::time::Instant;
 
     /// Generates all unique combinations of `k` vertices for local regression tests.

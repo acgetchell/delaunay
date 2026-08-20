@@ -10,21 +10,17 @@
 
 use crate::core::algorithms::flips::{
     DelaunayRepairError, verify_complete_euclidean_tds_via_robust_flip_predicates,
-    verify_triangulation_via_flip_predicates,
+    verify_tds_via_flip_predicates_assuming_connected,
 };
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::collections::ViolationBuffer;
 use crate::core::operations::DelaunayInsertionState;
-use crate::core::realization::{
-    TriangulationRealizationValidationError, TriangulationRefinementError,
-};
 use crate::core::tds::{
     InvariantError, InvariantKind, InvariantViolation, SimplexKey, Tds, TdsError,
     TriangulationValidationReport,
 };
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::Triangulation;
-use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
+use crate::delaunay_model::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
 #[cfg(feature = "diagnostics")]
 use crate::delaunay_property_validation::debug_print_first_delaunay_violation as debug_print_first_tds_delaunay_violation;
 use crate::delaunay_property_validation::{
@@ -35,8 +31,11 @@ use crate::geometry::kernel::Kernel;
 use crate::refinement::RefinementError;
 use crate::repair::DelaunayRepairOperation;
 use crate::topology::traits::topological_space::GlobalTopology;
-use crate::triangulation::DelaunayTriangulation;
-use crate::triangulation::EuclideanDelaunayReportDomain;
+use crate::triangulation::Triangulation;
+use crate::triangulation::realization::{
+    TriangulationRealizationValidationError, TriangulationRefinementError,
+};
+use crate::triangulation::validation::{TopologyGuarantee, TriangulationValidationError};
 use std::num::NonZeroUsize;
 use thiserror::Error;
 
@@ -311,11 +310,16 @@ where
             }
         })?;
     } else {
-        verify_triangulation_via_flip_predicates(triangulation).map_err(|source| {
-            DelaunayTriangulationValidationError::VerificationFailed {
+        verify_tds_via_flip_predicates_assuming_connected(
+            &triangulation.tds,
+            &triangulation.kernel,
+            triangulation.global_topology,
+        )
+        .map_err(
+            |source| DelaunayTriangulationValidationError::VerificationFailed {
                 source: Box::new(DelaunayVerificationError::from(source)),
-            }
-        })?;
+            },
+        )?;
     }
 
     Ok(())
@@ -997,7 +1001,11 @@ where
     /// # }
     /// ```
     pub fn verify_via_flip_predicates(&self) -> Result<(), DelaunayRepairError> {
-        verify_triangulation_via_flip_predicates(&self.tri)
+        verify_tds_via_flip_predicates_assuming_connected(
+            &self.tri.tds,
+            &self.tri.kernel,
+            self.tri.global_topology,
+        )
     }
 
     /// Performs cumulative validation for Levels 1–5.

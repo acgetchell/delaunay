@@ -31,11 +31,11 @@ into architecture docs; link to the command guide instead.
   canonical storage, and every checked storage transition. Higher layers do
   not receive raw field access; this boundary is independent of where those
   higher-level modules live in the source tree.
-- `src/core/triangulation/` owns the Levels 1–4 `Triangulation` model and all
+- `src/triangulation/` owns the Levels 3–4 `Triangulation` model and all
   operations whose contracts require no Level 5 Delaunay proof, including
   queries, flips, and Pachner moves. It consumes checked TDS transitions and
-  owns the additional Level 3 topology and Level 4 realization conditions.
-- `src/delaunay/` owns the Levels 1–5 refinement and Delaunay-facing
+  owns the Level 3 topology and Level 4 realization conditions.
+- `src/delaunay/` owns the Level 5 refinement and Delaunay-facing
   construction, insertion, deletion, validation, repair, serialization, and
   forwarding query APIs.
 - `src/geometry/` owns points, coordinate ranges, kernels, predicates,
@@ -54,16 +54,19 @@ into architecture docs; link to the command guide instead.
 
 ## Layering Rules
 
-- Dependency direction should stay `topology -> core`, not the reverse.
+- Proof-owner dependencies should stay
+  `core::tds <- triangulation <- delaunay`; lower proof layers must not depend
+  on higher proof owners.
 - `edge.rs` and `facet.rs` stay in `src/core/` because they are direct TDS
   traversal primitives. Ridge query/view types belong in `src/topology/`
   because ridge shape and link semantics depend on dimension and topology.
 - Generic Level 4 realization validation belongs in
-  `src/core/triangulation/realization.rs`;
+  `src/triangulation/realization.rs`;
   implemented Level 5 Geometric Predicate APIs for Delaunay belong in
   `src/delaunay/validation.rs`, with TDS-level Delaunay-property scan helpers
-  under `src/delaunay/`; generic Level 1-3 validation belongs in the
-  core/topology layers.
+  under `src/delaunay/`; Levels 1–2 validation belongs with `core::tds`, while
+  Level 3 topology validation belongs with `Triangulation` and the topology
+  helpers it consumes.
 - Focused preludes should stay narrow and workflow-specific. Use
   `delaunay::prelude::pachner::*` for local move workflows, and import
   primitive bistellar flips directly from `delaunay::flips` only when testing,

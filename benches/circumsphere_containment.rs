@@ -309,97 +309,41 @@ fn benchmark_circumcenter_solve_paths(c: &mut Criterion) {
     group.finish();
 }
 
-/// Numerical consistency test - compare results of all three methods
+/// Validate that every compared method succeeds and returns the same classification.
 fn numerical_consistency_test() {
+    const TOTAL_CASES: u64 = 1000;
     println!("\n=== Numerical Consistency Test ===");
-    let mut all_match = 0;
-    let mut insphere_distance_matches = 0;
-    let mut insphere_lifted_matches = 0;
-    let mut distance_lifted_matches = 0;
-    let mut total = 0;
-    let mut disagreements = Vec::new();
 
-    for i in 0..1000_u64 {
+    for i in 0..TOTAL_CASES {
         let simplex_points = generate_random_simplex_3d(1000 + i);
         let test_point = generate_random_test_point_3d(2000 + i);
 
-        let result_insphere = insphere(&simplex_points, test_point);
-        let result_distance = insphere_distance(&simplex_points, test_point);
-        let result_lifted = insphere_lifted(&simplex_points, test_point);
+        let result_insphere = insphere(&simplex_points, test_point).unwrap_or_else(|error| {
+            abort_benchmark(format_args!(
+                "numerical consistency case {i}: insphere failed: {error}"
+            ))
+        });
+        let result_distance =
+            insphere_distance(&simplex_points, test_point).unwrap_or_else(|error| {
+                abort_benchmark(format_args!(
+                    "numerical consistency case {i}: insphere_distance failed: {error}"
+                ))
+            });
+        let result_lifted = insphere_lifted(&simplex_points, test_point).unwrap_or_else(|error| {
+            abort_benchmark(format_args!(
+                "numerical consistency case {i}: insphere_lifted failed: {error}"
+            ))
+        });
 
-        if let (Ok(r1), Ok(r2), Ok(r3)) = (result_insphere, result_distance, result_lifted) {
-            total += 1;
-
-            // Check pairwise agreements
-            if r1 == r2 {
-                insphere_distance_matches += 1;
-            }
-            if r1 == r3 {
-                insphere_lifted_matches += 1;
-            }
-            if r2 == r3 {
-                distance_lifted_matches += 1;
-            }
-
-            // Check if all three agree
-            if r1 == r2 && r2 == r3 {
-                all_match += 1;
-            } else {
-                disagreements.push((simplex_points, test_point, r1, r2, r3));
-            }
+        if result_insphere != result_distance || result_distance != result_lifted {
+            abort_benchmark(format_args!(
+                "numerical consistency case {i} disagreed: insphere={result_insphere}, \
+                 insphere_distance={result_distance}, insphere_lifted={result_lifted}"
+            ));
         }
     }
 
-    if total == 0 {
-        println!("Method Comparisons (0 total tests): no valid cases; skipping percentage report.");
-        return;
-    }
-    println!("Method Comparisons ({total} total tests):");
-    println!(
-        "  insphere vs insphere_distance:  {}/{} ({:.2}%)",
-        insphere_distance_matches,
-        total,
-        (f64::from(insphere_distance_matches) / f64::from(total)) * 100.0
-    );
-    println!(
-        "  insphere vs insphere_lifted:    {}/{} ({:.2}%)",
-        insphere_lifted_matches,
-        total,
-        (f64::from(insphere_lifted_matches) / f64::from(total)) * 100.0
-    );
-    println!(
-        "  insphere_distance vs insphere_lifted: {}/{} ({:.2}%)",
-        distance_lifted_matches,
-        total,
-        (f64::from(distance_lifted_matches) / f64::from(total)) * 100.0
-    );
-    println!(
-        "  All three methods agree:        {}/{} ({:.2}%)",
-        all_match,
-        total,
-        (f64::from(all_match) / f64::from(total)) * 100.0
-    );
-
-    if !disagreements.is_empty() {
-        println!(
-            "\nFound {} cases where methods disagree:",
-            disagreements.len()
-        );
-        for (i, (simplex, test, r1, r2, r3)) in disagreements.iter().take(5).enumerate() {
-            println!(
-                "  Disagreement {}: insphere={}, distance={}, lifted={}",
-                i + 1,
-                r1,
-                r2,
-                r3
-            );
-            println!("    Test point: {:?}", test.coords());
-            println!(
-                "    Simplex: {:?}",
-                simplex.iter().map(Point::coords).collect::<Vec<_>>()
-            );
-        }
-    }
+    println!("All three methods agreed for all {TOTAL_CASES} numerical consistency cases.");
 }
 
 /// Main benchmark function that runs consistency test before benchmarks

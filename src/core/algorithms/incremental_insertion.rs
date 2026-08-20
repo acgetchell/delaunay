@@ -35,11 +35,7 @@ use crate::core::collections::{
     FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer,
     SmallBuffer, VertexKeyBuffer,
 };
-use crate::core::construction::{
-    FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
-};
 use crate::core::facet::{FacetError, FacetHandle};
-use crate::core::realization::TriangulationRealizationValidationError;
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
     DelaunayValidationErrorKind, EntityKind, GeometricError, InvariantError,
@@ -48,7 +44,6 @@ use crate::core::tds::{
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::traits::facet_incidence_analysis::FacetIncidenceAnalysis;
-use crate::core::validation::TriangulationValidationError;
 use crate::core::vertex::VertexValidationError;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
@@ -60,6 +55,11 @@ use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
     CoordinateValues, InvalidCoordinateValue,
 };
+use crate::triangulation::construction::{
+    FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
+};
+use crate::triangulation::realization::TriangulationRealizationValidationError;
+use crate::triangulation::validation::TriangulationValidationError;
 use crate::validation::DelaunayTriangulationValidationError;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -4712,7 +4712,6 @@ mod tests {
     use crate::core::algorithms::locate::InternalInconsistencySite;
     use crate::core::collections::SimplexKeyBuffer;
     use crate::core::tds::GeometricError;
-    use crate::core::validation::TopologyGuarantee;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{
         CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
@@ -4720,6 +4719,7 @@ mod tests {
     };
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::topology::traits::topological_space::TopologyKind;
+    use crate::triangulation::validation::TopologyGuarantee;
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;

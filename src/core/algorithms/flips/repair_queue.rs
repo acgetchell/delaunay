@@ -1863,8 +1863,8 @@ mod tests {
     use super::super::*;
     use super::*;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
-    use crate::core::validation::TopologyGuarantee;
     use crate::geometry::kernel::AdaptiveKernel;
+    use crate::triangulation::validation::TopologyGuarantee;
     use crate::vertex;
     use slotmap::KeyData;
     use std::iter::once;

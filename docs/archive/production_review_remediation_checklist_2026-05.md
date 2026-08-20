@@ -1,12 +1,13 @@
-# Production Review Remediation Checklist
+# Production Review Remediation Checklist (May 2026)
 
-This checklist tracks the May 2026 `rust-production-review` baseline audit.
-Treat partial items as still open until their acceptance notes are satisfied.
+This archived checklist records the completed May 2026
+`rust-production-review` baseline audit and its remediation status.
 
 ## Status Legend
 
-- [x] Closed in the current patch.
-- [ ] Open, including partial mitigations that need follow-up work.
+- Checked items were completed before archival.
+- Unchecked items would identify work that remained incomplete at archival;
+  none remain below.
 
 ## Critical Issues
 
@@ -29,7 +30,7 @@ Treat partial items as still open until their acceptance notes are satisfied.
 ## High-Value Improvements
 
 - [x] **6. Split very large source files.**
-  `core/triangulation.rs` and the Delaunay-facing layer have been split into
+  the triangulation and Delaunay-facing layers have been split into
   orthogonal construction, insertion, query, repair, orientation, validation,
   and serialization modules. The bistellar-flip implementation is likewise
   split across `core/algorithms/flips/`; if future review warrants another
@@ -154,7 +155,7 @@ Treat partial items as still open until their acceptance notes are satisfied.
 - [x] **B. Remove stale deprecated-warning comment in `lib.rs`.**
   The crate-level migration comment was removed along with the deprecated
   mutable triangulation escape hatch.
-- [x] **C. Relabel safe-code `SAFETY` comments in `tds/storage.rs`.**
+- [x] **C. Relabel safe-code `SAFETY` comments in `tds/model.rs`.**
   UUID index-map consistency comments now use `INVARIANT` where no unsafe
   reasoning is involved.
 - [x] **D. Remove allocation from `geometry/sos.rs` predicate helper.**

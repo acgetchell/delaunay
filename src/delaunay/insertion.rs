@@ -26,12 +26,12 @@ use crate::core::collections::{FastHashSet, SimplexKeyBuffer};
 use crate::core::operations::{InsertionOutcome, InsertionStatistics};
 use crate::core::tds::{SimplexKey, VertexKey};
 use crate::core::traits::data_type::DataType;
-use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
 use crate::core::vertex::Vertex;
+use crate::delaunay_model::DelaunayTriangulation;
 use crate::delaunay_rollback::{DelaunayRollbackTransaction, DelaunaySpatialIndexRollback};
 use crate::geometry::kernel::Kernel;
 use crate::topology::manifold::ManifoldError;
-use crate::triangulation::DelaunayTriangulation;
+use crate::triangulation::validation::{TopologyGuarantee, TriangulationValidationError};
 use std::env;
 
 fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {

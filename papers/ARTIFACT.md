@@ -215,9 +215,8 @@ contracts to concrete artifact evidence.
 
 ### Level 2 — Combinatorial Consistency
 
-- Implementation: [`tds/validation.rs`](../src/core/tds/validation.rs),
-  [`adjacency.rs`](../src/core/adjacency.rs), and
-  [`orientation.rs`](../src/core/triangulation/orientation.rs)
+- Implementation: [`tds/validation.rs`](../src/core/tds/validation.rs) and
+  [`adjacency.rs`](../src/core/adjacency.rs)
 - Representative tests: [`proptest_tds.rs`](../tests/proptest_tds.rs),
   [`proptest_triangulation.rs`](../tests/proptest_triangulation.rs), and
   [`public_topology_api.rs`](../tests/public_topology_api.rs)
@@ -230,7 +229,7 @@ contracts to concrete artifact evidence.
 
 ### Level 3 — Intrinsic PL Topology
 
-- Implementation: [`core/triangulation/validation.rs`](../src/core/triangulation/validation.rs),
+- Implementation: [`triangulation/validation.rs`](../src/triangulation/validation.rs),
   [`manifold.rs`](../src/topology/manifold.rs), and
   [`characteristics/validation.rs`](../src/topology/characteristics/validation.rs)
 - Representative tests:
@@ -246,11 +245,11 @@ contracts to concrete artifact evidence.
 
 ### Level 4 — Valid Realization
 
-- Implementation: [`core/triangulation/realization.rs`](../src/core/triangulation/realization.rs),
+- Implementation: [`triangulation/realization.rs`](../src/triangulation/realization.rs),
   [`geometry/realization.rs`](../src/geometry/realization.rs), and the spherical
   backend in [`spherical.rs`](../src/delaunay/spherical.rs)
 - Representative tests: unit tests in
-  [`core/triangulation/realization.rs`](../src/core/triangulation/realization.rs),
+  [`triangulation/realization.rs`](../src/triangulation/realization.rs),
   [`triangulation_builder.rs`](../tests/triangulation_builder.rs),
   [`proptest_toroidal.rs`](../tests/proptest_toroidal.rs), and
   [`spherical_delaunay.rs`](../tests/spherical_delaunay.rs)
@@ -294,7 +293,7 @@ make cost visible; they do not replace the layer-specific correctness tests.
     [`00_quickstart.ipynb`](../notebooks/00_quickstart.ipynb)
 - **Dimension-generic construction and invariant coverage**
   - Implementation: [`delaunay/construction.rs`](../src/delaunay/construction.rs)
-    and [`core/triangulation/construction.rs`](../src/core/triangulation/construction.rs)
+    and [`triangulation/construction.rs`](../src/triangulation/construction.rs)
   - Tests and documentation: the [test index](../tests/README.md),
     [property-testing summary](../docs/property_testing_summary.md), and 2D–5D
     release-signal cases in

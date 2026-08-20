@@ -1839,6 +1839,85 @@ class TestBaselineGenerator:
         assert calls[1] == ["fetch", "--depth", "1", "origin", "main"]
         assert calls[2] == ["checkout", "--detach", "FETCH_HEAD"]
 
+    @patch("benchmark_utils.run_git_command")
+    def test_local_ref_baseline_metadata_failure_preserves_prior_pair(
+        self,
+        mock_git,
+        tmp_path,
+    ) -> None:
+        """Test that staged results are not published when metadata creation fails."""
+
+        def fake_git_command(args, _cwd=None, **_kwargs) -> subprocess.CompletedProcess[str]:
+            if args[0] == "clone":
+                Path(args[-1]).mkdir(parents=True)
+            return completed_process(args=args)
+
+        def fake_generate_baseline(self, *, dev_mode=False, output_file=None, bench_timeout=1800) -> bool:
+            assert output_file is not None
+            output_file.write_text("new baseline\n", encoding="utf-8")
+            return True
+
+        mock_git.side_effect = fake_git_command
+        project_root = tmp_path / "repo"
+        project_root.mkdir()
+        out_dir = project_root / "baseline-artifact"
+        out_dir.mkdir()
+        output_file = out_dir / "baseline_results.txt"
+        metadata_file = out_dir / "metadata.json"
+        output_file.write_text("prior baseline\n", encoding="utf-8")
+        metadata_file.write_text('{"commit": "prior-commit"}\n', encoding="utf-8")
+        generator = LocalRefBaselineGenerator(project_root)
+
+        with (
+            patch("benchmark_utils.get_git_commit_hash", return_value="new-commit"),
+            patch("benchmark_utils.get_git_remote_url", return_value="git@github.com:acgetchell/delaunay.git"),
+            patch.object(BaselineGenerator, "generate_baseline", fake_generate_baseline),
+            patch.object(WorkflowHelper, "create_metadata", return_value=False),
+            pytest.raises(RuntimeError, match="Failed to write metadata"),
+        ):
+            generator.generate_for_ref(ref_name="main", out_dir=out_dir)
+
+        assert output_file.read_text(encoding="utf-8") == "prior baseline\n"
+        assert metadata_file.read_text(encoding="utf-8") == '{"commit": "prior-commit"}\n'
+        assert not list(project_root.glob(".baseline-artifact-staging-*"))
+
+    def test_local_ref_baseline_publish_failure_restores_prior_pair(self, tmp_path) -> None:
+        """Test rollback when the second staged artifact cannot be published."""
+        out_dir = tmp_path / "baseline-artifact"
+        staging_dir = tmp_path / "staging"
+        out_dir.mkdir()
+        staging_dir.mkdir()
+        output_file = out_dir / "baseline_results.txt"
+        metadata_file = out_dir / "metadata.json"
+        staged_output = staging_dir / output_file.name
+        staged_metadata = staging_dir / metadata_file.name
+        output_file.write_text("prior baseline\n", encoding="utf-8")
+        metadata_file.write_text('{"commit": "prior-commit"}\n', encoding="utf-8")
+        staged_output.write_text("new baseline\n", encoding="utf-8")
+        staged_metadata.write_text('{"commit": "new-commit"}\n', encoding="utf-8")
+        original_replace = Path.replace
+
+        def fail_metadata_publish(source: Path, target: Path) -> Path:
+            if source == staged_metadata and Path(target) == metadata_file:
+                msg = "injected metadata publish failure"
+                raise OSError(msg)
+            return original_replace(source, target)
+
+        with (
+            patch.object(Path, "replace", fail_metadata_publish),
+            pytest.raises(OSError, match="injected metadata publish failure"),
+        ):
+            LocalRefBaselineGenerator._publish_artifact_pair(
+                staged_output,
+                staged_metadata,
+                output_file,
+                metadata_file,
+            )
+
+        assert output_file.read_text(encoding="utf-8") == "prior baseline\n"
+        assert metadata_file.read_text(encoding="utf-8") == '{"commit": "prior-commit"}\n'
+        assert not list(out_dir.glob(".delaunay-baseline-backup-*"))
+
     def test_cached_ref_baseline_reuses_valid_cache(self, tmp_path) -> None:
         """Test that a valid same-machine ref baseline is reused without benchmarking."""
         commit = "abc123def456"

@@ -108,9 +108,11 @@ rules:
         - "/src/core/algorithms/**/*.rs"
         - "/src/core/collections/**/*.rs"
         - "/src/core/tds.rs"
-        - "/src/core/triangulation/**/*.rs"
+        - "/src/triangulation/**/*.rs"
         - "/src/geometry/algorithms/**/*.rs"
         - "/src/delaunay/**/*.rs"
+      exclude:
+        - "/src/triangulation/jaccard.rs"
     patterns:
       - pattern-either:
           - pattern: use std::collections::HashMap;
@@ -172,8 +174,8 @@ rules:
         - "/src/core/vertex.rs"
         - "/src/core/simplex.rs"
         - "/src/core/tds/validation.rs"
-        - "/src/core/triangulation/validation.rs"
-        - "/src/core/triangulation/realization.rs"
+        - "/src/triangulation/validation.rs"
+        - "/src/triangulation/realization.rs"
         - "/src/delaunay/validation.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-regex: >-
@@ -497,8 +499,8 @@ rules:
         Bare is_valid() is reserved for unambiguous element and TDS owners.
     paths:
       include:
-        - "/src/core/triangulation/validation.rs"
-        - "/src/core/triangulation/realization.rs"
+        - "/src/triangulation/validation.rs"
+        - "/src/triangulation/realization.rs"
         - "/src/delaunay/validation.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-regex: >-
@@ -1427,7 +1429,7 @@ rules:
         - "/src/geometry/util/conversions.rs"
         - "/src/geometry/util/circumsphere.rs"
         - "/src/geometry/quality.rs"
-        - "/src/core/triangulation/construction.rs"
+        - "/src/triangulation/construction.rs"
         - "/src/core/algorithms/incremental_insertion.rs"
         - "/src/core/algorithms/flips/**"
         - "/src/delaunay/construction.rs"
@@ -1944,7 +1946,7 @@ rules:
         - "/tests/semgrep/src/project_rules/**/*.rs"
       exclude:
         - "/src/core/algorithms/flips/**"
-        - "/src/core/triangulation/flips.rs"
+        - "/src/triangulation/flips.rs"
     patterns:
       - pattern-either:
           - pattern-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::(builder|construction|core|delaunayize|diagnostics|flips)::'
@@ -2357,6 +2359,144 @@ rules:
       - pattern-regex: '(?s)\bstruct\s+TriangulationAssemblyCandidate(?:\s*<[^{}]*>)?\s*\{[^}]*:\s*Triangulation(?:\s*<[^{}]*>)?'
       - pattern-regex: '\bfn\s+try_into_structurally_valid_triangulation\b'
 
+  - id: delaunay.rust.tds-defined-only-in-canonical-model
+    languages:
+      - generic
+    severity: ERROR
+    message: "Define Tds only in src/core/tds/model.rs, its canonical Levels 1–2 owner."
+    metadata:
+      category: architecture
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/568"
+      rationale: >-
+        A second Tds definition would split the canonical structural proof owner
+        and make checked storage transitions ambiguous.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+      exclude:
+        - "/src/core/tds/model.rs"
+    pattern-regex: |-
+      (?m)^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+Tds(?:\s*<|\s*\{|\s*\()
+
+  - id: delaunay.rust.triangulation-defined-only-in-canonical-model
+    languages:
+      - generic
+    severity: ERROR
+    message: "Define Triangulation only in src/triangulation/model.rs, its canonical Levels 3–4 owner."
+    metadata:
+      category: architecture
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/568"
+      rationale: >-
+        The realized PL triangulation proof must have one canonical model owner
+        between the TDS substrate and the Level 5 refinement.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+      exclude:
+        - "/src/triangulation/model.rs"
+    pattern-regex: |-
+      (?m)^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+Triangulation(?:\s*<|\s*\{|\s*\()
+
+  - id: delaunay.rust.delaunay-defined-only-in-canonical-model
+    languages:
+      - generic
+    severity: ERROR
+    message: "Define DelaunayTriangulation only in src/delaunay/model.rs, its canonical Level 5 owner."
+    metadata:
+      category: architecture
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/568"
+      rationale: >-
+        The Level 5 refinement must have one canonical model owner rather than
+        reappearing under the Levels 3–4 triangulation namespace.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+      exclude:
+        - "/src/delaunay/model.rs"
+    pattern-regex: |-
+      (?m)^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+DelaunayTriangulation(?:\s*<|\s*\{|\s*\()
+
+  - id: delaunay.rust.core-must-not-import-triangulation-owner
+    languages:
+      - rust
+    severity: ERROR
+    message: "Core/TDS modules must not depend on the Levels 3–4 Triangulation owner."
+    metadata:
+      category: architecture
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/568"
+      rationale: >-
+        The dependency direction is core::tds <- triangulation. Production
+        core modules may provide checked TDS primitives, but cannot depend on
+        the stronger realized triangulation owner.
+    paths:
+      include:
+        - "/src/core/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    patterns:
+      - pattern-either:
+          - pattern: use crate::{Triangulation};
+          - pattern-regex: |-
+              (?mx)
+              ^(?![ \t]*(?://|/\*|\*))
+              (?![ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?use\b)
+              [^\n]*\bcrate(?:::[A-Za-z_][A-Za-z0-9_]*)*::Triangulation\b
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $_ {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          mod $_ {
+              ...
+          }
+
+  - id: delaunay.rust.lower-layers-must-not-import-delaunay-owner
+    languages:
+      - rust
+    severity: ERROR
+    message: "Core and triangulation modules must not depend on the Level 5 DelaunayTriangulation owner."
+    metadata:
+      category: architecture
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/568"
+      rationale: >-
+        The dependency direction is core::tds <- triangulation <- delaunay.
+        Lower production modules cannot depend on the Level 5 proof owner.
+    paths:
+      include:
+        - "/src/core/**/*.rs"
+        - "/src/triangulation/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    patterns:
+      - pattern-either:
+          - pattern: use crate::{DelaunayTriangulation};
+          - pattern-regex: |-
+              (?mx)
+              ^(?![ \t]*(?://|/\*|\*))
+              (?![ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?use\b)
+              [^\n]*\bcrate(?:::[A-Za-z_][A-Za-z0-9_]*)*::DelaunayTriangulation\b
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $_ {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          mod $_ {
+              ...
+          }
+
   - id: delaunay.rust.no-crate-visible-tds-proof-storage
     languages:
       - generic
@@ -2372,7 +2512,7 @@ rules:
         mutation privileges.
     paths:
       include:
-        - "/src/core/tds/storage.rs"
+        - "/src/core/tds/model.rs"
         - "/tests/semgrep/src/project_rules/rust_style.rs"
     pattern-regex: >-
       (?x)^\s*pub(?!\s*\(in\s+crate::core::tds\))\s*(?:\([^)]*\)\s*)?

@@ -13,9 +13,10 @@ ordering, see [`module_patterns.md`](module_patterns.md).
 
 ## Core Layer
 
-`src/core/` contains triangulation data structures and algorithm machinery:
+`src/core/` contains the Levels 1–2 triangulation data structure and low-level
+algorithm machinery that operates on it:
 
-- `tds/storage.rs` - proof-bearing Levels 1–2 `Tds` storage, read-only
+- `tds/model.rs` - proof-bearing Levels 1–2 `Tds` storage, read-only
   accessors, identity helpers, and construction tests. Canonical fields remain
   visible only inside `core::tds`.
 - `tds/errors.rs` - TDS error/report vocabulary re-export boundary.
@@ -29,30 +30,9 @@ ordering, see [`module_patterns.md`](module_patterns.md).
 - `tds/snapshot.rs` - persistence boundary from raw codec records into
   validated UUID snapshots before hydration allocates fresh slotmap keys.
 - `tds/validation.rs` - Level 2 Combinatorial Consistency validation and adjacency checks.
-- `triangulation/model.rs` - proof-bearing Levels 1–4 `Triangulation` domain
-  owner and kernel/topology metadata. It owns a Levels 1–2 `Tds` without raw
-  mutable access to its canonical storage.
-- `triangulation/construction.rs` - generic construction helpers and
-  initial-simplex setup.
-- `triangulation/insertion.rs` - generic transactional insertion, duplicate detection, and
-  insertion telemetry.
-- `triangulation/orientation.rs` - simplex orientation validation, lifted-coordinate
-  handling, and positive-orientation canonicalization.
-- `triangulation/query.rs` - read-only generic triangulation accessors,
-  adjacency indices, barycenters, and topology traversal helpers.
-- `triangulation/repair.rs` - generic local topology repair, stale incident-simplex repair,
-  and vertex-deletion cavity retriangulation.
-- `triangulation/rollback.rs` - rollback guards for generic mutation windows.
 - `tds/rollback.rs` - canonical TDS snapshot ownership plus the shared
   transaction window used by nested proof refinements without duplicate
   snapshots.
-- `triangulation/validation.rs` - generic validation vocabulary and Level 3 orchestration.
-- `triangulation/realization.rs` - Level 4 realization validation and the
-  checked TDS-to-`Triangulation` restoration boundary.
-- `triangulation/flips.rs` - public primitive bistellar-edit contract, defined
-  only for the generic triangulation owner.
-- `triangulation/pachner.rs` - composed Pachner workflow over generic
-  triangulations.
 - `vertex.rs`, `simplex.rs`, and `facet.rs` - core geometric primitives.
 - `edge.rs` - canonical `EdgeKey` for topology traversal.
 - `adjacency.rs` - optional lifetime-bound topology indexes:
@@ -79,6 +59,32 @@ ordering, see [`module_patterns.md`](module_patterns.md).
 traversal primitives. A ridge is different: its codimension-2 shape depends on
 `D`, and its query/view types support ridge stars, lifted toroidal links, and
 PL-manifold validation. Ridge ownership therefore belongs in `src/topology/`.
+
+## Triangulation Layer
+
+`src/triangulation/` owns the proof-bearing Levels 3–4 `Triangulation` domain
+and operations over it. It consumes the checked Levels 1–2 TDS surface without
+receiving raw access to canonical TDS storage:
+
+- `model.rs` - `Triangulation` owner plus kernel and topology metadata.
+- `construction.rs` - generic construction helpers and initial-simplex setup.
+- `insertion.rs` - generic transactional insertion, duplicate detection, and
+  insertion telemetry.
+- `orientation.rs` - simplex orientation validation, lifted-coordinate
+  handling, and positive-orientation canonicalization.
+- `query.rs` - read-only generic triangulation accessors, adjacency indices,
+  barycenters, and topology traversal helpers.
+- `repair.rs` - generic local topology repair, stale incident-simplex repair,
+  and vertex-deletion cavity retriangulation.
+- `rollback.rs` - rollback guards for generic mutation windows.
+- `validation.rs` - Level 3 topology validation vocabulary and orchestration.
+- `realization.rs` - Level 4 realization validation and the checked
+  TDS-to-`Triangulation` restoration boundary.
+- `flips.rs` - public primitive bistellar-edit contract, defined only for the
+  generic triangulation owner.
+- `pachner.rs` - composed Pachner workflow over generic triangulations.
+- `jaccard.rs` and `locality.rs` - owner-level query locality and diagnostic
+  helpers.
 
 ## Geometry Layer
 
@@ -122,14 +128,12 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
   rollback-facing API support.
 - `query.rs` - read-only `DelaunayTriangulation` accessors and traversal
   helpers.
-- `triangulation.rs` - `DelaunayTriangulation` storage type and insertion-state
+- `model.rs` - Level 5 `DelaunayTriangulation` storage type and insertion-state
   cache.
 - `delaunayize.rs` - consuming flip-based promotion from a Levels 1–4
   `Triangulation` to a Levels 1–5 `DelaunayTriangulation`, with optional
   fallback rebuild. Raw-TDS PL-manifold repair remains an orthogonal core
   transformation before Levels 1–4 restoration.
-- `locality.rs` - local seed/frontier helpers for Hilbert-local construction
-  and repair.
 - `repair.rs` - Delaunay repair policies, rebuild config, and repair outcomes.
 - `serialization.rs` - versioned owner-level persistence that stores the
   canonical `Tds` plus topology guarantee, global topology, and validation
@@ -147,7 +151,7 @@ crate-level documentation map. Public workflow modules are exposed directly as
 `delaunay::builder`, `delaunay::construction`, `delaunay::flips`,
 `delaunay::pachner`, `delaunay::repair`, `delaunay::validation`, and focused
 preludes rather than through a nested `delaunay::delaunay` facade. The physical
-location of `flips` and `pachner` under `core/triangulation/` records that these
+location of `flips` and `pachner` under `src/triangulation/` records that these
 operations require only the Levels 1–4 owner.
 
 ## I/O And Export Layer
@@ -183,7 +187,9 @@ not depend on runtime slotmap handles.
 - `traits/global_topology_model.rs` - internal scalar-generic
   `GlobalTopologyModel<D>` trait and concrete topology models.
 
-Dependency direction should remain `topology -> core`, not the reverse.
+Proof-owner dependencies should remain
+`core::tds <- triangulation <- delaunay`; lower proof layers must not import
+higher proof owners.
 
 ## Public Namespace Policy
 

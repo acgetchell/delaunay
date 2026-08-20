@@ -4,7 +4,7 @@
 //! - `DelaunayTriangulation::insert_with_statistics`
 //! - `DelaunayTriangulation::insert_best_effort_with_statistics`
 //!
-//! Triangulation-layer insertion tests live in `core::triangulation` unit tests.
+//! Triangulation-layer insertion tests live in `src/triangulation/insertion.rs`.
 //!
 //! Coverage includes:
 //! - Basic insertion and statistics tracking

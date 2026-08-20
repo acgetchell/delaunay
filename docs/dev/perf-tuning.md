@@ -99,7 +99,7 @@ performance and invariants appear to conflict, re-scope the problem.
 In scope:
 
 - d-dimensional Delaunay triangulations for small-to-medium dimensions,
-  typically `2 <= D <= 7`
+  routinely `2 <= D <= 5`; higher dimensions remain experimental
 - single-threaded in-memory construction
 - `DenseSlotMap`-backed topology
 - Hilbert-ordered insertion

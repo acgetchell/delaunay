@@ -15,11 +15,19 @@ on:
     paths:
       - ".github/workflows/benchmarks.yml"
       - ".github/actions/setup-just/action.yml"
+      - ".python-version"
       - "justfile"
+      - "pyproject.toml"
+      - "rust-toolchain.toml"
+      - "scripts/benchmark_models.py"
+      - "scripts/benchmark_utils.py"
+      - "scripts/hardware_utils.py"
+      - "scripts/subprocess_utils.py"
       - "src/**"
       - "benches/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "uv.lock"
 
   # On pushes to main branch
   push:
@@ -29,11 +37,19 @@ on:
     paths:
       - ".github/workflows/benchmarks.yml"
       - ".github/actions/setup-just/action.yml"
+      - ".python-version"
       - "justfile"
+      - "pyproject.toml"
+      - "rust-toolchain.toml"
+      - "scripts/benchmark_models.py"
+      - "scripts/benchmark_utils.py"
+      - "scripts/hardware_utils.py"
+      - "scripts/subprocess_utils.py"
       - "src/**"
       - "benches/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "uv.lock"
 
 # Security: Define minimal required permissions
 permissions:
@@ -168,15 +184,15 @@ jobs:
 
       - name: Prepare baseline for comparison
         if: steps.find_baseline.outputs.found == 'true'
-        run: uv run benchmark-utils prepare-baseline
+        run: uv run --locked benchmark-utils prepare-baseline
 
       - name: Set baseline status if none found
         if: steps.find_baseline.outputs.found != 'true'
-        run: uv run benchmark-utils set-no-baseline
+        run: uv run --locked benchmark-utils set-no-baseline
 
       - name: Skip benchmarks - no baseline available
         if: env.BASELINE_EXISTS != 'true'
-        run: uv run benchmark-utils display-no-baseline
+        run: uv run --locked benchmark-utils display-no-baseline
 
       - name: Run performance regression test (compare vs latest release baseline)
         id: compare_regression
@@ -192,7 +208,7 @@ jobs:
           echo "   Baseline origin: ${BASELINE_ORIGIN:-unknown}"
           echo "   Baseline ref:    ${BASELINE_REF:-unknown}"
 
-          uv run benchmark-utils compare \
+          uv run --locked benchmark-utils compare \
             --baseline "baseline-artifact/baseline_results.txt" \
             --bench-timeout "${BENCHMARK_TIMEOUT_SECONDS}"
       - name: Classify benchmark comparison outcome
@@ -248,7 +264,7 @@ jobs:
 
       - name: Display regression test results
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false' && always()
-        run: uv run benchmark-utils display-results
+        run: uv run --locked benchmark-utils display-results
 
       - name: Upload regression test results
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false' && always()
@@ -263,4 +279,4 @@ jobs:
 
       - name: Summary
         if: always()
-        run: uv run benchmark-utils regression-summary
+        run: uv run --locked benchmark-utils regression-summary

@@ -14,11 +14,11 @@ use crate::core::algorithms::flips::{
 use crate::core::collections::SimplexKeyBuffer;
 use crate::core::tds::{InvariantError, NeighborValidationError, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
-use crate::core::validation::insertion_error_to_invariant_error;
+use crate::delaunay_model::DelaunayTriangulation;
 use crate::delaunay_rollback::{DelaunayRollbackTransaction, DelaunaySpatialIndexRollback};
 use crate::geometry::kernel::Kernel;
 use crate::repair::DelaunayRepairOperation;
-use crate::triangulation::DelaunayTriangulation;
+use crate::triangulation::validation::insertion_error_to_invariant_error;
 use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
 
@@ -324,11 +324,11 @@ mod tests {
         DelaunayRepairDiagnostics, DelaunayRepairError, RepairQueueOrder,
     };
     use crate::core::collections::spatial_hash_grid::HashGridIndex;
-    use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::util::safe_usize_to_scalar;
     use crate::repair::DelaunayRepairPolicy;
+    use crate::triangulation::validation::{TopologyGuarantee, TriangulationValidationError};
     use crate::vertex;
     use std::assert_matches;
     use std::cell::Cell;

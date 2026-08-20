@@ -173,7 +173,7 @@ pub struct TriangulationAdjacency<'tds> {
 impl<'tds> TriangulationAdjacency<'tds> {
     /// Wraps the split topology views as the lifetime-bound composite API.
     #[inline]
-    pub(in crate::core) const fn from_parts(
+    pub(crate) const fn from_parts(
         incidence: IncidenceView<'tds>,
         edges: EdgeIndex<'tds>,
         simplex_neighbors: SimplexNeighborIndex<'tds>,
@@ -262,7 +262,21 @@ impl<'tds> TriangulationAdjacency<'tds> {
     }
 }
 
-impl IncidenceView<'_> {
+impl<'tds> IncidenceView<'tds> {
+    /// Wraps the canonical incidence relation after validation by the owning triangulation.
+    #[inline]
+    pub(crate) const fn from_validated(vertex_to_simplices: &'tds VertexIncidenceIndex) -> Self {
+        Self {
+            vertex_to_simplices,
+        }
+    }
+
+    /// Borrows the validated vertex-to-simplices mapping for crate-internal queries.
+    #[inline]
+    pub(crate) const fn vertex_to_simplices(&self) -> &VertexIncidenceIndex {
+        self.vertex_to_simplices
+    }
+
     /// Returns an iterator over all simplices incident to `v`.
     ///
     /// If `v` is not present in this view, the iterator is empty.
@@ -270,7 +284,7 @@ impl IncidenceView<'_> {
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
     pub fn adjacent_simplices(&self, v: VertexKey) -> impl Iterator<Item = SimplexKey> + '_ {
-        self.vertex_to_simplices.simplex_keys(v)
+        self.vertex_to_simplices().simplex_keys(v)
     }
 
     /// Returns the number of simplices incident to `v`.
@@ -279,18 +293,46 @@ impl IncidenceView<'_> {
     #[must_use]
     #[inline]
     pub fn number_of_adjacent_simplices(&self, v: VertexKey) -> usize {
-        self.vertex_to_simplices.number_of_simplices(v)
+        self.vertex_to_simplices().number_of_simplices(v)
     }
 }
 
-impl EdgeIndex<'_> {
+impl<'tds> EdgeIndex<'tds> {
+    /// Assembles an index from parts derived and validated by the owning triangulation.
+    #[inline]
+    pub(crate) const fn from_validated_parts(
+        vertex_to_edges: FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+        edge_count: usize,
+        source_incidence: &'tds VertexIncidenceIndex,
+    ) -> Self {
+        Self {
+            vertex_to_edges,
+            edge_count,
+            _source_incidence: source_incidence,
+        }
+    }
+
+    /// Borrows the validated vertex-to-edge mapping for crate-internal queries.
+    #[inline]
+    pub(crate) const fn vertex_to_edges(
+        &self,
+    ) -> &FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>> {
+        &self.vertex_to_edges
+    }
+
+    /// Returns the validated edge count for crate-internal queries.
+    #[inline]
+    pub(crate) const fn edge_count(&self) -> usize {
+        self.edge_count
+    }
+
     /// Returns an iterator over all unique edges incident to `v`.
     ///
     /// If `v` is not present in this index, the iterator is empty.
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
     pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey> + '_ {
-        self.vertex_to_edges
+        self.vertex_to_edges()
             .get(&v)
             .into_iter()
             .flat_map(|edges| edges.iter().copied())
@@ -302,7 +344,7 @@ impl EdgeIndex<'_> {
     #[must_use]
     #[inline]
     pub fn number_of_incident_edges(&self, v: VertexKey) -> usize {
-        self.vertex_to_edges.get(&v).map_or(0, SmallBuffer::len)
+        self.vertex_to_edges().get(&v).map_or(0, SmallBuffer::len)
     }
 
     /// Returns an iterator over all unique edges in the triangulation snapshot.
@@ -311,7 +353,7 @@ impl EdgeIndex<'_> {
     /// `v0()` endpoint. Iteration order is not specified.
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
-        self.vertex_to_edges.iter().flat_map(|(vk, edges)| {
+        self.vertex_to_edges().iter().flat_map(|(vk, edges)| {
             let vk = *vk;
             edges.iter().copied().filter(move |edge| edge.v0() == vk)
         })
@@ -320,18 +362,41 @@ impl EdgeIndex<'_> {
     /// Returns the number of unique edges in the triangulation snapshot.
     #[must_use]
     pub const fn number_of_edges(&self) -> usize {
-        self.edge_count
+        self.edge_count()
     }
 }
 
-impl SimplexNeighborIndex<'_> {
+impl<'tds> SimplexNeighborIndex<'tds> {
+    /// Assembles an index from parts derived and validated by the owning triangulation.
+    #[inline]
+    pub(crate) const fn from_validated_parts(
+        simplex_to_neighbors: FastHashMap<
+            SimplexKey,
+            SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+        >,
+        source_incidence: &'tds VertexIncidenceIndex,
+    ) -> Self {
+        Self {
+            simplex_to_neighbors,
+            _source_incidence: source_incidence,
+        }
+    }
+
+    /// Borrows the validated simplex-to-neighbors mapping for crate-internal queries.
+    #[inline]
+    pub(crate) const fn simplex_to_neighbors(
+        &self,
+    ) -> &FastHashMap<SimplexKey, SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>> {
+        &self.simplex_to_neighbors
+    }
+
     /// Returns an iterator over all neighbors of a simplex.
     ///
     /// If `c` is not present in this index, the iterator is empty.
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
     pub fn simplex_neighbors(&self, c: SimplexKey) -> impl Iterator<Item = SimplexKey> + '_ {
-        self.simplex_to_neighbors
+        self.simplex_to_neighbors()
             .get(&c)
             .into_iter()
             .flat_map(|neighbors| neighbors.iter().copied())
@@ -343,7 +408,7 @@ impl SimplexNeighborIndex<'_> {
     #[must_use]
     #[inline]
     pub fn number_of_simplex_neighbors(&self, c: SimplexKey) -> usize {
-        self.simplex_to_neighbors
+        self.simplex_to_neighbors()
             .get(&c)
             .map_or(0, SmallBuffer::len)
     }

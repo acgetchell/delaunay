@@ -366,7 +366,7 @@ mod tests {
 
     use crate::core::simplex::Simplex;
     use crate::core::util::measure_with_result;
-    use crate::triangulation::DelaunayTriangulation;
+    use crate::delaunay_model::DelaunayTriangulation;
 
     use std::thread;
     use std::time::Instant;

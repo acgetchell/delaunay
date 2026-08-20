@@ -1,6 +1,6 @@
 //! Equality implementation for [`Tds`].
 
-use super::storage::{SimplexUuidSortKey, Tds};
+use super::model::{SimplexUuidSortKey, Tds};
 use crate::core::{simplex::Simplex, tds::VertexKey, vertex::Vertex};
 use std::cmp::Ordering as CmpOrdering;
 

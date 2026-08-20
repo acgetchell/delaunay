@@ -496,16 +496,13 @@ mod core {
                 AllFacetsIter, FacetError, FacetHandle, facet_key_from_vertices,
             };
             use crate::core::operations::TopologicalOperation;
-            use crate::core::realization::TriangulationRealizationValidationError;
             use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
             use crate::core::tds::{
                 EntityKind, NeighborValidationError, SimplexKey, Tds, TdsMutationError,
                 TdsRollbackTransaction, TdsRollbackWindow, TopologyOwnerId, VertexKey,
             };
             use crate::core::traits::data_type::DataType;
-            use crate::core::triangulation::Triangulation;
             use crate::core::util::stable_hash_u64_slice;
-            use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
             use crate::core::vertex::Vertex;
             use crate::geometry::kernel::{Kernel, RobustKernel};
             use crate::geometry::point::Point;
@@ -518,6 +515,10 @@ mod core {
                 GlobalTopologyModel, GlobalTopologyModelAdapter, GlobalTopologyModelError,
             };
             use crate::topology::traits::topological_space::GlobalTopology;
+            use crate::triangulation::realization::TriangulationRealizationValidationError;
+            use crate::triangulation::validation::{
+                TopologyGuarantee, TriangulationValidationError,
+            };
             use crate::validation::DelaunayTriangulationValidationError;
             use slotmap::Key;
             use std::borrow::Cow;
@@ -729,57 +730,30 @@ mod core {
         pub use secondary_maps::*;
         pub use triangulation_maps::*;
     }
-    /// Generic triangulation construction helpers.
-    #[path = "triangulation/construction.rs"]
-    pub mod construction;
     pub mod edge;
     pub mod facet;
-    /// Incremental insertion for generic triangulations.
-    #[path = "triangulation/insertion.rs"]
-    pub mod insertion;
     /// Semantic classification and telemetry for topological operations
     pub mod operations;
-    /// Geometric orientation validation and canonicalization for generic triangulations.
-    #[path = "triangulation/orientation.rs"]
-    pub mod orientation;
-    /// Read-only query and traversal helpers for generic triangulations.
-    #[path = "triangulation/query.rs"]
-    pub mod query;
-    /// Realized Euclidean geometry validation for generic triangulations.
-    #[path = "triangulation/realization.rs"]
-    pub mod realization;
-    /// Local topology repair for generic triangulations.
-    #[path = "triangulation/repair.rs"]
-    pub mod repair;
-    /// Scoped rollback guards for internal topology mutation windows.
-    #[path = "triangulation/rollback.rs"]
-    pub(crate) mod rollback;
     /// Triangulation data structure internals.
     pub mod tds {
         mod equality;
         pub mod errors;
         pub(crate) mod incidence;
         mod keys;
+        mod model;
         mod mutation;
         pub(crate) mod rollback;
         mod snapshot;
-        mod storage;
         mod validation;
 
         pub use errors::*;
         pub use keys::{SimplexKey, VertexKey};
+        pub use model::{Tds, TopologyOwner, TopologyOwnerId};
         pub(crate) use rollback::{
             TdsOwnerRollbackTransaction, TdsRollbackOwner, TdsRollbackTransaction,
             TdsRollbackWindow,
         };
-        pub use storage::{Tds, TopologyOwner, TopologyOwnerId};
     }
-    /// Generic triangulation combining kernel + Tds.
-    #[path = "triangulation/model.rs"]
-    pub mod triangulation;
-    /// Generic validation orchestration for triangulations.
-    #[path = "triangulation/validation.rs"]
-    pub mod validation;
 
     /// General utility functions organized by functionality.
     pub mod util {
@@ -789,7 +763,6 @@ mod core {
         pub mod facet_utils;
         pub mod hashing;
         pub mod hilbert;
-        pub mod jaccard;
         pub mod measurement;
         pub mod uuid;
 
@@ -799,7 +772,6 @@ mod core {
         pub use facet_utils::*;
         pub use hashing::*;
         pub use hilbert::*;
-        pub use jaccard::*;
         pub use measurement::*;
         pub use uuid::*;
     }
@@ -817,6 +789,25 @@ mod core {
     // Public low-level access is exposed through crate-root facades such as
     // `crate::tds`, `crate::collections`, `crate::algorithms`, and
     // `crate::query`.
+}
+
+/// Internal Levels 3–4 realized triangulation owner and workflows.
+pub(crate) mod triangulation {
+    pub mod construction;
+    pub mod flips;
+    pub mod insertion;
+    pub mod jaccard;
+    pub mod locality;
+    pub mod model;
+    pub mod orientation;
+    pub mod pachner;
+    pub mod query;
+    pub mod realization;
+    pub mod repair;
+    pub mod rollback;
+    pub mod validation;
+
+    pub use model::Triangulation;
 }
 
 #[cfg(feature = "bench")]
@@ -919,16 +910,15 @@ pub(crate) mod deletion;
 #[path = "delaunay/diagnostics.rs"]
 pub mod diagnostics;
 /// Triangulation editing operations (bistellar flips).
-#[path = "core/triangulation/flips.rs"]
-pub mod flips;
+pub use crate::triangulation::flips;
 /// Post-construction vertex insertion operations.
 #[path = "delaunay/insertion.rs"]
 pub(crate) mod insertion;
-#[path = "delaunay/locality.rs"]
-pub(crate) mod locality;
 /// Unified Pachner move workflow API for local topology editing.
-#[path = "core/triangulation/pachner.rs"]
-pub mod pachner;
+pub use crate::triangulation::pachner;
+/// Level 5 Delaunay triangulation owner.
+#[path = "delaunay/model.rs"]
+pub(crate) mod delaunay_model;
 /// Recoverable transitions between proof-bearing domain owners.
 pub mod refinement;
 /// Repair policies and outcomes for Delaunay triangulations.
@@ -940,9 +930,6 @@ pub(crate) mod serialization;
 /// Prototype spherical Delaunay construction via the spherical topology backend.
 #[path = "delaunay/spherical.rs"]
 pub mod spherical;
-/// Delaunay triangulation layer with incremental insertion.
-#[path = "delaunay/triangulation.rs"]
-pub(crate) mod triangulation;
 /// Delaunay-level validation APIs, reports, and construction diagnostics.
 #[path = "delaunay/validation.rs"]
 pub mod validation;
@@ -977,27 +964,12 @@ pub use crate::core::algorithms::pl_manifold_repair::{
     PlManifoldRepairStage, PlManifoldRepairStats, PlManifoldTdsRepairResult,
     repair_pl_manifold_tds,
 };
-pub use crate::core::construction::{
-    FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
-};
-pub use crate::core::insertion::DuplicateDetectionMetrics;
 pub use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, RepairDecision, RepairSkipReason,
     SuspicionFlags, TopologicalOperation,
 };
-pub use crate::core::query::SimplexBarycenterError;
-pub use crate::core::realization::{
-    PeriodicDomainPeriodError, TriangulationRealizationIntersectionDetail,
-    TriangulationRealizationSimplexDetail, TriangulationRealizationSimplexPairDetail,
-    TriangulationRealizationValidationError, TriangulationRealizationValidationErrorKind,
-    TriangulationRealizationValidationReport, TriangulationRefinementError,
-};
-pub use crate::core::triangulation::Triangulation;
 pub use crate::core::util::DeduplicationError;
-pub use crate::core::validation::{
-    OrientationWitness, TopologyGuarantee, TriangulationValidationError,
-    ValidationConfigurationError, ValidationPolicy,
-};
+pub use crate::delaunay_model::DelaunayTriangulation;
 #[cfg(feature = "diagnostics")]
 #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 pub use crate::delaunay_property_validation::debug_print_first_delaunay_violation;
@@ -1028,7 +1000,22 @@ pub use crate::tds::{
 pub use crate::topology::spaces::spherical::{
     SphericalMetric, SphericalPoint, SphericalPointError,
 };
-pub use crate::triangulation::DelaunayTriangulation;
+pub use crate::triangulation::Triangulation;
+pub use crate::triangulation::construction::{
+    FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
+};
+pub use crate::triangulation::insertion::DuplicateDetectionMetrics;
+pub use crate::triangulation::query::SimplexBarycenterError;
+pub use crate::triangulation::realization::{
+    PeriodicDomainPeriodError, TriangulationRealizationIntersectionDetail,
+    TriangulationRealizationSimplexDetail, TriangulationRealizationSimplexPairDetail,
+    TriangulationRealizationValidationError, TriangulationRealizationValidationErrorKind,
+    TriangulationRealizationValidationReport, TriangulationRefinementError,
+};
+pub use crate::triangulation::validation::{
+    OrientationWitness, TopologyGuarantee, TriangulationValidationError,
+    ValidationConfigurationError, ValidationPolicy,
+};
 pub use crate::validation::{
     DelaunayTdsRefinementError, DelaunayTriangulationRefinementError,
     DelaunayTriangulationValidationError, DelaunayVerificationError, DelaunayVerificationErrorKind,
@@ -1259,11 +1246,13 @@ pub mod tds {
     pub use crate::core::tds::*;
     pub use crate::core::util::{
         UuidValidationError, checked_facet_key_from_vertex_keys, facet_view_to_vertices,
-        facet_views_are_adjacent, format_jaccard_report, jaccard_distance, jaccard_index,
-        make_uuid, measure_with_result, stable_hash_u64_slice, usize_to_u8, validate_uuid,
-        verify_facet_index_consistency,
+        facet_views_are_adjacent, make_uuid, measure_with_result, stable_hash_u64_slice,
+        usize_to_u8, validate_uuid, verify_facet_index_consistency,
     };
     pub use crate::core::vertex::*;
+    pub use crate::triangulation::jaccard::{
+        format_jaccard_report, jaccard_distance, jaccard_index,
+    };
 }
 
 /// Public low-level algorithms that are useful outside full construction.
@@ -1329,16 +1318,11 @@ pub mod algorithms {
 /// ```
 pub mod query {
     pub use crate::assert_jaccard_gte;
-    pub use crate::core::query::QueryError;
     pub use crate::core::traits::data_type::{
         DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
     };
     pub use crate::core::traits::facet_incidence_analysis::FacetIncidenceAnalysis;
-    pub use crate::core::util::{
-        JaccardComputationError, extract_edge_set, extract_facet_identifier_set,
-        extract_hull_facet_set, extract_vertex_coordinate_set, format_jaccard_report,
-        jaccard_distance, jaccard_index, measure_with_result,
-    };
+    pub use crate::core::util::measure_with_result;
     pub use crate::flips::RidgeHandle;
     pub use crate::geometry::Point;
     pub use crate::geometry::algorithms::convex_hull::{
@@ -1359,6 +1343,12 @@ pub mod query {
     pub use crate::topology::ridge::{
         RidgeCandidate, RidgeCandidateError, RidgeLinkView, RidgeQuery, RidgeView,
     };
+    pub use crate::triangulation::jaccard::{
+        JaccardComputationError, extract_edge_set, extract_facet_identifier_set,
+        extract_hull_facet_set, extract_vertex_coordinate_set, format_jaccard_report,
+        jaccard_distance, jaccard_index,
+    };
+    pub use crate::triangulation::query::QueryError;
     pub use crate::{DelaunayTriangulation, Triangulation};
     pub use crate::{SimplexBarycenterError, SimplexDataFillError};
 }
@@ -2260,7 +2250,7 @@ mod tests {
         PlManifoldRepairStage, PlManifoldRepairStats, PlManifoldTdsRepairResult,
         core::{
             adjacency::TriangulationAdjacency, edge::EdgeKey, simplex::Simplex, tds::Tds,
-            triangulation::Triangulation, vertex::Vertex,
+            vertex::Vertex,
         },
         geometry::{
             Point, algorithms::convex_hull::ConvexHull, kernel::FastKernel, util::CircumcenterError,
@@ -2277,6 +2267,7 @@ mod tests {
             RepairQueueOrder, TopologyGuarantee,
         },
         prelude::*,
+        triangulation::Triangulation,
         vertex,
     };
     use std::assert_matches;

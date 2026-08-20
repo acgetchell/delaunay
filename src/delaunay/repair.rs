@@ -16,60 +16,10 @@ use crate::core::algorithms::flips::{
 use crate::core::operations::{RepairDecision, TopologicalOperation};
 use crate::core::tds::SimplexKey;
 use crate::core::traits::data_type::DataType;
-use crate::core::validation::TopologyGuarantee;
+use crate::delaunay_model::DelaunayTriangulation;
 use crate::geometry::kernel::{Kernel, RobustKernel};
-use crate::triangulation::DelaunayTriangulation;
+use crate::triangulation::validation::TopologyGuarantee;
 use std::{fmt, num::NonZeroUsize};
-
-#[cfg(test)]
-mod legacy_repair_guard {
-    use super::DelaunayRepairError;
-    use crate::core::algorithms::flips::DelaunayRepairHeuristicRebuildFailure;
-    use std::cell::Cell;
-
-    // Heuristic rebuild attempts must be consistent across build profiles to
-    // avoid release-only construction failures (see #306).
-    pub(super) const HEURISTIC_REBUILD_ATTEMPTS: usize = 6;
-    const MAX_HEURISTIC_REBUILD_DEPTH: usize = 1;
-
-    thread_local! {
-        static HEURISTIC_REBUILD_DEPTH: Cell<usize> = const { Cell::new(0) };
-    }
-
-    pub(super) struct HeuristicRebuildRecursionGuard {
-        prior_depth: usize,
-    }
-
-    impl HeuristicRebuildRecursionGuard {
-        /// Tracks nested heuristic rebuilds so fallback construction cannot
-        /// recurse indefinitely through repair hooks.
-        pub(super) fn enter() -> Result<Self, DelaunayRepairError> {
-            let prior_depth = HEURISTIC_REBUILD_DEPTH.with(|depth| {
-                let prior = depth.get();
-                if prior < MAX_HEURISTIC_REBUILD_DEPTH {
-                    depth.set(prior.saturating_add(1));
-                }
-                prior
-            });
-            if prior_depth >= MAX_HEURISTIC_REBUILD_DEPTH {
-                return Err(DelaunayRepairError::HeuristicRebuildFailed {
-                    reason: Box::new(
-                        DelaunayRepairHeuristicRebuildFailure::RecursionDepthExceeded {
-                            max_depth: MAX_HEURISTIC_REBUILD_DEPTH,
-                        },
-                    ),
-                });
-            }
-            Ok(Self { prior_depth })
-        }
-    }
-
-    impl Drop for HeuristicRebuildRecursionGuard {
-        fn drop(&mut self) {
-            HEURISTIC_REBUILD_DEPTH.with(|depth| depth.set(self.prior_depth));
-        }
-    }
-}
 
 /// Mutating Delaunay operation that can invoke flip-based repair internally.
 ///
@@ -159,124 +109,6 @@ impl DelaunayRepairPolicy {
         }
     }
 }
-#[cfg(test)]
-mod legacy_repair_types {
-    use crate::core::algorithms::flips::DelaunayRepairStats;
-
-    /// Configuration for legacy in-place repair fault-injection tests.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-    pub(super) struct DelaunayRepairHeuristicConfig {
-        /// Optional RNG seed used to shuffle vertex insertion order.
-        pub(crate) shuffle_seed: Option<u64>,
-        /// Optional seed used to vary the deterministic perturbation pattern.
-        pub(crate) perturbation_seed: Option<u64>,
-        /// Optional per-attempt flip budget cap.
-        ///
-        /// When set, each repair attempt is limited to at most this many flips.
-        /// `None` (the default) uses the dimension-dependent internal budget
-        /// computed from the triangulation size.
-        ///
-        /// This is primarily useful for debug harnesses that want to study
-        /// repair convergence behavior at different budgets without disabling
-        /// repair entirely.
-        pub(crate) max_flips: Option<usize>,
-    }
-
-    impl DelaunayRepairHeuristicConfig {
-        /// Sets the RNG seed used to shuffle vertex insertion order during heuristic rebuilds.
-        ///
-        #[must_use]
-        pub(crate) const fn with_shuffle_seed(mut self, shuffle_seed: u64) -> Self {
-            self.shuffle_seed = Some(shuffle_seed);
-            self
-        }
-
-        /// Sets the seed used to vary deterministic perturbation during heuristic rebuilds.
-        ///
-        #[must_use]
-        pub(crate) const fn with_perturbation_seed(mut self, perturbation_seed: u64) -> Self {
-            self.perturbation_seed = Some(perturbation_seed);
-            self
-        }
-
-        /// Sets the optional per-attempt flip budget cap for Delaunay repair.
-        ///
-        /// The cap applies to each primary, robust, or heuristic Delaunay-repair
-        /// attempt. Use [`Self::without_delaunay_max_flips`] to return to the
-        /// dimension-dependent internal budget.
-        ///
-        #[must_use]
-        pub(crate) const fn with_delaunay_max_flips(mut self, max_flips: usize) -> Self {
-            self.max_flips = Some(max_flips);
-            self
-        }
-
-        /// Clears the per-attempt flip budget cap for Delaunay repair.
-        ///
-        #[must_use]
-        pub(crate) const fn without_delaunay_max_flips(mut self) -> Self {
-            self.max_flips = None;
-            self
-        }
-
-        /// Fills omitted seeds from a stable base so heuristic rebuilds are
-        /// repeatable even when callers only configure one axis of randomness.
-        pub(crate) fn resolve_seeds(self, base_seed: u64) -> DelaunayRepairHeuristicSeeds {
-            // Derive deterministic defaults when the caller does not provide explicit seeds.
-            const SHUFFLE_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
-            const PERTURB_SALT: u64 = 0xD1B5_4A32_D192_ED03;
-
-            let mut shuffle_seed = self
-                .shuffle_seed
-                .unwrap_or_else(|| base_seed.wrapping_add(SHUFFLE_SALT));
-            if self.shuffle_seed.is_none() && shuffle_seed == 0 {
-                shuffle_seed = 1;
-            }
-
-            let mut perturbation_seed = self
-                .perturbation_seed
-                .unwrap_or_else(|| base_seed.rotate_left(17) ^ PERTURB_SALT);
-            if self.perturbation_seed.is_none() && perturbation_seed == 0 {
-                perturbation_seed = 1;
-            }
-
-            DelaunayRepairHeuristicSeeds {
-                shuffle_seed,
-                perturbation_seed,
-            }
-        }
-    }
-
-    /// Seeds used for an internal heuristic rebuild.
-    ///
-    /// Deterministic defaults are derived from a stable hash of the current vertex
-    /// set when construction internals do not provide explicit seeds.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub(super) struct DelaunayRepairHeuristicSeeds {
-        /// RNG seed used to shuffle vertex insertion order.
-        pub(crate) shuffle_seed: u64,
-        /// Seed used to vary the perturbation pattern during retries.
-        pub(crate) perturbation_seed: u64,
-    }
-
-    /// Internal result of a flip-based repair attempt, including heuristic
-    /// fallback metadata.
-    #[derive(Debug, Clone)]
-    pub(super) struct DelaunayRepairOutcome {
-        /// Statistics from the final flip-based repair pass.
-        pub(crate) stats: DelaunayRepairStats,
-        /// Heuristic rebuild seeds, if a fallback was used.
-        pub(crate) heuristic: Option<DelaunayRepairHeuristicSeeds>,
-    }
-
-    impl DelaunayRepairOutcome {
-        /// Returns `true` if a heuristic rebuild fallback was used.
-        #[must_use]
-        pub(crate) const fn used_heuristic(&self) -> bool {
-            self.heuristic.is_some()
-        }
-    }
-}
 
 /// Policy controlling when **global** Delaunay validation runs.
 ///
@@ -334,123 +166,6 @@ impl DelaunayCheckPolicy {
 // =============================================================================
 // REPAIR (Minimal Bounds)
 // =============================================================================
-
-#[cfg(test)]
-mod legacy_repair_methods {
-    use super::*;
-    use crate::core::algorithms::flips::{
-        DelaunayRepairOrientationCanonicalizationFailure, DelaunayRepairStats,
-        repair_delaunay_with_flips_k2_k3,
-    };
-    use crate::geometry::kernel::ExactPredicates;
-
-    impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
-    where
-        K: Kernel<D, Scalar = f64>,
-    {
-        /// Runs flip-based Delaunay repair over the full triangulation.
-        ///
-        /// This is a manual entrypoint that performs a global scan of interior facets
-        /// and applies k=2/k=3 bistellar flips until locally Delaunay or until the flip
-        /// budget is exhausted. On success, geometric orientation is re-canonicalized
-        /// to the positive sign.
-        ///
-        /// # Errors
-        ///
-        /// Returns [`DelaunayRepairError::NonConvergent`] if the flip budget is
-        /// exhausted, [`DelaunayRepairError::PostconditionFailed`] if repair
-        /// finishes with a remaining violation or disconnected triangulation,
-        /// [`DelaunayRepairError::OrientationCanonicalizationFailed`] if the final
-        /// positive-orientation pass fails, or another [`DelaunayRepairError`]
-        /// variant for lower-level flip, topology, or predicate failures.
-        ///
-        pub(super) fn repair_delaunay_with_flips(
-            &mut self,
-        ) -> Result<DelaunayRepairStats, DelaunayRepairError>
-        where
-            K: ExactPredicates<D, Scalar = f64>,
-            U: DataType,
-            V: DataType,
-        {
-            self.repair_delaunay_with_flips_capped(None)
-        }
-
-        /// Runs flip-based repair with an optional per-attempt cap so public repair
-        /// and heuristic harnesses share one mutation path.
-        pub(super) fn repair_delaunay_with_flips_capped(
-            &mut self,
-            max_flips: Option<usize>,
-        ) -> Result<DelaunayRepairStats, DelaunayRepairError>
-        where
-            K: ExactPredicates<D, Scalar = f64>,
-            U: DataType,
-            V: DataType,
-        {
-            if super::tests::force_repair_nonconvergent_enabled() {
-                return Err(super::tests::synthetic_nonconvergent_error());
-            }
-            let operation = TopologicalOperation::FacetFlip;
-            let topology = self.tri.topology_guarantee();
-            if !operation.is_admissible_under(topology) {
-                return Err(DelaunayRepairError::InvalidTopology {
-                    required: operation.required_topology(),
-                    found: topology,
-                    message: "Bistellar flips require a PL-manifold (vertex-link validation)",
-                });
-            }
-            self.invalidate_locate_hint_cache();
-            let global_topology = self.tri.global_topology();
-            let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-            let stats = repair_delaunay_with_flips_k2_k3(
-                tds,
-                kernel,
-                None,
-                topology,
-                global_topology,
-                max_flips,
-            )?;
-
-            // Re-canonicalize geometric orientation (#258): flip repair may leave
-            // the global sign negative.
-            self.ensure_positive_orientation()?;
-
-            Ok(stats)
-        }
-
-        /// Canonicalize geometric orientation to the positive sign, preserving
-        /// canonicalization failures as their own repair error variant.
-        pub(super) fn ensure_positive_orientation(&mut self) -> Result<(), DelaunayRepairError>
-        where
-            U: DataType,
-            V: DataType,
-        {
-            self.tri
-                .normalize_and_promote_positive_orientation()
-                .map_err(|e| DelaunayRepairError::OrientationCanonicalizationFailed {
-                    reason: Box::new(
-                        DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
-                            source: Box::new(e),
-                        },
-                    ),
-                })
-        }
-
-        /// Replays repair with an exact-predicate kernel before escalating to
-        /// heuristic rebuild.
-        pub(super) fn repair_delaunay_with_flips_robust(
-            &mut self,
-            seed_simplices: Option<&[SimplexKey]>,
-            max_flips: Option<usize>,
-        ) -> Result<DelaunayRepairStats, DelaunayRepairError>
-        where
-            U: DataType,
-            V: DataType,
-        {
-            self.repair_delaunay_with_flips_robust_run(seed_simplices, max_flips)
-                .map(|run| run.stats)
-        }
-    }
-}
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
@@ -547,391 +262,685 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     }
 }
 
-// =============================================================================
-// ADVANCED REPAIR & HEURISTIC REBUILD
-// =============================================================================
-//
-// `repair_delaunay_with_flips_advanced` can fall back to `rebuild_with_heuristic`,
-// which constructs a new triangulation from the stored f64 vertex coordinates.
-
 #[cfg(test)]
-mod legacy_repair_advanced {
-    use super::legacy_repair_guard::{HEURISTIC_REBUILD_ATTEMPTS, HeuristicRebuildRecursionGuard};
-    use super::legacy_repair_types::{
-        DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds, DelaunayRepairOutcome,
-    };
-    use super::*;
-    use crate::core::algorithms::flips::{
-        DelaunayRepairHeuristicRebuildFailure, DelaunayRepairHeuristicVertexContext,
-        DelaunayRepairStats, repair_delaunay_with_flips_k2_k3,
-    };
-    use crate::core::collections::FastHasher;
-    use crate::core::operations::InsertionOutcome;
-    use crate::core::util::stable_hash_u64_slice;
-    use crate::core::vertex::Vertex;
-    use crate::geometry::kernel::ExactPredicates;
-    use crate::geometry::traits::coordinate::CoordinateValues;
-    use rand::{SeedableRng, seq::SliceRandom};
-    use std::hash::{Hash, Hasher};
+mod test_support {
+    pub(super) mod legacy_repair_guard {
+        use super::super::DelaunayRepairError;
+        use crate::core::algorithms::flips::DelaunayRepairHeuristicRebuildFailure;
+        use std::cell::Cell;
 
-    impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
-        /// Enables legacy repair fallback paths for unit-test fault injection.
-        fn force_heuristic_rebuild_enabled() -> bool {
-            super::tests::force_heuristic_rebuild_enabled()
+        // Heuristic rebuild attempts must be consistent across build profiles to
+        // avoid release-only construction failures (see #306).
+        pub(in super::super) const HEURISTIC_REBUILD_ATTEMPTS: usize = 6;
+        const MAX_HEURISTIC_REBUILD_DEPTH: usize = 1;
+
+        thread_local! {
+            static HEURISTIC_REBUILD_DEPTH: Cell<usize> = const { Cell::new(0) };
+        }
+
+        pub(in super::super) struct HeuristicRebuildRecursionGuard {
+            prior_depth: usize,
+        }
+
+        impl HeuristicRebuildRecursionGuard {
+            /// Tracks nested heuristic rebuilds so fallback construction cannot
+            /// recurse indefinitely through repair hooks.
+            pub(in super::super) fn enter() -> Result<Self, DelaunayRepairError> {
+                let prior_depth = HEURISTIC_REBUILD_DEPTH.with(|depth| {
+                    let prior = depth.get();
+                    if prior < MAX_HEURISTIC_REBUILD_DEPTH {
+                        depth.set(prior.saturating_add(1));
+                    }
+                    prior
+                });
+                if prior_depth >= MAX_HEURISTIC_REBUILD_DEPTH {
+                    return Err(DelaunayRepairError::HeuristicRebuildFailed {
+                        reason: Box::new(
+                            DelaunayRepairHeuristicRebuildFailure::RecursionDepthExceeded {
+                                max_depth: MAX_HEURISTIC_REBUILD_DEPTH,
+                            },
+                        ),
+                    });
+                }
+                Ok(Self { prior_depth })
+            }
+        }
+
+        impl Drop for HeuristicRebuildRecursionGuard {
+            fn drop(&mut self) {
+                HEURISTIC_REBUILD_DEPTH.with(|depth| depth.set(self.prior_depth));
+            }
         }
     }
 
-    impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
-    where
-        K: Kernel<D, Scalar = f64>,
-        U: DataType,
-        V: DataType,
-    {
-        /// Runs flip-based Delaunay repair
-        ///
-        /// This first attempts the standard two-pass flip repair. If it fails to converge (or if
-        /// the result cannot be verified as Delaunay), it rebuilds the triangulation from the
-        /// current vertex set using a shuffled insertion order and a perturbation seed, then runs
-        /// a final flip-repair pass. On success, geometric orientation is re-canonicalized
-        /// to the positive sign.
-        ///
-        /// The returned outcome marks whether the heuristic fallback was used and records
-        /// the seeds needed to reproduce it (if desired).
-        ///
-        /// # Errors
-        ///
-        /// Returns [`DelaunayRepairError::HeuristicRebuildFailed`] when the
-        /// deterministic rebuild fallback cannot replay all vertices into a valid
-        /// triangulation, [`DelaunayRepairError::PostconditionFailed`] when a repair
-        /// pass leaves a violation, [`DelaunayRepairError::OrientationCanonicalizationFailed`]
-        /// when final positive-orientation promotion fails, or another
-        /// [`DelaunayRepairError`] variant for lower-level flip, topology, or
-        /// predicate failures.
-        ///
-        pub(super) fn repair_delaunay_with_flips_advanced(
-            &mut self,
-            config: DelaunayRepairHeuristicConfig,
-        ) -> Result<DelaunayRepairOutcome, DelaunayRepairError>
-        where
-            K: ExactPredicates<D, Scalar = f64>,
-        {
-            if Self::force_heuristic_rebuild_enabled() {
-                let base_seed = self.heuristic_rebuild_base_seed();
-                let seeds = config.resolve_seeds(base_seed);
-                let (candidate, stats, used_seeds) =
-                    self.rebuild_with_heuristic(seeds, config.max_flips)?;
-                *self = candidate;
-                return Ok(DelaunayRepairOutcome {
-                    stats,
-                    heuristic: Some(used_seeds),
-                });
+    pub(super) mod legacy_repair_types {
+        use crate::core::algorithms::flips::DelaunayRepairStats;
+
+        /// Configuration for legacy in-place repair fault-injection tests.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+        pub(in super::super) struct DelaunayRepairHeuristicConfig {
+            /// Optional RNG seed used to shuffle vertex insertion order.
+            pub(crate) shuffle_seed: Option<u64>,
+            /// Optional seed used to vary the deterministic perturbation pattern.
+            pub(crate) perturbation_seed: Option<u64>,
+            /// Optional per-attempt flip budget cap.
+            ///
+            /// When set, each repair attempt is limited to at most this many flips.
+            /// `None` (the default) uses the dimension-dependent internal budget
+            /// computed from the triangulation size.
+            ///
+            /// This is primarily useful for debug harnesses that want to study
+            /// repair convergence behavior at different budgets without disabling
+            /// repair entirely.
+            pub(crate) max_flips: Option<usize>,
+        }
+
+        impl DelaunayRepairHeuristicConfig {
+            /// Sets the RNG seed used to shuffle vertex insertion order during heuristic rebuilds.
+            ///
+            #[must_use]
+            pub(crate) const fn with_shuffle_seed(mut self, shuffle_seed: u64) -> Self {
+                self.shuffle_seed = Some(shuffle_seed);
+                self
             }
-            let max_flips = config.max_flips;
-            match self.repair_delaunay_with_flips_capped(max_flips) {
-                Ok(stats) => Ok(DelaunayRepairOutcome {
-                    stats,
-                    heuristic: None,
-                }),
-                Err(
-                    primary_err @ (DelaunayRepairError::NonConvergent { .. }
-                    | DelaunayRepairError::PostconditionFailed { .. }),
-                ) => {
-                    match self.repair_delaunay_with_flips_robust(None, max_flips) {
-                        Ok(stats) => {
-                            // Re-canonicalize geometric orientation (#258): robust flip
-                            // repair may leave the global sign negative.
-                            self.ensure_positive_orientation()?;
-                            Ok(DelaunayRepairOutcome {
-                                stats,
-                                heuristic: None,
-                            })
-                        }
-                        Err(robust_err) => {
-                            let base_seed = self.heuristic_rebuild_base_seed();
-                            let seeds = config.resolve_seeds(base_seed);
-                            let (candidate, stats, used_seeds) = self
-                            .rebuild_with_heuristic(seeds, max_flips)
-                            .map_err(|heuristic_err| {
-                                let heuristic = match heuristic_err {
-                                    DelaunayRepairError::HeuristicRebuildFailed { reason } => {
-                                        reason
-                                    }
-                                    other => Box::new(
-                                        DelaunayRepairHeuristicRebuildFailure::UnexpectedRepairFailure {
-                                            source: Box::new(other),
-                                        },
-                                    ),
-                                };
-                                DelaunayRepairError::HeuristicRebuildFailed {
-                                    reason: Box::new(
-                                        DelaunayRepairHeuristicRebuildFailure::FallbackChainFailed {
-                                            primary: Box::new(primary_err.clone()),
-                                            robust: Box::new(robust_err),
-                                            heuristic,
-                                        },
-                                    ),
-                                }
-                            })?;
-                            *self = candidate;
-                            Ok(DelaunayRepairOutcome {
-                                stats,
-                                heuristic: Some(used_seeds),
-                            })
-                        }
-                    }
+
+            /// Sets the seed used to vary deterministic perturbation during heuristic rebuilds.
+            ///
+            #[must_use]
+            pub(crate) const fn with_perturbation_seed(mut self, perturbation_seed: u64) -> Self {
+                self.perturbation_seed = Some(perturbation_seed);
+                self
+            }
+
+            /// Sets the optional per-attempt flip budget cap for Delaunay repair.
+            ///
+            /// The cap applies to each primary, robust, or heuristic Delaunay-repair
+            /// attempt. Use [`Self::without_delaunay_max_flips`] to return to the
+            /// dimension-dependent internal budget.
+            ///
+            #[must_use]
+            pub(crate) const fn with_delaunay_max_flips(mut self, max_flips: usize) -> Self {
+                self.max_flips = Some(max_flips);
+                self
+            }
+
+            /// Clears the per-attempt flip budget cap for Delaunay repair.
+            ///
+            #[must_use]
+            pub(crate) const fn without_delaunay_max_flips(mut self) -> Self {
+                self.max_flips = None;
+                self
+            }
+
+            /// Fills omitted seeds from a stable base so heuristic rebuilds are
+            /// repeatable even when callers only configure one axis of randomness.
+            pub(crate) fn resolve_seeds(self, base_seed: u64) -> DelaunayRepairHeuristicSeeds {
+                // Derive deterministic defaults when the caller does not provide explicit seeds.
+                const SHUFFLE_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
+                const PERTURB_SALT: u64 = 0xD1B5_4A32_D192_ED03;
+
+                let mut shuffle_seed = self
+                    .shuffle_seed
+                    .unwrap_or_else(|| base_seed.wrapping_add(SHUFFLE_SALT));
+                if self.shuffle_seed.is_none() && shuffle_seed == 0 {
+                    shuffle_seed = 1;
                 }
-                Err(err) => Err(err),
+
+                let mut perturbation_seed = self
+                    .perturbation_seed
+                    .unwrap_or_else(|| base_seed.rotate_left(17) ^ PERTURB_SALT);
+                if self.perturbation_seed.is_none() && perturbation_seed == 0 {
+                    perturbation_seed = 1;
+                }
+
+                DelaunayRepairHeuristicSeeds {
+                    shuffle_seed,
+                    perturbation_seed,
+                }
             }
         }
 
-        /// Rebuilds from the current vertex set with varied deterministic seeds when
-        /// flip repair cannot converge directly.
-        #[expect(
-            clippy::too_many_lines,
-            reason = "heuristic rebuild keeps point extraction, reconstruction, and validation together"
-        )]
-        fn rebuild_with_heuristic(
-            &self,
-            base_seeds: DelaunayRepairHeuristicSeeds,
-            max_flips_override: Option<usize>,
-        ) -> Result<(Self, DelaunayRepairStats, DelaunayRepairHeuristicSeeds), DelaunayRepairError>
+        /// Seeds used for an internal heuristic rebuild.
+        ///
+        /// Deterministic defaults are derived from a stable hash of the current vertex
+        /// set when construction internals do not provide explicit seeds.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub(in super::super) struct DelaunayRepairHeuristicSeeds {
+            /// RNG seed used to shuffle vertex insertion order.
+            pub(crate) shuffle_seed: u64,
+            /// Seed used to vary the perturbation pattern during retries.
+            pub(crate) perturbation_seed: u64,
+        }
+
+        /// Internal result of a flip-based repair attempt, including heuristic
+        /// fallback metadata.
+        #[derive(Debug, Clone)]
+        pub(in super::super) struct DelaunayRepairOutcome {
+            /// Statistics from the final flip-based repair pass.
+            pub(crate) stats: DelaunayRepairStats,
+            /// Heuristic rebuild seeds, if a fallback was used.
+            pub(crate) heuristic: Option<DelaunayRepairHeuristicSeeds>,
+        }
+
+        impl DelaunayRepairOutcome {
+            /// Returns `true` if a heuristic rebuild fallback was used.
+            #[must_use]
+            pub(crate) const fn used_heuristic(&self) -> bool {
+                self.heuristic.is_some()
+            }
+        }
+    }
+
+    pub(super) mod legacy_repair_methods {
+        use super::super::*;
+        use crate::core::algorithms::flips::{
+            DelaunayRepairOrientationCanonicalizationFailure, DelaunayRepairStats,
+            repair_delaunay_with_flips_k2_k3,
+        };
+        use crate::geometry::kernel::ExactPredicates;
+
+        impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
         where
-            K: ExactPredicates<D, Scalar = f64>,
+            K: Kernel<D, Scalar = f64>,
         {
-            let base_vertices = self.collect_vertices_for_rebuild();
+            /// Runs flip-based Delaunay repair over the full triangulation.
+            ///
+            /// This is a manual entrypoint that performs a global scan of interior facets
+            /// and applies k=2/k=3 bistellar flips until locally Delaunay or until the flip
+            /// budget is exhausted. On success, geometric orientation is re-canonicalized
+            /// to the positive sign.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`DelaunayRepairError::NonConvergent`] if the flip budget is
+            /// exhausted, [`DelaunayRepairError::PostconditionFailed`] if repair
+            /// finishes with a remaining violation or disconnected triangulation,
+            /// [`DelaunayRepairError::OrientationCanonicalizationFailed`] if the final
+            /// positive-orientation pass fails, or another [`DelaunayRepairError`]
+            /// variant for lower-level flip, topology, or predicate failures.
+            ///
+            pub(in super::super) fn repair_delaunay_with_flips(
+                &mut self,
+            ) -> Result<DelaunayRepairStats, DelaunayRepairError>
+            where
+                K: ExactPredicates<D, Scalar = f64>,
+                U: DataType,
+                V: DataType,
+            {
+                self.repair_delaunay_with_flips_capped(None)
+            }
 
-            let mut last_error: Option<DelaunayRepairHeuristicRebuildFailure> = None;
+            /// Runs flip-based repair with an optional per-attempt cap so public repair
+            /// and heuristic harnesses share one mutation path.
+            pub(in super::super) fn repair_delaunay_with_flips_capped(
+                &mut self,
+                max_flips: Option<usize>,
+            ) -> Result<DelaunayRepairStats, DelaunayRepairError>
+            where
+                K: ExactPredicates<D, Scalar = f64>,
+                U: DataType,
+                V: DataType,
+            {
+                if super::super::tests::force_repair_nonconvergent_enabled() {
+                    return Err(super::super::tests::synthetic_nonconvergent_error());
+                }
+                let operation = TopologicalOperation::FacetFlip;
+                let topology = self.tri.topology_guarantee();
+                if !operation.is_admissible_under(topology) {
+                    return Err(DelaunayRepairError::InvalidTopology {
+                        required: operation.required_topology(),
+                        found: topology,
+                        message: "Bistellar flips require a PL-manifold (vertex-link validation)",
+                    });
+                }
+                self.invalidate_locate_hint_cache();
+                let global_topology = self.tri.global_topology();
+                let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+                let stats = repair_delaunay_with_flips_k2_k3(
+                    tds,
+                    kernel,
+                    None,
+                    topology,
+                    global_topology,
+                    max_flips,
+                )?;
 
-            for attempt in 0..HEURISTIC_REBUILD_ATTEMPTS {
-                let seeds = if attempt == 0 {
-                    base_seeds
-                } else {
-                    // Vary the deterministic shuffle and perturbation patterns across attempts.
-                    const SHUFFLE_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
-                    const PERTURB_SALT: u64 = 0xD1B5_4A32_D192_ED03;
+                // Re-canonicalize geometric orientation (#258): flip repair may leave
+                // the global sign negative.
+                self.ensure_positive_orientation()?;
 
-                    let attempt_u64 = attempt as u64;
+                Ok(stats)
+            }
 
-                    let mut shuffle_seed = base_seeds
-                        .shuffle_seed
-                        .wrapping_add(attempt_u64.wrapping_mul(SHUFFLE_SALT));
-                    if shuffle_seed == 0 {
-                        shuffle_seed = 1;
-                    }
+            /// Canonicalize geometric orientation to the positive sign, preserving
+            /// canonicalization failures as their own repair error variant.
+            pub(in super::super) fn ensure_positive_orientation(
+                &mut self,
+            ) -> Result<(), DelaunayRepairError>
+            where
+                U: DataType,
+                V: DataType,
+            {
+                self.tri
+                    .normalize_and_promote_positive_orientation()
+                    .map_err(|e| DelaunayRepairError::OrientationCanonicalizationFailed {
+                        reason: Box::new(
+                            DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
+                                source: Box::new(e),
+                            },
+                        ),
+                    })
+            }
 
-                    let mut perturbation_seed =
-                        base_seeds.perturbation_seed ^ attempt_u64.wrapping_mul(PERTURB_SALT);
-                    if perturbation_seed == 0 {
-                        perturbation_seed = 1;
-                    }
+            /// Replays repair with an exact-predicate kernel before escalating to
+            /// heuristic rebuild.
+            pub(in super::super) fn repair_delaunay_with_flips_robust(
+                &mut self,
+                seed_simplices: Option<&[SimplexKey]>,
+                max_flips: Option<usize>,
+            ) -> Result<DelaunayRepairStats, DelaunayRepairError>
+            where
+                U: DataType,
+                V: DataType,
+            {
+                self.repair_delaunay_with_flips_robust_run(seed_simplices, max_flips)
+                    .map(|run| run.stats)
+            }
+        }
+    }
 
-                    DelaunayRepairHeuristicSeeds {
-                        shuffle_seed,
-                        perturbation_seed,
-                    }
-                };
+    // =============================================================================
+    // ADVANCED REPAIR & HEURISTIC REBUILD
+    // =============================================================================
+    //
+    // `repair_delaunay_with_flips_advanced` can fall back to `rebuild_with_heuristic`,
+    // which constructs a new triangulation from the stored f64 vertex coordinates.
 
-                let rebuild_attempt = (|| {
-                    let _guard = HeuristicRebuildRecursionGuard::enter()?;
+    pub(super) mod legacy_repair_advanced {
+        use super::super::*;
+        use super::legacy_repair_guard::{
+            HEURISTIC_REBUILD_ATTEMPTS, HeuristicRebuildRecursionGuard,
+        };
+        use super::legacy_repair_types::{
+            DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds, DelaunayRepairOutcome,
+        };
+        use crate::core::algorithms::flips::{
+            DelaunayRepairHeuristicRebuildFailure, DelaunayRepairHeuristicVertexContext,
+            DelaunayRepairStats, repair_delaunay_with_flips_k2_k3,
+        };
+        use crate::core::collections::FastHasher;
+        use crate::core::operations::InsertionOutcome;
+        use crate::core::util::stable_hash_u64_slice;
+        use crate::core::vertex::Vertex;
+        use crate::geometry::kernel::ExactPredicates;
+        use crate::geometry::traits::coordinate::CoordinateValues;
+        use rand::{SeedableRng, seq::SliceRandom};
+        use std::hash::{Hash, Hasher};
 
-                    // Shuffle vertices for this attempt.
-                    let mut vertices = base_vertices.clone();
-                    let mut rng = rand::rngs::StdRng::seed_from_u64(seeds.shuffle_seed);
-                    vertices.shuffle(&mut rng);
+        impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
+            /// Enables legacy repair fallback paths for unit-test fault injection.
+            fn force_heuristic_rebuild_enabled() -> bool {
+                super::super::tests::force_heuristic_rebuild_enabled()
+            }
+        }
 
-                    // Heuristic rebuild is a last-resort fallback when global repair fails. Prefer an
-                    // insertion schedule that keeps the triangulation near-Delaunay (local repairs on
-                    // each insertion) so we do not get stuck in a non-regular configuration that flip
-                    // repair cannot escape.
-                    let topology_guarantee = self.tri.topology_guarantee();
-                    let global_topology = self.tri.global_topology();
-                    let mut candidate = Self::with_empty_kernel_and_topology_context(
-                        self.tri.kernel.clone(),
-                        topology_guarantee,
-                        global_topology,
-                    );
-
-                    // During rebuild, force local repair after every insertion. The caller's
-                    // policies are copied onto the finished candidate below.
-                    candidate.insertion_state.delaunay_repair_policy =
-                        DelaunayRepairPolicy::EveryInsertion;
-                    candidate.insertion_state.delaunay_check_policy = DelaunayCheckPolicy::EndOnly;
-
-                    for (idx, vertex) in vertices.into_iter().enumerate() {
-                        let uuid = vertex.uuid();
-                        let coords = *vertex.point().coords();
-                        let vertex_context = DelaunayRepairHeuristicVertexContext {
-                            index: idx,
-                            vertex_uuid: uuid,
-                            coordinates: CoordinateValues::from(coords),
-                        };
-
-                        let hint = candidate.insertion_state.last_inserted_simplex;
-                        let insert_detail = {
-                            let (tri, spatial_index) =
-                                (&mut candidate.tri, &mut candidate.spatial_index);
-                            tri.insert_with_statistics_seeded_indexed_detailed(
-                                vertex,
-                                None,
-                                hint,
-                                seeds.perturbation_seed,
-                                spatial_index.as_mut(),
-                                Some(idx),
-                            )
-                            .map_err(|e| {
-                                DelaunayRepairError::HeuristicRebuildFailed {
-                                    reason: Box::new(
-                                        DelaunayRepairHeuristicRebuildFailure::InsertionFailed {
-                                            vertex: vertex_context.clone(),
-                                            source: Box::new(e),
-                                        },
-                                    ),
-                                }
-                            })?
-                        };
-                        let repair_seed_simplices = insert_detail.repair_seed_simplices;
-                        let delaunay_repair_required = insert_detail.delaunay_repair_required;
-
-                        match insert_detail.outcome {
-                            InsertionOutcome::Inserted { vertex_key, hint } => {
-                                candidate.insertion_state.last_inserted_simplex = hint;
-                                candidate.insertion_state.delaunay_repair_insertion_count =
-                                    candidate
-                                        .insertion_state
-                                        .delaunay_repair_insertion_count
-                                        .saturating_add(1);
-
-                                if delaunay_repair_required {
-                                    candidate
-                                        .maybe_repair_after_insertion_capped(
-                                            vertex_key,
-                                            hint,
-                                            &repair_seed_simplices,
-                                            max_flips_override,
-                                        )
-                                        .map_err(|e| {
-                                            DelaunayRepairError::HeuristicRebuildFailed {
+        impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
+        where
+            K: Kernel<D, Scalar = f64>,
+            U: DataType,
+            V: DataType,
+        {
+            /// Runs flip-based Delaunay repair
+            ///
+            /// This first attempts the standard two-pass flip repair. If it fails to converge (or if
+            /// the result cannot be verified as Delaunay), it rebuilds the triangulation from the
+            /// current vertex set using a shuffled insertion order and a perturbation seed, then runs
+            /// a final flip-repair pass. On success, geometric orientation is re-canonicalized
+            /// to the positive sign.
+            ///
+            /// The returned outcome marks whether the heuristic fallback was used and records
+            /// the seeds needed to reproduce it (if desired).
+            ///
+            /// # Errors
+            ///
+            /// Returns [`DelaunayRepairError::HeuristicRebuildFailed`] when the
+            /// deterministic rebuild fallback cannot replay all vertices into a valid
+            /// triangulation, [`DelaunayRepairError::PostconditionFailed`] when a repair
+            /// pass leaves a violation, [`DelaunayRepairError::OrientationCanonicalizationFailed`]
+            /// when final positive-orientation promotion fails, or another
+            /// [`DelaunayRepairError`] variant for lower-level flip, topology, or
+            /// predicate failures.
+            ///
+            pub(in super::super) fn repair_delaunay_with_flips_advanced(
+                &mut self,
+                config: DelaunayRepairHeuristicConfig,
+            ) -> Result<DelaunayRepairOutcome, DelaunayRepairError>
+            where
+                K: ExactPredicates<D, Scalar = f64>,
+            {
+                if Self::force_heuristic_rebuild_enabled() {
+                    let base_seed = self.heuristic_rebuild_base_seed();
+                    let seeds = config.resolve_seeds(base_seed);
+                    let (candidate, stats, used_seeds) =
+                        self.rebuild_with_heuristic(seeds, config.max_flips)?;
+                    *self = candidate;
+                    return Ok(DelaunayRepairOutcome {
+                        stats,
+                        heuristic: Some(used_seeds),
+                    });
+                }
+                let max_flips = config.max_flips;
+                match self.repair_delaunay_with_flips_capped(max_flips) {
+                    Ok(stats) => Ok(DelaunayRepairOutcome {
+                        stats,
+                        heuristic: None,
+                    }),
+                    Err(
+                        primary_err @ (DelaunayRepairError::NonConvergent { .. }
+                        | DelaunayRepairError::PostconditionFailed { .. }),
+                    ) => {
+                        match self.repair_delaunay_with_flips_robust(None, max_flips) {
+                            Ok(stats) => {
+                                // Re-canonicalize geometric orientation (#258): robust flip
+                                // repair may leave the global sign negative.
+                                self.ensure_positive_orientation()?;
+                                Ok(DelaunayRepairOutcome {
+                                    stats,
+                                    heuristic: None,
+                                })
+                            }
+                            Err(robust_err) => {
+                                let base_seed = self.heuristic_rebuild_base_seed();
+                                let seeds = config.resolve_seeds(base_seed);
+                                let (candidate, stats, used_seeds) = self
+                                .rebuild_with_heuristic(seeds, max_flips)
+                                .map_err(|heuristic_err| {
+                                    let heuristic = match heuristic_err {
+                                        DelaunayRepairError::HeuristicRebuildFailed { reason } => {
+                                            reason
+                                        }
+                                        other => Box::new(
+                                            DelaunayRepairHeuristicRebuildFailure::UnexpectedRepairFailure {
+                                                source: Box::new(other),
+                                            },
+                                        ),
+                                    };
+                                    DelaunayRepairError::HeuristicRebuildFailed {
                                         reason: Box::new(
-                                            DelaunayRepairHeuristicRebuildFailure::RepairFailed {
+                                            DelaunayRepairHeuristicRebuildFailure::FallbackChainFailed {
+                                                primary: Box::new(primary_err.clone()),
+                                                robust: Box::new(robust_err),
+                                                heuristic,
+                                            },
+                                        ),
+                                    }
+                                })?;
+                                *self = candidate;
+                                Ok(DelaunayRepairOutcome {
+                                    stats,
+                                    heuristic: Some(used_seeds),
+                                })
+                            }
+                        }
+                    }
+                    Err(err) => Err(err),
+                }
+            }
+
+            /// Rebuilds from the current vertex set with varied deterministic seeds when
+            /// flip repair cannot converge directly.
+            #[expect(
+                clippy::too_many_lines,
+                reason = "heuristic rebuild keeps point extraction, reconstruction, and validation together"
+            )]
+            fn rebuild_with_heuristic(
+                &self,
+                base_seeds: DelaunayRepairHeuristicSeeds,
+                max_flips_override: Option<usize>,
+            ) -> Result<
+                (Self, DelaunayRepairStats, DelaunayRepairHeuristicSeeds),
+                DelaunayRepairError,
+            >
+            where
+                K: ExactPredicates<D, Scalar = f64>,
+            {
+                let base_vertices = self.collect_vertices_for_rebuild();
+
+                let mut last_error: Option<DelaunayRepairHeuristicRebuildFailure> = None;
+
+                for attempt in 0..HEURISTIC_REBUILD_ATTEMPTS {
+                    let seeds = if attempt == 0 {
+                        base_seeds
+                    } else {
+                        // Vary the deterministic shuffle and perturbation patterns across attempts.
+                        const SHUFFLE_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
+                        const PERTURB_SALT: u64 = 0xD1B5_4A32_D192_ED03;
+
+                        let attempt_u64 = attempt as u64;
+
+                        let mut shuffle_seed = base_seeds
+                            .shuffle_seed
+                            .wrapping_add(attempt_u64.wrapping_mul(SHUFFLE_SALT));
+                        if shuffle_seed == 0 {
+                            shuffle_seed = 1;
+                        }
+
+                        let mut perturbation_seed =
+                            base_seeds.perturbation_seed ^ attempt_u64.wrapping_mul(PERTURB_SALT);
+                        if perturbation_seed == 0 {
+                            perturbation_seed = 1;
+                        }
+
+                        DelaunayRepairHeuristicSeeds {
+                            shuffle_seed,
+                            perturbation_seed,
+                        }
+                    };
+
+                    let rebuild_attempt = (|| {
+                        let _guard = HeuristicRebuildRecursionGuard::enter()?;
+
+                        // Shuffle vertices for this attempt.
+                        let mut vertices = base_vertices.clone();
+                        let mut rng = rand::rngs::StdRng::seed_from_u64(seeds.shuffle_seed);
+                        vertices.shuffle(&mut rng);
+
+                        // Heuristic rebuild is a last-resort fallback when global repair fails. Prefer an
+                        // insertion schedule that keeps the triangulation near-Delaunay (local repairs on
+                        // each insertion) so we do not get stuck in a non-regular configuration that flip
+                        // repair cannot escape.
+                        let topology_guarantee = self.tri.topology_guarantee();
+                        let global_topology = self.tri.global_topology();
+                        let mut candidate = Self::with_empty_kernel_and_topology_context(
+                            self.tri.kernel.clone(),
+                            topology_guarantee,
+                            global_topology,
+                        );
+
+                        // During rebuild, force local repair after every insertion. The caller's
+                        // policies are copied onto the finished candidate below.
+                        candidate.insertion_state.delaunay_repair_policy =
+                            DelaunayRepairPolicy::EveryInsertion;
+                        candidate.insertion_state.delaunay_check_policy =
+                            DelaunayCheckPolicy::EndOnly;
+
+                        for (idx, vertex) in vertices.into_iter().enumerate() {
+                            let uuid = vertex.uuid();
+                            let coords = *vertex.point().coords();
+                            let vertex_context = DelaunayRepairHeuristicVertexContext {
+                                index: idx,
+                                vertex_uuid: uuid,
+                                coordinates: CoordinateValues::from(coords),
+                            };
+
+                            let hint = candidate.insertion_state.last_inserted_simplex;
+                            let insert_detail = {
+                                let (tri, spatial_index) =
+                                    (&mut candidate.tri, &mut candidate.spatial_index);
+                                tri.insert_with_statistics_seeded_indexed_detailed(
+                                    vertex,
+                                    None,
+                                    hint,
+                                    seeds.perturbation_seed,
+                                    spatial_index.as_mut(),
+                                    Some(idx),
+                                )
+                                .map_err(|e| {
+                                    DelaunayRepairError::HeuristicRebuildFailed {
+                                        reason: Box::new(
+                                            DelaunayRepairHeuristicRebuildFailure::InsertionFailed {
                                                 vertex: vertex_context.clone(),
                                                 source: Box::new(e),
                                             },
                                         ),
                                     }
-                                        })?;
-                                }
+                                })?
+                            };
+                            let repair_seed_simplices = insert_detail.repair_seed_simplices;
+                            let delaunay_repair_required = insert_detail.delaunay_repair_required;
 
-                                candidate.maybe_check_after_insertion().map_err(|e| {
-                                    DelaunayRepairError::HeuristicRebuildFailed {
-                                    reason: Box::new(
-                                        DelaunayRepairHeuristicRebuildFailure::DelaunayCheckFailed {
-                                            vertex: vertex_context,
-                                            source: Box::new(e),
-                                        },
-                                    ),
+                            match insert_detail.outcome {
+                                InsertionOutcome::Inserted { vertex_key, hint } => {
+                                    candidate.insertion_state.last_inserted_simplex = hint;
+                                    candidate.insertion_state.delaunay_repair_insertion_count =
+                                        candidate
+                                            .insertion_state
+                                            .delaunay_repair_insertion_count
+                                            .saturating_add(1);
+
+                                    if delaunay_repair_required {
+                                        candidate
+                                            .maybe_repair_after_insertion_capped(
+                                                vertex_key,
+                                                hint,
+                                                &repair_seed_simplices,
+                                                max_flips_override,
+                                            )
+                                            .map_err(|e| {
+                                                DelaunayRepairError::HeuristicRebuildFailed {
+                                            reason: Box::new(
+                                                DelaunayRepairHeuristicRebuildFailure::RepairFailed {
+                                                    vertex: vertex_context.clone(),
+                                                    source: Box::new(e),
+                                                },
+                                            ),
+                                        }
+                                            })?;
+                                    }
+
+                                    candidate.maybe_check_after_insertion().map_err(|e| {
+                                        DelaunayRepairError::HeuristicRebuildFailed {
+                                        reason: Box::new(
+                                            DelaunayRepairHeuristicRebuildFailure::DelaunayCheckFailed {
+                                                vertex: vertex_context,
+                                                source: Box::new(e),
+                                            },
+                                        ),
+                                    }
+                                    })?;
                                 }
-                                })?;
-                            }
-                            InsertionOutcome::Skipped { error } => {
-                                return Err(DelaunayRepairError::HeuristicRebuildFailed {
-                                    reason: Box::new(
-                                        DelaunayRepairHeuristicRebuildFailure::SkippedVertex {
-                                            vertex: vertex_context,
-                                            source: Box::new(error),
-                                        },
-                                    ),
-                                });
+                                InsertionOutcome::Skipped { error } => {
+                                    return Err(DelaunayRepairError::HeuristicRebuildFailed {
+                                        reason: Box::new(
+                                            DelaunayRepairHeuristicRebuildFailure::SkippedVertex {
+                                                vertex: vertex_context,
+                                                source: Box::new(error),
+                                            },
+                                        ),
+                                    });
+                                }
                             }
                         }
-                    }
 
-                    candidate.tri.validation_policy = self.tri.validation_policy;
-                    candidate.insertion_state.delaunay_repair_policy =
-                        self.insertion_state.delaunay_repair_policy;
-                    candidate.insertion_state.delaunay_check_policy =
-                        self.insertion_state.delaunay_check_policy;
-                    candidate.insertion_state.delaunay_repair_insertion_count =
-                        self.insertion_state.delaunay_repair_insertion_count;
-                    candidate.insertion_state.last_inserted_simplex = None;
+                        candidate.tri.validation_policy = self.tri.validation_policy;
+                        candidate.insertion_state.delaunay_repair_policy =
+                            self.insertion_state.delaunay_repair_policy;
+                        candidate.insertion_state.delaunay_check_policy =
+                            self.insertion_state.delaunay_check_policy;
+                        candidate.insertion_state.delaunay_repair_insertion_count =
+                            self.insertion_state.delaunay_repair_insertion_count;
+                        candidate.insertion_state.last_inserted_simplex = None;
 
-                    let topology = candidate.tri.topology_guarantee();
-                    let global_topology = candidate.tri.global_topology();
-                    candidate.invalidate_locate_hint_cache();
-                    let (tds, kernel) = (&mut candidate.tri.tds, &candidate.tri.kernel);
-                    let stats = repair_delaunay_with_flips_k2_k3(
-                        tds,
-                        kernel,
-                        None,
-                        topology,
-                        global_topology,
-                        max_flips_override,
-                    )?;
+                        let topology = candidate.tri.topology_guarantee();
+                        let global_topology = candidate.tri.global_topology();
+                        candidate.invalidate_locate_hint_cache();
+                        let (tds, kernel) = (&mut candidate.tri.tds, &candidate.tri.kernel);
+                        let stats = repair_delaunay_with_flips_k2_k3(
+                            tds,
+                            kernel,
+                            None,
+                            topology,
+                            global_topology,
+                            max_flips_override,
+                        )?;
 
-                    // Re-canonicalize geometric orientation (#258): the final flip
-                    // repair may leave the global sign negative.
-                    candidate.ensure_positive_orientation()?;
+                        // Re-canonicalize geometric orientation (#258): the final flip
+                        // repair may leave the global sign negative.
+                        candidate.ensure_positive_orientation()?;
 
-                    Ok::<_, DelaunayRepairError>((candidate, stats))
-                })();
+                        Ok::<_, DelaunayRepairError>((candidate, stats))
+                    })();
 
-                match rebuild_attempt {
-                    Ok((candidate, stats)) => return Ok((candidate, stats, seeds)),
-                    Err(err) => {
-                        last_error = Some(DelaunayRepairHeuristicRebuildFailure::AttemptFailed {
-                            attempt: attempt + 1,
-                            max_attempts: HEURISTIC_REBUILD_ATTEMPTS,
-                            shuffle_seed: seeds.shuffle_seed,
-                            perturbation_seed: seeds.perturbation_seed,
-                            source: Box::new(err),
-                        });
+                    match rebuild_attempt {
+                        Ok((candidate, stats)) => return Ok((candidate, stats, seeds)),
+                        Err(err) => {
+                            last_error =
+                                Some(DelaunayRepairHeuristicRebuildFailure::AttemptFailed {
+                                    attempt: attempt + 1,
+                                    max_attempts: HEURISTIC_REBUILD_ATTEMPTS,
+                                    shuffle_seed: seeds.shuffle_seed,
+                                    perturbation_seed: seeds.perturbation_seed,
+                                    source: Box::new(err),
+                                });
+                        }
                     }
                 }
-            }
 
-            Err(DelaunayRepairError::HeuristicRebuildFailed {
-                reason: Box::new(DelaunayRepairHeuristicRebuildFailure::ExhaustedAttempts {
-                    attempts: HEURISTIC_REBUILD_ATTEMPTS,
-                    last_failure: Box::new(
-                        last_error.unwrap_or(DelaunayRepairHeuristicRebuildFailure::NoAttempts),
-                    ),
-                }),
-            })
-        }
-
-        /// Preserves vertex UUIDs and data so heuristic rebuilds remain an internal
-        /// repair strategy, not a user-visible remapping.
-        fn collect_vertices_for_rebuild(&self) -> Vec<Vertex<U, D>> {
-            self.tri
-                .tds
-                .vertices()
-                .map(|(_, vertex)| {
-                    Vertex::from_validated_point_with_uuid(
-                        *vertex.point(),
-                        vertex.uuid(),
-                        vertex.data,
-                    )
+                Err(DelaunayRepairError::HeuristicRebuildFailed {
+                    reason: Box::new(DelaunayRepairHeuristicRebuildFailure::ExhaustedAttempts {
+                        attempts: HEURISTIC_REBUILD_ATTEMPTS,
+                        last_failure: Box::new(
+                            last_error.unwrap_or(DelaunayRepairHeuristicRebuildFailure::NoAttempts),
+                        ),
+                    }),
                 })
-                .collect()
-        }
-
-        /// Derives rebuild seeds from the vertex set so fallback behavior is
-        /// reproducible regardless of slotmap iteration accidents.
-        fn heuristic_rebuild_base_seed(&self) -> u64 {
-            let mut vertex_hashes = Vec::with_capacity(self.tri.tds.number_of_vertices());
-            for (_, vertex) in self.tri.tds.vertices() {
-                let mut hasher = FastHasher::default();
-                vertex.hash(&mut hasher);
-                vertex_hashes.push(hasher.finish());
             }
-            vertex_hashes.sort_unstable();
-            stable_hash_u64_slice(&vertex_hashes)
+
+            /// Preserves vertex UUIDs and data so heuristic rebuilds remain an internal
+            /// repair strategy, not a user-visible remapping.
+            fn collect_vertices_for_rebuild(&self) -> Vec<Vertex<U, D>> {
+                self.tri
+                    .tds
+                    .vertices()
+                    .map(|(_, vertex)| {
+                        Vertex::from_validated_point_with_uuid(
+                            *vertex.point(),
+                            vertex.uuid(),
+                            vertex.data,
+                        )
+                    })
+                    .collect()
+            }
+
+            /// Derives rebuild seeds from the vertex set so fallback behavior is
+            /// reproducible regardless of slotmap iteration accidents.
+            fn heuristic_rebuild_base_seed(&self) -> u64 {
+                let mut vertex_hashes = Vec::with_capacity(self.tri.tds.number_of_vertices());
+                for (_, vertex) in self.tri.tds.vertices() {
+                    let mut hasher = FastHasher::default();
+                    vertex.hash(&mut hasher);
+                    vertex_hashes.push(hasher.finish());
+                }
+                vertex_hashes.sort_unstable();
+                stable_hash_u64_slice(&vertex_hashes)
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::legacy_repair_types::{
+    use super::test_support::legacy_repair_types::{
         DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds, DelaunayRepairOutcome,
     };
     use super::*;
@@ -942,11 +951,11 @@ mod tests {
     use crate::core::operations::InsertionOutcome;
     use crate::core::simplex::Simplex;
     use crate::core::tds::Tds;
-    use crate::core::validation::TopologyGuarantee;
     use crate::core::vertex::Vertex;
+    use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
     use crate::topology::traits::topological_space::GlobalTopology;
-    use crate::triangulation::DelaunayTriangulation;
+    use crate::triangulation::validation::TopologyGuarantee;
     use crate::validation::DelaunayTriangulationCandidate;
     use crate::vertex;
     use std::{assert_matches, cell::Cell, num::NonZeroUsize, sync::Once};
