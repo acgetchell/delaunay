@@ -395,7 +395,7 @@ suite for local saved-baseline comparisons. It runs
 `locate`, and `realization_validation`, leaving `target/criterion/new` data suitable for
 `just bench-compare`. The manual `topology_guarantee_construction` suite remains
 available through `just bench-save-baseline <tag> topology` and
-`uv run --locked benchmark-utils perf-local --suite topology`. Save the previous release
+`cargo bench --locked --profile perf --bench topology_guarantee_construction`. Save the previous release
 signal as `last` with `just bench-save-baseline last` from the baseline
 checkout, or save an explicit baseline name with the same recipe. Use
 `just perf-local` when you want the tool to manage isolated

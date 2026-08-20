@@ -512,6 +512,7 @@ dependencies = [
 dev = [
     { name = "actionlint-py" },
     { name = "pytest" },
+    { name = "pyyaml" },
     { name = "ruff" },
     { name = "semgrep" },
     { name = "shellcheck-py" },
@@ -541,6 +542,7 @@ requires-dist = [
 dev = [
     { name = "actionlint-py", specifier = ">=1.7.12.24" },
     { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "ruff", specifier = ">=0.16.1" },
     { name = "semgrep", specifier = ">=1.172.0" },
     { name = "shellcheck-py", specifier = ">=0.11.0.1" },

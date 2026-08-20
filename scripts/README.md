@@ -102,16 +102,14 @@ uv run --locked hardware-utils kv
 uv run --locked hardware-utils info --json
 ```
 
-### Coverage utilities
+### Coverage workflow
 
 ```bash
 just coverage-ci
-uv run --locked coverage-report --help
-uv run --locked coverage_report --help
 ```
 
-`coverage-report` summarizes the Cobertura XML produced by `just coverage-ci`.
-`coverage_report` is kept as a backwards-compatible alias.
+`just coverage-ci` writes the Cobertura XML consumed by CI to
+`coverage/cobertura.xml`.
 
 ### Tool-pin maintenance
 

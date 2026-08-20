@@ -18,15 +18,16 @@ class _PlottingBackend:
     pyplot: Any
     circle: Any
     polygon: Any
+    rectangle: Any
 
 
 @cache
 def _plotting_backend() -> _PlottingBackend:
     """Import Matplotlib only when a caller renders a figure."""
     from matplotlib import pyplot as plt  # noqa: PLC0415 - optional notebook dependency
-    from matplotlib.patches import Circle, Polygon  # noqa: PLC0415 - optional notebook dependency
+    from matplotlib.patches import Circle, Polygon, Rectangle  # noqa: PLC0415 - optional notebook dependency
 
-    return _PlottingBackend(pyplot=plt, circle=Circle, polygon=Polygon)
+    return _PlottingBackend(pyplot=plt, circle=Circle, polygon=Polygon, rectangle=Rectangle)
 
 
 def save_figure_png(
@@ -67,6 +68,13 @@ def point_by_index(points: list[Point2], index: int, context: str) -> Point2:
     if index < 0 or index >= len(points):
         raise IndexError(f"{context} index {index} is outside 0..{len(points) - 1}")
     return points[index]
+
+
+def simplex_by_index(simplices: list[tuple[int, ...]], index: int, context: str) -> tuple[int, ...]:
+    """Return a simplex by visual index with contextual bounds checking."""
+    if index < 0 or index >= len(simplices):
+        raise IndexError(f"{context} index {index} is outside 0..{len(simplices) - 1}")
+    return simplices[index]
 
 
 def simplex_points(points: list[Point2], simplex: tuple[int, ...], context: str) -> list[Point2]:
@@ -166,7 +174,9 @@ def validate_degenerate_simplex_witness(case_index: int, level: int, witness: Vi
     if not witness.highlighted_simplices:
         raise ValueError(f"cases[{case_index}] Level 4 must highlight a degenerate simplex")
     for simplex_index in sorted(witness.highlighted_simplices):
-        area = abs(triangle_signed_area(witness.points, witness.simplices[simplex_index], f"cases[{case_index}].visual.simplices[{simplex_index}]"))
+        simplices_context = f"cases[{case_index}].visual.simplices"
+        simplex = simplex_by_index(witness.simplices, simplex_index, simplices_context)
+        area = abs(triangle_signed_area(witness.points, simplex, f"{simplices_context}[{simplex_index}]"))
         if area > VISUAL_AREA_TOLERANCE:
             raise ValueError(f"cases[{case_index}].visual.simplices[{simplex_index}] area {area} exceeds degeneracy tolerance {VISUAL_AREA_TOLERANCE}")
 
@@ -186,8 +196,10 @@ def validate_circumcircle_witness(case_index: int, level: int, witness: VisualWi
     radius = circle.radius
     tolerance = circle_tolerance(radius)
     for simplex_index in sorted(witness.highlighted_simplices):
-        for vertex_index in witness.simplices[simplex_index]:
-            vertex = point_by_index(witness.points, vertex_index, f"cases[{case_index}].visual.simplices[{simplex_index}]")
+        simplices_context = f"cases[{case_index}].visual.simplices"
+        simplex = simplex_by_index(witness.simplices, simplex_index, simplices_context)
+        for vertex_index in simplex:
+            vertex = point_by_index(witness.points, vertex_index, f"{simplices_context}[{simplex_index}]")
             residual = abs(point_distance(vertex, center) - radius)
             if residual > tolerance:
                 raise ValueError(f"cases[{case_index}] simplex vertex {vertex_index} has circumcircle residual {residual}, tolerance {tolerance}")
@@ -424,7 +436,7 @@ def render_validation_hierarchy_figure(output_path: Path, *, tracked_figure_dir:
         scope_lines = (f"Owner: {layer.proof_owner}", *layer.scope)
         y = current_top - box_height
         row_center = y + box_height / 2.0
-        rectangle = plotting.pyplot.Rectangle(
+        rectangle = plotting.rectangle(
             (box_left, y),
             box_width,
             box_height,
@@ -526,7 +538,7 @@ def draw_level_1_glyph(axis: Any, family_index: int) -> None:
         axis.text(0.50, 0.28, "coords = [NaN, 0]", ha="center", fontsize=8.5, color="#991b1b")
         glyph_cross(axis, (0.50, 0.50))
     elif family_index == 1:
-        axis.add_patch(_plotting_backend().pyplot.Rectangle((0.18, 0.34), 0.64, 0.34, facecolor="white", edgecolor="#64748b", linewidth=1.4))
+        axis.add_patch(_plotting_backend().rectangle((0.18, 0.34), 0.64, 0.34, facecolor="white", edgecolor="#64748b", linewidth=1.4))
         axis.text(0.28, 0.55, "UUID", fontsize=9, weight="bold", color="#475569")
         axis.text(0.58, 0.55, "nil", fontsize=10, weight="bold", color="#991b1b")
         glyph_cross(axis, (0.73, 0.55))
@@ -547,12 +559,10 @@ def draw_level_1_glyph(axis: Any, family_index: int) -> None:
         points = ((0.20, 0.26), (0.80, 0.26), (0.50, 0.74))
         glyph_triangle(axis, points)
         for midpoint in ((0.50, 0.26), (0.35, 0.50)):
-            axis.add_patch(
-                _plotting_backend().pyplot.Rectangle((midpoint[0] - 0.035, midpoint[1] - 0.035), 0.07, 0.07, facecolor="#86efac", edgecolor="#166534")
-            )
+            axis.add_patch(_plotting_backend().rectangle((midpoint[0] - 0.035, midpoint[1] - 0.035), 0.07, 0.07, facecolor="#86efac", edgecolor="#166534"))
         missing = (0.65, 0.50)
         axis.add_patch(
-            _plotting_backend().pyplot.Rectangle((missing[0] - 0.035, missing[1] - 0.035), 0.07, 0.07, facecolor="white", edgecolor="#dc2626", linestyle="--")
+            _plotting_backend().rectangle((missing[0] - 0.035, missing[1] - 0.035), 0.07, 0.07, facecolor="white", edgecolor="#dc2626", linestyle="--")
         )
 
 
@@ -712,7 +722,7 @@ def draw_level_4_glyph(axis: Any, family_index: int) -> None:
         axis.scatter([0.46], [0.50], marker="x", s=80, color="#dc2626", linewidth=2.2, zorder=6)
         axis.text(0.50, 0.86, "overlapping interiors", fontsize=8.5, ha="center", color="#991b1b")
     elif family_index == 3:
-        axis.add_patch(_plotting_backend().pyplot.Rectangle((0.18, 0.22), 0.64, 0.56, facecolor="none", edgecolor="#64748b", linewidth=1.5))
+        axis.add_patch(_plotting_backend().rectangle((0.18, 0.22), 0.64, 0.56, facecolor="none", edgecolor="#64748b", linewidth=1.5))
         axis.scatter([0.24, 0.76], [0.42, 0.58], s=30, color="#0f172a")
         axis.annotate("", xy=(0.86, 0.58), xytext=(0.76, 0.58), arrowprops={"arrowstyle": "->", "color": "#dc2626"})
         axis.scatter([0.14], [0.58], s=55, facecolor="none", edgecolor="#dc2626", linestyle="--")
@@ -724,7 +734,7 @@ def draw_level_4_glyph(axis: Any, family_index: int) -> None:
         axis.text(0.50, 0.39, "center", fontsize=8, ha="center")
         axis.text(0.50, 0.82, "same side", fontsize=8, ha="center", color="#991b1b")
     else:
-        axis.add_patch(_plotting_backend().pyplot.Rectangle((0.18, 0.36), 0.64, 0.30, facecolor="white", edgecolor="#64748b", linewidth=1.4))
+        axis.add_patch(_plotting_backend().rectangle((0.18, 0.36), 0.64, 0.30, facecolor="white", edgecolor="#64748b", linewidth=1.4))
         axis.text(0.36, 0.52, "model", fontsize=9, weight="bold", ha="center")
         axis.text(0.66, 0.52, "unsupported", fontsize=8.5, ha="center", color="#991b1b")
         glyph_cross(axis, (0.78, 0.52))

@@ -8,6 +8,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 import benchmark_utils
 import update_cargo_tool_pins
 
@@ -40,6 +42,16 @@ def just_recipes() -> dict[str, dict[str, Any]]:
     recipes = document["recipes"]
     assert isinstance(recipes, dict)
     return recipes
+
+
+def workflow_trigger_paths(path: Path) -> tuple[set[str], set[str]]:
+    """Return pull-request and push path filters from one GitHub workflow."""
+    workflow: Any = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)  # noqa: S506 - BaseLoader constructs data only.
+    pull_request_paths = workflow["on"]["pull_request"]["paths"]
+    push_paths = workflow["on"]["push"]["paths"]
+    assert all(isinstance(item, str) for item in pull_request_paths)
+    assert all(isinstance(item, str) for item in push_paths)
+    return set(pull_request_paths), set(push_paths)
 
 
 def test_recipe_declarations_are_lexicographically_sorted() -> None:
@@ -162,7 +174,7 @@ def test_validation_and_benchmark_uv_runs_are_locked() -> None:
 
 def test_performance_workflow_tracks_every_harness_input() -> None:
     """Performance checks should run when their code or toolchain changes."""
-    workflow = (REPO_ROOT / ".github" / "workflows" / "benchmarks.yml").read_text(encoding="utf-8")
+    pull_request_paths, push_paths = workflow_trigger_paths(REPO_ROOT / ".github" / "workflows" / "benchmarks.yml")
     required_paths = (
         ".python-version",
         "pyproject.toml",
@@ -175,12 +187,13 @@ def test_performance_workflow_tracks_every_harness_input() -> None:
     )
 
     for path in required_paths:
-        assert workflow.count(f'- "{path}"') == 2, path
+        assert path in pull_request_paths
+        assert path in push_paths
 
 
 def test_paper_workflow_tracks_validation_figure_producers() -> None:
     """Paper checks should run when Rust or notebook figure producers change."""
-    workflow = (REPO_ROOT / ".github" / "workflows" / "papers.yml").read_text(encoding="utf-8")
+    pull_request_paths, push_paths = workflow_trigger_paths(REPO_ROOT / ".github" / "workflows" / "papers.yml")
     required_paths = (
         ".python-version",
         "Cargo.lock",
@@ -192,7 +205,8 @@ def test_paper_workflow_tracks_validation_figure_producers() -> None:
     )
 
     for path in required_paths:
-        assert workflow.count(f'- "{path}"') == 2, path
+        assert path in pull_request_paths
+        assert path in push_paths
 
 
 def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:

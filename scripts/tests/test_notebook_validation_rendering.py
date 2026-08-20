@@ -136,6 +136,30 @@ def test_visual_witnesses_reject_false_evidence(case: ValidationCase, message: s
         validate_case_visual_invariants(case, case.level - 1)
 
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        visual_case(
+            4,
+            ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0)),
+            ((0, 1, 2),),
+            highlighted_simplices=frozenset({1}),
+        ),
+        visual_case(
+            5,
+            ((1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, 0.0)),
+            ((0, 1, 2),),
+            highlighted_simplices=frozenset({1}),
+            invalid_points=frozenset({3}),
+            circumcircle=CircumcircleWitness(center=(0.0, 0.0), radius=1.0),
+        ),
+    ],
+)
+def test_visual_witnesses_reject_out_of_range_highlighted_simplex(case: ValidationCase) -> None:
+    with pytest.raises(IndexError, match=r"cases\[7\]\.visual\.simplices index 1 is outside 0\.\.0"):
+        validate_case_visual_invariants(case, 7)
+
+
 class FakeFigure:
     """Minimal figure seam for deterministic output-path tests."""
 
@@ -161,6 +185,17 @@ def test_save_figure_png_writes_scratch_and_explicit_tracked_copy(tmp_path: Path
 
     assert figure.saved_paths == [scratch, tracked_dir / scratch.name]
     assert all(path.read_bytes() == b"png" for path in figure.saved_paths)
+
+
+def test_save_figure_png_writes_only_scratch_without_tracked_directory(tmp_path: Path) -> None:
+    figure = FakeFigure()
+    scratch = tmp_path / "scratch" / "validation.png"
+
+    save_figure_png(figure, scratch)
+
+    assert figure.saved_paths == [scratch]
+    assert scratch.read_bytes() == b"png"
+    assert set(tmp_path.rglob("validation.png")) == {scratch}
 
 
 def test_validation_notebook_keeps_render_cell_as_orchestration() -> None:

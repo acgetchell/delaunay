@@ -121,19 +121,6 @@ impl From<LaError> for StackMatrixDispatchError {
     }
 }
 
-/// Dispatch a runtime `k` (matrix dimension) to a stack-allocated `la_stack::Matrix<k>`.
-///
-/// This test-only macro is used for concise matrix unit tests. Production code
-/// must use [`try_with_la_stack_matrix!`] so unsupported dimensions are reported
-/// as typed errors at API boundaries.
-#[cfg(test)]
-macro_rules! with_la_stack_matrix {
-    ($k:expr, |$m:ident| $body:block) => {{
-        la_stack::try_with_stack_matrix!($k, |mut $m| -> Result<_, la_stack::LaError> { Ok($body) })
-            .expect("test requested an unsupported stack matrix size")
-    }};
-}
-
 /// Dispatch a runtime matrix dimension to a stack matrix, returning an error if unsupported.
 ///
 /// Unsupported upstream dispatch dimensions are converted from [`LaError`], so callers
@@ -257,6 +244,15 @@ pub fn determinant<const D: usize>(m: &Matrix<D>) -> Result<f64, LaError> {
         Err(LaError::Singular { .. }) => Ok(0.0),
         Err(source) => Err(source),
     }
+}
+
+/// Dispatch a runtime `k` to a stack-allocated matrix for concise unit tests.
+#[cfg(test)]
+macro_rules! with_la_stack_matrix {
+    ($k:expr, |$m:ident| $body:block) => {{
+        la_stack::try_with_stack_matrix!($k, |mut $m| -> Result<_, la_stack::LaError> { Ok($body) })
+            .expect("test requested an unsupported stack matrix size")
+    }};
 }
 
 #[cfg(test)]

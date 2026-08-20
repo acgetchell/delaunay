@@ -1085,7 +1085,7 @@ python-sync: _ensure-uv
 # Type-check Python support code with ty.
 [group('validation')]
 python-typecheck: _ensure-uv
-    uv run --locked ty check scripts/ --error all
+    uv run --locked --group notebooks ty check scripts/ --error all
 
 # Run the opt-in companion binary with the CLI feature and perf profile.
 [group('build and setup')]
