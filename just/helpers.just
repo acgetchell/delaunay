@@ -30,6 +30,8 @@ _ensure-actionlint: _ensure-uv
     set -euo pipefail
     uv run actionlint -version >/dev/null
 
+_ensure-cargo-edit: (_ensure-pinned-cargo-tool "cargo-upgrade" "cargo-edit" cargo_edit_version "upgrade")
+
 _ensure-cargo-llvm-cov: (_ensure-pinned-cargo-tool "cargo-llvm-cov" "cargo-llvm-cov" cargo_llvm_cov_version "llvm-cov")
 
 _ensure-cargo-machete: (_ensure-pinned-cargo-tool "cargo-machete" "cargo-machete" cargo_machete_version)

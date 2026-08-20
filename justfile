@@ -14,6 +14,7 @@ binary_extension := if os_family() == "windows" { ".exe" } else { "" }
 perf_delaunay_binary := "target/perf/delaunay" + binary_extension
 
 cargo_audit_version := "0.22.2"
+cargo_edit_version := "0.13.13"
 cargo_llvm_cov_version := "0.9.0"
 cargo_machete_version := "0.9.2"
 clippy_sarif_version := "0.8.0"
@@ -21,7 +22,7 @@ dprint_version := "0.56.0"
 git_cliff_version := "2.13.1"
 just_version := "1.58.0"
 nextest_version := "0.9.143"
-rumdl_version := "0.2.57"
+rumdl_version := "0.2.58"
 samply_version := "0.13.1"
 sarif_fmt_version := "0.8.0"
 taplo_version := "0.10.0"
@@ -318,7 +319,7 @@ help-workflows:
     @echo "Setup and maintenance:"
     @echo "  just setup              # Install pinned tools and build the development profile"
     @echo "  just setup-tools        # Install and verify pinned repository tools"
-    @echo "  just update             # Update dependency locks and repo-owned Cargo tools"
+    @echo "  just update             # Update dependency requirements, locks, and repo-owned Cargo tools"
     @echo ""
     @echo "Focused checks:"
     @echo "  just check-code         # Rust, Python, notebooks, and shell"
@@ -1258,6 +1259,7 @@ setup-tools: _ensure-uv
     fi
 
     ensure_pinned_cargo_tool cargo-llvm-cov cargo-llvm-cov "{{ cargo_llvm_cov_version }}" llvm-cov
+    ensure_pinned_cargo_tool cargo-upgrade cargo-edit "{{ cargo_edit_version }}" upgrade
     ensure_pinned_cargo_tool cargo-machete cargo-machete "{{ cargo_machete_version }}"
     ensure_pinned_cargo_tool cargo-nextest cargo-nextest "{{ nextest_version }}"
     ensure_pinned_cargo_tool dprint dprint "{{ dprint_version }}"
@@ -1276,7 +1278,7 @@ setup-tools: _ensure-uv
     missing=0
 
     cmds=(uv jq taplo dprint tectonic tex-fmt rumdl git-cliff typos zizmor chktex samply)
-    cmds+=(cargo-nextest cargo-llvm-cov cargo-machete)
+    cmds+=(cargo-nextest cargo-llvm-cov cargo-upgrade cargo-machete)
 
     for cmd in "${cmds[@]}"; do
         if have "$cmd"; then
@@ -1536,15 +1538,15 @@ toml-parse-check: _ensure-uv
 unused-deps: _ensure-cargo-machete
     cargo machete
 
-# Update dependency locks and locally installed Cargo tools owned by this repository.
+# Update dependency requirements, locks, and locally installed Cargo tools owned by this repository.
 [group('build and setup')]
 update: update-dependencies update-cargo-tools
     @echo "✅ Repository dependencies and tools updated."
 
-# Update locally installed Cargo CLI tools owned by `setup-tools`.
-[doc('Update locally installed Cargo CLI tools owned by setup-tools; review root pins afterward.')]
+# Update locally installed Cargo CLI tools owned by `setup-tools` and reconcile their pins.
+[doc('Update Cargo CLI tools owned by setup-tools and reconcile their root justfile pins.')]
 [group('build and setup')]
-update-cargo-tools:
+update-cargo-tools: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -1555,6 +1557,7 @@ update-cargo-tools:
     fi
 
     packages=(
+        cargo-edit
         cargo-llvm-cov
         cargo-machete
         cargo-nextest
@@ -1570,16 +1573,15 @@ update-cargo-tools:
         zizmor
     )
     cargo install-update --locked "${packages[@]}"
+    uv run --locked update-cargo-tool-pins
 
-    echo ""
-    echo "Review the root justfile pins before running setup-tools or CI;"
-    echo "those workflows intentionally enforce the declared versions."
-
-# Update Cargo and uv lockfiles within declared constraints, then sync uv dev tools.
+# Advance Cargo dependency declarations, update Cargo and uv locks, then sync uv dev tools.
+[doc('Update Cargo.toml dependency requirements and all Cargo/uv locked dependencies.')]
 [group('build and setup')]
-update-dependencies: _ensure-uv
+update-dependencies: _ensure-uv _ensure-cargo-edit
+    cargo upgrade --incompatible allow
     cargo update
-    uv lock --upgrade-group dev
+    uv lock --upgrade
     uv sync --locked --group dev
 
 # Refresh reviewer-facing validation diagrams from the reproducible notebook.

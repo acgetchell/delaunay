@@ -24,6 +24,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 # Markdown line-length limit used by this project.
 MAX_LINE_WIDTH = 160
@@ -353,11 +354,11 @@ def _squash_heading_parts(line: str) -> tuple[str, str, str] | None:
     if label is None:
         return None
 
-    title = match.group("title").strip()
+    title = cast("str", match.group("title")).strip()
     if not title:
         return None
 
-    return match.group("indent"), label, title[0].upper() + title[1:]
+    return cast("str", match.group("indent")), label, title[0].upper() + title[1:]
 
 
 def _normalize_squash_heading(line: str, *, nested: bool = False) -> str:
@@ -617,7 +618,7 @@ def _commit_identity(line: str) -> str | None:
     match = _COMMIT_ID_RE.search(line)
     if match is None:
         return None
-    return match.group(1)[:7]
+    return cast("str", match.group(1))[:7]
 
 
 def _entry_commit_identity(lines: list[str], start: int) -> str | None:
@@ -1264,7 +1265,7 @@ def _is_changelog_boundary_heading(line: str) -> bool:
         return False
 
     title = match.group("title").strip()
-    return match.group("level") == "###" and title in _CHANGELOG_SECTION_HEADINGS
+    return cast("str", match.group("level")) == "###" and title in _CHANGELOG_SECTION_HEADINGS
 
 
 def _normalize_entry_heading(line: str, current_entry_summary: str | None) -> str:
@@ -1353,7 +1354,7 @@ def _fence_parts(line: str) -> tuple[str, str, str] | None:
     match = _FENCE_RE.fullmatch(line)
     if match is None:
         return None
-    return match.group("indent"), match.group("fence"), match.group("info")
+    return cast("str", match.group("indent")), cast("str", match.group("fence")), cast("str", match.group("info"))
 
 
 def _opening_code_fence(line: str) -> _CodeFence | None:

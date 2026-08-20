@@ -128,15 +128,18 @@ required tool or pinned version is unavailable during an individual recipe.
 `just setup` composes `setup-tools` with the development build.
 
 Use `just update` for deliberate dependency and tool maintenance. It composes
-`just update-dependencies`, which updates `Cargo.lock` and the uv `dev` group
-within the constraints declared by `Cargo.toml` and `pyproject.toml`, with
+`just update-dependencies`, which advances compatible and incompatible
+dependency requirements in `Cargo.toml`, updates `Cargo.lock`, and upgrades all
+uv-locked dependency groups within the constraints declared by
+`pyproject.toml`, with
 `just update-cargo-tools`, which upgrades only the locally installed Cargo CLI
-packages owned by `setup-tools`. The Cargo tool updater requires
+packages owned by `setup-tools` and atomically reconciles their root `justfile`
+pins after every requested package updates successfully. The Cargo tool updater requires
 `cargo-install-update` from the `cargo-update` package and does not touch other
-Cargo-installed executables or uv's user-global tool environments. Review and
-update the root tool-version pins after a Cargo tool upgrade; `setup-tools` and
-CI intentionally continue enforcing those declared versions. Exact uv
-dependencies remain pinned until their declarations are changed intentionally.
+Cargo-installed executables or uv's user-global tool environments. `setup-tools`
+and CI consume the reconciled declarations. Intentional exact
+uv overrides remain pinned until their declarations are changed explicitly;
+reproducible development tool versions otherwise come from `uv.lock`.
 
 Agents should **prefer running `just` commands instead of invoking the
 underlying tools directly**. The justfile ensures the correct flags,
@@ -821,8 +824,8 @@ just action-lint
 | Compile benchmark harnesses | `just bench-compile` |
 | Compile release integration tests without running | `just test-integration-compile` |
 | Run examples | `just examples` |
-| Update dependency locks and repo-owned Cargo tools | `just update` |
-| Update only Cargo and uv dependency locks | `just update-dependencies` |
+| Update dependency declarations, locks, and repo-owned Cargo tools | `just update` |
+| Update Cargo declarations and Cargo/uv dependency locks | `just update-dependencies` |
 | Run full GitHub-equivalent CI | `just ci` |
 | Run perf-profile benchmarks | `just bench` |
 
