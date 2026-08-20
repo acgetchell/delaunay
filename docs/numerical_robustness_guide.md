@@ -91,25 +91,24 @@ Kernels control which predicate implementations are used by the triangulation al
   Prefer this when your application needs to detect cospherical/coplanar/collinear
   configurations directly (SoS would mask these). Implements `ExactPredicates`
   through D ≤ 5.
-- `FastKernel<T>`: raw f64 arithmetic, no robustness guarantees. Only suitable for 2D with
-  well-conditioned input. Does **not** implement `ExactPredicates`. Construction and
-  insertion work (automatic repair uses a `RobustKernel` fallback internally), but the
-  consuming `delaunayize` conversion is compile-time blocked for a
-  `Triangulation<FastKernel<…>, …>`.
+- `FastKernel<T>`: lean filtered-exact predicates that preserve explicit
+  `BOUNDARY`/`DEGENERATE` signals without `RobustKernel`'s opt-in diagnostic
+  consistency check or higher-dimensional fallback. Implements
+  `ExactPredicates` through D ≤ 5.
 
 ### `ExactPredicates` marker trait (v0.7.3+)
 
 The `ExactPredicates` marker trait identifies kernels whose `orientation` and
 `in_sphere` predicates return the mathematically correct sign in the supported
-dimension, including near-degenerate configurations. Both `AdaptiveKernel` and
-`RobustKernel` implement this trait through D ≤ 5; `FastKernel` does not.
+dimension, including near-degenerate configurations. `AdaptiveKernel`,
+`RobustKernel`, and `FastKernel` implement this trait through D ≤ 5.
 
 The public `delaunayize` conversion requires `K: ExactPredicates`. This is
-enforced at compile time, preventing silent
-misclassification from floating-point-only predicates that can lead to infinite flip
-cycles, invalid topology, or non-Delaunay results. Construction and insertion do **not**
-require the bound — the internal repair path uses the caller's kernel first and falls
-back to `RobustKernel` automatically.
+enforced at compile time, preventing kernels without the supported exact
+predicate contract from entering flip repair. Construction and insertion do
+**not** require the bound; the internal repair path uses the caller's kernel
+first and falls back to `RobustKernel` automatically when its policy requires
+that recovery.
 
 Dimension-bound exactness is intentional: orientation has exact determinant
 support through D ≤ 6, but the public exact repair contract is tied to exact
@@ -228,15 +227,16 @@ match outcome {
 ### Flip-based repair and Delaunay verification (v0.7.3+)
 
 `DelaunayTriangulation` runs flip-based repair passes to restore the local Delaunay property
-after insertion. The repair code uses the same kernel predicates as the insertion path —
-there is no separate "robust predicate override". This unified predicate pipeline ensures
-consistent sign decisions and eliminates flip cycles caused by predicate disagreements.
+after insertion. The primary pass uses the caller's kernel, matching the insertion path. If
+that pass is non-convergent or fails its postcondition, insertion replays repair with
+`RobustKernel` before returning an error. Each pass therefore uses one consistent predicate
+policy; the robust replay is an explicit fallback attempt rather than an in-place predicate
+override.
 
 Since v0.7.3, the exact flip-repair boundary requires `K: ExactPredicates` at
-compile time. This prevents accidental use of `FastKernel` for Delaunay
-conversion, which would produce incorrect results on near-degenerate inputs.
-The public conversion is therefore available only in dimensions covered by
-the `ExactPredicates` marker, D ≤ 5.
+compile time. `AdaptiveKernel`, `RobustKernel`, and `FastKernel` satisfy that
+contract through D ≤ 5, so public conversion is available for each policy in
+those dimensions.
 
 To convert a Levels 1–4 triangulation explicitly, use the consuming workflow:
 
@@ -379,16 +379,16 @@ and per-insertion checks handle any remaining cases.
 - Use finite, reasonably scaled coordinates. Extreme magnitudes and tiny local
   feature sizes are supported better than before, but they still increase exact
   arithmetic and duplicate-detection costs.
-- Treat `FastKernel` as a low-level or exploratory tool. If you use it for
+- Use `FastKernel` when explicit degeneracy signals are useful but the
+  diagnostic consistency check and higher-dimensional fallbacks are not. For
   direct incremental insertion or exploratory batch construction, consider
   setting `DelaunayRepairPolicy::EveryN(n)` (e.g. `n = 10`) instead of the
   default `EveryInsertion` repair policy. Batch construction exposes this
   through `ConstructionOptions::with_batch_repair_policy(...)` and still
   performs final repair/validation. This reduces the frequency of the automatic
   robust-fallback repair pass while still maintaining the Delaunay property
-  periodically. Consuming `delaunayize` is not available for a
-  `Triangulation<FastKernel<…>, …>` — use `AdaptiveKernel` or `RobustKernel`
-  if you need explicit conversion control.
+  periodically. Consuming `delaunayize` is available through D ≤ 5 because
+  `FastKernel` carries the dimension-bounded exact predicate proof.
 - If you see retryable insertion errors, frequent perturbation retries, or skipped vertices,
   preprocess your input (dedup / rescale if appropriate).
 - Treat `InsertionOutcome::Skipped { .. }` from the best-effort API as an expected outcome on

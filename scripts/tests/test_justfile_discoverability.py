@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import benchmark_utils
+import update_cargo_tool_pins
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 JUSTFILE = REPO_ROOT / "justfile"
@@ -82,6 +83,7 @@ def test_cargo_tool_guards_reuse_pinned_helper() -> None:
     """Named Cargo-tool guards should share one exact-version implementation."""
     recipes = just_recipes()
     guard_names = (
+        "_ensure-cargo-edit",
         "_ensure-cargo-llvm-cov",
         "_ensure-cargo-machete",
         "_ensure-dprint",
@@ -138,7 +140,7 @@ def test_uv_backed_recipes_reuse_pinned_guard() -> None:
 
     assert "uv --version" in ensure_uv_body
     assert "uv_version" in ensure_uv_body
-    for name in ("_ensure-actionlint", "_ensure-shellcheck", "_ensure-shfmt", "_ensure-yamllint", "setup-tools"):
+    for name in ("_ensure-actionlint", "_ensure-shellcheck", "_ensure-shfmt", "_ensure-yamllint", "setup-tools", "update-cargo-tools"):
         dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
         assert "_ensure-uv" in dependencies, name
 
@@ -152,8 +154,9 @@ def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
 
     dependency_result = run_just("--dry-run", "update-dependencies")
     dependency_update = dependency_result.stdout + dependency_result.stderr
+    assert "cargo upgrade --incompatible allow" in dependency_update
     assert "cargo update" in dependency_update
-    assert "uv lock --upgrade-group dev" in dependency_update
+    assert "uv lock --upgrade" in dependency_update
     assert "uv sync --locked --group dev" in dependency_update
     assert "cargo install-update --all" not in dependency_update
     assert "uv tool upgrade" not in dependency_update
@@ -161,8 +164,22 @@ def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
     tool_result = run_just("--dry-run", "update-cargo-tools")
     tool_update = tool_result.stdout + tool_result.stderr
     assert "cargo install-update --locked" in tool_update
+    assert "update-cargo-tool-pins" in tool_update
     assert "cargo install-update --all" not in tool_update
     assert "uv tool upgrade" not in tool_update
+    package_block = re.search(r"packages=\(\n(?P<packages>.*?)\n\)", tool_update, re.DOTALL)
+    assert package_block is not None
+    updated_packages = set(re.findall(r"^\s+([a-z0-9-]+)$", package_block.group("packages"), re.MULTILINE))
+    assert updated_packages == set(update_cargo_tool_pins.PIN_TO_PACKAGE.values())
+
+
+def test_managed_cargo_tool_pins_exist_once_in_root_justfile() -> None:
+    """Every managed Cargo package should map to one real root Just pin."""
+    justfile_text = JUSTFILE.read_text(encoding="utf-8")
+
+    for pin in update_cargo_tool_pins.PIN_TO_PACKAGE:
+        assignments = re.findall(rf"^{re.escape(pin)}\s*:=", justfile_text, re.MULTILINE)
+        assert len(assignments) == 1, pin
 
 
 def test_workflow_tool_version_lookups_resolve_from_just() -> None:

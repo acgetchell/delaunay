@@ -2,7 +2,7 @@
 //!
 //! The `Kernel` trait defines the interface for geometric predicates used by
 //! higher-level triangulation algorithms. This separation allows swapping
-//! between fast floating-point and robust exact-arithmetic implementations.
+//! between filtered-exact, diagnostic, and symbolic-perturbation policies.
 //!
 //! # Choosing a kernel
 //!
@@ -17,8 +17,9 @@
 //! coplanar configurations directly. Use the explicit-kernel constructors
 //! (`with_kernel`, `build_with_kernel`, etc.) to opt in.
 //!
-//! **`FastKernel`** — raw f64 arithmetic, no robustness guarantees.
-//! Only suitable for 2D with well-conditioned input.
+//! **`FastKernel`** — the lean filtered-exact policy. It preserves explicit
+//! `BOUNDARY`/`DEGENERATE` signals without the opt-in diagnostic consistency
+//! checks or higher-dimensional fallback supplied by `RobustKernel`.
 //!
 //! Kernels remain generic over `T` to compose with the crate's combinatorial
 //! storage types, but the only currently supported caller-visible coordinate
@@ -280,9 +281,7 @@ pub trait Kernel<const D: usize>: Clone {
 ///
 /// Exact-predicate kernels guarantee that [`Kernel::orientation`] and
 /// [`Kernel::in_sphere`] return the mathematically correct sign for all
-/// inputs in the supported dimension `D`, including near-degenerate configurations. This
-/// eliminates the silent misclassification that can occur with floating-point-only kernels like
-/// [`FastKernel`].
+/// inputs in the supported dimension `D`, including near-degenerate configurations.
 ///
 /// The exact stack-matrix path currently supports insphere predicates through `D <= 5`.
 /// Higher dimensions can still use deterministic robust fallbacks, but they do not implement this
@@ -293,11 +292,9 @@ pub trait Kernel<const D: usize>: Clone {
 /// - [`AdaptiveKernel`] — exact arithmetic + Simulation of Simplicity
 ///   (never returns `0` for distinct points)
 /// - [`RobustKernel`] — exact Bareiss arithmetic (may return `0` for
-///   boundary/degenerate, but never a *wrong* non-zero sign)
-///
-/// [`FastKernel`] does **not** implement this trait because its raw
-/// floating-point arithmetic can produce incorrect signs for
-/// near-degenerate inputs.
+///   boundary/degenerate), diagnostic checks, and higher-dimensional fallbacks
+/// - [`FastKernel`] — filtered-exact arithmetic with explicit
+///   boundary/degenerate results and no diagnostic cross-check
 ///
 /// # Usage
 ///
@@ -315,14 +312,12 @@ pub trait Kernel<const D: usize>: Clone {
 /// { /* ... */ }
 /// ```
 ///
-/// # Negative example
+/// `FastKernel` satisfies the same dimension-bounded exactness contract:
 ///
-/// [`FastKernel`] does not implement `ExactPredicates`, so this fails:
-///
-/// ```compile_fail
+/// ```
 /// use delaunay::prelude::geometry::{ExactPredicates, FastKernel};
 /// fn requires_exact<T: ExactPredicates<3>>() {}
-/// requires_exact::<FastKernel<f64>>(); // ERROR: FastKernel doesn't implement ExactPredicates
+/// requires_exact::<FastKernel<f64>>();
 /// ```
 ///
 /// Dimension-bound exactness is also enforced:
@@ -337,6 +332,7 @@ pub trait ExactPredicates<const D: usize>: Kernel<D> {}
 macro_rules! impl_exact_predicates_for_supported_dims {
     ($($dim:literal),* $(,)?) => {
         $(
+            impl ExactPredicates<$dim> for FastKernel<f64> {}
             impl ExactPredicates<$dim> for RobustKernel<f64> {}
             impl ExactPredicates<$dim> for AdaptiveKernel<f64> {}
         )*
@@ -345,32 +341,24 @@ macro_rules! impl_exact_predicates_for_supported_dims {
 
 impl_exact_predicates_for_supported_dims!(0, 1, 2, 3, 4, 5);
 
-/// Fast floating-point kernel.
+/// Lean filtered-exact kernel.
 ///
-/// Uses standard floating-point arithmetic for maximum performance.
-/// May produce incorrect results for degenerate or near-degenerate cases.
+/// `FastKernel` uses provable f64 filters and falls back to exact Bareiss
+/// determinant signs when a filter is inconclusive. It therefore preserves
+/// explicit `BOUNDARY`/`DEGENERATE` results and implements [`ExactPredicates`]
+/// through D ≤ 5.
 ///
-/// For applications requiring guaranteed correctness in degenerate cases,
-/// use [`AdaptiveKernel`] (the default) instead.
-///
-/// # ⚠️ Warning: Unreliable in 3D and Higher Dimensions
-///
-/// **`FastKernel` should not be used for bulk Delaunay triangulation in 3D or higher
-/// dimensions.** Random point sets in 3D+ routinely produce near-co-spherical
-/// configurations that cause `FastKernel`'s in-sphere predicate to misclassify
-/// points, leading to incorrect conflict zones, invalid topology, and construction
-/// failures.
-///
-/// Use [`AdaptiveKernel`] (the default) for all 3D+ work. `FastKernel` remains
-/// suitable for 2D triangulations with well-conditioned input, or when explicitly
-/// opted into via
-/// [`DelaunayTriangulationBuilder::build_with_kernel`](crate::DelaunayTriangulationBuilder::build_with_kernel)
-/// for advanced use cases where the caller has verified the input is non-degenerate.
+/// Use [`AdaptiveKernel`] (the default) when cospherical and coplanar ties should
+/// be resolved deterministically with Simulation of Simplicity. Use
+/// [`RobustKernel`] when opt-in diagnostic consistency checks or the
+/// higher-dimensional fallback behavior are required.
 ///
 /// # Performance
 ///
-/// `FastKernel` wraps the standard predicates from [`crate::geometry::predicates`]
-/// with zero overhead, providing excellent performance for well-conditioned input.
+/// `FastKernel` wraps the standard filtered-exact predicates from
+/// [`crate::geometry::predicates`] without the diagnostic cross-check performed
+/// by [`RobustKernel`]. Predicate cost depends on dimension and degeneracy; use
+/// the repository benchmarks for workload-specific decisions.
 ///
 /// # Examples
 ///
@@ -440,7 +428,8 @@ impl<const D: usize> Kernel<D> for FastKernel<f64> {
         simplex_points: &[Point<D>],
         test_point: &Point<D>,
     ) -> Result<i32, CoordinateConversionError> {
-        // Use insphere_lifted for optimal performance (5.3x faster in 3D)
+        // Use the smaller relative-coordinate determinant. Its fast filter
+        // falls back to an exact sign whenever the result is inconclusive.
         let result = insphere_lifted(simplex_points, *test_point).map_err(|e| {
             // Preserve original CoordinateConversionError if present
             match e {
@@ -483,8 +472,8 @@ impl<const D: usize> Kernel<D> for FastKernel<f64> {
 
 /// Robust exact-arithmetic kernel.
 ///
-/// Uses exact Bareiss arithmetic backed by provable error bounds.
-/// Slower than [`FastKernel`] but provides robust numerical stability.
+/// Uses the same filtered-exact core as [`FastKernel`], with opt-in diagnostic
+/// consistency checks and higher-dimensional fallbacks.
 ///
 /// # When to use `RobustKernel` over [`AdaptiveKernel`]
 ///
@@ -1348,17 +1337,13 @@ mod tests {
         assert_exact_predicates::<RobustKernel<f64>, 5>();
     }
 
-    /// Negative compile-time assertion: `FastKernel` must NOT implement
-    /// `ExactPredicates`.  This is verified by the `compile_fail` doctest
-    /// on [`ExactPredicates`] (see trait doc) and by the absence of an impl
-    /// block; this test documents the intent.
     #[test]
-    fn test_fast_kernel_does_not_implement_exact_predicates() {
-        // If `FastKernel` ever gains an `ExactPredicates` impl, the
-        // compile_fail doctest will break.  This test serves as a
-        // human-readable reminder of the design invariant.
-        fn _requires_exact<T: ExactPredicates<3>>() {}
-        // Uncomment the next line to verify it fails to compile:
-        // _requires_exact::<FastKernel<f64>>();
+    fn test_fast_kernel_implements_exact_predicates_in_supported_dimensions() {
+        assert_exact_predicates::<FastKernel<f64>, 0>();
+        assert_exact_predicates::<FastKernel<f64>, 1>();
+        assert_exact_predicates::<FastKernel<f64>, 2>();
+        assert_exact_predicates::<FastKernel<f64>, 3>();
+        assert_exact_predicates::<FastKernel<f64>, 4>();
+        assert_exact_predicates::<FastKernel<f64>, 5>();
     }
 }

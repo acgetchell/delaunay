@@ -113,6 +113,14 @@ uv run coverage_report --help
 `coverage-report` summarizes the Cobertura XML produced by `just coverage-ci`.
 `coverage_report` is kept as a backwards-compatible alias.
 
+### Tool-pin maintenance
+
+`just update` upgrades the Cargo CLI packages owned by `setup-tools`, then runs
+`update-cargo-tool-pins` to atomically reconcile their installed versions with
+the root `justfile`. The updater validates the complete managed package set
+before replacing the pin source, so missing or malformed Cargo output leaves
+the existing declarations unchanged.
+
 ## Shell helpers
 
 ```bash

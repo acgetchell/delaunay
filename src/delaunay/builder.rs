@@ -2036,14 +2036,13 @@ where
     /// Builds the triangulation using a caller-supplied kernel.
     ///
     /// [`build()`](Self::build) already defaults to [`AdaptiveKernel`], so this method is
-    /// only needed when you want a different kernel (e.g. [`FastKernel`](crate::geometry::kernel::FastKernel)
-    /// for workloads that prioritize speed over exact predicate correctness, or a custom
-    /// implementation).
+    /// only needed when you want a different kernel (e.g.
+    /// [`FastKernel`](crate::geometry::kernel::FastKernel) for a lean
+    /// degeneracy-preserving filtered-exact policy, or a custom implementation).
     ///
-    /// **Note:** `FastKernel` is accepted for direct construction, but the
-    /// consuming [`delaunayize`](crate::delaunayize::delaunayize) conversion
-    /// requires [`ExactPredicates`](crate::geometry::kernel::ExactPredicates)
-    /// and is not available for a `Triangulation<FastKernel<…>, …>`.
+    /// **Note:** consuming [`delaunayize`](crate::delaunayize::delaunayize)
+    /// requires [`ExactPredicates`](crate::geometry::kernel::ExactPredicates).
+    /// `FastKernel` satisfies that dimension-bounded contract through D ≤ 5.
     ///
     /// # Errors
     ///

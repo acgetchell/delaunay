@@ -28,7 +28,7 @@ import sys
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from postprocess_changelog import normalize_entry_headings_text, postprocess_text
 
@@ -189,7 +189,7 @@ def _parse_release_heading(heading_line: str, line_number: int) -> str:
             msg = f"Invalid release date at line {line_number}: {release_date!r}"
             raise ValueError(msg) from err
 
-    return release_match.group("version")
+    return cast("str", release_match.group("version"))
 
 
 def parse_changelog(text: str) -> ParsedChangelog:

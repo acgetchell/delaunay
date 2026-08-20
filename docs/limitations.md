@@ -56,9 +56,10 @@ provable f64 fast filter, exact Bareiss determinant signs, and SoS
 tie-breaking. Use `RobustKernel` when you need explicit
 `BOUNDARY`/`DEGENERATE` signals instead of SoS resolving ties.
 
-`FastKernel` is raw floating-point arithmetic. It is useful for exploratory
-well-conditioned 2D work and for low-level tests, but it does not implement
-`ExactPredicates` and cannot call the explicit public repair APIs.
+`FastKernel` is the lean filtered-exact policy: it preserves explicit
+`BOUNDARY`/`DEGENERATE` results without `RobustKernel`'s opt-in diagnostic
+cross-check or higher-dimensional fallback. It implements `ExactPredicates`
+through D ≤ 5 and can use the explicit public repair APIs in those dimensions.
 
 See [`numerical_robustness_guide.md`](numerical_robustness_guide.md) for kernel
 selection, duplicate handling, exact predicate details, and retry semantics.

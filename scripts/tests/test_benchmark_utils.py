@@ -1887,7 +1887,7 @@ class TestBaselineGenerator:
         assert result.reused is True
         mock_generate.assert_not_called()
 
-    def test_cached_ref_baseline_regenerates_stale_cache(self, tmp_path) -> None:
+    def test_cached_ref_baseline_regenerates_stale_cache(self, tmp_path: Path) -> None:
         """Test that stale cache entries are refreshed and revalidated before reuse."""
         commit = "abc123def456"
         options = LocalRefBaselineCacheOptions(
@@ -2209,37 +2209,41 @@ class TestEdgeCases:
 class TestWorkflowHelper:
     """Test cases for WorkflowHelper class."""
 
-    @patch.dict(os.environ, {"BASELINE_REF": "main"}, clear=True)
     def test_determine_ref_name_from_baseline_ref(self) -> None:
         """Test ref name determination from explicit BASELINE_REF."""
-        ref_name = WorkflowHelper.determine_ref_name()
+        with patch.dict(os.environ, {"BASELINE_REF": "main"}, clear=True):
+            ref_name = WorkflowHelper.determine_ref_name()
         assert ref_name == "main"
 
-    @patch.dict(os.environ, {"GITHUB_REF_NAME": "feature/perf"}, clear=True)
     def test_determine_ref_name_from_github_ref_name(self) -> None:
         """Test ref name determination from GITHUB_REF_NAME."""
-        ref_name = WorkflowHelper.determine_ref_name()
+        with patch.dict(os.environ, {"GITHUB_REF_NAME": "feature/perf"}, clear=True):
+            ref_name = WorkflowHelper.determine_ref_name()
         assert ref_name == "feature/perf"
 
-    @patch.dict(os.environ, {"INPUT_REF": "refs/tags/v1.2.3"}, clear=True)
     def test_determine_ref_name_normalizes_trusted_ref_namespace(self) -> None:
         """Test trusted fully-qualified refs are normalized before checkout."""
-        ref_name = WorkflowHelper.determine_ref_name()
+        with patch.dict(os.environ, {"INPUT_REF": "refs/tags/v1.2.3"}, clear=True):
+            ref_name = WorkflowHelper.determine_ref_name()
         assert ref_name == "v1.2.3"
 
-    @patch.dict(os.environ, {"INPUT_REF": "refs/pull/123/merge"}, clear=True)
     def test_determine_ref_name_rejects_pull_request_ref(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test untrusted checkout namespaces are rejected before checkout."""
-        with pytest.raises(SystemExit) as exc_info:
+        with (
+            patch.dict(os.environ, {"INPUT_REF": "refs/pull/123/merge"}, clear=True),
+            pytest.raises(SystemExit) as exc_info,
+        ):
             WorkflowHelper.determine_ref_name()
 
         assert exc_info.value.code == 1
         assert "refs/pull/123/merge" in capsys.readouterr().err
 
-    @patch.dict(os.environ, {"GITHUB_REF": "refs/changes/12/34"}, clear=True)
     def test_determine_ref_name_rejects_untrusted_github_ref(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test derived GitHub refs pass through the same namespace validation."""
-        with pytest.raises(SystemExit) as exc_info:
+        with (
+            patch.dict(os.environ, {"GITHUB_REF": "refs/changes/12/34"}, clear=True),
+            pytest.raises(SystemExit) as exc_info,
+        ):
             WorkflowHelper.determine_ref_name()
 
         assert exc_info.value.code == 1

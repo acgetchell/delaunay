@@ -7,7 +7,7 @@ snapshots live in [`archive/`](archive/).
 
 ### v0.7.8 pre-v0.8.0 cleanup (released)
 
-The v0.7.8 line is the current pre-v0.8.0 cleanup baseline. It keeps the
+The v0.7.8 line was the final pre-v0.8.0 cleanup baseline. It kept the
 performance-summary work from v0.7.7, closes the release-facing documentation
 and doctest hygiene pass, tightens default test-suite budgets, validates compact
 `T^3` quotient construction, and restores failed topology-repair
@@ -29,35 +29,34 @@ Key takeaways from v0.7.8:
   for construction throughput, generated simplex counts, and circumsphere
   predicate behavior.
 
-### v0.8.0 paper-facing API and topology push
+### v0.8.0 paper-facing API and topology push (released)
 
-v0.8.0 is the next feature-bearing release and is expected to carry the larger
-work intentionally deferred from v0.7.8 cleanup. It will require Rust 1.97.1;
-the final release gate is an explicit audit of the 1.97.1 toolchain surface
-before shipping.
+v0.8.0 delivered the paper-facing API and topology work deferred from v0.7.8.
+It requires Rust 1.97.1, including the completed audit of the 1.97.1 toolchain
+surface.
 
-- **Pachner/Edit API shape (#252/#253/#350/#337):** unify the Pachner move API,
-  expand public flip benchmark coverage, add Monte-Carlo stress benchmarks, and
-  support periodic external-simplex parity constraints in bistellar flips.
-- **Linear algebra and API boundaries (#424):** keep `la-stack` details behind
-  `src/geometry/matrix.rs`, preserve typed backend errors in geometry helpers,
-  and keep README/API guidance aligned with the focused prelude reference in
+- **Pachner/Edit API shape (#252/#253/#350/#337):** unified the Pachner move API,
+  expanded public flip benchmark coverage, added Monte-Carlo stress benchmarks,
+  and supported periodic external-simplex parity constraints in bistellar flips.
+- **Linear algebra and API boundaries (#424):** kept `la-stack` details behind
+  `src/geometry/matrix.rs`, preserved typed backend errors in geometry helpers,
+  and kept README/API guidance aligned with the focused prelude reference in
   `docs/code_organization.md`.
-- **Topology and incidence surface (#359/#304):** add stable incidence queries
+- **Topology and incidence surface (#359/#304):** added stable incidence queries
   for simplex-local topology and dedicated targeted topology repair stages for
   ridge and vertex-link failures.
-- **Transactional rollback architecture (#364):** replace or centralize
+- **Transactional rollback architecture (#364):** replaced or centralized
   full-TDS clone rollback where benchmarks show it matters, while preserving
   the current strong failed-mutation rollback guarantee.
-- **Naming cleanup (#323):** make the breaking `Cell` → `Simplex` rename.
-- **Iterator cleanup (#353):** prefer iterator-based collection-building paths
+- **Naming cleanup (#323):** made the breaking `Cell` → `Simplex` rename.
+- **Iterator cleanup (#353):** preferred iterator-based collection-building paths
   where that improves clarity and allocation behavior.
-- **Rust 1.97.1 release gate (#329/#496):** raise the v0.8.0 MSRV to Rust
-  1.97.1, finish the baseline `assert_matches!` cleanup, audit the new
+- **Rust 1.97.1 release gate (#329/#496):** raised the v0.8.0 MSRV to Rust
+  1.97.1, finished the baseline `assert_matches!` cleanup, audited the new
   integer/`NonZero` bit helpers against Hilbert bit-depth/index invariants,
-  review `RepeatN::default` and Cargo 1.97 tooling changes for useful adoption,
-  and re-benchmark predicate `cold_path` decisions under the 1.97.1 compiler.
-- **Notebook/export artifact (#64/#408):** ship the generic simplicial-complex
+  reviewed `RepeatN::default` and Cargo 1.97 tooling changes for useful adoption,
+  and re-benchmarked predicate `cold_path` decisions under the 1.97.1 compiler.
+- **Notebook/export artifact (#64/#408):** shipped the generic simplicial-complex
   JSON export, reproducible quickstart and validation notebooks, tracked
   validation diagrams, and reviewer-facing artifact instructions.
 

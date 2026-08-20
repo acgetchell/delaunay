@@ -48,6 +48,7 @@ paper-pdf-normalize = "paper_pdf_normalize:main"
 paper-source-date-epoch = "paper_source_date:main"
 postprocess-changelog = "postprocess_changelog:main"
 tag-release = "tag_release:main"
+update-cargo-tool-pins = "update_cargo_tool_pins:main"
 
 # Configure setuptools to find packages in scripts/ directory
 [tool.setuptools]
@@ -59,12 +60,16 @@ py-modules = [
     "check_docs_version_sync",
     "hardware_utils",
     "notebook_check",
+    "notebook_utils",
+    "notebook_validation",
+    "notebook_visualization",
     "paper_check",
     "paper_pdf_normalize",
     "paper_source_date",
     "postprocess_changelog",
     "subprocess_utils",
     "tag_release",
+    "update_cargo_tool_pins",
 ]
 
 [tool.ruff]
@@ -192,6 +197,7 @@ known-first-party = [
     "postprocess_changelog",
     "subprocess_utils",
     "tag_release",
+    "update_cargo_tool_pins",
 ]
 force-single-line = false
 split-on-trailing-comma = true
@@ -241,19 +247,20 @@ line-length = 160
 
 [dependency-groups]
 dev = [
-    "actionlint-py==1.7.12.24",
-    "pytest==9.1.1",
-    "ruff==0.16.1",
-    "semgrep==1.172.0",
-    "shellcheck-py==0.11.0.1",
-    "shfmt-py==4.0.0",
-    "ty==0.0.66",
-    "yamllint==1.38.0",
+    "actionlint-py>=1.7.12.24",
+    "pytest>=9.1.1",
+    "ruff>=0.16.1",
+    "semgrep>=1.172.0",
+    "shellcheck-py>=0.11.0.1",
+    "shfmt-py>=4.0.0",
+    "ty>=0.0.66",
+    "yamllint>=1.38.0",
 ]
 notebooks = [
     "ipykernel>=7.3.0",
     "jupyterlab>=4.6.2",
     "matplotlib>=3.11.1",
+    "numpy>=2.5.2",
     "nbclient>=0.11.0",
     "nbconvert>=7.17.1",
     "nbformat>=5.10.4",

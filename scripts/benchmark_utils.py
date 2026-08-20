@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from itertools import product
 from pathlib import Path
 from shutil import copy2 as copyfile  # NOTE: Use copy2 (metadata-preserving) under the 'copyfile' alias for tests/patching convenience.
-from typing import TYPE_CHECKING, Literal, NoReturn, TextIO, TypeIs
+from typing import TYPE_CHECKING, Literal, NoReturn, TextIO, TypeIs, cast
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -1080,7 +1080,7 @@ class PerformanceSummaryGenerator:
 
         version = package.get("version")
         if isinstance(version, str) and version.strip():
-            return version.strip()
+            return cast("str", version).strip()
         return None
 
     def _get_version_date(self) -> str:
@@ -2292,7 +2292,7 @@ class CriterionParser:
             return dim
         # Fallback: extract trailing "<digits>d" or "<digits>D"
         m = re.search(r"(\d+)[dD]$", dim_dir.name)
-        return m.group(1) if m else None
+        return cast("str", m.group(1)) if m else None
 
     @staticmethod
     def _find_estimates_file(point_dir: Path) -> Path | None:
@@ -3100,10 +3100,12 @@ def _cargo_manifest_bench_targets(worktree: Path) -> set[str]:
     benches = data.get("bench")
     if not isinstance(benches, list):
         return set()
-    names = set()
+    names: set[str] = set()
     for bench in benches:
-        if isinstance(bench, dict) and isinstance(bench.get("name"), str):
-            names.add(bench["name"])
+        if isinstance(bench, dict):
+            name = bench.get("name")
+            if isinstance(name, str):
+                names.add(cast("str", name))
     return names
 
 
@@ -5249,7 +5251,7 @@ def _parse_github_owner_repo(remote_url: str) -> tuple[str, str] | None:
     # git@github.com:OWNER/REPO
     match = re.match(r"^git@github\.com:(?P<owner>[^/]+)/(?P<repo>.+)$", url)
     if match:
-        return match.group("owner"), match.group("repo")
+        return cast("str", match.group("owner")), cast("str", match.group("repo"))
 
     # ssh://git@github.com/OWNER/REPO
     if url.startswith("ssh://"):

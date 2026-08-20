@@ -72,8 +72,9 @@ meshing, or production-scale dynamic remeshing.
   retries.
 - [x] Complete set of bistellar flip / [Pachner moves] through D=5 via the Edit API, plus bounded
   Delaunay repair.
-- [x] Configurable predicate kernels: `AdaptiveKernel` by default, `RobustKernel` for exact
-  degeneracy-preserving predicates, and `FastKernel` for well-conditioned exploratory work.
+- [x] Configurable predicate kernels: `AdaptiveKernel` by default for deterministic SoS tie-breaking,
+  `RobustKernel` for exact diagnostics and higher-dimensional fallbacks, and `FastKernel` for a lean
+  filtered-exact path that preserves degeneracy signals through D ≤ 5.
 - [x] D-dimensional [Convex hulls] and [Delaunay triangulations].
 - [x] Euclidean construction and periodic `T^2`/`T^3` image-point quotients through
   `DelaunayTriangulationBuilder`.
@@ -347,7 +348,7 @@ visualization, massively parallel/GPU construction, out-of-core meshing, full sp
 beyond the bounded `S^2`/`S^3` prototype, and hyperbolic triangulation semantics.
 
 See [`docs/limitations.md`](docs/limitations.md) for operational limits and [`docs/roadmap.md`](docs/roadmap.md)
-for the v0.8.0 paper-facing API/topology push and later feature tracks.
+for v0.8.1 follow-up work and later feature tracks.
 
 ## 🤝 Contributing
 
