@@ -76,7 +76,8 @@ Property-based tests for Point data structures verifying fundamental properties.
 
 #### [`proptest_tds.rs`](./proptest_tds.rs)
 
-Property-based tests for Tds (Triangulation Data Structure) combinatorial/topological invariants.
+Property-based tests for the Levels 1–2 element and combinatorial-consistency
+invariants owned by `Tds`.
 
 **Architectural Layer:** Pure combinatorial structure (no geometric predicates)
 
@@ -117,7 +118,8 @@ Property-based tests focused on coherent orientation invariants in the TDS layer
 
 Property-based tests for Triangulation layer invariants (generic geometric layer with kernel).
 
-**Architectural Layer:** Generic geometric operations with kernel (delegates topology to Tds)
+**Architectural Layer:** Levels 3–4 intrinsic topology and realization over a
+Levels 1–2 `Tds`, together with generic kernel-backed geometric operations
 
 **Test Coverage:**
 
@@ -372,7 +374,8 @@ Integration tests for serialization ensuring vertex identifiers and associated d
 
 #### [`delaunayize_workflow.rs`](./delaunayize_workflow.rs)
 
-Integration tests for the `delaunayize_by_flips` workflow validating the public API in `delaunay::delaunayize`.
+Integration tests for the consuming `delaunayize` workflow and its explicit
+`delaunayize_by_flips` alias, validating the public API in `delaunay::delaunayize`.
 
 **Test Coverage:**
 

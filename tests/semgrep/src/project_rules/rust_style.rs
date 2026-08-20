@@ -2,9 +2,310 @@
 
 use num_traits::NumCast;
 
+pub struct DelaunayTriangulation<K, U, V, const D: usize>(K, U, V);
+pub struct Triangulation<K, U, V, const D: usize>(K, U, V);
+pub struct Tds<U, V, const D: usize>(U, V);
+pub trait BistellarFlips<const D: usize> {}
+pub trait PachnerMoves<const D: usize> {}
+
+// ruleid: delaunay.rust.no-topology-edit-traits-for-delaunay-owner
+impl<K, U, V, const D: usize> BistellarFlips<D> for DelaunayTriangulation<K, U, V, D> {}
+
+// ok: delaunay.rust.no-topology-edit-traits-for-delaunay-owner
+impl<K, U, V, const D: usize> BistellarFlips<D> for Triangulation<K, U, V, D> {}
+
+// ruleid: delaunay.rust.no-lower-proof-delaunay-promotion
+fn into_realization_validated_delaunay() {}
+
+// ok: delaunay.rust.no-lower-proof-delaunay-promotion
+fn into_realization_validated_triangulation() {}
+
+mod invalid_delaunay_candidate_fixture {
+    use super::*;
+
+    // ruleid: delaunay.rust.no-unproven-delaunay-candidate-storage
+    struct DelaunayTriangulationCandidate<K, U, V, const D: usize> {
+        candidate: DelaunayTriangulation<K, U, V, D>,
+    }
+}
+
+mod valid_triangulation_candidate_fixture {
+    use super::*;
+
+    // ok: delaunay.rust.no-unproven-delaunay-candidate-storage
+    struct DelaunayTriangulationCandidate<K, U, V, const D: usize> {
+        candidate: Triangulation<K, U, V, D>,
+    }
+}
+
+mod invalid_triangulation_assembly_candidate_fixture {
+    use super::*;
+
+    // ruleid: delaunay.rust.no-unproven-triangulation-assembly-storage
+    struct TriangulationAssemblyCandidate<K, U, V, const D: usize> {
+        candidate: Triangulation<K, U, V, D>,
+    }
+}
+
+mod valid_triangulation_assembly_candidate_fixture {
+    use super::*;
+
+    // ok: delaunay.rust.no-unproven-triangulation-assembly-storage
+    struct TriangulationAssemblyCandidate<K, U, V, const D: usize> {
+        tds: Tds<U, V, D>,
+        kernel: K,
+    }
+}
+
+struct MutableTdsOwnerFixture<U, V, const D: usize> {
+    tds: Tds<U, V, D>,
+}
+
+struct LeakyTdsStorageFixture {
+    // ruleid: delaunay.rust.no-crate-visible-tds-proof-storage
+    pub(crate) construction_state: TriangulationConstructionState,
+    // ruleid: delaunay.rust.no-crate-visible-tds-proof-storage
+    pub(in crate::core) simplices: Vec<usize>,
+    // ruleid: delaunay.rust.no-crate-visible-tds-proof-storage
+    pub identity: u64,
+    // ok: delaunay.rust.no-crate-visible-tds-proof-storage
+    pub(in crate::core::tds) generation: u64,
+}
+
+impl<U, V, const D: usize> MutableTdsOwnerFixture<U, V, D> {
+    // ruleid: delaunay.rust.no-public-mutable-tds-accessor
+    pub fn storage_mut(&mut self) -> &mut Tds<U, V, D> {
+        &mut self.tds
+    }
+
+    // ok: delaunay.rust.no-public-mutable-tds-accessor
+    pub(crate) fn storage_mut_for_internal_candidate(&mut self) -> &mut Tds<U, V, D> {
+        &mut self.tds
+    }
+}
+
+struct TriangulationPromotionFixture;
+
+impl TriangulationPromotionFixture {
+    pub fn try_from_tds_with_topology_context() -> Result<(), ()> {
+        let candidate = Self;
+        if candidate.is_valid_topology().is_err() {
+            return Err(());
+        }
+        // ruleid: delaunay.rust.no-level12-revalidation-in-triangulation-promotion
+        candidate.validate_realization()
+    }
+
+    // ok: delaunay.rust.no-level12-revalidation-in-triangulation-promotion
+    pub fn try_from_validated_tds_with_topology_context() -> Result<(), ()> {
+        let candidate = Self;
+        candidate.is_valid_topology()?;
+        candidate.is_valid_realization()
+    }
+
+    fn validate_realization(&self) -> Result<(), ()> {
+        Ok(())
+    }
+
+    fn is_valid_topology(&self) -> Result<(), ()> {
+        Ok(())
+    }
+
+    fn is_valid_realization(&self) -> Result<(), ()> {
+        Ok(())
+    }
+}
+
+// ruleid: delaunay.rust.no-in-place-public-delaunayize
+pub fn delaunayize_by_flips<K, U, V, const D: usize>(
+    _candidate: &mut DelaunayTriangulation<K, U, V, D>,
+) {
+}
+
+// ok: delaunay.rust.no-in-place-public-delaunayize
+pub fn delaunayize<K, U, V, const D: usize>(
+    _triangulation: Triangulation<K, U, V, D>,
+) {
+}
+
+struct TriangulationRealizationValidationError;
+struct DelaunayTriangulationValidationError;
+struct DelaunayizeError;
+struct TriangulationRefinementError;
+struct DelaunayTriangulationRefinementError;
+struct DelaunayTdsRefinementError;
+struct DelaunayizeRefinementError;
+struct PlManifoldRepairError;
+struct PlManifoldTdsRepairResult;
+struct PlManifoldRepairRefinementError;
+
+struct RecoverableRefinementFixture;
+
+impl RecoverableRefinementFixture {
+    // ruleid: delaunay.rust.proof-refinement-must-return-lower-owner
+    pub fn try_from_tds_with_topology_context(
+        _tds: Tds<(), (), 2>,
+    ) -> Result<Self, TriangulationRealizationValidationError> {
+        todo!()
+    }
+
+    // ruleid: delaunay.rust.proof-refinement-must-return-lower-owner
+    pub fn try_from_triangulation(
+        _triangulation: Triangulation<(), (), (), 2>,
+    ) -> Result<Self, DelaunayTriangulationValidationError> {
+        todo!()
+    }
+
+    // ruleid: delaunay.rust.proof-refinement-must-return-lower-owner
+    pub fn try_from_tds(
+        _tds: Tds<(), (), 2>,
+    ) -> Result<Self, DelaunayTriangulationValidationError> {
+        todo!()
+    }
+
+    // ok: delaunay.rust.proof-refinement-must-return-lower-owner
+    pub fn try_from_tds_recoverably(
+        _tds: Tds<(), (), 2>,
+    ) -> Result<Self, DelaunayTdsRefinementError> {
+        todo!()
+    }
+}
+
+mod lossy_delaunayize_fixture {
+    use super::*;
+
+    // ruleid: delaunay.rust.proof-refinement-must-return-lower-owner
+    pub fn delaunayize(
+        _triangulation: Triangulation<(), (), (), 2>,
+    ) -> Result<(), DelaunayizeError> {
+        todo!()
+    }
+}
+
+// ok: delaunay.rust.proof-refinement-must-return-lower-owner
+pub fn delaunayize_recoverably(
+    _triangulation: Triangulation<(), (), (), 2>,
+) -> Result<(), DelaunayizeRefinementError> {
+    todo!()
+}
+
+mod lossy_pl_manifold_repair_fixture {
+    use super::*;
+
+    // ruleid: delaunay.rust.proof-refinement-must-return-lower-owner
+    pub fn repair_pl_manifold_tds(
+        _tds: Tds<(), (), 2>,
+    ) -> Result<PlManifoldTdsRepairResult, PlManifoldRepairError> {
+        todo!()
+    }
+
+    // ok: delaunay.rust.proof-refinement-must-return-lower-owner
+    pub fn repair_pl_manifold_tds_recoverably(
+        _tds: Tds<(), (), 2>,
+    ) -> Result<PlManifoldTdsRepairResult, PlManifoldRepairRefinementError> {
+        todo!()
+    }
+}
+
+fn detached_trusted_delaunay_publication(candidate: RecoverableRefinementFixture) {
+    // ruleid: delaunay.rust.no-detached-trusted-delaunay-publication
+    candidate.into_delaunay_after_level_five_check();
+}
+
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
+    // ruleid: delaunay.rust.no-public-in-place-delaunay-repair
+    pub fn repair_delaunay_with_flips(&mut self) {}
+
+    // ruleid: delaunay.rust.no-public-in-place-delaunay-repair
+    pub fn repair_delaunay_with_flips_advanced(&mut self) {}
+
+    // ok: delaunay.rust.no-public-in-place-delaunay-repair
+    pub(crate) fn repair_delaunay_with_flips_capped(&mut self) {}
+
+    // ruleid: delaunay.rust.no-public-delaunay-repair-policy-setter
+    pub const fn set_delaunay_repair_policy(&mut self) {}
+
+    // ok: delaunay.rust.no-public-delaunay-repair-policy-setter
+    pub(crate) const fn set_internal_delaunay_repair_policy(&mut self) {}
+
+    // ruleid: delaunay.rust.no-build-delaunay-then-demote-terminal
+    fn build_candidate_with_kernel_options() -> Result<Self, ()> {
+        todo!()
+    }
+}
+
+// ok: delaunay.rust.no-build-delaunay-then-demote-terminal
+fn build_candidate_with_kernel_options_valid<K, U, V, const D: usize>()
+-> Result<valid_triangulation_assembly_candidate_fixture::TriangulationAssemblyCandidate<K, U, V, D>, ()> {
+    todo!()
+}
+
+// ruleid: delaunay.rust.no-level4-delaunay-repair-constructor
+fn from_realized_triangulation_for_repair() {}
+
+// ok: delaunay.rust.no-level4-delaunay-repair-constructor
+fn from_validated_delaunay_candidate() {}
+
+// ruleid: delaunay.rust.no-detached-candidate-validation-proof
+struct DelaunayTriangulationValidationProof(());
+
+// ruleid: delaunay.rust.no-detached-candidate-validation-proof
+struct TriangulationRealizationValidationProof(());
+
+// ok: delaunay.rust.no-detached-candidate-validation-proof
+// ruleid: delaunay.rust.no-cumulative-revalidation-delaunay-promotion
+fn try_into_validated_delaunay() {}
+
+// ok: delaunay.rust.no-cumulative-revalidation-delaunay-promotion
+fn try_into_delaunay() {}
+
+fn verify_triangulation_via_flip_predicates<K, U, V, const D: usize>(
+    triangulation: &Triangulation<K, U, V, D>,
+) -> Result<(), Error>
+where
+    K: Kernel<D>,
+{
+    if needs_local_verification() {
+        let _ = ConnectivityPostcondition::Defer;
+    }
+    // ruleid: delaunay.rust.no-connectivity-recheck-in-level5-proof-promotion
+    let _ = ConnectivityPostcondition::Check;
+    Ok(())
+}
+
+// ok: delaunay.rust.no-connectivity-recheck-in-level5-proof-promotion
+fn verify_triangulation_via_flip_predicates_without_lower_revalidation() {
+    let _ = ConnectivityPostcondition::Defer;
+}
+
+// ruleid: delaunay.rust.no-unproven-triangulation-assembly-storage
+fn try_into_structurally_valid_triangulation() {}
+
+// ruleid: delaunay.rust.no-build-delaunay-then-demote-terminal
+fn validate_constructed_triangulation() {}
+
+fn invalid_triangulation_terminal(builder: Builder, kernel: &Kernel) {
+    // ruleid: delaunay.rust.no-build-delaunay-then-demote-terminal
+    builder.build_with_kernel(kernel)
+        .map(DelaunayTriangulation::into_triangulation);
+}
+
+// ok: delaunay.rust.no-build-delaunay-then-demote-terminal
+fn build_triangulation_with_kernel_options() {}
+
 // ruleid: delaunay.rust.no-module-scope-cfg-test-use
 #[cfg(test)]
 use crate::tests::FixtureOnlyImport;
+
+// ruleid: delaunay.rust.no-cfg-test-items-outside-test-modules
+#[cfg(test)]
+fn misplaced_test_helper() {}
+
+// ok: delaunay.rust.no-cfg-test-items-outside-test-modules
+#[cfg(test)]
+mod correctly_scoped_test_support {
+    fn helper() {}
+}
 
 // ruleid: delaunay.rust.prefer-prelude-imports-in-examples-benches
 use delaunay::core::vertex::Vertex as DeepVertex;
@@ -437,6 +738,74 @@ pub fn legacy_delaunay_batch_constructors_bad(
         // ruleid: delaunay.rust.no-legacy-delaunay-try-new-constructors
         DelaunayTriangulation::try_with_options_and_statistics(vertices, options);
 }
+
+pub fn legacy_topology_guarantee_and_pachner_terminals_bad(proposal: PachnerProposal) {
+    // ruleid: delaunay.rust.no-validation-cadence-topology-variant
+    let _guarantee = TopologyGuarantee::PLManifoldStrict;
+    // ruleid: delaunay.rust.no-validation-cadence-topology-variant
+    let _schema = VisualizationTopologyGuarantee::PLManifoldStrict;
+    // ruleid: delaunay.rust.no-topology-only-pachner-terminal
+    proposal.attempt_topology_on();
+
+    // ruleid: delaunay.rust.no-validation-cadence-topology-variant
+    let _legacy_wire_value = "PLManifoldStrict";
+    // ok: delaunay.rust.no-topology-only-pachner-terminal
+    proposal.attempt_on();
+}
+
+pub fn legacy_completion_validation_bad<K, U, V, const D: usize>(
+    triangulation: &Triangulation<K, U, V, D>,
+) {
+    // ruleid: delaunay.rust.no-completion-phase-validation-api
+    triangulation.validate_at_completion();
+    // ok: delaunay.rust.no-completion-phase-validation-api
+    triangulation.validate_vertex_links();
+}
+
+enum LegacyConstructionError {
+    // ruleid: delaunay.rust.no-completion-phase-validation-api
+    CompletionValidation,
+}
+
+pub fn silent_validation_configuration_bad<K, U, V, const D: usize>(
+    triangulation: &mut Triangulation<K, U, V, D>,
+) {
+    // ruleid: delaunay.rust.no-silent-validation-configuration-setters
+    triangulation.set_validation_policy(ValidationPolicy::Always);
+    // ruleid: delaunay.rust.no-silent-validation-configuration-setters
+    triangulation.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+    // ok: delaunay.rust.no-silent-validation-configuration-setters
+    let _ = triangulation.try_set_validation_policy(ValidationPolicy::Always);
+    // ok: delaunay.rust.no-silent-validation-configuration-setters
+    let _ = triangulation.try_set_topology_guarantee(TopologyGuarantee::PLManifold);
+}
+
+// ruleid: delaunay.rust.no-validation-policy-in-construction-options
+struct ConstructionOptions {
+    validation_policy: Option<ValidationPolicy>,
+}
+
+struct DelaunayOwnerTdsOnlySerializationFixture {
+    tri: TriangulationStorageFixture,
+}
+
+struct TriangulationStorageFixture {
+    tds: Tds,
+}
+
+// ruleid: delaunay.rust.no-tds-only-delaunay-serialization
+impl Serialize for DelaunayTriangulation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.tri.tds.serialize(serializer)
+    }
+}
+
+// ruleid: delaunay.rust.no-topology-only-pachner-terminal
+pub trait TopologyPachnerMoves {}
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     #[doc(hidden)]

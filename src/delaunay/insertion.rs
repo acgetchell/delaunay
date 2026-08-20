@@ -78,22 +78,12 @@ where
 
     /// Returns whether the next insertion needs an outer Delaunay-level rollback window.
     ///
-    /// This mirrors the post-insertion repair and validation cadence so ordinary insertions avoid
-    /// snapshotting when neither scheduled repair nor scheduled Delaunay checking can run.
+    /// Every insertion capable of publishing simplices needs rollback
+    /// protection. Repair and check policies control which postcondition path
+    /// runs; they do not weaken the Level 5 invariant carried by this owner.
     fn post_insertion_transaction_required(&self) -> bool {
-        let next_insertion_count = self
-            .insertion_state
-            .delaunay_repair_insertion_count
-            .saturating_add(1);
-        let could_have_simplices_after_insertion = self.tri.tds.number_of_simplices() > 0
-            || self.tri.tds.number_of_vertices().saturating_add(1) > D;
-        let repair_scheduled = self
-            .should_run_delaunay_repair_for(self.tri.topology_guarantee(), next_insertion_count);
-        let check_scheduled = self
-            .insertion_state
-            .delaunay_check_policy
-            .should_check(next_insertion_count);
-        could_have_simplices_after_insertion && (repair_scheduled || check_scheduled)
+        self.tri.tds.number_of_simplices() > 0
+            || self.tri.tds.number_of_vertices().saturating_add(1) > D
     }
 
     /// Runs a Delaunay insertion operation with the rollback policy used by
@@ -436,11 +426,14 @@ where
         max_flips: Option<usize>,
     ) -> Result<(), InsertionError> {
         let topology = self.tri.topology_guarantee();
-        if !self.should_run_delaunay_repair_for(
-            topology,
-            self.insertion_state.delaunay_repair_insertion_count,
-        ) {
+        let insertion_count = self.insertion_state.delaunay_repair_insertion_count;
+        if self.tri.tds.number_of_simplices() == 0 {
             return Ok(());
+        }
+        if !self.should_run_delaunay_repair_for(topology, insertion_count) {
+            return self
+                .is_valid_delaunay()
+                .map_err(|source| InsertionError::DelaunayValidationFailed { source });
         }
 
         // Prefer the merged local frontier when we have one; otherwise fall back to the
@@ -479,8 +472,16 @@ where
 
         let repair_result = {
             self.invalidate_locate_hint_cache();
+            let global_topology = self.tri.global_topology();
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-            repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_ref, topology, max_flips)
+            repair_delaunay_with_flips_k2_k3_run(
+                tds,
+                kernel,
+                seed_ref,
+                topology,
+                global_topology,
+                max_flips,
+            )
         };
 
         #[cfg(test)]
@@ -501,9 +502,10 @@ where
                 // Robust fallback: retry with `RobustKernel` which guarantees exact
                 // predicate evaluation. This covers 99.9%+ of repair failures.
                 //
-                // If the robust pass also fails, return an error. Callers that need
-                // the full heuristic rebuild (shuffled re-insertion) can invoke
-                // `repair_delaunay_with_flips_advanced()` explicitly.
+                // If the robust pass also fails, return an error so the
+                // insertion transaction can roll back. Batch workflows that
+                // start from a Levels 1–4 value can opt into rebuild fallback
+                // through the consuming `delaunayize` conversion.
                 let robust_run = self
                     .repair_delaunay_with_flips_robust_run(seed_ref, max_flips)
                     .map_err(|robust_err| InsertionError::DelaunayRepairFailed {
@@ -617,6 +619,7 @@ mod tests {
     };
     use crate::core::simplex::Simplex;
     use crate::core::tds::{Tds, TdsError};
+    use crate::flips::BistellarFlips;
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
     use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
     use crate::topology::traits::topological_space::GlobalTopology;
@@ -824,7 +827,7 @@ mod tests {
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
 
         // Initially no last_inserted_simplex
         assert!(dt.insertion_state.last_inserted_simplex.is_none());
@@ -894,7 +897,7 @@ mod tests {
     }
 
     #[test]
-    fn post_insertion_transaction_required_respects_repair_and_check_cadence() {
+    fn post_insertion_transaction_required_protects_every_publishable_simplex() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
             vertex![0.0, 0.0].unwrap(),
@@ -904,21 +907,82 @@ mod tests {
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(3).unwrap()));
+        dt.insertion_state.delaunay_repair_policy =
+            DelaunayRepairPolicy::EveryN(NonZeroUsize::new(3).unwrap());
         dt.set_delaunay_check_policy(DelaunayCheckPolicy::EndOnly);
         dt.insertion_state.delaunay_repair_insertion_count = 0;
-        assert!(!dt.post_insertion_transaction_required());
+        assert!(dt.post_insertion_transaction_required());
 
         dt.insertion_state.delaunay_repair_insertion_count = 2;
         assert!(dt.post_insertion_transaction_required());
 
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
         dt.set_delaunay_check_policy(DelaunayCheckPolicy::EveryN(NonZeroUsize::new(2).unwrap()));
         dt.insertion_state.delaunay_repair_insertion_count = 0;
-        assert!(!dt.post_insertion_transaction_required());
+        assert!(dt.post_insertion_transaction_required());
 
         dt.insertion_state.delaunay_repair_insertion_count = 1;
         assert!(dt.post_insertion_transaction_required());
+
+        let empty: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::empty();
+        assert!(!empty.post_insertion_transaction_required());
+    }
+
+    #[test]
+    fn pseudomanifold_inadmissible_repair_rejects_and_rolls_back_level5_violation() {
+        init_tracing();
+        let vertices = vec![
+            vertex![0.0, 0.0].unwrap(),
+            vertex![4.0, 0.0].unwrap(),
+            vertex![4.0, 2.0].unwrap(),
+            vertex![1.0, 2.0].unwrap(),
+        ];
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::EveryInsertion;
+
+        let facet = dt
+            .tri
+            .facets()
+            .filter_map(Result::ok)
+            .find(|facet| {
+                facet
+                    .simplex()
+                    .neighbor_key(usize::from(facet.facet_index()))
+                    .flatten()
+                    .is_some()
+            })
+            .expect("quadrilateral fixture should have an interior facet")
+            .handle();
+        let vertex_key = dt.vertices().next().unwrap().0;
+        let vertex_count_before = dt.number_of_vertices();
+        let simplex_count_before = dt.number_of_simplices();
+
+        assert!(dt.post_insertion_transaction_required());
+        let result = dt.with_post_insertion_rollback(|delaunay| {
+            delaunay
+                .tri
+                .flip_k2(facet)
+                .expect("opposite quadrilateral diagonal should be realizable");
+            delaunay
+                .try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+                .unwrap();
+            assert!(
+                !delaunay
+                    .tri
+                    .delaunay_violation_report(None)
+                    .expect("Level 5 witness scan should succeed")
+                    .is_valid()
+            );
+            delaunay.maybe_repair_after_insertion_capped(vertex_key, None, &[], None)
+        });
+
+        assert_matches!(result, Err(InsertionError::DelaunayValidationFailed { .. }));
+        assert_eq!(dt.number_of_vertices(), vertex_count_before);
+        assert_eq!(dt.number_of_simplices(), simplex_count_before);
+        dt.is_valid_delaunay()
+            .expect("rollback must restore the original Level 5 proof");
     }
 
     #[test]
@@ -1093,13 +1157,13 @@ mod tests {
         init_tracing();
         let (tds, incident_to_invalid_ridge, nonincident) =
             wedge_two_s2_complexes_share_vertex_tds();
-        let dt = DelaunayTriangulationCandidate::assemble(
+        let dt = DelaunayTriangulationCandidate::assemble_unchecked_for_test(
             tds,
             AdaptiveKernel::new(),
             TopologyGuarantee::PLManifold,
             GlobalTopology::DEFAULT,
         )
-        .into_repairable_delaunay_for_test();
+        .into_unproven_delaunay_for_test();
         let stats = DelaunayRepairStats {
             flips_performed: 1,
             ..DelaunayRepairStats::default()

@@ -19,7 +19,6 @@ use delaunay::prelude::tds::{
     verify_facet_index_consistency,
 };
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
-use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 use uuid::Uuid;
 
 struct Payload;
@@ -29,14 +28,8 @@ type NotAKernelTriangulation = Triangulation<NotAKernel, Payload, Payload, 2>;
 type NotAKernelDelaunay = DelaunayTriangulation<NotAKernel, Payload, Payload, 2>;
 type GenericTrySetTopologyFn =
     fn(&mut NotAKernelTriangulation, GlobalTopology<2>) -> Result<(), InvariantError>;
-type DelaunayTrySetTopologyFn = fn(
-    &mut NotAKernelDelaunay,
-    GlobalTopology<2>,
-) -> Result<(), DelaunayTriangulationValidationError>;
 
 fn accepts_generic_try_set(_: GenericTrySetTopologyFn) {}
-
-fn accepts_delaunay_try_set(_: DelaunayTrySetTopologyFn) {}
 
 #[derive(Debug, thiserror::Error)]
 enum TraitBoundErgonomicsError {
@@ -49,11 +42,6 @@ enum TraitBoundErgonomicsError {
     Query {
         #[from]
         source: QueryError,
-    },
-    #[error(transparent)]
-    Validation {
-        #[from]
-        source: DelaunayTriangulationValidationError,
     },
 }
 
@@ -124,12 +112,9 @@ fn triangulation_types_do_not_require_kernel_bounds() {
 }
 
 #[test]
-fn topology_metadata_setters_do_not_require_kernel_bounds() {
+fn triangulation_topology_metadata_setter_does_not_require_kernel_bounds() {
     accepts_generic_try_set(
         Triangulation::<NotAKernel, Payload, Payload, 2>::try_set_global_topology,
-    );
-    accepts_delaunay_try_set(
-        DelaunayTriangulation::<NotAKernel, Payload, Payload, 2>::try_set_global_topology,
     );
 }
 
@@ -245,8 +230,8 @@ fn delaunay_empty_query_wrappers_accept_non_datatype_payloads()
     assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
     assert_eq!(dt.topology_kind(), TopologyKind::Euclidean);
 
-    dt.try_set_global_topology(GlobalTopology::Euclidean)?;
-    dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+    dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+        .unwrap();
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 
     assert!(dt.facets().next().is_none());

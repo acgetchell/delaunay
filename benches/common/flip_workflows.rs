@@ -12,20 +12,20 @@ use delaunay::flips::{
     TriangleHandleError,
 };
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
-    DelaunayTriangulationConstructionError, InsertionOrderStrategy, TopologyGuarantee, Vertex,
-    vertex,
+    ConstructionOptions, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    InsertionOrderStrategy, TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::geometry::{CoordinateConversionError, Point, RobustKernel, simplex_volume};
 use delaunay::prelude::query::{JaccardComputationError, QueryError, format_jaccard_report};
-use delaunay::prelude::tds::{EdgeKeyError, FacetError, InvariantError, VertexKey};
+use delaunay::prelude::tds::{EdgeKeyError, FacetError, VertexKey};
 use delaunay::prelude::topology::validation::{ManifoldError, RidgeCandidate, RidgeCandidateError};
-use delaunay::prelude::validation::DelaunayTriangulationValidationError;
+use delaunay::prelude::triangulation::Triangulation;
+use delaunay::prelude::validation::TriangulationRealizationValidationError;
 use thiserror::Error;
 use uuid::Uuid;
 
 /// Robust-kernel triangulation type used by explicit public flip fixtures.
-pub type FlipTriangulation<const D: usize> = DelaunayTriangulation<RobustKernel<f64>, (), (), D>;
+pub type FlipTriangulation<const D: usize> = Triangulation<RobustKernel<f64>, (), (), D>;
 
 /// Result type for benchmark/test workflow helpers that preserves
 /// [`FlipWorkflowError`] variants for setup diagnostics.
@@ -308,14 +308,14 @@ pub enum FlipWorkflowError {
         source: TriangleHandleError,
     },
 
-    /// A forward-only flip produced an invalid underlying triangulation.
-    #[error("{context} produced invalid triangulation topology: {source}")]
+    /// A forward-only flip produced an invalid triangulation realization.
+    #[error("{context} produced invalid triangulation realization: {source}")]
     InvalidAfterForward {
         /// Forward-only context.
         context: FlipWorkflowContext,
-        /// Underlying triangulation invariant failure.
+        /// Underlying realized-triangulation validation failure.
         #[source]
-        source: Box<InvariantError>,
+        source: Box<TriangulationRealizationValidationError>,
     },
 
     /// A roundtrip produced a triangulation that failed validation.
@@ -325,7 +325,7 @@ pub enum FlipWorkflowError {
         context: FlipWorkflowContext,
         /// Underlying validation failure.
         #[source]
-        source: DelaunayTriangulationValidationError,
+        source: Box<TriangulationRealizationValidationError>,
     },
 }
 
@@ -481,9 +481,9 @@ pub enum FlipCandidateError {
     InvalidAfterForwardFlip {
         /// Candidate move kind.
         move_kind: FlipMoveKind,
-        /// Underlying validation failure.
+        /// Underlying realized-triangulation validation failure.
         #[source]
-        source: Box<InvariantError>,
+        source: Box<TriangulationRealizationValidationError>,
     },
 }
 
@@ -545,6 +545,7 @@ pub fn build_flip_dt<const D: usize>(
         .topology_guarantee(TopologyGuarantee::PLManifold)
         .construction_options(options)
         .build_with_kernel(&RobustKernel::new())
+        .map(delaunay::DelaunayTriangulation::into_triangulation)
         .map_err(|source| FlipWorkflowError::Construction {
             dimension: D,
             source: Box::new(source),
@@ -756,7 +757,7 @@ pub fn flippable_k2_facet<const D: usize>(
                         continue;
                     }
                 };
-                if let Err(source) = trial.as_triangulation().validate() {
+                if let Err(source) = trial.validate_realization() {
                     last_error = Some(Box::new(FlipCandidateError::InvalidAfterForwardFlip {
                         move_kind: FlipMoveKind::K2,
                         source: Box::new(source),
@@ -839,7 +840,7 @@ pub fn flippable_k3_ridge<const D: usize>(
                         continue;
                     }
                 };
-                if let Err(source) = trial.as_triangulation().validate() {
+                if let Err(source) = trial.validate_realization() {
                     last_error = Some(Box::new(FlipCandidateError::InvalidAfterForwardFlip {
                         move_kind: FlipMoveKind::K3,
                         source: Box::new(source),
@@ -989,7 +990,7 @@ pub fn roundtrip_k2<const D: usize>(
 /// # Errors
 ///
 /// Returns an error when the k=2 forward flip or
-/// [`DelaunayTriangulation::validate`] validation fails.
+/// [`Triangulation::validate_realization`] validation fails.
 pub fn verify_k2_forward<const D: usize>(
     base_dt: &FlipTriangulation<D>,
     facet: FacetHandle,
@@ -997,7 +998,7 @@ pub fn verify_k2_forward<const D: usize>(
     let context = FlipWorkflowContext::forward_only::<D>(FlipMoveKind::K2);
     let mut trial = base_dt.clone();
     forward_k2(&mut trial, facet)?;
-    validate_forward_topology(&trial, context)
+    validate_forward_realization(&trial, context)
 }
 
 /// Executes a selected public k=3 flip without its inverse.
@@ -1088,7 +1089,7 @@ pub fn roundtrip_k3<const D: usize>(
 /// # Errors
 ///
 /// Returns an error when the k=3 forward flip or
-/// [`DelaunayTriangulation::validate`] validation fails.
+/// [`Triangulation::validate_realization`] validation fails.
 #[cfg_attr(
     not(feature = "slow-tests"),
     allow(
@@ -1103,7 +1104,7 @@ pub fn verify_k3_forward<const D: usize>(
     let context = FlipWorkflowContext::forward_only::<D>(FlipMoveKind::K3);
     let mut trial = base_dt.clone();
     forward_k3(&mut trial, ridge)?;
-    validate_forward_topology(&trial, context)
+    validate_forward_realization(&trial, context)
 }
 
 /// Verifies exact topology recovery for a selected k=1 roundtrip.
@@ -1114,7 +1115,7 @@ pub fn verify_k3_forward<const D: usize>(
 /// # Errors
 ///
 /// Returns an error when snapshotting, the k=1 roundtrip,
-/// [`DelaunayTriangulation::validate`] validation, or exact topology comparison
+/// [`Triangulation::validate_realization`] validation, or exact topology comparison
 /// fails.
 pub fn verify_k1_roundtrip<const D: usize>(
     base_dt: &FlipTriangulation<D>,
@@ -1124,7 +1125,7 @@ pub fn verify_k1_roundtrip<const D: usize>(
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k1(&mut trial, simplex_key)?;
-    validate_topology_and_delaunay(&trial, context)?;
+    validate_roundtrip_realization(&trial, context)?;
     assert_same_topology(&trial, &before, context)
 }
 
@@ -1136,7 +1137,7 @@ pub fn verify_k1_roundtrip<const D: usize>(
 /// # Errors
 ///
 /// Returns an error when snapshotting, the k=2 roundtrip,
-/// [`DelaunayTriangulation::validate`] validation, or exact topology comparison
+/// [`Triangulation::validate_realization`] validation, or exact topology comparison
 /// fails.
 pub fn verify_k2_roundtrip<const D: usize>(
     base_dt: &FlipTriangulation<D>,
@@ -1146,7 +1147,7 @@ pub fn verify_k2_roundtrip<const D: usize>(
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k2(&mut trial, facet)?;
-    validate_topology_and_delaunay(&trial, context)?;
+    validate_roundtrip_realization(&trial, context)?;
     assert_same_topology(&trial, &before, context)
 }
 
@@ -1158,7 +1159,7 @@ pub fn verify_k2_roundtrip<const D: usize>(
 /// # Errors
 ///
 /// Returns an error when snapshotting, the k=3 roundtrip,
-/// [`DelaunayTriangulation::validate`] validation, or exact topology comparison
+/// [`Triangulation::validate_realization`] validation, or exact topology comparison
 /// fails.
 #[cfg_attr(
     not(feature = "slow-tests"),
@@ -1175,24 +1176,26 @@ pub fn verify_k3_roundtrip<const D: usize>(
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k3(&mut trial, ridge)?;
-    validate_topology_and_delaunay(&trial, context)?;
+    validate_roundtrip_realization(&trial, context)?;
     assert_same_topology(&trial, &before, context)
 }
 
-fn validate_topology_and_delaunay<const D: usize>(
+fn validate_roundtrip_realization<const D: usize>(
     dt: &FlipTriangulation<D>,
     context: FlipWorkflowContext,
 ) -> FlipWorkflowResult<()> {
-    dt.validate()
-        .map_err(|source| FlipWorkflowError::InvalidAfterRoundtrip { context, source })
+    dt.validate_realization()
+        .map_err(|source| FlipWorkflowError::InvalidAfterRoundtrip {
+            context,
+            source: Box::new(source),
+        })
 }
 
-fn validate_forward_topology<const D: usize>(
+fn validate_forward_realization<const D: usize>(
     dt: &FlipTriangulation<D>,
     context: FlipWorkflowContext,
 ) -> FlipWorkflowResult<()> {
-    dt.as_triangulation()
-        .validate()
+    dt.validate_realization()
         .map_err(|source| FlipWorkflowError::InvalidAfterForward {
             context,
             source: Box::new(source),

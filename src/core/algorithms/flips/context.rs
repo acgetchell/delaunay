@@ -87,7 +87,8 @@ pub struct FlipInfo<const D: usize> {
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-///     .build()?;
+///     .build()?
+///     .into_triangulation();
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };

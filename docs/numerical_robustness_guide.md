@@ -94,8 +94,8 @@ Kernels control which predicate implementations are used by the triangulation al
 - `FastKernel<T>`: raw f64 arithmetic, no robustness guarantees. Only suitable for 2D with
   well-conditioned input. Does **not** implement `ExactPredicates`. Construction and
   insertion work (automatic repair uses a `RobustKernel` fallback internally), but the
-  explicit public repair methods (`repair_delaunay_with_flips`,
-  `repair_delaunay_with_flips_advanced`) are compile-time blocked.
+  consuming `delaunayize` conversion is compile-time blocked for a
+  `Triangulation<FastKernel<…>, …>`.
 
 ### `ExactPredicates` marker trait (v0.7.3+)
 
@@ -104,9 +104,8 @@ The `ExactPredicates` marker trait identifies kernels whose `orientation` and
 dimension, including near-degenerate configurations. Both `AdaptiveKernel` and
 `RobustKernel` implement this trait through D ≤ 5; `FastKernel` does not.
 
-The explicit public repair methods (`repair_delaunay_with_flips`,
-`repair_delaunay_with_flips_advanced`, `rebuild_with_heuristic`) require
-`K: ExactPredicates`. This is enforced at compile time, preventing silent
+The public `delaunayize` conversion requires `K: ExactPredicates`. This is
+enforced at compile time, preventing silent
 misclassification from floating-point-only predicates that can lead to infinite flip
 cycles, invalid topology, or non-Delaunay results. Construction and insertion do **not**
 require the bound — the internal repair path uses the caller's kernel first and falls
@@ -233,18 +232,19 @@ after insertion. The repair code uses the same kernel predicates as the insertio
 there is no separate "robust predicate override". This unified predicate pipeline ensures
 consistent sign decisions and eliminates flip cycles caused by predicate disagreements.
 
-Since v0.7.3, all repair entry points require `K: ExactPredicates` at compile
-time. This prevents accidental use of `FastKernel` for flip repair, which would
-produce incorrect results on near-degenerate inputs. It also means explicit
-repair APIs are currently available only in dimensions covered by the
-`ExactPredicates` marker, D ≤ 5.
+Since v0.7.3, the exact flip-repair boundary requires `K: ExactPredicates` at
+compile time. This prevents accidental use of `FastKernel` for Delaunay
+conversion, which would produce incorrect results on near-degenerate inputs.
+The public conversion is therefore available only in dimensions covered by
+the `ExactPredicates` marker, D ≤ 5.
 
-You can also run repair manually:
+To convert a Levels 1–4 triangulation explicitly, use the consuming workflow:
 
-- `dt.repair_delaunay_with_flips()`
-- `dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())`
+- `delaunayize(tri, DelaunayizeConfig::default())`
+- enable bounded rebuild recovery with
+  `DelaunayizeConfig::default().with_fallback_rebuild(true)`
 
-After construction (or repair), verify the Delaunay property via `dt.is_valid_delaunay()`
+After construction or conversion, verify the Delaunay property via `dt.is_valid_delaunay()`
 (which uses local flip predicates).
 
 For full-stack diagnostics (Levels 1-5), use `dt.validate()` or `dt.validation_report()`;
@@ -317,7 +317,7 @@ This layer catches duplicates that survive Hilbert dedup (e.g. when using
 `InsertionOrderStrategy::Input`) and also protects single-vertex `insert_vertex()` calls.
 
 See `duplicate_coordinates_error` in
-[`src/core/triangulation.rs`](../src/core/triangulation.rs).
+[`src/core/triangulation/insertion.rs`](../src/core/triangulation/insertion.rs).
 
 ### Layer 3: Simplex-level coordinate uniqueness validation
 
@@ -386,9 +386,9 @@ and per-insertion checks handle any remaining cases.
   through `ConstructionOptions::with_batch_repair_policy(...)` and still
   performs final repair/validation. This reduces the frequency of the automatic
   robust-fallback repair pass while still maintaining the Delaunay property
-  periodically. The explicit repair methods (`repair_delaunay_with_flips`,
-  etc.) are not available with `FastKernel` — use `AdaptiveKernel` or
-  `RobustKernel` if you need manual repair control.
+  periodically. Consuming `delaunayize` is not available for a
+  `Triangulation<FastKernel<…>, …>` — use `AdaptiveKernel` or `RobustKernel`
+  if you need explicit conversion control.
 - If you see retryable insertion errors, frequent perturbation retries, or skipped vertices,
   preprocess your input (dedup / rescale if appropriate).
 - Treat `InsertionOutcome::Skipped { .. }` from the best-effort API as an expected outcome on

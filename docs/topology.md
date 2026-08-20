@@ -53,6 +53,9 @@ Notes:
   supported caller-visible coordinate scalar is finite `f64`, stored through
   validated `Point` coordinates; exact-coordinate input, if added in the future,
   should be an explicit documented API rather than incidental generic support.
+- `Tds` owns Levels 1–2 storage and checked mutation. `Triangulation` consumes
+  that proof and adds the topology metadata required for Level 3; Level 3 code
+  never receives raw mutable access to canonical TDS fields.
 
 ## Level 3 Intrinsic PL Topology validation (`Triangulation::is_valid_topology()`)
 
@@ -89,11 +92,9 @@ Level 3 always checks:
 `TopologyGuarantee` controls which additional PL-manifold checks Level 3 runs:
 
 - `TopologyGuarantee::Pseudomanifold`: no additional link or orientability checks.
-- `TopologyGuarantee::PLManifold`: runs ridge-link validation during insertion and
-  requires a completion-time vertex-link pass for full certification; in 2D/3D,
-  it also certifies intrinsic orientability.
-- `TopologyGuarantee::PLManifoldStrict`: runs vertex-link validation after every
-  insertion and certifies 2D/3D intrinsic orientability (slowest, maximum safety).
+- `TopologyGuarantee::PLManifold`: adds ridge- and vertex-link validation and,
+  in 2D/3D, intrinsic orientability. Every full Level 3 audit checks this same
+  mathematical contract; `ValidationPolicy` independently selects audit cadence.
 
 `Triangulation::orientation_witness()` returns the opaque coherent assignment
 used by the 2D/3D Level 3 check. This is independent of Level 2 stored-ordering
@@ -103,10 +104,11 @@ identities, including explicit self-identifications.
 
 Implementation pointers:
 
-- Level 3 entry points and validation vocabulary: `src/core/validation.rs`
+- Level 3 entry points and validation vocabulary:
+  `src/core/triangulation/validation.rs`
   (`Triangulation::is_valid_topology`, `Triangulation::orientation_witness`,
   `OrientationWitness`, and `Triangulation::validate`)
-- Owner-level topology validators: `src/core/validation.rs` and
+- Owner-level topology validators: `src/core/triangulation/validation.rs` and
   `src/delaunay/query.rs`
   (`Triangulation::validate_ridge_links`,
   `Triangulation::validate_ridge_links_for_simplices`,
@@ -321,16 +323,21 @@ PL-topology validation separate from spherical Level 4/5 geometry. Full
 spherical integration across `S^2`-`S^5` and hyperbolic integration remain future
 work.
 
-## Triangulation editing (`src/delaunay/`)
+## Triangulation editing (`src/core/triangulation/`)
 
-`src/delaunay/flips.rs` exposes explicit bistellar-flip editing APIs
+`src/core/triangulation/flips.rs` exposes explicit bistellar-flip editing APIs
 (`BistellarFlips`) built on `core::algorithms::flips`. These operations:
 
-- are topological edits (they can change manifold structure), and
+- change the combinatorial triangulation while preserving the certified
+  PL-homeomorphism class when their admissibility checks succeed, and
 - do not automatically restore the Delaunay property.
 
-After batch edits, consider repair and/or validation (see `docs/api_design.md`
-and `docs/validation.md`).
+They operate on `Triangulation`, not `DelaunayTriangulation`, because an edit
+can invalidate Level 5. After batch edits, use strict certification or the
+consuming Delaunay conversion workflow (see `docs/api_design.md` and
+`docs/validation.md`). The PL-homeomorphism and regular-triangulation results
+behind these operations are listed under
+[Bistellar (Pachner) Moves and Delaunay Repair](../REFERENCES.md#bistellar-pachner-moves-and-delaunay-repair).
 
 ## Further reading
 

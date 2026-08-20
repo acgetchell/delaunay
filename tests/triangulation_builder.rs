@@ -16,11 +16,12 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::insertion::InsertionError;
-use delaunay::prelude::tds::{InvariantError, TdsConstructionError, TdsError, VertexKey};
+use delaunay::prelude::tds::{InvariantError, TdsConstructionError, TdsError};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 use delaunay::prelude::topology::validation::{TopologyClassification, euler_characteristic};
 use delaunay::prelude::validation::{
-    DelaunayTriangulationValidationError, TriangulationValidationError, ValidationPolicy,
+    TriangulationRealizationValidationError, TriangulationValidationError,
+    ValidationConfigurationError, ValidationPolicy,
 };
 use delaunay::vertex;
 
@@ -84,10 +85,9 @@ fn test_builder_topology_guarantee_propagated() {
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 }
 
-/// Builder derives validation policy from topology guarantee instead of exposing
-/// a separate construction-time policy axis.
+/// Builder keeps the mathematical topology guarantee independent from validation cadence.
 #[test]
-fn test_builder_validation_policy_derived_from_topology_guarantee() {
+fn test_builder_validation_policy_is_independent_from_topology_guarantee() {
     let vertices = vec![
         vertex!([0.0_f64, 0.0]).unwrap(),
         vertex!([1.0, 0.0]).unwrap(),
@@ -95,12 +95,38 @@ fn test_builder_validation_policy_derived_from_topology_guarantee() {
     ];
 
     let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .validation_policy(ValidationPolicy::Always)
         .build()
         .expect("build should succeed");
 
-    assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifoldStrict);
+    assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
     assert_eq!(dt.validation_policy(), ValidationPolicy::Always);
+}
+
+#[test]
+fn test_builder_rejects_incompatible_validation_policy() {
+    let vertices = [
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+    ];
+
+    let err = DelaunayTriangulationBuilder::new(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .validation_policy(ValidationPolicy::Never)
+        .build()
+        .expect_err("PL-manifold construction must reject disabled global validation");
+
+    assert_eq!(
+        err,
+        DelaunayTriangulationConstructionError::ValidationConfiguration {
+            source: ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                topology_guarantee: TopologyGuarantee::PLManifold,
+                validation_policy: ValidationPolicy::Never,
+            },
+        },
+    );
 }
 
 #[test]
@@ -248,6 +274,20 @@ fn count_boundary_facets<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, 
         .unwrap()
         .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
         .unwrap()
+}
+
+fn assert_compact_toroidal_t3_transform(vertices: &[Vertex<(), 3>]) {
+    let kernel = RobustKernel::new();
+    let dt = DelaunayTriangulationBuilder::new(vertices)
+        .try_toroidal([1.0_f64; 3])
+        .unwrap()
+        .build_with_kernel(&kernel)
+        .expect("transformed compact periodic T^3 quotient should succeed");
+
+    assert_eq!(dt.number_of_vertices(), vertices.len());
+    assert!(dt.number_of_simplices() > 0);
+    assert_eq!(count_boundary_facets(&dt), 0);
+    assert!(dt.validate().is_ok());
 }
 
 /// `toroidal` builds a valid periodic triangulation of `T^2` with χ = 0.
@@ -405,6 +445,7 @@ fn test_builder_toroidal_t3_compact_quotient_validates_topology_and_delaunay() {
     assert!(dt.is_valid_structure().is_ok());
     assert!(dt.as_triangulation().validate().is_ok());
     assert!(dt.is_valid_delaunay().is_ok());
+    assert!(dt.validate().is_ok());
 
     for input_vertex in &vertices {
         let output_vertex = dt
@@ -436,11 +477,17 @@ fn test_builder_toroidal_t3_compact_quotient_validates_topology_and_delaunay() {
     }));
 }
 
-/// Compact `T^3` construction remains valid after input reversal and an orientation-reversing map.
+/// Compact `T^3` construction remains valid after input reversal.
 #[test]
-fn test_builder_toroidal_t3_compact_quotient_handles_adversarial_transforms() {
+fn test_builder_toroidal_t3_compact_quotient_handles_reversed_input() {
     let mut reversed = compact_toroidal_vertices_t3();
     reversed.reverse();
+    assert_compact_toroidal_t3_transform(&reversed);
+}
+
+/// Compact `T^3` construction remains valid after an orientation-reversing map.
+#[test]
+fn test_builder_toroidal_t3_compact_quotient_handles_orientation_reversing_map() {
     let reflected = compact_toroidal_vertices_t3()
         .iter()
         .map(|vertex| {
@@ -448,37 +495,7 @@ fn test_builder_toroidal_t3_compact_quotient_handles_adversarial_transforms() {
             vertex!([1.0 - x, y, z]).unwrap()
         })
         .collect::<Vec<_>>();
-    let kernel = RobustKernel::new();
-
-    for vertices in [&reversed, &reflected] {
-        let dt = DelaunayTriangulationBuilder::new(vertices)
-            .try_toroidal([1.0_f64; 3])
-            .unwrap()
-            .build_with_kernel(&kernel)
-            .expect("transformed compact periodic T^3 quotient should succeed");
-
-        assert_eq!(dt.number_of_vertices(), vertices.len());
-        assert!(dt.number_of_simplices() > 0);
-        assert_eq!(count_boundary_facets(&dt), 0);
-        assert!(dt.is_valid_structure().is_ok());
-        assert!(dt.as_triangulation().validate().is_ok());
-        assert!(dt.is_valid_delaunay().is_ok());
-        assert!(dt.validate().is_ok());
-    }
-}
-
-/// Exhaustive periodic all-translates intersection validation stays within the default budget.
-#[test]
-fn test_builder_toroidal_t3_compact_quotient_validates_levels_1_to_5() {
-    let vertices = compact_toroidal_vertices_t3();
-    let kernel = RobustKernel::new();
-    let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .try_toroidal([1.0_f64; 3])
-        .unwrap()
-        .build_with_kernel(&kernel)
-        .expect("compact periodic T^3 quotient should succeed");
-
-    assert!(dt.validate().is_ok());
+    assert_compact_toroidal_t3_transform(&reflected);
 }
 
 macro_rules! gen_toroidal_high_dim_guardrail_test {
@@ -732,19 +749,31 @@ fn assert_relaxed_explicit_non_delaunay_succeeds<const D: usize>() {
 
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .expect("explicit simplex specs should validate")
-        .construction_options(ConstructionOptions::default().without_final_delaunay_enforcement())
-        .build()
-        .expect("relaxed explicit construction should accept a realized non-Delaunay mesh");
+        .build_triangulation()
+        .expect("the Levels 1-4 terminal should accept a realized non-Delaunay mesh");
 
     assert_eq!(dt.number_of_vertices(), D + 2);
     assert_eq!(dt.number_of_simplices(), 2);
-    dt.as_triangulation()
-        .validate_realization()
+    dt.validate_realization()
         .expect("relaxed explicit mesh should pass Levels 1-4");
     assert!(
-        dt.is_valid_delaunay().is_err(),
+        DelaunayTriangulation::try_from_triangulation(dt).is_err(),
         "fixture should still violate Level 5 Delaunay predicates",
     );
+}
+
+fn assert_strict_explicit_non_delaunay_repairs<const D: usize>() {
+    let vertices = shared_facet_vertices::<D>(1.1);
+    let simplices = shared_facet_simplices::<D>();
+
+    let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+        .expect("explicit simplex specs should validate")
+        .build()
+        .expect("strict explicit construction should repair a flippable Delaunay violation");
+
+    assert_eq!(dt.number_of_vertices(), D + 2);
+    dt.validate()
+        .expect("strict explicit construction must publish a Levels 1-5 owner");
 }
 
 fn assert_relaxed_explicit_invalid_realization_fails<const D: usize>() {
@@ -753,16 +782,15 @@ fn assert_relaxed_explicit_invalid_realization_fails<const D: usize>() {
 
     let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .expect("explicit simplex specs should validate")
-        .construction_options(ConstructionOptions::default().without_final_delaunay_enforcement())
-        .build()
-        .expect_err("relaxed explicit construction should still reject invalid realizations");
+        .build_triangulation()
+        .expect_err("the Levels 1-4 terminal should still reject invalid realizations");
 
     match err {
         DelaunayTriangulationConstructionError::ExplicitConstruction {
             source: ExplicitConstructionError::RealizationValidation { source },
         } => assert_matches!(
             source.as_ref(),
-            DelaunayTriangulationValidationError::Realization { source: _ }
+            TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace { .. }
         ),
         other => panic!("expected relaxed explicit realization-validation failure, got {other:?}"),
     }
@@ -774,6 +802,11 @@ macro_rules! gen_relaxed_explicit_validation_tests {
             #[test]
             fn [<test_relaxed_explicit_non_delaunay_mesh_succeeds_ $dim d>]() {
                 assert_relaxed_explicit_non_delaunay_succeeds::<$dim>();
+            }
+
+            #[test]
+            fn [<test_strict_explicit_non_delaunay_mesh_repairs_ $dim d>]() {
+                assert_strict_explicit_non_delaunay_repairs::<$dim>();
             }
 
             #[test]
@@ -855,6 +888,60 @@ fn test_builder_build_with_statistics_explicit_records_telemetry() {
     assert!(stats.telemetry.has_data());
     assert!(stats.telemetry.construction_total_nanos > 0);
     assert!(dt.validate().is_ok());
+}
+
+/// The Levels 1–4 statistics terminal preserves explicit connectivity without
+/// requiring or claiming a Level 5 proof.
+#[test]
+fn test_builder_build_triangulation_with_statistics_explicit() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+    ];
+    let simplices = vec![vec![0, 1, 2]];
+
+    let (triangulation, stats) =
+        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+            .unwrap()
+            .validation_policy(ValidationPolicy::Always)
+            .build_triangulation_with_statistics()
+            .expect("explicit Levels 1-4 statistics build should succeed");
+
+    assert_eq!(triangulation.number_of_vertices(), stats.inserted);
+    assert_eq!(triangulation.number_of_simplices(), 1);
+    assert_eq!(triangulation.validation_policy(), ValidationPolicy::Always);
+    assert_eq!(stats.total_attempts, 0);
+    assert_eq!(stats.telemetry.insertion_wall_time_calls, 0);
+    assert!(stats.telemetry.has_data());
+    triangulation
+        .validate_realization()
+        .expect("the returned triangulation should remain valid through Level 4");
+}
+
+/// Statistics-bearing Delaunay terminals reject options that disable the proof
+/// they promise and retain an inspectable default statistics record.
+#[test]
+fn test_builder_build_with_kernel_and_statistics_rejects_disabled_level_five() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+    ];
+    let kernel = RobustKernel::new();
+
+    let error = DelaunayTriangulationBuilder::new(&vertices)
+        .construction_options(ConstructionOptions::default().without_final_delaunay_enforcement())
+        .build_with_kernel_and_statistics(&kernel)
+        .expect_err("a Delaunay terminal must not publish without Level 5 certification");
+
+    assert_matches!(
+        error.error,
+        DelaunayTriangulationConstructionError::Level5CertificationDisabled
+    );
+    assert_eq!(error.statistics.inserted, 0);
+    assert_eq!(error.statistics.total_attempts, 0);
+    assert!(error.statistics.attempts_histogram.is_empty());
 }
 
 /// Explicit construction normalizes incoherent local simplex orderings.
@@ -1161,8 +1248,8 @@ fn test_explicit_3d_single_tetrahedron() {
 }
 
 /// Non-Delaunay mesh: prescribed connectivity that violates the empty-circumsphere
-/// property. Because the builder returns `DelaunayTriangulation`, Level 4
-/// validation must reject this connectivity before construction succeeds.
+/// property. Because the strict builder returns `DelaunayTriangulation`, it
+/// must repair the connectivity and certify Level 5 before construction succeeds.
 ///
 /// Geometry: A=(0,0), B=(4,0), C=(4,2), D=(1,2). The circumcircle of ABC has
 /// center (2,1) and radius √5. Point D=(1,2) is at distance √2 < √5 from the
@@ -1181,24 +1268,15 @@ fn test_explicit_non_delaunay_mesh() {
     // the circumcircle of triangle ABC.
     let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
 
-    let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+    let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
         .build()
-        .expect_err("non-Delaunay mesh must not construct a DelaunayTriangulation");
+        .expect("strict explicit construction should repair the flippable diagonal");
 
-    assert!(
-        matches!(
-            err,
-            DelaunayTriangulationConstructionError::ExplicitConstruction {
-                source: ExplicitConstructionError::DelaunayValidation { .. }
-            }
-        ),
-        "expected explicit validation failure, got {err:?}"
-    );
-    assert!(
-        err.to_string().contains("Delaunay validation failed"),
-        "error should identify the Level 5 validation failure: {err}"
-    );
+    assert_eq!(dt.number_of_vertices(), vertices.len());
+    assert_eq!(dt.number_of_simplices(), 2);
+    dt.validate()
+        .expect("repaired explicit construction must publish a Levels 1-5 owner");
 }
 
 /// Topology guarantee is propagated through explicit construction.
@@ -1425,6 +1503,21 @@ fn test_explicit_error_variant_incompatible_topology() {
         ),
         "Expected IncompatibleTopology, got: {err}"
     );
+
+    let triangulation_err =
+        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+            .unwrap()
+            .try_toroidal([1.0, 1.0])
+            .unwrap()
+            .build_triangulation()
+            .unwrap_err();
+
+    assert_matches!(
+        triangulation_err,
+        DelaunayTriangulationConstructionError::ExplicitConstruction {
+            source: ExplicitConstructionError::IncompatibleTopology
+        }
+    );
 }
 
 /// Error variant: explicit connectivity rejects point-insertion-only construction options.
@@ -1469,11 +1562,25 @@ fn test_explicit_error_variant_unsupported_construction_options() {
     assert!(
         matches!(
             mixed_err,
-            DelaunayTriangulationConstructionError::ExplicitConstruction {
-                source: ExplicitConstructionError::UnsupportedConstructionOptions
-            }
+            DelaunayTriangulationConstructionError::Level5CertificationDisabled
         ),
-        "Expected mixed non-enforcing point-insertion options to be rejected, got: {mixed_err}",
+        "Expected a Delaunay terminal to reject disabled Level 5 certification, got: {mixed_err}",
+    );
+
+    let triangulation_err =
+        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+            .unwrap()
+            .construction_options(
+                ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input),
+            )
+            .build_triangulation()
+            .unwrap_err();
+
+    assert_matches!(
+        triangulation_err,
+        DelaunayTriangulationConstructionError::ExplicitConstruction {
+            source: ExplicitConstructionError::UnsupportedConstructionOptions
+        }
     );
 }
 
@@ -1530,36 +1637,6 @@ fn test_explicit_error_variant_geometric_nondegeneracy() {
             source: ExplicitConstructionError::GeometricNondegeneracy { source },
         } => assert_matches!(source.as_ref(), TdsError::Geometric { source: _ }),
         other => panic!("expected explicit geometric nondegeneracy failure, got {other:?}"),
-    }
-}
-
-/// Error variant: completion-time PL validation preserves vertex-link summaries.
-#[test]
-fn test_explicit_error_variant_completion_validation_summary() {
-    let err = ExplicitConstructionError::CompletionValidation {
-        source: Box::new(InvariantError::Triangulation {
-            source: TriangulationValidationError::VertexLinkNotManifold {
-                vertex_key: VertexKey::default(),
-                link_vertex_count: 0,
-                link_simplex_count: 0,
-                boundary_facet_count: 0,
-                max_degree: 0,
-                connected: false,
-                interior_vertex: false,
-            },
-        }),
-    };
-
-    match err {
-        ExplicitConstructionError::CompletionValidation { source } => {
-            assert_matches!(
-                source.as_ref(),
-                InvariantError::Triangulation {
-                    source: TriangulationValidationError::VertexLinkNotManifold { .. }
-                }
-            );
-        }
-        other => panic!("expected explicit completion validation failure, got {other:?}"),
     }
 }
 

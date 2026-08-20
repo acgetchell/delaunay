@@ -1,20 +1,19 @@
 #![forbid(unsafe_code)]
 
-//! Benchmark: flip-based Delaunay repair (`repair_delaunay_with_flips_advanced`).
+//! Benchmark: consuming `Triangulation` to `DelaunayTriangulation` conversion.
 //!
-//! Fixtures are built with
-//! [`ConstructionOptions::without_final_delaunay_enforcement`], which returns a
-//! valid Levels 1-4 triangulation without running batch or final Level 5
-//! repair, so well-conditioned random fixtures typically still carry Delaunay
-//! violations. The benchmark then times the public repair entry point on a
-//! clone of each prepared fixture.
+//! Fixtures are built with a `build_triangulation*` terminal, which returns a
+//! valid Levels 1-4 triangulation without running batch or final Level 5 repair,
+//! so well-conditioned random fixtures typically still carry Delaunay violations.
+//! The benchmark then times the public `delaunayize` entry point on a clone of
+//! each prepared fixture.
 //!
 //! Setup verifies on a throwaway clone that repair converges for the chosen
 //! seed, so the measured closure never times a repair failure chain. Case
 //! labels record whether the prepared fixture was `violating` or already
 //! `delaunay`, so baseline comparisons notice when a fixture changes meaning.
 //! A separate `repair_transaction_pressure` case selects fixtures whose probe
-//! run performs at least one direct flip without heuristic rebuild fallback,
+//! run performs at least one direct flip without fallback rebuild,
 //! isolating the public repair path most sensitive to per-flip rollback
 //! snapshots. Compare that case with `tds_clone.rs` when evaluating journaled or
 //! reusable rollback designs.
@@ -33,14 +32,13 @@ use criterion::{
     BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
     measurement::WallTime,
 };
-use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder, Vertex,
-};
+use delaunay::prelude::construction::{DelaunayTriangulationBuilder, Vertex};
+use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeOutcome, delaunayize};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{
     AdaptiveKernel, CoordinateRange, ExactPredicates, Kernel, Point,
 };
-use delaunay::prelude::repair::{DelaunayRepairHeuristicConfig, DelaunayRepairOutcome};
+use delaunay::prelude::triangulation::Triangulation;
 use delaunay::try_vertices_from_points;
 use std::hint::black_box;
 use std::num::NonZeroUsize;
@@ -60,7 +58,7 @@ const MEASUREMENT_TIME: Duration = Duration::from_secs(2);
 const TRANSACTION_PRESSURE_MIN_FLIPS: NonZeroUsize = NonZeroUsize::MIN;
 const TRANSACTION_PRESSURE_SEED_SALT: u64 = 0xA511_E9B3_6C4D_27F1;
 
-type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
+type BenchTriangulation<const D: usize> = Triangulation<AdaptiveKernel<f64>, (), (), D>;
 
 #[derive(Clone, Copy)]
 enum RepairFixtureRequirement {
@@ -70,11 +68,12 @@ enum RepairFixtureRequirement {
 
 impl RepairFixtureRequirement {
     /// Returns whether a probe run has the repair behavior this benchmark case needs.
-    const fn accepts(self, outcome: &DelaunayRepairOutcome) -> bool {
+    const fn accepts(self, outcome: &DelaunayizeOutcome) -> bool {
         match self {
             Self::AnyConvergent => true,
             Self::DirectFlipRepair { min_flips } => {
-                !outcome.used_heuristic() && outcome.stats.flips_performed >= min_flips.get()
+                !outcome.used_fallback_rebuild
+                    && outcome.delaunay_repair.flips_performed >= min_flips.get()
             }
         }
     }
@@ -144,7 +143,7 @@ fn generate_vertices<const D: usize>(requested_vertices: usize, seed: u64) -> Ve
 /// Build one repair fixture whose repair is verified to converge.
 ///
 /// Seeds are searched until construction succeeds and a throwaway clone
-/// completes `repair_delaunay_with_flips_advanced`, so the measured closure
+/// completes the consuming `delaunayize` workflow, so the measured closure
 /// never times a repair failure chain.
 fn build_source<const D: usize>(requested_vertices: usize, seed_base: u64) -> RepairSource<D>
 where
@@ -160,7 +159,7 @@ where
 /// Build one repair fixture whose probe satisfies the requested repair behavior.
 ///
 /// The transaction-pressure case uses this to require successful direct
-/// flip-based repair with performed flips, keeping heuristic rebuild setup out
+/// flip-based repair with performed flips, keeping fallback rebuild setup out
 /// of the benchmark case that is meant to expose per-flip snapshot cost.
 fn build_source_with_requirement<const D: usize>(
     requested_vertices: usize,
@@ -170,36 +169,31 @@ fn build_source_with_requirement<const D: usize>(
 where
     AdaptiveKernel<f64>: ExactPredicates<D> + Kernel<D, Scalar = f64>,
 {
-    let options = ConstructionOptions::default().without_final_delaunay_enforcement();
-
     for attempt in 0..SEED_SEARCH_ATTEMPTS {
         let attempt_seed = u64::try_from(attempt).or_abort();
         let seed = seed_for_case::<D>(requested_vertices, seed_base)
             ^ attempt_seed.wrapping_mul(SEED_SALT.rotate_left(17));
         let vertices = generate_vertices::<D>(requested_vertices, seed);
-        let Ok(triangulation) = DelaunayTriangulationBuilder::new(&vertices)
-            .construction_options(options)
-            .build()
+        let Ok(triangulation) = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()
         else {
             continue;
         };
 
-        let mut probe = triangulation.clone();
-        let Ok(outcome) =
-            probe.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
-        else {
+        let Ok(probe) = delaunayize(triangulation.clone(), DelaunayizeConfig::default()) else {
             continue;
         };
-        if !requirement.accepts(&outcome) {
+        if !requirement.accepts(&probe.outcome) {
             continue;
         }
 
-        let violating = triangulation.verify_via_flip_predicates().is_err();
+        let violating = triangulation
+            .delaunay_violation_report(None)
+            .is_ok_and(|report| !report.is_valid());
         return RepairSource {
             vertex_count: triangulation.number_of_vertices(),
             simplex_count: triangulation.number_of_simplices(),
             violating,
-            probe_flips_performed: outcome.stats.flips_performed,
+            probe_flips_performed: probe.outcome.delaunay_repair.flips_performed,
             triangulation,
         };
     }
@@ -243,7 +237,7 @@ fn bench_repair_dimension<const D: usize>(
 
         group.bench_with_input(
             BenchmarkId::new(
-                "repair_advanced",
+                "delaunayize",
                 format!(
                     "{delaunay_state}_vertices_{}_simplices_{}",
                     source.vertex_count, source.simplex_count
@@ -253,13 +247,9 @@ fn bench_repair_dimension<const D: usize>(
             |b, source| {
                 b.iter_batched(
                     || source.triangulation.clone(),
-                    |mut triangulation| {
+                    |triangulation| {
                         black_box(
-                            triangulation
-                                .repair_delaunay_with_flips_advanced(
-                                    DelaunayRepairHeuristicConfig::default(),
-                                )
-                                .or_abort(),
+                            delaunayize(triangulation, DelaunayizeConfig::default()).or_abort(),
                         );
                     },
                     BatchSize::SmallInput,
@@ -306,14 +296,8 @@ fn bench_transaction_pressure_case<const D: usize>(
         |b, source| {
             b.iter_batched(
                 || source.triangulation.clone(),
-                |mut triangulation| {
-                    black_box(
-                        triangulation
-                            .repair_delaunay_with_flips_advanced(
-                                DelaunayRepairHeuristicConfig::default(),
-                            )
-                            .or_abort(),
-                    );
+                |triangulation| {
+                    black_box(delaunayize(triangulation, DelaunayizeConfig::default()).or_abort());
                 },
                 BatchSize::SmallInput,
             );

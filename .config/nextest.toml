@@ -70,6 +70,17 @@ binary(=proptest_delaunay_triangulation)
 '''
 slow-timeout = { period = "60s", terminate-after = 1 }
 
+[[profile.ci.overrides]]
+# A single compact T^3 periodic-image construction can cross the default
+# budget on Windows. Each test retains one construction so other platforms
+# keep the normal watchdog and the exception remains limited to this fixture.
+platform = 'cfg(windows)'
+filter = '''
+binary(=triangulation_builder)
+& test(/^(test_builder_toroidal_t3_compact_quotient_validates_topology_and_delaunay|test_builder_toroidal_t3_compact_quotient_handles_reversed_input|test_builder_toroidal_t3_compact_quotient_handles_orientation_reversing_map)$/)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
 [profile.debug]
 # Debug assertions and overflow checks make exact-geometry paths slower than
 # their release counterparts. Inherit the default 10-second budget and grant
@@ -105,6 +116,16 @@ slow-timeout = { period = "60s", terminate-after = 1 }
 inherits = "ci"
 retries = 0
 slow-timeout = { period = "300s", terminate-after = 1 }
+
+[[profile.coverage.overrides]]
+# The compact T^3 periodic-image builders can exceed seven minutes even before
+# LLVM coverage instrumentation. Keep the broader coverage watchdog at five
+# minutes and grant only these named tests enough instrumented headroom.
+filter = '''
+binary(=triangulation_builder)
+& test(/^(test_builder_toroidal_t3_compact_quotient_validates_topology_and_delaunay|test_builder_toroidal_t3_compact_quotient_handles_reversed_input|test_builder_toroidal_t3_compact_quotient_handles_orientation_reversing_map)$/)
+'''
+slow-timeout = { period = "1200s", terminate-after = 1 }
 
 [profile.slow]
 # Slow correctness and regression tests are intentionally outside the default

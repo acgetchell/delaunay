@@ -14,6 +14,19 @@ pub(crate) trait TdsRollbackOwner<U, V, const D: usize> {
     fn rollback_tds_mut(&mut self) -> &mut Tds<U, V, D>;
 }
 
+/// Shared mutation surface for repair algorithms that participate in an
+/// owner-selected TDS rollback transaction.
+///
+/// The caller owns commit versus rollback. Algorithms using this trait may
+/// restore between retries, but must not publish or commit the transaction.
+pub(crate) trait TdsRollbackWindow<U, V, const D: usize> {
+    /// Borrows canonical TDS storage for one mutation or validation step.
+    fn rollback_tds_mut(&mut self) -> &mut Tds<U, V, D>;
+
+    /// Restores the transaction snapshot while keeping the window open.
+    fn restore_rollback_tds(&mut self);
+}
+
 impl<U, V, const D: usize> TdsRollbackOwner<U, V, D> for Tds<U, V, D> {
     fn rollback_tds(&self) -> &Self {
         self
@@ -115,6 +128,22 @@ where
     /// Marks the transaction committed for wrapper guards that own their own drop policy.
     pub(crate) const fn commit_in_place(&mut self) {
         self.finished = true;
+    }
+}
+
+impl<O, U, V, const D: usize> TdsRollbackWindow<U, V, D>
+    for TdsOwnerRollbackTransaction<'_, O, U, V, D>
+where
+    O: TdsRollbackOwner<U, V, D>,
+    U: Clone,
+    V: Clone,
+{
+    fn rollback_tds_mut(&mut self) -> &mut Tds<U, V, D> {
+        self.owner.rollback_tds_mut()
+    }
+
+    fn restore_rollback_tds(&mut self) {
+        self.restore();
     }
 }
 

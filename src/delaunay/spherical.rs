@@ -54,7 +54,7 @@ use crate::topology::spaces::spherical::{
     SphericalMetric, SphericalPoint, SphericalPointError, ambient_array_from_slice,
 };
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError};
-use crate::{DelaunayTriangulation, TopologyGuarantee, TriangulationValidationError, vertex};
+use crate::{TopologyGuarantee, Triangulation, TriangulationValidationError, vertex};
 
 /// Default tracking issue for full spherical triangulation support.
 const SPHERICAL_ROADMAP_ISSUE: u32 = 414;
@@ -1188,9 +1188,10 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
 
     /// Sets construction options for the ambient hull-duality build.
     ///
-    /// Final Euclidean Delaunay enforcement is disabled internally because all
-    /// spherical inputs are cospherical in the ambient space; the options still
-    /// control insertion order, deduplication, and retry behavior.
+    /// The supplied options are retained for the ambient Levels 1–4 build, except
+    /// that the initial-simplex strategy is set to `Balanced`. The ambient builder
+    /// calls `build_triangulation()`, so this boundary stops before Euclidean
+    /// Level 5 certification of the cospherical inputs.
     ///
     /// # Examples
     ///
@@ -1286,42 +1287,39 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
         let ambient_vertices = self.ambient_vertices::<A>()?;
         let ambient_options = self
             .construction_options
-            .with_initial_simplex_strategy(InitialSimplexStrategy::Balanced)
-            .without_final_delaunay_enforcement();
-        let ambient: DelaunayTriangulation<_, usize, (), A> =
+            .with_initial_simplex_strategy(InitialSimplexStrategy::Balanced);
+        let ambient: Triangulation<_, usize, (), A> =
             DelaunayTriangulationBuilder::new(&ambient_vertices)
                 .topology_guarantee(TopologyGuarantee::Pseudomanifold)
                 .construction_options(ambient_options)
-                .build()
+                .build_triangulation()
                 .map_err(
                     |source| SphericalDelaunayConstructionError::AmbientConstruction {
                         source: Box::new(source),
                     },
                 )?;
-        let hull =
-            ConvexHull::try_from_triangulation(ambient.as_triangulation()).map_err(|source| {
-                SphericalDelaunayConstructionError::ConvexHull {
-                    source: Box::new(source),
-                }
-            })?;
+        let hull = ConvexHull::try_from_triangulation(&ambient).map_err(|source| {
+            SphericalDelaunayConstructionError::ConvexHull {
+                source: Box::new(source),
+            }
+        })?;
 
         let origin = Point::<A>::try_new([0.0; A]).map_err(|source| {
             SphericalDelaunayConstructionError::AmbientOriginValidation { source }
         })?;
-        if hull
-            .is_point_outside(&origin, ambient.as_triangulation())
-            .map_err(|source| SphericalDelaunayConstructionError::ConvexHull {
+        if hull.is_point_outside(&origin, &ambient).map_err(|source| {
+            SphericalDelaunayConstructionError::ConvexHull {
                 source: Box::new(source),
-            })?
-        {
+            }
+        })? {
             return Err(SphericalDelaunayConstructionError::OriginOutsideConvexHull);
         }
 
-        let facets = hull
-            .try_facets(ambient.as_triangulation())
-            .map_err(|source| SphericalDelaunayConstructionError::ConvexHull {
+        let facets = hull.try_facets(&ambient).map_err(|source| {
+            SphericalDelaunayConstructionError::ConvexHull {
                 source: Box::new(source),
-            })?;
+            }
+        })?;
         let mut simplices = Vec::with_capacity(hull.number_of_facets());
         for (simplex_index, facet_result) in facets.enumerate() {
             let facet = facet_result

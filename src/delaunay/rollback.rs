@@ -5,7 +5,7 @@
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::operations::DelaunayInsertionState;
 use crate::core::tds::{Tds, TdsOwnerRollbackTransaction, TdsRollbackOwner};
-use crate::triangulation::DelaunayTriangulation;
+use crate::triangulation::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
 
 impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for DelaunayTriangulation<K, U, V, D> {
     fn rollback_tds(&self) -> &Tds<U, V, D> {
@@ -37,6 +37,7 @@ where
     tds_transaction: TdsOwnerRollbackTransaction<'dt, DelaunayTriangulation<K, U, V, D>, U, V, D>,
     insertion_state_snapshot: DelaunayInsertionState,
     spatial_index_snapshot: Option<HashGridIndex<D>>,
+    euclidean_report_domain_snapshot: EuclideanDelaunayReportDomain,
     spatial_index_rollback: DelaunaySpatialIndexRollback,
     finished: bool,
 }
@@ -52,6 +53,7 @@ where
         spatial_index_rollback: DelaunaySpatialIndexRollback,
     ) -> Self {
         let insertion_state_snapshot = owner.insertion_state;
+        let euclidean_report_domain_snapshot = owner.euclidean_report_domain;
         let spatial_index_snapshot = match spatial_index_rollback {
             DelaunaySpatialIndexRollback::Restore => owner.spatial_index.clone(),
             DelaunaySpatialIndexRollback::Invalidate => None,
@@ -61,6 +63,7 @@ where
             tds_transaction,
             insertion_state_snapshot,
             spatial_index_snapshot,
+            euclidean_report_domain_snapshot,
             spatial_index_rollback,
             finished: false,
         }
@@ -76,6 +79,7 @@ where
         self.tds_transaction.restore();
         let owner = self.tds_transaction.owner_mut();
         owner.insertion_state = self.insertion_state_snapshot;
+        owner.euclidean_report_domain = self.euclidean_report_domain_snapshot;
         owner.spatial_index = match self.spatial_index_rollback {
             DelaunaySpatialIndexRollback::Restore => self.spatial_index_snapshot.clone(),
             DelaunaySpatialIndexRollback::Invalidate => None,
@@ -112,7 +116,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::collections::spatial_hash_grid::HashGridIndexSnapshot;
+    use crate::core::collections::spatial_hash_grid::test_support::HashGridIndexSnapshot;
     use crate::core::tds::VertexKey;
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::AdaptiveKernel;
@@ -172,6 +176,7 @@ mod tests {
 
     fn assert_restore_policy_drop_restores_auxiliary_state<const D: usize>() {
         let mut triangulation = test_triangulation::<D>();
+        let report_domain_before = triangulation.euclidean_report_domain;
         let hint_before = triangulation.simplices().next().map(|(key, _)| key);
         triangulation.insertion_state.last_inserted_simplex = hint_before;
         let spatial_index_before = seed_spatial_index(&mut triangulation);
@@ -189,6 +194,9 @@ mod tests {
                 .insertion_state
                 .last_inserted_simplex = None;
             transaction.delaunay_mut().spatial_index = None;
+            transaction
+                .delaunay_mut()
+                .invalidate_euclidean_report_domain();
         }
 
         assert_eq!(triangulation.number_of_vertices(), vertices_before);
@@ -204,6 +212,7 @@ mod tests {
                 .map(HashGridIndex::<D>::debug_snapshot),
             spatial_index_before
         );
+        assert_eq!(triangulation.euclidean_report_domain, report_domain_before);
     }
 
     fn assert_invalidate_policy_drop_drops_spatial_index<const D: usize>() {
@@ -267,6 +276,7 @@ mod tests {
 
     fn assert_explicit_rollback_restores_auxiliary_state<const D: usize>() {
         let mut triangulation = test_triangulation::<D>();
+        let report_domain_before = triangulation.euclidean_report_domain;
         let hint_before = triangulation.simplices().next().map(|(key, _)| key);
         triangulation.insertion_state.last_inserted_simplex = hint_before;
         let spatial_index_before = seed_spatial_index(&mut triangulation);
@@ -282,6 +292,9 @@ mod tests {
             .insertion_state
             .last_inserted_simplex = None;
         transaction.delaunay_mut().spatial_index = None;
+        transaction
+            .delaunay_mut()
+            .invalidate_euclidean_report_domain();
         transaction.rollback();
 
         assert_eq!(triangulation.number_of_vertices(), vertices_before);
@@ -297,6 +310,7 @@ mod tests {
                 .map(HashGridIndex::<D>::debug_snapshot),
             spatial_index_before
         );
+        assert_eq!(triangulation.euclidean_report_domain, report_domain_before);
     }
 
     #[test]

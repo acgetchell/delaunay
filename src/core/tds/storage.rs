@@ -21,8 +21,9 @@
 //!   simplices (vertices, edges, facets) from the maximal simplices
 //! - **Neighbor Relationships**: Maintains adjacency information between simplices for efficient
 //!   topological traversal
-//! - **Validation Support**: Structural invariant validation (Level 2) plus cumulative element
-//!   validation (Levels 1–2)
+//! - **Proof-bearing storage**: Published `Tds` values satisfy cumulative
+//!   element and structural validation (Levels 1–2); raw assembly and durable
+//!   snapshots are validated before they cross this boundary
 //! - **Serialization Support**: Serde support for persistence
 //! - **Optimized Storage**: Internal key-based storage with UUIDs for external identity
 //!
@@ -79,15 +80,17 @@
 //! | **Vertex Validity** | [`Point::try_new`](crate::geometry::point::Point::try_new) / [`Point`](crate::geometry::point::Point) coordinate conversion (coordinates) + UUID auto-gen + `vertex.is_valid()` / `vertex_report()` | Construction + runtime validation |
 //!
 //! The incremental insertion algorithm attempts to maintain the Delaunay property during
-//! construction, but rare violations can remain. Structural invariants are enforced
-//! **reactively** through validation methods. For a definitive Delaunay check, run
+//! construction, but rare violations can remain. TDS construction, deserialization,
+//! and public mutation paths preserve Levels 1–2 before publishing their result;
+//! validation methods remain available as explicit audits and internal bug detectors.
+//! For a definitive Delaunay check, run
 //! Level 4 Valid Realization via `Triangulation::validate_realization()` and
 //! Level 5 Geometric Predicates via `DelaunayTriangulation::is_valid_delaunay()` /
 //! `DelaunayTriangulation::validate()`.
 //!
 //! # Validation
 //!
-//! The TDS participates in a layered validation hierarchy:
+//! The TDS is the proof-bearing owner at the bottom of the layered hierarchy:
 //!
 //! ## Validation Hierarchy (TDS Role)
 //!
@@ -113,8 +116,8 @@
 //!
 //! ## TDS Validation Methods
 //!
-//! - [`is_valid()`](Tds::is_valid) - Level 2 Combinatorial Consistency only; returns first error, stops early
-//! - [`validate()`](Tds::validate) - Levels 1–2 (Element Validity + Combinatorial Consistency); returns first error, stops early
+//! - [`is_valid()`](Tds::is_valid) - explicit Level 2 Combinatorial Consistency audit; returns first error, stops early
+//! - [`validate()`](Tds::validate) - explicit cumulative Levels 1–2 audit; returns first error, stops early
 //!
 //! For cumulative diagnostics across the full stack (Levels 1–5), use
 //! [`DelaunayTriangulation::validation_report()`].
@@ -497,12 +500,20 @@ pub trait TopologyOwner {
 /// # Ok(())
 /// # }
 /// ```
+/// Proof-bearing Levels 1–2 triangulation data structure.
+///
+/// Safe public construction, deserialization, and mutation paths publish only
+/// element-valid, combinatorially consistent storage. [`Tds::validate`] remains
+/// available for explicit audits and for detecting crate-internal algorithm
+/// bugs. Intrinsic topology is intentionally not part of this type's proof;
+/// [`Triangulation`](crate::Triangulation) adds the topology context required to
+/// certify Level 3.
 pub struct Tds<U, V, const D: usize> {
     /// Storage map for vertices, allowing stable keys and efficient access.
-    pub(super) vertices: StorageMap<VertexKey, Vertex<U, D>>,
+    pub(in crate::core::tds) vertices: StorageMap<VertexKey, Vertex<U, D>>,
 
     /// Storage map for simplices, providing stable keys and efficient access.
-    pub(super) simplices: StorageMap<SimplexKey, Simplex<V, D>>,
+    pub(in crate::core::tds) simplices: StorageMap<SimplexKey, Simplex<V, D>>,
 
     /// Fast mapping from Vertex UUIDs to their `VertexKeys` for efficient UUID → Key lookups.
     /// This optimizes the common operation of looking up vertex keys by UUID.
@@ -512,7 +523,7 @@ pub struct Tds<U, V, const D: usize> {
     /// This should only be modified through TDS methods that maintain consistency.
     ///
     /// Note: Not serialized - reconstructed during deserialization from vertices.
-    pub(crate) uuid_to_vertex_key: UuidToVertexKeyMap,
+    pub(in crate::core::tds) uuid_to_vertex_key: UuidToVertexKeyMap,
 
     /// Fast mapping from Simplex UUIDs to their `SimplexKeys` for efficient UUID → Key lookups.
     /// This optimizes the common operation of looking up simplex keys by UUID.
@@ -522,7 +533,7 @@ pub struct Tds<U, V, const D: usize> {
     /// This should only be modified through TDS methods that maintain consistency.
     ///
     /// Note: Not serialized - reconstructed during deserialization from simplices.
-    pub(crate) uuid_to_simplex_key: UuidToSimplexKeyMap,
+    pub(in crate::core::tds) uuid_to_simplex_key: UuidToSimplexKeyMap,
 
     /// Maintained vertex-to-simplices incidence index.
     ///
@@ -532,14 +543,14 @@ pub struct Tds<U, V, const D: usize> {
     /// entries.
     ///
     /// Note: Not serialized - reconstructed during deserialization from simplices.
-    pub(super) vertex_to_simplices: VertexIncidenceIndex,
+    pub(in crate::core::tds) vertex_to_simplices: VertexIncidenceIndex,
 
     /// The current construction state of the triangulation.
     /// This field tracks whether the triangulation has enough vertices to form a complete
     /// D-dimensional triangulation or if it's still being incrementally built.
     ///
     /// Note: Not serialized - only constructed triangulations should be serialized.
-    pub(crate) construction_state: TriangulationConstructionState,
+    pub(in crate::core::tds) construction_state: TriangulationConstructionState,
 
     /// Generation counter for invalidating caches.
     /// This counter is incremented whenever the triangulation structure is modified
@@ -548,7 +559,7 @@ pub struct Tds<U, V, const D: usize> {
     /// Uses `Arc<AtomicU64>` for thread-safe operations in concurrent contexts while allowing Clone.
     ///
     /// Note: Not serialized - generation is runtime-only.
-    pub(super) generation: Arc<AtomicU64>,
+    pub(in crate::core::tds) generation: Arc<AtomicU64>,
 
     /// Runtime identity for cache/handle provenance checks.
     ///
@@ -557,7 +568,7 @@ pub struct Tds<U, V, const D: usize> {
     /// storage by generation alone.
     ///
     /// Note: Not serialized - identity is runtime-only.
-    pub(super) identity: Arc<Uuid>,
+    pub(in crate::core::tds) identity: Arc<Uuid>,
 }
 
 impl<U, V, const D: usize> Clone for Tds<U, V, D>
@@ -1587,15 +1598,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     pub(crate) const fn identity(&self) -> &Arc<Uuid> {
         &self.identity
     }
-
-    /// Marks the triangulation topology as modified and invalidates generation-keyed caches.
-    ///
-    /// This is intended for crate-internal mutation paths that adjust simplex slot ordering
-    /// without going through the standard insertion/removal APIs.
-    #[inline]
-    pub(crate) fn mark_topology_modified(&self) {
-        self.bump_generation();
-    }
 }
 
 impl<U, V, const D: usize> Tds<U, V, D> {}
@@ -2075,11 +2077,11 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     // These methods work directly with keys to avoid UUID lookups in hot paths.
     // They complement the existing UUID-based methods for internal algorithm use.
 
-    /// Gets a mutable reference to a simplex directly by its key.
+    /// Gets TDS-internal mutable simplex storage directly by key.
     ///
-    /// This method provides direct mutable access to simplices, similar to [`vertex_mut()`](Self::vertex_mut).
-    /// While this allows modifying simplex data fields, callers should use safe topology setter APIs
-    /// like [`set_neighbors_by_key()`](Self::set_neighbors_by_key) when modifying neighbor relationships.
+    /// Higher layers must use checked TDS transitions such as
+    /// [`set_neighbors_by_key`](Self::set_neighbors_by_key) instead of editing
+    /// simplex storage directly.
     ///
     /// # Arguments
     ///
@@ -2091,7 +2093,11 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     #[inline]
     #[must_use]
-    pub(crate) fn simplex_mut(&mut self, simplex_key: SimplexKey) -> Option<&mut Simplex<V, D>> {
+    #[cfg(not(test))]
+    pub(in crate::core::tds) fn simplex_mut(
+        &mut self,
+        simplex_key: SimplexKey,
+    ) -> Option<&mut Simplex<V, D>> {
         self.simplices.get_mut(simplex_key)
     }
 
@@ -2143,22 +2149,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     #[must_use]
     pub fn vertex(&self, vertex_key: VertexKey) -> Option<&Vertex<U, D>> {
         self.vertices.get(vertex_key)
-    }
-
-    /// Gets a mutable reference to a vertex directly by its key.
-    ///
-    /// # Arguments
-    ///
-    /// * `vertex_key` - The key of the vertex to retrieve
-    ///
-    /// # Returns
-    ///
-    /// An `Option` containing a mutable reference to the vertex if it exists.
-    ///
-    #[inline]
-    #[must_use]
-    pub(crate) fn vertex_mut(&mut self, vertex_key: VertexKey) -> Option<&mut Vertex<U, D>> {
-        self.vertices.get_mut(vertex_key)
     }
 
     /// Checks if a vertex key exists in the triangulation.
@@ -2293,9 +2283,46 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 mod test_support {
     use super::Tds;
     use crate::core::collections::PeriodicOffsetBuffer;
-    use crate::core::tds::{SimplexKey, VertexKey};
+    use crate::core::simplex::Simplex;
+    use crate::core::tds::{SimplexKey, TriangulationConstructionState, VertexKey};
+    use crate::core::vertex::Vertex;
+    use uuid::Uuid;
 
     impl<U, V, const D: usize> Tds<U, V, D> {
+        /// Gets mutable vertex storage for a test that deliberately corrupts derived state.
+        pub(crate) fn vertex_mut_for_test(
+            &mut self,
+            vertex_key: VertexKey,
+        ) -> Option<&mut Vertex<U, D>> {
+            self.vertices.get_mut(vertex_key)
+        }
+
+        /// Gets mutable simplex storage for a test that deliberately corrupts topology.
+        ///
+        /// This test-only definition widens the owner-private production method just
+        /// far enough for crate unit tests to construct invalid fixtures deliberately.
+        pub(crate) fn simplex_mut(
+            &mut self,
+            simplex_key: SimplexKey,
+        ) -> Option<&mut Simplex<V, D>> {
+            self.simplices.get_mut(simplex_key)
+        }
+
+        /// Invalidates generation-keyed caches after a test-only raw storage edit.
+        pub(crate) fn mark_topology_modified_for_test(&self) {
+            self.bump_generation();
+        }
+
+        /// Bypasses the checked construction-completion transition for negative tests.
+        pub(crate) fn force_construction_complete_for_test(&mut self) {
+            self.construction_state = TriangulationConstructionState::Constructed;
+        }
+
+        /// Removes a vertex UUID mapping without changing canonical vertex storage.
+        pub(crate) fn remove_vertex_uuid_mapping_for_test(&mut self, uuid: &Uuid) {
+            self.uuid_to_vertex_key.remove(uuid);
+        }
+
         /// Clears one vertex incidence buffer for tests that need corrupted storage.
         pub(in crate::core) fn clear_vertex_incidence_for_test(&mut self, vertex_key: VertexKey) {
             self.vertex_to_simplices.clear_vertex_for_test(vertex_key);
@@ -2553,7 +2580,7 @@ mod tests {
             )
             .unwrap();
 
-        tds.vertex_mut(shared)
+        tds.vertex_mut_for_test(shared)
             .unwrap()
             .set_incident_simplex(Some(first));
 
@@ -2606,7 +2633,7 @@ mod tests {
         assert!(tds.generation() > 0);
 
         let gen_before = tds.generation();
-        tds.mark_topology_modified();
+        tds.mark_topology_modified_for_test();
         assert!(tds.generation() > gen_before);
     }
 
@@ -2653,7 +2680,7 @@ mod tests {
     fn test_mark_topology_modified_bumps_generation() {
         let tds: Tds<(), (), 2> = Tds::empty();
         let gen_before = tds.generation();
-        tds.mark_topology_modified();
+        tds.mark_topology_modified_for_test();
         assert_eq!(tds.generation(), gen_before + 1);
     }
 
@@ -2687,7 +2714,7 @@ mod tests {
                             "rollback snapshots should preserve runtime identity"
                         );
 
-                        tds.mark_topology_modified();
+                        tds.mark_topology_modified_for_test();
 
                         assert_eq!(
                             snapshot.generation(),
@@ -2727,7 +2754,7 @@ mod tests {
                         assert_eq!(target.number_of_simplices(), source.number_of_simplices());
                         assert!(target.vertex(source_vertex).is_some());
 
-                        source.mark_topology_modified();
+                        source.mark_topology_modified_for_test();
 
                         assert_eq!(
                             target.generation(),

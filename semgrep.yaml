@@ -108,7 +108,7 @@ rules:
         - "/src/core/algorithms/**/*.rs"
         - "/src/core/collections/**/*.rs"
         - "/src/core/tds.rs"
-        - "/src/core/triangulation.rs"
+        - "/src/core/triangulation/**/*.rs"
         - "/src/geometry/algorithms/**/*.rs"
         - "/src/delaunay/**/*.rs"
     patterns:
@@ -172,8 +172,8 @@ rules:
         - "/src/core/vertex.rs"
         - "/src/core/simplex.rs"
         - "/src/core/tds/validation.rs"
-        - "/src/core/validation.rs"
-        - "/src/core/realization.rs"
+        - "/src/core/triangulation/validation.rs"
+        - "/src/core/triangulation/realization.rs"
         - "/src/delaunay/validation.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-regex: >-
@@ -335,6 +335,24 @@ rules:
         - "/examples/**/*.rs"
     pattern-regex: '(?m)^[ \t]*#\[cfg\(test\)\][ \t]*\n[ \t]*use[ \t]+[^;]+;'
 
+  - id: delaunay.rust.no-cfg-test-items-outside-test-modules
+    languages:
+      - generic
+    severity: WARNING
+    message: "Move test-only items into a #[cfg(test)] test or test_support module."
+    metadata:
+      category: maintainability
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Decorating functions, impls, or data declarations in production modules
+        with `#[cfg(test)]` spreads test scaffolding through the production
+        surface. Test-only items should be owned by an explicit test module.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+    pattern-regex: '(?m)^[ \t]*#\[cfg\(test\)\][^\n]*\n(?:[ \t]*#\[[^\]\n]*\][^\n]*\n|[ \t]*#\[[^\n]*\n(?:[ \t]+[^\n]*\n){0,8}[ \t]*[)\]]+[^\n]*\n|[ \t]*///[^\n]*\n|[ \t]*\n){0,8}[ \t]*(?:pub(?:\([^\)\n]+\))?[ \t]+)?(?:(?:const|async)[ \t]+)?(?:fn|impl|struct|enum|type|static|const)\b' # yamllint disable-line rule:line-length
+
   - id: delaunay.rust.no-public-api-cfg-test-shim
     languages:
       - generic
@@ -479,8 +497,8 @@ rules:
         Bare is_valid() is reserved for unambiguous element and TDS owners.
     paths:
       include:
-        - "/src/core/validation.rs"
-        - "/src/core/realization.rs"
+        - "/src/core/triangulation/validation.rs"
+        - "/src/core/triangulation/realization.rs"
         - "/src/delaunay/validation.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-regex: >-
@@ -1409,7 +1427,7 @@ rules:
         - "/src/geometry/util/conversions.rs"
         - "/src/geometry/util/circumsphere.rs"
         - "/src/geometry/quality.rs"
-        - "/src/core/construction.rs"
+        - "/src/core/triangulation/construction.rs"
         - "/src/core/algorithms/incremental_insertion.rs"
         - "/src/core/algorithms/flips/**"
         - "/src/delaunay/construction.rs"
@@ -1926,12 +1944,490 @@ rules:
         - "/tests/semgrep/src/project_rules/**/*.rs"
       exclude:
         - "/src/core/algorithms/flips/**"
-        - "/src/delaunay/flips.rs"
+        - "/src/core/triangulation/flips.rs"
     patterns:
       - pattern-either:
           - pattern-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::(builder|construction|core|delaunayize|diagnostics|flips)::'
           - pattern-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::(geometry|insertion|repair|topology|validation)::'
       - pattern-not-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::prelude::'
+
+  - id: delaunay.rust.no-topology-edit-traits-for-delaunay-owner
+    languages:
+      - generic
+    severity: ERROR
+    message: "Implement topology-edit traits for Triangulation, not DelaunayTriangulation."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Bistellar and Pachner edits preserve Levels 1-4 but may invalidate Level
+        5. Requiring explicit demotion prevents a non-Delaunay state from being
+        stored under the proof-bearing Delaunay owner.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: >-
+      (?sx) \bimpl(?:\s*<[^{}]*>)?\s+
+      (?:BistellarFlips|PachnerMoves)
+      (?:\s*<[^{}]*>)?\s+for\s+DelaunayTriangulation
+      (?:\s*<[^{}]*>)?\s*\{
+
+  - id: delaunay.rust.no-validation-cadence-topology-variant
+    languages:
+      - generic
+    severity: ERROR
+    message: >-
+      Use PLManifold for the mathematical class and ValidationPolicy for audit
+      cadence; the strict variant and wire spelling are removed.
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Encoding Always-style audit cadence as PLManifoldStrict creates two
+        names for the same PL-manifold proof and lets scheduling decisions
+        silently change domain semantics. Accepting the removed name in the
+        wire schema would preserve the same ambiguity at the parsing boundary.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '(?:\b(?:TopologyGuarantee|VisualizationTopologyGuarantee)::PLManifoldStrict\b|"PLManifoldStrict")'
+
+  - id: delaunay.rust.no-completion-phase-validation-api
+    languages:
+      - generic
+    severity: ERROR
+    message: >-
+      Use validate() for cumulative Levels 1-3 certification or
+      validate_vertex_links() for the focused link diagnostic.
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Vertex links are part of every PLManifold Level 3 certification, not a
+        separate construction-completion phase. Retaining phase-named methods
+        or errors creates a redundant compatibility surface.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '\b(?:validate_at_completion|CompletionValidation)\b'
+
+  - id: delaunay.rust.no-silent-validation-configuration-setters
+    languages:
+      - generic
+    severity: ERROR
+    message: >-
+      Use the try_set_* validation configuration APIs and handle their typed
+      failure; do not silently retain the previous domain contract.
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Changing validation policy can reject an incoherent guarantee/cadence
+        pair, and strengthening topology must prove the requested Level 3
+        invariant. Logging and retaining the old value hides that failed state
+        transition from the caller.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '\.\s*set_(?:validation_policy|topology_guarantee)\s*\('
+
+  - id: delaunay.rust.no-validation-policy-in-construction-options
+    languages:
+      - generic
+    severity: ERROR
+    message: >-
+      ValidationPolicy belongs to DelaunayTriangulationBuilder; keep
+      ConstructionOptions limited to algorithmic construction settings.
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Giving both the builder and ConstructionOptions ownership of validation
+        cadence makes fluent setter order observable and lets an options bundle
+        silently replace the requested proof-audit policy.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '(?s)\bstruct\s+ConstructionOptions\s*\{[^}]*\bvalidation_policy\s*:'
+
+  - id: delaunay.rust.no-tds-only-delaunay-serialization
+    languages:
+      - generic
+    severity: ERROR
+    message: >-
+      Serialize the versioned Delaunay owner checkpoint, not the embedded TDS
+      alone.
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        TDS-only serialization drops the topology guarantee, global topology,
+        and validation policy. Reloading that payload with defaults changes the
+        mathematical contract while appearing to restore the same proof owner.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '(?s)\bimpl[^{}]*\bSerialize\s+for\s+DelaunayTriangulation[^{}]*\{.*?\bself\s*\.\s*tri\s*\.\s*tds\s*\.\s*serialize\s*\('
+
+  - id: delaunay.rust.no-topology-only-pachner-terminal
+    languages:
+      - generic
+    severity: ERROR
+    message: "Pachner terminals on Triangulation must preserve Levels 1-4."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Triangulation is the proof-bearing Levels 1-4 owner. A topology-only
+        mutation terminal can commit a value that violates Level 4 while it is
+        still stored under that owner.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '\b(?:attempt_topology_on|TopologyPachnerMoves)\b'
+
+  - id: delaunay.rust.no-lower-proof-delaunay-promotion
+    languages:
+      - generic
+    severity: ERROR
+    message: "Do not publish DelaunayTriangulation from structural or Levels 1-4 proof alone."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        DelaunayTriangulation is the Levels 1-5 refinement. Promotion helpers
+        named for structural or realization-only validation reintroduce the
+        invalid-state storage bug fixed by issue 557.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '\binto_(?:structurally|realization)_validated_delaunay\b'
+
+  - id: delaunay.rust.no-unproven-delaunay-candidate-storage
+    languages:
+      - generic
+    severity: ERROR
+    message: "Store unproven candidates as Triangulation, not DelaunayTriangulation."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        A staging DTO must not contain the proof-bearing Levels 1-5 owner before
+        Level 5 certification. Keeping Triangulation in the candidate makes the
+        final Delaunay construction structurally dependent on a validation proof.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '(?s)\bstruct\s+DelaunayTriangulationCandidate(?:\s*<[^{}]*>)?\s*\{[^}]*:\s*DelaunayTriangulation(?:\s*<[^{}]*>)?'
+
+  - id: delaunay.rust.no-cumulative-revalidation-delaunay-promotion
+    languages:
+      - generic
+    severity: ERROR
+    message: "Consume the Triangulation proof and check Level 5 only; do not revalidate Levels 1-4 during Delaunay promotion."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Triangulation is the proof-bearing Levels 1-4 owner. A cumulative
+        promotion helper treats that domain value as unchecked transport data,
+        duplicates potentially expensive realization work, and obscures the
+        orthogonal Level 5 refinement boundary.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '\bfn\s+try_into_validated_delaunay\b'
+
+  - id: delaunay.rust.no-connectivity-recheck-in-level5-proof-promotion
+    languages:
+      - rust
+    severity: ERROR
+    message: "A proof-bearing Triangulation promotion must replay Level 5 predicates without rechecking connectivity."
+    metadata:
+      category: performance
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Connectivity is a lower-layer invariant already encoded by
+        Triangulation. Rechecking it in the proof-consuming Level 5 helper
+        duplicates a whole-complex traversal and blurs the refinement boundary.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    patterns:
+      - pattern-inside: |
+          fn verify_triangulation_via_flip_predicates(...) {
+            ...
+          }
+      - pattern: ConnectivityPostcondition::Check
+
+  - id: delaunay.rust.no-in-place-public-delaunayize
+    languages:
+      - generic
+    severity: ERROR
+    message: "Public delaunayize functions must consume Triangulation and return a certified DelaunayTriangulation."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        An in-place public conversion on DelaunayTriangulation exposes a Level
+        5 owner during the repair window. Consuming the Levels 1-4 owner keeps
+        invalid intermediate states private.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '(?s)\bpub\s+fn\s+delaunayize(?:_by_flips)?\s*(?:<[^{}]*>)?\s*\([^)]*&mut\s+DelaunayTriangulation'
+
+  - id: delaunay.rust.proof-refinement-must-return-lower-owner
+    languages:
+      - generic
+    severity: ERROR
+    message: >-
+      Consuming proof refinements must return the accepted lower-layer owner
+      with the typed rejection reason.
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Dropping a valid Tds or Triangulation on failed promotion prevents
+        policy-driven retry and forces defensive cloning. RefinementError, or
+        the composed stage error, preserves the strongest proof already held.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-either:
+      - pattern-regex: '(?s)\bpub\s+fn\s+try_from_tds_with_topology_context\b[^{};]*->\s*Result\s*<[^{};]*,\s*TriangulationRealizationValidationError\s*>'
+      - pattern-regex: '(?s)\bpub\s+fn\s+try_from_triangulation\b[^{};]*->\s*Result\s*<[^{};]*,\s*DelaunayTriangulationValidationError\s*>'
+      - pattern-regex: '(?s)\bpub\s+fn\s+try_from_tds(?:_with_topology_[a-z_]+)?\b[^{};]*->\s*Result\s*<[^{};]*,\s*DelaunayTriangulationValidationError\s*>'
+      - pattern-regex: '(?s)\bpub\s+fn\s+delaunayize(?:_by_flips)?\b[^{};]*->\s*Result\s*<[^{};]*,\s*DelaunayizeError\s*>'
+      - pattern-regex: '(?s)\bpub\s+fn\s+repair_pl_manifold_tds\b[^{};]*->\s*Result\s*<[^{};]*,\s*PlManifoldRepairError\s*>'
+
+  - id: delaunay.rust.no-detached-trusted-delaunay-publication
+    languages:
+      - generic
+    severity: ERROR
+    message: >-
+      Keep trusted Delaunay publication adjacent to Level 5 certification in
+      the validation boundary or the outer delaunayize transaction.
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        The unchecked terminal is sound only when the exact Triangulation state
+        was just certified. Allowing unrelated callers to invoke it can publish
+        a Levels 1-4 value under the Levels 1-5 owner.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+      exclude:
+        - "/src/delaunay/validation.rs"
+        - "/src/delaunay/delaunayize.rs"
+    pattern-regex: '\.into_delaunay_after_level_five_check\s*\('
+
+  - id: delaunay.rust.no-public-in-place-delaunay-repair
+    languages:
+      - generic
+    severity: ERROR
+    message: "Repair Levels 1-4 Triangulation values through consuming delaunayize; do not mutate a public DelaunayTriangulation in place."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        DelaunayTriangulation is the Levels 1-5 proof-bearing owner. A public
+        in-place repair exposes that owner while Level 5 may be temporarily
+        false and can leave an uncertified value after failure. Consuming a
+        Triangulation keeps the repair window private and publishes only after
+        certification succeeds.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '\bpub\s+fn\s+repair_delaunay_with_flips(?:_advanced)?\s*\('
+
+  - id: delaunay.rust.no-public-delaunay-repair-policy-setter
+    languages:
+      - generic
+    severity: ERROR
+    message: "Keep repair cadence inside unpublished construction; a public DelaunayTriangulation must preserve Level 5 after every mutation."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Allowing callers to disable or defer repair on a published
+        DelaunayTriangulation creates windows where the Levels 1-5 owner may
+        store only a Levels 1-4 value. Cadence remains configurable on builder
+        candidates because the terminal certifies Level 5 before publication.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '\bpub\s+(?:const\s+)?fn\s+set_delaunay_repair_policy\s*\('
+
+  - id: delaunay.rust.no-level4-delaunay-repair-constructor
+    languages:
+      - generic
+    severity: ERROR
+    message: "Repair a Triangulation and certify it; do not construct DelaunayTriangulation from a realized-only value."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        A realized triangulation carries Levels 1-4 only. Wrapping it in
+        DelaunayTriangulation during repair stores an uncertified Level 5 owner,
+        even when the constructor is crate-private.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '\bfn\s+from_realized_triangulation_for_repair\b'
+
+  - id: delaunay.rust.no-detached-candidate-validation-proof
+    languages:
+      - generic
+    severity: ERROR
+    message: "Validate and promote a candidate in one consuming try_into_* transition; do not detach its proof."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        A detached unit proof can be minted from one candidate and accidentally
+        supplied while promoting another candidate of the same Rust type.
+        Consuming validation structurally binds the checked value to the owner
+        published from it.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: >-
+      \bstruct\s+(?:TdsStructureValidationProof|TriangulationRealizationValidationProof|DelaunayTriangulationValidationProof)\b
+
+  - id: delaunay.rust.no-build-delaunay-then-demote-terminal
+    languages:
+      - generic
+    severity: ERROR
+    message: "A build_triangulation terminal must use the Levels 1-4 backend directly, not build a Delaunay owner and demote it."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Building a DelaunayTriangulation before a Levels 1-4 terminal has proved
+        Level 5 recreates the invalid-state storage bug. A dedicated
+        triangulation backend makes the weaker proof boundary explicit.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-either:
+      - pattern-regex: '\bfn\s+validate_constructed_triangulation\b'
+      - pattern-regex: '(?s)\.build_with_kernel\s*\([^)]*\)\s*\.map\s*\(\s*DelaunayTriangulation::into_triangulation\s*\)'
+      - pattern-regex: '(?s)\bfn\s+build_candidate_with_kernel_options(?:_and_statistics)?\b[^{};]*->\s*Result\s*<[^{};]*\bSelf\b'
+
+  - id: delaunay.rust.no-unproven-triangulation-assembly-storage
+    languages:
+      - generic
+    severity: ERROR
+    message: "Raw assembly workspaces must store Tds, not an unproven Triangulation."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Triangulation is the Levels 1-4 proof-bearing owner. A raw assembly DTO
+        that stores Triangulation before cumulative validation recreates the
+        same invalid-state bug one layer lower. Store Tds plus validation
+        context, and construct Triangulation only inside a consuming smart
+        constructor that proves all four levels.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-either:
+      - pattern-regex: '(?s)\bstruct\s+TriangulationAssemblyCandidate(?:\s*<[^{}]*>)?\s*\{[^}]*:\s*Triangulation(?:\s*<[^{}]*>)?'
+      - pattern-regex: '\bfn\s+try_into_structurally_valid_triangulation\b'
+
+  - id: delaunay.rust.no-crate-visible-tds-proof-storage
+    languages:
+      - generic
+    severity: ERROR
+    message: "Keep proof-bearing Tds storage visible only inside core::tds; higher layers must use checked transitions."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Crate-wide or parent-module visibility lets Triangulation and Delaunay
+        code edit Levels 1–2 storage directly. Restrict canonical fields to
+        pub(in crate::core::tds) so the #568 module move cannot inherit raw
+        mutation privileges.
+    paths:
+      include:
+        - "/src/core/tds/storage.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: >-
+      (?x)^\s*pub(?!\s*\(in\s+crate::core::tds\))\s*(?:\([^)]*\)\s*)?
+      (?:vertices|simplices|uuid_to_vertex_key|uuid_to_simplex_key|
+      vertex_to_simplices|construction_state|generation|identity)\s*:
+
+  - id: delaunay.rust.no-public-mutable-tds-accessor
+    languages:
+      - generic
+    severity: ERROR
+    message: "Do not expose &mut Tds from a higher-level owner; keep Levels 1–2 mutation inside checked Tds transitions."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Tds is the proof-bearing Levels 1–2 owner. A mutable storage accessor on
+        Triangulation or DelaunayTriangulation lets callers bypass TDS mutation
+        checks and silently invalidate every stronger proof. Higher layers may
+        expose owner-scoped operations or consume into_tds(), but never &mut Tds.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '^\s*pub\s+(?:const\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\s*(?:<[^>{}]*>)?\s*\([^)]*\)\s*->\s*&(?:''[^\s]+\s+)?mut\s+Tds\b'
+
+  - id: delaunay.rust.no-level12-revalidation-in-triangulation-promotion
+    languages:
+      - rust
+    severity: ERROR
+    message: "Trust the consumed Tds proof during Triangulation promotion; check only Levels 3–4."
+    metadata:
+      category: performance
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Triangulation::try_from_tds_with_topology_context consumes the
+        proof-bearing Levels 1–2 owner. Calling cumulative realization or TDS
+        validation at that boundary discards the type evidence and repeats
+        lower-layer work. Install topology context, check Level 3, then check
+        Level 4 only.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    patterns:
+      - pattern-inside: |
+          pub fn $FUNCTION(...) {
+            ...
+          }
+      - metavariable-regex:
+          metavariable: $FUNCTION
+          regex: ^try_from_tds_with_topology_context$
+      - pattern-either:
+          - pattern: $CANDIDATE.validate_realization(...)
+          - pattern: $CANDIDATE.validate_structure(...)
+          - pattern: $CANDIDATE.tds.validate(...)
 
   - id: delaunay.docs.check-before-fix-command-order
     languages:

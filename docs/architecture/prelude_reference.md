@@ -9,9 +9,11 @@ they exercise.
 | Unified Pachner move workflow / local topology edits | `use delaunay::prelude::pachner::*` |
 | Collection aliases and small buffers | `use delaunay::prelude::collections::*` |
 | Construct/configure Euclidean, toroidal, or spherical Delaunay triangulations | `use delaunay::prelude::construction::*` |
+| Build, validate, query, or repair generic triangulations | `use delaunay::prelude::triangulation::*` |
 | Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
 | Export stable simplicial-complex primitives | `use delaunay::prelude::export::*` |
 | Validation policies, errors, reports, PL-manifold link errors, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
+| Raw-TDS PL-manifold repair and restoration context | `use delaunay::prelude::repair::{repair_pl_manifold_tds, GlobalTopology, PlManifoldRepairConfig}` |
 | Delaunay repair diagnostics and policies | `use delaunay::prelude::repair::*` |
 | Delaunayize workflow | `use delaunay::prelude::delaunayize::*` |
 | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
@@ -21,8 +23,14 @@ they exercise.
 | Points, simplex realizations, coordinate ranges, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
 | Random points or triangulations for examples, tests, and benchmarks | `use delaunay::prelude::generators::*` |
 | Read-only traversal, adjacency, ridge views, simplex barycenters, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
+| Point location and conflict-region algorithms | `use delaunay::prelude::algorithms::*` |
 | Topological space helpers, topology traits, spherical point/metric backends, and lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
 | Low-level topology validation, Euler characteristic helpers, manifold validators, and ridge queries | `use delaunay::prelude::topology::validation::*` |
+
+The triangulation, Delaunayize, and validation preludes re-export
+`RefinementError` and their stage-specific aliases. A failed consuming proof
+promotion therefore remains recoverable without importing an unrelated
+construction prelude.
 
 ## Policy
 

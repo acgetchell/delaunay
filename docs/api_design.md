@@ -113,10 +113,9 @@ fn main() -> DelaunayResult<()> {
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-        .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .validation_policy(ValidationPolicy::Always)
         .build()?;
-
-    dt.set_validation_policy(ValidationPolicy::Always);
 
     // Works like any other DelaunayTriangulation
     dt.insert_vertex(vertex![0.25, 0.75]?)?;
@@ -129,12 +128,10 @@ fn main() -> DelaunayResult<()> {
 - **Toroidal construction**: Use `.try_toroidal([1.0, 1.0])` for periodic image-point construction.
   This path is release-validated on `T^2` and compact `T^3`; `T^4`/`T^5`
   fail fast pending scalable quotient construction in issue #416.
-- **Custom topology guarantees**: Set stricter or more relaxed manifold checks
-- **Custom validation policies**: Configure `ValidationPolicy` via
-  `dt.try_set_validation_policy(...)` before or after build when callers need
-  typed feedback for incompatible policy/guarantee pairs. The compatibility
-  `dt.set_validation_policy(...)` setter leaves the previous policy unchanged
-  for incoherent combinations.
+- **Custom topology guarantees**: Choose PL-manifold or pseudomanifold invariants
+- **Custom validation policies**: Configure `ValidationPolicy` independently via
+  the builder or `dt.try_set_validation_policy(...)`, which returns typed
+  feedback for incompatible policy/guarantee pairs.
 - **Custom repair policies**: Configure Delaunay repair behavior
 
 See `docs/topology.md` for more on toroidal triangulations and `docs/validation.md`
@@ -159,12 +156,12 @@ for topology guarantee and validation policy details.
   typed repair diagnostics where available, for example
   `RepairOperationFailed { operation, source }`.
 - **Validation**: The active `ValidationPolicy` (set with
-  `dt.try_set_validation_policy(...)` or `dt.set_validation_policy(...)`) governs automatic topology and
-  changed-scope realization guards for subsequent construction/modification operations
+  `dt.try_set_validation_policy(...)`) governs automatic
+  full-complex Levels 1–4 audits. Changed-scope Levels 1–4 postconditions remain mandatory.
 
 ### Simplex Barycenters For Local Editing
 
-`DelaunayTriangulation::simplex_barycenter(simplex_key)` computes a topology-aware interior point for
+`Triangulation::simplex_barycenter(simplex_key)` computes a topology-aware interior point for
 a live `D`-simplex. In Euclidean triangulations it returns the arithmetic average of the simplex
 vertices. In periodic image-point triangulations it lifts vertices through their stored periodic
 offsets before averaging, then canonicalizes the result back into the topology domain.
@@ -200,7 +197,9 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build()?
+        .into_triangulation();
 
     // k=1 move: Insert a vertex into a simplex (splits simplex into D+1 simplices)
     let Some((simplex_key, _)) = dt.simplices().next() else {
@@ -333,18 +332,19 @@ synchronization or transaction design.
 
 ⚠️ **The Pachner Move API does not preserve the Delaunay property automatically.**
 
-After applying flips, you should:
+Pachner moves therefore operate on `Triangulation`, the Levels 1–4 owner. After
+applying flips, you should:
 
-1. Manually verify the Delaunay property if needed:
+1. Verify the realization before requesting Level 5 certification:
 
    ```rust
-   assert!(dt.as_triangulation().validate_realization().is_ok()); // Check Level 4 (Valid Realization)
-   assert!(dt.is_valid_delaunay().is_ok()); // Check Level 5 (Geometric Predicates: Delaunay)
+   assert!(tri.validate_realization().is_ok()); // Level 4
    ```
 
-2. Consider running a repair pass if you need the Delaunay property again (requires `K: ExactPredicates`):
-   - `dt.repair_delaunay_with_flips()` (flip-based repair)
-   - `dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())` (includes a heuristic rebuild fallback)
+2. Consume the edited value with
+   `delaunayize(tri, DelaunayizeConfig::default())` when you need a
+   `DelaunayTriangulation` again. Enable
+   `.with_fallback_rebuild(true)` for bounded rebuild recovery.
 
 ## Combining Both APIs
 
@@ -352,33 +352,53 @@ You can mix both APIs in the same workflow:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayResult, DelaunayTriangulationBuilder, vertex,
+    DelaunayError, DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::pachner::{FacetHandle, PachnerMove, PachnerMoves};
+use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
+use delaunay::prelude::geometry::AdaptiveKernel;
+use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
+use delaunay::prelude::triangulation::Triangulation;
+use delaunay::RefinementError;
 
-fn main() -> DelaunayResult<()> {
-    // 1. Build initial triangulation (Builder API)
+#[derive(Debug, thiserror::Error)]
+enum ExampleError {
+    #[error(transparent)]
+    Delaunay(#[from] DelaunayError),
+    #[error(transparent)]
+    Delaunayize(#[from] DelaunayizeError),
+}
+
+fn edit_topology() -> DelaunayResult<Triangulation<AdaptiveKernel<f64>, (), (), 3>> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    let delaunay = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    let mut tri = delaunay.into_triangulation();
 
-    // 2. Add vertices using Builder API (maintains Delaunay)
-    dt.insert_vertex(vertex![0.5, 0.5, 0.5]?)?;
+    // Successful construction of these four affinely independent vertices
+    // produces one tetrahedron. Keep the empty branch explicit instead of panicking.
+    let Some((simplex_key, _)) = tri.simplices().next() else {
+        return Ok(tri);
+    };
+    let _move_result = tri.propose_pachner(PachnerMove::K1Insert {
+        simplex_key,
+        vertex: vertex![0.25, 0.25, 0.25]?,
+    })?
+    .attempt_on(&mut tri)?;
+    Ok(tri)
+}
 
-    // 3. Make custom topology edits (Pachner Move API)
-    let facet = /* ... */;
-    dt.propose_pachner(PachnerMove::K2 { facet })?
-        .attempt_on(&mut dt)?;
-
-    // 4. Verify Delaunay property if needed
-    if let Err(e) = dt.is_valid_delaunay() {
-        eprintln!("Warning: Delaunay property violated after manual edit: {}", e);
-        // Optionally restore using Builder API or custom repair
-    }
+fn main() -> Result<(), ExampleError> {
+    let tri = edit_topology()?;
+    let converted = delaunayize(tri, DelaunayizeConfig::default())
+        .map_err(RefinementError::into_reason)?;
+    converted
+        .triangulation
+        .validate()
+        .map_err(DelaunayError::from)?;
     Ok(())
 }
 ```
@@ -398,9 +418,14 @@ Both APIs work with the same validation framework but have different guarantees:
 ### Pachner Move API Guarantees
 
 - ✅ Maintains **Element Validity** and **Combinatorial Consistency** (Levels 1-2)
+- ✅ Preserves the certified **Intrinsic PL Topology** (Level 3) under the
+  triangulation's `TopologyGuarantee`
+- ✅ The ordinary `PachnerProposal::attempt_on` path revalidates **Valid
+  Realization** (Level 4) and rolls back a move that cannot preserve it
 - ✅ Checks **geometric degeneracy** (prevents degenerate flips)
 - ⚠️ Does **not** automatically maintain Delaunay property
-- ⚠️ User is responsible for property preservation
+- ✅ The result remains represented as `Triangulation`, so it cannot claim
+  Level 5 until consuming certification succeeds
 
 ### Validation Levels
 
@@ -525,13 +550,14 @@ canonical storage.
 
 Algorithms follow the same phase split. Read-only traversal, classification,
 and validation should work through borrowed views or lifetime-bound indexes
-where practical. Mutating topology APIs should take `&mut Tds`/`&mut
-Triangulation` directly, or execute behind a transaction guard that holds that
-mutable borrow for the mutation or rollback window. Handles and keys may appear
-inside that guard as short-lived, validated commit identifiers; they are not
-proof that topology still exists by themselves. Keep views in lexical scopes
-that end before the mutation so Rust enforces both existence and mutable versus
-immutable access.
+where practical. Canonical Levels 1–2 storage edits belong to checked methods
+on `Tds`; higher-level mutating APIs take `&mut Triangulation` and delegate the
+storage transition instead of acquiring raw mutable TDS fields. TDS-owned
+transactions hold the mutable borrow for the mutation or rollback window.
+Handles and keys may appear inside that guard as short-lived, validated commit
+identifiers; they are not proof that topology still exists by themselves. Keep
+views in lexical scopes that end before mutation so Rust enforces both
+existence and mutable versus immutable access.
 
 ### Design Rationale
 
@@ -553,17 +579,20 @@ examples/notebooks split. The examples most directly related to this design are:
 
 ## Delaunayize Workflow
 
-The `delaunay::delaunayize` module provides a single entrypoint for the
-common "repair topology then restore Delaunay" workflow:
+The `delaunay::delaunayize` module provides the canonical `delaunayize`
+entrypoint for the common "repair then certify Delaunay" workflow. The
+`delaunayize_by_flips` alias names the current repair strategy explicitly:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayTriangulationBuilder,
+    DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::delaunayize::{
-    DelaunayizeConfig, DelaunayizeError, delaunayize_by_flips,
+    DelaunayizeConfig, DelaunayizeError, delaunayize,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
+use delaunay::RefinementError;
 
 #[derive(Debug, thiserror::Error)]
 enum ExampleError {
@@ -577,39 +606,45 @@ enum ExampleError {
 
 fn main() -> Result<(), ExampleError> {
     let vertices = vec![
-        vertex![0.0, 0.0, 0.0]?,
-        vertex![1.0, 0.0, 0.0]?,
-        vertex![0.0, 1.0, 0.0]?,
-        vertex![0.0, 0.0, 1.0]?,
+        vertex![0.0, 0.0]?,
+        vertex![4.0, 0.0]?,
+        vertex![4.0, 2.0]?,
+        vertex![1.0, 2.0]?,
     ];
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
+    let tri =
+        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+            .map_err(DelaunayTriangulationConstructionError::from)?
+            .build_triangulation()?;
 
-    let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
-    assert!(outcome.topology_repair.succeeded);
+    let result = delaunayize(tri, DelaunayizeConfig::default())
+        .map_err(RefinementError::into_reason)?;
+    assert!(result.triangulation.validate().is_ok());
     Ok(())
 }
 ```
 
 ### Steps
 
-1. **PL-manifold topology repair** — bounded deterministic removal of simplices
-   that cause facet over-sharing (codimension-1 facet degree > 2).
-2. **Delaunay flip repair** — k=2/k=3 bistellar flips to restore the
-   empty-circumsphere property.
-3. **Optional fallback rebuild** — rebuilds from the vertex set when both
-   repair passes fail
+1. **Levels 1–4 proof consumption** — accept the proof-bearing
+   `Triangulation` without revalidating its encoded invariants.
+2. **Delaunay flip repair** — transactional k=2/k=3 bistellar flips preserve
+   Levels 1–4 while restoring the empty-circumsphere property.
+3. **Optional fallback rebuild** — rebuild from the vertex set when flip repair
+   fails
    (`DelaunayizeConfig::default().with_fallback_rebuild(true)`).
-   If a failed topology repair is recovered by fallback rebuild,
-   `outcome.topology_repair.succeeded` remains `false`; use
-   `outcome.used_fallback_rebuild` to distinguish successful rebuild recovery
-   from direct repair success.
+4. **Level 5 certification** — publish `DelaunayTriangulation` only after the
+   refinement predicate succeeds.
+
+If any repairing step fails, the `DelaunayizeRefinementError` contains the
+original Levels 1–4 `Triangulation` after rollback plus the typed
+`DelaunayizeError`. This makes changing a budget or enabling fallback and
+retrying an explicit composition instead of requiring a defensive clone.
 
 ### Configuration
 
 `DelaunayizeConfig` controls:
 
-- `topology_max_iterations` (default 64): max repair iterations.
-- `topology_max_simplices_removed` (default 10,000): max simplices removed.
 - `fallback_rebuild` (default false): rebuild from vertices on failure,
   restoring simplex data for rebuilt simplices whose sorted vertex UUID set still
   matches exactly one original simplex.
@@ -617,9 +652,7 @@ fn main() -> Result<(), ExampleError> {
 
 ### Data Preservation
 
-`PlManifoldRepairStats` carries `removed_simplices` and `removed_vertices`
-(identified by UUID) so callers can recover user data from entities removed
-during topology repair. The fallback rebuild path also preserves simplex payloads
+The fallback rebuild path preserves simplex payloads
 when a rebuilt simplex has the same vertex UUID set as exactly one original simplex;
 changed or ambiguous simplices receive no payload.
 
@@ -630,7 +663,8 @@ changed or ambiguous simplices receive no payload.
 
 ## Further Reading
 
-- **Bistellar flip theory**: See `REFERENCES.md` for academic citations
+- **Bistellar flip theory**: See
+  [Bistellar (Pachner) Moves and Delaunay Repair](../REFERENCES.md#bistellar-pachner-moves-and-delaunay-repair)
 - **Validation framework**: See `docs/validation.md` for detailed validation guide
 - **Invariant rationale**: See [`invariants.md`](invariants.md) for theory and implementation pointers
 - **Topology analysis**: See `docs/topology.md` for topological concepts

@@ -4111,7 +4111,9 @@ mod tests {
                 Simplex::try_new_with_data(vec![v1, v2, v3], None).unwrap(),
             )
             .unwrap();
-        tds.vertex_mut(v0).unwrap().set_incident_simplex(Some(ck2));
+        tds.vertex_mut_for_test(v0)
+            .unwrap()
+            .set_incident_simplex(Some(ck2));
 
         let err = tds.validate_vertex_incidence().unwrap_err();
         assert_matches!(err, TdsError::InconsistentDataStructure { .. });
@@ -4138,7 +4140,7 @@ mod tests {
 
         // Point v0 at a non-existent simplex key.
         let dangling = SimplexKey::from(KeyData::from_ffi(0xDEAD));
-        tds.vertex_mut(v0)
+        tds.vertex_mut_for_test(v0)
             .unwrap()
             .set_incident_simplex(Some(dangling));
 

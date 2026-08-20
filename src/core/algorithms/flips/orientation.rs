@@ -976,6 +976,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::super::repair_queue::RIDGE_DEBUG_LIMIT_DEFAULT;
+    use super::super::test_support::init_tracing;
     use super::super::*;
     use super::*;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;

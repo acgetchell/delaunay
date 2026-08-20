@@ -244,6 +244,7 @@ where
             {
                 let delaunay = transaction.delaunay_mut();
                 let topology = delaunay.tri.topology_guarantee();
+                let global_topology = delaunay.tri.global_topology();
                 if delaunay.should_run_delaunay_repair_after_mutation(topology) {
                     let seed_ref = seed_simplices.as_deref();
                     let repair_seed_count =
@@ -257,6 +258,7 @@ where
                             kernel,
                             seed_ref,
                             topology,
+                            global_topology,
                             Some(max_flips),
                         )
                     };
@@ -324,7 +326,6 @@ mod tests {
     use crate::core::collections::spatial_hash_grid::HashGridIndex;
     use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
     use crate::core::vertex::Vertex;
-    use crate::flips::BistellarFlips;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::util::safe_usize_to_scalar;
     use crate::repair::DelaunayRepairPolicy;
@@ -514,18 +515,19 @@ mod tests {
 
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
+            .unwrap();
 
-        let simplex_key = dt.simplices().next().unwrap().0;
         let inserted_vertex = interior_vertex_for_k1_insert::<D>();
         let inserted_uuid = inserted_vertex.uuid();
-        dt.flip_k1_insert(simplex_key, inserted_vertex).unwrap();
+        let inserted_key = dt.insert_vertex(inserted_vertex).unwrap();
 
         let vertex_key = dt
             .vertices()
             .find(|(_, v)| v.uuid() == inserted_uuid)
             .map(|(k, _)| k)
             .expect("Inserted vertex not found");
+        assert_eq!(vertex_key, inserted_key);
 
         assert_forced_delete_vertex_rolls_back(&mut dt, vertex_key, inserted_uuid);
     }
@@ -536,7 +538,8 @@ mod tests {
 
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
+            .unwrap();
 
         let mut inserted_vertices = Vec::new();
         for point_index in 0..(D + 3) {
@@ -601,14 +604,14 @@ mod tests {
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
+            .unwrap();
         let original_vertex_count = dt.number_of_vertices();
         let original_simplex_count = dt.number_of_simplices();
 
-        let simplex_key = dt.simplices().next().unwrap().0;
         let inserted_vertex = vertex![0.2, 0.2, 0.2].unwrap();
         let inserted_uuid = inserted_vertex.uuid();
-        dt.flip_k1_insert(simplex_key, inserted_vertex).unwrap();
+        let inserted_key = dt.insert_vertex(inserted_vertex).unwrap();
 
         assert_eq!(dt.number_of_vertices(), original_vertex_count + 1);
         assert_eq!(dt.number_of_simplices(), original_simplex_count + 3);
@@ -618,8 +621,9 @@ mod tests {
             .find(|(_, v)| v.uuid() == inserted_uuid)
             .map(|(k, _)| k)
             .expect("Inserted vertex not found");
+        assert_eq!(vertex_key, inserted_key);
 
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
         let removed_simplices = dt.delete_vertex(vertex_key).unwrap();
 
         assert_eq!(removed_simplices, 4);
@@ -655,7 +659,7 @@ mod tests {
             "incremental construction should establish the report domain"
         );
 
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
         let removed_simplices = dt.delete_vertex(vertex_key).unwrap();
 
         assert!(removed_simplices > 0);
@@ -691,7 +695,7 @@ mod tests {
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let vertex_key = dt.insert_vertex(vertex![0.25, 0.25].unwrap()).unwrap();
 
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
         let removed_simplices = dt.delete_vertex(vertex_key).unwrap();
         assert!(removed_simplices > 0);
 
@@ -733,8 +737,9 @@ mod tests {
         let deleted_uuid = vertices[7].uuid();
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::EveryInsertion);
+        dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
+            .unwrap();
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::EveryInsertion;
         dt.as_triangulation().validate().unwrap();
         dt.is_valid_delaunay().unwrap();
 
@@ -769,8 +774,9 @@ mod tests {
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         dt.is_valid_delaunay().unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
+            .unwrap();
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
 
         let vertex_key = dt
             .vertices()

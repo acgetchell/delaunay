@@ -2,7 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::tds::{Tds, TdsOwnerRollbackTransaction, TdsRollbackOwner};
+use crate::core::tds::{Tds, TdsOwnerRollbackTransaction, TdsRollbackOwner, TdsRollbackWindow};
 use crate::core::triangulation::Triangulation;
 
 impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for Triangulation<K, U, V, D> {
@@ -57,6 +57,21 @@ where
     /// Restores the snapshot and closes the transaction.
     pub(crate) fn rollback(self) {
         self.inner.rollback();
+    }
+}
+
+impl<K, U, V, const D: usize> TdsRollbackWindow<U, V, D>
+    for TriangulationRollbackTransaction<'_, K, U, V, D>
+where
+    U: Clone,
+    V: Clone,
+{
+    fn rollback_tds_mut(&mut self) -> &mut Tds<U, V, D> {
+        &mut self.inner.owner_mut().tds
+    }
+
+    fn restore_rollback_tds(&mut self) {
+        self.restore();
     }
 }
 

@@ -53,20 +53,6 @@ impl VertexIncidenceIndex {
         &self.map
     }
 
-    /// Returns `true` when the index has no vertex entries.
-    #[must_use]
-    #[cfg(test)]
-    pub(in crate::core) fn is_empty(&self) -> bool {
-        self.map.is_empty()
-    }
-
-    /// Returns whether `vertex_key` has an incidence entry.
-    #[must_use]
-    #[cfg(test)]
-    pub(in crate::core) fn contains_vertex(&self, vertex_key: VertexKey) -> bool {
-        self.map.contains_key(&vertex_key)
-    }
-
     /// Returns every simplex key incident to `vertex_key`.
     ///
     /// The returned order is an implementation detail of the incidence buffers
@@ -304,13 +290,6 @@ impl VertexIncidenceIndex {
             }
         }
     }
-
-    #[cfg(test)]
-    pub(super) fn clear_vertex_for_test(&mut self, vertex_key: VertexKey) {
-        if let Some(incident_simplices) = self.map.get_mut(&vertex_key) {
-            incident_simplices.clear();
-        }
-    }
 }
 
 #[cfg(test)]
@@ -319,6 +298,27 @@ mod tests {
 
     use super::*;
     use slotmap::KeyData;
+
+    impl VertexIncidenceIndex {
+        /// Returns `true` when a fixture index has no vertex entries.
+        #[must_use]
+        pub(in crate::core) fn is_empty(&self) -> bool {
+            self.map.is_empty()
+        }
+
+        /// Returns whether a fixture index contains `vertex_key`.
+        #[must_use]
+        pub(in crate::core) fn contains_vertex(&self, vertex_key: VertexKey) -> bool {
+            self.map.contains_key(&vertex_key)
+        }
+
+        /// Clears one fixture incidence list without removing its vertex entry.
+        pub(in crate::core) fn clear_vertex_for_test(&mut self, vertex_key: VertexKey) {
+            if let Some(incident_simplices) = self.map.get_mut(&vertex_key) {
+                incident_simplices.clear();
+            }
+        }
+    }
 
     fn vertex_key(raw: u64) -> VertexKey {
         VertexKey::from(KeyData::from_ffi(raw))
