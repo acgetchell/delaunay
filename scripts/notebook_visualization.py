@@ -175,8 +175,10 @@ def _validate_adjacency_facets(simplices: dict[str, SimplexVertices], neighbors:
         for facet_index, neighbor_id in enumerate(slots):
             if neighbor_id is None:
                 continue
+            if neighbor_id == simplex_id:
+                raise ValueError(f"adjacency for simplex {simplex_id!r} facet {facet_index} references itself, but self-referential adjacency is invalid")
             reciprocal_count = neighbor_edge_counts.get((neighbor_id, simplex_id), 0)
-            if reciprocal_count == 0 or (neighbor_id == simplex_id and reciprocal_count == 1):
+            if reciprocal_count == 0:
                 raise ValueError(
                     f"adjacency for simplex {simplex_id!r} facet {facet_index} references neighbor {neighbor_id!r}, "
                     "but the neighbor does not provide a distinct reciprocal adjacency"

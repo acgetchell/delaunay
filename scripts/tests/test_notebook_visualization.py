@@ -78,7 +78,18 @@ def test_load_visualization_3d_rejects_nonreciprocal_self_neighbor(tmp_path: Pat
     artifact["adjacency"][0]["neighbor_simplex_id"] = "tet"
     path.write_text(json.dumps(artifact), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="distinct reciprocal adjacency"):
+    with pytest.raises(ValueError, match="self-referential adjacency is invalid"):
+        load_visualization_3d(path)
+
+
+def test_load_visualization_3d_rejects_two_self_neighbor_slots(tmp_path: Path) -> None:
+    path = tmp_path / "visualization.json"
+    artifact = visualization_artifact()
+    artifact["adjacency"][0]["neighbor_simplex_id"] = "tet"
+    artifact["adjacency"][1]["neighbor_simplex_id"] = "tet"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="self-referential adjacency is invalid"):
         load_visualization_3d(path)
 
 
