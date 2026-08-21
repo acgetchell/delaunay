@@ -1,0 +1,417 @@
+//! Fluent promotion from Levels 1–2 storage to a Levels 1–4 triangulation.
+
+#![forbid(unsafe_code)]
+
+use crate::core::algorithms::incremental_insertion::InsertionError;
+use crate::core::tds::{InvariantError, Tds, TdsError};
+use crate::core::traits::data_type::DataType;
+use crate::geometry::kernel::Kernel;
+use crate::refinement::RefinementError;
+use crate::topology::traits::topological_space::GlobalTopology;
+use crate::triangulation::Triangulation;
+use crate::triangulation::draft::TriangulationDraft;
+use crate::triangulation::realization::TriangulationRealizationValidationError;
+use crate::triangulation::validation::{
+    TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
+};
+use thiserror::Error;
+
+/// Selects whether [`TriangulationBuilder`] may transform TDS storage.
+///
+/// The mode is explicit because it changes both successful representation and
+/// construction cost. Both modes run the same final Levels 3–4 certification.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub(super) enum TriangulationBuildMode {
+    /// Require the supplied TDS representation to satisfy Levels 3–4 unchanged.
+    ///
+    /// This mode performs no orientation normalization and allocates no rollback
+    /// snapshot. Failure returns the unchanged TDS.
+    Strict,
+    /// Normalize orientation transactionally before Levels 3–4 certification.
+    ///
+    /// This is the default for backward-compatible builder behavior. Successful
+    /// publication may change simplex ordering and structural generation.
+    #[default]
+    Canonicalizing,
+}
+
+/// Typed failures while promoting a TDS through Levels 3–4.
+#[derive(Clone, Debug, Error, PartialEq)]
+#[non_exhaustive]
+pub enum TriangulationBuilderError {
+    /// The requested topology guarantee and validation policy are incompatible.
+    #[error("triangulation builder configuration is invalid: {source}")]
+    ValidationConfiguration {
+        /// Typed validation-policy configuration failure.
+        #[source]
+        source: ValidationConfigurationError,
+    },
+    /// Positive geometric orientation could not be established.
+    #[error("orientation normalization failed during triangulation construction: {source}")]
+    OrientationNormalization {
+        /// Typed orientation transition failure.
+        #[source]
+        source: Box<InsertionError>,
+    },
+    /// Cumulative Levels 1–2 validation failed before higher-layer promotion.
+    #[error("structural validation failed during triangulation construction: {source}")]
+    StructuralValidation {
+        /// Typed TDS validation failure.
+        #[source]
+        source: Box<TdsError>,
+    },
+    /// The requested Level 3 topology guarantee could not be proved.
+    #[error("topology validation failed during triangulation construction: {source}")]
+    TopologyValidation {
+        /// Typed cumulative invariant failure.
+        #[source]
+        source: Box<InvariantError>,
+    },
+    /// At least one maximal simplex is geometrically degenerate.
+    #[error("geometric nondegeneracy failed during triangulation construction: {source}")]
+    GeometricNondegeneracy {
+        /// Typed geometric validation failure.
+        #[source]
+        source: Box<TdsError>,
+    },
+    /// The complex is not a valid realization in its selected topology model.
+    #[error("realization validation failed during triangulation construction: {source}")]
+    RealizationValidation {
+        /// Typed Level 4 validation failure.
+        #[source]
+        source: Box<TriangulationRealizationValidationError>,
+    },
+}
+
+/// Recoverable failure to build a [`Triangulation`] from a Levels 1-2 [`Tds`].
+///
+/// The error retains the original TDS exactly as it was supplied to the
+/// builder. Canonicalization may mutate a private candidate while publication
+/// is attempted, but any failure restores owner identity, generation, and
+/// storage before returning it for repair or retry.
+pub type TriangulationBuildFailure<U, V, const D: usize> =
+    RefinementError<Tds<U, V, D>, TriangulationBuilderError>;
+
+/// Fluent builder for a proof-bearing Levels 1–4 [`Triangulation`].
+///
+/// The builder consumes TDS storage, installs kernel and topology context, and
+/// publishes a triangulation only after Levels 3–4 succeed. The default mode
+/// canonicalizes positive geometric orientation and rechecks Levels 1–2 after
+/// that transition. Select [`Self::strict`] when the TDS is already canonical
+/// and publication must not transform it. Neither mode infers connectivity or
+/// repairs arbitrary topology or realization failures.
+///
+/// # Transformation and cost
+///
+/// Default canonicalizing construction may change stored simplex ordering and
+/// advance the TDS structural generation. It snapshots the canonical TDS
+/// before normalization, adding storage and copy work linear in the TDS
+/// representation. Strict construction performs no orientation mutation and
+/// allocates no rollback snapshot. Either mode returns the exact input TDS in
+/// [`TriangulationBuildFailure`] when publication fails.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateConversionError};
+/// use delaunay::prelude::tds::{TdsBuilder, TdsBuilderError};
+/// use delaunay::prelude::triangulation::{
+///     TriangulationBuildFailure, TriangulationBuilder,
+/// };
+///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] CoordinateConversionError),
+/// #     #[error(transparent)]
+/// #     Tds(#[from] TdsBuilderError),
+/// #     #[error(transparent)]
+/// #     Triangulation(#[from] TriangulationBuildFailure<(), (), 2>),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let vertices = [
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0]?,
+/// ];
+/// let simplices = [vec![0, 1, 2]];
+/// let tds = TdsBuilder::new(&vertices, &simplices).build()?;
+///
+/// let triangulation = TriangulationBuilder::new(tds, AdaptiveKernel::new()).build()?;
+/// assert!(triangulation.validate_realization().is_ok());
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+pub struct TriangulationBuilder<K, U, V, const D: usize> {
+    tds: Tds<U, V, D>,
+    kernel: K,
+    topology_guarantee: TopologyGuarantee,
+    global_topology: GlobalTopology<D>,
+    validation_policy: Option<ValidationPolicy>,
+    build_mode: TriangulationBuildMode,
+}
+
+impl<K, U, V, const D: usize> TriangulationBuilder<K, U, V, D> {
+    /// Creates an inert Levels 3–4 promotion request from TDS storage and a kernel.
+    ///
+    /// Validation is deferred to [`build`](Self::build). Builder setters only
+    /// record context and cannot publish an invalid domain value.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::FastKernel;
+    /// use delaunay::prelude::tds::Tds;
+    /// use delaunay::prelude::triangulation::TriangulationBuilder;
+    ///
+    /// let tds: Tds<(), (), 2> = Tds::empty();
+    /// let builder = TriangulationBuilder::new(tds, FastKernel::<f64>::new());
+    /// assert_eq!(
+    ///     builder.selected_topology_guarantee(),
+    ///     delaunay::TopologyGuarantee::DEFAULT
+    /// );
+    /// ```
+    #[must_use]
+    pub const fn new(tds: Tds<U, V, D>, kernel: K) -> Self {
+        Self {
+            tds,
+            kernel,
+            topology_guarantee: TopologyGuarantee::DEFAULT,
+            global_topology: GlobalTopology::DEFAULT,
+            validation_policy: None,
+            build_mode: TriangulationBuildMode::Canonicalizing,
+        }
+    }
+
+    /// Selects the Level 3 topology guarantee proved by [`build`](Self::build).
+    #[must_use]
+    pub const fn topology_guarantee(mut self, topology_guarantee: TopologyGuarantee) -> Self {
+        self.topology_guarantee = topology_guarantee;
+        self
+    }
+
+    /// Selects the global topology context used by Levels 3–4 validation.
+    #[must_use]
+    pub const fn global_topology(mut self, global_topology: GlobalTopology<D>) -> Self {
+        self.global_topology = global_topology;
+        self
+    }
+
+    /// Selects the audit cadence retained by the published triangulation.
+    ///
+    /// Compatibility with the selected [`TopologyGuarantee`] is checked by
+    /// [`build`](Self::build), keeping this configuration step infallible.
+    #[must_use]
+    pub const fn validation_policy(mut self, validation_policy: ValidationPolicy) -> Self {
+        self.validation_policy = Some(validation_policy);
+        self
+    }
+
+    /// Selects the non-mutating fast path.
+    #[must_use]
+    pub const fn strict(mut self) -> Self {
+        self.build_mode = TriangulationBuildMode::Strict;
+        self
+    }
+
+    /// Returns the currently selected topology guarantee.
+    #[must_use]
+    pub const fn selected_topology_guarantee(&self) -> TopologyGuarantee {
+        self.topology_guarantee
+    }
+}
+
+impl<K, U, V, const D: usize> TriangulationBuilder<K, U, V, D>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    /// Promotes the configured TDS into a proof-bearing Levels 1–4 triangulation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TriangulationBuildFailure`] if configuration is incompatible,
+    /// orientation cannot be normalized, or any cumulative validation layer
+    /// through Level 4 rejects the candidate. The failure retains the original
+    /// TDS so the caller can repair it or retry with different options. Success
+    /// may return a canonicalized TDS representation. Select [`Self::strict`]
+    /// when success must preserve the supplied representation unchanged.
+    pub fn build(self) -> Result<Triangulation<K, U, V, D>, TriangulationBuildFailure<U, V, D>> {
+        let validation_policy = self
+            .validation_policy
+            .unwrap_or_else(|| self.topology_guarantee.default_validation_policy());
+
+        TriangulationDraft::with_topology_context(
+            self.tds,
+            self.kernel,
+            self.topology_guarantee,
+            self.global_topology,
+        )
+        .validation_policy(validation_policy)
+        .finish(self.build_mode)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::tds::TdsBuilder;
+    use crate::geometry::kernel::AdaptiveKernel;
+    use crate::vertex;
+    use std::assert_matches;
+
+    #[test]
+    fn build_publishes_only_a_valid_realization() {
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+        ];
+        let simplices = [vec![0, 1, 2]];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+
+        let triangulation = TriangulationBuilder::new(tds, AdaptiveKernel::new())
+            .build()
+            .unwrap();
+
+        assert!(triangulation.validate_realization().is_ok());
+    }
+
+    #[test]
+    fn strict_build_preserves_valid_tds_representation() {
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+        ];
+        let simplices = [vec![0, 1, 2]];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+        let expected_snapshot = serde_json::to_value(&tds).unwrap();
+        let expected_owner = tds.topology_owner_id();
+        let expected_generation = tds.generation();
+
+        let triangulation = TriangulationBuilder::new(tds, AdaptiveKernel::new())
+            .strict()
+            .build()
+            .unwrap();
+        let restored = triangulation.into_tds();
+
+        assert_eq!(restored.topology_owner_id(), expected_owner);
+        assert_eq!(restored.generation(), expected_generation);
+        assert_eq!(serde_json::to_value(&restored).unwrap(), expected_snapshot);
+    }
+
+    #[test]
+    fn strict_build_rejects_orientation_that_canonicalizing_build_accepts() {
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+        ];
+        let simplices = [vec![0, 2, 1]];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+        let strict_tds = tds.clone();
+        let expected_snapshot = serde_json::to_value(&strict_tds).unwrap();
+        let expected_owner = strict_tds.topology_owner_id();
+        let expected_generation = strict_tds.generation();
+
+        let failure = TriangulationBuilder::new(strict_tds, AdaptiveKernel::new())
+            .strict()
+            .build()
+            .expect_err("strict publication must not rewrite negative orientation");
+        assert_matches!(
+            failure.reason(),
+            TriangulationBuilderError::RealizationValidation { .. }
+        );
+        assert_eq!(failure.owner().topology_owner_id(), expected_owner);
+        assert_eq!(failure.owner().generation(), expected_generation);
+        assert_eq!(
+            serde_json::to_value(failure.owner()).unwrap(),
+            expected_snapshot
+        );
+
+        TriangulationBuilder::new(tds, AdaptiveKernel::new())
+            .build()
+            .expect("canonicalizing publication should normalize the same TDS");
+    }
+
+    #[test]
+    fn build_rejects_incompatible_policy_before_publication() {
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+        ];
+        let simplices = [vec![0, 1, 2]];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+
+        let result = TriangulationBuilder::new(tds, AdaptiveKernel::new())
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .validation_policy(ValidationPolicy::Never)
+            .build();
+
+        assert_matches!(
+            result.as_ref().map_err(RefinementError::reason),
+            Err(TriangulationBuilderError::ValidationConfiguration { .. })
+        );
+    }
+
+    #[test]
+    fn failed_publication_rolls_back_canonicalization_and_returns_original_tds() {
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+        ];
+        let simplices = [vec![0, 2, 1]];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+        let expected_snapshot = serde_json::to_value(&tds).unwrap();
+        let expected_owner = tds.topology_owner_id();
+        let expected_generation = tds.generation();
+
+        let mut canonicalized_probe = TriangulationDraft::with_topology_context(
+            tds.clone(),
+            AdaptiveKernel::new(),
+            TopologyGuarantee::DEFAULT,
+            GlobalTopology::DEFAULT,
+        )
+        .into_unpublished_triangulation();
+        canonicalized_probe
+            .normalize_and_promote_positive_orientation()
+            .unwrap();
+        assert_ne!(
+            serde_json::to_value(&canonicalized_probe.tds).unwrap(),
+            expected_snapshot,
+            "fixture must mutate during orientation canonicalization"
+        );
+        assert_ne!(
+            canonicalized_probe.tds.generation(),
+            expected_generation,
+            "fixture must advance the structural generation during canonicalization"
+        );
+
+        let failure = TriangulationBuilder::new(tds, AdaptiveKernel::new())
+            .global_topology(GlobalTopology::Spherical)
+            .build()
+            .expect_err("an open simplex cannot represent a closed spherical topology");
+
+        assert_matches!(
+            failure.reason(),
+            TriangulationBuilderError::TopologyValidation { .. }
+        );
+        assert_eq!(failure.owner().topology_owner_id(), expected_owner);
+        assert_eq!(failure.owner().generation(), expected_generation);
+        assert_eq!(
+            serde_json::to_value(failure.owner()).unwrap(),
+            expected_snapshot,
+            "failed publication must return the exact pre-canonicalization TDS"
+        );
+        failure
+            .owner()
+            .validate()
+            .expect("the recovered lower-layer owner must remain a valid TDS");
+    }
+}

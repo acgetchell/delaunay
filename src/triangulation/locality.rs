@@ -166,7 +166,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delaunay_model::DelaunayTriangulation;
+    use crate::core::tds::TdsBuilder;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
     use crate::triangulation::Triangulation;
@@ -185,19 +185,25 @@ mod tests {
         Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds)
     }
 
-    #[test]
-    fn accumulate_live_simplex_seeds_dedupes_and_ignores_stale() {
-        let vertices = vec![
+    fn multi_simplex_tds_2d() -> Tds<(), (), 2> {
+        let vertices = [
             vertex!([0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
             vertex!([1.0, 1.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
             vertex!([0.5, 0.5]).unwrap(),
         ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let all_simplices: Vec<SimplexKey> =
-            dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
+        let simplices = [vec![0, 1, 4], vec![1, 2, 4], vec![2, 3, 4], vec![3, 0, 4]];
+        TdsBuilder::new(&vertices, &simplices).build().unwrap()
+    }
+
+    #[test]
+    fn accumulate_live_simplex_seeds_dedupes_and_ignores_stale() {
+        let tds = multi_simplex_tds_2d();
+        let all_simplices: Vec<SimplexKey> = tds
+            .simplices()
+            .map(|(simplex_key, _)| simplex_key)
+            .collect();
         assert!(
             all_simplices.len() >= 2,
             "fixture should produce multiple simplices for seed accumulation"
@@ -209,7 +215,7 @@ mod tests {
         let mut pending_seen: FastHashSet<SimplexKey> =
             pending_seed_simplices.iter().copied().collect();
         let added = accumulate_live_simplex_seeds(
-            dt.tds(),
+            &tds,
             &[
                 all_simplices[0],
                 all_simplices[1],
@@ -228,7 +234,7 @@ mod tests {
         assert!(!pending_seed_simplices.contains(&stale_simplex));
 
         let added_again = accumulate_live_simplex_seeds(
-            dt.tds(),
+            &tds,
             &[all_simplices[1]],
             &mut pending_seed_simplices,
             &mut pending_seen,
@@ -242,17 +248,11 @@ mod tests {
 
     #[test]
     fn append_live_unique_simplex_seeds_dedupes_and_ignores_stale() {
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-            vertex!([1.0, 1.0]).unwrap(),
-            vertex!([0.5, 0.5]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let all_simplices: Vec<SimplexKey> =
-            dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
+        let tds = multi_simplex_tds_2d();
+        let all_simplices: Vec<SimplexKey> = tds
+            .simplices()
+            .map(|(simplex_key, _)| simplex_key)
+            .collect();
         assert!(
             all_simplices.len() >= 2,
             "fixture should produce multiple simplices for compact seed accumulation"
@@ -262,7 +262,7 @@ mod tests {
         let mut seed_simplices = SimplexKeyBuffer::new();
         seed_simplices.push(all_simplices[0]);
         let added = append_live_unique_simplex_seeds(
-            dt.tds(),
+            &tds,
             &[
                 all_simplices[0],
                 all_simplices[1],
@@ -281,17 +281,11 @@ mod tests {
 
     #[test]
     fn retain_live_simplex_seeds_filters_stale_and_dedupes() {
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-            vertex!([1.0, 1.0]).unwrap(),
-            vertex!([0.5, 0.5]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let all_simplices: Vec<SimplexKey> =
-            dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
+        let tds = multi_simplex_tds_2d();
+        let all_simplices: Vec<SimplexKey> = tds
+            .simplices()
+            .map(|(simplex_key, _)| simplex_key)
+            .collect();
         assert!(
             all_simplices.len() >= 2,
             "fixture should produce multiple simplices for seed retention"
@@ -306,7 +300,7 @@ mod tests {
             all_simplices[0],
         ]);
         let mut seen = FastHashSet::default();
-        retain_live_simplex_seeds(dt.tds(), &mut seed_simplices, &mut seen);
+        retain_live_simplex_seeds(&tds, &mut seed_simplices, &mut seen);
 
         assert_eq!(
             seed_simplices.iter().copied().collect::<Vec<_>>(),

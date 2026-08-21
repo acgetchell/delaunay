@@ -86,15 +86,17 @@ fn test_repeat_run_determinism_2d() {
         vertex!([0.5, 0.5]).unwrap(),
     ];
 
-    let config = DelaunayizeConfig::default();
-
     let dt1 = DelaunayTriangulation::builder(&vertices).build().unwrap();
-    let outcome1 = delaunayize(dt1.into_triangulation(), config)
+    let outcome1 = DelaunayRefinementBuilder::new(dt1.into_triangulation())
+        .repair_by_flips()
+        .build()
         .unwrap()
         .outcome;
 
     let dt2 = DelaunayTriangulation::builder(&vertices).build().unwrap();
-    let outcome2 = delaunayize(dt2.into_triangulation(), config)
+    let outcome2 = DelaunayRefinementBuilder::new(dt2.into_triangulation())
+        .repair_by_flips()
+        .build()
         .unwrap()
         .outcome;
 
@@ -139,7 +141,10 @@ fn test_vertex_count_preserved_after_delaunayize() {
         .collect::<Vec<_>>();
     vertex_uuids_before.sort_unstable();
 
-    let converted = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default()).unwrap();
+    let converted = DelaunayRefinementBuilder::new(dt.into_triangulation())
+        .repair_by_flips()
+        .build()
+        .unwrap();
     let mut vertex_uuids_after = converted
         .triangulation
         .vertices()
@@ -182,7 +187,15 @@ fn test_flip_breaks_delaunay_then_delaunayize_restores() {
 
     // Delaunay property may now be violated.
     // `delaunayize` should restore it.
-    let converted = delaunayize(tri, DelaunayizeConfig::default()).unwrap();
+    let converted = DelaunayRefinementBuilder::new(tri)
+        .repair_by_flips()
+        .build()
+        .unwrap();
+    assert!(
+        converted.outcome.delaunay_repair.flips_performed > 0,
+        "known violation should require at least one repair flip"
+    );
+    assert!(!converted.outcome.used_fallback_rebuild);
     assert!(
         converted.triangulation.validate().is_ok(),
         "Should be valid after delaunayize"
@@ -227,11 +240,11 @@ fn fallback_does_not_bypass_flip_topology_precondition() {
         .unwrap()
         .into_triangulation();
 
-    let error = delaunayize(
-        triangulation,
-        DelaunayizeConfig::default().with_fallback_rebuild(true),
-    )
-    .expect_err("a weaker topology guarantee must not enter flip repair or fallback");
+    let error = DelaunayRefinementBuilder::new(triangulation)
+        .repair_by_flips()
+        .fallback_rebuild(true)
+        .build()
+        .expect_err("a weaker topology guarantee must not enter flip repair or fallback");
 
     let (triangulation, reason) = error.into_parts();
     std::assert_matches!(
@@ -301,96 +314,52 @@ fn test_prelude_exports_error_payloads() {
 }
 
 // =============================================================================
-// EXPLICIT FLIP BUDGET TESTS
+// EXPLICIT FLIP BUDGET TEST
 // =============================================================================
 
-/// Verify that `delaunayize` works with an explicit `delaunay_max_flips`
-/// budget, which is forwarded to the low-level flip repair engine.
+/// A zero flip budget must reach the repair engine, reject a known violation,
+/// and return the unchanged Levels 1–4 owner.
 #[test]
-fn test_delaunayize_with_explicit_flip_budget_3d() {
-    init_tracing();
-    let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0, 0.0]).unwrap(),
-        vertex!([0.0, 0.0, 1.0]).unwrap(),
-        vertex!([0.5, 0.5, 0.5]).unwrap(),
-    ];
-    let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-    let config = DelaunayizeConfig::default().with_delaunay_max_flips(1000);
-    let converted = delaunayize(dt.into_triangulation(), config).unwrap();
-    assert!(!converted.outcome.used_fallback_rebuild);
-    assert!(converted.triangulation.validate().is_ok());
-}
-
-/// Verify that `delaunayize` handles both `delaunay_max_flips` and
-/// `fallback_rebuild` together on valid input.
-#[test]
-fn test_delaunayize_with_flip_budget_and_fallback_2d() {
-    init_tracing();
-    let vertices = vec![
-        vertex!([0.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0]).unwrap(),
-        vertex!([1.0, 1.0]).unwrap(),
-        vertex!([0.5, 0.5]).unwrap(),
-    ];
-    let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-    let config = DelaunayizeConfig::default()
-        .with_delaunay_max_flips(500)
-        .with_fallback_rebuild(true);
-    let converted = delaunayize(dt.into_triangulation(), config).unwrap();
-    // Already valid — fallback should not be triggered.
-    assert!(!converted.outcome.used_fallback_rebuild);
-    assert!(converted.triangulation.validate().is_ok());
-}
-
-/// Apply a k=2 Pachner move to break the Delaunay property, then verify
-/// `delaunayize` with an explicit flip budget restores it.
-#[test]
-fn test_flip_breaks_then_delaunayize_with_budget_restores_3d() {
+fn zero_flip_budget_is_forwarded_and_rolls_back() {
     init_tracing();
     let vertices = stable_3d_flip_vertices();
     let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-    assert!(dt.validate().is_ok());
-    let mut tri = dt.into_triangulation();
+    let mut triangulation = dt.into_triangulation();
 
     assert!(
-        apply_first_delaunay_breaking_k2_flip(&mut tri),
-        "3D delaunayize budget fixture should provide a k=2 move with a proven Level 5 violation"
+        apply_first_delaunay_breaking_k2_flip(&mut triangulation),
+        "3D budget fixture should provide a k=2 move with a proven Level 5 violation"
     );
+    let vertex_count_before = triangulation.number_of_vertices();
+    let simplex_count_before = triangulation.number_of_simplices();
+    let generation_before = triangulation.topology_generation();
+
+    let failure = DelaunayRefinementBuilder::new(triangulation)
+        .repair_by_flips()
+        .max_flips(0)
+        .build()
+        .expect_err("zero budget must reject a non-Delaunay triangulation");
+    let (triangulation, reason) = failure.into_parts();
+
+    std::assert_matches!(
+        reason,
+        DelaunayizeError::DelaunayRepairFailed {
+            source: DelaunayRepairError::NonConvergent {
+                max_flips: 0,
+                diagnostics,
+            },
+        } if diagnostics.flips_performed == 0
+    );
+    assert_eq!(triangulation.number_of_vertices(), vertex_count_before);
+    assert_eq!(triangulation.number_of_simplices(), simplex_count_before);
+    assert_eq!(triangulation.topology_generation(), generation_before);
     assert!(
-        tri.delaunay_violation_report(None)
+        triangulation
+            .delaunay_violation_report(None)
             .is_ok_and(|report| !report.is_valid()),
-        "fixture must be non-Delaunay before conversion"
+        "failed repair must return the original non-Delaunay owner"
     );
-
-    let config = DelaunayizeConfig::default().with_delaunay_max_flips(1000);
-    let converted = delaunayize(tri, config).unwrap();
-    assert!(converted.triangulation.validate().is_ok());
-}
-
-// =============================================================================
-// VALIDATION AFTER DELAUNAYIZE TEST
-// =============================================================================
-
-#[test]
-fn test_full_validation_passes_after_delaunayize() {
-    init_tracing();
-    let vertices = vec![
-        vertex!([0.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0]).unwrap(),
-        vertex!([1.0, 1.0]).unwrap(),
-        vertex!([0.5, 0.5]).unwrap(),
-        vertex!([0.25, 0.75]).unwrap(),
-    ];
-    let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-    let converted = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default()).unwrap();
-
-    // Full Levels 1–4 validation should pass.
-    assert!(converted.triangulation.validate().is_ok());
+    triangulation
+        .validate_realization()
+        .expect("rollback must preserve the Levels 1–4 proof");
 }

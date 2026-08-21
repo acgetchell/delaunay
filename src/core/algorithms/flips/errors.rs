@@ -770,6 +770,14 @@ pub enum FlipNeighborRepairFailure {
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum FlipNeighborWiringError {
+    /// Bootstrap insertion was attempted through an already published owner.
+    #[error(
+        "published {dimension}D owner reached flip neighbor wiring during bootstrap; use its draft API"
+    )]
+    PublishedOwnerBootstrapRequiresDraft {
+        /// Requested triangulation dimension.
+        dimension: usize,
+    },
     /// Boundary extraction failed before replacement simplices were created.
     #[error("flip boundary extraction failed: {source}")]
     BoundaryExtraction {
@@ -899,6 +907,9 @@ pub enum FlipNeighborWiringError {
 impl From<InsertionError> for FlipNeighborWiringError {
     fn from(source: InsertionError) -> Self {
         match source {
+            InsertionError::PublishedOwnerBootstrapRequiresDraft { dimension } => {
+                Self::PublishedOwnerBootstrapRequiresDraft { dimension }
+            }
             InsertionError::NeighborWiring { reason } => Self::NeighborWiring { source: reason },
             InsertionError::NonManifoldTopology {
                 facet_hash,
@@ -2036,6 +2047,9 @@ impl From<&DelaunayRepairHeuristicRebuildFailure> for DelaunayRepairHeuristicReb
 
 pub(super) const fn insertion_error_kind(source: &InsertionError) -> InsertionErrorKind {
     match source {
+        InsertionError::PublishedOwnerBootstrapRequiresDraft { .. } => {
+            InsertionErrorKind::PublishedOwnerBootstrapRequiresDraft
+        }
         InsertionError::ConflictRegion { source: _ } => InsertionErrorKind::ConflictRegion,
         InsertionError::Location { source: _ } => InsertionErrorKind::Location,
         InsertionError::CavityFilling { .. } => InsertionErrorKind::CavityFilling,

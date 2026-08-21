@@ -2029,8 +2029,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DelaunayTriangulation;
     use crate::core::simplex::Simplex;
+    use crate::core::tds::TdsBuilder;
     use crate::core::tds::errors::{InvariantError, NeighborValidationError, TdsError};
     use crate::core::vertex::Vertex;
     use crate::vertex;
@@ -2046,6 +2046,12 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ]
+    }
+
+    fn initial_simplex_tds_3d() -> Tds<(), (), 3> {
+        let vertices = initial_simplex_vertices_3d();
+        let simplices = [vec![0, 1, 2, 3]];
+        TdsBuilder::new(&vertices, &simplices).build().unwrap()
     }
 
     /// Computes permutation parity independently for generated shared-facet orders.
@@ -4029,17 +4035,14 @@ mod tests {
 
     #[test]
     fn test_tds_is_valid_passes_for_valid_simplex() {
-        let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::builder(&verts).build().unwrap();
-        assert!(dt.tds().is_valid().is_ok());
-        assert!(dt.tds().validate().is_ok());
+        let tds = initial_simplex_tds_3d();
+        assert!(tds.is_valid().is_ok());
+        assert!(tds.validate().is_ok());
     }
 
     #[test]
     fn test_build_facet_to_simplices_map_basic() {
-        let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::builder(&verts).build().unwrap();
-        let tds = dt.tds();
+        let tds = initial_simplex_tds_3d();
 
         let facet_map = tds.build_facet_to_simplices_map().unwrap();
         // A single tetrahedron in 3D has 4 facets, all boundary (degree 1)
@@ -4150,9 +4153,7 @@ mod tests {
 
     #[test]
     fn test_validate_simplex_coordinate_uniqueness_passes_for_distinct_coords() {
-        let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::builder(&verts).build().unwrap();
-        let tds = dt.tds();
+        let tds = initial_simplex_tds_3d();
         assert!(tds.validate_simplex_coordinate_uniqueness().is_ok());
     }
 }

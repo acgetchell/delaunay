@@ -835,7 +835,7 @@ pub fn surface_measure<U, V, const D: usize>(
 mod tests {
     use super::*;
     use crate::{
-        core::{traits::facet_incidence_analysis::FacetIncidenceAnalysis, vertex::Vertex},
+        core::vertex::Vertex,
         delaunay_model::DelaunayTriangulation,
         geometry::{matrix::LaError, point::Point, traits::coordinate::InvalidCoordinateValue},
         vertex,
@@ -1603,8 +1603,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -1652,8 +1651,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -1986,8 +1984,7 @@ mod tests {
             DelaunayTriangulation::builder(&vertices2).build().unwrap();
 
         let boundary_facets1: Vec<_> = dt1
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2013,8 +2010,7 @@ mod tests {
             .clone();
 
         let boundary_facets2: Vec<_> = dt2
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2065,8 +2061,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2094,8 +2089,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 4> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2130,8 +2124,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2204,8 +2197,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();

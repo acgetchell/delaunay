@@ -44,6 +44,7 @@ use criterion::measurement::WallTime;
 use criterion::{
     BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
+use delaunay::DelaunayRefinementBuilder;
 use delaunay::flips::{FacetHandle, RidgeHandle, SimplexKey};
 use delaunay::prelude::collections::FastHashMap;
 use delaunay::prelude::construction::{
@@ -54,7 +55,7 @@ use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point};
 use delaunay::prelude::query::ConvexHull;
 use delaunay::prelude::tds::Tds;
-use delaunay::prelude::triangulation::Triangulation;
+use delaunay::prelude::triangulation::{Triangulation, TriangulationBuilder};
 use delaunay::try_vertices_from_points;
 use std::{env, hint::black_box, num::NonZeroUsize, sync::Once};
 #[cfg(feature = "bench-logging")]
@@ -291,7 +292,7 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
         },
         ApiBenchmarkEntry {
             group: "proof_boundaries",
-            public_api: "Triangulation::try_from_tds_with_topology_context;DelaunayTriangulation::try_from_triangulation",
+            public_api: "TriangulationBuilder::new(...).strict().build();DelaunayRefinementBuilder::new(...).build()",
             dimensions: "2,3,4,5",
             benchmark_ids: proof_boundary_benchmark_ids(),
             note: "measure_level_3_4_promotion_from_proof_bearing_tds_and_strict_level_5_certification_independently",
@@ -534,14 +535,15 @@ fn prepare_proof_boundary_fixture<const D: usize>(
 
     // Preflight both independent boundaries outside Criterion timing. A failed
     // scientific precondition invalidates the fixture instead of timing errors.
-    Triangulation::try_from_tds_with_topology_context(
-        tds.clone(),
-        AdaptiveKernel::new(),
-        topology_guarantee,
-        global_topology,
-    )
-    .or_abort();
-    DelaunayTriangulation::try_from_triangulation(triangulation.clone()).or_abort();
+    TriangulationBuilder::new(tds.clone(), AdaptiveKernel::new())
+        .topology_guarantee(topology_guarantee)
+        .global_topology(global_topology)
+        .strict()
+        .build()
+        .or_abort();
+    DelaunayRefinementBuilder::new(triangulation.clone())
+        .build()
+        .or_abort();
 
     ProofBoundaryFixture {
         tds,
@@ -1499,13 +1501,12 @@ fn bench_proof_boundary_case<const D: usize>(
             || (fixture.tds.clone(), AdaptiveKernel::new()),
             |(tds, kernel)| {
                 black_box(
-                    Triangulation::try_from_tds_with_topology_context(
-                        tds,
-                        kernel,
-                        fixture.topology_guarantee,
-                        fixture.global_topology,
-                    )
-                    .or_abort(),
+                    TriangulationBuilder::new(tds, kernel)
+                        .topology_guarantee(fixture.topology_guarantee)
+                        .global_topology(fixture.global_topology)
+                        .strict()
+                        .build()
+                        .or_abort(),
                 );
             },
             BatchSize::LargeInput,
@@ -1515,7 +1516,11 @@ fn bench_proof_boundary_case<const D: usize>(
         b.iter_batched(
             || fixture.triangulation.clone(),
             |triangulation| {
-                black_box(DelaunayTriangulation::try_from_triangulation(triangulation).or_abort());
+                black_box(
+                    DelaunayRefinementBuilder::new(triangulation)
+                        .build()
+                        .or_abort(),
+                );
             },
             BatchSize::LargeInput,
         );

@@ -262,12 +262,11 @@
 //! [`DelaunayTriangulation`] (Levels 1–5). Consuming promotion constructors
 //! check only the invariant layers missing from their input type. If a promotion
 //! fails, [`RefinementError`] retains the unchanged lower-layer owner together
-//! with the typed rejection reason. The direct TDS-to-Delaunay constructors use
-//! [`DelaunayTdsRefinementError`] to preserve whether the strongest recovered
-//! owner is the original TDS or the intermediate triangulation.
+//! with the typed rejection reason. Each proof boundary has one fluent builder,
+//! so the owner returned on failure identifies the failed stage directly.
 //!
 //! Strict promotions move canonical storage without cloning it. Repairing
-//! [`delaunayize::delaunayize`] keeps one rollback snapshot through flips,
+//! [`DelaunayRefinementBuilder`] repair mode keeps one rollback snapshot through flips,
 //! orientation normalization, and final Level 5 certification; any failure
 //! restores and returns the original Levels 1–4 triangulation.
 //!
@@ -736,6 +735,8 @@ mod core {
     pub mod operations;
     /// Triangulation data structure internals.
     pub mod tds {
+        mod builder;
+        mod draft;
         mod equality;
         pub mod errors;
         pub(crate) mod incidence;
@@ -746,6 +747,8 @@ mod core {
         mod snapshot;
         mod validation;
 
+        pub use builder::{TdsBuilder, TdsBuilderError};
+        pub use draft::{TdsDraft, TdsDraftError, TdsDraftInsertionError};
         pub use errors::*;
         pub use keys::{SimplexKey, VertexKey};
         pub use model::{Tds, TopologyOwner, TopologyOwnerId};
@@ -793,7 +796,9 @@ mod core {
 
 /// Internal Levels 3–4 realized triangulation owner and workflows.
 pub(crate) mod triangulation {
+    pub mod builder;
     pub mod construction;
+    pub mod draft;
     pub mod flips;
     pub mod insertion;
     pub mod jaccard;
@@ -900,7 +905,7 @@ pub(crate) mod delaunay_query;
 /// Delaunay-level rollback guards for mutation windows with auxiliary state.
 #[path = "delaunay/rollback.rs"]
 pub(crate) mod delaunay_rollback;
-/// End-to-end "repair then delaunayize" workflow.
+/// End-to-end Delaunay refinement workflow.
 #[path = "delaunay/delaunayize.rs"]
 pub mod delaunayize;
 /// Post-construction vertex deletion operations.
@@ -909,6 +914,9 @@ pub(crate) mod deletion;
 /// Construction and performance diagnostics.
 #[path = "delaunay/diagnostics.rs"]
 pub mod diagnostics;
+/// Unpublished incremental Delaunay construction state.
+#[path = "delaunay/draft.rs"]
+pub mod draft;
 /// Triangulation editing operations (bistellar flips).
 pub use crate::triangulation::flips;
 /// Post-construction vertex insertion operations.
@@ -978,7 +986,9 @@ pub use crate::delaunay_property_validation::{
     delaunay_violation_report, find_delaunay_violations,
 };
 pub use crate::delaunay_query::SimplexDataFillError;
+pub use crate::delaunayize::DelaunayRefinementBuilder;
 pub use crate::deletion::DeleteVertexError;
+pub use crate::draft::{DelaunayTriangulationDraft, DelaunayTriangulationDraftError};
 pub use crate::io::visualization::{
     AdjacencyRecord, MESH_EXPORT_SCHEMA, MESH_EXPORT_SCHEMA_VERSION, MeshAdjacencyRecord,
     MeshExport, MeshExportError, MeshExportValidationError, MeshSimplexRecord, MeshVertexRecord,
@@ -1001,6 +1011,9 @@ pub use crate::topology::spaces::spherical::{
     SphericalMetric, SphericalPoint, SphericalPointError,
 };
 pub use crate::triangulation::Triangulation;
+pub use crate::triangulation::builder::{
+    TriangulationBuildFailure, TriangulationBuilder, TriangulationBuilderError,
+};
 pub use crate::triangulation::construction::{
     FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
 };
@@ -1010,15 +1023,15 @@ pub use crate::triangulation::realization::{
     PeriodicDomainPeriodError, TriangulationRealizationIntersectionDetail,
     TriangulationRealizationSimplexDetail, TriangulationRealizationSimplexPairDetail,
     TriangulationRealizationValidationError, TriangulationRealizationValidationErrorKind,
-    TriangulationRealizationValidationReport, TriangulationRefinementError,
+    TriangulationRealizationValidationReport,
 };
 pub use crate::triangulation::validation::{
     OrientationWitness, TopologyGuarantee, TriangulationValidationError,
     ValidationConfigurationError, ValidationPolicy,
 };
 pub use crate::validation::{
-    DelaunayTdsRefinementError, DelaunayTriangulationRefinementError,
-    DelaunayTriangulationValidationError, DelaunayVerificationError, DelaunayVerificationErrorKind,
+    DelaunayTriangulationRefinementError, DelaunayTriangulationValidationError,
+    DelaunayVerificationError, DelaunayVerificationErrorKind,
 };
 
 /// Creates vertices from points by re-validating coordinates at the public boundary.
@@ -1368,8 +1381,8 @@ pub mod prelude {
         ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
         ConstructionStatistics, DedupPolicy, DedupTolerance, DelaunayCheckPolicy,
         DelaunayConstructionFailure, DelaunayConstructionRepairPhase,
-        DelaunayConstructionRetryFailure, DelaunayError, DelaunayRepairOperation,
-        DelaunayRepairPolicy, DelaunayResult, DelaunayTdsRefinementError, DelaunayTriangulation,
+        DelaunayConstructionRetryFailure, DelaunayError, DelaunayRefinementBuilder,
+        DelaunayRepairOperation, DelaunayRepairPolicy, DelaunayResult, DelaunayTriangulation,
         DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
         DelaunayTriangulationConstructionErrorWithStatistics, DelaunayTriangulationRefinementError,
         DelaunayTriangulationValidationError, DelaunayVerificationError,
@@ -1385,8 +1398,8 @@ pub mod prelude {
         TriangulationRealizationIntersectionDetail, TriangulationRealizationSimplexDetail,
         TriangulationRealizationSimplexPairDetail, TriangulationRealizationValidationError,
         TriangulationRealizationValidationErrorKind, TriangulationRealizationValidationReport,
-        TriangulationRefinementError, TriangulationValidationError, TriangulationValidationReport,
-        ValidationConfigurationError, ValidationPolicy, try_vertices_from_points,
+        TriangulationValidationError, TriangulationValidationReport, ValidationConfigurationError,
+        ValidationPolicy, try_vertices_from_points,
     };
 
     // Re-export utility items, but avoid exporting the util module names themselves.
@@ -1533,11 +1546,15 @@ pub mod prelude {
         };
         pub use crate::vertex;
         pub use crate::{
-            CavityFillingError, CavityRepairStage, DelaunayTriangulation, DeleteVertexError,
+            CavityFillingError, CavityRepairStage, DelaunayTriangulation,
+            DelaunayTriangulationDraft, DelaunayTriangulationDraftError, DeleteVertexError,
             FinalDelaunayValidationContext, FinalTopologyValidationContext,
             SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
             TriangulationConstructionError, TriangulationRealizationValidationError,
             try_vertices_from_points,
+        };
+        pub use crate::{
+            TriangulationBuildFailure, TriangulationBuilder, TriangulationBuilderError,
         };
     }
 
@@ -1601,12 +1618,12 @@ pub mod prelude {
         pub use crate::{
             InsertionError, PeriodicDomainPeriodError, RefinementError,
             SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
+            TriangulationBuildFailure, TriangulationBuilder, TriangulationBuilderError,
             TriangulationConstructionError, TriangulationRealizationIntersectionDetail,
             TriangulationRealizationSimplexDetail, TriangulationRealizationSimplexPairDetail,
             TriangulationRealizationValidationError, TriangulationRealizationValidationErrorKind,
-            TriangulationRealizationValidationReport, TriangulationRefinementError,
-            TriangulationValidationError, TriangulationValidationReport,
-            ValidationConfigurationError, ValidationPolicy,
+            TriangulationRealizationValidationReport, TriangulationValidationError,
+            TriangulationValidationReport, ValidationConfigurationError, ValidationPolicy,
         };
     }
 
@@ -1797,11 +1814,11 @@ pub mod prelude {
         };
     }
 
-    /// End-to-end Delaunay conversion workflow.
+    /// End-to-end Delaunay refinement workflow.
     ///
     /// Self-contained: a single `use delaunay::prelude::delaunayize::*`
     /// import brings in [`DelaunayTriangulationBuilder`], [`DelaunayTriangulation`],
-    /// and all delaunayize-specific types.
+    /// and all Delaunay-refinement types.
     pub mod delaunayize {
         pub use crate::delaunayize::*;
         pub use crate::{DelaunayTriangulation, DelaunayTriangulationBuilder, RefinementError};
@@ -1822,14 +1839,13 @@ pub mod prelude {
         pub use crate::topology::manifold::ManifoldError;
         pub use crate::validation::*;
         pub use crate::{
-            DelaunayTdsRefinementError, DelaunayTriangulationRefinementError,
-            DelaunayTriangulationValidationError, DelaunayVerificationError,
-            DelaunayVerificationErrorKind, OrientationWitness, PeriodicDomainPeriodError,
-            RefinementError, SphericalDelaunayValidationError, SphericalValidationLayer,
-            TopologyGuarantee, TriangulationRealizationIntersectionDetail,
-            TriangulationRealizationSimplexDetail, TriangulationRealizationSimplexPairDetail,
-            TriangulationRealizationValidationError, TriangulationRealizationValidationErrorKind,
-            TriangulationRealizationValidationReport, TriangulationRefinementError,
+            DelaunayTriangulationRefinementError, DelaunayTriangulationValidationError,
+            DelaunayVerificationError, DelaunayVerificationErrorKind, OrientationWitness,
+            PeriodicDomainPeriodError, RefinementError, SphericalDelaunayValidationError,
+            SphericalValidationLayer, TopologyGuarantee,
+            TriangulationRealizationIntersectionDetail, TriangulationRealizationSimplexDetail,
+            TriangulationRealizationSimplexPairDetail, TriangulationRealizationValidationError,
+            TriangulationRealizationValidationErrorKind, TriangulationRealizationValidationReport,
             TriangulationValidationError, TriangulationValidationReport,
             ValidationConfigurationError, ValidationPolicy,
         };
@@ -2248,6 +2264,7 @@ mod tests {
     use crate::{
         DelaunayTriangulation, PlManifoldRepairConfig, PlManifoldRepairError,
         PlManifoldRepairStage, PlManifoldRepairStats, PlManifoldTdsRepairResult,
+        TriangulationBuildFailure, TriangulationBuilder,
         core::{
             adjacency::TriangulationAdjacency, edge::EdgeKey, simplex::Simplex, tds::Tds,
             vertex::Vertex,
@@ -2257,9 +2274,8 @@ mod tests {
         },
         is_normal,
         prelude::delaunayize::{
-            DelaunayTriangulationConstructionError, DelaunayizeConfig, DelaunayizeError,
-            DelaunayizeOutcome, DelaunayizeRefinementError, SimplexDataRestoreError,
-            SimplexValidationError,
+            DelaunayTriangulationConstructionError, DelaunayizeError, DelaunayizeOutcome,
+            DelaunayizeRefinementError, SimplexDataRestoreError, SimplexValidationError,
         },
         prelude::repair::{
             DelaunayCheckPolicy, DelaunayRepairError, DelaunayRepairPolicy, DelaunayRepairStats,
@@ -2287,17 +2303,20 @@ mod tests {
         assert!(is_normal::<Tds<(), (), 4>>());
         assert!(is_normal::<Triangulation<FastKernel<f64>, (), (), 3>>());
         assert!(is_normal::<DelaunayTriangulation<FastKernel<f64>, (), (), 3>>());
+        assert!(is_normal::<TriangulationBuilder<FastKernel<f64>, (), (), 3>>());
+        assert!(is_normal::<
+            DelaunayRefinementBuilder<FastKernel<f64>, (), (), 3>,
+        >());
         assert!(is_normal::<ConvexHull<(), (), 3>>());
         assert!(is_normal::<EdgeKey>());
         assert!(is_normal::<TriangulationAdjacency<'static>>());
-        assert!(is_normal::<DelaunayizeConfig>());
         assert!(is_normal::<DelaunayizeOutcome>());
         assert!(is_normal::<DelaunayizeError>());
         assert!(is_normal::<RefinementError<u8, DelaunayizeError>>());
         assert!(is_normal::<
             DelaunayizeRefinementError<FastKernel<f64>, (), (), 3>,
         >());
-        assert!(is_normal::<TriangulationRefinementError<(), (), 3>>());
+        assert!(is_normal::<TriangulationBuildFailure<(), (), 3>>());
         assert!(is_normal::<
             DelaunayTriangulationRefinementError<FastKernel<f64>, (), (), 3>,
         >());

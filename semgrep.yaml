@@ -1174,6 +1174,52 @@ rules:
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-regex: '^\s*pub\s+(?:const\s+)?fn\s+tds\s*(?:<[^>{}]*>)?\s*\('
 
+  - id: delaunay.rust.no-delaunay-tds-accessor-method
+    languages:
+      - rust
+    severity: WARNING
+    message: "Use DelaunayTriangulation owner queries; consume it into Triangulation/Tds for intentionally low-level storage workflows."
+    metadata:
+      category: api
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/503"
+      rationale: >-
+        DelaunayTriangulation is the proof-bearing Level 5 owner. A crate-private
+        tds() accessor lets ordinary code bypass that boundary and couples
+        Delaunay workflows to raw storage. Low-level workflows should consume
+        the owner through into_triangulation() and then into_tds().
+    paths:
+      include:
+        - "/src/delaunay/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
+                  ...
+              }
+          - pattern-inside: |
+              impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
+              where
+                  K: $K_BOUND,
+                  U: $U_BOUND,
+                  V: $V_BOUND,
+              {
+                  ...
+              }
+          - pattern-inside: |
+              impl<K, U, V> DelaunayTriangulation<K, U, V, 2> {
+                  ...
+              }
+          - pattern-inside: |
+              impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
+                  ...
+              }
+          - pattern-inside: |
+              impl DelaunayOwnerFixture {
+                  ...
+              }
+      - pattern: fn tds(...) -> $RET { ... }
+
   - id: delaunay.rust.no-tds-accessor-in-doctests
     languages:
       - generic
@@ -2129,7 +2175,7 @@ rules:
       include:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/rust_style.rs"
-    pattern-regex: '(?s)\bstruct\s+DelaunayTriangulationCandidate(?:\s*<[^{}]*>)?\s*\{[^}]*:\s*DelaunayTriangulation(?:\s*<[^{}]*>)?'
+    pattern-regex: '(?s)\bstruct\s+DelaunayRefinementCandidate(?:\s*<[^{}]*>)?\s*\{[^}]*:\s*DelaunayTriangulation(?:\s*<[^{}]*>)?'
 
   - id: delaunay.rust.no-cumulative-revalidation-delaunay-promotion
     languages:

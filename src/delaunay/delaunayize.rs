@@ -1,18 +1,18 @@
-//! End-to-end Delaunay conversion workflow.
+//! End-to-end Delaunay refinement workflow.
 //!
-//! This module provides [`delaunayize`], a consuming conversion from a Levels
-//! 1–4 [`Triangulation`] to a Levels 1–5 [`DelaunayTriangulation`]. The
-//! [`delaunayize_by_flips`](crate::delaunayize::delaunayize_by_flips) alias
-//! names the current repair strategy explicitly.
-//! Conversion applies bounded flip-based Delaunay repair without weakening the
-//! input type's existing topology and realization proofs.
+//! [`DelaunayRefinementBuilder`] is the single consuming transition from a
+//! Levels 1–4 [`Triangulation`] to a Levels 1–5
+//! [`DelaunayTriangulation`]. The default strict terminal checks only Level 5;
+//! [`repair_by_flips`](DelaunayRefinementBuilder::repair_by_flips) selects
+//! bounded transactional repair before certification.
 //!
 //! # Workflow
 //!
 //! 1. **Levels 1–4 proof consumption** — accepts the proof-bearing
 //!    `Triangulation` without revalidating invariants encoded by its type.
-//! 2. **Delaunay flip repair** — runs transactional k=2/k=3 bistellar flips
-//!    that preserve Levels 1–4 while restoring the empty-circumsphere property.
+//! 2. **Optional Delaunay flip repair** — when selected, runs transactional
+//!    k=2/k=3 bistellar flips that preserve Levels 1–4 while restoring the
+//!    empty-circumsphere property.
 //! 3. **Optional fallback rebuild** — if configured, rebuilds the triangulation
 //!    from its vertex set after Delaunay repair fails.
 //! 4. **Level 5 certification** — publishes `DelaunayTriangulation` only after
@@ -47,7 +47,9 @@
 //! ];
 //! let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
 //!
-//! let result = delaunayize(tri, DelaunayizeConfig::default())
+//! let result = DelaunayRefinementBuilder::new(tri)
+//!     .repair_by_flips()
+//!     .build()
 //!     .map_err(RefinementError::into_reason)?;
 //! assert!(result.triangulation.validate().is_ok());
 //! # Ok(())
@@ -84,36 +86,166 @@ use crate::triangulation::Triangulation;
 use crate::triangulation::rollback::TriangulationRollbackTransaction;
 use crate::triangulation::validation::TopologyGuarantee;
 use crate::validation::{
-    DelaunayTriangulationCandidate, DelaunayTriangulationValidationError,
+    DelaunayRefinementCandidate, DelaunayTriangulationValidationError,
     validate_level_five_for_refinement,
 };
 use thiserror::Error;
+
+/// Type state for strict, non-mutating Level 5 certification.
+#[derive(Clone, Copy, Debug, Default)]
+#[doc(hidden)]
+pub struct StrictDelaunayRefinement;
+
+/// Type state for bounded flip repair before Level 5 certification.
+#[derive(Clone, Copy, Debug)]
+#[doc(hidden)]
+pub struct FlipRepairDelaunayRefinement {
+    config: DelaunayizeConfig,
+}
+
+/// Fluent promotion from a Levels 1–4 [`Triangulation`] to a Levels 1–5
+/// [`DelaunayTriangulation`].
+///
+/// [`new`](Self::new) defaults to strict publication, which checks only Level
+/// 5, performs no mutation, and allocates no rollback snapshot.
+/// [`repair_by_flips`](Self::repair_by_flips) explicitly selects bounded
+/// transactional repair and enables its repair-only options.
+#[derive(Clone, Debug)]
+pub struct DelaunayRefinementBuilder<K, U, V, const D: usize, M = StrictDelaunayRefinement> {
+    triangulation: Triangulation<K, U, V, D>,
+    mode: M,
+}
+
+impl<K, U, V, const D: usize> DelaunayRefinementBuilder<K, U, V, D, StrictDelaunayRefinement> {
+    /// Creates a strict, non-mutating Level 5 refinement request.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::delaunayize::DelaunayRefinementBuilder;
+    /// use delaunay::prelude::geometry::AdaptiveKernel;
+    /// use delaunay::prelude::triangulation::Triangulation;
+    /// use delaunay::{DelaunayTriangulation, DelaunayTriangulationRefinementError};
+    ///
+    /// fn certify(
+    ///     triangulation: Triangulation<AdaptiveKernel<f64>, (), (), 2>,
+    /// ) -> Result<
+    ///     DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>,
+    ///     DelaunayTriangulationRefinementError<AdaptiveKernel<f64>, (), (), 2>,
+    /// > {
+    ///     DelaunayRefinementBuilder::new(triangulation).build()
+    /// }
+    /// ```
+    #[must_use]
+    pub const fn new(triangulation: Triangulation<K, U, V, D>) -> Self {
+        Self {
+            triangulation,
+            mode: StrictDelaunayRefinement,
+        }
+    }
+
+    /// Selects bounded bistellar-flip repair before Level 5 certification.
+    #[must_use]
+    pub fn repair_by_flips(
+        self,
+    ) -> DelaunayRefinementBuilder<K, U, V, D, FlipRepairDelaunayRefinement> {
+        DelaunayRefinementBuilder {
+            triangulation: self.triangulation,
+            mode: FlipRepairDelaunayRefinement {
+                config: DelaunayizeConfig {
+                    fallback_rebuild: false,
+                    delaunay_max_flips: None,
+                },
+            },
+        }
+    }
+}
+
+impl<K, U, V, const D: usize> DelaunayRefinementBuilder<K, U, V, D, StrictDelaunayRefinement>
+where
+    K: crate::geometry::kernel::Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    /// Certifies Level 5 without changing the triangulation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayTriangulationRefinementError`](crate::DelaunayTriangulationRefinementError)
+    /// when the Level 5
+    /// predicate rejects the candidate. The failure retains the unchanged
+    /// Levels 1–4 triangulation.
+    pub fn build(
+        self,
+    ) -> Result<
+        DelaunayTriangulation<K, U, V, D>,
+        crate::validation::DelaunayTriangulationRefinementError<K, U, V, D>,
+    > {
+        let Self {
+            triangulation,
+            mode: _,
+        } = self;
+        DelaunayRefinementCandidate::from_triangulation(triangulation).try_into_delaunay()
+    }
+}
+
+impl<K, U, V, const D: usize> DelaunayRefinementBuilder<K, U, V, D, FlipRepairDelaunayRefinement> {
+    /// Enables or disables fallback reconstruction after failed flip repair.
+    #[must_use]
+    pub const fn fallback_rebuild(mut self, fallback_rebuild: bool) -> Self {
+        self.mode.config.fallback_rebuild = fallback_rebuild;
+        self
+    }
+
+    /// Sets the per-attempt bistellar-flip budget cap.
+    #[must_use]
+    pub const fn max_flips(mut self, max_flips: usize) -> Self {
+        self.mode.config.delaunay_max_flips = Some(max_flips);
+        self
+    }
+
+    /// Clears the explicit flip cap and restores the dimension-dependent bound.
+    #[must_use]
+    pub const fn default_flip_budget(mut self) -> Self {
+        self.mode.config.delaunay_max_flips = None;
+        self
+    }
+}
+
+impl<K, U, V, const D: usize> DelaunayRefinementBuilder<K, U, V, D, FlipRepairDelaunayRefinement>
+where
+    K: ExactPredicates<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    /// Repairs and certifies the configured triangulation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayizeRefinementError`] when repair, optional fallback,
+    /// or final Level 5 certification fails. Transactional failure returns the
+    /// original Levels 1–4 triangulation.
+    #[expect(
+        clippy::result_large_err,
+        reason = "recoverable refinement failures retain the original proof-bearing owner"
+    )]
+    pub fn build(
+        self,
+    ) -> Result<DelaunayizeResult<K, U, V, D>, DelaunayizeRefinementError<K, U, V, D>> {
+        let Self {
+            triangulation,
+            mode,
+        } = self;
+        delaunayize(triangulation, mode.config)
+    }
+}
 
 // =============================================================================
 // CONFIGURATION
 // =============================================================================
 
-/// Configuration for the [`delaunayize`] workflow.
-///
-/// # Defaults
-///
-/// - `fallback_rebuild`: false
-/// - `delaunay_max_flips`: `None`
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::delaunayize::DelaunayizeConfig;
-///
-/// let config = DelaunayizeConfig::default()
-///     .with_fallback_rebuild(true)
-///     .with_delaunay_max_flips(500);
-///
-/// assert!(config.fallback_rebuild);
-/// assert_eq!(config.delaunay_max_flips, Some(500));
-/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct DelaunayizeConfig {
+struct DelaunayizeConfig {
     /// If `true`, rebuild the triangulation from the vertex set when flip-based
     /// Delaunay repair fails.
     ///
@@ -121,71 +253,19 @@ pub struct DelaunayizeConfig {
     /// vertex UUID set matches exactly one original simplex. Simplices that change
     /// during rebuild, have no original payload, or have ambiguous duplicate
     /// original signatures receive `None`.
-    pub fallback_rebuild: bool,
+    fallback_rebuild: bool,
     /// Optional per-attempt flip budget cap for Delaunay repair.
     ///
     /// `None` (default) uses the internal dimension-dependent budget.
     /// Set to `Some(n)` to limit each repair attempt to at most `n` flips.
-    pub delaunay_max_flips: Option<usize>,
-}
-
-impl DelaunayizeConfig {
-    /// Enables or disables fallback rebuild after failed Delaunay repair.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::delaunayize::DelaunayizeConfig;
-    ///
-    /// let config = DelaunayizeConfig::default().with_fallback_rebuild(true);
-    /// assert!(config.fallback_rebuild);
-    /// ```
-    #[must_use]
-    pub const fn with_fallback_rebuild(mut self, fallback_rebuild: bool) -> Self {
-        self.fallback_rebuild = fallback_rebuild;
-        self
-    }
-
-    /// Sets the optional per-attempt flip budget for the Delaunay repair stage.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::delaunayize::DelaunayizeConfig;
-    ///
-    /// let config = DelaunayizeConfig::default().with_delaunay_max_flips(500);
-    /// assert_eq!(config.delaunay_max_flips, Some(500));
-    /// ```
-    #[must_use]
-    pub const fn with_delaunay_max_flips(mut self, max_flips: usize) -> Self {
-        self.delaunay_max_flips = Some(max_flips);
-        self
-    }
-
-    /// Clears the per-attempt flip budget so Delaunay repair uses its default bound.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::delaunayize::DelaunayizeConfig;
-    ///
-    /// let config = DelaunayizeConfig::default()
-    ///     .with_delaunay_max_flips(500)
-    ///     .without_delaunay_max_flips();
-    /// assert_eq!(config.delaunay_max_flips, None);
-    /// ```
-    #[must_use]
-    pub const fn without_delaunay_max_flips(mut self) -> Self {
-        self.delaunay_max_flips = None;
-        self
-    }
+    delaunay_max_flips: Option<usize>,
 }
 
 // =============================================================================
 // OUTCOME
 // =============================================================================
 
-/// Outcome of a successful [`delaunayize`] call.
+/// Outcome of successful flip-repair refinement.
 ///
 /// # Examples
 ///
@@ -210,7 +290,9 @@ impl DelaunayizeConfig {
 /// ];
 /// let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
 ///
-/// let result = delaunayize(tri, DelaunayizeConfig::default())
+/// let result = DelaunayRefinementBuilder::new(tri)
+///     .repair_by_flips()
+///     .build()
 ///     .map_err(RefinementError::into_reason)?;
 /// assert!(!result.outcome.used_fallback_rebuild);
 /// assert!(result.triangulation.validate().is_ok());
@@ -245,7 +327,7 @@ pub struct DelaunayizeResult<K, U, V, const D: usize> {
 // ERRORS
 // =============================================================================
 
-/// Errors that can occur during the [`delaunayize`] workflow.
+/// Errors that can occur during flip-repair refinement.
 ///
 /// There are five orthogonal failure modes:
 /// - **Topology precondition** rejected an input without the PL-manifold proof
@@ -720,8 +802,9 @@ fn failed_delaunay_repair_stats(source: &DelaunayRepairError) -> DelaunayRepairS
 /// invariant-preserving repair, then publishes the Delaunay owner only after
 /// Level 5 certification succeeds.
 ///
-/// Use [`DelaunayTriangulation::try_from_triangulation`] instead when the input
-/// is already expected to be Delaunay and no repair should be attempted.
+/// The public [`DelaunayRefinementBuilder`] selects this implementation through
+/// [`repair_by_flips`](DelaunayRefinementBuilder::repair_by_flips). Use its
+/// strict mode when no repair should be attempted.
 ///
 /// # Errors
 ///
@@ -737,7 +820,7 @@ fn failed_delaunay_repair_stats(source: &DelaunayRepairError) -> DelaunayRepairS
 ///     DelaunayTriangulationBuilder,
 ///     DelaunayTriangulationConstructionError,
 /// };
-/// use delaunay::prelude::delaunayize::{DelaunayizeConfig, delaunayize};
+/// use delaunay::prelude::delaunayize::DelaunayRefinementBuilder;
 /// use delaunay::prelude::geometry::CoordinateConversionError;
 /// use delaunay::prelude::validation::DelaunayValidationError;
 /// use delaunay::RefinementError;
@@ -767,7 +850,9 @@ fn failed_delaunay_repair_stats(source: &DelaunayRepairError) -> DelaunayRepairS
 ///         .build_triangulation()?;
 /// assert!(!triangulation.delaunay_violation_report(None)?.is_valid());
 ///
-/// let result = delaunayize(triangulation, DelaunayizeConfig::default())
+/// let result = DelaunayRefinementBuilder::new(triangulation)
+///     .repair_by_flips()
+///     .build()
 ///     .map_err(RefinementError::into_reason)?;
 /// assert!(result.triangulation.validate().is_ok());
 /// # Ok(())
@@ -777,7 +862,7 @@ fn failed_delaunay_repair_stats(source: &DelaunayRepairError) -> DelaunayRepairS
     clippy::result_large_err,
     reason = "recoverable Delaunayize failures preserve typed sources on a cold conversion error path"
 )]
-pub fn delaunayize<K, U, V, const D: usize>(
+fn delaunayize<K, U, V, const D: usize>(
     mut triangulation: Triangulation<K, U, V, D>,
     config: DelaunayizeConfig,
 ) -> Result<DelaunayizeResult<K, U, V, D>, DelaunayizeRefinementError<K, U, V, D>>
@@ -834,7 +919,7 @@ where
                 return Err(RefinementError::new(triangulation, reason));
             }
             transaction.commit();
-            let triangulation = DelaunayTriangulationCandidate::from_triangulation(triangulation)
+            let triangulation = DelaunayRefinementCandidate::from_triangulation(triangulation)
                 .into_delaunay_after_level_five_check();
             Ok(DelaunayizeResult {
                 triangulation,
@@ -871,72 +956,6 @@ where
             })
         }
     }
-}
-
-/// Converts a Levels 1–4 triangulation into a Levels 1–5 Delaunay
-/// triangulation using the bounded flip-repair workflow.
-///
-/// This named variant is equivalent to [`delaunayize`] and makes the selected
-/// repair strategy explicit. It consumes the generic triangulation so no
-/// intermediate non-Delaunay state can escape under the Level 5 owner type.
-///
-/// # Errors
-///
-/// Returns [`DelaunayizeRefinementError`] when repair does not converge within
-/// its budgets, fallback reconstruction fails, or final Level 5 certification
-/// rejects the candidate. The failure retains the original Levels 1–4 owner
-/// after rollback together with its typed [`DelaunayizeError`] reason.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::construction::{
-///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-/// };
-/// use delaunay::prelude::delaunayize::{
-///     DelaunayizeConfig, DelaunayizeError, delaunayize_by_flips,
-/// };
-/// use delaunay::prelude::geometry::CoordinateConversionError;
-/// use delaunay::RefinementError;
-///
-/// # #[derive(Debug, thiserror::Error)]
-/// # enum ExampleError {
-/// #     #[error(transparent)]
-/// #     Coordinate(#[from] CoordinateConversionError),
-/// #     #[error(transparent)]
-/// #     Construction(#[from] DelaunayTriangulationConstructionError),
-/// #     #[error(transparent)]
-/// #     Delaunayize(#[from] DelaunayizeError),
-/// # }
-/// # fn main() -> Result<(), ExampleError> {
-/// let vertices = [
-///     delaunay::vertex![0.0, 0.0]?,
-///     delaunay::vertex![1.0, 0.0]?,
-///     delaunay::vertex![0.0, 1.0]?,
-/// ];
-/// let triangulation = DelaunayTriangulationBuilder::new(&vertices)
-///     .build_triangulation()?;
-///
-/// let result = delaunayize_by_flips(triangulation, DelaunayizeConfig::default())
-///     .map_err(RefinementError::into_reason)?;
-/// assert!(result.triangulation.validate().is_ok());
-/// # Ok(())
-/// # }
-/// ```
-#[expect(
-    clippy::result_large_err,
-    reason = "recoverable Delaunayize failures preserve typed sources on a cold conversion error path"
-)]
-pub fn delaunayize_by_flips<K, U, V, const D: usize>(
-    triangulation: Triangulation<K, U, V, D>,
-    config: DelaunayizeConfig,
-) -> Result<DelaunayizeResult<K, U, V, D>, DelaunayizeRefinementError<K, U, V, D>>
-where
-    K: ExactPredicates<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
-{
-    delaunayize(triangulation, config)
 }
 
 // =============================================================================
@@ -1167,44 +1186,6 @@ mod tests {
     }
 
     // =============================================================================
-    // SUCCESS PATH TESTS
-    // =============================================================================
-
-    #[test]
-    fn test_already_delaunay_3d() {
-        init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-        let result = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default()).unwrap();
-        assert!(!result.outcome.used_fallback_rebuild);
-        assert!(result.triangulation.validate().is_ok());
-    }
-
-    #[test]
-    fn test_already_delaunay_2d() {
-        init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-            vertex!([1.0, 1.0]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-        let result = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default()).unwrap();
-        assert!(!result.outcome.used_fallback_rebuild);
-        assert!(result.triangulation.validate().is_ok());
-    }
-
-    // =============================================================================
     // OUTCOME POPULATION TESTS
     // =============================================================================
 
@@ -1388,24 +1369,6 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn test_fallback_enabled_on_valid_triangulation() {
-        init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-        // Fallback should not be triggered on a valid triangulation.
-        let config = DelaunayizeConfig::default().with_fallback_rebuild(true);
-        let result = delaunayize(dt.into_triangulation(), config).unwrap();
-        assert!(!result.outcome.used_fallback_rebuild);
-    }
-
-    #[test]
     fn final_certification_failure_rolls_back_mutating_repair_and_returns_triangulation() {
         init_tracing();
         let vertices = [
@@ -1459,7 +1422,10 @@ mod tests {
 
         let result = delaunayize(
             dt.into_triangulation(),
-            DelaunayizeConfig::default().with_fallback_rebuild(true),
+            DelaunayizeConfig {
+                fallback_rebuild: true,
+                ..DelaunayizeConfig::default()
+            },
         )
         .unwrap();
 
@@ -1468,7 +1434,7 @@ mod tests {
         assert_eq!(result.outcome.delaunay_repair.max_queue_len, 0);
         assert!(result.outcome.used_fallback_rebuild);
         assert_eq!(result.triangulation.number_of_vertices(), vertices.len());
-        assert!(result.triangulation.tds().is_valid().is_ok());
+        assert!(result.triangulation.is_valid_structure().is_ok());
     }
 
     #[test]
@@ -1486,7 +1452,10 @@ mod tests {
         let _guard = ForceDelaunayRepairFailureGuard::enable();
         let result = delaunayize(
             dt.into_triangulation(),
-            DelaunayizeConfig::default().with_fallback_rebuild(true),
+            DelaunayizeConfig {
+                fallback_rebuild: true,
+                ..DelaunayizeConfig::default()
+            },
         )
         .unwrap();
 
@@ -1556,52 +1525,5 @@ mod tests {
         let (_, rebuilt_simplex) = rebuilt.simplices().next().unwrap();
         assert_eq!(rebuilt_simplex.data(), None);
         assert!(rebuilt.validate().is_ok());
-    }
-
-    // =============================================================================
-    // DETERMINISM TESTS
-    // =============================================================================
-
-    #[test]
-    fn test_deterministic_repeated_runs() {
-        init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-            vertex!([0.5, 0.5, 0.5]).unwrap(),
-        ];
-
-        let config = DelaunayizeConfig::default();
-
-        let dt1: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let outcome1 = delaunayize(dt1.into_triangulation(), config)
-            .unwrap()
-            .outcome;
-
-        let dt2: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let outcome2 = delaunayize(dt2.into_triangulation(), config)
-            .unwrap()
-            .outcome;
-
-        assert_eq!(
-            outcome1.delaunay_repair.facets_checked,
-            outcome2.delaunay_repair.facets_checked
-        );
-        assert_eq!(
-            outcome1.delaunay_repair.flips_performed,
-            outcome2.delaunay_repair.flips_performed
-        );
-        assert_eq!(
-            outcome1.delaunay_repair.max_queue_len,
-            outcome2.delaunay_repair.max_queue_len
-        );
-        assert_eq!(
-            outcome1.used_fallback_rebuild,
-            outcome2.used_fallback_rebuild
-        );
     }
 }

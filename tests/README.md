@@ -353,6 +353,7 @@ Core integration coverage currently includes:
 - [`delaunay_repair_fallback.rs`](./delaunay_repair_fallback.rs)
 - [`delaunay_edge_cases.rs`](./delaunay_edge_cases.rs)
 - [`delaunayize_workflow.rs`](./delaunayize_workflow.rs)
+- [`proof_builders.rs`](./proof_builders.rs)
 - [`triangulation_builder.rs`](./triangulation_builder.rs)
 - [`public_topology_api.rs`](./public_topology_api.rs)
 - [`euler_characteristic.rs`](./euler_characteristic.rs)
@@ -374,18 +375,30 @@ Integration tests for serialization ensuring vertex identifiers and associated d
 
 #### [`delaunayize_workflow.rs`](./delaunayize_workflow.rs)
 
-Integration tests for the consuming `delaunayize` workflow and its explicit
-`delaunayize_by_flips` alias, validating the public API in `delaunay::delaunayize`.
+Integration tests for the consuming `DelaunayRefinementBuilder` workflow,
+validating flip-repair mode in `delaunay::delaunayize`.
 
 **Test Coverage:**
 
-- **Config Defaults**: `DelaunayizeConfig` default values
-- **Non-Delaunay PL-Manifold Repair**: 2D and 3D success cases
-- **Fallback Behavior**: fallback off/on does not trigger on valid triangulations
-- **Outcome Stats**: stats populated correctly after repair
+- **Bounded Repair**: a zero flip budget reaches the repair engine and rolls back
+- **Non-Delaunay PL-Manifold Repair**: a known 3D violation requires and accepts flips
+- **Topology Precondition**: fallback cannot bypass the PL-manifold requirement
+- **Typed Errors and Outcome Stats**: public payloads remain inspectable
 - **Determinism**: repeat runs produce identical outcome stats
 
 **Run with:** `cargo test --test delaunayize_workflow`
+
+#### [`proof_builders.rs`](./proof_builders.rs)
+
+Cross-crate contract tests for the explicit proof chain.
+
+**Test Coverage:**
+
+- **TDS Boundary**: malformed connectivity returns exact typed builder context
+- **Strict Promotion**: TDS representation, owner, generation, and payload survive
+  strict TDS → Triangulation → Delaunay promotion unchanged
+
+**Run with:** `cargo test --test proof_builders`
 
 ### 🐛 Regression and Error Reproduction
 

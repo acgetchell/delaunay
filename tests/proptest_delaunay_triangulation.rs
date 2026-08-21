@@ -36,7 +36,8 @@
 mod proptest_config;
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, DedupPolicy, DelaunayTriangulation, TopologyGuarantee, Vertex,
+    ConstructionOptions, DedupPolicy, DelaunayTriangulation, DelaunayTriangulationDraft,
+    TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::insertion::InsertionOutcome;
@@ -424,8 +425,8 @@ fn shuffle_points<const D: usize>(mut points: Vec<Point<D>>, seed: u64) -> Vec<P
 fn assert_on_suspicion_sequence_valid<const D: usize>(
     points: Vec<Point<D>>,
 ) -> Result<(), TestCaseError> {
-    let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayTriangulationDraft<AdaptiveKernel<f64>, (), (), D> =
+        DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
     dt.try_set_validation_policy(ValidationPolicy::OnSuspicion)
         .unwrap();
 
@@ -433,7 +434,7 @@ fn assert_on_suspicion_sequence_valid<const D: usize>(
         let result = dt.insert_best_effort_with_statistics(vertex!(point.into()).unwrap());
 
         if dt.number_of_simplices() > 0 {
-            let validation = dt.validate();
+            let validation = dt.clone().finish();
             prop_assert!(
                 validation.is_ok(),
                 "{D}D OnSuspicion validation failed after cospherical attempt {idx}: result={result:?}, validation={:?}",
@@ -447,7 +448,7 @@ fn assert_on_suspicion_sequence_valid<const D: usize>(
         "{D}D OnSuspicion cospherical sequence did not create any simplices"
     );
 
-    let validation = dt.validate();
+    let validation = dt.finish();
     prop_assert!(
         validation.is_ok(),
         "{D}D OnSuspicion final Level 1-4 validation failed after cospherical sequence: {:?}",
@@ -509,17 +510,12 @@ fn assert_non_finite_point_rejected_and_preserves_validity<const D: usize>(
         })
     );
 
-    let empty: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let empty: DelaunayTriangulationDraft<AdaptiveKernel<f64>, (), (), D> =
+        DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     prop_assert_eq!(empty.number_of_vertices(), 0);
     prop_assert_eq!(empty.number_of_simplices(), 0);
-    let empty_validation = empty.validate();
-    prop_assert!(
-        empty_validation.is_ok(),
-        "{D}D empty triangulation became invalid after rejected non-finite insertion: {:?}",
-        empty_validation.err()
-    );
+    prop_assert!(empty.finish().is_ok());
 
     let dt = DelaunayTriangulation::builder(initial_vertices)
         .topology_guarantee(TopologyGuarantee::PLManifold)
@@ -559,7 +555,7 @@ enum InsertionOrder3dRunStatus {
 }
 
 fn insert_vertices_3d_no_retry_or_skip(
-    dt: &mut DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>,
+    dt: &mut DelaunayTriangulationDraft<AdaptiveKernel<f64>, (), (), 3>,
     vertices: &[Vertex<(), 3>],
 ) -> InsertionOrder3dRunStatus {
     for (idx, v) in vertices.iter().enumerate() {
@@ -647,8 +643,8 @@ fn regression_insertion_order_3d_case_001() {
         .expect("finite point coordinates"),
     ];
     let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayTriangulationDraft<_, (), (), 3> =
+        DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     for (idx, v) in vertices.iter().enumerate() {
         let result = dt.insert_best_effort_with_statistics(*v);
@@ -1458,8 +1454,8 @@ fn prop_insertion_order_robustness_3d() {
         // Build triangulation A via incremental insertion, requiring a "clean run":
         // - no retry/perturbation (stats.attempts == 1 for all insertions)
         // - no skipped vertices
-        let mut dt_a: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+        let mut dt_a: DelaunayTriangulationDraft<_, (), (), 3> =
+            DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
         let run_a = insert_vertices_3d_no_retry_or_skip(&mut dt_a, &points);
         match run_a {
             InsertionOrder3dRunStatus::Clean => {}
@@ -1483,21 +1479,20 @@ fn prop_insertion_order_robustness_3d() {
             }
         }
 
-        let validation_a = dt_a.as_triangulation().validate();
-        if let Err(e) = validation_a {
+        let dt_a = dt_a.finish().map_err(|e| {
             stats.rejected_run_a_invalid_levels_1_to_3 += 1;
-            return Err(TestCaseError::reject(format!(
-                "3D: Triangulation A (clean insertion run) failed Levels 1–3 validation (treated as out of scope): {e:?}"
-            )));
-        }
+            TestCaseError::reject(format!(
+                "3D: Triangulation A (clean insertion run) failed Levels 1–5 publication (treated as out of scope): {e:?}"
+            ))
+        })?;
 
         // Build triangulation B with shuffled order, same retry/skip rejection.
         let mut rng = rand::rngs::StdRng::seed_from_u64(0x00DE_C0DE);
         let mut points_shuffled = points.clone();
         points_shuffled.shuffle(&mut rng);
 
-        let mut dt_b: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+        let mut dt_b: DelaunayTriangulationDraft<_, (), (), 3> =
+            DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
         let run_b = insert_vertices_3d_no_retry_or_skip(&mut dt_b, &points_shuffled);
         match run_b {
             InsertionOrder3dRunStatus::Clean => {}
@@ -1521,13 +1516,12 @@ fn prop_insertion_order_robustness_3d() {
             }
         }
 
-        let validation_b = dt_b.as_triangulation().validate();
-        if let Err(e) = validation_b {
+        let dt_b = dt_b.finish().map_err(|e| {
             stats.rejected_run_b_invalid_levels_1_to_3 += 1;
-            return Err(TestCaseError::reject(format!(
-                "3D: Triangulation B (clean insertion run) failed Levels 1–3 validation (treated as out of scope): {e:?}"
-            )));
-        }
+            TestCaseError::reject(format!(
+                "3D: Triangulation B (clean insertion run) failed Levels 1–5 publication (treated as out of scope): {e:?}"
+            ))
+        })?;
 
         // Both should have inserted all vertices (we reject Skipped cases above).
         prop_assert_eq!(

@@ -19,7 +19,7 @@ use std::{
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use delaunay::{
-    DelaunayTriangulation, InvariantError, VisualizationExportError,
+    DelaunayRefinementBuilder, DelaunayTriangulation, InvariantError, VisualizationExportError,
     prelude::{
         construction::{
             ConstructionOptions, DelaunayTriangulationBuilder,
@@ -790,7 +790,7 @@ fn validation_demo_level_5() -> Result<ValidationDemoCase, CliError> {
         layer: "Delaunay",
         title: "Interior point in a circumcircle",
         status: "failed_as_expected",
-        public_check: "DelaunayTriangulation::try_from_triangulation",
+        public_check: "DelaunayRefinementBuilder::new(...).build()",
         public_reference: "tests/triangulation_builder.rs::test_relaxed_explicit_non_delaunay_mesh_succeeds_2d",
         input_summary: "Quadrilateral triangulated with diagonal AC instead of BD",
         explanation: "Point D lies inside the circumcircle of triangle ABC, so the chosen diagonal violates the local Delaunay property.",
@@ -823,7 +823,7 @@ fn strict_delaunay_certification_failure<const N: usize>(
                 ),
             })?;
 
-    match DelaunayTriangulation::try_from_triangulation(triangulation) {
+    match DelaunayRefinementBuilder::new(triangulation).build() {
         Ok(_) => Err(CliError::ValidationDemoInvariant {
             case: CASE,
             message: "expected strict Level 5 certification to fail, but it passed".to_owned(),
@@ -2794,7 +2794,7 @@ mod tests {
         assert_eq!(export.cases[3].layer, "Valid realization");
         assert_eq!(
             export.cases[4].public_check,
-            "DelaunayTriangulation::try_from_triangulation"
+            "DelaunayRefinementBuilder::new(...).build()"
         );
     }
 

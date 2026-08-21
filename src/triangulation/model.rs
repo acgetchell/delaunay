@@ -27,13 +27,12 @@ use crate::triangulation::validation::{TopologyGuarantee, ValidationPolicy};
 /// return an error without publishing the attempted state. An empty Euclidean
 /// triangulation satisfies the same contract vacuously.
 ///
-/// Use [`Triangulation::try_from_tds_with_topology_context`] to refine validated
-/// storage into this domain type and [`Triangulation::into_tds`] to demote it
-/// explicitly. Consume a triangulation with
-/// [`DelaunayTriangulation::try_from_triangulation`](crate::DelaunayTriangulation::try_from_triangulation)
-/// to certify Level 5 without repair, or pass it to
-/// [`delaunayize`](crate::delaunayize::delaunayize) to repair and certify the
-/// Delaunay property.
+/// Use [`TriangulationBuilder`](crate::TriangulationBuilder) for this proof
+/// transition. Its strict mode performs non-mutating certification of an
+/// already canonical TDS; its default mode may canonicalize orientation. Use
+/// [`Triangulation::into_tds`] to demote the owner explicitly. Consume a
+/// triangulation with [`DelaunayRefinementBuilder`](crate::DelaunayRefinementBuilder)
+/// to certify Level 5 strictly or repair and certify the Delaunay property.
 ///
 /// # Type Parameters
 /// - `K`: Geometric kernel implementing predicates
@@ -41,15 +40,6 @@ use crate::triangulation::validation::{TopologyGuarantee, ValidationPolicy};
 /// - `V`: User data type for simplices
 /// - `D`: Dimension of the triangulation
 ///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::triangulation::{FastKernel, Triangulation};
-///
-/// let tri: Triangulation<FastKernel<f64>, (), (), 3> =
-///     Triangulation::new_empty(FastKernel::new());
-/// assert_eq!(tri.number_of_vertices(), 0);
-/// ```
 #[derive(Clone, Debug)]
 pub struct Triangulation<K, U, V, const D: usize> {
     /// The geometric kernel for predicates.
@@ -95,8 +85,8 @@ where
 
     /// Consumes this Levels 1–4 owner and returns its transport/storage value.
     ///
-    /// This explicit demotion is the inverse boundary of
-    /// [`Triangulation::try_from_tds_with_topology_context`](crate::Triangulation::try_from_tds_with_topology_context).
+    /// This explicit demotion is the inverse boundary of strict
+    /// [`TriangulationBuilder`](crate::TriangulationBuilder) publication.
     /// `Tds` does not retain the runtime [`TopologyGuarantee`] or
     /// [`GlobalTopology`] context, so callers must persist those values
     /// separately when they intend to restore the same domain contract.
@@ -126,41 +116,19 @@ where
         self.tds
     }
 
-    /// Create an empty triangulation with the given kernel.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::triangulation::{FastKernel, Triangulation};
-    ///
-    /// let tri: Triangulation<FastKernel<f64>, (), (), 3> =
-    ///     Triangulation::new_empty(FastKernel::new());
-    /// assert_eq!(tri.number_of_vertices(), 0);
-    /// assert_eq!(tri.number_of_simplices(), 0);
-    /// assert_eq!(tri.dim(), -1); // Empty triangulation has dimension -1
-    /// ```
-    #[must_use]
-    pub fn new_empty(kernel: K) -> Self {
-        Self::new_empty_with_topology_context(
-            kernel,
-            TopologyGuarantee::DEFAULT,
-            GlobalTopology::DEFAULT,
-        )
-    }
-
     /// Creates empty storage with explicit validation and global-topology context.
     ///
     /// Construction paths use this helper when topology metadata must be present
     /// before later validation, boundary classification, or Euler checks run.
     #[inline]
-    pub(crate) fn new_empty_with_topology_context(
+    pub(crate) fn new_unpublished_with_topology_context(
         kernel: K,
         topology_guarantee: TopologyGuarantee,
         global_topology: GlobalTopology<D>,
     ) -> Self {
         Self {
             kernel,
-            tds: Tds::empty(),
+            tds: Tds::empty_unpublished(),
             global_topology,
             validation_policy: topology_guarantee.default_validation_policy(),
             topology_guarantee,
@@ -288,6 +256,27 @@ where
     }
 }
 
+/// Test-only constructors for deliberately unpublished owner fixtures.
+#[cfg(test)]
+pub mod test_support {
+    use super::*;
+
+    impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
+    where
+        K: Kernel<D>,
+    {
+        /// Creates empty storage for tests that exercise bootstrap transitions.
+        #[must_use]
+        pub(crate) fn new_empty(kernel: K) -> Self {
+            Self::new_unpublished_with_topology_context(
+                kernel,
+                TopologyGuarantee::DEFAULT,
+                GlobalTopology::DEFAULT,
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,7 +319,7 @@ mod tests {
     #[test]
     fn explicit_empty_context_sets_requested_topology_and_policy() {
         let tri: Triangulation<FastKernel<f64>, (), (), 3> =
-            Triangulation::new_empty_with_topology_context(
+            Triangulation::new_unpublished_with_topology_context(
                 FastKernel::new(),
                 TopologyGuarantee::Pseudomanifold,
                 GlobalTopology::Spherical,

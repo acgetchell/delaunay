@@ -456,8 +456,9 @@ pub trait TopologyOwner {
 /// [`crate::DelaunayTriangulation`].
 ///
 /// Most users should construct triangulations via `DelaunayTriangulation` and use the
-/// owner query and validation methods on that type. Use [`Tds::empty`](Self::empty)
-/// for low-level or test scenarios where you want to manipulate the topology directly.
+/// owner query and validation methods on that type. Explicit low-level
+/// connectivity is accepted through [`TdsBuilder`](crate::tds::TdsBuilder), which
+/// publishes only after Levels 1–2 validation.
 ///
 /// ```rust
 /// use delaunay::prelude::*;
@@ -1155,10 +1156,12 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// ```no_run
     /// use delaunay::prelude::*;
+    /// use delaunay::prelude::construction::DelaunayTriangulationDraft;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)] Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)] Draft(#[from] delaunay::DelaunayTriangulationDraftError),
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
@@ -1169,7 +1172,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    /// let mut dt: DelaunayTriangulationDraft<_, (), (), 3> =
+    ///     DelaunayTriangulationDraft::new();
     /// let vertex1: Vertex<(), 3> = vertex![1.0, 2.0, 3.0]?;
     /// let vertex2: Vertex<(), 3> = vertex![4.0, 5.0, 6.0]?;
     ///
@@ -1241,11 +1245,13 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// ```no_run
     /// use delaunay::prelude::*;
+    /// use delaunay::prelude::construction::DelaunayTriangulationDraft;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)] Coordinates(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// #     #[error(transparent)] Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)] Draft(#[from] delaunay::DelaunayTriangulationDraftError),
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
@@ -1254,7 +1260,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    /// let mut dt: DelaunayTriangulationDraft<_, (), (), 3> =
+    ///     DelaunayTriangulationDraft::new();
     ///
     /// // Start empty
     /// assert_eq!(dt.dim(), -1);
@@ -1330,26 +1337,10 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         nv_i32.saturating_sub(1).min(d_i32)
     }
 
-    /// Returns the current construction state of this triangulation data structure.
-    ///
-    /// The state is maintained by checked TDS and Delaunay construction paths. It
-    /// is exposed read-only so callers can inspect incomplete vs. constructed
-    /// topology without bypassing mutation invariants.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::tds::{Tds, TriangulationConstructionState};
-    ///
-    /// let tds: Tds<(), (), 3> = Tds::empty();
-    /// std::assert_matches!(
-    ///     tds.construction_state(),
-    ///     TriangulationConstructionState::Incomplete(0)
-    /// );
-    /// ```
+    /// Returns the crate-internal draft publication state.
     #[inline]
     #[must_use]
-    pub const fn construction_state(&self) -> &TriangulationConstructionState {
+    pub(crate) const fn construction_state(&self) -> &TriangulationConstructionState {
         &self.construction_state
     }
 
@@ -2280,45 +2271,31 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 }
 
 impl<U, V, const D: usize> Tds<U, V, D> {
-    /// Creates a new empty triangulation data structure.
+    /// Creates the verified empty complex.
     ///
-    ///
-    /// This function creates an empty triangulation with no vertices and no simplices.
-    /// Use [`DelaunayTriangulation::empty()`](crate::DelaunayTriangulation::empty)
-    /// for the high-level API, or this method for low-level Tds construction.
-    ///
-    /// # Returns
-    ///
-    /// An empty triangulation data structure with:
-    /// - No vertices
-    /// - No simplices
-    /// - Construction state set to `Incomplete(0)`
-    /// - Dimension of -1 (empty)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::prelude::tds::Tds;
-    /// use delaunay::prelude::tds::TriangulationConstructionState;
-    ///
-    /// let tds: Tds<(), (), 3> = Tds::empty();
-    /// assert_eq!(tds.number_of_vertices(), 0);
-    /// assert_eq!(tds.number_of_simplices(), 0);
-    /// assert_eq!(tds.dim(), -1);
-    /// std::assert_matches!(
-    ///     tds.construction_state(),
-    ///     TriangulationConstructionState::Incomplete(0)
-    /// );
-    /// ```
+    /// The empty complex satisfies Levels 1–2 vacuously and is therefore a
+    /// complete [`Tds`], not an incomplete bootstrap workspace. Use
+    /// [`TdsDraft`](crate::tds::TdsDraft) when vertices will be accumulated before a
+    /// full-dimensional simplex exists.
     #[must_use]
     pub fn empty() -> Self {
+        Self::empty_with_construction_state(TriangulationConstructionState::Constructed)
+    }
+
+    /// Creates empty unpublished storage for draft-owned bootstrap work.
+    #[must_use]
+    pub(crate) fn empty_unpublished() -> Self {
+        Self::empty_with_construction_state(TriangulationConstructionState::Incomplete(0))
+    }
+
+    fn empty_with_construction_state(construction_state: TriangulationConstructionState) -> Self {
         Self {
             vertices: StorageMap::with_key(),
             simplices: StorageMap::with_key(),
             uuid_to_vertex_key: UuidToVertexKeyMap::default(),
             uuid_to_simplex_key: UuidToSimplexKeyMap::default(),
             vertex_to_simplices: VertexIncidenceIndex::default(),
-            construction_state: TriangulationConstructionState::Incomplete(0),
+            construction_state,
             generation: Arc::new(AtomicU64::new(0)),
             identity: Arc::new(Uuid::new_v4()),
         }
@@ -2470,6 +2447,7 @@ mod tests {
 
         assert_eq!(tds.number_of_vertices(), 0);
         assert_eq!(tds.number_of_simplices(), 0);
+        assert!(tds.validate().is_ok());
         assert_eq!(tds.dim(), -1);
         assert!(tds.vertices().next().is_none());
         assert!(tds.simplices().next().is_none());
@@ -2478,13 +2456,13 @@ mod tests {
         assert!(tds.simplex_key_from_uuid(&Uuid::new_v4()).is_none());
         assert_matches!(
             tds.construction_state(),
-            TriangulationConstructionState::Incomplete(0)
+            TriangulationConstructionState::Constructed
         );
     }
 
     #[test]
     fn test_incomplete_construction_state_tracks_vertex_count() {
-        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty_unpublished();
 
         let v0 = tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())

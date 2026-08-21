@@ -297,7 +297,8 @@ mod tests {
     use crate::core::collections::{FacetToSimplicesMap, SmallBuffer};
     use crate::core::facet::{FacetError, FacetHandle, FacetToSimplicesIndex, FacetView};
     use crate::core::simplex::Simplex;
-    use crate::core::tds::{SimplexKey, Tds, TdsError};
+    use crate::core::tds::{SimplexKey, Tds, TdsBuilder, TdsError};
+    use crate::core::vertex::Vertex;
     use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::point::Point;
     use crate::triangulation::query::QueryError;
@@ -333,6 +334,16 @@ mod tests {
         }};
     }
 
+    fn single_simplex_tds<const D: usize>(vertices: &[Vertex<(), D>]) -> Tds<(), (), D> {
+        let simplices = [(0..vertices.len()).collect()];
+        TdsBuilder::new(vertices, &simplices).build().unwrap()
+    }
+
+    fn two_tetrahedra_tds_3d(vertices: &[Vertex<(), 3>]) -> Tds<(), (), 3> {
+        let simplices = [vec![0, 1, 2, 3], vec![4, 1, 2, 3]];
+        TdsBuilder::new(vertices, &simplices).build().unwrap()
+    }
+
     #[cfg(not(feature = "diagnostics"))]
     macro_rules! test_debug {
         ($($arg:tt)*) => {{
@@ -360,7 +371,7 @@ mod tests {
                 Point::try_new([0.5, 1.0]).expect("finite point coordinates"),
             ];
             let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+            let dt = single_simplex_tds(&vertices);
 
             assert_eq!(
                 dt.number_of_simplices(),
@@ -370,7 +381,6 @@ mod tests {
             assert_eq!(dt.dim(), 2, "Should be 2-dimensional");
 
             let one_sided_count = dt
-                .tds()
                 .one_sided_facets()
                 .unwrap()
                 .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
@@ -382,13 +392,11 @@ mod tests {
 
             // Verify all facets are one-sided using cached index.
             let facet_to_simplices = dt
-                .tds()
                 .build_facet_to_simplices_index()
                 .expect("Should build facet index");
-            assert!(dt.tds().one_sided_facets().unwrap().all(|f| {
+            assert!(dt.one_sided_facets().unwrap().all(|f| {
                 let f = f.expect("valid one-sided facet");
-                dt.tds()
-                    .is_one_sided_facet_with_index(&f, &facet_to_simplices)
+                dt.is_one_sided_facet_with_index(&f, &facet_to_simplices)
                     .expect("Should not fail for valid facets")
             }));
         }
@@ -402,7 +410,7 @@ mod tests {
                 Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ];
             let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+            let dt = single_simplex_tds(&vertices);
 
             assert_eq!(
                 dt.number_of_simplices(),
@@ -412,7 +420,6 @@ mod tests {
             assert_eq!(dt.dim(), 3, "Should be 3-dimensional");
 
             let one_sided_count = dt
-                .tds()
                 .one_sided_facets()
                 .unwrap()
                 .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
@@ -424,13 +431,11 @@ mod tests {
 
             // Verify all facets are one-sided.
             let facet_to_simplices = dt
-                .tds()
                 .build_facet_to_simplices_index()
                 .expect("Should build facet index");
-            assert!(dt.tds().one_sided_facets().unwrap().all(|f| {
+            assert!(dt.one_sided_facets().unwrap().all(|f| {
                 let f = f.expect("valid one-sided facet");
-                dt.tds()
-                    .is_one_sided_facet_with_index(&f, &facet_to_simplices)
+                dt.is_one_sided_facet_with_index(&f, &facet_to_simplices)
                     .expect("Should not fail for valid facets")
             }));
         }
@@ -445,7 +450,7 @@ mod tests {
                 Point::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ];
             let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+            let dt = single_simplex_tds(&vertices);
 
             assert_eq!(
                 dt.number_of_simplices(),
@@ -455,7 +460,6 @@ mod tests {
             assert_eq!(dt.dim(), 4, "Should be 4-dimensional");
 
             let one_sided_count = dt
-                .tds()
                 .one_sided_facets()
                 .unwrap()
                 .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
@@ -467,17 +471,14 @@ mod tests {
 
             // Verify all facets are one-sided.
             let facet_to_simplices = dt
-                .tds()
                 .build_facet_to_simplices_index()
                 .expect("Should build facet index");
             let confirmed_one_sided = dt
-                .tds()
                 .one_sided_facets()
                 .unwrap()
                 .filter(|f| {
                     let f = f.as_ref().expect("valid one-sided facet");
-                    dt.tds()
-                        .is_one_sided_facet_with_index(f, &facet_to_simplices)
+                    dt.is_one_sided_facet_with_index(f, &facet_to_simplices)
                         .expect("Should not fail for valid facets")
                 })
                 .count();
@@ -494,8 +495,7 @@ mod tests {
             );
 
             let one_sided_count = dt
-                .tds()
-                .one_sided_facets()
+                .boundary_facets()
                 .unwrap()
                 .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
                 .unwrap();
@@ -516,7 +516,7 @@ mod tests {
                 Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ];
             let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+            let dt = single_simplex_tds(&vertices);
 
             assert_eq!(
                 dt.number_of_simplices(),
@@ -526,7 +526,6 @@ mod tests {
             assert_eq!(dt.dim(), 5, "Should be 5-dimensional");
 
             let one_sided_count = dt
-                .tds()
                 .one_sided_facets()
                 .unwrap()
                 .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
@@ -537,17 +536,14 @@ mod tests {
             );
 
             let facet_to_simplices = dt
-                .tds()
                 .build_facet_to_simplices_index()
                 .expect("Should build facet index");
             let confirmed_one_sided = dt
-                .tds()
                 .one_sided_facets()
                 .unwrap()
                 .filter(|f| {
                     let f = f.as_ref().expect("valid one-sided facet");
-                    dt.tds()
-                        .is_one_sided_facet_with_index(f, &facet_to_simplices)
+                    dt.is_one_sided_facet_with_index(f, &facet_to_simplices)
                         .expect("Should not fail for valid facets")
                 })
                 .count();
@@ -575,11 +571,10 @@ mod tests {
                 Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ];
             let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+            let dt = single_simplex_tds(&vertices);
 
             // Test one_sided_facets() normal path.
             let one_sided_count = dt
-                .tds()
                 .one_sided_facets()
                 .unwrap()
                 .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
@@ -590,9 +585,9 @@ mod tests {
             );
 
             // Test is_one_sided_facet() delegation (builds facet index internally).
-            if let Some(facet) = dt.tds().one_sided_facets().unwrap().next() {
+            if let Some(facet) = dt.one_sided_facets().unwrap().next() {
                 let facet = facet.unwrap();
-                let result = dt.tds().is_one_sided_facet(&facet);
+                let result = dt.is_one_sided_facet(&facet);
                 assert!(result.is_ok(), "Should not error on valid facet");
                 assert!(result.unwrap(), "Facet should be one-sided");
             }
@@ -605,10 +600,10 @@ mod tests {
                 Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
                 Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
                 Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
-                Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates"), // Interior point
+                Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates"), // Second apex
             ];
             let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+            let dt = two_tetrahedra_tds_3d(&vertices);
 
             // After robust cleanup and facet-sharing filtering, we may end up with a single simplex
             assert!(
@@ -618,7 +613,6 @@ mod tests {
 
             // Exercise capacity allocation, cache initialization, and vector push operations
             let one_sided_count = dt
-                .tds()
                 .one_sided_facets()
                 .unwrap()
                 .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
@@ -704,21 +698,19 @@ mod tests {
             Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
 
         // Build facet index
         let facet_to_simplices = dt
-            .tds()
             .build_facet_to_simplices_index()
             .expect("Should build index");
 
         // Get all one-sided facets and verify they are correctly identified.
         let mut one_sided_count = 0;
 
-        for facet in dt.tds().one_sided_facets().unwrap() {
+        for facet in dt.one_sided_facets().unwrap() {
             let facet = facet.unwrap();
             let is_one_sided = dt
-                .tds()
                 .is_one_sided_facet_with_index(&facet, &facet_to_simplices)
                 .expect("Should successfully check one-sided status");
 
@@ -735,7 +727,6 @@ mod tests {
         );
 
         let reported_count = dt
-            .tds()
             .one_sided_facets()
             .unwrap()
             .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
@@ -758,22 +749,20 @@ mod tests {
             Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let facet = dt.boundary_facets().unwrap().next().unwrap().unwrap();
+        let dt = single_simplex_tds(&vertices);
+        let facet = dt.one_sided_facets().unwrap().next().unwrap().unwrap();
         let facet_key = facet.key();
 
-        let mut facet_to_simplices = dt.tds().build_facet_to_simplices_map().unwrap();
+        let mut facet_to_simplices = dt.build_facet_to_simplices_map().unwrap();
         facet_to_simplices.remove(&facet_key);
-        let facet_index =
-            FacetToSimplicesIndex::try_from_map(dt.tds(), &facet_to_simplices).unwrap();
+        let facet_index = FacetToSimplicesIndex::try_from_map(&dt, &facet_to_simplices).unwrap();
         assert!(
-            !dt.tds()
-                .is_one_sided_facet_with_index(&facet, &facet_index)
+            !dt.is_one_sided_facet_with_index(&facet, &facet_index)
                 .unwrap()
         );
 
         facet_to_simplices.insert(facet_key, SmallBuffer::new());
-        let err = FacetToSimplicesIndex::try_from_map(dt.tds(), &facet_to_simplices).unwrap_err();
+        let err = FacetToSimplicesIndex::try_from_map(&dt, &facet_to_simplices).unwrap_err();
         assert_matches!(err, FacetError::InvalidFacetMultiplicity { found: 0, .. });
 
         facet_to_simplices.insert(
@@ -787,7 +776,7 @@ mod tests {
             .collect(),
         );
 
-        let err = FacetToSimplicesIndex::try_from_map(dt.tds(), &facet_to_simplices).unwrap_err();
+        let err = FacetToSimplicesIndex::try_from_map(&dt, &facet_to_simplices).unwrap_err();
 
         assert_matches!(err, FacetError::InvalidFacetMultiplicity { found: 3, .. });
     }
@@ -801,18 +790,16 @@ mod tests {
             Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let foreign_dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
+        let foreign_dt = single_simplex_tds(&vertices);
         let foreign_facet = foreign_dt
-            .boundary_facets()
+            .one_sided_facets()
             .unwrap()
             .next()
             .unwrap()
             .unwrap();
 
-        let err = dt.tds().is_one_sided_facet(&foreign_facet).unwrap_err();
+        let err = dt.is_one_sided_facet(&foreign_facet).unwrap_err();
 
         assert_matches!(
             err,
@@ -831,15 +818,12 @@ mod tests {
             Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let foreign_dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let facet = dt.boundary_facets().unwrap().next().unwrap().unwrap();
-        let foreign_index = foreign_dt.tds().build_facet_to_simplices_index().unwrap();
+        let dt = single_simplex_tds(&vertices);
+        let foreign_dt = single_simplex_tds(&vertices);
+        let facet = dt.one_sided_facets().unwrap().next().unwrap().unwrap();
+        let foreign_index = foreign_dt.build_facet_to_simplices_index().unwrap();
 
         let err = dt
-            .tds()
             .is_one_sided_facet_with_index(&facet, &foreign_index)
             .unwrap_err();
 
@@ -922,17 +906,15 @@ mod tests {
             Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
 
         // Test both methods return consistent results
         let one_sided_facets_count = dt
-            .tds()
             .one_sided_facets()
             .unwrap()
             .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
             .unwrap();
         let one_sided_count = dt
-            .tds()
             .number_of_one_sided_facets()
             .expect("Should get one-sided count");
 

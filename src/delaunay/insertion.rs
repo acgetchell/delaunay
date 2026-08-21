@@ -58,6 +58,14 @@ where
     U: DataType,
     V: DataType,
 {
+    /// Rejects a transition from the valid empty owner into unpublished bootstrap state.
+    fn ensure_incremental_insertion_preserves_publication(&self) -> Result<(), InsertionError> {
+        if D > 0 && self.tri.tds.number_of_simplices() == 0 {
+            return Err(InsertionError::PublishedOwnerBootstrapRequiresDraft { dimension: D });
+        }
+        Ok(())
+    }
+
     /// Lazily seeds the spatial index from existing vertices so incremental
     /// insertion can start from deserialized or manually constructed TDS state.
     fn ensure_spatial_index_seeded(&mut self) -> Result<(), InsertionError> {
@@ -110,33 +118,28 @@ where
         }
     }
 
-    /// Insert a vertex into the Delaunay triangulation using incremental cavity-based algorithm.
+    /// Inserts a vertex into an already full-dimensional Delaunay triangulation.
     ///
-    /// This method handles all stages of triangulation construction:
-    /// - **Bootstrap (< D+1 vertices)**: Accumulates vertices without creating simplices
-    /// - **Initial simplex (D+1 vertices)**: Automatically builds the first D-simplex
-    /// - **Incremental (> D+1 vertices)**: Uses cavity-based insertion with point location
+    /// Use [`DelaunayTriangulationDraft`](crate::draft::DelaunayTriangulationDraft)
+    /// to incrementally construct a triangulation from empty. A published owner
+    /// may be the valid empty complex, but it never exposes a partial bootstrap
+    /// containing vertices without a maximal simplex.
     ///
     /// If post-insertion Delaunay repair or validation fails, the failed insertion is rolled
     /// back before this method returns the error.
     ///
     /// # Algorithm
-    /// 1. Insert vertex into Tds
-    /// 2. Check vertex count:
-    ///    - If < D+1: Return (bootstrap phase)
-    ///    - If == D+1: Build initial simplex from all vertices
-    ///    - If > D+1: Continue with steps 3-7
-    /// 3. Locate simplex containing the point
-    /// 4. Find conflict region (simplices whose circumspheres contain the point)
-    /// 5. Extract cavity boundary
-    /// 6. Fill cavity (create new simplices)
-    /// 7. Wire neighbors locally
-    /// 8. Remove conflict simplices
+    /// 1. Reject duplicate coordinates or identity.
+    /// 2. Locate the containing simplex or visible hull facets.
+    /// 3. Find the conflict region whose circumspheres contain the point.
+    /// 4. Extract the cavity boundary and create replacement simplices.
+    /// 5. Wire neighbors and remove superseded simplices.
+    /// 6. Repair or validate the Delaunay postcondition and commit; otherwise roll back.
     ///
     /// # Errors
     /// Returns error if:
+    /// - Insertion is attempted on a published empty owner rather than through a draft
     /// - Duplicate UUID detected
-    /// - Initial simplex construction fails (when reaching D+1 vertices)
     /// - Point is on a facet, edge, or vertex (degenerate cases not yet implemented)
     /// - Spatial index construction fails while seeding duplicate-detection and locate hints
     /// - Conflict region computation fails
@@ -147,14 +150,15 @@ where
     ///
     /// # Examples
     ///
-    /// Incremental insertion from empty triangulation:
+    /// Incremental construction from empty uses the draft API:
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationDraft, vertex};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// // Start with empty triangulation
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    /// let mut dt: DelaunayTriangulationDraft<_, (), (), 3> =
+    ///     DelaunayTriangulationDraft::new();
     /// assert_eq!(dt.number_of_vertices(), 0);
     /// assert_eq!(dt.number_of_simplices(), 0);
     ///
@@ -174,6 +178,8 @@ where
     /// dt.insert_vertex(vertex![0.2, 0.2, 0.2]?)?;
     /// assert_eq!(dt.number_of_vertices(), 5);
     /// assert!(dt.number_of_simplices() > 1);
+    /// let dt = dt.finish()?;
+    /// assert!(dt.validate().is_ok());
     /// # Ok(())
     /// # }
     /// ```
@@ -203,6 +209,7 @@ where
     /// # }
     /// ```
     pub fn insert_vertex(&mut self, vertex: Vertex<U, D>) -> Result<VertexKey, InsertionError> {
+        self.ensure_incremental_insertion_preserves_publication()?;
         self.ensure_spatial_index_seeded()?;
 
         // Fully delegate to Triangulation layer
@@ -274,15 +281,20 @@ where
     /// Returns [`InsertionError`] for structural failures, duplicate coordinates,
     /// retryable geometric degeneracies that exhaust all attempts, and spatial
     /// index construction failures while seeding duplicate-detection and locate hints.
+    /// A published empty owner also rejects insertion because bootstrap state
+    /// belongs to [`DelaunayTriangulationDraft`](crate::draft::DelaunayTriangulationDraft).
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation};
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulationDraft, DelaunayTriangulationDraftError,
+    /// };
     /// use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
     ///
     /// # fn main() -> DelaunayResult<()> {
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    /// let mut dt: DelaunayTriangulationDraft<_, (), (), 3> =
+    ///     DelaunayTriangulationDraft::new();
     ///
     /// let vertex = delaunay::vertex![0.0, 0.0, 0.0]?;
     /// let (outcome, stats) = dt.insert_with_statistics(vertex)?;
@@ -294,7 +306,8 @@ where
     /// let duplicate = dt.insert_with_statistics(duplicate_vertex);
     /// std::assert_matches!(
     ///     duplicate,
-    ///     Err(InsertionError::DuplicateCoordinates { .. })
+    ///     Err(DelaunayTriangulationDraftError::Insertion { source })
+    ///         if matches!(source.as_ref(), InsertionError::DuplicateCoordinates { .. })
     /// );
     /// # Ok(())
     /// # }
@@ -324,16 +337,19 @@ where
     /// Returns [`InsertionError`] for non-skip structural failures that cannot
     /// be represented as an [`InsertionOutcome::Skipped`] value, including
     /// spatial index construction failures while seeding duplicate-detection
-    /// and locate hints.
+    /// and locate hints. A published empty owner also rejects insertion because
+    /// bootstrap state belongs to
+    /// [`DelaunayTriangulationDraft`](crate::draft::DelaunayTriangulationDraft).
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation};
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationDraft};
     /// use delaunay::prelude::insertion::InsertionOutcome;
     ///
     /// # fn main() -> DelaunayResult<()> {
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    /// let mut dt: DelaunayTriangulationDraft<_, (), (), 3> =
+    ///     DelaunayTriangulationDraft::new();
     ///
     /// let (outcome, stats) = dt
     ///     .insert_best_effort_with_statistics(delaunay::vertex![0.0, 0.0, 0.0]?)?;
@@ -355,6 +371,7 @@ where
         &mut self,
         vertex: Vertex<U, D>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
+        self.ensure_incremental_insertion_preserves_publication()?;
         self.ensure_spatial_index_seeded()?;
 
         // Transactional guard: post-steps (flip repair and/or global Delaunay checks) can fail.
@@ -619,11 +636,12 @@ mod tests {
     };
     use crate::core::simplex::Simplex;
     use crate::core::tds::{Tds, TdsError};
+    use crate::draft::DelaunayTriangulationDraft;
     use crate::flips::BistellarFlips;
-    use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
+    use crate::geometry::kernel::AdaptiveKernel;
     use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
     use crate::topology::traits::topological_space::GlobalTopology;
-    use crate::validation::DelaunayTriangulationCandidate;
+    use crate::validation::DelaunayRefinementCandidate;
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
@@ -838,24 +856,37 @@ mod tests {
     }
 
     #[test]
-    fn test_bootstrap_with_custom_kernel() {
-        init_tracing();
-        // Verify bootstrap works with RobustKernel
-        let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
-            DelaunayTriangulation::with_empty_kernel(RobustKernel::new());
+    fn verified_empty_owner_rejects_bootstrap_without_mutation() {
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulationDraft::new().finish().unwrap();
+        let owner_before = dt.tri.tds.topology_owner_id();
+        let generation_before = dt.tri.tds.generation();
+        let insertion_count_before = dt.insertion_state.delaunay_repair_insertion_count;
 
+        let error = dt.insert_vertex(vertex![0.0, 0.0].unwrap()).unwrap_err();
+        assert_eq!(
+            error,
+            InsertionError::PublishedOwnerBootstrapRequiresDraft { dimension: 2 }
+        );
+        assert!(!error.is_retryable());
+
+        let best_effort_error = dt
+            .insert_best_effort_with_statistics(vertex![1.0, 0.0].unwrap())
+            .unwrap_err();
+        assert_eq!(
+            best_effort_error,
+            InsertionError::PublishedOwnerBootstrapRequiresDraft { dimension: 2 }
+        );
+
+        assert_eq!(dt.tri.tds.topology_owner_id(), owner_before);
+        assert_eq!(dt.tri.tds.generation(), generation_before);
+        assert_eq!(
+            dt.insertion_state.delaunay_repair_insertion_count,
+            insertion_count_before
+        );
         assert_eq!(dt.number_of_vertices(), 0);
-
-        // Bootstrap with robust predicates
-        dt.insert_vertex(vertex![0.0, 0.0, 0.0].unwrap()).unwrap();
-        dt.insert_vertex(vertex![1.0, 0.0, 0.0].unwrap()).unwrap();
-        dt.insert_vertex(vertex![0.0, 1.0, 0.0].unwrap()).unwrap();
-        assert_eq!(dt.number_of_simplices(), 0); // Still bootstrapping
-
-        dt.insert_vertex(vertex![0.0, 0.0, 1.0].unwrap()).unwrap();
-        assert_eq!(dt.number_of_simplices(), 1); // Initial simplex created
-
-        assert!(dt.is_valid_delaunay().is_ok());
+        assert_eq!(dt.number_of_simplices(), 0);
+        assert!(dt.validate().is_ok());
     }
 
     /// When the primary per-insertion repair returns `NonConvergent`, the robust
@@ -1157,7 +1188,7 @@ mod tests {
         init_tracing();
         let (tds, incident_to_invalid_ridge, nonincident) =
             wedge_two_s2_complexes_share_vertex_tds();
-        let dt = DelaunayTriangulationCandidate::assemble_unchecked_for_test(
+        let dt = DelaunayRefinementCandidate::assemble_unchecked_for_test(
             tds,
             AdaptiveKernel::new(),
             TopologyGuarantee::PLManifold,

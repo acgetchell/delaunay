@@ -51,16 +51,14 @@ return a typed error for incoherent combinations such as
 See [`validation.md`](validation.md) for details.
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
+use delaunay::prelude::construction::{DelaunayTriangulationDraft, TopologyGuarantee};
 use delaunay::prelude::validation::ValidationPolicy;
 
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
-
-// Enforce the PL-manifold mathematical contract.
-dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)?;
+let mut draft: DelaunayTriangulationDraft<_, (), (), 3> =
+    DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
 // In tests/debugging, validate global Levels 1–4 after every insertion.
-dt.try_set_validation_policy(ValidationPolicy::Always)?;
+draft.try_set_validation_policy(ValidationPolicy::Always)?;
 ```
 
 ### What the topology guarantees mean (quick summary)
@@ -134,7 +132,7 @@ consuming conversion:
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
-use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
+use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeError};
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::RefinementError;
 
@@ -157,7 +155,9 @@ fn main() -> Result<(), ConversionExampleError> {
     ];
 
     let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
-    let converted = delaunayize(tri, DelaunayizeConfig::default())
+    let converted = DelaunayRefinementBuilder::new(tri)
+        .repair_by_flips()
+        .build()
         .map_err(RefinementError::into_reason)?;
     assert!(converted.triangulation.validate().is_ok());
     Ok(())
@@ -172,7 +172,7 @@ Flip-based conversion requires a PL-manifold topology guarantee. Passing a
 `DelaunayizeError::FlipTopologyNotAdmissible` and whose owner is the unchanged
 input triangulation.
 
-Additionally, `delaunayize` requires `K: ExactPredicates` (compile-time bound).
+Additionally, flip-repair refinement requires `K: ExactPredicates` (compile-time bound).
 The default `AdaptiveKernel`, `RobustKernel`, and `FastKernel` satisfy this
 through D ≤ 5. Their policies differ in tie handling, diagnostics, and
 higher-dimensional fallback rather than in the exactness of a returned sign
@@ -192,8 +192,8 @@ same flip predicates used by the repair loop. A postcondition failure is treated
 similarly to non-convergence and triggers the second attempt or a caller-level
 fallback.
 
-If requested, `delaunayize` can follow failed bounded repair with a vertex-set
-rebuild before final certification.
+If requested, the refinement builder can follow failed bounded repair with a
+vertex-set rebuild before final certification.
 
 If repair fails to converge within the flip budget, you get
 `DelaunayRepairError::NonConvergent { .. }`, which contains a `DelaunayRepairDiagnostics` payload
@@ -204,7 +204,7 @@ detections, etc.).
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
-use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
+use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeError};
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::repair::DelaunayRepairError;
 
@@ -226,7 +226,10 @@ fn main() -> Result<(), DiagnosticExampleError> {
 
     let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
 
-    match delaunayize(tri, DelaunayizeConfig::default()) {
+    match DelaunayRefinementBuilder::new(tri)
+        .repair_by_flips()
+        .build()
+    {
         Ok(_converted) => {}
         Err(failure) => {
             let (tri, reason) = failure.into_parts();
@@ -284,8 +287,7 @@ fn main() -> DelaunayResult<()> {
 ### Opt-in fallback rebuild
 
 If you want a stronger "try harder" path, enable fallback rebuild on the
-consuming conversion:
-`DelaunayizeConfig::default().with_fallback_rebuild(true)`.
+consuming conversion with `.fallback_rebuild(true)`.
 
 This workflow:
 
@@ -301,7 +303,7 @@ The outcome reports whether rebuild fallback was used.
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
-use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
+use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeError};
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::RefinementError;
 
@@ -324,11 +326,11 @@ fn main() -> Result<(), RepairExampleError> {
     ];
 
     let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
-    let converted = delaunayize(
-        tri,
-        DelaunayizeConfig::default().with_fallback_rebuild(true),
-    )
-    .map_err(RefinementError::into_reason)?;
+    let converted = DelaunayRefinementBuilder::new(tri)
+        .repair_by_flips()
+        .fallback_rebuild(true)
+        .build()
+        .map_err(RefinementError::into_reason)?;
     eprintln!("fallback rebuild used: {}", converted.outcome.used_fallback_rebuild);
     Ok(())
 }
@@ -449,11 +451,12 @@ want to keep going after skipped vertices, use the explicitly best-effort
 `insert_best_effort_with_statistics()`.
 
 ```rust
-use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationDraft, vertex};
 use delaunay::prelude::insertion::InsertionOutcome;
 
 fn main() -> DelaunayResult<()> {
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayTriangulationDraft<_, (), (), 3> =
+        DelaunayTriangulationDraft::new();
 
     let (outcome, stats) = dt.insert_best_effort_with_statistics(vertex![0.5, 0.5, 0.5]?)?;
 
@@ -580,8 +583,8 @@ fn main() -> DelaunayResult<()> {
     assert!(dt.validate().is_ok());
 
     // If you need Delaunay after edits (requires K: ExactPredicates), consume
-    // `dt` with `delaunayize(dt, DelaunayizeConfig::default())`; failure
-    // returns `dt` for inspection or a differently configured retry.
+    // `dt` with `DelaunayRefinementBuilder::new(dt).repair_by_flips().build()`;
+    // failure returns `dt` for inspection or a differently configured retry.
     Ok(())
 }
 ```

@@ -757,7 +757,9 @@ fn assert_relaxed_explicit_non_delaunay_succeeds<const D: usize>() {
     dt.validate_realization()
         .expect("relaxed explicit mesh should pass Levels 1-4");
     assert!(
-        DelaunayTriangulation::try_from_triangulation(dt).is_err(),
+        delaunay::DelaunayRefinementBuilder::new(dt)
+            .build()
+            .is_err(),
         "fixture should still violate Level 5 Delaunay predicates",
     );
 }

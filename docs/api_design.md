@@ -62,6 +62,59 @@ snippets into an application.
 
 ## Builder API Reference
 
+Construction builders mirror the proof hierarchy. Use `TdsBuilder` when the
+vertices and maximal-simplex connectivity are already known,
+`TriangulationBuilder` when that TDS must be certified for a topology and
+coordinate realization, `DelaunayRefinementBuilder` when a `Triangulation`
+must cross Level 5, and `DelaunayTriangulationBuilder` when connectivity must be
+inferred from a point set. Each `build()` is a failure-atomic publication
+boundary: it returns a fully valid owner for that layer or a typed error.
+
+Each proof transition has one public fluent builder. `TriangulationBuilder`
+defaults to canonicalizing mode; `.strict()` selects non-mutating Levels 3–4
+certification. Strict success preserves owner identity, generation, simplex
+ordering, and avoids a rollback snapshot. Canonicalizing success may normalize
+simplex orientation and advance the structural generation, so that mode keeps a
+storage-linear snapshot and restores the exact input TDS on failure. Both modes
+share the same final Levels 3–4 certification implementation and return the
+unchanged input TDS on failure.
+
+`DelaunayRefinementBuilder` likewise defaults to strict Level 5 certification.
+`.repair_by_flips()` changes its type state and enables `.max_flips(...)` and
+`.fallback_rebuild(...)`. Strict certification neither mutates the
+triangulation nor allocates a rollback snapshot. Repair mode is transactional
+and returns the exact Levels 1–4 owner on failure. Neither builder infers
+connectivity at these proof boundaries. See
+[`invariants.md`](invariants.md#builder-publication-contracts) for the complete
+contract.
+
+Public unpublished construction uses `TdsDraft` to stage explicit vertices and
+maximal simplices, and `DelaunayTriangulationDraft` to infer connectivity while
+incrementally inserting points. Both expose genuine staged mutations before
+`finish()` validates and returns the corresponding proof-bearing owner. The
+generic layer has no public `TriangulationDraft`: once a TDS exists, its
+explicit connectivity is complete, so `TriangulationBuilder` is the single
+canonicalizing publication API. An internal `TriangulationDraft` remains only
+as unpublished implementation state shared by that builder and higher-layer
+construction. The verified empty complex is publishable, while a non-empty TDS
+bootstrap without a maximal simplex is not.
+
+Internally, a Delaunay draft stores a lower-layer `TriangulationDraft` only
+during bootstrap. The first maximal simplex must pass Levels 3–5 before the
+draft changes state to a verified `DelaunayTriangulation`; a failed transition
+restores the exact pre-insertion bootstrap. Subsequent insertions use the
+verified owner's transactional path. The private, mutation-free
+`DelaunayRefinementCandidate` is reserved for the final
+`Triangulation`-to-`DelaunayTriangulation` proof transition and is shared by
+strict refinement, repair, batch construction, draft publication, and
+restoration. Thus the draft and candidate are complementary rather than two
+public ways to perform the same operation.
+
+The valid empty complex may be published, but positive-dimensional insertion on
+that published owner cannot expose a partial bootstrap. Construct incrementally
+from empty through `DelaunayTriangulationDraft`; use
+`DelaunayTriangulation::insert_vertex` only after a maximal simplex exists.
+
 ### Simple Construction: `DelaunayTriangulationBuilder`
 
 For most use cases, the builder with default options is sufficient:
@@ -342,9 +395,9 @@ applying flips, you should:
    ```
 
 2. Consume the edited value with
-   `delaunayize(tri, DelaunayizeConfig::default())` when you need a
-   `DelaunayTriangulation` again. Enable
-   `.with_fallback_rebuild(true)` for bounded rebuild recovery.
+   `DelaunayRefinementBuilder::new(tri).repair_by_flips().build()` when you need
+   a `DelaunayTriangulation` again. Add `.fallback_rebuild(true)` for bounded
+   rebuild recovery.
 
 ## Combining Both APIs
 
@@ -354,7 +407,7 @@ You can mix both APIs in the same workflow:
 use delaunay::prelude::construction::{
     DelaunayError, DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
+use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeError};
 use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
 use delaunay::prelude::triangulation::Triangulation;
@@ -393,7 +446,9 @@ fn edit_topology() -> DelaunayResult<Triangulation<AdaptiveKernel<f64>, (), (), 
 
 fn main() -> Result<(), ExampleError> {
     let tri = edit_topology()?;
-    let converted = delaunayize(tri, DelaunayizeConfig::default())
+    let converted = DelaunayRefinementBuilder::new(tri)
+        .repair_by_flips()
+        .build()
         .map_err(RefinementError::into_reason)?;
     converted
         .triangulation
@@ -577,20 +632,18 @@ examples/notebooks split. The examples most directly related to this design are:
 - `examples/triangulation_and_hull.rs` - 3D–5D Builder API, traversal, quality, location, and convex hull queries
 - `examples/delaunayize_repair.rs` - Delaunayize workflow (2D/3D/4D, flip-then-repair, custom config)
 
-## Delaunayize Workflow
+## Delaunay Refinement Workflow
 
-The `delaunay::delaunayize` module provides the canonical `delaunayize`
-entrypoint for the common "repair then certify Delaunay" workflow. The
-`delaunayize_by_flips` alias names the current repair strategy explicitly:
+`DelaunayRefinementBuilder` is the canonical `Triangulation` →
+`DelaunayTriangulation` boundary. Strict mode certifies Level 5 without repair;
+flip-repair mode exposes repair-only options through the same staged builder:
 
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder,
     DelaunayTriangulationConstructionError, vertex,
 };
-use delaunay::prelude::delaunayize::{
-    DelaunayizeConfig, DelaunayizeError, delaunayize,
-};
+use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeError};
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::RefinementError;
 
@@ -617,7 +670,9 @@ fn main() -> Result<(), ExampleError> {
             .map_err(DelaunayTriangulationConstructionError::from)?
             .build_triangulation()?;
 
-    let result = delaunayize(tri, DelaunayizeConfig::default())
+    let result = DelaunayRefinementBuilder::new(tri)
+        .repair_by_flips()
+        .build()
         .map_err(RefinementError::into_reason)?;
     assert!(result.triangulation.validate().is_ok());
     Ok(())
@@ -632,7 +687,7 @@ fn main() -> Result<(), ExampleError> {
    Levels 1–4 while restoring the empty-circumsphere property.
 3. **Optional fallback rebuild** — rebuild from the vertex set when flip repair
    fails
-   (`DelaunayizeConfig::default().with_fallback_rebuild(true)`).
+   (`.fallback_rebuild(true)`).
 4. **Level 5 certification** — publish `DelaunayTriangulation` only after the
    refinement predicate succeeds.
 
@@ -641,14 +696,15 @@ original Levels 1–4 `Triangulation` after rollback plus the typed
 `DelaunayizeError`. This makes changing a budget or enabling fallback and
 retrying an explicit composition instead of requiring a defensive clone.
 
-### Configuration
+### Repair options
 
-`DelaunayizeConfig` controls:
+After `.repair_by_flips()`, the builder accepts:
 
-- `fallback_rebuild` (default false): rebuild from vertices on failure,
-  restoring simplex data for rebuilt simplices whose sorted vertex UUID set still
-  matches exactly one original simplex.
-- `delaunay_max_flips` (default `None`): optional per-attempt flip budget.
+- `.fallback_rebuild(true)`: rebuild from vertices on failure, restoring
+  simplex data for rebuilt simplices whose sorted vertex UUID set still matches
+  exactly one original simplex.
+- `.max_flips(n)`: cap the flips in each repair attempt. Omitting it, or calling
+  `.default_flip_budget()`, uses the dimension-dependent default.
 
 ### Data Preservation
 

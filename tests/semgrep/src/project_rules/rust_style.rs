@@ -9,7 +9,7 @@ pub struct Triangulation<K, U, V, const D: usize>(K, U, V);
 // ruleid: delaunay.rust.tds-defined-only-in-canonical-model
 pub struct Tds<U, V, const D: usize>(U, V);
 // ok: delaunay.rust.delaunay-defined-only-in-canonical-model
-pub struct DelaunayTriangulationCandidate<K, U, V, const D: usize>(K, U, V);
+pub struct DelaunayRefinementCandidate<K, U, V, const D: usize>(K, U, V);
 // ok: delaunay.rust.triangulation-defined-only-in-canonical-model
 pub struct TriangulationCandidate<K, U, V, const D: usize>(K, U, V);
 // ok: delaunay.rust.tds-defined-only-in-canonical-model
@@ -75,7 +75,7 @@ mod invalid_delaunay_candidate_fixture {
     use super::*;
 
     // ruleid: delaunay.rust.no-unproven-delaunay-candidate-storage
-    struct DelaunayTriangulationCandidate<K, U, V, const D: usize> {
+    struct DelaunayRefinementCandidate<K, U, V, const D: usize> {
         candidate: DelaunayTriangulation<K, U, V, D>,
     }
 }
@@ -84,7 +84,7 @@ mod valid_triangulation_candidate_fixture {
     use super::*;
 
     // ok: delaunay.rust.no-unproven-delaunay-candidate-storage
-    struct DelaunayTriangulationCandidate<K, U, V, const D: usize> {
+    struct DelaunayRefinementCandidate<K, U, V, const D: usize> {
         candidate: Triangulation<K, U, V, D>,
     }
 }
@@ -1309,6 +1309,7 @@ struct TriangulationOwnerFixture {
 }
 
 impl TriangulationOwnerFixture {
+    // ok: delaunay.rust.no-delaunay-tds-accessor-method
     fn tds(&self) -> &Tds {
         todo!()
     }
@@ -1329,6 +1330,7 @@ impl DelaunayOwnerFixture {
         todo!()
     }
 
+    // ruleid: delaunay.rust.no-delaunay-tds-accessor-method
     fn tds(&self) -> &Tds {
         todo!()
     }
@@ -1347,8 +1349,6 @@ fn as_triangulation_storage_bypass_fixture(dt: &DelaunayOwnerFixture) {
     let _kernel = &dt.as_triangulation().kernel;
     // ruleid: delaunay.rust.no-as-triangulation-storage-reach-through
     let _kernel = dt.as_triangulation().kernel();
-    // ok: delaunay.rust.no-as-triangulation-storage-reach-through
-    let _storage = dt.tds();
     // ok: delaunay.rust.no-as-triangulation-storage-reach-through
     let _generation = dt.topology_generation();
     // ok: delaunay.rust.no-as-triangulation-storage-reach-through

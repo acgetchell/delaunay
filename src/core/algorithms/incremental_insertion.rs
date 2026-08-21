@@ -1172,6 +1172,8 @@ impl From<&DelaunayRepairError> for DelaunayRepairErrorKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum InsertionErrorKind {
+    /// Bootstrap insertion was attempted through an already published owner.
+    PublishedOwnerBootstrapRequiresDraft,
     /// Conflict-region search failed.
     ConflictRegion,
     /// Point location failed.
@@ -1718,6 +1720,20 @@ impl From<HashGridIndexError> for SpatialIndexConstructionFailure {
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum InsertionError {
+    /// Insertion would turn a published empty owner into an incomplete bootstrap.
+    ///
+    /// Published invariant-bearing owners may be empty or full-dimensional, but
+    /// they never expose the intermediate state containing vertices without a
+    /// maximal simplex. Incremental construction from empty belongs to the
+    /// corresponding draft API.
+    #[error(
+        "cannot bootstrap a published {dimension}D triangulation; use its draft API for incremental construction"
+    )]
+    PublishedOwnerBootstrapRequiresDraft {
+        /// Requested triangulation dimension.
+        dimension: usize,
+    },
+
     /// Conflict region finding failed
     #[error("Conflict region error: {source}")]
     ConflictRegion {
@@ -2035,6 +2051,7 @@ impl InsertionError {
             // overflow, etc.). Non-manifold topology detection uses the dedicated
             // `NonManifoldTopology` variant.
             Self::NeighborWiring { .. }
+            | Self::PublishedOwnerBootstrapRequiresDraft { .. }
             | Self::Location { .. }
             | Self::RealizationValidationFailed { .. }
             | Self::DelaunayValidationFailed { .. }
@@ -4703,7 +4720,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DelaunayTriangulation;
     use crate::core::algorithms::flips::{
         DelaunayRepairDiagnostics, DelaunayRepairHeuristicRebuildFailure,
         DelaunayRepairOrientationCanonicalizationFailure, DelaunayRepairPostconditionFailure,
@@ -4711,7 +4727,8 @@ mod tests {
     };
     use crate::core::algorithms::locate::InternalInconsistencySite;
     use crate::core::collections::SimplexKeyBuffer;
-    use crate::core::tds::GeometricError;
+    use crate::core::tds::{GeometricError, TdsBuilder};
+    use crate::core::vertex::Vertex;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{
         CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
@@ -4723,6 +4740,31 @@ mod tests {
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
+
+    fn tds_from_specs<const D: usize>(
+        vertices: &[Vertex<(), D>],
+        simplices: &[Vec<usize>],
+    ) -> Tds<(), (), D> {
+        TdsBuilder::new(vertices, simplices).build().unwrap()
+    }
+
+    fn single_simplex_tds<const D: usize>(vertices: &[Vertex<(), D>]) -> Tds<(), (), D> {
+        tds_from_specs(vertices, &[(0..vertices.len()).collect()])
+    }
+
+    fn subdivided_simplex_tds<const D: usize>(vertices: &[Vertex<(), D>]) -> Tds<(), (), D> {
+        assert_eq!(vertices.len(), D + 2);
+        let interior = D + 1;
+        let simplices = (0..=D)
+            .map(|omitted| {
+                (0..=D)
+                    .filter(|&index| index != omitted)
+                    .chain(std::iter::once(interior))
+                    .collect()
+            })
+            .collect::<Vec<Vec<usize>>>();
+        tds_from_specs(vertices, &simplices)
+    }
 
     /// Return one mutual neighbor pair from a test TDS.
     fn first_neighbor_pair<U, V, const D: usize>(
@@ -4855,8 +4897,8 @@ mod tests {
                 fn [<test_fill_cavity_replacing_simplices_ $dim d>]() {
                     // Create initial simplex
                     let vertices = $initial_vertices;
-                    let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-                    let tds = dt.tds_mut_for_repair();
+                    let mut dt = single_simplex_tds(&vertices);
+                    let tds = &mut dt;
 
                     // Insert new vertex
                     let new_vertex = $new_vertex;
@@ -4968,8 +5010,8 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut_for_repair();
+        let mut dt = single_simplex_tds(&vertices);
+        let tds = &mut dt;
 
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
         let simplex_key = tds.simplex_keys().next().unwrap();
@@ -4994,8 +5036,8 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut_for_repair();
+        let mut dt = single_simplex_tds(&vertices);
+        let tds = &mut dt;
 
         let new_vkey = tds
             .insert_vertex_with_mapping(vertex!([0.5, 0.5]).unwrap())
@@ -5022,8 +5064,8 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut_for_repair();
+        let mut dt = single_simplex_tds(&vertices);
+        let tds = &mut dt;
 
         let new_vkey = tds
             .insert_vertex_with_mapping(vertex!([0.5, 0.5]).unwrap())
@@ -5054,8 +5096,8 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut_for_repair();
+        let mut dt = single_simplex_tds(&vertices);
+        let tds = &mut dt;
 
         let mut invalid_simplices = SimplexKeyBuffer::new();
         invalid_simplices.push(SimplexKey::from(KeyData::from_ffi(u64::MAX)));
@@ -5314,8 +5356,8 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut_for_repair();
+        let mut dt = single_simplex_tds(&vertices);
+        let tds = &mut dt;
 
         let new_vkey = tds
             .insert_vertex_with_mapping(vertex!([0.5, 0.5]).unwrap())
@@ -5334,8 +5376,8 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut_for_repair();
+        let mut dt = single_simplex_tds(&vertices);
+        let tds = &mut dt;
 
         // Insert a new vertex (apex)
         let new_vkey = tds
@@ -5420,8 +5462,8 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut_for_repair();
+        let mut dt = single_simplex_tds(&vertices);
+        let tds = &mut dt;
 
         let simplex_key = tds.simplex_keys().next().unwrap();
         let vkey0 = tds.simplex(simplex_key).unwrap().vertices()[0];
@@ -6392,8 +6434,8 @@ mod tests {
                 #[test]
                 fn [<test_repair_neighbor_pointers_ $dim d>]() {
                     let vertices = $initial_vertices;
-                    let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-                    let tds = dt.tds_mut_for_repair();
+                    let mut dt = subdivided_simplex_tds(&vertices);
+                    let tds = &mut dt;
 
                     // Verify all neighbor pointers are initially valid
                     for (_, simplex) in tds.simplices() {
@@ -6480,8 +6522,8 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
             vertex!([1.0, 1.1]).unwrap(), // break cocircular symmetry
         ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut_for_repair();
+        let mut dt = subdivided_simplex_tds(&vertices);
+        let tds = &mut dt;
 
         // Remove all neighbor pointers.
         tds.clear_all_neighbors();
@@ -6517,8 +6559,8 @@ mod tests {
                 #[test]
                 fn [<test_repair_neighbor_pointers_local_reconstructs_missing_slot_ $dim d>]() {
                     let vertices = $initial_vertices;
-                    let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-                    let tds = dt.tds_mut_for_repair();
+                    let mut dt = subdivided_simplex_tds(&vertices);
+                    let tds = &mut dt;
                     let (simplex_key, facet_idx, neighbor_key, _) =
                         first_neighbor_pair(tds).expect("test triangulation should have adjacent simplices");
 
@@ -6665,8 +6707,8 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
             vertex!([1.0, 1.1]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut_for_repair();
+        let mut dt = subdivided_simplex_tds(&vertices);
+        let tds = &mut dt;
         let (simplex_key, facet_idx, neighbor_key, _) =
             first_neighbor_pair(tds).expect("test triangulation should have adjacent simplices");
         let stale_neighbor = SimplexKey::from(KeyData::from_ffi(u64::MAX - 7));
@@ -6758,8 +6800,11 @@ mod tests {
             vertex!([1.0, 1.1]).unwrap(),
             vertex!([0.5, 0.35]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut_for_repair();
+        let mut dt = tds_from_specs(
+            &vertices,
+            &[vec![0, 1, 4], vec![1, 3, 4], vec![3, 2, 4], vec![2, 0, 4]],
+        );
+        let tds = &mut dt;
         let (simplex_key, facet_idx, _neighbor_key, _) =
             first_neighbor_pair(tds).expect("test triangulation should have adjacent simplices");
 
@@ -6783,8 +6828,8 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut_for_repair();
+        let mut dt = single_simplex_tds(&vertices);
+        let tds = &mut dt;
 
         let kernel = FastKernel::<f64>::new();
         let p = Point::try_new([2.0, 2.0]).expect("finite point coordinates");
@@ -6804,8 +6849,8 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut_for_repair();
+        let mut dt = single_simplex_tds(&vertices);
+        let tds = &mut dt;
 
         let kernel = FastKernel::<f64>::new();
         let p = Point::try_new([0.25, 0.25]).expect("finite point coordinates"); // inside
@@ -6875,10 +6920,10 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let point = Point::try_new([0.5, 0.0]).expect("finite point coordinates"); // on boundary edge
 
-        let facet = find_boundary_edge_split_facet(dt.tds(), &point).unwrap();
+        let facet = find_boundary_edge_split_facet(&dt, &point).unwrap();
         assert!(facet.is_some());
     }
 
@@ -6889,10 +6934,10 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let point = Point::try_new([0.0, 0.0]).expect("finite point coordinates");
 
-        let err = find_boundary_edge_split_facet(dt.tds(), &point).unwrap_err();
+        let err = find_boundary_edge_split_facet(&dt, &point).unwrap_err();
 
         assert!(err.is_retryable());
         assert_matches!(
@@ -6913,10 +6958,10 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let point = Point::try_new([2.0, 0.0]).expect("finite point coordinates"); // collinear with an edge line, outside segment
 
-        let facet = find_boundary_edge_split_facet(dt.tds(), &point).unwrap();
+        let facet = find_boundary_edge_split_facet(&dt, &point).unwrap();
         assert!(facet.is_none());
     }
 
@@ -6927,11 +6972,11 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let point = Point::try_new([f64::from_bits(1.0_f64.to_bits() + 1), 0.0])
             .expect("finite point coordinates");
 
-        let facet = find_boundary_edge_split_facet(dt.tds(), &point).unwrap();
+        let facet = find_boundary_edge_split_facet(&dt, &point).unwrap();
         assert!(facet.is_none());
     }
 
@@ -6942,11 +6987,11 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
         let point = Point::try_new([0.2, 0.2]).expect("finite point coordinates"); // inside simplex
 
-        let visible = find_visible_boundary_facets(dt.tds(), &kernel, &point).unwrap();
+        let visible = find_visible_boundary_facets(&dt, &kernel, &point).unwrap();
         assert!(visible.is_empty());
     }
 
@@ -6957,11 +7002,11 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
         let point = Point::try_new([3.0, 3.0]).expect("finite point coordinates"); // clearly outside
 
-        let visible = find_visible_boundary_facets(dt.tds(), &kernel, &point).unwrap();
+        let visible = find_visible_boundary_facets(&dt, &kernel, &point).unwrap();
         assert!(!visible.is_empty());
         assert!(visible.len() <= 3);
     }

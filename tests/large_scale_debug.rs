@@ -107,9 +107,9 @@
 use delaunay::prelude::construction::{
     ConstructionOptions, ConstructionStatistics, DelaunayRepairPolicy, DelaunayTriangulation,
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionErrorWithStatistics,
-    InitialSimplexStrategy, TopologyGuarantee, Vertex,
+    DelaunayTriangulationDraft, InitialSimplexStrategy, TopologyGuarantee, Vertex,
 };
-use delaunay::prelude::delaunayize::{DelaunayizeConfig, delaunayize};
+use delaunay::prelude::delaunayize::DelaunayRefinementBuilder;
 use delaunay::prelude::diagnostics::ConstructionTelemetry;
 use delaunay::prelude::generators::{
     generate_random_points_in_ball_seeded, generate_random_points_in_range_seeded,
@@ -1395,8 +1395,8 @@ where
                 println!("Shuffled insertion order with seed {shuffle_seed}");
             }
 
-            let mut dt: DelaunayTriangulation<_, (), (), D> =
-                DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
+            let mut dt: DelaunayTriangulationDraft<_, (), (), D> =
+                DelaunayTriangulationDraft::with_kernel_and_topology_guarantee(
                     RobustKernel::<f64>::new(),
                     topology_guarantee,
                 );
@@ -1450,11 +1450,10 @@ where
                         );
                         println!("  error: {err}");
 
-                        if let Err(report) = dt.validation_report() {
-                            print_validation_report(&report);
-                        } else {
-                            println!("validation_report: OK (after rollback)");
-                        }
+                        println!(
+                            "draft retained {} vertices after rollback",
+                            dt.number_of_vertices()
+                        );
                         let outcome = DebugOutcome::ConstructionFailure {
                             error: format!("{err}"),
                         };
@@ -1471,17 +1470,12 @@ where
                 if inserted_this_loop
                     && had_simplices
                     && validation_cadence.should_validate(summary.inserted)
-                    && let Err(e) = dt.as_triangulation().is_valid_topology()
+                    && let Err(e) = dt.clone().finish()
                 {
                     println!("Topology validation failed at idx={idx}: {e}");
-                    let outcome = if let Err(report) = dt.validation_report() {
-                        print_validation_report(&report);
-                        classify_validation_report(&report)
-                    } else {
-                        DebugOutcome::ValidationFailure {
-                            kind: InvariantKind::Topology,
-                            details: format!("{e}"),
-                        }
+                    let outcome = DebugOutcome::ValidationFailure {
+                        kind: InvariantKind::Topology,
+                        details: format!("{e}"),
                     };
                     print_abort_summary::<D>(&outcome, seed, n_points, "periodic validation");
                     return outcome;
@@ -1509,7 +1503,21 @@ where
 
             print_insertion_summary(&summary, t_insert.elapsed(), false);
 
-            dt
+            match dt.finish() {
+                Ok(dt) => dt,
+                Err(error) => {
+                    let outcome = DebugOutcome::ConstructionFailure {
+                        error: format!("draft publication failed: {error}"),
+                    };
+                    print_abort_summary::<D>(
+                        &outcome,
+                        seed,
+                        n_points,
+                        "incremental draft publication",
+                    );
+                    return outcome;
+                }
+            }
         }
     };
 
@@ -1539,15 +1547,14 @@ where
         println!();
         println!("Running final Triangulation -> DelaunayTriangulation conversion...");
         let t_repair = Instant::now();
-        let repair_config = repair_max_flips.map_or_else(
-            || DelaunayizeConfig::default().with_fallback_rebuild(fallback_rebuild),
-            |max_flips| {
-                DelaunayizeConfig::default()
-                    .with_fallback_rebuild(fallback_rebuild)
-                    .with_delaunay_max_flips(max_flips)
-            },
-        );
-        match delaunayize(dt.into_triangulation(), repair_config) {
+        let repair = DelaunayRefinementBuilder::new(dt.into_triangulation())
+            .repair_by_flips()
+            .fallback_rebuild(fallback_rebuild);
+        let repair = match repair_max_flips {
+            Some(max_flips) => repair.max_flips(max_flips),
+            None => repair,
+        };
+        match repair.build() {
             Ok(converted) => {
                 let outcome = converted.outcome;
                 println!(

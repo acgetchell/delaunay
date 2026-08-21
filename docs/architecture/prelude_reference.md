@@ -15,7 +15,7 @@ they exercise.
 | Validation policies, errors, reports, PL-manifold link errors, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
 | Raw-TDS PL-manifold repair and restoration context | `use delaunay::prelude::repair::{repair_pl_manifold_tds, GlobalTopology, PlManifoldRepairConfig}` |
 | Delaunay repair diagnostics and policies | `use delaunay::prelude::repair::*` |
-| Delaunayize workflow | `use delaunay::prelude::delaunayize::*` |
+| Delaunay refinement workflow | `use delaunay::prelude::delaunayize::*` |
 | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
 | Incremental insertion diagnostics and result types | `use delaunay::prelude::insertion::*` |
 | Post-construction vertex deletion errors and keys | `use delaunay::prelude::deletion::*` |

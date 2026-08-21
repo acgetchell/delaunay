@@ -15,7 +15,9 @@
 //! ```
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, Vertex, vertex};
+use delaunay::prelude::construction::{
+    DelaunayTriangulation, DelaunayTriangulationDraft, TopologyGuarantee, Vertex, vertex,
+};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange};
 use delaunay::prelude::validation::ValidationPolicy;
@@ -37,8 +39,7 @@ fn construct_with_policy<const D: usize>(
     vertices: &[Vertex<(), D>],
     validation_policy: ValidationPolicy,
 ) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
-    let mut dt =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt = DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
     dt.try_set_validation_policy(validation_policy).or_abort();
     for (vertex_index, vertex) in vertices.iter().enumerate() {
         if let Err(error) = dt.insert_with_statistics(*vertex) {
@@ -48,7 +49,7 @@ fn construct_with_policy<const D: usize>(
             ));
         }
     }
-    dt
+    dt.finish().or_abort()
 }
 
 fn validate_preflight<const D: usize>(

@@ -13,9 +13,10 @@ use crate::core::algorithms::incremental_insertion::{
 };
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
-use crate::core::simplex::{Simplex, SimplexValidationError};
+use crate::core::simplex::SimplexValidationError;
 use crate::core::tds::{
-    InvariantError, SimplexKey, Tds, TdsConstructionError, TdsError, VertexKey,
+    InvariantError, SimplexKey, Tds, TdsConstructionError, TdsDraft, TdsDraftError,
+    TdsDraftInsertionError, TdsError, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::util::PeriodicFacetKeyDerivationError;
@@ -737,10 +738,10 @@ where
             }
         };
 
-        let mut tds = Tds::empty();
+        let mut draft = TdsDraft::new();
         let mut vertex_keys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
         for vertex in vertices {
-            let vkey = tds.insert_vertex_with_mapping(*vertex)?;
+            let vkey = draft.insert_vertex(*vertex)?;
             vertex_keys.push(vkey);
         }
 
@@ -758,22 +759,30 @@ where
             }
         }
 
-        let simplex = Simplex::try_new(vertex_keys).map_err(|e| {
-            TriangulationConstructionError::FailedToCreateSimplex {
-                message: format!("Failed to create initial simplex: {e}"),
+        let _simplex_key = draft
+            .insert_simplex(vertex_keys)
+            .map_err(|source| match source {
+                TdsDraftInsertionError::SimplexCreation { source } => {
+                    TriangulationConstructionError::FailedToCreateSimplex {
+                        message: format!("Failed to create initial simplex: {source}"),
+                    }
+                }
+                TdsDraftInsertionError::SimplexInsertion { source } => {
+                    TriangulationConstructionError::Tds { source: *source }
+                }
+            })?;
+
+        draft.finish().map_err(|source| {
+            let source = match source {
+                TdsDraftError::NeighborAssignment { source }
+                | TdsDraftError::OrientationNormalization { source }
+                | TdsDraftError::Validation { source } => *source,
+                TdsDraftError::IncidentAssignment { source } => (*source).into(),
+            };
+            TriangulationConstructionError::Tds {
+                source: TdsConstructionError::ValidationError { source },
             }
-        })?;
-
-        let _simplex_key = tds.insert_simplex_with_mapping(simplex)?;
-
-        tds.assign_neighbors()
-            .map_err(|source| TdsConstructionError::ValidationError { source })?;
-        tds.assign_incident_simplices()
-            .map_err(|e| TdsConstructionError::ValidationError { source: e.into() })?;
-        tds.complete_construction()
-            .map_err(|source| TdsConstructionError::ValidationError { source })?;
-
-        Ok(tds)
+        })
     }
 }
 

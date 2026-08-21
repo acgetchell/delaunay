@@ -18,28 +18,14 @@ use uuid::Uuid;
 // CONSTRUCTION STATE TYPES
 // =============================================================================
 
-/// Represents the construction state of a triangulation.
-///
-/// # Examples
-///
-/// ```
-/// use delaunay::prelude::tds::TriangulationConstructionState;
-///
-/// let state = TriangulationConstructionState::Incomplete(2);
-/// std::assert_matches!(state, TriangulationConstructionState::Incomplete(2));
-///
-/// let default_state = TriangulationConstructionState::default();
-/// std::assert_matches!(
-///     default_state,
-///     TriangulationConstructionState::Incomplete(0)
-/// );
-/// ```
+/// Crate-internal publication state carried by draft-owned TDS storage.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TriangulationConstructionState {
+pub(crate) enum TriangulationConstructionState {
     /// The triangulation has insufficient vertices to form a complete D-dimensional triangulation.
     /// Contains the number of vertices currently stored.
     Incomplete(usize),
-    /// The triangulation is complete and valid with at least D+1 vertices and proper simplex structure.
+    /// The TDS has crossed its Levels 1–2 publication boundary; this includes
+    /// the verified empty complex.
     Constructed,
 }
 

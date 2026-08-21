@@ -19,6 +19,12 @@ algorithm machinery that operates on it:
 - `tds/model.rs` - proof-bearing Levels 1–2 `Tds` storage, read-only
   accessors, identity helpers, and construction tests. Canonical fields remain
   visible only inside `core::tds`.
+- `tds/builder.rs` - explicit-connectivity `TdsBuilder` publication boundary.
+  It owns raw vertex/simplex specifications and returns a constructed TDS only
+  after cumulative Levels 1–2 validation succeeds.
+- `tds/draft.rs` - mutable unpublished `TdsDraft` workspace for explicitly
+  supplied vertices and maximal simplices, plus its checked Levels 1–2
+  `finish()` publication boundary.
 - `tds/errors.rs` - TDS error/report vocabulary re-export boundary.
 - `tds/equality.rs` - TDS equality implementation and stable simplex identity
   helpers.
@@ -67,6 +73,15 @@ and operations over it. It consumes the checked Levels 1–2 TDS surface without
 receiving raw access to canonical TDS storage:
 
 - `model.rs` - `Triangulation` owner plus kernel and topology metadata.
+- `builder.rs` - `TriangulationBuilder` publication boundary. It consumes a
+  TDS plus kernel/topology options and returns a triangulation only after
+  cumulative Levels 1–4 validation succeeds. Strict mode is non-mutating and
+  snapshot-free; canonicalizing mode normalizes orientation transactionally.
+  Both return the exact input TDS in a recoverable failure.
+- `draft.rs` - crate-internal `TriangulationDraft` publication state shared by
+  `TriangulationBuilder` and higher-layer drafts. It is not a separate public
+  workflow because a proof-bearing TDS already has complete connectivity and
+  the generic layer exposes no further staged mutation.
 - `construction.rs` - generic construction helpers and initial-simplex setup.
 - `insertion.rs` - generic transactional insertion, duplicate detection, and
   insertion telemetry.
@@ -78,8 +93,9 @@ receiving raw access to canonical TDS storage:
   and vertex-deletion cavity retriangulation.
 - `rollback.rs` - rollback guards for generic mutation windows.
 - `validation.rs` - Level 3 topology validation vocabulary and orchestration.
-- `realization.rs` - Level 4 realization validation and the checked
-  TDS-to-`Triangulation` restoration boundary.
+- `realization.rs` - Level 4 realization validation and the shared Levels 3–4
+  certification used by both strict TDS-to-`Triangulation` refinement and
+  canonicalizing builder publication.
 - `flips.rs` - public primitive bistellar-edit contract, defined only for the
   generic triangulation owner.
 - `pachner.rs` - composed Pachner workflow over generic triangulations.
@@ -120,20 +136,28 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
 `src/delaunay/` owns public Delaunay workflows:
 
 - `builder.rs` - fluent builder API for Euclidean and toroidal/periodic
-  construction.
+  construction. Explicit-connectivity construction delegates through
+  `TdsBuilder` and `TriangulationBuilder` before Level 5 certification.
 - `construction.rs` - batch construction options, errors, statistics, and
   high-level constructors.
-- `insertion.rs` - post-construction vertex insertion and repair orchestration.
+- `draft.rs` - incremental `DelaunayTriangulationDraft` state. Bootstrap owns an
+  unpublished lower-layer draft; the first maximal simplex crosses Levels 3–5
+  failure-atomically, and later mutations operate on a verified owner before
+  the checked `finish()` boundary returns it.
+- `insertion.rs` - post-construction vertex insertion and repair orchestration;
+  published empty owners reject bootstrap insertion, which belongs to
+  `DelaunayTriangulationDraft`.
 - `deletion.rs` - post-construction vertex deletion errors and transactional
   rollback-facing API support.
 - `query.rs` - read-only `DelaunayTriangulation` accessors and traversal
   helpers.
 - `model.rs` - Level 5 `DelaunayTriangulation` storage type and insertion-state
   cache.
-- `delaunayize.rs` - consuming flip-based promotion from a Levels 1–4
-  `Triangulation` to a Levels 1–5 `DelaunayTriangulation`, with optional
-  fallback rebuild. Raw-TDS PL-manifold repair remains an orthogonal core
-  transformation before Levels 1–4 restoration.
+- `delaunayize.rs` - `DelaunayRefinementBuilder`, the sole consuming promotion
+  from a Levels 1–4 `Triangulation` to a Levels 1–5
+  `DelaunayTriangulation`. Strict mode certifies only Level 5; flip-repair mode
+  is transactional and optionally rebuilds. Raw-TDS PL-manifold repair remains
+  an orthogonal core transformation before Levels 1–4 restoration.
 - `repair.rs` - Delaunay repair policies, rebuild config, and repair outcomes.
 - `serialization.rs` - versioned owner-level persistence that stores the
   canonical `Tds` plus topology guarantee, global topology, and validation
@@ -141,8 +165,9 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
 - `spherical.rs` - bounded `S^2`/`S^3` construction,
   realization-validation, and empty-cap Delaunay backend using the topology
   space coordinate/metric backend.
-- `validation.rs` - implemented Level 5 Geometric Predicate APIs for Delaunay
-  validation errors and construction validation cadence helpers.
+- `validation.rs` - implemented Level 5 Geometric Predicate APIs, validation
+  errors, and the private mutation-free `DelaunayRefinementCandidate` shared by
+  every final Levels 1–4 to Level 5 publication path.
 - `property_validation.rs` - TDS-level Delaunay empty-circumsphere scans and
   repair-oriented violation reports used by Level 5 validation APIs.
 

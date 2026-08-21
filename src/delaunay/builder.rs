@@ -93,19 +93,20 @@ use crate::construction::{
 use crate::core::algorithms::flips::{DelaunayRepairError, repair_delaunay_with_flips_k2_k3};
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::collections::{
-    Entry, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, PeriodicOffsetBuffer, SimplexVertexKeyBuffer,
-    SmallBuffer, Uuid, VertexKeySet,
+    FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, PeriodicOffsetBuffer, SmallBuffer, Uuid,
+    VertexKeySet,
 };
-use crate::core::facet::facet_key_from_vertices;
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
-    InvariantError, SimplexKey, Tds, TdsConstructionError, TdsError, TdsMutationError, VertexKey,
+    InvariantError, SimplexKey, TdsBuilder, TdsBuilderError, TdsConstructionError, TdsError,
+    TdsMutationError, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
 use crate::core::vertex::Vertex;
 use crate::delaunay_model::DelaunayTriangulation;
 use crate::delaunay_property_validation::is_delaunay_property_only;
+use crate::delaunayize::DelaunayRefinementBuilder;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::util::circumcenter;
@@ -114,6 +115,7 @@ use crate::topology::traits::topological_space::{
     GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
 };
 use crate::triangulation::Triangulation;
+use crate::triangulation::builder::{TriangulationBuilder, TriangulationBuilderError};
 use crate::triangulation::construction::{
     FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
 };
@@ -121,10 +123,7 @@ use crate::triangulation::realization::TriangulationRealizationValidationError;
 use crate::triangulation::validation::{
     TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
 };
-use crate::validation::{
-    DelaunayTriangulationValidationError, TriangulationAssemblyCandidate,
-    TriangulationAssemblyError,
-};
+use crate::validation::DelaunayTriangulationValidationError;
 use num_traits::ToPrimitive;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -1787,9 +1786,8 @@ where
     /// realized triangulation need not satisfy the Level 5 Delaunay predicate.
     /// It therefore disables final Delaunay repair and certification regardless
     /// of the builder's Level 5 option, while preserving all Levels 1–4 options.
-    /// Call [`DelaunayTriangulation::try_from_triangulation`]
-    /// for strict no-repair certification, or
-    /// [`crate::delaunayize::delaunayize`] for bounded repair and certification.
+    /// Pass the result to [`DelaunayRefinementBuilder`] for strict no-repair
+    /// certification or bounded repair and certification.
     ///
     /// # Errors
     ///
@@ -1805,6 +1803,7 @@ where
     ///     DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder,
     ///     DelaunayTriangulationConstructionError,
     /// };
+    /// use delaunay::DelaunayRefinementBuilder;
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
@@ -1820,7 +1819,9 @@ where
     ///         .build_triangulation()?;
     ///
     /// assert!(triangulation.validate_realization().is_ok());
-    /// assert!(DelaunayTriangulation::try_from_triangulation(triangulation).is_err());
+    /// assert!(DelaunayRefinementBuilder::new(triangulation)
+    ///     .build()
+    ///     .is_err());
     /// # Ok(())
     /// # }
     /// ```
@@ -2042,9 +2043,9 @@ where
     /// [`FastKernel`](crate::geometry::kernel::FastKernel) for a lean
     /// degeneracy-preserving filtered-exact policy, or a custom implementation).
     ///
-    /// **Note:** consuming [`delaunayize`](crate::delaunayize::delaunayize)
-    /// requires [`ExactPredicates`](crate::geometry::kernel::ExactPredicates).
-    /// `FastKernel` satisfies that dimension-bounded contract through D ≤ 5.
+    /// **Note:** [`DelaunayRefinementBuilder::repair_by_flips`] requires
+    /// [`ExactPredicates`](crate::geometry::kernel::ExactPredicates). `FastKernel`
+    /// satisfies that dimension-bounded contract through D ≤ 5.
     ///
     /// # Errors
     ///
@@ -2130,14 +2131,14 @@ where
                         },
                     )?;
             }
-            return DelaunayTriangulation::try_from_triangulation(triangulation).map_err(
-                |failure| {
+            return DelaunayRefinementBuilder::new(triangulation)
+                .build()
+                .map_err(|failure| {
                     ExplicitConstructionError::DelaunayValidation {
                         source: Box::new(failure.into_reason()),
                     }
                     .into()
-                },
-            );
+                });
         }
 
         match self.topology {
@@ -2150,12 +2151,14 @@ where
                     domain,
                     validation_policy,
                 )?;
-                let dt = DelaunayTriangulation::try_from_triangulation(triangulation).map_err(
-                    |failure| TriangulationConstructionError::FinalDelaunayValidation {
-                        context: FinalDelaunayValidationContext::PeriodicQuotientDelaunay,
-                        source: failure.into_reason(),
-                    },
-                )?;
+                let dt = DelaunayRefinementBuilder::new(triangulation)
+                    .build()
+                    .map_err(
+                        |failure| TriangulationConstructionError::FinalDelaunayValidation {
+                            context: FinalDelaunayValidationContext::PeriodicQuotientDelaunay,
+                            source: failure.into_reason(),
+                        },
+                    )?;
                 return Ok(dt);
             }
         }
@@ -2513,155 +2516,6 @@ where
         Self::apply_validation_policy(triangulation, validation_policy)
     }
 
-    /// Proves explicit simplex topology once before taking the prechecked TDS insertion path.
-    ///
-    /// The public constructor has already rejected empty input, wrong arity,
-    /// out-of-bounds vertex indices, and repeated vertex indices within a
-    /// simplex. This helper checks the cross-simplex topology that only becomes
-    /// visible after raw indices are mapped to canonical [`VertexKey`] values.
-    fn validate_explicit_topology(
-        simplices: ValidatedExplicitSimplices<'_>,
-        index_to_key: &[VertexKey],
-    ) -> Result<(), TdsConstructionError> {
-        let simplices = simplices.as_slice();
-        Self::reject_duplicate_explicit_simplices(simplices, index_to_key)?;
-        Self::reject_overshared_explicit_facets(simplices, index_to_key)?;
-        Ok(())
-    }
-
-    /// Rejects duplicate explicit maximal simplices before the insertion loop.
-    ///
-    /// The duplicate check uses sorted [`VertexKey`] identities so callers cannot
-    /// bypass the explicit-construction invariant by permuting the same input
-    /// simplex indices.
-    fn reject_duplicate_explicit_simplices(
-        simplices: &[Vec<usize>],
-        index_to_key: &[VertexKey],
-    ) -> Result<(), TdsConstructionError> {
-        let mut seen: FastHashMap<SimplexVertexKeyBuffer, usize> = FastHashMap::default();
-
-        for (simplex_index, simplex_spec) in simplices.iter().enumerate() {
-            let identity = Self::explicit_simplex_identity(simplex_spec, index_to_key);
-            match seen.entry(identity) {
-                Entry::Occupied(entry) => {
-                    let existing_index = *entry.get();
-                    return Err(TdsConstructionError::ValidationError {
-                        source: TdsError::DuplicateExplicitSimplices {
-                            existing_simplex_index: existing_index,
-                            duplicate_simplex_index: simplex_index,
-                            vertex_indices: Self::explicit_simplex_input_indices(simplex_spec),
-                        },
-                    });
-                }
-                Entry::Vacant(entry) => {
-                    entry.insert(simplex_index);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Rejects explicit facets that would exceed PL-manifold multiplicity.
-    ///
-    /// This protects the public explicit-import path from committing topology
-    /// that later Level 3 validation must reject after neighbor assignment.
-    fn reject_overshared_explicit_facets(
-        simplices: &[Vec<usize>],
-        index_to_key: &[VertexKey],
-    ) -> Result<(), TdsConstructionError> {
-        let mut facet_incident_counts: FastHashMap<SimplexVertexKeyBuffer, usize> =
-            FastHashMap::default();
-
-        for (simplex_index, simplex_spec) in simplices.iter().enumerate() {
-            for facet_index in 0..=D {
-                let facet_identity =
-                    Self::explicit_facet_identity(simplex_spec, index_to_key, facet_index);
-                match facet_incident_counts.entry(facet_identity) {
-                    Entry::Occupied(mut entry) => {
-                        let incident_count = *entry.get();
-                        if incident_count >= 2 {
-                            return Err(TdsConstructionError::ValidationError {
-                                source: TdsError::ExplicitFacetSharingViolation {
-                                    facet_key: facet_key_from_vertices(entry.key().as_slice()),
-                                    facet_vertex_indices: Self::explicit_facet_input_indices(
-                                        simplex_spec,
-                                        facet_index,
-                                    ),
-                                    existing_incident_count: incident_count,
-                                    attempted_incident_count: incident_count + 1,
-                                    max_incident_count: 2,
-                                    candidate_simplex_index: simplex_index,
-                                    candidate_facet_index: facet_index,
-                                },
-                            });
-                        }
-                        *entry.get_mut() += 1;
-                    }
-                    Entry::Vacant(entry) => {
-                        entry.insert(1);
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Builds a canonical simplex identity from prevalidated explicit vertex indices.
-    fn explicit_simplex_identity(
-        simplex_spec: &[usize],
-        index_to_key: &[VertexKey],
-    ) -> SimplexVertexKeyBuffer {
-        let mut identity = Self::explicit_simplex_vertex_keys(simplex_spec, index_to_key);
-        identity.as_mut_slice().sort_unstable();
-        identity
-    }
-
-    /// Builds a canonical input-index identity from prevalidated explicit vertex indices.
-    fn explicit_simplex_input_indices(simplex_spec: &[usize]) -> Vec<usize> {
-        let mut identity = simplex_spec.to_vec();
-        identity.sort_unstable();
-        identity
-    }
-
-    /// Builds a canonical facet identity for one prevalidated explicit simplex facet.
-    fn explicit_facet_identity(
-        simplex_spec: &[usize],
-        index_to_key: &[VertexKey],
-        facet_index: usize,
-    ) -> SimplexVertexKeyBuffer {
-        let mut identity = SimplexVertexKeyBuffer::new();
-        identity.extend(simplex_spec.iter().enumerate().filter_map(
-            |(local_vertex_index, &input_vertex_index)| {
-                (local_vertex_index != facet_index).then_some(index_to_key[input_vertex_index])
-            },
-        ));
-        identity.as_mut_slice().sort_unstable();
-        identity
-    }
-
-    /// Builds a canonical input-index identity for one prevalidated explicit simplex facet.
-    fn explicit_facet_input_indices(simplex_spec: &[usize], facet_index: usize) -> Vec<usize> {
-        let mut identity: Vec<usize> = simplex_spec
-            .iter()
-            .enumerate()
-            .filter_map(|(local_vertex_index, &input_vertex_index)| {
-                (local_vertex_index != facet_index).then_some(input_vertex_index)
-            })
-            .collect();
-        identity.sort_unstable();
-        identity
-    }
-
-    /// Maps prevalidated explicit vertex indices into TDS keys without an intermediate `Vec`.
-    fn explicit_simplex_vertex_keys(
-        simplex_spec: &[usize],
-        index_to_key: &[VertexKey],
-    ) -> SimplexVertexKeyBuffer {
-        simplex_spec.iter().map(|&vi| index_to_key[vi]).collect()
-    }
-
     /// Builds a Levels 1–4 triangulation from explicit vertex and simplex specifications.
     ///
     /// This explicit-connectivity construction assembles a valid TDS from the given
@@ -2677,16 +2531,8 @@ where
     ///    unique vertex indices.
     /// 2. Reject non-Euclidean explicit connectivity until quotient realization
     ///    validation exists.
-    /// 3. Build a `Tds`: insert all vertices, then insert simplices from the specifications.
-    /// 4. Compute adjacency via `assign_neighbors()`.
-    /// 5. Assign incident simplices via `assign_incident_simplices()`.
-    /// 6. Wrap in a validation candidate.
-    /// 7. Normalize coherent orientation and promote to positive canonical sign
-    ///    via `normalize_and_promote_positive_orientation()`.
-    /// 8. Validate Levels 1–2 (TDS structural: `tds.validate()`).
-    /// 9. Validate Level 3 topology (excluding geometric orientation).
-    /// 10. Validate PL-manifold completion (vertex links, if required).
-    /// 11. Validate geometric nondegeneracy (reject zero-volume simplices).
+    /// 3. Delegate Levels 1–2 assembly and proof to [`TdsBuilder`].
+    /// 4. Delegate Levels 3–4 promotion to [`TriangulationBuilder`].
     fn build_explicit_triangulation<K>(
         kernel: &K,
         vertices: &[Vertex<U, D>],
@@ -2699,92 +2545,106 @@ where
     {
         Self::reject_explicit_non_euclidean_topology(global_topology)?;
 
-        let vertex_count = vertices.len();
         let simplex_specs = simplices.as_slice();
+        let tds = TdsBuilder::new(vertices, simplex_specs)
+            .simplex_data_type::<V>()
+            .build()
+            .map_err(Self::explicit_error_from_tds_builder)?;
 
-        // --- Build TDS ---
-        let mut tds: Tds<U, V, D> = Tds::empty();
-
-        // Insert all vertices and build index → VertexKey map.
-        let mut index_to_key = Vec::with_capacity(vertex_count);
-        for v in vertices {
-            let vk = tds.insert_vertex_with_mapping(*v).map_err(|source| {
-                ExplicitConstructionError::TdsAssembly {
-                    source: Box::new(source),
-                }
-            })?;
-            index_to_key.push(vk);
-        }
-
-        Self::validate_explicit_topology(simplices, &index_to_key).map_err(|source| {
-            ExplicitConstructionError::TdsAssembly {
-                source: Box::new(source),
-            }
-        })?;
-
-        // Construct each simplex only at insertion time after the topology
-        // precheck has proved duplicate and facet-sharing constraints.
-        for (simplex_idx, simplex_spec) in simplex_specs.iter().enumerate() {
-            let vertex_keys = Self::explicit_simplex_vertex_keys(simplex_spec, &index_to_key);
-            let simplex = Simplex::try_new(vertex_keys).map_err(|e| {
-                ExplicitConstructionError::SimplexCreation {
-                    simplex_index: simplex_idx,
-                    source: e,
-                }
-            })?;
-            tds.insert_simplex_with_mapping_prechecked_topology(simplex)
-                .map_err(|source| ExplicitConstructionError::TdsAssembly {
-                    source: Box::new(source),
-                })?;
-        }
-
-        // --- Compute adjacency ---
-        tds.assign_neighbors()
-            .map_err(|source| ExplicitConstructionError::NeighborAssignment {
-                source: Box::new(source),
-            })?;
-
-        // --- Assign incident simplices ---
-        tds.assign_incident_simplices().map_err(|source| {
-            ExplicitConstructionError::TdsAssembly {
-                source: Box::new(TdsConstructionError::ValidationError {
-                    source: source.into(),
-                }),
-            }
-        })?;
-
-        // Keep raw connectivity in an assembly workspace until the consuming
-        // smart constructor has repaired orientation and proved Levels 1–4.
-        // Installing global topology before proof ensures Euler and boundary
-        // checks use the intended model rather than the Euclidean default.
-        let candidate = TriangulationAssemblyCandidate::new(
-            tds,
-            kernel.clone(),
-            topology_guarantee,
-            global_topology,
-        );
-        candidate
-            .try_into_validated_triangulation()
-            .map_err(|source| {
-                match source {
-                    TriangulationAssemblyError::OrientationNormalization { source } => {
-                        ExplicitConstructionError::OrientationNormalization { source }
-                    }
-                    TriangulationAssemblyError::StructuralValidation { source } => {
-                        ExplicitConstructionError::StructuralValidation { source }
-                    }
-                    TriangulationAssemblyError::TopologyValidation { source } => {
-                        ExplicitConstructionError::TopologyValidation { source }
-                    }
-                    TriangulationAssemblyError::GeometricNondegeneracy { source } => {
-                        ExplicitConstructionError::GeometricNondegeneracy { source }
-                    }
-                    TriangulationAssemblyError::RealizationValidation { source } => {
-                        ExplicitConstructionError::RealizationValidation { source }
-                    }
-                }
-                .into()
+        TriangulationBuilder::new(tds, kernel.clone())
+            .topology_guarantee(topology_guarantee)
+            .global_topology(global_topology)
+            .build()
+            .map_err(|failure| {
+                Self::explicit_error_from_triangulation_builder(failure.into_reason())
             })
+    }
+
+    /// Preserves the established explicit-construction error surface while TDS
+    /// assembly is delegated to its owning builder.
+    fn explicit_error_from_tds_builder(
+        source: TdsBuilderError,
+    ) -> DelaunayTriangulationConstructionError {
+        match source {
+            TdsBuilderError::EmptySimplices => ExplicitConstructionError::EmptySimplices,
+            TdsBuilderError::InvalidSimplexArity {
+                simplex_index,
+                actual,
+                expected,
+            } => ExplicitConstructionError::InvalidSimplexArity {
+                simplex_index,
+                actual,
+                expected,
+            },
+            TdsBuilderError::IndexOutOfBounds {
+                simplex_index,
+                vertex_index,
+                bound,
+            } => ExplicitConstructionError::IndexOutOfBounds {
+                simplex_index,
+                vertex_index,
+                bound,
+            },
+            TdsBuilderError::DuplicateVertexInSimplex {
+                simplex_index,
+                vertex_index,
+            } => ExplicitConstructionError::DuplicateVertexInSimplex {
+                simplex_index,
+                vertex_index,
+            },
+            TdsBuilderError::VertexInsertion { source, .. }
+            | TdsBuilderError::TopologyValidation { source }
+            | TdsBuilderError::SimplexInsertion { source, .. } => {
+                ExplicitConstructionError::TdsAssembly { source }
+            }
+            TdsBuilderError::SimplexCreation {
+                simplex_index,
+                source,
+            } => ExplicitConstructionError::SimplexCreation {
+                simplex_index,
+                source,
+            },
+            TdsBuilderError::NeighborAssignment { source } => {
+                ExplicitConstructionError::NeighborAssignment { source }
+            }
+            TdsBuilderError::IncidentAssignment { source } => {
+                ExplicitConstructionError::TdsAssembly {
+                    source: Box::new(TdsConstructionError::ValidationError {
+                        source: (*source).into(),
+                    }),
+                }
+            }
+            TdsBuilderError::OrientationNormalization { source }
+            | TdsBuilderError::Validation { source } => {
+                ExplicitConstructionError::StructuralValidation { source }
+            }
+        }
+        .into()
+    }
+
+    /// Preserves explicit-construction diagnostics while Levels 3–4 promotion
+    /// is delegated to its owning builder.
+    fn explicit_error_from_triangulation_builder(
+        source: TriangulationBuilderError,
+    ) -> DelaunayTriangulationConstructionError {
+        match source {
+            TriangulationBuilderError::ValidationConfiguration { source } => source.into(),
+            TriangulationBuilderError::OrientationNormalization { source } => {
+                ExplicitConstructionError::OrientationNormalization { source }.into()
+            }
+            TriangulationBuilderError::StructuralValidation { source } => {
+                ExplicitConstructionError::StructuralValidation { source }.into()
+            }
+            TriangulationBuilderError::TopologyValidation { source } => {
+                ExplicitConstructionError::TopologyValidation { source }.into()
+            }
+            TriangulationBuilderError::GeometricNondegeneracy { source } => {
+                ExplicitConstructionError::GeometricNondegeneracy { source }.into()
+            }
+            TriangulationBuilderError::RealizationValidation { source } => {
+                ExplicitConstructionError::RealizationValidation { source }.into()
+            }
+        }
     }
 
     /// Rejects explicit quotient connectivity until realization validation supports it.
@@ -3140,13 +3000,15 @@ where
                         source: Box::new(source),
                     }
                 })?;
-            DelaunayTriangulation::try_from_triangulation(full_triangulation).map_err(|failure| {
-                TriangulationConstructionError::FinalDelaunayValidation {
-                    context: FinalDelaunayValidationContext::PeriodicQuotientDelaunay,
-                    source: failure.into_reason(),
-                }
-                .into()
-            })
+            DelaunayRefinementBuilder::new(full_triangulation)
+                .build()
+                .map_err(|failure| {
+                    TriangulationConstructionError::FinalDelaunayValidation {
+                        context: FinalDelaunayValidationContext::PeriodicQuotientDelaunay,
+                        source: failure.into_reason(),
+                    }
+                    .into()
+                })
         })();
         let full_dt = match relaxed_full_dt {
             Ok(full_dt) => full_dt,
@@ -3646,9 +3508,8 @@ where
                 .insert(symbolic_signature.clone(), lifted_ordered.clone());
         }
 
-        // Clone TDS and rebuild simplex complex from quotient representatives.
-        let tds_ref = full_dt.tds();
-        let mut tds_mut = tds_ref.clone();
+        // Rebuild the simplex complex from quotient representatives.
+        let mut tds_mut = full_dt.into_triangulation().into_tds();
 
         // Remove all simplices first.
         let all_simplices: Vec<SimplexKey> = tds_mut.simplex_keys().collect();
@@ -3815,39 +3676,39 @@ where
         tds_mut
             .assign_incident_simplices()
             .map_err(periodic_quotient_tds_mutation_error)?;
-        let candidate = TriangulationAssemblyCandidate::new(
-            tds_mut,
-            kernel.clone(),
-            topology_guarantee,
-            global_topology,
-        );
-        candidate
-            .try_into_validated_triangulation()
-            .map_err(|source| {
+        TriangulationBuilder::new(tds_mut, kernel.clone())
+            .topology_guarantee(topology_guarantee)
+            .global_topology(global_topology)
+            .build()
+            .map_err(|failure| {
+                let source = failure.into_reason();
                 match source {
-                    TriangulationAssemblyError::OrientationNormalization { source } => {
+                    TriangulationBuilderError::ValidationConfiguration { source } => {
+                        return source.into();
+                    }
+                    TriangulationBuilderError::OrientationNormalization { source } => {
                         TriangulationConstructionError::PeriodicImageOrientationCanonicalization {
                             source,
                         }
                     }
-                    TriangulationAssemblyError::StructuralValidation { source } => {
+                    TriangulationBuilderError::StructuralValidation { source } => {
                         TriangulationConstructionError::FinalTopologyValidation {
                             context: FinalTopologyValidationContext::PeriodicQuotientTopology,
                             source: Box::new(InvariantError::Tds { source: *source }),
                         }
                     }
-                    TriangulationAssemblyError::TopologyValidation { source } => {
+                    TriangulationBuilderError::TopologyValidation { source } => {
                         TriangulationConstructionError::FinalTopologyValidation {
                             context: FinalTopologyValidationContext::PeriodicQuotientTopology,
                             source,
                         }
                     }
-                    TriangulationAssemblyError::GeometricNondegeneracy { source } => {
+                    TriangulationBuilderError::GeometricNondegeneracy { source } => {
                         TriangulationConstructionError::PeriodicImageGeometricOrientationValidation {
                             source,
                         }
                     }
-                    TriangulationAssemblyError::RealizationValidation { source } => {
+                    TriangulationBuilderError::RealizationValidation { source } => {
                         return DelaunayTriangulationConstructionError::Triangulation {
                             source: DelaunayConstructionFailure::FinalRealizationValidation {
                                 source: *source,

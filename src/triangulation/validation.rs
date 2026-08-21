@@ -776,11 +776,14 @@ impl TopologyGuarantee {
 /// ```rust
 /// use delaunay::prelude::geometry::FastKernel;
 /// use delaunay::prelude::{
-///     TopologyGuarantee, Triangulation, ValidationConfigurationError, ValidationPolicy,
+///     TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
 /// };
+/// use delaunay::prelude::triangulation::TriangulationBuilder;
+/// use delaunay::prelude::tds::Tds;
 ///
-/// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-///     Triangulation::new_empty(FastKernel::new());
+/// let mut tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
+///     .build()
+///     .expect("the empty complex is a valid realization");
 ///
 /// std::assert_matches!(
 ///     tri.try_set_validation_policy(ValidationPolicy::Never),
@@ -1152,14 +1155,15 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::Triangulation;
+    /// use delaunay::prelude::triangulation::TriangulationBuilder;
     /// use delaunay::prelude::geometry::FastKernel;
-    /// use delaunay::prelude::tds::InvariantError;
+    /// use delaunay::prelude::tds::{InvariantError, Tds};
     /// use delaunay::prelude::topology::spaces::GlobalTopology;
     ///
     /// # fn main() -> Result<(), InvariantError> {
-    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-    ///     Triangulation::new_empty(FastKernel::new());
+    /// let mut tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
+    ///     .build()
+    ///     .expect("the empty complex is a valid realization");
     ///
     /// tri.try_set_global_topology(GlobalTopology::Euclidean)?;
     /// assert_eq!(tri.global_topology(), GlobalTopology::Euclidean);
@@ -1412,11 +1416,14 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::{Triangulation, ValidationPolicy};
+    /// use delaunay::prelude::ValidationPolicy;
+    /// use delaunay::prelude::triangulation::TriangulationBuilder;
     /// use delaunay::prelude::geometry::FastKernel;
+    /// use delaunay::prelude::tds::Tds;
     ///
-    /// let tri: Triangulation<FastKernel<f64>, (), (), 2> =
-    ///     Triangulation::new_empty(FastKernel::new());
+    /// let tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
+    ///     .build()
+    ///     .expect("the empty complex is a valid realization");
     ///
     /// assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
     /// ```
@@ -1439,12 +1446,15 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::{Triangulation, ValidationPolicy};
+    /// use delaunay::prelude::ValidationPolicy;
+    /// use delaunay::prelude::triangulation::TriangulationBuilder;
     /// use delaunay::prelude::geometry::FastKernel;
+    /// use delaunay::prelude::tds::Tds;
     ///
     /// # fn main() -> Result<(), delaunay::prelude::ValidationConfigurationError> {
-    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-    ///     Triangulation::new_empty(FastKernel::new());
+    /// let mut tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
+    ///     .build()
+    ///     .expect("the empty complex is a valid realization");
     ///
     /// tri.try_set_validation_policy(ValidationPolicy::Always)?;
     /// assert_eq!(tri.validation_policy(), ValidationPolicy::Always);
@@ -1473,12 +1483,15 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::{TopologyGuarantee, Triangulation};
+    /// use delaunay::prelude::TopologyGuarantee;
+    /// use delaunay::prelude::triangulation::TriangulationBuilder;
     /// use delaunay::prelude::geometry::FastKernel;
+    /// use delaunay::prelude::tds::Tds;
     ///
     /// # fn main() -> Result<(), delaunay::prelude::ValidationConfigurationError> {
-    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-    ///     Triangulation::new_empty(FastKernel::new());
+    /// let mut tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
+    ///     .build()
+    ///     .expect("the empty complex is a valid realization");
     /// tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)?;
     /// assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
     /// # Ok(())
@@ -2195,6 +2208,7 @@ mod tests {
     use crate::core::tds::{GeometricError, NeighborValidationError, Tds};
     use crate::core::vertex::Vertex;
     use crate::delaunay_model::DelaunayTriangulation;
+    use crate::draft::DelaunayTriangulationDraft;
     use crate::geometry::coordinate_range::CoordinateRange;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
@@ -4624,15 +4638,23 @@ mod tests {
         let bounds = CoordinateRange::try_new(-100.0_f64, 100.0).unwrap();
         let points = generate_random_points_in_range_seeded::<3>(25, bounds, 123)
             .expect("validated range should generate finite points");
+        let mut points = points.into_iter();
 
-        let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
-
-        dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)
+        let mut draft: DelaunayTriangulationDraft<_, (), (), 3> =
+            DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
+        draft
+            .try_set_validation_policy(ValidationPolicy::ExplicitOnly)
             .unwrap();
+        for point in points.by_ref().take(4) {
+            draft
+                .insert_vertex(Vertex::from_validated_point(point, None))
+                .expect("the initial draft simplex should publish");
+        }
+
+        let mut dt = draft.finish().expect("the bootstrap should be complete");
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
 
-        for (i, point) in points.into_iter().enumerate() {
+        for (i, point) in points.enumerate() {
             let vertex = Vertex::from_validated_point(point, None);
             let vertex_count_before = dt.number_of_vertices();
             let simplex_count_before = dt.number_of_simplices();

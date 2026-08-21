@@ -300,42 +300,43 @@ The resulting domain guarantee remains `TopologyGuarantee::PLManifold`.
 
 ## Strict construction and realized-state reconstruction
 
-Fresh Delaunay construction and restoration of evolved state have different
-validation boundaries:
+Fresh construction and restoration of evolved state have different validation
+boundaries:
 
-- Builder construction and
-  `DelaunayTriangulation::try_from_tds_with_topology_context` are strict. The
-  TDS supplies Levels 1–2; the composed promotions check Levels 3–4 and Level 5
-  before returning an owner with the cumulative Levels 1–5 guarantee.
-- `Triangulation::try_from_tds_with_topology_context` restores the supplied
-  `TopologyGuarantee` and `GlobalTopology`. The consumed `Tds` already proves
-  Levels 1–2, so promotion checks only Level 3 intrinsic topology and Level 4
-  realization. The returned value therefore carries the cumulative Levels
-  1–4 guarantee without repeating lower-layer validation. It preserves the
-  input TDS exactly and neither checks nor repairs Level 5. A
-  `TriangulationRefinementError` retains the unchanged `Tds` together with its
-  `TriangulationRealizationValidationError`, keeping this boundary independent
-  of Delaunay-only variants.
-- `DelaunayTriangulation::try_from_triangulation` performs strict no-repair
-  Level 5 certification. `delaunayize` and `delaunayize_by_flips` consume a
-  Levels 1–4 triangulation, perform bounded repair, and return a Levels 1–5
-  owner only after Level 5 certification. The input type supplies the lower
-  four proofs; successful transactional flips preserve them rather than
-  causing the conversion boundary to revalidate them. Their flip stage follows the
+- `TriangulationBuilder` is the sole Levels 3–4 publication path. It restores
+  the supplied `TopologyGuarantee`, `GlobalTopology`, and optional validation
+  policy. The consumed `Tds` already proves Levels 1–2, so publication checks
+  only Level 3 intrinsic topology and Level 4 realization.
+- `.strict()` selects certification-only publication. It preserves owner
+  identity, generation, simplex ordering, and stored orientation; neither
+  checks nor repairs Level 5 and avoids a rollback snapshot.
+- The default canonicalizing mode may normalize geometric orientation before
+  the same final Levels 3–4 proof. That successful transformation may change
+  simplex ordering and generation. A storage-linear TDS snapshot makes the
+  mutation failure-atomic. Both modes return `TriangulationBuildFailure` with
+  the exact input TDS if publication fails.
+- `DelaunayRefinementBuilder` is the sole Level 5 publication path from an
+  existing `Triangulation`. Its default `.build()` terminal checks Level 5
+  without mutation or a rollback snapshot. Its `.repair_by_flips()` type state
+  enables bounded repair, `.max_flips(...)`, and
+  `.fallback_rebuild(...)`; it publishes a Levels 1–5 owner only after final
+  certification. The input type supplies the lower four proofs; successful
+  transactional flips preserve them rather than causing the boundary to
+  revalidate them. The flip stage follows the
   regular-triangulation framework cited under
   [Bistellar (Pachner) Moves and Delaunay Repair](../REFERENCES.md#bistellar-pachner-moves-and-delaunay-repair),
   while typed budget exhaustion and rollback define the narrower executable
   contract.
+- Restoring a Delaunay value from TDS storage uses those same boundaries in
+  order: strict `TriangulationBuilder`, then strict
+  `DelaunayRefinementBuilder`. There is no public shortcut with a stage-union
+  error. The owner type returned by the failed builder identifies the stage.
 
 All consuming promotions are recoverable. `RefinementError<T, E>` couples the
 still-valid lower-layer owner `T` to the typed rejection reason `E`; callers can
-borrow either part or consume the carrier with `into_parts()`. The composed
-`Tds`-to-`DelaunayTriangulation` constructors use
-`DelaunayTdsRefinementError` to identify whether rejection occurred before or
-after the intermediate `Triangulation` proof was established. Repairing
-promotion keeps one rollback snapshot alive through flips, orientation
-normalization, and final Level 5 certification, and returns the restored
-Levels 1–4 owner on every failure.
+borrow either part or consume the carrier with `into_parts()`. Repair mode keeps
+one rollback snapshot alive through flips and final Level 5 certification, and
+returns the restored Levels 1–4 owner on every failure.
 
 Use the realized-state boundary for checkpoints created after valid local moves
 when Delaunay optimality is not an invariant of the evolved model. Use
@@ -831,7 +832,7 @@ enough for future regular, weighted, Gabriel, alpha, constrained, or related pre
   [Issue #120 Investigation](archive/issue_120_investigation.md).
 - **Fallback rebuild**: If flip-based conversion does not converge, a Levels
   1–4 `Triangulation` can opt into bounded rebuild recovery through
-  `delaunayize(tri, DelaunayizeConfig::default().with_fallback_rebuild(true))`.
+  `DelaunayRefinementBuilder::new(tri).repair_by_flips().fallback_rebuild(true).build()`.
   This requires `TopologyGuarantee::PLManifold` and `K: ExactPredicates`.
   See [Numerical Robustness Guide](numerical_robustness_guide.md).
 
@@ -1082,10 +1083,10 @@ but the validator itself does not mutate the triangulation.
 or missing higher-dimensional flip coverage
 **Fix**: Keep flip repair enabled, handle insertion errors, check for near-coplanar/collinear points,
 and select the kernel whose tie-handling and diagnostic policy matches the
-workflow. `delaunayize` requires `K: ExactPredicates`; `AdaptiveKernel`,
+workflow. Flip-repair refinement requires `K: ExactPredicates`; `AdaptiveKernel`,
 `RobustKernel`, and `FastKernel` satisfy that bound through D ≤ 5. If conversion
 fails to converge, enable the opt-in rebuild through
-`DelaunayizeConfig::default().with_fallback_rebuild(true)` (requires
+`.repair_by_flips().fallback_rebuild(true)` (requires
 PL-manifold + `ExactPredicates`).
 
 ---
