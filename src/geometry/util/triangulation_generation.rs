@@ -1444,7 +1444,6 @@ mod tests {
         assert!(triangulation.number_of_simplices() > 0);
         assert!(
             triangulation
-                .tds()
                 .vertices()
                 .all(|(_, vertex)| vertex.data().is_none())
         );
@@ -1642,7 +1641,6 @@ mod tests {
                 .build()
                 .unwrap();
         let vertex_data: Vec<_> = triangulation_with_data
-            .tds()
             .vertices()
             .filter_map(|(_, vertex)| vertex.data().copied())
             .collect();
@@ -1812,7 +1810,7 @@ mod tests {
             "Expected at least 3 vertices in 2D triangulation with data, got {}",
             tri_with_char_array.number_of_vertices()
         );
-        tri_with_char_array.tds().is_valid().unwrap();
+        tri_with_char_array.is_valid_structure().unwrap();
 
         // Convert the char array to a string to demonstrate string-like usage
         let char_array_data = ['v', 'e', 'r', 't', 'e', 'x', '_', 'd'];
@@ -1849,7 +1847,7 @@ mod tests {
             "Expected at least 4 vertices in 3D triangulation with data, got {}",
             tri_with_int_data.number_of_vertices()
         );
-        tri_with_int_data.tds().is_valid().unwrap();
+        tri_with_int_data.is_valid_structure().unwrap();
 
         // Test without data (None)
         let tri_no_data = try_generate_random_triangulation::<(), (), 2>(
@@ -1865,6 +1863,6 @@ mod tests {
             "Expected at least 3 vertices in 2D triangulation without data, got {}",
             tri_no_data.number_of_vertices()
         );
-        tri_no_data.tds().is_valid().unwrap();
+        tri_no_data.is_valid_structure().unwrap();
     }
 }

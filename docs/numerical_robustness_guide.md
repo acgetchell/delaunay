@@ -116,8 +116,9 @@ insphere support and the currently tested triangulation envelope, so
 `ExactPredicates` stops at D ≤ 5.
 
 `DelaunayTriangulationBuilder::new(&vertices).build()` and
-`DelaunayTriangulation::empty()` use `AdaptiveKernel`. To opt into a different
-kernel, use the explicit-kernel constructors:
+`DelaunayIncrementalBuilder::new()` use `AdaptiveKernel`. To opt into a
+different kernel for incremental construction, use
+`DelaunayIncrementalBuilder::with_kernel(...)`.
 
 ```rust
 use delaunay::prelude::geometry::RobustKernel;
@@ -201,10 +202,11 @@ cases involve cavity/topology failures rather than predicate degeneracies.
 Use `insert_best_effort_with_statistics()` to observe this behavior:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayIncrementalBuilder, vertex};
 use delaunay::prelude::insertion::InsertionOutcome;
 
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+let mut dt: DelaunayIncrementalBuilder<_, (), (), 3> =
+    DelaunayIncrementalBuilder::new();
 
 let (outcome, stats) = dt
     .insert_best_effort_with_statistics(vertex![0.5, 0.5, 0.5]?)?;
@@ -240,15 +242,15 @@ those dimensions.
 
 To convert a Levels 1–4 triangulation explicitly, use the consuming workflow:
 
-- `delaunayize(tri, DelaunayizeConfig::default())`
+- `DelaunayRefinementBuilder::new(tri).repair_by_flips().build()`
 - enable bounded rebuild recovery with
-  `DelaunayizeConfig::default().with_fallback_rebuild(true)`
+  `.repair_by_flips().fallback_rebuild(true).build()`
 
 After construction or conversion, verify the Delaunay property via `dt.is_valid_delaunay()`
 (which uses local flip predicates).
 
 For full-stack diagnostics (Levels 1-5), use `dt.validate()` or `dt.validation_report()`;
-see `docs/validation.md`.
+see `docs/construction_and_validation.md`.
 
 ### Exact circumcenter computation (v0.7.3+)
 
@@ -372,7 +374,7 @@ and per-insertion checks handle any remaining cases.
 ## Practical recommendations
 
 - Start with the default `AdaptiveKernel` (`DelaunayTriangulationBuilder::new(&vertices).build()` /
-  `DelaunayTriangulation::empty()`).
+  `DelaunayIncrementalBuilder::new()`).
   This handles near-degenerate configurations correctly out of the box.
 - If you need explicit `BOUNDARY`/`DEGENERATE` signals (e.g. to detect and handle cospherical
   configurations yourself), switch to `RobustKernel`.

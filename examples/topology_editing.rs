@@ -23,10 +23,8 @@
     reason = "example preserves the crate's typed insertion and flip errors instead of erasing them"
 )]
 
-use delaunay::InvariantError;
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-    vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::geometry::{
     AdaptiveKernel, CircumcenterError, Coordinate, CoordinateConversionError, Point, circumcenter,
@@ -42,6 +40,7 @@ use delaunay::prelude::triangulation::Triangulation;
 use delaunay::prelude::validation::{
     DelaunayTriangulationValidationError, TriangulationRealizationValidationError,
 };
+use delaunay::{DelaunayRefinementBuilder, InvariantError};
 
 type ExampleResult<T = ()> = Result<T, TopologyEditingExampleError>;
 type Dt3 = Triangulation<AdaptiveKernel<f64>, (), (), 3>;
@@ -301,7 +300,7 @@ fn pachner_2d_k2() -> ExampleResult {
     println!("  Inserted: {} simplices", flip_info.new_simplices.len());
 
     // Check if Delaunay property changed
-    let after_valid = DelaunayTriangulation::try_from_triangulation(dt.clone()).is_ok();
+    let after_valid = DelaunayRefinementBuilder::new(dt.clone()).build().is_ok();
     println!(
         "  Delaunay after flip: {}",
         if after_valid { "✓" } else { "⚠️" }

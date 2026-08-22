@@ -365,8 +365,8 @@ mod tests {
     use std::assert_matches;
 
     use crate::core::simplex::Simplex;
+    use crate::core::tds::TdsBuilder;
     use crate::core::util::measure_with_result;
-    use crate::delaunay_model::DelaunayTriangulation;
 
     use std::thread;
     use std::time::Instant;
@@ -497,8 +497,8 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds();
+        let simplices = [vec![0, 1, 2, 3]];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
 
         // Test 1: Basic functionality - successful key derivation
         tracing::debug!("  Testing basic functionality...");
@@ -637,18 +637,18 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds();
+        let simplices = [vec![0, 1, 2, 3]];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
         let simplex_key = tds.simplex_keys().next().unwrap();
-        assert!(verify_facet_index_consistency(tds, simplex_key, simplex_key, 0).unwrap());
+        assert!(verify_facet_index_consistency(&tds, simplex_key, simplex_key, 0).unwrap());
 
         // Error case: facet index out of bounds.
-        let err = verify_facet_index_consistency(tds, simplex_key, simplex_key, 99).unwrap_err();
+        let err = verify_facet_index_consistency(&tds, simplex_key, simplex_key, 99).unwrap_err();
         assert_matches!(err, FacetError::InvalidFacetIndex { .. });
 
         // Logging: demonstrate behavior for large out-of-bounds facet index
         let err_large =
-            verify_facet_index_consistency(tds, simplex_key, simplex_key, 300).unwrap_err();
+            verify_facet_index_consistency(&tds, simplex_key, simplex_key, 300).unwrap_err();
         tracing::debug!("    Large facet_idx=300 error: {err_large:?}");
         assert_matches!(err_large, FacetError::InvalidFacetIndexOverflow { .. });
 

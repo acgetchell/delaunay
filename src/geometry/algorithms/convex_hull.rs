@@ -50,7 +50,7 @@ use crate::core::collections::{
     FacetToSimplicesMap, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
 use crate::core::facet::{FacetError, FacetHandle, FacetView};
-use crate::core::tds::{Tds, TdsError};
+use crate::core::tds::TdsError;
 use crate::core::traits::data_type::DataType;
 use crate::core::util::checked_facet_key_from_vertex_keys;
 use crate::core::vertex::Vertex;
@@ -995,9 +995,12 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     ///
     /// Cache failures are stable for the snapshot: changing the source TDS would
     /// make the hull stale before another cache lookup can occur.
-    fn try_facet_cache(&self, tds: &Tds<U, V, D>) -> Result<&FacetToSimplicesMap, TdsError> {
+    fn try_facet_cache<K>(
+        &self,
+        tri: &Triangulation<K, U, V, D>,
+    ) -> Result<&FacetToSimplicesMap, TdsError> {
         self.facet_to_simplices_cache
-            .get_or_init(|| tds.build_facet_to_simplices_map())
+            .get_or_init(|| tri.tds.build_facet_to_simplices_map())
             .as_ref()
             .map_err(Clone::clone)
     }
@@ -1255,14 +1258,12 @@ where
     where
         K: Kernel<D>,
     {
-        let tds = &tri.tds;
-
         // Staleness guard: fail fast before any cache work
         self.ensure_current_for_construction(tri)?;
 
         // Get or build the cached facet-to-simplices mapping
         let facet_to_simplices = self
-            .try_facet_cache(tds)
+            .try_facet_cache(tri)
             .map_err(|source| ConvexHullConstructionError::FacetCacheBuildFailed { source })?;
 
         // Delegate to internal helper with pre-loaded cache
@@ -1631,14 +1632,12 @@ where
     where
         K: Kernel<D>,
     {
-        let tds = &tri.tds;
-
         // Fail fast if hull is stale relative to this TDS (using immutable creation_generation)
         self.ensure_current_for_construction(tri)?;
 
         // Resolve the cache once before the loop.
         let facet_cache = self
-            .try_facet_cache(tds)
+            .try_facet_cache(tri)
             .map_err(|source| ConvexHullConstructionError::FacetCacheBuildFailed { source })?;
 
         let mut visible_facets = Vec::new();
@@ -2014,8 +2013,8 @@ mod tests {
     use crate::construction::{
         DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
     };
-    use crate::core::algorithms::incremental_insertion::InsertionError;
-    use crate::core::tds::{Tds, TdsError};
+    use crate::core::algorithms::insertion::InsertionError;
+    use crate::core::tds::{Tds, TdsError, TopologyOwner};
     use crate::core::util::{checked_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::AdaptiveKernel;
@@ -4184,11 +4183,11 @@ mod tests {
 
         assert!(hull.facet_to_simplices_cache.get().is_none());
 
-        let cache_before = hull.try_facet_cache(dt.tds()).unwrap();
+        let cache_before = hull.try_facet_cache(dt.as_triangulation()).unwrap();
         assert!(!cache_before.is_empty());
         assert!(hull.facet_to_simplices_cache.get().is_some());
 
-        let cache_after = hull.try_facet_cache(dt.tds()).unwrap();
+        let cache_after = hull.try_facet_cache(dt.as_triangulation()).unwrap();
         assert!(
             std::ptr::eq(cache_before, cache_after),
             "the initialized facet cache should be reused"
@@ -4212,7 +4211,7 @@ mod tests {
         // Test that cache contains keys derivable by the key derivation method
         test_debug!("  Testing cache-key derivation consistency...");
         let cache = hull
-            .try_facet_cache(dt.tds())
+            .try_facet_cache(dt.as_triangulation())
             .expect("Failed to build cache");
 
         // For each facet in the hull, derive its key and check it exists in cache
@@ -4462,7 +4461,7 @@ mod tests {
         test_debug!("  Testing cache consistency after concurrent access...");
 
         // Verify cache is in a consistent state after concurrent access
-        let cache = hull.try_facet_cache(dt.tds()).unwrap();
+        let cache = hull.try_facet_cache(dt.as_triangulation()).unwrap();
         assert!(
             !cache.is_empty(),
             "Cache should be populated after concurrent access"
@@ -6226,7 +6225,7 @@ mod tests {
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
-        let cache_before = hull.try_facet_cache(dt.tds()).unwrap();
+        let cache_before = hull.try_facet_cache(dt.as_triangulation()).unwrap();
         assert!(!cache_before.is_empty());
 
         let creation_generation = hull
@@ -6234,12 +6233,8 @@ mod tests {
             .get()
             .copied()
             .expect("constructed hull should capture generation");
-        let creation_identity = hull
-            .creation_identity
-            .get()
-            .expect("constructed hull should capture TDS identity");
+        let creation_owner_id = dt.topology_owner_id();
         assert_eq!(creation_generation, dt.topology_generation());
-        assert!(Arc::ptr_eq(creation_identity, dt.tds().identity()));
         assert!(hull.is_valid_for_triangulation(dt.as_triangulation()));
 
         let duplicate_uuid = dt
@@ -6266,7 +6261,7 @@ mod tests {
             "failed insert rollback should restore the generation captured by the hull"
         );
         assert!(
-            Arc::ptr_eq(creation_identity, dt.tds().identity()),
+            creation_owner_id == dt.topology_owner_id(),
             "failed insert rollback must preserve TDS identity for cache provenance"
         );
         assert!(
@@ -6274,7 +6269,7 @@ mod tests {
             "hull cache key should remain valid after failed insert rollback"
         );
 
-        let cache_after = hull.try_facet_cache(dt.tds()).unwrap();
+        let cache_after = hull.try_facet_cache(dt.as_triangulation()).unwrap();
         assert!(
             std::ptr::eq(cache_before, cache_after),
             "facet cache should be reused after a failed insertion rolls back"

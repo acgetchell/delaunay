@@ -17,11 +17,22 @@ mod cli_tests {
         Command::new(env!("CARGO_BIN_EXE_delaunay"))
     }
 
+    fn pachner_stress_command() -> Command {
+        Command::new(env!("CARGO_BIN_EXE_pachner-stress"))
+    }
+
     fn run_cli(args: &[&str]) -> Output {
         delaunay_command()
             .args(args)
             .output()
             .expect("delaunay binary should run")
+    }
+
+    fn run_pachner_stress(args: &[&str]) -> Output {
+        pachner_stress_command()
+            .args(args)
+            .output()
+            .expect("pachner-stress binary should run")
     }
 
     fn output_text(bytes: &[u8]) -> String {
@@ -95,16 +106,29 @@ mod cli_tests {
     }
 
     #[test]
-    fn binary_help_lists_supported_subcommands() {
+    fn binary_help_exposes_each_binarys_direct_workflows() {
         let output = run_cli(&["--help"]);
         assert_success(&output);
 
         let help = output_text(&output.stdout);
-        assert!(help.contains("Generate and diagnose d-dimensional Delaunay triangulations"));
         assert!(help.contains("generate"));
         assert!(help.contains("spherical-hero"));
         assert!(help.contains("validation-demo"));
-        assert!(help.contains("pachner-stress"));
+
+        let diagnostic_help = run_pachner_stress(&["--help"]);
+        assert_success(&diagnostic_help);
+        let diagnostic_help = output_text(&diagnostic_help.stdout);
+        assert!(diagnostic_help.contains("Run validated Pachner-move stress diagnostics"));
+        assert!(diagnostic_help.contains("--dimension"));
+    }
+
+    #[test]
+    fn redundant_command_groups_are_rejected() {
+        for name in ["artifact", "diagnose"] {
+            let output = run_cli(&[name, "--help"]);
+            assert_exit_code(&output, 2);
+            assert_stderr_contains(&output, "unrecognized subcommand");
+        }
     }
 
     #[test]
@@ -334,7 +358,9 @@ mod cli_tests {
             assert_exit_code(&output, 1);
             assert_stderr_contains(
                 &output,
-                &format!("2D generation requires at least 4 vertices, got {vertices}"),
+                &format!(
+                    "S^2 spherical-hero generation requires at least 4 vertices, got {vertices}"
+                ),
             );
         }
     }
@@ -399,11 +425,30 @@ mod cli_tests {
     }
 
     #[test]
+    fn artifact_open_errors_name_the_requested_destination() {
+        let path = target_artifact_path("validation-demo-directory", "dir");
+        fs::create_dir_all(&path).expect("output-directory fixture should be created");
+        let output = run_cli(&[
+            "validation-demo",
+            "--output",
+            path.to_str().expect("target path should be UTF-8"),
+        ]);
+
+        assert_exit_code(&output, 1);
+        assert_stderr_contains(&output, "failed to open artifact");
+        assert_stderr_contains(
+            &output,
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .expect("fixture file name should be UTF-8"),
+        );
+    }
+
+    #[test]
     fn pachner_stress_accepts_small_quiet_summary_run() {
         let summary_path = target_json_path("pachner-stress-summary");
         let progress_path = target_artifact_path("pachner-stress-progress", "csv");
-        let output = run_cli(&[
-            "pachner-stress",
+        let output = run_pachner_stress(&[
             "--dimension",
             "3d",
             "--mode",
@@ -433,6 +478,8 @@ mod cli_tests {
         );
 
         let json = file_json(&summary_path);
+        assert_eq!(json["schema"], "delaunay.pachner_stress");
+        assert_eq!(json["schema_version"], 1);
         assert_eq!(json["dimension"], 3);
         assert_eq!(json["label"], "3d");
         assert_eq!(json["mode"], "round-trip");
@@ -474,8 +521,7 @@ mod cli_tests {
     #[test]
     fn pachner_stress_accepts_small_random_walk_summary_run() {
         let summary_path = target_json_path("pachner-stress-random-walk-summary");
-        let output = run_cli(&[
-            "pachner-stress",
+        let output = run_pachner_stress(&[
             "--dimension",
             "3d",
             "--mode",
@@ -518,8 +564,7 @@ mod cli_tests {
 
     #[test]
     fn pachner_stress_emits_setup_stage_telemetry() {
-        let output = run_cli(&[
-            "pachner-stress",
+        let output = run_pachner_stress(&[
             "--dimension",
             "3d",
             "--mode",
@@ -561,14 +606,20 @@ mod cli_tests {
     fn generate_rejects_too_few_vertices_for_dimension() {
         let output = run_cli(&["generate", "--dimension", "3", "--vertices", "3"]);
         assert_exit_code(&output, 1);
-        assert_stderr_contains(&output, "3D generation requires at least 4 vertices, got 3");
+        assert_stderr_contains(
+            &output,
+            "3D Euclidean generation requires at least 4 vertices, got 3",
+        );
     }
 
     #[test]
     fn generate_rejects_zero_vertices() {
         let output = run_cli(&["generate", "--dimension", "3", "--vertices", "0"]);
         assert_exit_code(&output, 1);
-        assert_stderr_contains(&output, "3D generation requires at least 4 vertices, got 0");
+        assert_stderr_contains(
+            &output,
+            "3D Euclidean generation requires at least 4 vertices, got 0",
+        );
     }
 
     #[test]
@@ -598,10 +649,20 @@ mod cli_tests {
 
     #[test]
     fn pachner_stress_rejects_unsupported_dimension_value() {
-        let output = run_cli(&["pachner-stress", "--dimension", "2d"]);
+        let output = run_pachner_stress(&["--dimension", "2d"]);
         assert_exit_code(&output, 2);
         assert_stderr_contains(&output, "invalid value '2d'");
         assert_stderr_contains(&output, "[possible values: 3d, 4d]");
+    }
+
+    #[test]
+    fn pachner_stress_rejects_empty_artifact_paths_during_parsing() {
+        for argument in ["--progress-csv", "--summary-json"] {
+            let output = run_pachner_stress(&[argument, ""]);
+            assert_exit_code(&output, 2);
+            assert_stderr_contains(&output, "a value is required");
+            assert_stderr_contains(&output, argument);
+        }
     }
 
     #[test]
@@ -615,7 +676,7 @@ mod cli_tests {
             ),
             ("--retry-attempts", "--retry-attempts must be positive"),
         ] {
-            let output = run_cli(&["pachner-stress", argument, "0", "--quiet"]);
+            let output = run_pachner_stress(&[argument, "0", "--quiet"]);
             assert_exit_code(&output, 1);
 
             let stderr = output_text(&output.stderr);
@@ -628,14 +689,14 @@ mod cli_tests {
 
     #[test]
     fn pachner_stress_rejects_too_few_vertices_for_dimension() {
-        let output = run_cli(&["pachner-stress", "--dimension", "3d", "--vertices", "3"]);
+        let output = run_pachner_stress(&["--dimension", "3d", "--vertices", "3"]);
         assert_exit_code(&output, 1);
         assert_stderr_contains(&output, "3D stress requires at least 4 vertices, got 3");
     }
 
     #[test]
     fn pachner_stress_rejects_zero_vertices() {
-        let output = run_cli(&["pachner-stress", "--dimension", "3d", "--vertices", "0"]);
+        let output = run_pachner_stress(&["--dimension", "3d", "--vertices", "0"]);
         assert_exit_code(&output, 1);
         assert_stderr_contains(&output, "3D stress requires at least 4 vertices, got 0");
     }
@@ -644,20 +705,41 @@ mod cli_tests {
     fn pachner_stress_rejects_duplicate_artifact_paths() {
         let path = target_json_path("pachner-stress-duplicate-artifact");
         let path = path.to_str().expect("target path should be UTF-8");
-        let output = run_cli(&[
-            "pachner-stress",
-            "--quiet",
-            "--progress-csv",
-            path,
-            "--summary-json",
-            path,
-        ]);
+        let output =
+            run_pachner_stress(&["--quiet", "--progress-csv", path, "--summary-json", path]);
 
         assert_exit_code(&output, 1);
         assert_stderr_contains(
             &output,
             "progress CSV and summary JSON must use different paths",
         );
+    }
+
+    #[test]
+    fn pachner_stress_rejects_lexically_aliased_artifact_paths() {
+        let direct = target_json_path("pachner-stress-aliased-artifact");
+        let alias = direct
+            .parent()
+            .expect("target artifact should have a parent")
+            .join("missing")
+            .join("..")
+            .join(
+                direct
+                    .file_name()
+                    .expect("target artifact should have a file name"),
+            );
+        let output = run_pachner_stress(&[
+            "--quiet",
+            "--progress-csv",
+            direct.to_str().expect("target path should be UTF-8"),
+            "--summary-json",
+            alias.to_str().expect("target path should be UTF-8"),
+        ]);
+
+        assert_exit_code(&output, 1);
+        assert_stderr_contains(&output, "progress CSV");
+        assert_stderr_contains(&output, "summary JSON");
+        assert_stderr_contains(&output, "must use different paths");
     }
 
     #[test]

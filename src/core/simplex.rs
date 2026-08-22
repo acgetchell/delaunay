@@ -1864,16 +1864,13 @@ impl<V, const D: usize> Hash for Simplex<V, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builder::DelaunayTriangulationBuilder;
     use crate::core::collections::FastHashSet;
     use crate::core::facet::FacetError;
+    use crate::core::tds::TdsBuilder;
     use crate::core::vertex::Vertex;
-    use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::matrix::MAX_STACK_MATRIX_DIM;
     use crate::geometry::point::Point;
-    use crate::geometry::predicates::insphere;
     use crate::geometry::util::{circumcenter, circumradius, circumradius_with_center};
-    use crate::prelude::DelaunayTriangulation;
     use crate::vertex;
     use approx::assert_relative_eq;
     use proptest::prelude::*;
@@ -1911,6 +1908,20 @@ mod tests {
     type TestVertex2D = Vertex<(), 2>;
     type CanonicalSimplexRecord = (Uuid, Vec<Uuid>, Option<Vec<Option<Uuid>>>);
 
+    fn tds_from_specs<U: Copy, V, const D: usize>(
+        vertices: &[Vertex<U, D>],
+        simplices: &[Vec<usize>],
+    ) -> Tds<U, V, D> {
+        TdsBuilder::new(vertices, simplices)
+            .simplex_data_type::<V>()
+            .build()
+            .unwrap()
+    }
+
+    fn single_simplex_tds<U: Copy, const D: usize>(vertices: &[Vertex<U, D>]) -> Tds<U, (), D> {
+        tds_from_specs(vertices, &[(0..vertices.len()).collect()])
+    }
+
     struct NonDataType(String);
 
     fn simplex_with_non_data_type_metadata<const D: usize>(
@@ -1930,9 +1941,7 @@ mod tests {
     }
 
     /// Captures stable simplex incidence so snapshot hydration can be compared across fresh keys.
-    fn canonical_simplex_records(
-        dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>,
-    ) -> Vec<CanonicalSimplexRecord> {
+    fn canonical_simplex_records(dt: &Tds<(), (), 3>) -> Vec<CanonicalSimplexRecord> {
         let mut records: Vec<_> = dt
             .simplices()
             .map(|(_, simplex)| {
@@ -2091,7 +2100,7 @@ mod tests {
                 fn $test_name() {
                     // Test basic simplex creation
                     let vertices = $vertices;
-                    let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+                    let dt = single_simplex_tds(&vertices);
                     let (_, simplex) = dt.simplices().next().unwrap();
                     assert_simplex_properties(simplex, $dim + 1, $dim);
                 }
@@ -2099,13 +2108,11 @@ mod tests {
                 pastey::paste! {
                     #[test]
                     fn [<$test_name _with_data>]() {
-                        // Test simplex with data - need generic constructor for non-() simplex data
                         let vertices = $vertices;
-                        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, $dim> =
-                            DelaunayTriangulationBuilder::new(&vertices)
-                                .simplex_data_type::<i32>()
-                                .build()
-                                .unwrap();
+                        let dt: Tds<(), i32, $dim> = tds_from_specs(
+                            &vertices,
+                            &[(0..vertices.len()).collect()],
+                        );
 
                         let (_, simplex_ref) = dt.simplices().next().unwrap();
                         let mut simplex = simplex_ref.clone();
@@ -2116,13 +2123,11 @@ mod tests {
 
                     #[test]
                     fn [<$test_name _serialization_roundtrip>]() {
-                        // Test serialization with Some data - use generic constructor
                         let vertices = $vertices;
-                        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, $dim> =
-                            DelaunayTriangulationBuilder::new(&vertices)
-                                .simplex_data_type::<i32>()
-                                .build()
-                                .unwrap();
+                        let dt: Tds<(), i32, $dim> = tds_from_specs(
+                            &vertices,
+                            &[(0..vertices.len()).collect()],
+                        );
                         let (_, simplex) = dt.simplices().next().unwrap();
                         let mut simplex = simplex.clone();
                         simplex.data = Some(99);
@@ -2135,7 +2140,7 @@ mod tests {
 
                         // Test serialization with None data - use simple constructor
                         let vertices = $vertices;
-                        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+                        let dt = single_simplex_tds(&vertices);
                         let (_, simplex) = dt.simplices().next().unwrap();
 
                         let serialized = serde_json::to_string(&simplex).unwrap();
@@ -2150,9 +2155,9 @@ mod tests {
                         // Test UUID uniqueness by creating two separate triangulations
                         let vertices1 = $vertices;
                         let vertices2 = $vertices;
-                        let dt1 = DelaunayTriangulation::builder(&vertices1).build().unwrap();
+                        let dt1 = single_simplex_tds(&vertices1);
                         let (_, simplex1) = dt1.simplices().next().unwrap();
-                        let dt2 = DelaunayTriangulation::builder(&vertices2).build().unwrap();
+                        let dt2 = single_simplex_tds(&vertices2);
                         let (_, simplex2) = dt2.simplices().next().unwrap();
                         assert_ne!(simplex1.uuid(), simplex2.uuid());
                         assert!(!simplex1.uuid().is_nil());
@@ -2312,7 +2317,7 @@ mod tests {
         ];
 
         // Create DT to get a simplex with TDS context.
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex) = dt.simplices().next().unwrap();
 
         assert_eq!(simplex.number_of_vertices(), 4);
@@ -2325,8 +2330,7 @@ mod tests {
             .vertices()
             .iter()
             .map(|&vkey| {
-                dt.tds()
-                    .vertex(vkey)
+                dt.vertex(vkey)
                     .unwrap()
                     .point()
                     .coords()
@@ -2362,15 +2366,15 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt1 = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let dt2 = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt1 = single_simplex_tds(&vertices);
+        let dt2 = single_simplex_tds(&vertices);
 
         let simplex1 = dt1.simplices().next().unwrap().1;
         let simplex2 = dt2.simplices().next().unwrap().1;
 
         // Despite different DT instances (and thus different vertex keys),
         // simplices should be equal by coordinates
-        assert!(simplex1.eq_by_vertices(dt1.tds(), simplex2, dt2.tds()));
+        assert!(simplex1.eq_by_vertices(&dt1, simplex2, &dt2));
     }
 
     #[test]
@@ -2380,17 +2384,17 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt1 = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let dt2 = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt1 = single_simplex_tds(&vertices);
+        let dt2 = single_simplex_tds(&vertices);
 
         let simplex1 = dt1.simplices().next().unwrap().1;
         let simplex2 = dt2.simplices().next().unwrap().1;
 
-        assert!(simplex1.eq_by_vertices(dt1.tds(), simplex2, dt2.tds()));
+        assert!(simplex1.eq_by_vertices(&dt1, simplex2, &dt2));
     }
 
     #[test]
-    fn simplex_from_triangulation_with_data() {
+    fn simplex_from_tds_with_data() {
         // Exercise simplex data by creating a TDS-backed simplex and modifying a clone.
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]).unwrap(),
@@ -2399,12 +2403,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        // Build DT with integer simplex data type
-        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, 3> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .simplex_data_type::<i32>()
-                .build()
-                .unwrap();
+        let dt: Tds<(), i32, 3> = tds_from_specs(&vertices, &[(0..vertices.len()).collect()]);
 
         let (_, simplex_ref) = dt.simplices().next().unwrap();
         let mut simplex = simplex_ref.clone();
@@ -2420,8 +2419,7 @@ mod tests {
             .vertices()
             .iter()
             .map(|&vkey| {
-                dt.tds()
-                    .vertex(vkey)
+                dt.vertex(vkey)
                     .unwrap()
                     .point()
                     .coords()
@@ -2455,10 +2453,7 @@ mod tests {
         ];
 
         // Create DT with vertex data and default simplex data.
-        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .build()
-                .unwrap();
+        let dt = single_simplex_tds(&vertices);
 
         let (_, simplex) = dt.simplices().next().unwrap();
 
@@ -2469,7 +2464,7 @@ mod tests {
         let simplex_data: Vec<i32> = simplex
             .vertices()
             .iter()
-            .map(|&vkey| dt.tds().vertex(vkey).unwrap().data.unwrap())
+            .map(|&vkey| dt.vertex(vkey).unwrap().data.unwrap())
             .collect();
 
         for expected in &[1, 2, 3, 4] {
@@ -2494,7 +2489,7 @@ mod tests {
             vertex!([1.0, 0.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 0.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex1) = dt.simplices().next().unwrap();
         let simplex2 = simplex1.clone();
 
@@ -2518,9 +2513,8 @@ mod tests {
             vertex!([0.0, 0.0, 0.0]).unwrap(),
             vertex!([1.0, 1.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&all_vertices)
-            .build()
-            .unwrap();
+        let dt: Tds<(), (), 3> =
+            tds_from_specs(&all_vertices, &[vec![0, 1, 2, 3], vec![0, 1, 2, 4]]);
         let simplices: Vec<_> = dt.simplices().map(|(_, simplex)| simplex).collect();
 
         if simplices.len() >= 2 {
@@ -2545,7 +2539,7 @@ mod tests {
             vertex!([1.0, 0.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 0.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex1) = dt.simplices().next().unwrap();
         let simplex2 = simplex1.clone();
 
@@ -2570,11 +2564,7 @@ mod tests {
             vertex!([1.0, 0.0, 0.0]; data = 1).unwrap(),
             vertex!([1.0, 1.0, 1.0]; data = 2).unwrap(),
         ];
-        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, i32, 3> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .simplex_data_type::<i32>()
-                .build()
-                .unwrap();
+        let dt: Tds<i32, i32, 3> = tds_from_specs(&vertices, &[(0..vertices.len()).collect()]);
         let (_, simplex_ref) = dt.simplices().next().unwrap();
         let mut simplex1 = simplex_ref.clone();
         simplex1.data = Some(42);
@@ -2591,7 +2581,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex1) = dt.simplices().next().unwrap();
         let simplex2 = simplex1.clone();
 
@@ -2612,19 +2602,15 @@ mod tests {
     #[test]
     fn simplex_number_of_vertices() {
         let vertices_2d = create_test_vertices_2d();
-        let dt_2d = DelaunayTriangulation::builder(&vertices_2d)
-            .build()
-            .unwrap();
-        let simplex_key_2d = dt_2d.tds().simplex_keys().next().unwrap();
-        let triangle = dt_2d.tds().simplex(simplex_key_2d).unwrap();
+        let dt_2d = single_simplex_tds(&vertices_2d);
+        let simplex_key_2d = dt_2d.simplex_keys().next().unwrap();
+        let triangle = dt_2d.simplex(simplex_key_2d).unwrap();
         assert_eq!(triangle.number_of_vertices(), 3);
 
         let vertices_3d = create_test_vertices_3d();
-        let dt_3d = DelaunayTriangulation::builder(&vertices_3d)
-            .build()
-            .unwrap();
-        let simplex_key_3d = dt_3d.tds().simplex_keys().next().unwrap();
-        let tetrahedron = dt_3d.tds().simplex(simplex_key_3d).unwrap();
+        let dt_3d = single_simplex_tds(&vertices_3d);
+        let simplex_key_3d = dt_3d.simplex_keys().next().unwrap();
+        let tetrahedron = dt_3d.simplex(simplex_key_3d).unwrap();
         assert_eq!(tetrahedron.number_of_vertices(), 4);
     }
 
@@ -2637,7 +2623,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
             vertex!([1.0, 1.1]).unwrap(), // break cocircular symmetry
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt: Tds<(), (), 2> = tds_from_specs(&vertices, &[vec![0, 1, 2], vec![1, 3, 2]]);
 
         let simplices: Vec<_> = dt.simplices().map(|(_, simplex)| simplex).collect();
         assert!(
@@ -2713,7 +2699,10 @@ mod tests {
             vertex!([1.0, 1.0]).unwrap(),
             vertex!([0.5, 0.5]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt: Tds<(), (), 2> = tds_from_specs(
+            &vertices,
+            &[vec![0, 1, 4], vec![1, 3, 4], vec![3, 2, 4], vec![2, 0, 4]],
+        );
 
         let simplices: Vec<_> = dt.simplices().map(|(_, simplex)| simplex).collect();
         assert!(
@@ -2755,7 +2744,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex_ref) = dt.simplices().next().unwrap();
 
         let mut malformed_neighbor = simplex_ref.clone();
@@ -2767,19 +2756,15 @@ mod tests {
     #[test]
     fn simplex_dim() {
         let vertices_2d = create_test_vertices_2d();
-        let dt_2d = DelaunayTriangulation::builder(&vertices_2d)
-            .build()
-            .unwrap();
-        let simplex_key_2d = dt_2d.tds().simplex_keys().next().unwrap();
-        let triangle = dt_2d.tds().simplex(simplex_key_2d).unwrap();
+        let dt_2d = single_simplex_tds(&vertices_2d);
+        let simplex_key_2d = dt_2d.simplex_keys().next().unwrap();
+        let triangle = dt_2d.simplex(simplex_key_2d).unwrap();
         assert_eq!(triangle.dim(), 2);
 
         let vertices_3d = create_test_vertices_3d();
-        let dt_3d = DelaunayTriangulation::builder(&vertices_3d)
-            .build()
-            .unwrap();
-        let simplex_key_3d = dt_3d.tds().simplex_keys().next().unwrap();
-        let tetrahedron = dt_3d.tds().simplex(simplex_key_3d).unwrap();
+        let dt_3d = single_simplex_tds(&vertices_3d);
+        let simplex_key_3d = dt_3d.simplex_keys().next().unwrap();
+        let tetrahedron = dt_3d.simplex(simplex_key_3d).unwrap();
         assert_eq!(tetrahedron.dim(), 3);
     }
 
@@ -2790,18 +2775,14 @@ mod tests {
         let vertex3 = vertex!([1.0, 0.0, 0.0]; data = 1).unwrap();
         let vertex4 = vertex!([1.0, 1.0, 1.0]; data = 2).unwrap();
 
-        // Create DT to get VertexKeys - use generic constructor for vertex data
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .build()
-                .unwrap();
+        let dt = single_simplex_tds(&vertices);
 
         let simplex_key = dt.simplices().next().unwrap().0;
-        let simplex = &dt.tds().simplex(simplex_key).unwrap();
+        let simplex = &dt.simplex(simplex_key).unwrap();
 
         // Get vertex keys from DT
-        let vertex_keys: Vec<_> = dt.tds().vertices().map(|(k, _)| k).collect();
+        let vertex_keys: Vec<_> = dt.vertices().map(|(k, _)| k).collect();
 
         assert!(simplex.contains_vertex(vertex_keys[0]));
         assert!(simplex.contains_vertex(vertex_keys[1]));
@@ -2811,38 +2792,20 @@ mod tests {
 
     #[test]
     fn simplex_has_vertex_in_common() {
-        // Test has_vertex_in_common (replacement for deprecated contains_vertex_of)
-        let vertices1 = vec![
+        let vertices = vec![
             vertex!([0.0, 0.0, 1.0]; data = 1).unwrap(),
             vertex!([0.0, 1.0, 0.0]; data = 1).unwrap(),
             vertex!([1.0, 0.0, 0.0]; data = 1).unwrap(),
             vertex!([1.0, 1.0, 1.0]; data = 2).unwrap(),
-        ];
-        let tds1: DelaunayTriangulation<AdaptiveKernel<f64>, i32, i32, 3> =
-            DelaunayTriangulationBuilder::new(&vertices1)
-                .simplex_data_type::<i32>()
-                .build()
-                .unwrap();
-        let (_, simplex_ref) = tds1.simplices().next().unwrap();
-        let mut simplex = simplex_ref.clone();
-        simplex.data = Some(42);
-
-        let vertices2 = vec![
-            vertex!([0.0, 0.0, 1.0]; data = 1).unwrap(),
-            vertex!([0.0, 1.0, 0.0]; data = 1).unwrap(),
-            vertex!([1.0, 0.0, 0.0]; data = 1).unwrap(),
             vertex!([0.0, 0.0, 0.0]; data = 0).unwrap(),
         ];
-        let tds2: DelaunayTriangulation<AdaptiveKernel<f64>, i32, i32, 3> =
-            DelaunayTriangulationBuilder::new(&vertices2)
-                .simplex_data_type::<i32>()
-                .build()
-                .unwrap();
-        let (_, simplex2_ref) = tds2.simplices().next().unwrap();
-        let mut simplex2 = simplex2_ref.clone();
-        simplex2.data = Some(43);
+        let tds: Tds<i32, i32, 3> =
+            tds_from_specs(&vertices, &[vec![0, 1, 2, 3], vec![0, 1, 2, 4]]);
+        let mut simplices = tds.simplices().map(|(_, simplex)| simplex);
+        let simplex = simplices.next().unwrap();
+        let simplex2 = simplices.next().unwrap();
 
-        assert!(simplex.has_vertex_in_common(&simplex2));
+        assert!(simplex.has_vertex_in_common(simplex2));
     }
 
     // =============================================================================
@@ -2859,21 +2822,17 @@ mod tests {
         let vertex4 = vertex!([0.0, 0.0, 1.0]; data = 40).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .build()
-                .unwrap();
+        let dt = single_simplex_tds(&vertices);
 
         let simplex_key = dt.simplices().next().unwrap().0;
-        let simplex = &dt.tds().simplex(simplex_key).unwrap();
+        let simplex = &dt.simplex(simplex_key).unwrap();
 
         // Get vertex UUIDs
-        let vertex_uuids = simplex.vertex_uuids(dt.tds()).unwrap();
-        assert_eq!(simplex.vertex_uuid_iter(dt.tds()).count(), 4);
+        let vertex_uuids = simplex.vertex_uuids(&dt).unwrap();
+        assert_eq!(simplex.vertex_uuid_iter(&dt).count(), 4);
 
         // Verify UUIDs match the simplex's vertices using iterator
-        for (expected_uuid, returned_uuid) in
-            simplex.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
+        for (expected_uuid, returned_uuid) in simplex.vertex_uuid_iter(&dt).zip(vertex_uuids.iter())
         {
             assert_eq!(expected_uuid.unwrap(), *returned_uuid);
         }
@@ -2883,22 +2842,9 @@ mod tests {
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
         // Verify no nil UUIDs using iterator
-        for uuid in simplex.vertex_uuid_iter(dt.tds()) {
+        for uuid in simplex.vertex_uuid_iter(&dt) {
             assert_ne!(uuid.unwrap(), Uuid::nil());
         }
-    }
-
-    #[test]
-    fn test_vertex_uuids_empty_simplex_fails() {
-        // Test that TDS creation fails gracefully with insufficient vertices for dimension
-        // Tested through TDS, which is the user-facing API.
-
-        let vertices = vec![vertex!([0.0, 0.0, 0.0]).unwrap()];
-        let result = DelaunayTriangulation::builder(&vertices).build();
-
-        assert!(result.is_err());
-        let error = result.unwrap_err();
-        assert!(error.to_string().contains("Insufficient vertices"));
     }
 
     #[test]
@@ -2909,20 +2855,16 @@ mod tests {
         let vertex3 = vertex!([0.5, 1.0]; data = 3).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3];
-        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 2> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .build()
-                .unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
-        let simplex = &dt.tds().simplex(simplex_key).unwrap();
+        let simplex = &dt.simplex(simplex_key).unwrap();
 
         // Get vertex UUIDs
-        let vertex_uuids = simplex.vertex_uuids(dt.tds()).unwrap();
-        assert_eq!(simplex.vertex_uuid_iter(dt.tds()).count(), 3);
+        let vertex_uuids = simplex.vertex_uuids(&dt).unwrap();
+        assert_eq!(simplex.vertex_uuid_iter(&dt).count(), 3);
 
         // Verify UUIDs match the simplex's vertices using iterator
-        for (expected_uuid, returned_uuid) in
-            simplex.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
+        for (expected_uuid, returned_uuid) in simplex.vertex_uuid_iter(&dt).zip(vertex_uuids.iter())
         {
             assert_eq!(expected_uuid.unwrap(), *returned_uuid);
         }
@@ -2932,7 +2874,7 @@ mod tests {
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
         // Verify no nil UUIDs using iterator
-        for uuid in simplex.vertex_uuid_iter(dt.tds()) {
+        for uuid in simplex.vertex_uuid_iter(&dt) {
             assert_ne!(uuid.unwrap(), Uuid::nil());
         }
     }
@@ -2948,20 +2890,16 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 1.0]; data = 5).unwrap(),
         ];
 
-        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 4> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .build()
-                .unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
-        let simplex = &dt.tds().simplex(simplex_key).unwrap();
+        let simplex = &dt.simplex(simplex_key).unwrap();
 
         // Get vertex UUIDs
-        let vertex_uuids = simplex.vertex_uuids(dt.tds()).unwrap();
-        assert_eq!(simplex.vertex_uuid_iter(dt.tds()).count(), 5);
+        let vertex_uuids = simplex.vertex_uuids(&dt).unwrap();
+        assert_eq!(simplex.vertex_uuid_iter(&dt).count(), 5);
 
         // Verify UUIDs match the simplex's vertices using iterator
-        for (expected_uuid, returned_uuid) in
-            simplex.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
+        for (expected_uuid, returned_uuid) in simplex.vertex_uuid_iter(&dt).zip(vertex_uuids.iter())
         {
             assert_eq!(expected_uuid.unwrap(), *returned_uuid);
         }
@@ -2974,7 +2912,7 @@ mod tests {
         let vertex_data: Vec<i32> = simplex
             .vertices()
             .iter()
-            .map(|&vkey| dt.tds().vertex(vkey).unwrap().data.unwrap())
+            .map(|&vkey| dt.vertex(vkey).unwrap().data.unwrap())
             .collect();
 
         for expected in 1..=5 {
@@ -2985,7 +2923,7 @@ mod tests {
         }
 
         // Verify no nil UUIDs using iterator
-        for uuid in simplex.vertex_uuid_iter(dt.tds()) {
+        for uuid in simplex.vertex_uuid_iter(&dt) {
             assert_ne!(uuid.unwrap(), Uuid::nil());
         }
     }
@@ -3003,38 +2941,27 @@ mod tests {
     #[test]
     fn simplex_1d() {
         let vertices = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex) = dt.simplices().next().unwrap();
         assert_simplex_properties(simplex, 2, 1);
     }
 
     #[test]
-    fn simplex_single_vertex() {
-        // Test that creating a 3D triangulation with insufficient vertices fails validation
-        // Tested through TDS, which is the user-facing API.
-        let vertices = vec![vertex!([0.0, 0.0, 0.0]).unwrap()];
-        let result = DelaunayTriangulation::builder(&vertices).build();
-
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Insufficient vertices"));
-        assert!(error_msg.contains('1'));
-        assert!(error_msg.contains('4'));
-    }
-
-    #[test]
-    fn simplex_neighbors_none_by_default() {
+    fn single_simplex_tds_derives_boundary_neighbor_slots() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex) = dt.simplices().next().unwrap();
 
-        // Note: neighbors may be set by TDS construction, this tests simplex structure
-        assert!(simplex.neighbors.is_some() || simplex.neighbors.is_none());
+        let neighbors: Vec<_> = simplex
+            .neighbors()
+            .expect("published TDS should assign neighbor slots")
+            .collect();
+        assert_eq!(neighbors, vec![None, None, None, None]);
     }
 
     #[test]
@@ -3045,7 +2972,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex) = dt.simplices().next().unwrap();
 
         assert!(simplex.data.is_none());
@@ -3059,11 +2986,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, 3> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .simplex_data_type::<i32>()
-                .build()
-                .unwrap();
+        let dt: Tds<(), i32, 3> = tds_from_specs(&vertices, &[(0..vertices.len()).collect()]);
 
         let (_, simplex_ref) = dt.simplices().next().unwrap();
         let mut simplex = simplex_ref.clone();
@@ -3088,7 +3011,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
             vertex!([1.0, 1.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt: Tds<(), (), 3> = tds_from_specs(&vertices, &[vec![0, 1, 2, 3], vec![1, 2, 3, 4]]);
 
         // Iterate simplices from DT (clone into owned values for the hashmap).
         let mut simplices_iter = dt.simplices().map(|(_, simplex)| simplex.clone());
@@ -3118,7 +3041,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex_ref) = dt.simplices().next().unwrap();
         let simplex = simplex_ref.clone();
         let uuid = simplex.uuid();
@@ -3136,19 +3059,13 @@ mod tests {
 
     #[test]
     fn simplex_debug_format() {
-        // Use a simple non-degenerate 3D tetrahedron so `DelaunayTriangulationBuilder::build` can construct
-        // a valid simplex for debug-format testing.
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, 3> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .simplex_data_type::<i32>()
-                .build()
-                .unwrap();
+        let dt: Tds<(), i32, 3> = tds_from_specs(&vertices, &[(0..vertices.len()).collect()]);
 
         let (_, simplex_ref) = dt.simplices().next().unwrap();
         let mut simplex = simplex_ref.clone();
@@ -3181,7 +3098,15 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
             vertex!([0.2, 0.2, 0.2]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt: Tds<(), (), 3> = tds_from_specs(
+            &vertices,
+            &[
+                vec![4, 1, 2, 3],
+                vec![0, 4, 2, 3],
+                vec![0, 1, 4, 3],
+                vec![0, 1, 2, 4],
+            ],
+        );
         let expected_vertices = dt.number_of_vertices();
         let expected_simplices = dt.number_of_simplices();
         let expected_dimension = dt.dim();
@@ -3189,21 +3114,18 @@ mod tests {
 
         // Exercise the TDS snapshot boundary directly. Delaunay owner
         // checkpoints use a distinct versioned envelope with proof context.
-        let tds = dt.into_triangulation().into_tds();
+        let tds = dt;
         let serialized = serde_json::to_string(&tds).unwrap();
         assert!(serialized.contains("vertices"));
         assert!(serialized.contains("simplices"));
 
-        // Deserialize back to DT via try_from_tds (AdaptiveKernel has no auto-Deserialize).
-        let tds: Tds<(), (), 3> = serde_json::from_str(&serialized).unwrap();
-        let deserialized = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
-            .expect("serialized Delaunay TDS should validate");
+        let deserialized: Tds<(), (), 3> = serde_json::from_str(&serialized).unwrap();
 
         // Verify DT properties match
         assert_eq!(deserialized.number_of_vertices(), expected_vertices);
         assert_eq!(deserialized.number_of_simplices(), expected_simplices);
         assert_eq!(deserialized.dim(), expected_dimension);
-        assert!(deserialized.validation_report().is_ok());
+        assert!(deserialized.validate().is_ok());
         assert_eq!(
             canonical_simplex_records(&deserialized),
             expected_simplex_records
@@ -3211,7 +3133,7 @@ mod tests {
 
         // Verify simplices within DT can be accessed
         assert_ne!(deserialized.number_of_simplices(), 0);
-        for (_simplex_key, simplex) in deserialized.tds().simplices() {
+        for (_simplex_key, simplex) in deserialized.simplices() {
             assert_eq!(simplex.dim(), 3);
             assert_eq!(simplex.number_of_vertices(), 4);
         }
@@ -3302,11 +3224,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, 3> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .simplex_data_type::<i32>()
-                .build()
-                .unwrap();
+        let dt: Tds<(), i32, 3> = tds_from_specs(&vertices, &[(0..vertices.len()).collect()]);
         let (_, simplex_ref) = dt.simplices().next().unwrap();
         let mut simplex_with_data = simplex_ref.clone();
         simplex_with_data.data = Some(42);
@@ -3324,7 +3242,7 @@ mod tests {
         );
 
         // Test 3: Serialization with None data omits field (optimization)
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex_none) = dt.simplices().next().unwrap();
         let serialized_none = serde_json::to_string(&simplex_none).unwrap();
         assert!(
@@ -3364,10 +3282,8 @@ mod tests {
             vertex!([-1.0, -2.0, -1.0]).unwrap(),
             vertex!([-1.0, -1.0, -2.0]).unwrap(),
         ];
-        let dt_neg = DelaunayTriangulation::builder(&negative_vertices)
-            .build()
-            .unwrap();
-        let (_, simplex_neg) = dt_neg.tds().simplices().next().unwrap();
+        let dt_neg = single_simplex_tds(&negative_vertices);
+        let (_, simplex_neg) = dt_neg.simplices().next().unwrap();
         assert_eq!(simplex_neg.number_of_vertices(), 4);
         assert_eq!(simplex_neg.dim(), 3);
 
@@ -3378,10 +3294,8 @@ mod tests {
             vertex!([1e6, 2e6, 1e6]).unwrap(),
             vertex!([1e6, 1e6, 2e6]).unwrap(),
         ];
-        let dt_large = DelaunayTriangulation::builder(&large_vertices)
-            .build()
-            .unwrap();
-        let (_, simplex_large) = dt_large.tds().simplices().next().unwrap();
+        let dt_large = single_simplex_tds(&large_vertices);
+        let (_, simplex_large) = dt_large.simplices().next().unwrap();
         assert_eq!(simplex_large.number_of_vertices(), 4);
         assert_eq!(simplex_large.dim(), 3);
 
@@ -3392,10 +3306,8 @@ mod tests {
             vertex!([0.0, 1e-3, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1e-3]).unwrap(),
         ];
-        let dt_small = DelaunayTriangulation::builder(&small_vertices)
-            .build()
-            .unwrap();
-        let (_, simplex_small) = dt_small.tds().simplices().next().unwrap();
+        let dt_small = single_simplex_tds(&small_vertices);
+        let (_, simplex_small) = dt_small.simplices().next().unwrap();
         assert_eq!(simplex_small.number_of_vertices(), 4);
         assert_eq!(simplex_small.dim(), 3);
     }
@@ -3407,15 +3319,15 @@ mod tests {
         let vertex3 = vertex!([0.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
-        let simplex = &dt.tds().simplex(simplex_key).unwrap();
+        let simplex = &dt.simplex(simplex_key).unwrap();
 
         // Resolve VertexKeys to actual vertices
         let vertex_points: Vec<Point<2>> = simplex
             .vertices()
             .iter()
-            .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
+            .map(|vk| *dt.vertex(*vk).unwrap().point())
             .collect();
         let circumradius = circumradius(&vertex_points).unwrap();
 
@@ -3433,85 +3345,13 @@ mod tests {
         let vertex_outside: Vertex<(), 3> = vertex!([2.0, 2.0, 2.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
         let simplex = dt.simplex(simplex_key).unwrap();
 
         // Create a vertex key for the outside vertex - it won't be in the simplex
         let outside_key = dt.vertex_key_from_uuid(&vertex_outside.uuid());
         assert!(outside_key.is_none() || !simplex.contains_vertex(outside_key.unwrap()));
-    }
-
-    #[test]
-    fn simplex_circumsphere_contains_vertex_determinant() {
-        // Test the matrix determinant method for circumsphere containment
-        // Use a simple, well-known case: unit tetrahedron
-        let vertex1 = vertex!([0.0, 0.0, 0.0]; data = 1).unwrap();
-        let vertex2 = vertex!([1.0, 0.0, 0.0]; data = 1).unwrap();
-        let vertex3 = vertex!([0.0, 1.0, 0.0]; data = 1).unwrap();
-        let vertex4 = vertex!([0.0, 0.0, 1.0]; data = 2).unwrap();
-
-        let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .build()
-                .unwrap();
-        let simplex_key = dt.simplices().next().unwrap().0;
-        let simplex = &dt.tds().simplex(simplex_key).unwrap();
-
-        // Test vertex clearly outside circumsphere
-        let vertex_far_outside: Vertex<i32, 3> = vertex!([10.0, 10.0, 10.0]; data = 4).unwrap();
-        // Just check that the method runs without error for now
-        let vertex_points: Vec<Point<3>> = simplex
-            .vertices()
-            .iter()
-            .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
-            .collect();
-        let result = insphere(&vertex_points, *vertex_far_outside.point());
-        assert!(result.is_ok());
-
-        // Test with origin (should be inside or on boundary)
-        let origin: Vertex<i32, 3> = vertex!([0.0, 0.0, 0.0]; data = 3).unwrap();
-        let vertex_points: Vec<Point<3>> = simplex
-            .vertices()
-            .iter()
-            .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
-            .collect();
-        let result_origin = insphere(&vertex_points, *origin.point());
-        assert!(result_origin.is_ok());
-    }
-
-    #[test]
-    fn simplex_circumsphere_contains_vertex_2d() {
-        // Test 2D case for circumsphere containment using determinant method
-        let vertex1 = vertex!([0.0, 0.0]).unwrap();
-        let vertex2 = vertex!([1.0, 0.0]).unwrap();
-        let vertex3 = vertex!([0.0, 1.0]).unwrap();
-
-        let vertices = vec![vertex1, vertex2, vertex3];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let simplex_key = dt.simplices().next().unwrap().0;
-        let simplex = &dt.tds().simplex(simplex_key).unwrap();
-
-        // Test vertex far outside circumcircle
-        let vertex_far_outside: Vertex<(), 2> = vertex!([10.0, 10.0]).unwrap();
-        let vertex_points: Vec<Point<2>> = simplex
-            .vertices()
-            .iter()
-            .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
-            .collect();
-        let result = insphere(&vertex_points, *vertex_far_outside.point());
-        assert!(result.is_ok());
-
-        // Test with center of triangle (should be inside)
-        let center: Vertex<(), 2> = vertex!([0.33, 0.33]).unwrap();
-        let vertex_points: Vec<Point<2>> = simplex
-            .vertices()
-            .iter()
-            .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
-            .collect();
-        let result_center = insphere(&vertex_points, *center.point());
-        assert!(result_center.is_ok());
     }
 
     #[test]
@@ -3523,14 +3363,14 @@ mod tests {
         let vertex4 = vertex!([0.0, 0.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
-        let simplex = &dt.tds().simplex(simplex_key).unwrap();
+        let simplex = &dt.simplex(simplex_key).unwrap();
 
         let vertex_points: Vec<Point<3>> = simplex
             .vertices()
             .iter()
-            .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
+            .map(|vk| *dt.vertex(*vk).unwrap().point())
             .collect();
 
         let circumcenter = circumcenter(&vertex_points).unwrap();
@@ -3551,12 +3391,11 @@ mod tests {
         let vertex4 = vertex!([0.0, 0.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test that we can get facet views for all facets
         let facet_views = dt
-            .tds()
             .try_simplex_facets(simplex_key)
             .expect("Failed to get facet iterator")
             .collect::<Result<Vec<_>, _>>()
@@ -3574,14 +3413,11 @@ mod tests {
         }
 
         // Verify opposite vertices are correct
-        let simplex = dt.tds().simplex(simplex_key).unwrap();
+        let simplex = dt.simplex(simplex_key).unwrap();
         for (i, facet_view) in facet_views.iter().enumerate() {
             let opposite_vertex = facet_view.opposite_vertex();
             // The opposite vertex should be one of the simplex's vertices (by VertexKey)
-            let opposite_key = dt
-                .tds()
-                .vertex_key_from_uuid(&opposite_vertex.uuid())
-                .unwrap();
+            let opposite_key = dt.vertex_key_from_uuid(&opposite_vertex.uuid()).unwrap();
             assert!(
                 simplex.vertices().contains(&opposite_key),
                 "Facet {i} opposite vertex key should be in simplex"
@@ -3600,12 +3436,12 @@ mod tests {
         let vertex4 = vertex!([1.0, 1.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Get all facet views
         let facet_views = dt
-            .simplex_facets(simplex_key)
+            .try_simplex_facets(simplex_key)
             .expect("Failed to get facet iterator")
             .collect::<Result<Vec<_>, _>>()
             .expect("Failed to get facet views");
@@ -3647,15 +3483,14 @@ mod tests {
         let vertex6 = vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4, vertex5, vertex6];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
-        let simplex = &dt.tds().simplex(simplex_key).unwrap();
+        let simplex = &dt.simplex(simplex_key).unwrap();
 
         assert_eq!(simplex.number_of_vertices(), 6);
         assert_eq!(simplex.dim(), 5);
         assert_eq!(
-            dt.tds()
-                .try_simplex_facets(simplex_key)
+            dt.try_simplex_facets(simplex_key)
                 .expect("Failed to get facets")
                 .len(),
             6
@@ -3671,25 +3506,21 @@ mod tests {
         let vertex4 = vertex!([0.0, 0.0, 1.0]; data = 4).unwrap(); // Need 4 vertices for 3D simplex
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
-        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, u32, 3> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .simplex_data_type::<u32>()
-                .build()
-                .unwrap();
+        let mut dt: Tds<i32, u32, 3> = tds_from_specs(&vertices, &[vec![0, 1, 2, 3]]);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Set the simplex data to a known value
-        if let Some(simplex) = dt.tri.tds.simplex_mut(simplex_key) {
+        if let Some(simplex) = dt.simplex_mut(simplex_key) {
             simplex.data = Some(42u32);
         }
 
-        let simplex = &dt.tds().simplex(simplex_key).unwrap();
+        let simplex = &dt.simplex(simplex_key).unwrap();
 
         // Verify all expected vertex data values exist (order-independent)
         let vertex_data: Vec<i32> = simplex
             .vertices()
             .iter()
-            .map(|&vkey| dt.tds().vertex(vkey).unwrap().data.unwrap())
+            .map(|&vkey| dt.vertex(vkey).unwrap().data.unwrap())
             .collect();
 
         for expected in 1..=4 {
@@ -3702,7 +3533,6 @@ mod tests {
 
         // Also verify we can access vertex data through facet views
         let facet_views = dt
-            .tds()
             .try_simplex_facets(simplex_key)
             .expect("Failed to get facet iterator");
         for facet_view in facet_views {
@@ -3738,9 +3568,7 @@ mod tests {
             vertex!([1.0, 0.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 0.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices_3d)
-            .build()
-            .unwrap();
+        let dt = single_simplex_tds(&vertices_3d);
         let (_, simplex_3d) = dt.simplices().next().unwrap();
         assert!(
             simplex_3d.is_valid().is_ok(),
@@ -3753,9 +3581,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices_2d)
-            .build()
-            .unwrap();
+        let dt = single_simplex_tds(&vertices_2d);
         let (_, simplex_ref) = dt.simplices().next().unwrap();
         let mut simplex_2d = simplex_ref.clone();
         assert!(
@@ -3791,7 +3617,7 @@ mod tests {
             vertex!([1.0, 0.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 0.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex_ref) = dt.simplices().next().unwrap();
         let mut invalid_uuid_simplex = simplex_ref.clone();
         invalid_uuid_simplex.uuid = uuid::Uuid::nil();
@@ -3803,26 +3629,13 @@ mod tests {
             "Nil UUID should fail validation"
         );
 
-        // Insufficient vertices (TDS construction fails)
-        let insufficient_vertices = vec![
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-        ];
-        let result = DelaunayTriangulation::builder(&insufficient_vertices).build();
-        assert!(
-            result.is_err(),
-            "TDS should fail with insufficient vertices"
-        );
-
         // Invalid neighbors length (too few)
         let vertices_2d = vec![
             vertex!([0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices_2d)
-            .build()
-            .unwrap();
+        let dt = single_simplex_tds(&vertices_2d);
         let (_, simplex_ref) = dt.simplices().next().unwrap();
         let mut simplex_wrong_neighbors = simplex_ref.clone();
         let err = simplex_wrong_neighbors
@@ -3865,8 +3678,8 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let vkeys: Vec<_> = dt.tds().vertices().map(|(k, _)| k).collect();
+        let dt = single_simplex_tds(&vertices);
+        let vkeys: Vec<_> = dt.vertices().map(|(k, _)| k).collect();
 
         // Too few vertices for a 3D simplex (D+1 = 4)
         let err = Simplex::<(), 3>::try_new_with_data(vec![vkeys[0], vkeys[1], vkeys[2]], None)
@@ -3959,7 +3772,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex_ref) = dt.simplices().next().unwrap();
 
         // Insufficient vertices (wrong vertex buffer length)
@@ -3986,7 +3799,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (simplex_key, simplex_ref) = dt.simplices().next().unwrap();
 
         let mut simplex = simplex_ref.clone();
@@ -4010,7 +3823,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex_ref) = dt.simplices().next().unwrap();
 
         let mut simplex = simplex_ref.clone();
@@ -4034,7 +3847,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (simplex_key, simplex_ref) = dt.simplices().next().unwrap();
 
         let mut simplex = simplex_ref.clone();
@@ -4068,7 +3881,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex_ref) = dt.simplices().next().unwrap();
 
         let mut simplex = simplex_ref.clone();
@@ -4088,7 +3901,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (simplex_key, simplex_ref) = dt.simplices().next().unwrap();
 
         let mut simplex = simplex_ref.clone();
@@ -4124,7 +3937,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let (_, simplex_ref) = dt.simplices().next().unwrap();
 
         let mut simplex = simplex_ref.clone();
@@ -4142,19 +3955,17 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let simplex_key = dt.tds().simplex_keys().next().unwrap();
+        let mut dt = single_simplex_tds(&vertices);
+        let simplex_key = dt.simplex_keys().next().unwrap();
 
         // Grab a stable key we can duplicate to inflate the vertex buffer.
         let vkey0 = {
-            let simplex = dt.tds().simplex(simplex_key).unwrap();
+            let simplex = dt.simplex(simplex_key).unwrap();
             simplex.vertices()[0]
         };
 
         {
             let simplex = dt
-                .tri
-                .tds
                 .simplex_mut(simplex_key)
                 .expect("simplex key should be valid in test");
             while simplex.number_of_vertices() <= usize::from(u8::MAX) + 1 {
@@ -4165,7 +3976,6 @@ mod tests {
 
         // The owner-bound iterator should fail early before building individual FacetViews.
         let err = dt
-            .tds()
             .try_simplex_facets(simplex_key)
             .err()
             .expect("Expected try_simplex_facets to fail on vertex_count overflow");
@@ -4242,14 +4052,10 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt1 = DelaunayTriangulation::builder(&vertices_2d)
-            .build()
-            .unwrap();
-        let (_, simplex_2d) = dt1.tds().simplices().next().unwrap();
-        let dt2 = DelaunayTriangulation::builder(&vertices_2d)
-            .build()
-            .unwrap();
-        let (_, simplex_2d_copy) = dt2.tds().simplices().next().unwrap();
+        let dt1 = single_simplex_tds(&vertices_2d);
+        let (_, simplex_2d) = dt1.simplices().next().unwrap();
+        let dt2 = single_simplex_tds(&vertices_2d);
+        let (_, simplex_2d_copy) = dt2.simplices().next().unwrap();
 
         // Test equality for 2D simplices
         assert_eq!(
@@ -4267,13 +4073,12 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
 
-        let simplex_key = dt.tds().simplex_keys().next().unwrap();
+        let simplex_key = dt.simplex_keys().next().unwrap();
 
         // Test the iterator method
         let facet_iter = dt
-            .tds()
             .try_simplex_facets(simplex_key)
             .expect("Failed to get facet iterator");
 
@@ -4299,7 +4104,6 @@ mod tests {
 
         // Test iterator is zero-allocation by using it without collect
         let facet_iter2 = dt
-            .tds()
             .try_simplex_facets(simplex_key)
             .expect("Failed to get second facet iterator");
 
@@ -4312,7 +4116,6 @@ mod tests {
 
         // Test iterator combinators work correctly
         let facet_iter3 = dt
-            .tds()
             .try_simplex_facets(simplex_key)
             .expect("Failed to get third facet iterator");
 
@@ -4333,17 +4136,14 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .simplex_data_type::<i32>()
-            .build()
-            .unwrap();
+        let mut dt: Tds<(), i32, 2> = tds_from_specs(&vertices, &[vec![0, 1, 2]]);
         let key = dt.simplices().next().unwrap().0;
 
         // No data initially
-        assert_eq!(dt.tds().simplex(key).unwrap().data(), None);
+        assert_eq!(dt.simplex(key).unwrap().data(), None);
 
         // Set data and verify via accessor
         dt.set_simplex_data(key, Some(99)).unwrap();
-        assert_eq!(dt.tds().simplex(key).unwrap().data(), Some(&99));
+        assert_eq!(dt.simplex(key).unwrap().data(), Some(&99));
     }
 }

@@ -569,7 +569,7 @@ mod test_support {
             DelaunayRepairStats, repair_delaunay_with_flips_k2_k3,
         };
         use crate::core::collections::FastHasher;
-        use crate::core::operations::InsertionOutcome;
+        use crate::core::operations::{InsertionOutcome, InsertionTelemetryMode};
         use crate::core::util::stable_hash_u64_slice;
         use crate::core::vertex::Vertex;
         use crate::geometry::kernel::ExactPredicates;
@@ -751,11 +751,12 @@ mod test_support {
                         // repair cannot escape.
                         let topology_guarantee = self.tri.topology_guarantee();
                         let global_topology = self.tri.global_topology();
-                        let mut candidate = Self::with_empty_kernel_and_topology_context(
-                            self.tri.kernel.clone(),
-                            topology_guarantee,
-                            global_topology,
-                        );
+                        let mut candidate =
+                            Self::new_unverified_for_test_with_kernel_and_topology_context(
+                                self.tri.kernel.clone(),
+                                topology_guarantee,
+                                global_topology,
+                            );
 
                         // During rebuild, force local repair after every insertion. The caller's
                         // policies are copied onto the finished candidate below.
@@ -777,13 +778,15 @@ mod test_support {
                             let insert_detail = {
                                 let (tri, spatial_index) =
                                     (&mut candidate.tri, &mut candidate.spatial_index);
-                                tri.insert_with_statistics_seeded_indexed_detailed(
+                                tri.insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
                                     vertex,
                                     None,
                                     hint,
                                     seeds.perturbation_seed,
                                     spatial_index.as_mut(),
                                     Some(idx),
+                                    InsertionTelemetryMode::CountsOnly,
+                                    false,
                                 )
                                 .map_err(|e| {
                                     DelaunayRepairError::HeuristicRebuildFailed {
@@ -953,10 +956,10 @@ mod tests {
     use crate::core::tds::Tds;
     use crate::core::vertex::Vertex;
     use crate::delaunay_model::DelaunayTriangulation;
+    use crate::draft::DelaunayTriangulationDraft;
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
     use crate::topology::traits::topological_space::GlobalTopology;
     use crate::triangulation::validation::TopologyGuarantee;
-    use crate::validation::DelaunayTriangulationCandidate;
     use crate::vertex;
     use std::{assert_matches, cell::Cell, num::NonZeroUsize, sync::Once};
 
@@ -1424,7 +1427,7 @@ mod tests {
         let kernel = AdaptiveKernel::<f64>::new();
         let robust_kernel = RobustKernel::<f64>::new();
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulationCandidate::assemble_unchecked_for_test(
+            DelaunayTriangulationDraft::assemble_unchecked_for_test(
                 non_delaunay_quad_tds(),
                 kernel,
                 TopologyGuarantee::PLManifold,
@@ -1436,7 +1439,7 @@ mod tests {
         assert!(dt.verify_via_flip_predicates().is_err());
 
         let robust_dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
-            DelaunayTriangulationCandidate::assemble_unchecked_for_test(
+            DelaunayTriangulationDraft::assemble_unchecked_for_test(
                 non_delaunay_quad_tds(),
                 robust_kernel,
                 TopologyGuarantee::PLManifold,
@@ -1466,7 +1469,7 @@ mod tests {
         // Reconstruct dt from the same raw TDS in case the previous attempt mutated it.
         let tds2 = non_delaunay_quad_tds();
         let mut dt2: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulationCandidate::assemble_unchecked_for_test(
+            DelaunayTriangulationDraft::assemble_unchecked_for_test(
                 tds2,
                 AdaptiveKernel::new(),
                 TopologyGuarantee::PLManifold,

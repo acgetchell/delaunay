@@ -18,7 +18,7 @@
 use crate::core::algorithms::flips::{
     DelaunayRepairError, DelaunayRepairRun, repair_delaunay_with_flips_k2_k3_run,
 };
-use crate::core::algorithms::incremental_insertion::{
+use crate::core::algorithms::insertion::{
     DelaunayRepairFailureContext, InsertionError, InsertionTopologyValidationContext,
 };
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
@@ -31,7 +31,11 @@ use crate::delaunay_model::DelaunayTriangulation;
 use crate::delaunay_rollback::{DelaunayRollbackTransaction, DelaunaySpatialIndexRollback};
 use crate::geometry::kernel::Kernel;
 use crate::topology::manifold::ManifoldError;
-use crate::triangulation::validation::{TopologyGuarantee, TriangulationValidationError};
+use crate::triangulation::{
+    Triangulation,
+    insertion::DetailedInsertionResult,
+    validation::{TopologyGuarantee, TriangulationValidationError},
+};
 use std::env;
 
 fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {
@@ -58,6 +62,14 @@ where
     U: DataType,
     V: DataType,
 {
+    /// Rejects a transition from the valid empty owner into unpublished bootstrap state.
+    fn ensure_insertion_preserves_owner(&self) -> Result<(), InsertionError> {
+        if D > 0 && self.tri.tds.number_of_simplices() == 0 {
+            return Err(InsertionError::PublishedOwnerBootstrapRequiresBuilder { dimension: D });
+        }
+        Ok(())
+    }
+
     /// Lazily seeds the spatial index from existing vertices so incremental
     /// insertion can start from deserialized or manually constructed TDS state.
     fn ensure_spatial_index_seeded(&mut self) -> Result<(), InsertionError> {
@@ -76,29 +88,17 @@ where
         Ok(())
     }
 
-    /// Returns whether the next insertion needs an outer Delaunay-level rollback window.
-    ///
-    /// Every insertion capable of publishing simplices needs rollback
-    /// protection. Repair and check policies control which postcondition path
-    /// runs; they do not weaken the Level 5 invariant carried by this owner.
-    fn post_insertion_transaction_required(&self) -> bool {
-        self.tri.tds.number_of_simplices() > 0
-            || self.tri.tds.number_of_vertices().saturating_add(1) > D
-    }
-
     /// Runs a Delaunay insertion operation with the rollback policy used by
     /// post-insertion repair/check failures.
     fn with_post_insertion_rollback<T>(
         &mut self,
-        operation: impl FnOnce(&mut Self) -> Result<T, InsertionError>,
+        operation: impl FnOnce(
+            &mut DelaunayRollbackTransaction<'_, K, U, V, D>,
+        ) -> Result<T, InsertionError>,
     ) -> Result<T, InsertionError> {
-        if !self.post_insertion_transaction_required() {
-            return operation(self);
-        }
-
         let mut transaction =
             DelaunayRollbackTransaction::begin(self, DelaunaySpatialIndexRollback::Invalidate);
-        match operation(transaction.delaunay_mut()) {
+        match operation(&mut transaction) {
             Ok(value) => {
                 transaction.commit();
                 Ok(value)
@@ -110,33 +110,56 @@ where
         }
     }
 
-    /// Insert a vertex into the Delaunay triangulation using incremental cavity-based algorithm.
+    /// Runs Levels 3–4 insertion against the Delaunay owner's existing rollback
+    /// snapshot while keeping its detached spatial index synchronized.
+    fn insert_detailed_in_rollback_window(
+        transaction: &mut DelaunayRollbackTransaction<'_, K, U, V, D>,
+        vertex: Vertex<U, D>,
+    ) -> Result<DetailedInsertionResult, InsertionError> {
+        let (hint, mut spatial_index) = {
+            let delaunay = transaction.delaunay_mut();
+            (
+                delaunay.insertion_state.last_inserted_simplex,
+                delaunay.spatial_index.take(),
+            )
+        };
+
+        let result = Triangulation::<K, U, V, D>::
+            insert_with_statistics_seeded_indexed_detailed_in_rollback_window(
+                transaction,
+                vertex,
+                None,
+                hint,
+                0,
+                spatial_index.as_mut(),
+                None,
+            );
+        transaction.delaunay_mut().spatial_index = spatial_index;
+        result
+    }
+
+    /// Inserts a vertex into an already full-dimensional Delaunay triangulation.
     ///
-    /// This method handles all stages of triangulation construction:
-    /// - **Bootstrap (< D+1 vertices)**: Accumulates vertices without creating simplices
-    /// - **Initial simplex (D+1 vertices)**: Automatically builds the first D-simplex
-    /// - **Incremental (> D+1 vertices)**: Uses cavity-based insertion with point location
+    /// Use [`DelaunayIncrementalBuilder`](crate::incremental_builder::DelaunayIncrementalBuilder)
+    /// to incrementally construct a triangulation from empty. A published owner
+    /// may be the valid empty complex, but it never exposes a partial bootstrap
+    /// containing vertices without a maximal simplex.
     ///
     /// If post-insertion Delaunay repair or validation fails, the failed insertion is rolled
     /// back before this method returns the error.
     ///
     /// # Algorithm
-    /// 1. Insert vertex into Tds
-    /// 2. Check vertex count:
-    ///    - If < D+1: Return (bootstrap phase)
-    ///    - If == D+1: Build initial simplex from all vertices
-    ///    - If > D+1: Continue with steps 3-7
-    /// 3. Locate simplex containing the point
-    /// 4. Find conflict region (simplices whose circumspheres contain the point)
-    /// 5. Extract cavity boundary
-    /// 6. Fill cavity (create new simplices)
-    /// 7. Wire neighbors locally
-    /// 8. Remove conflict simplices
+    /// 1. Reject duplicate coordinates or identity.
+    /// 2. Locate the containing simplex or visible hull facets.
+    /// 3. Find the conflict region whose circumspheres contain the point.
+    /// 4. Extract the cavity boundary and create replacement simplices.
+    /// 5. Wire neighbors and remove superseded simplices.
+    /// 6. Repair or validate the Delaunay postcondition and commit; otherwise roll back.
     ///
     /// # Errors
     /// Returns error if:
+    /// - Insertion is attempted on a published empty owner rather than through an incremental builder
     /// - Duplicate UUID detected
-    /// - Initial simplex construction fails (when reaching D+1 vertices)
     /// - Point is on a facet, edge, or vertex (degenerate cases not yet implemented)
     /// - Spatial index construction fails while seeding duplicate-detection and locate hints
     /// - Conflict region computation fails
@@ -147,14 +170,15 @@ where
     ///
     /// # Examples
     ///
-    /// Incremental insertion from empty triangulation:
+    /// Incremental construction from empty uses the incremental builder API:
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayIncrementalBuilder, vertex};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// // Start with empty triangulation
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    /// let mut dt: DelaunayIncrementalBuilder<_, (), (), 3> =
+    ///     DelaunayIncrementalBuilder::new();
     /// assert_eq!(dt.number_of_vertices(), 0);
     /// assert_eq!(dt.number_of_simplices(), 0);
     ///
@@ -174,6 +198,8 @@ where
     /// dt.insert_vertex(vertex![0.2, 0.2, 0.2]?)?;
     /// assert_eq!(dt.number_of_vertices(), 5);
     /// assert!(dt.number_of_simplices() > 1);
+    /// let dt = dt.finish()?;
+    /// assert!(dt.validate().is_ok());
     /// # Ok(())
     /// # }
     /// ```
@@ -203,6 +229,7 @@ where
     /// # }
     /// ```
     pub fn insert_vertex(&mut self, vertex: Vertex<U, D>) -> Result<VertexKey, InsertionError> {
+        self.ensure_insertion_preserves_owner()?;
         self.ensure_spatial_index_seeded()?;
 
         // Fully delegate to Triangulation layer
@@ -218,19 +245,8 @@ where
         //
         // Transactional guard: post-steps (flip repair and/or global Delaunay checks) can fail.
         // If they do, rollback to leave the triangulation unchanged.
-        self.with_post_insertion_rollback(|delaunay| {
-            let hint = delaunay.insertion_state.last_inserted_simplex;
-            let insert_detail = {
-                let (tri, spatial_index) = (&mut delaunay.tri, &mut delaunay.spatial_index);
-                tri.insert_with_statistics_seeded_indexed_detailed(
-                    vertex,
-                    None,
-                    hint,
-                    0,
-                    spatial_index.as_mut(),
-                    None,
-                )?
-            };
+        self.with_post_insertion_rollback(|transaction| {
+            let insert_detail = Self::insert_detailed_in_rollback_window(transaction, vertex)?;
             let repair_seed_simplices = insert_detail.repair_seed_simplices;
             let delaunay_repair_required = insert_detail.delaunay_repair_required;
 
@@ -239,6 +255,7 @@ where
                     vertex_key: v_key,
                     hint,
                 } => {
+                    let delaunay = transaction.delaunay_mut();
                     delaunay.insertion_state.last_inserted_simplex = hint;
                     delaunay.insertion_state.delaunay_repair_insertion_count = delaunay
                         .insertion_state
@@ -274,15 +291,20 @@ where
     /// Returns [`InsertionError`] for structural failures, duplicate coordinates,
     /// retryable geometric degeneracies that exhaust all attempts, and spatial
     /// index construction failures while seeding duplicate-detection and locate hints.
+    /// A published empty owner also rejects insertion because bootstrap state
+    /// belongs to [`DelaunayIncrementalBuilder`](crate::incremental_builder::DelaunayIncrementalBuilder).
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation};
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayIncrementalBuilder, DelaunayIncrementalBuilderError,
+    /// };
     /// use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
     ///
     /// # fn main() -> DelaunayResult<()> {
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    /// let mut dt: DelaunayIncrementalBuilder<_, (), (), 3> =
+    ///     DelaunayIncrementalBuilder::new();
     ///
     /// let vertex = delaunay::vertex![0.0, 0.0, 0.0]?;
     /// let (outcome, stats) = dt.insert_with_statistics(vertex)?;
@@ -294,7 +316,8 @@ where
     /// let duplicate = dt.insert_with_statistics(duplicate_vertex);
     /// std::assert_matches!(
     ///     duplicate,
-    ///     Err(InsertionError::DuplicateCoordinates { .. })
+    ///     Err(DelaunayIncrementalBuilderError::Insertion { source })
+    ///         if matches!(source.as_ref(), InsertionError::DuplicateCoordinates { .. })
     /// );
     /// # Ok(())
     /// # }
@@ -324,16 +347,19 @@ where
     /// Returns [`InsertionError`] for non-skip structural failures that cannot
     /// be represented as an [`InsertionOutcome::Skipped`] value, including
     /// spatial index construction failures while seeding duplicate-detection
-    /// and locate hints.
+    /// and locate hints. A published empty owner also rejects insertion because
+    /// bootstrap state belongs to
+    /// [`DelaunayIncrementalBuilder`](crate::incremental_builder::DelaunayIncrementalBuilder).
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation};
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayIncrementalBuilder};
     /// use delaunay::prelude::insertion::InsertionOutcome;
     ///
     /// # fn main() -> DelaunayResult<()> {
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    /// let mut dt: DelaunayIncrementalBuilder<_, (), (), 3> =
+    ///     DelaunayIncrementalBuilder::new();
     ///
     /// let (outcome, stats) = dt
     ///     .insert_best_effort_with_statistics(delaunay::vertex![0.0, 0.0, 0.0]?)?;
@@ -355,29 +381,20 @@ where
         &mut self,
         vertex: Vertex<U, D>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
+        self.ensure_insertion_preserves_owner()?;
         self.ensure_spatial_index_seeded()?;
 
         // Transactional guard: post-steps (flip repair and/or global Delaunay checks) can fail.
         // If they do, rollback to leave the triangulation unchanged.
-        self.with_post_insertion_rollback(|delaunay| {
-            let hint = delaunay.insertion_state.last_inserted_simplex;
-            let insert_detail = {
-                let (tri, spatial_index) = (&mut delaunay.tri, &mut delaunay.spatial_index);
-                tri.insert_with_statistics_seeded_indexed_detailed(
-                    vertex,
-                    None,
-                    hint,
-                    0,
-                    spatial_index.as_mut(),
-                    None,
-                )?
-            };
+        self.with_post_insertion_rollback(|transaction| {
+            let insert_detail = Self::insert_detailed_in_rollback_window(transaction, vertex)?;
             let stats = insert_detail.stats;
             let repair_seed_simplices = insert_detail.repair_seed_simplices;
             let delaunay_repair_required = insert_detail.delaunay_repair_required;
 
             let outcome = match insert_detail.outcome {
                 InsertionOutcome::Inserted { vertex_key, hint } => {
+                    let delaunay = transaction.delaunay_mut();
                     delaunay.insertion_state.last_inserted_simplex = hint;
                     delaunay.insertion_state.delaunay_repair_insertion_count = delaunay
                         .insertion_state
@@ -484,13 +501,16 @@ where
             )
         };
 
-        #[cfg(test)]
-        let repair_result = if tests::force_repair_nonconvergent_enabled() {
-            Err(tests::synthetic_nonconvergent_error())
-        } else {
-            repair_result
-        };
+        self.finish_primary_insertion_repair(repair_result, seed_ref, topology, max_flips)
+    }
 
+    fn finish_primary_insertion_repair(
+        &mut self,
+        repair_result: Result<DelaunayRepairRun, DelaunayRepairError>,
+        seed_simplices: Option<&[SimplexKey]>,
+        topology: TopologyGuarantee,
+        max_flips: Option<usize>,
+    ) -> Result<(), InsertionError> {
         match repair_result {
             Ok(run) => {
                 self.validate_ridge_links_after_repair(topology, &run)?;
@@ -507,7 +527,7 @@ where
                 // start from a Levels 1–4 value can opt into rebuild fallback
                 // through the consuming `delaunayize` conversion.
                 let robust_run = self
-                    .repair_delaunay_with_flips_robust_run(seed_ref, max_flips)
+                    .repair_delaunay_with_flips_robust_run(seed_simplices, max_flips)
                     .map_err(|robust_err| InsertionError::DelaunayRepairFailed {
                         source: Box::new(robust_err),
                         context: DelaunayRepairFailureContext::LocalRepairRobustFallback {
@@ -619,33 +639,20 @@ mod tests {
     };
     use crate::core::simplex::Simplex;
     use crate::core::tds::{Tds, TdsError};
+    use crate::draft::DelaunayTriangulationDraft;
     use crate::flips::BistellarFlips;
-    use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
-    use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
+    use crate::geometry::kernel::AdaptiveKernel;
+    use crate::incremental_builder::DelaunayIncrementalBuilder;
+    use crate::repair::DelaunayRepairPolicy;
     use crate::topology::traits::topological_space::GlobalTopology;
-    use crate::validation::DelaunayTriangulationCandidate;
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
-    use std::cell::Cell;
     use std::iter::once;
-    use std::num::NonZeroUsize;
     use std::sync::Once;
 
-    // Last-resort fault injection for rollback branches that are hard to
-    // trigger deterministically; thread-local state avoids cross-test leakage.
-    // Remove this once a cleaner harness can reach the branch directly.
-    thread_local! {
-        static FORCE_REPAIR_NONCONVERGENT: Cell<bool> = const { Cell::new(false) };
-    }
-
     #[must_use]
-    pub(super) fn force_repair_nonconvergent_enabled() -> bool {
-        FORCE_REPAIR_NONCONVERGENT.with(Cell::get)
-    }
-
-    #[must_use]
-    pub(super) fn synthetic_nonconvergent_error() -> DelaunayRepairError {
+    fn synthetic_nonconvergent_error() -> DelaunayRepairError {
         DelaunayRepairError::NonConvergent {
             max_flips: 0,
             diagnostics: Box::new(DelaunayRepairDiagnostics {
@@ -663,15 +670,6 @@ mod tests {
         }
     }
 
-    #[must_use]
-    fn set_force_repair_nonconvergent(enabled: bool) -> bool {
-        FORCE_REPAIR_NONCONVERGENT.with(|flag| {
-            let prior = flag.get();
-            flag.set(enabled);
-            prior
-        })
-    }
-
     fn init_tracing() {
         static INIT: Once = Once::new();
         INIT.call_once(|| {
@@ -682,24 +680,6 @@ mod tests {
                 .with_test_writer()
                 .try_init();
         });
-    }
-
-    struct ForceRepairNonconvergentGuard {
-        previous: bool,
-    }
-
-    impl ForceRepairNonconvergentGuard {
-        fn enable() -> Self {
-            Self {
-                previous: set_force_repair_nonconvergent(true),
-            }
-        }
-    }
-
-    impl Drop for ForceRepairNonconvergentGuard {
-        fn drop(&mut self) {
-            let _ = set_force_repair_nonconvergent(self.previous);
-        }
     }
 
     #[test]
@@ -838,30 +818,43 @@ mod tests {
     }
 
     #[test]
-    fn test_bootstrap_with_custom_kernel() {
-        init_tracing();
-        // Verify bootstrap works with RobustKernel
-        let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
-            DelaunayTriangulation::with_empty_kernel(RobustKernel::new());
+    fn verified_empty_owner_rejects_bootstrap_without_mutation() {
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayIncrementalBuilder::new().finish().unwrap();
+        let owner_before = dt.tri.tds.topology_owner_id();
+        let generation_before = dt.tri.tds.generation();
+        let insertion_count_before = dt.insertion_state.delaunay_repair_insertion_count;
 
+        let error = dt.insert_vertex(vertex![0.0, 0.0].unwrap()).unwrap_err();
+        assert_eq!(
+            error,
+            InsertionError::PublishedOwnerBootstrapRequiresBuilder { dimension: 2 }
+        );
+        assert!(!error.is_retryable());
+
+        let best_effort_error = dt
+            .insert_best_effort_with_statistics(vertex![1.0, 0.0].unwrap())
+            .unwrap_err();
+        assert_eq!(
+            best_effort_error,
+            InsertionError::PublishedOwnerBootstrapRequiresBuilder { dimension: 2 }
+        );
+
+        assert_eq!(dt.tri.tds.topology_owner_id(), owner_before);
+        assert_eq!(dt.tri.tds.generation(), generation_before);
+        assert_eq!(
+            dt.insertion_state.delaunay_repair_insertion_count,
+            insertion_count_before
+        );
         assert_eq!(dt.number_of_vertices(), 0);
-
-        // Bootstrap with robust predicates
-        dt.insert_vertex(vertex![0.0, 0.0, 0.0].unwrap()).unwrap();
-        dt.insert_vertex(vertex![1.0, 0.0, 0.0].unwrap()).unwrap();
-        dt.insert_vertex(vertex![0.0, 1.0, 0.0].unwrap()).unwrap();
-        assert_eq!(dt.number_of_simplices(), 0); // Still bootstrapping
-
-        dt.insert_vertex(vertex![0.0, 0.0, 1.0].unwrap()).unwrap();
-        assert_eq!(dt.number_of_simplices(), 1); // Initial simplex created
-
-        assert!(dt.is_valid_delaunay().is_ok());
+        assert_eq!(dt.number_of_simplices(), 0);
+        assert!(dt.validate().is_ok());
     }
 
-    /// When the primary per-insertion repair returns `NonConvergent`, the robust
-    /// fallback in `maybe_repair_after_insertion` should rescue the insertion.
+    /// When primary repair returns `NonConvergent`, the result handler should
+    /// run the robust fallback without invalidating the spatial index.
     #[test]
-    fn test_maybe_repair_after_insertion_robust_fallback_on_forced_nonconvergent() {
+    fn test_primary_insertion_repair_result_uses_robust_fallback() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
             vertex![0.0, 0.0].unwrap(),
@@ -871,16 +864,15 @@ mod tests {
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
-        let _guard = ForceRepairNonconvergentGuard::enable();
-        let result = dt.insert_vertex(vertex![0.5, 0.5].unwrap());
-        let inserted_key = result
-            .as_ref()
-            .copied()
-            .expect("Insertion should succeed via robust fallback");
-        assert!(
-            result.is_ok(),
-            "Insertion should succeed via robust fallback: {result:?}"
-        );
+        let inserted_key = dt.insert_vertex(vertex![0.5, 0.5].unwrap()).unwrap();
+        let topology = dt.topology_guarantee();
+        dt.finish_primary_insertion_repair(
+            Err(synthetic_nonconvergent_error()),
+            None,
+            topology,
+            None,
+        )
+        .expect("robust fallback should recover from primary non-convergence");
         let spatial_index = dt
             .spatial_index
             .as_ref()
@@ -894,39 +886,6 @@ mod tests {
         );
         assert!(found_inserted_key);
         assert!(dt.validate().is_ok());
-    }
-
-    #[test]
-    fn post_insertion_transaction_required_protects_every_publishable_simplex() {
-        init_tracing();
-        let vertices: Vec<Vertex<(), 2>> = vec![
-            vertex![0.0, 0.0].unwrap(),
-            vertex![1.0, 0.0].unwrap(),
-            vertex![0.0, 1.0].unwrap(),
-        ];
-        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-        dt.insertion_state.delaunay_repair_policy =
-            DelaunayRepairPolicy::EveryN(NonZeroUsize::new(3).unwrap());
-        dt.set_delaunay_check_policy(DelaunayCheckPolicy::EndOnly);
-        dt.insertion_state.delaunay_repair_insertion_count = 0;
-        assert!(dt.post_insertion_transaction_required());
-
-        dt.insertion_state.delaunay_repair_insertion_count = 2;
-        assert!(dt.post_insertion_transaction_required());
-
-        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
-        dt.set_delaunay_check_policy(DelaunayCheckPolicy::EveryN(NonZeroUsize::new(2).unwrap()));
-        dt.insertion_state.delaunay_repair_insertion_count = 0;
-        assert!(dt.post_insertion_transaction_required());
-
-        dt.insertion_state.delaunay_repair_insertion_count = 1;
-        assert!(dt.post_insertion_transaction_required());
-
-        let empty: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::empty();
-        assert!(!empty.post_insertion_transaction_required());
     }
 
     #[test]
@@ -959,8 +918,8 @@ mod tests {
         let vertex_count_before = dt.number_of_vertices();
         let simplex_count_before = dt.number_of_simplices();
 
-        assert!(dt.post_insertion_transaction_required());
-        let result = dt.with_post_insertion_rollback(|delaunay| {
+        let result = dt.with_post_insertion_rollback(|transaction| {
+            let delaunay = transaction.delaunay_mut();
             delaunay
                 .tri
                 .flip_k2(facet)
@@ -1005,11 +964,10 @@ mod tests {
             spatial_index.insert_vertex(vertex_key, vertex.point().coords());
         }
         dt.spatial_index = Some(spatial_index);
-        assert!(dt.post_insertion_transaction_required());
-
         let transient_vertex = vertex![0.25, 0.25].unwrap();
         let transient_uuid = transient_vertex.uuid();
-        let result: Result<(), InsertionError> = dt.with_post_insertion_rollback(|delaunay| {
+        let result: Result<(), InsertionError> = dt.with_post_insertion_rollback(|transaction| {
+            let delaunay = transaction.delaunay_mut();
             delaunay
                 .tri
                 .tds
@@ -1157,7 +1115,7 @@ mod tests {
         init_tracing();
         let (tds, incident_to_invalid_ridge, nonincident) =
             wedge_two_s2_complexes_share_vertex_tds();
-        let dt = DelaunayTriangulationCandidate::assemble_unchecked_for_test(
+        let dt = DelaunayTriangulationDraft::assemble_unchecked_for_test(
             tds,
             AdaptiveKernel::new(),
             TopologyGuarantee::PLManifold,

@@ -24,7 +24,7 @@ use std::assert_matches;
 
 use delaunay::flips::FlipError;
 use delaunay::prelude::construction::{
-    DelaunayConstructionFailure, DelaunayConstructionRetryFailure, DelaunayTriangulation,
+    DelaunayConstructionFailure, DelaunayConstructionRetryFailure,
     DelaunayTriangulationConstructionError,
 };
 use delaunay::prelude::tds::{FacetError, SimplexKey};
@@ -599,7 +599,8 @@ fn assert_topology_and_delaunay_valid<const D: usize>(dt: &FlipTriangulation<D>,
         .unwrap_or_else(|err| panic!("{context} should pass Levels 1-3: {err}"));
     dt.is_valid_realization()
         .unwrap_or_else(|err| panic!("{context} should pass Level 4 realization: {err}"));
-    DelaunayTriangulation::try_from_triangulation(dt.clone())
+    delaunay::DelaunayRefinementBuilder::new(dt.clone())
+        .build()
         .unwrap_or_else(|err| panic!("{context} should pass Level 5: {err}"));
 }
 

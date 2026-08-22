@@ -1976,9 +1976,9 @@ mod tests {
     use super::super::test_support::init_tracing;
     use super::super::*;
     use super::*;
-    use crate::DelaunayTriangulation;
-    use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
+    use crate::core::algorithms::insertion::repair_neighbor_pointers;
     use crate::core::collections::Uuid;
+    use crate::core::tds::TdsBuilder;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::triangulation::validation::TopologyGuarantee;
     use crate::vertex;
@@ -1998,6 +1998,20 @@ mod tests {
     {
         verify_delaunay_with_topology(tds, kernel, GlobalTopology::DEFAULT)
     }
+
+    /// Builds the two-triangle disk used by queue-frontier tests directly at
+    /// the Levels 1–2 boundary those tests exercise.
+    fn two_triangle_tds() -> Tds<(), (), 2> {
+        let vertices = [
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 0.2]).unwrap(),
+        ];
+        let simplices = [vec![0, 1, 3], vec![0, 3, 2]];
+        TdsBuilder::new(&vertices, &simplices).build().unwrap()
+    }
+
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct TopologySnapshot {
         vertices: Vec<Uuid>,
@@ -2374,15 +2388,7 @@ mod tests {
     #[test]
     fn test_repair_run_full_reseed_preserves_mutation_frontier() {
         init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-            vertex!([1.0, 0.2]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds();
+        let tds = two_triangle_tds();
         let local_simplex = tds.simplex_keys().next().unwrap();
         let outcome = RepairAttemptOutcome {
             postcondition_required: false,
@@ -2406,15 +2412,7 @@ mod tests {
     #[test]
     fn test_repair_k2_empty_seed_does_not_full_reseed() {
         init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-            vertex!([1.0, 0.2]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds = two_triangle_tds();
         let before = snapshot_topology(&tds);
         let kernel = AdaptiveKernel::<f64>::new();
         let config = RepairAttemptConfig {
@@ -2443,15 +2441,7 @@ mod tests {
     #[test]
     fn test_repair_queue_k2_local_seed() {
         init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-            vertex!([1.0, 0.2]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds = two_triangle_tds();
         let kernel = AdaptiveKernel::<f64>::new();
 
         let seed_simplex = tds.simplex_keys().next().unwrap();

@@ -883,6 +883,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// ```rust
     /// use delaunay::prelude::geometry::*;
     /// use delaunay::prelude::*;
+    /// use delaunay::prelude::triangulation::TriangulationBuilder;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -893,8 +894,12 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Empty triangulation has dimension -1
-    /// let empty: Triangulation<FastKernel<f64>, (), (), 3> =
-    ///     Triangulation::new_empty(FastKernel::new());
+    /// let empty = TriangulationBuilder::new(
+    ///     Tds::<(), (), 3>::empty(),
+    ///     FastKernel::new(),
+    /// )
+    /// .build()
+    /// .expect("the empty complex is a valid realization");
     /// assert_eq!(empty.dim(), -1);
     ///
     /// // 3D tetrahedron has dimension 3

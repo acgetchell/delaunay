@@ -6,7 +6,8 @@ This document provides small, practical recipes for working with triangulations.
 - **Pachner Move API**: explicitly edit triangulation topology via local Pachner moves.
 
 For the full design discussion (and more extensive examples), see [`api_design.md`](api_design.md).
-For validation semantics and configuration details, see [`validation.md`](validation.md).
+For construction, promotion, and validation semantics, see
+[`construction_and_validation.md`](construction_and_validation.md).
 For the theoretical background and rationale behind the invariants, see [`invariants.md`](invariants.md).
 
 Examples that derive `thiserror::Error` assume the example crate includes
@@ -30,7 +31,7 @@ fn main() -> DelaunayResult<()> {
 
     let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
-    // Optional verification (see docs/validation.md for when to use each):
+    // Optional verification (see docs/construction_and_validation.md for when to use each):
     assert!(dt.as_triangulation().validate_realization().is_ok()); // Levels 1-4 (Valid Realization)
     assert!(dt.is_valid_delaunay().is_ok()); // Level 5 only (Geometric Predicates: Delaunay)
     Ok(())
@@ -48,19 +49,17 @@ Use the `try_set_*` policy setters when changing both axes programmatically; the
 return a typed error for incoherent combinations such as
 `TopologyGuarantee::PLManifold` with `ValidationPolicy::Never`.
 
-See [`validation.md`](validation.md) for details.
+See [`construction_and_validation.md`](construction_and_validation.md) for details.
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
+use delaunay::prelude::construction::{DelaunayIncrementalBuilder, TopologyGuarantee};
 use delaunay::prelude::validation::ValidationPolicy;
 
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
-
-// Enforce the PL-manifold mathematical contract.
-dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)?;
+let mut builder: DelaunayIncrementalBuilder<_, (), (), 3> =
+    DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
 // In tests/debugging, validate global Levels 1–4 after every insertion.
-dt.try_set_validation_policy(ValidationPolicy::Always)?;
+builder.try_set_validation_policy(ValidationPolicy::Always)?;
 ```
 
 ### What the topology guarantees mean (quick summary)
@@ -73,7 +72,7 @@ dt.try_set_validation_policy(ValidationPolicy::Always)?;
   same PL-manifold contract; `ValidationPolicy::Always` repeats complete Levels
   1–4 audits after every mutation.
 
-See [`validation.md`](validation.md) for the precise invariants and which methods validate which
+See [`construction_and_validation.md`](construction_and_validation.md) for the precise invariants and which methods validate which
 levels.
 
 ## Builder API: flip-based Delaunay repair (details)
@@ -88,7 +87,7 @@ maintainer-hardware envelope for final Levels 1–5 validation. The explicit
 that has also passed the same final validation checks. Published incremental
 insertion keeps the invariant-preserving repair cadence fixed at every
 insertion. `DelaunayRepairPolicy` remains configurable through
-`ConstructionOptions` while a batch candidate is unpublished; the terminal
+`ConstructionOptions` while a batch workspace is unpublished; the terminal
 still certifies Level 5 before returning it.
 
 At the domain boundary, the strict terminal composes three proof-bearing
@@ -134,7 +133,7 @@ consuming conversion:
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
-use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
+use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeError};
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::RefinementError;
 
@@ -157,7 +156,9 @@ fn main() -> Result<(), ConversionExampleError> {
     ];
 
     let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
-    let converted = delaunayize(tri, DelaunayizeConfig::default())
+    let converted = DelaunayRefinementBuilder::new(tri)
+        .repair_by_flips()
+        .build()
         .map_err(RefinementError::into_reason)?;
     assert!(converted.triangulation.validate().is_ok());
     Ok(())
@@ -172,7 +173,7 @@ Flip-based conversion requires a PL-manifold topology guarantee. Passing a
 `DelaunayizeError::FlipTopologyNotAdmissible` and whose owner is the unchanged
 input triangulation.
 
-Additionally, `delaunayize` requires `K: ExactPredicates` (compile-time bound).
+Additionally, flip-repair refinement requires `K: ExactPredicates` (compile-time bound).
 The default `AdaptiveKernel`, `RobustKernel`, and `FastKernel` satisfy this
 through D ≤ 5. Their policies differ in tie handling, diagnostics, and
 higher-dimensional fallback rather than in the exactness of a returned sign
@@ -192,8 +193,8 @@ same flip predicates used by the repair loop. A postcondition failure is treated
 similarly to non-convergence and triggers the second attempt or a caller-level
 fallback.
 
-If requested, `delaunayize` can follow failed bounded repair with a vertex-set
-rebuild before final certification.
+If requested, the refinement builder can follow failed bounded repair with a
+vertex-set rebuild before final certification.
 
 If repair fails to converge within the flip budget, you get
 `DelaunayRepairError::NonConvergent { .. }`, which contains a `DelaunayRepairDiagnostics` payload
@@ -204,7 +205,7 @@ detections, etc.).
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
-use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
+use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeError};
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::repair::DelaunayRepairError;
 
@@ -226,7 +227,10 @@ fn main() -> Result<(), DiagnosticExampleError> {
 
     let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
 
-    match delaunayize(tri, DelaunayizeConfig::default()) {
+    match DelaunayRefinementBuilder::new(tri)
+        .repair_by_flips()
+        .build()
+    {
         Ok(_converted) => {}
         Err(failure) => {
             let (tri, reason) = failure.into_parts();
@@ -284,8 +288,7 @@ fn main() -> DelaunayResult<()> {
 ### Opt-in fallback rebuild
 
 If you want a stronger "try harder" path, enable fallback rebuild on the
-consuming conversion:
-`DelaunayizeConfig::default().with_fallback_rebuild(true)`.
+consuming conversion with `.fallback_rebuild(true)`.
 
 This workflow:
 
@@ -301,7 +304,7 @@ The outcome reports whether rebuild fallback was used.
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
-use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
+use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeError};
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::RefinementError;
 
@@ -324,11 +327,11 @@ fn main() -> Result<(), RepairExampleError> {
     ];
 
     let tri = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
-    let converted = delaunayize(
-        tri,
-        DelaunayizeConfig::default().with_fallback_rebuild(true),
-    )
-    .map_err(RefinementError::into_reason)?;
+    let converted = DelaunayRefinementBuilder::new(tri)
+        .repair_by_flips()
+        .fallback_rebuild(true)
+        .build()
+        .map_err(RefinementError::into_reason)?;
     eprintln!("fallback rebuild used: {}", converted.outcome.used_fallback_rebuild);
     Ok(())
 }
@@ -449,11 +452,12 @@ want to keep going after skipped vertices, use the explicitly best-effort
 `insert_best_effort_with_statistics()`.
 
 ```rust
-use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayResult, DelaunayIncrementalBuilder, vertex};
 use delaunay::prelude::insertion::InsertionOutcome;
 
 fn main() -> DelaunayResult<()> {
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 3> =
+        DelaunayIncrementalBuilder::new();
 
     let (outcome, stats) = dt.insert_best_effort_with_statistics(vertex![0.5, 0.5, 0.5]?)?;
 
@@ -580,8 +584,8 @@ fn main() -> DelaunayResult<()> {
     assert!(dt.validate().is_ok());
 
     // If you need Delaunay after edits (requires K: ExactPredicates), consume
-    // `dt` with `delaunayize(dt, DelaunayizeConfig::default())`; failure
-    // returns `dt` for inspection or a differently configured retry.
+    // `dt` with `DelaunayRefinementBuilder::new(dt).repair_by_flips().build()`;
+    // failure returns `dt` for inspection or a differently configured retry.
     Ok(())
 }
 ```

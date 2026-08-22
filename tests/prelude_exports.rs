@@ -21,8 +21,8 @@ use delaunay::construction::{
     InsertionOrderStrategy as ConstructionModuleInsertionOrderStrategy,
 };
 use delaunay::delaunayize::{
-    DelaunayizeConfig as DelaunayizeModuleConfig, DelaunayizeError as DelaunayizeModuleError,
-    delaunayize_by_flips as module_delaunayize_by_flips,
+    DelaunayRefinementBuilder as ModuleDelaunayRefinementBuilder,
+    DelaunayizeError as DelaunayizeModuleError,
 };
 use delaunay::flips::{
     BistellarFlips, DelaunayRepairError as DirectDelaunayRepairError,
@@ -34,6 +34,10 @@ use delaunay::geometry::{
     CoordinateRange as GeometryCoordinateRange,
     LabeledSimplexRealization as GeometryModuleLabeledSimplexRealization,
     validate_simplex_realizations_intersect_only_in_shared_faces as geometry_module_validate_simplex_realizations_intersect_only_in_shared_faces,
+};
+use delaunay::incremental_builder::{
+    DelaunayIncrementalBuilder as ModuleDelaunayIncrementalBuilder,
+    DelaunayIncrementalBuilderError as ModuleDelaunayIncrementalBuilderError,
 };
 use delaunay::pachner::PachnerMoves as DirectPachnerMoves;
 use delaunay::prelude::DelaunayValidationError;
@@ -51,8 +55,9 @@ use delaunay::prelude::construction::{
     CoordinateRangeOrdering as ConstructionCoordinateRangeOrdering,
     CoordinateValidationError as ConstructionCoordinateValidationError, DedupPolicy,
     DedupTolerance, DeduplicationError, DelaunayConstructionFailure,
-    DelaunayConstructionRetryFailure, DelaunayError, DelaunayRepairPolicy, DelaunayResult,
-    DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    DelaunayConstructionRetryFailure, DelaunayError, DelaunayIncrementalBuilder,
+    DelaunayIncrementalBuilderError, DelaunayRepairPolicy, DelaunayResult, DelaunayTriangulation,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     DelaunayTriangulationConstructionErrorWithStatistics,
     DelaunayTriangulationValidationError as ConstructionDelaunayTriangulationValidationError,
     DelaunayVerificationError as ConstructionDelaunayVerificationError, DeleteVertexError,
@@ -70,8 +75,9 @@ use delaunay::prelude::construction::{
     try_vertices_from_points as construction_try_vertices_from_points, vertex,
 };
 use delaunay::prelude::delaunayize::{
-    DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
-    DelaunayizeError, DelaunayizeOutcome, SimplexDataRestoreError, delaunayize_by_flips,
+    DelaunayRefinementBuilder,
+    DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeError,
+    DelaunayizeOutcome, SimplexDataRestoreError,
 };
 use delaunay::prelude::deletion::{
     DeleteVertexError as FocusedDeleteVertexError, VertexKey as DeletionVertexKey,
@@ -169,9 +175,9 @@ use delaunay::prelude::tds::{
     AllFacetsIter as TdsAllFacetsIter, BoundaryFacetsIter as TdsBoundaryFacetsIter, EdgeKeyError,
     EdgeView, FacetError, FacetIncidenceView as TdsFacetIncidenceView, FacetView, InvariantError,
     NeighborSlot, OneSidedFacetsIter as TdsOneSidedFacetsIter,
-    SimplexFacetsIter as TdsSimplexFacetsIter, SimplexKey, Tds, TdsConstructionError, TdsError,
-    TdsMutationError, TopologyOwner as TdsTopologyOwner, TopologyOwnerId as TdsTopologyOwnerId,
-    VertexKey,
+    SimplexFacetsIter as TdsSimplexFacetsIter, SimplexKey, Tds, TdsConstructionError, TdsDraft,
+    TdsError, TdsMutationError, TopologyOwner as TdsTopologyOwner,
+    TopologyOwnerId as TdsTopologyOwnerId, VertexKey,
 };
 use delaunay::prelude::topology::spaces::{
     GlobalTopology, GlobalTopologyModelError, LiftedLinkEdge, LiftedVertexId, SphericalMetric,
@@ -198,6 +204,8 @@ use delaunay::prelude::triangulation::{
     SpatialIndexConstructionFailure as GenericSpatialIndexConstructionFailure,
     TdsError as TriangulationTdsError, TopologyGuarantee as TriangulationTopologyGuarantee,
     Triangulation as GenericTriangulation, TriangulationAdjacency as GenericTriangulationAdjacency,
+    TriangulationBuildFailure as GenericTriangulationBuildFailure,
+    TriangulationBuilder as GenericTriangulationBuilder,
     TriangulationConstructionError as GenericTriangulationConstructionError,
     ValidationConfigurationError as TriangulationValidationConfigurationError,
     ValidationPolicy as TriangulationValidationPolicy, vertex as triangulation_vertex,
@@ -221,6 +229,8 @@ use delaunay::prelude::validation::{
 use delaunay::prelude::{
     ConstructionStatistics as RootPreludeConstructionStatistics,
     CoordinateRange as RootCoordinateRange, DelaunayError as RootDelaunayError,
+    DelaunayIncrementalBuilder as RootPreludeDelaunayIncrementalBuilder,
+    DelaunayIncrementalBuilderError as RootPreludeDelaunayIncrementalBuilderError,
     DelaunayResult as RootDelaunayResult, DelaunayTriangulation as RootDelaunayTriangulation,
     DelaunayTriangulationBuilder as RootDelaunayTriangulationBuilder,
     DelaunayTriangulationConstructionErrorWithStatistics as RootPreludeConstructionErrorWithStatistics,
@@ -289,6 +299,10 @@ use delaunay::{
     ValidatedVisualizationData as RootValidatedVisualizationData,
     VisualizationTopologyGuarantee as RootVisualizationTopologyGuarantee,
     VisualizationTopologyKind as RootVisualizationTopologyKind,
+};
+use delaunay::{
+    DelaunayIncrementalBuilder as RootDelaunayIncrementalBuilder,
+    DelaunayIncrementalBuilderError as RootDelaunayIncrementalBuilderError,
 };
 #[derive(Debug, thiserror::Error)]
 enum RootApiExportTestError {
@@ -519,6 +533,23 @@ fn assert_construction_prelude_unsupported_topology_variants() {
 }
 
 #[test]
+fn incremental_builder_exports_cover_each_intended_public_path() {
+    let _: RootDelaunayIncrementalBuilder<_, (), (), 2> = RootDelaunayIncrementalBuilder::new();
+    let _: ModuleDelaunayIncrementalBuilder<_, (), (), 2> = ModuleDelaunayIncrementalBuilder::new();
+    let _: DelaunayIncrementalBuilder<_, (), (), 2> = DelaunayIncrementalBuilder::new();
+    let _: RootPreludeDelaunayIncrementalBuilder<_, (), (), 2> =
+        RootPreludeDelaunayIncrementalBuilder::new();
+
+    let error = DelaunayIncrementalBuilderError::IncompleteBootstrap {
+        dimension: 2,
+        vertex_count: 1,
+    };
+    let _: &RootDelaunayIncrementalBuilderError = &error;
+    let _: &ModuleDelaunayIncrementalBuilderError = &error;
+    let _: &RootPreludeDelaunayIncrementalBuilderError = &error;
+}
+
+#[test]
 fn construction_prelude_exports_common_delaunay_error_aliases() {
     let source = CoordinateConversionError::InvalidSimplexPointCount {
         actual: 2,
@@ -559,6 +590,17 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     assert_matches!(
         DelaunayError::from(insertion.clone()),
         DelaunayError::Insertion { source: err } if err.as_ref() == &insertion
+    );
+
+    let incremental_build = DelaunayIncrementalBuilderError::IncompleteBootstrap {
+        dimension: 2,
+        vertex_count: 1,
+    };
+    let root_incremental_build: RootDelaunayIncrementalBuilderError = incremental_build.clone();
+    assert_matches!(
+        DelaunayError::from(root_incremental_build),
+        DelaunayError::IncrementalConstruction { source }
+            if source.as_ref() == &incremental_build
     );
 
     let delete_vertex = DeleteVertexError::VertexNotFound {
@@ -1127,9 +1169,10 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
     assert_bistellar_flips(dt.as_triangulation());
     assert_root_bistellar_flips(dt.as_triangulation());
 
-    let result =
-        module_delaunayize_by_flips(dt.into_triangulation(), DelaunayizeModuleConfig::default())
-            .map_err(delaunay::RefinementError::into_reason)?;
+    let result = ModuleDelaunayRefinementBuilder::new(dt.into_triangulation())
+        .repair_by_flips()
+        .build()
+        .map_err(delaunay::RefinementError::into_reason)?;
     assert!(!result.outcome.used_fallback_rebuild);
     Ok(())
 }
@@ -2328,24 +2371,29 @@ fn topology_spaces_prelude_covers_spherical_backend_api() {
 
 #[test]
 fn triangulation_prelude_covers_generic_layer() -> Result<(), PreludeExportTestError> {
-    let vertices = vec![
+    let _recoverable_failure: Option<GenericTriangulationBuildFailure<(), (), 2>> = None;
+    let vertices = [
         triangulation_vertex![0.0, 0.0]?,
         triangulation_vertex![1.0, 0.0]?,
         triangulation_vertex![0.0, 1.0]?,
     ];
-    let tds =
-        GenericTriangulation::<TriangulationFastKernel<f64>, (), (), 2>::build_initial_simplex(
-            &vertices,
-        )?;
+    let mut tds_draft: TdsDraft<(), (), 2> = TdsDraft::new();
+    let vertex_keys: Vec<_> = vertices
+        .iter()
+        .copied()
+        .map(|vertex| tds_draft.insert_vertex(vertex).unwrap())
+        .collect();
+    tds_draft.insert_simplex(vertex_keys).unwrap();
+    let tds = tds_draft.finish().unwrap();
     assert_eq!(tds.number_of_vertices(), 3);
     assert_eq!(tds.number_of_simplices(), 1);
 
     let mut tri: GenericTriangulation<TriangulationFastKernel<f64>, (), (), 2> =
-        GenericTriangulation::new_empty(TriangulationFastKernel::new());
-    tri.try_set_topology_guarantee(TriangulationTopologyGuarantee::Pseudomanifold)
-        .unwrap();
-    tri.try_set_validation_policy(TriangulationValidationPolicy::Never)
-        .unwrap();
+        GenericTriangulationBuilder::new(tds, TriangulationFastKernel::new())
+            .topology_guarantee(TriangulationTopologyGuarantee::Pseudomanifold)
+            .validation_policy(TriangulationValidationPolicy::Never)
+            .build()
+            .unwrap();
     tri.validate().unwrap();
     let _triangulation_all_facets: TriangulationAllFacetsIter<'_, (), (), 2> = tri.facets();
     let _triangulation_boundary_facets: TriangulationBoundaryFacetsIter<'_, (), (), 2> =
@@ -2361,7 +2409,7 @@ fn triangulation_prelude_covers_generic_layer() -> Result<(), PreludeExportTestE
             .unwrap()
             .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
             .unwrap(),
-        0
+        3
     );
 
     assert_send_sync_unpin::<TriangulationInsertionError>();
@@ -2479,20 +2527,6 @@ fn construction_prelude_covers_random_point_generation_failure_variant()
     Ok(())
 }
 
-fn assert_delaunayize_config_fluent_setters() {
-    let delaunayize_config = DelaunayizeConfig::default()
-        .with_fallback_rebuild(true)
-        .with_delaunay_max_flips(500);
-    assert!(delaunayize_config.fallback_rebuild);
-    assert_eq!(delaunayize_config.delaunay_max_flips, Some(500));
-    assert_eq!(
-        delaunayize_config
-            .without_delaunay_max_flips()
-            .delaunay_max_flips,
-        None
-    );
-}
-
 #[test]
 fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError> {
     let vertices: Vec<Vertex<(), 3>> = vec![
@@ -2585,9 +2619,11 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
 
     dt.verify_via_flip_predicates()?;
 
-    assert_delaunayize_config_fluent_setters();
-
-    let result = delaunayize_by_flips(dt.into_triangulation(), DelaunayizeConfig::default())
+    let result = DelaunayRefinementBuilder::new(dt.into_triangulation())
+        .repair_by_flips()
+        .max_flips(500)
+        .default_flip_budget()
+        .build()
         .map_err(delaunay::RefinementError::into_reason)?;
     assert!(!result.outcome.used_fallback_rebuild);
     let _typed_outcome: DelaunayizeOutcome = result.outcome;

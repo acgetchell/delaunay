@@ -31,13 +31,12 @@ use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateValidationError, InvalidCoordinateValue,
 };
-use crate::refinement::RefinementError;
 use crate::topology::traits::global_topology_model::{
     GlobalTopologyModel, GlobalTopologyModelError,
 };
-use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
+use crate::topology::traits::topological_space::TopologyKind;
 use crate::triangulation::Triangulation;
-use crate::triangulation::validation::{TopologyGuarantee, TriangulationValidationError};
+use crate::triangulation::validation::TriangulationValidationError;
 use num_traits::ToPrimitive;
 use thiserror::Error;
 use uuid::Uuid;
@@ -141,6 +140,28 @@ fn realization_error_from_invariant(
             }
         }
     }
+}
+
+/// Crate-internal result of the shared Levels 3-4 publication proof.
+///
+/// Strict and canonicalizing `TriangulationBuilder` publication intentionally
+/// share this diagnostic boundary so their proof criteria cannot drift.
+pub(super) enum TriangulationCertificationError {
+    /// Raw storage has not crossed the Levels 1-2 construction boundary.
+    IncompleteConstruction {
+        /// Number of vertices recorded by the incomplete construction state.
+        vertex_count: usize,
+    },
+    /// The requested Level 3 topology guarantee does not hold.
+    Topology {
+        /// Typed cumulative invariant failure.
+        source: InvariantError,
+    },
+    /// The Level 4 coordinate realization does not hold.
+    Realization {
+        /// Typed realization failure.
+        source: TriangulationRealizationValidationError,
+    },
 }
 
 /// Errors returned by realized-geometry validation (Level 4).
@@ -409,14 +430,6 @@ impl From<TriangulationValidationError> for TriangulationRealizationValidationEr
         }
     }
 }
-
-/// Recoverable failure to refine a Levels 1–2 [`Tds`] into a [`Triangulation`].
-///
-/// The error retains the unchanged TDS so callers can adjust topology context
-/// or repair policy and retry Levels 3–4 certification without cloning it in
-/// advance.
-pub type TriangulationRefinementError<U, V, const D: usize> =
-    RefinementError<Tds<U, V, D>, TriangulationRealizationValidationError>;
 
 /// Discriminant for compact Level 4 realized-geometry validation summaries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -979,83 +992,30 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Level 4 realized geometry without repeating the TDS checks. The Level 5
     /// Delaunay property is deliberately outside this constructor's contract.
     ///
-    /// # Errors
+    /// Runs the single shared Levels 3-4 publication proof.
     ///
-    /// Returns [`TriangulationRefinementError`] if the TDS is still an
-    /// incomplete construction or if Levels 3–4 do not hold under the supplied
-    /// topology context. The failure retains the unchanged Levels 1–2 owner. A
-    /// lower-layer TDS diagnostic can still be returned if an internal invariant
-    /// bug prevents the stronger checks from running.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
-    /// use delaunay::prelude::geometry::AdaptiveKernel;
-    /// use delaunay::prelude::triangulation::Triangulation;
-    /// use delaunay::prelude::validation::DelaunayTriangulationValidationError;
-    ///
-    /// # fn main() -> DelaunayResult<()> {
-    /// let vertices = [
-    ///     delaunay::vertex![0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0]?,
-    /// ];
-    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .build_triangulation()?;
-    /// let topology_guarantee = triangulation.topology_guarantee();
-    /// let global_topology = triangulation.global_topology();
-    /// let tds = triangulation.into_tds();
-    ///
-    /// let restored = Triangulation::try_from_tds_with_topology_context(
-    ///     tds,
-    ///     AdaptiveKernel::new(),
-    ///     topology_guarantee,
-    ///     global_topology,
-    /// )
-    /// .map_err(|failure| {
-    ///     DelaunayTriangulationValidationError::from(failure.into_reason())
-    /// })?;
-    /// assert_eq!(restored.number_of_vertices(), 3);
-    /// assert!(restored.validate_realization().is_ok());
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn try_from_tds_with_topology_context(
-        tds: Tds<U, V, D>,
-        kernel: K,
-        topology_guarantee: TopologyGuarantee,
-        global_topology: GlobalTopology<D>,
-    ) -> Result<Self, TriangulationRefinementError<U, V, D>>
+    /// The method is deliberately non-mutating. Callers that canonicalize a
+    /// candidate first must own rollback around that preprocessing and invoke
+    /// this same proof before committing it.
+    pub(super) fn certify_levels_three_four(&self) -> Result<(), TriangulationCertificationError>
     where
         K: Kernel<D, Scalar = f64>,
         U: DataType,
         V: DataType,
     {
-        if let TriangulationConstructionState::Incomplete(vertex_count) = tds.construction_state() {
-            let reason = TriangulationRealizationValidationError::IncompleteConstruction {
+        if let TriangulationConstructionState::Incomplete(vertex_count) =
+            self.tds.construction_state()
+        {
+            return Err(TriangulationCertificationError::IncompleteConstruction {
                 vertex_count: *vertex_count,
-            };
-            return Err(RefinementError::new(tds, reason));
+            });
         }
 
-        let triangulation = Self {
-            kernel,
-            tds,
-            global_topology,
-            validation_policy: topology_guarantee.default_validation_policy(),
-            topology_guarantee,
-        };
-        if let Err(reason) = triangulation
-            .is_valid_topology()
-            .map_err(realization_error_from_invariant)
-        {
-            return Err(RefinementError::new(triangulation.tds, reason));
-        }
-        if let Err(reason) = triangulation.is_valid_realization() {
-            return Err(RefinementError::new(triangulation.tds, reason));
-        }
-        Ok(triangulation)
+        self.is_valid_topology()
+            .map_err(|source| TriangulationCertificationError::Topology { source })?;
+        self.is_valid_realization()
+            .map_err(|source| TriangulationCertificationError::Realization { source })?;
+        Ok(())
     }
 
     /// Validates realized geometry only (Level 4).
@@ -2134,27 +2094,6 @@ mod tests {
 
     fn test_vertex<const D: usize>(coords: [f64; D]) -> Vertex<(), D> {
         vertex!(coords).unwrap()
-    }
-
-    #[test]
-    fn restore_rejects_incomplete_tds_before_installing_domain_context() {
-        let tds = Tds::<(), (), 2>::empty();
-
-        let error = Triangulation::try_from_tds_with_topology_context(
-            tds,
-            FastKernel::new(),
-            TopologyGuarantee::PLManifold,
-            GlobalTopology::Euclidean,
-        )
-        .expect_err("incomplete transport storage must not become a Triangulation");
-
-        let (tds, reason) = error.into_parts();
-        assert_matches!(
-            reason,
-            TriangulationRealizationValidationError::IncompleteConstruction { vertex_count: 0 }
-        );
-        tds.validate()
-            .expect("failed Levels 3-4 refinement must return the valid Levels 1-2 owner");
     }
 
     fn tds_from_vertices_and_simplices<const D: usize>(

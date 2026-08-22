@@ -4,10 +4,8 @@
 //! Delaunay violations, the deterministic rebuild heuristic is triggered and
 //! successfully produces a valid Delaunay triangulation.
 
-use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayRepairPolicy, DelaunayTriangulation, TopologyGuarantee,
-};
-use delaunay::prelude::delaunayize::{DelaunayizeConfig, delaunayize};
+use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
+use delaunay::prelude::delaunayize::DelaunayRefinementBuilder;
 use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
 use delaunay::vertex;
 
@@ -91,10 +89,11 @@ fn repair_fallback_produces_valid_triangulation() {
         "fixture should contain a realized flip that violates Level 5"
     );
 
-    let config = DelaunayizeConfig::default()
-        .with_delaunay_max_flips(0)
-        .with_fallback_rebuild(true);
-    let converted = delaunayize(tri, config)
+    let converted = DelaunayRefinementBuilder::new(tri)
+        .repair_by_flips()
+        .max_flips(0)
+        .fallback_rebuild(true)
+        .build()
         .expect("heuristic rebuild fallback should repair the non-Delaunay fixture");
     test_debug_info!("bounded conversion outcome: {:?}", converted.outcome);
     assert!(
@@ -111,146 +110,4 @@ fn repair_fallback_produces_valid_triangulation() {
         dt.number_of_simplices() > 0,
         "Should have at least one simplex"
     );
-}
-
-/// Test incremental insertion with repair fallback.
-///
-/// Verifies that even when inserting vertices one-by-one triggers repair failures,
-/// the fallback mechanism maintains validity throughout.
-#[test]
-fn incremental_insertion_with_repair_fallback() {
-    init_tracing();
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
-
-    // Insert vertices that might trigger repair challenges
-    let test_vertices = vec![
-        vertex!([0.0, 0.0, 0.0]).unwrap(),
-        vertex!([2.0, 0.0, 0.0]).unwrap(),
-        vertex!([1.0, 2.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.5, 1.5]).unwrap(),
-        vertex!([1.0, 0.5, 0.5]).unwrap(), // Interior point
-        vertex!([0.8, 0.8, 0.8]).unwrap(), // Another interior point
-        vertex!([1.2, 0.6, 0.7]).unwrap(), // Close to existing
-    ];
-
-    for (i, vertex) in test_vertices.into_iter().enumerate() {
-        let result = dt.insert_vertex(vertex);
-
-        match result {
-            Ok(_) => {
-                // Skip validation during bootstrap (vertices exist but no simplices yet)
-                // Level 3 topology validation is not meaningful until simplices exist
-                if dt.number_of_simplices() > 0 {
-                    dt.validate().unwrap_or_else(|e| {
-                        panic!("Triangulation invalid after insertion {}: {}", i + 1, e)
-                    });
-                }
-            }
-            Err(e) => {
-                // Some insertions may be skipped (duplicates, degeneracies), which is fine
-                test_debug_info!("Vertex {} skipped: {}", i + 1, e);
-            }
-        }
-    }
-
-    // Final validation
-    dt.validate()
-        .expect("Final triangulation should be valid after all insertions");
-
-    assert!(
-        dt.number_of_vertices() >= 5,
-        "Should have inserted most vertices"
-    );
-}
-
-/// Test that repair fallback works in 2D as well.
-#[test]
-fn repair_fallback_2d() {
-    // Use non-collinear points to avoid degeneracy
-    let vertices = vec![
-        vertex!([0.0, 0.0]).unwrap(),
-        vertex!([4.0, 0.0]).unwrap(),
-        vertex!([2.0, 3.5]).unwrap(), // Non-collinear with first two
-        vertex!([0.5, 2.0]).unwrap(),
-        vertex!([3.5, 2.0]).unwrap(),
-        vertex!([1.5, 1.0]).unwrap(),
-        vertex!([2.5, 2.5]).unwrap(),
-        vertex!([1.0, 3.0]).unwrap(),
-    ];
-
-    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
-        .topology_guarantee(TopologyGuarantee::PLManifold)
-        .build()
-        .expect("2D construction should succeed with fallback if needed");
-
-    dt.validate()
-        .expect("2D triangulation should be valid after construction");
-
-    assert_eq!(dt.number_of_vertices(), vertices.len());
-    assert_eq!(dt.dim(), 2);
-}
-
-/// Test that explicit Levels 1–4 to Levels 1–5 conversion validates properly.
-#[test]
-fn explicit_delaunayize_call_validates_result() {
-    init_tracing();
-    // Build a triangulation
-    let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0, 0.0]).unwrap(),
-        vertex!([0.0, 0.0, 1.0]).unwrap(),
-        vertex!([0.5, 0.5, 0.5]).unwrap(),
-    ];
-
-    let tri = DelaunayTriangulation::builder(&vertices)
-        .topology_guarantee(TopologyGuarantee::PLManifold)
-        .build_triangulation()
-        .expect("Levels 1–4 construction should succeed");
-
-    let converted = delaunayize(tri, DelaunayizeConfig::default())
-        .expect("Explicit Delaunay conversion should succeed");
-
-    #[cfg(feature = "diagnostics")]
-    test_debug_info!("Explicit conversion outcome: {:?}", converted.outcome);
-    #[cfg(not(feature = "diagnostics"))]
-    let _ = &converted.outcome;
-
-    let dt = converted.triangulation;
-
-    // Verify triangulation is valid after explicit repair
-    dt.validate()
-        .expect("Triangulation should be valid after explicit repair");
-
-    // Verify Delaunay property specifically
-    dt.is_valid_delaunay()
-        .expect("Should satisfy Delaunay property after repair");
-}
-
-/// Test that unpublished batch repair cadence still ends at a certified owner.
-#[test]
-fn batch_repair_policy_configuration_certifies_result() {
-    let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0, 0.0]).unwrap(),
-        vertex!([0.0, 0.0, 1.0]).unwrap(),
-    ];
-
-    // Test with different repair policies
-    for policy in [
-        DelaunayRepairPolicy::EveryInsertion,
-        DelaunayRepairPolicy::EveryN(std::num::NonZeroUsize::new(2).unwrap()),
-    ] {
-        let options = ConstructionOptions::default().with_batch_repair_policy(policy);
-        let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
-            .topology_guarantee(TopologyGuarantee::PLManifold)
-            .construction_options(options)
-            .build()
-            .expect("Batch construction should certify Level 5 for any repair cadence");
-
-        dt.validate()
-            .unwrap_or_else(|e| panic!("Triangulation invalid with policy {policy:?}: {e}"));
-    }
 }

@@ -40,7 +40,7 @@ def visual_case(  # noqa: PLR0913 - compact builder for varied witness fixtures
         title=f"case {level}",
         status="invalid",
         public_check="validate",
-        public_reference="docs/validation.md",
+        public_reference="docs/construction_and_validation.md",
         input_summary="fixture",
         explanation="fixture",
         diagnostic="fixture",

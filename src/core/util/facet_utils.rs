@@ -139,7 +139,7 @@ mod tests {
     use crate::vertex;
 
     use crate::core::collections::FastHashSet;
-    use crate::delaunay_model::DelaunayTriangulation;
+    use crate::core::tds::{Tds, TdsBuilder};
     use std::time::Instant;
 
     /// Generates all unique combinations of `k` vertices for local regression tests.
@@ -188,6 +188,11 @@ mod tests {
                 indices[j] = indices[j - 1] + 1;
             }
         }
+    }
+
+    fn single_simplex_tds<U: Copy, const D: usize>(vertices: &[Vertex<U, D>]) -> Tds<U, (), D> {
+        let simplices = [(0..vertices.len()).collect()];
+        TdsBuilder::new(vertices, &simplices).build().unwrap()
     }
 
     #[test]
@@ -336,10 +341,10 @@ mod tests {
         let mut vertices2 = shared_vertices;
         vertices2.push(vertex_b);
 
-        let dt1 = DelaunayTriangulation::builder(&vertices1).build().unwrap();
-        let dt2 = DelaunayTriangulation::builder(&vertices2).build().unwrap();
-        let tds1 = dt1.tds();
-        let tds2 = dt2.tds();
+        let dt1 = single_simplex_tds(&vertices1);
+        let dt2 = single_simplex_tds(&vertices2);
+        let tds1 = &dt1;
+        let tds2 = &dt2;
 
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();
@@ -427,10 +432,10 @@ mod tests {
         let mut vertices2 = shared_edge;
         vertices2.push(vertex_d);
 
-        let dt1 = DelaunayTriangulation::builder(&vertices1).build().unwrap();
-        let dt2 = DelaunayTriangulation::builder(&vertices2).build().unwrap();
-        let tds1 = dt1.tds();
-        let tds2 = dt2.tds();
+        let dt1 = single_simplex_tds(&vertices1);
+        let dt2 = single_simplex_tds(&vertices2);
+        let tds1 = &dt1;
+        let tds2 = &dt2;
 
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();
@@ -476,10 +481,10 @@ mod tests {
         // Edge 2: shared_vertex to vertex_right
         let vertices2 = vec![shared_vertex, vertex_right];
 
-        let dt1 = DelaunayTriangulation::builder(&vertices1).build().unwrap();
-        let dt2 = DelaunayTriangulation::builder(&vertices2).build().unwrap();
-        let tds1 = dt1.tds();
-        let tds2 = dt2.tds();
+        let dt1 = single_simplex_tds(&vertices1);
+        let dt2 = single_simplex_tds(&vertices2);
+        let tds1 = &dt1;
+        let tds2 = &dt2;
 
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();
@@ -528,8 +533,8 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds();
+        let dt = single_simplex_tds(&vertices);
+        let tds = &dt;
         let simplex_key = tds.simplex_keys().next().unwrap();
 
         // All facets of the same tetrahedron should be different from each other
@@ -568,8 +573,8 @@ mod tests {
             vertex!([1.0, 1.0, 2.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds();
+        let dt = single_simplex_tds(&vertices);
+        let tds = &dt;
         let simplex_key = tds.simplex_keys().next().unwrap();
 
         let facet1 = FacetView::try_new(tds, simplex_key, 0).unwrap();
@@ -614,10 +619,10 @@ mod tests {
             vertex!([10.0, 10.0, 11.0]).unwrap(),
         ];
 
-        let dt1 = DelaunayTriangulation::builder(&vertices1).build().unwrap();
-        let dt2 = DelaunayTriangulation::builder(&vertices2).build().unwrap();
-        let tds1 = dt1.tds();
-        let tds2 = dt2.tds();
+        let dt1 = single_simplex_tds(&vertices1);
+        let dt2 = single_simplex_tds(&vertices2);
+        let tds1 = &dt1;
+        let tds2 = &dt2;
 
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();
@@ -646,10 +651,10 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt1 = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let dt2 = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds1 = dt1.tds();
-        let tds2 = dt2.tds();
+        let dt1 = single_simplex_tds(&vertices);
+        let dt2 = single_simplex_tds(&vertices);
+        let tds1 = &dt1;
+        let tds2 = &dt2;
 
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();
@@ -714,10 +719,10 @@ mod tests {
         let mut vertices2 = shared_tetrahedron;
         vertices2.push(vertex_f);
 
-        let dt1 = DelaunayTriangulation::builder(&vertices1).build().unwrap();
-        let dt2 = DelaunayTriangulation::builder(&vertices2).build().unwrap();
-        let tds1 = dt1.tds();
-        let tds2 = dt2.tds();
+        let dt1 = single_simplex_tds(&vertices1);
+        let dt2 = single_simplex_tds(&vertices2);
+        let tds1 = &dt1;
+        let tds2 = &dt2;
 
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();
@@ -775,10 +780,10 @@ mod tests {
         let mut vertices2 = shared_4d_simplex;
         vertices2.push(vertex_h);
 
-        let dt1 = DelaunayTriangulation::builder(&vertices1).build().unwrap();
-        let dt2 = DelaunayTriangulation::builder(&vertices2).build().unwrap();
-        let tds1 = dt1.tds();
-        let tds2 = dt2.tds();
+        let dt1 = single_simplex_tds(&vertices1);
+        let dt2 = single_simplex_tds(&vertices2);
+        let tds1 = &dt1;
+        let tds2 = &dt2;
 
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();

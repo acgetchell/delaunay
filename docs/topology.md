@@ -8,7 +8,7 @@ backend plus a bounded `S^2`/`S^3` construction and validation prototype, while
 full spherical integration and hyperbolic support remain future work.
 
 If you want the user-facing guide to the full validation stack (Levels 1–5), start
-with `docs/validation.md`.
+with `docs/construction_and_validation.md`.
 
 For the theoretical background and rationale behind the invariants themselves, see
 [`invariants.md`](invariants.md).
@@ -338,7 +338,7 @@ work.
 They operate on `Triangulation`, not `DelaunayTriangulation`, because an edit
 can invalidate Level 5. After batch edits, use strict certification or the
 consuming Delaunay conversion workflow (see `docs/api_design.md` and
-`docs/validation.md`). The PL-homeomorphism and regular-triangulation results
+`docs/construction_and_validation.md`). The PL-homeomorphism and regular-triangulation results
 behind these operations are listed under
 [Bistellar (Pachner) Moves and Delaunay Repair](../REFERENCES.md#bistellar-pachner-moves-and-delaunay-repair).
 

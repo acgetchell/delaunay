@@ -335,7 +335,7 @@ help-workflows:
     @echo "  just test-unit          # Debug and release Rust lib unit tests"
     @echo "  just test-integration   # Release integration tests, including proptests"
     @echo "  just test-integration-fast # Integration tests without proptests"
-    @echo "  just test-cli           # CLI-feature integration tests"
+    @echo "  just test-cli           # CLI-feature binary unit and integration tests"
     @echo "  just test-doc           # Release doctests"
     @echo "  just test-python        # Python support-script tests"
     @echo "  just test-slow          # Explicit slow correctness bucket"
@@ -1090,7 +1090,7 @@ python-typecheck: _ensure-uv
 # Run the opt-in companion binary with the CLI feature and perf profile.
 [group('build and setup')]
 run *args:
-    cargo run --profile perf --features cli --bin delaunay -- {{ args }}
+    cargo run --locked --profile perf --features cli --bin delaunay -- {{ args }}
 
 # Run the complete non-mutating Rust validation surface.
 [group('validation')]
@@ -1100,7 +1100,7 @@ rust-core-check: fmt-check clippy doc-check semgrep semgrep-test
 # Repository-owned Semgrep rules for project-specific Rust diagnostics.
 [group('validation')]
 semgrep: _ensure-uv
-    uv run --locked semgrep --error --strict --timeout 120 --config semgrep.yaml .
+    uv run --locked semgrep --error --strict --timeout 120 --jobs 1 --config semgrep.yaml .
 
 # Test the repository-owned Semgrep rules against their fixtures.
 [group('validation')]
@@ -1406,10 +1406,10 @@ test: test-rust test-python
 test-allocation: _ensure-nextest
     cargo nextest run --profile ci --test allocation_api --features count-allocations -- --nocapture
 
-# Run CLI-feature integration tests in the release profile.
+# Run CLI-feature binary unit and integration tests in the release profile.
 [group('tests and coverage')]
 test-cli: _ensure-nextest
-    cargo nextest run --release --profile ci --features cli --test cli
+    cargo nextest run --release --profile ci --features cli --bin delaunay --bin pachner-stress --test cli
 
 # Run diagnostics-feature integration tests with captured output.
 [group('diagnostics')]

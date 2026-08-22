@@ -11,11 +11,11 @@
 //! original TDS rather than expose a partially modified value. A successful
 //! result still proves only the TDS contract plus the targeted repair
 //! postconditions, not a Level 3 topology. Pass it to
-//! [`Triangulation::try_from_tds_with_topology_context`](crate::Triangulation::try_from_tds_with_topology_context)
-//! to validate Levels 1-4 and mint a [`Triangulation`](crate::Triangulation),
-//! then optionally pass that value to
-//! [`delaunayize`](crate::delaunayize::delaunayize) for Level 5 repair and
-//! certification.
+//! strict [`TriangulationBuilder`](crate::TriangulationBuilder) to validate
+//! Levels 1-4 and mint a [`Triangulation`](crate::Triangulation), then
+//! optionally pass that value to
+//! [`DelaunayRefinementBuilder`](crate::DelaunayRefinementBuilder) for Level 5
+//! repair and certification.
 //!
 //! # Algorithm
 //!
@@ -239,7 +239,7 @@ impl<U, V, const D: usize> Default for PlManifoldRepairStats<U, V, D> {
 /// The contained [`Tds`] has passed the repair algorithm's structural and
 /// targeted topology postconditions, but this type is deliberately not a
 /// topology proof. Use
-/// [`Triangulation::try_from_tds_with_topology_context`](crate::Triangulation::try_from_tds_with_topology_context)
+/// strict [`TriangulationBuilder`](crate::TriangulationBuilder)
 /// to validate Levels 1-4 before calling algorithms that require a
 /// proof-bearing [`Triangulation`](crate::Triangulation).
 ///
@@ -640,7 +640,7 @@ where
 /// This transformation consumes the input and keeps one rollback snapshot
 /// through all repair stages. Success does not itself certify Levels 3-4;
 /// compose the returned TDS with
-/// [`Triangulation::try_from_tds_with_topology_context`](crate::Triangulation::try_from_tds_with_topology_context)
+/// strict [`TriangulationBuilder`](crate::TriangulationBuilder)
 /// to obtain that proof-bearing domain type.
 ///
 /// # Errors
@@ -656,7 +656,7 @@ where
 /// ```rust
 /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
 /// use delaunay::prelude::repair::{PlManifoldRepairConfig, repair_pl_manifold_tds};
-/// use delaunay::prelude::triangulation::{FastKernel, Triangulation};
+/// use delaunay::prelude::triangulation::{FastKernel, TriangulationBuilder};
 /// use delaunay::prelude::topology::spaces::GlobalTopology;
 /// use delaunay::prelude::validation::{TopologyGuarantee, ValidationPolicy};
 /// use delaunay::RefinementError;
@@ -673,6 +673,8 @@ where
 /// #     Repair(#[from] delaunay::PlManifoldRepairError),
 /// #     #[error(transparent)]
 /// #     Realization(#[from] delaunay::TriangulationRealizationValidationError),
+/// #     #[error(transparent)]
+/// #     TriangulationBuild(#[from] delaunay::TriangulationBuilderError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
@@ -690,13 +692,11 @@ where
 /// )
 /// .map_err(RefinementError::into_reason)?;
 ///
-/// let triangulation = Triangulation::try_from_tds_with_topology_context(
-///     repaired.tds,
-///     FastKernel::new(),
-///     TopologyGuarantee::PLManifold,
-///     GlobalTopology::Euclidean,
-/// )
-/// .map_err(RefinementError::into_reason)?;
+/// let triangulation = TriangulationBuilder::new(repaired.tds, FastKernel::new())
+///     .topology_guarantee(TopologyGuarantee::PLManifold)
+///     .global_topology(GlobalTopology::Euclidean)
+///     .build()
+///     .map_err(RefinementError::into_reason)?;
 /// assert_ne!(triangulation.validation_policy(), ValidationPolicy::Never);
 /// # Ok(())
 /// # }
@@ -1334,7 +1334,8 @@ mod tests {
     use std::assert_matches;
 
     use super::*;
-    use crate::delaunay_model::DelaunayTriangulation;
+    use crate::core::tds::TdsBuilder;
+    use crate::core::vertex::Vertex;
     use crate::vertex;
     use slotmap::KeyData;
 
@@ -1344,6 +1345,17 @@ mod tests {
 
     fn init_tracing() {
         let _ = tracing_subscriber::fmt::try_init();
+    }
+
+    fn tds_from_specs<const D: usize>(
+        vertices: &[Vertex<(), D>],
+        simplices: &[Vec<usize>],
+    ) -> Tds<(), (), D> {
+        TdsBuilder::new(vertices, simplices).build().unwrap()
+    }
+
+    fn single_simplex_tds<const D: usize>(vertices: &[Vertex<(), D>]) -> Tds<(), (), D> {
+        tds_from_specs(vertices, &[(0..vertices.len()).collect()])
     }
 
     // =============================================================================
@@ -1385,9 +1397,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds = single_simplex_tds(&vertices);
 
         let config = PlManifoldRepairConfig::default();
         let stats = repair_facet_oversharing(&mut tds, &config).unwrap();
@@ -1410,9 +1420,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds = single_simplex_tds(&vertices);
 
         // Zero iterations — should succeed because already PL-manifold.
         let config = PlManifoldRepairConfig {
@@ -1436,9 +1444,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
             vertex!([1.0, 1.0]).unwrap(),
         ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds = tds_from_specs(&vertices, &[vec![0, 1, 2], vec![1, 3, 2]]);
 
         let config = PlManifoldRepairConfig::default();
         let stats = repair_facet_oversharing(&mut tds, &config).unwrap();
@@ -1459,9 +1465,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds = single_simplex_tds(&vertices);
 
         let stats = repair_facet_oversharing(&mut tds, &PlManifoldRepairConfig::default()).unwrap();
 
@@ -1490,9 +1494,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
             vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds = tds_from_specs(&vertices, &[vec![0, 1, 2, 3], vec![4, 1, 2, 3]]);
         assert!(
             tds.number_of_simplices() > 1,
             "Need multiple simplices for interior facets"
@@ -2208,19 +2210,17 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds();
+        let tds = single_simplex_tds(&vertices);
         let simplex_key = tds.simplex_keys().next().unwrap();
 
-        let score1 = simplex_quality_score(tds, simplex_key);
-        let score2 = simplex_quality_score(tds, simplex_key);
+        let score1 = simplex_quality_score(&tds, simplex_key);
+        let score2 = simplex_quality_score(&tds, simplex_key);
 
         assert!(score1.is_finite(), "Score should be finite, got {score1}");
         assert!(score1 > 0.0, "Score should be positive, got {score1}");
         approx::assert_relative_eq!(score1, score2, epsilon = 0.0);
         let invalid_score =
-            simplex_quality_score(tds, SimplexKey::from(KeyData::from_ffi(u64::MAX)));
+            simplex_quality_score(&tds, SimplexKey::from(KeyData::from_ffi(u64::MAX)));
         assert_eq!(invalid_score.to_bits(), f64::MAX.to_bits());
     }
 
@@ -2274,15 +2274,14 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
             vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let tds = tds_from_specs(&vertices, &[vec![0, 1, 2, 3], vec![4, 1, 2, 3]]);
 
         let config = PlManifoldRepairConfig::default();
 
-        let mut tds1 = dt.tds().clone();
+        let mut tds1 = tds.clone();
         let stats1 = repair_facet_oversharing(&mut tds1, &config).unwrap();
 
-        let mut tds2 = dt.tds().clone();
+        let mut tds2 = tds;
         let stats2 = repair_facet_oversharing(&mut tds2, &config).unwrap();
 
         assert_eq!(stats1, stats2);

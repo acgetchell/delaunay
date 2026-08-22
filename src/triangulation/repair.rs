@@ -5,7 +5,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::algorithms::incremental_insertion::{
+use crate::core::algorithms::insertion::{
     CavityFillingError, CavityRepairStage, InsertionError, InsertionTopologyValidationContext,
     external_facets_for_boundary, fill_cavity_replacing_simplices, repair_neighbor_pointers,
     repair_neighbor_pointers_local, wire_cavity_neighbors,
@@ -113,15 +113,6 @@ fn quality_error_to_tds_error(simplex_key: SimplexKey, error: QualityError) -> T
 pub struct LocalFacetRepairOutcome {
     /// Number of simplices actually removed from the TDS.
     pub(crate) removed_count: usize,
-    /// Simplices selected for removal before they were deleted.
-    #[cfg_attr(
-        not(debug_assertions),
-        expect(
-            dead_code,
-            reason = "Removed-simplex keys are retained for debug logging and future local repair diagnostics"
-        )
-    )]
-    pub(crate) removed_simplices: SimplexKeyBuffer,
     /// Surviving one-hop neighbors whose back-references may have been cleared.
     pub(crate) frontier_simplices: SimplexKeyBuffer,
     /// Vertices touched by simplices removed during local repair.
@@ -1258,7 +1249,6 @@ where
         if issues.is_empty() {
             return Ok(LocalFacetRepairOutcome {
                 removed_count: 0,
-                removed_simplices: SimplexKeyBuffer::new(),
                 frontier_simplices: SimplexKeyBuffer::new(),
                 affected_vertices: IncidentRepairVertexBuffer::new(),
             });
@@ -1285,7 +1275,6 @@ where
 
         Ok(LocalFacetRepairOutcome {
             removed_count,
-            removed_simplices: to_remove,
             frontier_simplices,
             affected_vertices,
         })
@@ -1646,31 +1635,30 @@ mod tests {
                         .map(|(k, _)| k)
                         .expect("Interior vertex not found");
 
-                    let initial_simplex_count = dt.tds().number_of_simplices();
+                    let initial_simplex_count = dt.number_of_simplices();
                     dt.delete_vertex(interior_vertex_key)
                         .expect("Failed to remove vertex");
 
                     // After removal, should have fewer simplices (or same if just 1 simplex left)
-                    assert!(dt.tds().number_of_simplices() <= initial_simplex_count,
+                    assert!(dt.number_of_simplices() <= initial_simplex_count,
                         "{}D: Simplex count should not increase after removal", $dim);
 
                     // Verify neighbor pointer consistency:
                     // 1. No dangling pointers (all neighbor keys exist)
                     // 2. Neighbor relationships are symmetric
-                    for (simplex_key, simplex) in dt.tds().simplices() {
+                    for (simplex_key, simplex) in dt.simplices() {
                         if let Some(neighbors) = simplex.neighbors() {
                             for (facet_idx, neighbor_opt) in neighbors.enumerate() {
                                 if let Some(neighbor_key) = neighbor_opt {
                                     // Verify neighbor exists
                                     assert!(
-                                        dt.tds().contains_simplex(neighbor_key),
+                                        dt.contains_simplex(neighbor_key),
                                         "{}D: Simplex {simplex_key:?} has neighbor pointer to non-existent simplex {neighbor_key:?}",
                                         $dim
                                     );
 
                                     // Verify symmetry: neighbor should point back to us
                                     let neighbor_simplex = dt
-                                        .tds()
                                         .simplex(neighbor_key)
                                         .expect("Neighbor simplex should exist");
                                     if let Some(mut neighbor_neighbors) = neighbor_simplex.neighbors() {
@@ -2358,7 +2346,7 @@ mod tests {
         );
         assert_eq!(dt.number_of_vertices(), initial_vertices);
         assert_eq!(dt.number_of_simplices(), initial_simplices);
-        assert!(dt.tds().contains_vertex_key(vertex_key));
+        assert!(dt.contains_vertex_key(vertex_key));
     }
 
     // =========================================================================

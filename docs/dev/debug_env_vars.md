@@ -68,9 +68,9 @@ This matters for large-scale investigations that need to run under
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_DEBUG_CAVITY` | presence | `incremental_insertion.rs`, `locate.rs` | Cavity boundary diagnostics, simplex creation provenance with orientation |
-| `DELAUNAY_DEBUG_HULL` | presence | `incremental_insertion.rs` | Hull extension visibility, locate stats, neighbor summary |
-| `DELAUNAY_DEBUG_HULL_DETAIL` | presence | `incremental_insertion.rs` | Per-facet orientation details during visibility computation |
+| `DELAUNAY_DEBUG_CAVITY` | presence | `core/algorithms/insertion.rs`, `locate.rs` | Cavity boundary diagnostics, simplex creation provenance with orientation |
+| `DELAUNAY_DEBUG_HULL` | presence | `core/algorithms/insertion.rs` | Hull extension visibility, locate stats, neighbor summary |
+| `DELAUNAY_DEBUG_HULL_DETAIL` | presence | `core/algorithms/insertion.rs` | Per-facet orientation details during visibility computation |
 
 ## Orientation
 
@@ -82,8 +82,8 @@ This matters for large-scale investigations that need to run under
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_DEBUG_NEIGHBORS` | presence | `incremental_insertion.rs`, `triangulation.rs` | Neighbor symmetry checks after cavity wiring and hull extension |
-| `DELAUNAY_DEBUG_RIDGE_LINK` | presence | `incremental_insertion.rs`, `triangulation.rs` | Ridge-link validation after wiring; skipped external facet matches |
+| `DELAUNAY_DEBUG_NEIGHBORS` | presence | `core/algorithms/insertion.rs`, `triangulation.rs` | Neighbor symmetry checks after cavity wiring and hull extension |
+| `DELAUNAY_DEBUG_RIDGE_LINK` | presence | `core/algorithms/insertion.rs`, `triangulation.rs` | Ridge-link checks; skipped external facet matches |
 | `DELAUNAY_FORCE_GLOBAL_NEIGHBOR_REBUILD` | presence | `triangulation.rs` | `[release]` Bypass local repair; use global rebuild for A/B isolation. |
 
 ## Flip Repair
@@ -178,8 +178,8 @@ release builds only.
 
 `benches/pachner_stress.rs` now benchmarks stable 4D move fixtures and
 forward/inverse round trips. Use `just bench-pachner-stress*` for Criterion
-timing, or run `delaunay pachner-stress` / `just pachner-stress*` for direct
-3D/4D diagnostic workloads with explicit command-line arguments.
+timing, or run `pachner-stress` / `just pachner-stress*` for
+direct 3D/4D diagnostic workloads with explicit command-line arguments.
 
 | Variable | Activation | Description |
 |---|---|---|

@@ -298,15 +298,16 @@ compile-only pass. `test-unit` runs lib unit
 tests in both debug and release profiles so debug assertions and default
 overflow checks remain covered. The nextest `debug` profile preserves the
 default 10-second watchdog, with 60-second overrides for the two periodic
-builder cases whose debug exact-geometry cost is platform-sensitive and, on
-Windows, two randomized 5D agreement checks at the timeout boundary. The
-optimized 5D intersection agreement check has the same focused override on
-macOS ARM runners.
+builder cases whose debug exact-geometry cost is platform-sensitive and the
+optimized 5D intersection agreement checks, which can reach that boundary on
+hosted runners. The randomized 5D full-report agreement check has the same
+focused override across platforms.
 `test-integration` runs a focused release-profile nextest bucket. Selected 4D
 property families retain that default coverage with a Windows-only 60-second
 override because their release runtimes sit at the 10-second boundary on
 Windows runners; non-Windows platforms keep the normal budget. `test-cli` owns
-the feature-gated CLI tests, and `test-rust` composes every Rust test class once.
+the feature-gated binary unit and CLI integration tests, and `test-rust`
+composes every Rust test class once.
 The LLVM-instrumented coverage profile retains its 300-second default watchdog
 and grants a 1,200-second override only to the three compact `T^3` builder cases
 that exercise periodic-image construction.
@@ -354,7 +355,7 @@ Workspace-wide benchmark recipes (`just bench`, `just bench-smoke`,
 dependencies are compiled.
 
 Use `just pachner-stress [attempts] [validate_every] [mode]` for the manual 3D+4D
-direct Pachner diagnostic run through the opt-in `delaunay` CLI. The
+direct Pachner diagnostic run through the opt-in `pachner-stress` binary. The
 dimension-specific `just pachner-stress-3d` and `just pachner-stress-4d` recipes
 default to 100 attempted moves with progress every 10 attempts, write progress
 CSV plus summary JSON under `target/pachner_stress/`, and keep parseable stdout
@@ -362,7 +363,8 @@ stage/report/progress lines so long workloads can be diagnosed without making
 the workflow part of routine CI. These direct stress recipes currently validate
 topology scope only (Levels 1-3); the large Level 4 realization overlap scan is
 deferred to the dedicated realization-validation work. The CLI supports
-`round-trip` and `random-walk` modes; `round-trip` is the default. Pass explicit
+The `pachner-stress` binary supports `round-trip` and `random-walk` modes;
+`round-trip` is the default. Pass explicit
 `attempts`, `vertices`, and `validate_every` arguments for soak runs. Use
 `just bench-pachner-stress` when Criterion timing statistics for stable 4D move
 and inverse fixtures are needed.
@@ -817,7 +819,7 @@ just action-lint
 | Validate core Rust checks | `just rust-core-check` |
 | Run all default test buckets | `just test` |
 | Run Rust tests only | `just test-rust` |
-| Run CLI-feature integration tests | `just test-cli` |
+| Run CLI-feature binary unit and integration tests | `just test-cli` |
 | Run Rust lib unit tests only | `just test-unit` |
 | Run doctests only | `just test-doc` |
 | Run integration tests | `just test-integration` |

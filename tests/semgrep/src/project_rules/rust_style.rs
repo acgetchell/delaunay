@@ -1,3 +1,4 @@
+// ruleid: delaunay.rust.no-dead-code-suppressions-in-src
 #![allow(dead_code, unused_imports)]
 
 use num_traits::NumCast;
@@ -9,11 +10,11 @@ pub struct Triangulation<K, U, V, const D: usize>(K, U, V);
 // ruleid: delaunay.rust.tds-defined-only-in-canonical-model
 pub struct Tds<U, V, const D: usize>(U, V);
 // ok: delaunay.rust.delaunay-defined-only-in-canonical-model
-pub struct DelaunayTriangulationCandidate<K, U, V, const D: usize>(K, U, V);
+pub struct DelaunayTriangulationDraft<K, U, V, const D: usize>(K, U, V);
 // ok: delaunay.rust.triangulation-defined-only-in-canonical-model
-pub struct TriangulationCandidate<K, U, V, const D: usize>(K, U, V);
+pub struct TriangulationWrapper<K, U, V, const D: usize>(K, U, V);
 // ok: delaunay.rust.tds-defined-only-in-canonical-model
-pub struct TdsCandidate<U, V, const D: usize>(U, V);
+pub struct TdsWrapper<U, V, const D: usize>(U, V);
 pub trait BistellarFlips<const D: usize> {}
 pub trait PachnerMoves<const D: usize> {}
 
@@ -71,40 +72,124 @@ fn into_realization_validated_delaunay() {}
 // ok: delaunay.rust.no-lower-proof-delaunay-promotion
 fn into_realization_validated_triangulation() {}
 
-mod invalid_delaunay_candidate_fixture {
+mod invalid_delaunay_draft_fixture {
     use super::*;
 
-    // ruleid: delaunay.rust.no-unproven-delaunay-candidate-storage
-    struct DelaunayTriangulationCandidate<K, U, V, const D: usize> {
-        candidate: DelaunayTriangulation<K, U, V, D>,
+    // ruleid: delaunay.rust.delaunay-draft-must-store-triangulation
+    struct DelaunayTriangulationDraft<K, U, V, const D: usize> {
+        draft: DelaunayTriangulation<K, U, V, D>,
     }
 }
 
-mod valid_triangulation_candidate_fixture {
+mod valid_delaunay_draft_fixture {
     use super::*;
 
-    // ok: delaunay.rust.no-unproven-delaunay-candidate-storage
-    struct DelaunayTriangulationCandidate<K, U, V, const D: usize> {
-        candidate: Triangulation<K, U, V, D>,
+    // ok: delaunay.rust.delaunay-draft-must-store-triangulation
+    struct DelaunayTriangulationDraft<K, U, V, const D: usize> {
+        draft: Triangulation<K, U, V, D>,
     }
 }
 
-mod invalid_triangulation_assembly_candidate_fixture {
+mod invalid_delaunay_batch_workspace_fixture {
+    use super::*;
+
+    // ruleid: delaunay.rust.delaunay-batch-workspace-must-store-triangulation
+    struct DelaunayBatchWorkspace<K, U, V, const D: usize> {
+        workspace: DelaunayTriangulation<K, U, V, D>,
+    }
+}
+
+mod valid_delaunay_batch_workspace_fixture {
+    use super::*;
+
+    // ok: delaunay.rust.delaunay-batch-workspace-must-store-triangulation
+    struct DelaunayBatchWorkspace<K, U, V, const D: usize> {
+        workspace: Triangulation<K, U, V, D>,
+    }
+}
+
+mod invalid_triangulation_assembly_workspace_fixture {
     use super::*;
 
     // ruleid: delaunay.rust.no-unproven-triangulation-assembly-storage
-    struct TriangulationAssemblyCandidate<K, U, V, const D: usize> {
-        candidate: Triangulation<K, U, V, D>,
+    struct TriangulationAssemblyWorkspace<K, U, V, const D: usize> {
+        workspace: Triangulation<K, U, V, D>,
     }
 }
 
-mod valid_triangulation_assembly_candidate_fixture {
+mod valid_triangulation_assembly_workspace_fixture {
     use super::*;
 
     // ok: delaunay.rust.no-unproven-triangulation-assembly-storage
-    struct TriangulationAssemblyCandidate<K, U, V, const D: usize> {
+    struct TriangulationAssemblyWorkspace<K, U, V, const D: usize> {
         tds: Tds<U, V, D>,
         kernel: K,
+    }
+}
+
+struct UnverifiedTds<U, V, const D: usize>(U, V);
+struct UnverifiedTriangulation<K, U, V, const D: usize>(K, U, V);
+
+mod invalid_public_proof_owner_typestate_fixtures {
+    // ruleid: delaunay.rust.proof-owners-must-not-expose-publication-typestate, delaunay.rust.tds-defined-only-in-canonical-model
+    pub struct Tds<U, V, const D: usize, State>(U, V, State);
+
+    // ruleid: delaunay.rust.proof-owners-must-not-expose-publication-typestate, delaunay.rust.triangulation-defined-only-in-canonical-model
+    pub struct Triangulation<K, U, V, const D: usize, State>(K, U, V, State);
+}
+
+mod valid_public_proof_owner_fixtures {
+    // ok: delaunay.rust.proof-owners-must-not-expose-publication-typestate
+    // ruleid: delaunay.rust.tds-defined-only-in-canonical-model
+    pub struct Tds<U, V, const D: usize>(U, V);
+
+    // ok: delaunay.rust.proof-owners-must-not-expose-publication-typestate
+    // ruleid: delaunay.rust.triangulation-defined-only-in-canonical-model
+    pub struct Triangulation<K, U, V, const D: usize>(K, U, V);
+}
+
+mod invalid_tds_draft_fixture {
+    use super::*;
+
+    // ruleid: delaunay.rust.tds-draft-must-store-unverified-state
+    struct TdsDraft<U, V, const D: usize> {
+        storage: Tds<U, V, D>,
+    }
+}
+
+mod valid_tds_draft_fixture {
+    use super::*;
+
+    // ok: delaunay.rust.tds-draft-must-store-unverified-state
+    struct TdsDraft<U, V, const D: usize> {
+        storage: UnverifiedTds<U, V, D>,
+    }
+}
+
+mod invalid_triangulation_draft_fixture {
+    use super::*;
+
+    // ruleid: delaunay.rust.triangulation-draft-must-store-unverified-state
+    struct TriangulationDraft<K, U, V, const D: usize> {
+        triangulation: Triangulation<K, U, V, D>,
+    }
+}
+
+mod valid_triangulation_draft_fixture {
+    use super::*;
+
+    // ok: delaunay.rust.triangulation-draft-must-store-unverified-state
+    struct TriangulationDraft<K, U, V, const D: usize> {
+        triangulation: UnverifiedTriangulation<K, U, V, D>,
+    }
+}
+
+mod invalid_delaunay_bootstrap_fixture {
+    use super::*;
+
+    // ruleid: delaunay.rust.delaunay-bootstrap-workspace-must-use-tds-draft
+    struct DelaunayBootstrapWorkspace<K, U, V, const D: usize> {
+        triangulation: TriangulationDraft<K, U, V, D>,
     }
 }
 
@@ -260,7 +345,7 @@ mod lossy_pl_manifold_repair_fixture {
 
 fn detached_trusted_delaunay_publication(candidate: RecoverableRefinementFixture) {
     // ruleid: delaunay.rust.no-detached-trusted-delaunay-publication
-    candidate.into_delaunay_after_level_five_check();
+    candidate.publish_verified();
 }
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
@@ -280,14 +365,14 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     pub(crate) const fn set_internal_delaunay_repair_policy(&mut self) {}
 
     // ruleid: delaunay.rust.no-build-delaunay-then-demote-terminal
-    fn build_candidate_with_kernel_options() -> Result<Self, ()> {
+    fn build_workspace_with_kernel_options() -> Result<Self, ()> {
         todo!()
     }
 }
 
 // ok: delaunay.rust.no-build-delaunay-then-demote-terminal
-fn build_candidate_with_kernel_options_valid<K, U, V, const D: usize>()
--> Result<valid_triangulation_assembly_candidate_fixture::TriangulationAssemblyCandidate<K, U, V, D>, ()> {
+fn build_workspace_with_kernel_options_valid<K, U, V, const D: usize>()
+-> Result<valid_triangulation_assembly_workspace_fixture::TriangulationAssemblyWorkspace<K, U, V, D>, ()> {
     todo!()
 }
 
@@ -295,7 +380,7 @@ fn build_candidate_with_kernel_options_valid<K, U, V, const D: usize>()
 fn from_realized_triangulation_for_repair() {}
 
 // ok: delaunay.rust.no-level4-delaunay-repair-constructor
-fn from_validated_delaunay_candidate() {}
+fn from_validated_delaunay_draft() {}
 
 // ruleid: delaunay.rust.no-detached-candidate-validation-proof
 struct DelaunayTriangulationValidationProof(());
@@ -344,7 +429,7 @@ fn invalid_triangulation_terminal(builder: Builder, kernel: &Kernel) {
 // ok: delaunay.rust.no-build-delaunay-then-demote-terminal
 fn build_triangulation_with_kernel_options() {}
 
-// ruleid: delaunay.rust.no-module-scope-cfg-test-use
+// ruleid: delaunay.rust.no-cfg-test-items-outside-test-modules
 #[cfg(test)]
 use crate::tests::FixtureOnlyImport;
 
@@ -352,11 +437,53 @@ use crate::tests::FixtureOnlyImport;
 #[cfg(test)]
 fn misplaced_test_helper() {}
 
+fn production_path_with_test_statement() {
+    // ruleid: delaunay.rust.no-cfg-test-items-outside-test-modules
+    #[cfg(test)]
+    test_support::record_event();
+}
+
+struct TestHelperOwner;
+
+impl TestHelperOwner {
+    // ruleid: delaunay.rust.no-cfg-test-items-outside-test-modules
+    #[cfg(test)]
+    #[expect(
+        clippy::missing_const_for_fn,
+        reason = "fixture models attributes between cfg(test) and a misplaced helper"
+    )]
+    pub(crate) fn misplaced_test_helper_with_attribute() {}
+}
+
 // ok: delaunay.rust.no-cfg-test-items-outside-test-modules
 #[cfg(test)]
 mod correctly_scoped_test_support {
     fn helper() {}
 }
+
+// ruleid: delaunay.rust.no-dead-code-suppressions-in-src
+#[expect(
+    dead_code,
+    reason = "fixture models a direct dead-code suppression"
+)]
+fn dead_code_expectation_fixture() {}
+
+// ruleid: delaunay.rust.no-dead-code-suppressions-in-src
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "fixture models a conditional dead-code suppression"
+    )
+)]
+fn conditional_dead_code_expectation_fixture() {}
+
+// ok: delaunay.rust.no-dead-code-suppressions-in-src
+#[expect(
+    clippy::too_many_arguments,
+    reason = "non-dead-code lint expectations remain explicit and permitted"
+)]
+fn non_dead_code_expectation_fixture() {}
 
 // ruleid: delaunay.rust.prefer-prelude-imports-in-examples-benches
 use delaunay::core::vertex::Vertex as DeepVertex;
@@ -1309,6 +1436,7 @@ struct TriangulationOwnerFixture {
 }
 
 impl TriangulationOwnerFixture {
+    // ok: delaunay.rust.no-delaunay-tds-accessor-method
     fn tds(&self) -> &Tds {
         todo!()
     }
@@ -1329,6 +1457,7 @@ impl DelaunayOwnerFixture {
         todo!()
     }
 
+    // ruleid: delaunay.rust.no-delaunay-tds-accessor-method
     fn tds(&self) -> &Tds {
         todo!()
     }
@@ -1347,8 +1476,6 @@ fn as_triangulation_storage_bypass_fixture(dt: &DelaunayOwnerFixture) {
     let _kernel = &dt.as_triangulation().kernel;
     // ruleid: delaunay.rust.no-as-triangulation-storage-reach-through
     let _kernel = dt.as_triangulation().kernel();
-    // ok: delaunay.rust.no-as-triangulation-storage-reach-through
-    let _storage = dt.tds();
     // ok: delaunay.rust.no-as-triangulation-storage-reach-through
     let _generation = dt.topology_generation();
     // ok: delaunay.rust.no-as-triangulation-storage-reach-through

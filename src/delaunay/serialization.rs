@@ -214,8 +214,8 @@ where
 ///
 /// The internal `insertion_state.last_inserted_simplex` locate hint is not
 /// serialized. Deserialization reconstructs a fresh triangulation via
-/// [`DelaunayTriangulation::try_from_tds_with_topology_context`], which resets
-/// the hint to `None`.
+/// the same strict TDS → `Triangulation` → `DelaunayTriangulation` proof chain,
+/// which resets the hint to `None`.
 /// This only affects performance for the first few insertions after loading.
 ///
 /// # Usage with Other Kernels
@@ -224,16 +224,15 @@ where
 /// caller-supplied kernel cannot be obtained from `Deserialize`. Workflows
 /// requiring another kernel should persist their [`Tds`] and owner-level
 /// topology context explicitly, then reconstruct with
-/// [`DelaunayTriangulation::try_from_tds_with_topology_context`].
+/// strict [`TriangulationBuilder`](crate::TriangulationBuilder) followed by
+/// strict [`DelaunayRefinementBuilder`](crate::DelaunayRefinementBuilder).
 ///
 /// ```rust
 /// # use delaunay::prelude::geometry::AdaptiveKernel;
 /// # use delaunay::prelude::tds::Tds;
-/// # use delaunay::prelude::construction::{
-/// #     DelaunayTriangulation, DelaunayTriangulationBuilder, GlobalTopology,
-/// #     TopologyGuarantee,
-/// # };
-/// # use delaunay::prelude::validation::DelaunayTdsRefinementError;
+/// # use delaunay::prelude::construction::DelaunayTriangulationBuilder;
+/// # use delaunay::prelude::triangulation::TriangulationBuilder;
+/// # use delaunay::{DelaunayRefinementBuilder, RefinementError};
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
 /// #     #[error(transparent)]
@@ -242,6 +241,8 @@ where
 /// #     Serde(#[from] serde_json::Error),
 /// #     #[error(transparent)]
 /// #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+/// #     #[error(transparent)]
+/// #     TriangulationBuild(#[from] delaunay::TriangulationBuilderError),
 /// #     #[error(transparent)]
 /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
@@ -258,13 +259,14 @@ where
 /// let tds_json = serde_json::to_string(&dt.into_triangulation().into_tds())?;
 ///
 /// let tds: Tds<(), (), 3> = serde_json::from_str(&tds_json)?;
-/// let dt_adaptive = DelaunayTriangulation::try_from_tds_with_topology_context(
-///     tds,
-///     AdaptiveKernel::new(),
-///     topology_guarantee,
-///     global_topology,
-/// )
-/// .map_err(DelaunayTdsRefinementError::into_reason)?;
+/// let triangulation = TriangulationBuilder::new(tds, AdaptiveKernel::new())
+///     .topology_guarantee(topology_guarantee)
+///     .global_topology(global_topology)
+///     .build()
+///     .map_err(RefinementError::into_reason)?;
+/// let dt_adaptive = DelaunayRefinementBuilder::new(triangulation)
+///     .build()
+///     .map_err(RefinementError::into_reason)?;
 /// # let _ = dt_adaptive;
 /// # Ok(())
 /// # }
@@ -305,7 +307,7 @@ where
             .try_into_global_topology::<D>()
             .map_err(serde::de::Error::custom)?;
 
-        let mut triangulation = Self::try_from_tds_with_topology_context(
+        let mut triangulation = Self::try_restore_from_tds_with_topology_context(
             wire.tds,
             RobustKernel::new(),
             topology_guarantee,

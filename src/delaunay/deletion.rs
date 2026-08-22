@@ -9,16 +9,17 @@
 
 use crate::construction::local_repair_flip_budget;
 use crate::core::algorithms::flips::{
-    FlipError, apply_bistellar_flip_k1_inverse_raw, repair_delaunay_with_flips_k2_k3,
+    DelaunayRepairError, FlipError, apply_bistellar_flip_k1_inverse_raw,
+    repair_delaunay_with_flips_k2_k3,
 };
 use crate::core::collections::SimplexKeyBuffer;
-use crate::core::tds::{InvariantError, NeighborValidationError, TdsError, VertexKey};
+use crate::core::tds::{InvariantError, NeighborValidationError, SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::delaunay_model::DelaunayTriangulation;
 use crate::delaunay_rollback::{DelaunayRollbackTransaction, DelaunaySpatialIndexRollback};
 use crate::geometry::kernel::Kernel;
 use crate::repair::DelaunayRepairOperation;
-use crate::triangulation::validation::insertion_error_to_invariant_error;
+use crate::triangulation::validation::{TopologyGuarantee, insertion_error_to_invariant_error};
 use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
 
@@ -230,6 +231,35 @@ where
     /// # }
     /// ```
     pub fn delete_vertex(&mut self, vertex_key: VertexKey) -> Result<usize, DeleteVertexError> {
+        self.delete_vertex_with_repair(vertex_key, |delaunay, seed_ref, topology, max_flips| {
+            delaunay.invalidate_locate_hint_cache();
+            let global_topology = delaunay.tri.global_topology();
+            let (tds, kernel) = (&mut delaunay.tri.tds, &delaunay.tri.kernel);
+            repair_delaunay_with_flips_k2_k3(
+                tds,
+                kernel,
+                seed_ref,
+                topology,
+                global_topology,
+                Some(max_flips),
+            )
+            .map(|_| ())
+        })
+    }
+
+    fn delete_vertex_with_repair<F>(
+        &mut self,
+        vertex_key: VertexKey,
+        mut run_repair: F,
+    ) -> Result<usize, DeleteVertexError>
+    where
+        F: for<'seed> FnMut(
+            &mut Self,
+            Option<&'seed [SimplexKey]>,
+            TopologyGuarantee,
+            usize,
+        ) -> Result<(), DelaunayRepairError>,
+    {
         let Some(removed_vertex) = self.tri.tds.vertex(vertex_key) else {
             return Err(DeleteVertexError::VertexNotFound { vertex_key });
         };
@@ -244,31 +274,12 @@ where
             {
                 let delaunay = transaction.delaunay_mut();
                 let topology = delaunay.tri.topology_guarantee();
-                let global_topology = delaunay.tri.global_topology();
                 if delaunay.should_run_delaunay_repair_after_mutation(topology) {
                     let seed_ref = seed_simplices.as_deref();
                     let repair_seed_count =
                         seed_ref.map_or_else(|| delaunay.tri.tds.number_of_simplices(), <[_]>::len);
                     let max_flips = local_repair_flip_budget::<D>(repair_seed_count);
-                    let repair_result = {
-                        delaunay.invalidate_locate_hint_cache();
-                        let (tds, kernel) = (&mut delaunay.tri.tds, &delaunay.tri.kernel);
-                        repair_delaunay_with_flips_k2_k3(
-                            tds,
-                            kernel,
-                            seed_ref,
-                            topology,
-                            global_topology,
-                            Some(max_flips),
-                        )
-                    };
-
-                    #[cfg(test)]
-                    let repair_result = if tests::force_repair_nonconvergent_enabled() {
-                        Err(tests::synthetic_nonconvergent_error())
-                    } else {
-                        repair_result
-                    };
+                    let repair_result = run_repair(delaunay, seed_ref, topology, max_flips);
 
                     repair_result.map_err(|source| InvariantError::Delaunay {
                         source: DelaunayTriangulationValidationError::RepairOperationFailed {
@@ -331,24 +342,11 @@ mod tests {
     use crate::triangulation::validation::{TopologyGuarantee, TriangulationValidationError};
     use crate::vertex;
     use std::assert_matches;
-    use std::cell::Cell;
     use std::sync::Once;
     use uuid::Uuid;
 
-    // Last-resort fault injection for rollback branches that are hard to
-    // trigger deterministically; thread-local state avoids cross-test leakage.
-    // Remove this once a cleaner harness can reach the branch directly.
-    thread_local! {
-        static FORCE_REPAIR_NONCONVERGENT: Cell<bool> = const { Cell::new(false) };
-    }
-
     #[must_use]
-    pub(super) fn force_repair_nonconvergent_enabled() -> bool {
-        FORCE_REPAIR_NONCONVERGENT.with(Cell::get)
-    }
-
-    #[must_use]
-    pub(super) fn synthetic_nonconvergent_error() -> DelaunayRepairError {
+    fn synthetic_nonconvergent_error() -> DelaunayRepairError {
         DelaunayRepairError::NonConvergent {
             max_flips: 0,
             diagnostics: Box::new(DelaunayRepairDiagnostics {
@@ -366,15 +364,6 @@ mod tests {
         }
     }
 
-    #[must_use]
-    fn set_force_repair_nonconvergent(enabled: bool) -> bool {
-        FORCE_REPAIR_NONCONVERGENT.with(|flag| {
-            let prior = flag.get();
-            flag.set(enabled);
-            prior
-        })
-    }
-
     fn init_tracing() {
         static INIT: Once = Once::new();
         INIT.call_once(|| {
@@ -385,24 +374,6 @@ mod tests {
                 .with_test_writer()
                 .try_init();
         });
-    }
-
-    struct ForceRepairNonconvergentGuard {
-        previous: bool,
-    }
-
-    impl ForceRepairNonconvergentGuard {
-        fn enable() -> Self {
-            Self {
-                previous: set_force_repair_nonconvergent(true),
-            }
-        }
-    }
-
-    impl Drop for ForceRepairNonconvergentGuard {
-        fn drop(&mut self) {
-            let _ = set_force_repair_nonconvergent(self.previous);
-        }
     }
 
     fn simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
@@ -462,8 +433,9 @@ mod tests {
             .as_ref()
             .map(HashGridIndex::<D>::debug_snapshot);
 
-        let _guard = ForceRepairNonconvergentGuard::enable();
-        let result = dt.delete_vertex(vertex_key);
+        let result = dt.delete_vertex_with_repair(vertex_key, |_, _, _, _| {
+            Err(synthetic_nonconvergent_error())
+        });
         let err = result.expect_err("forced repair failure should make deletion fail");
         match err {
             DeleteVertexError::InvariantViolation { source } => match source.as_ref() {

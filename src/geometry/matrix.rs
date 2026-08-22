@@ -246,17 +246,24 @@ pub fn determinant<const D: usize>(m: &Matrix<D>) -> Result<f64, LaError> {
     }
 }
 
-/// Dispatch a runtime `k` to a stack-allocated matrix for concise unit tests.
 #[cfg(test)]
-macro_rules! with_la_stack_matrix {
-    ($k:expr, |$m:ident| $body:block) => {{
-        la_stack::try_with_stack_matrix!($k, |mut $m| -> Result<_, la_stack::LaError> { Ok($body) })
+pub(crate) mod test_support {
+    /// Dispatch a runtime `k` to a stack-allocated matrix for concise unit tests.
+    macro_rules! with_la_stack_matrix {
+        ($k:expr, |$m:ident| $body:block) => {{
+            la_stack::try_with_stack_matrix!($k, |mut $m| -> Result<_, la_stack::LaError> {
+                Ok($body)
+            })
             .expect("test requested an unsupported stack matrix size")
-    }};
+        }};
+    }
+
+    pub(crate) use with_la_stack_matrix;
 }
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::with_la_stack_matrix;
     use super::*;
     use std::assert_matches;
 

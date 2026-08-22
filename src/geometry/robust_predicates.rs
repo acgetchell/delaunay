@@ -25,14 +25,8 @@ static PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
 /// Returns whether strict insphere consistency diagnostics are active.
 ///
 /// Production code reads `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` once per
-/// process. Unit tests can override the value for the current test thread so
-/// branch coverage does not depend on process-wide environment mutation.
+/// process.
 fn strict_insphere_consistency_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(enabled) = test_support::strict_insphere_consistency_override() {
-        return enabled;
-    }
-
     *PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY
 }
 
@@ -181,6 +175,18 @@ pub fn robust_insphere<const D: usize>(
     simplex_points: &[Point<D>],
     test_point: &Point<D>,
 ) -> Result<InSphere, CoordinateConversionError> {
+    robust_insphere_with_consistency(
+        simplex_points,
+        test_point,
+        strict_insphere_consistency_enabled(),
+    )
+}
+
+fn robust_insphere_with_consistency<const D: usize>(
+    simplex_points: &[Point<D>],
+    test_point: &Point<D>,
+    strict_consistency: bool,
+) -> Result<InSphere, CoordinateConversionError> {
     if simplex_points.len() != D + 1 {
         return Err(CoordinateConversionError::InvalidSimplexPointCount {
             actual: simplex_points.len(),
@@ -192,7 +198,7 @@ pub fn robust_insphere<const D: usize>(
     // Strategy 1: Exact-sign determinant approach with adaptive tolerance.
     match relative_exact_insphere(simplex_points, test_point) {
         Ok(result) => {
-            if strict_insphere_consistency_enabled() {
+            if strict_consistency {
                 // Strategy 2: Diagnostic consistency check against distance-based insphere.
                 // The exact-sign result is provably correct for finite inputs; a disagreement
                 // from insphere_distance reflects f64 rounding in the distance-based check,
@@ -280,6 +286,18 @@ pub(crate) fn robust_insphere_positive_oriented<const D: usize>(
     simplex_points: &[Point<D>],
     test_point: &Point<D>,
 ) -> Result<InSphere, CoordinateConversionError> {
+    robust_insphere_positive_oriented_with_consistency(
+        simplex_points,
+        test_point,
+        strict_insphere_consistency_enabled(),
+    )
+}
+
+fn robust_insphere_positive_oriented_with_consistency<const D: usize>(
+    simplex_points: &[Point<D>],
+    test_point: &Point<D>,
+    strict_consistency: bool,
+) -> Result<InSphere, CoordinateConversionError> {
     if simplex_points.len() != D + 1 {
         return Err(CoordinateConversionError::InvalidSimplexPointCount {
             actual: simplex_points.len(),
@@ -288,7 +306,7 @@ pub(crate) fn robust_insphere_positive_oriented<const D: usize>(
         });
     }
     if D > 5 {
-        return robust_insphere(simplex_points, test_point);
+        return robust_insphere_with_consistency(simplex_points, test_point, strict_consistency);
     }
 
     let determinant_sign = relative_insphere_determinant_sign(simplex_points, test_point)?;
@@ -300,7 +318,7 @@ pub(crate) fn robust_insphere_positive_oriented<const D: usize>(
         Ordering::Equal => InSphere::BOUNDARY,
     };
 
-    if strict_insphere_consistency_enabled()
+    if strict_consistency
         && let ConsistencyResult::Inconsistent(error) =
             verify_insphere_consistency(simplex_points, test_point, result)
     {
@@ -474,46 +492,9 @@ fn verify_insphere_consistency<const D: usize>(
 }
 
 #[cfg(test)]
-mod test_support {
-    use std::cell::Cell;
-
-    thread_local! {
-        static STRICT_INSPHERE_CONSISTENCY_OVERRIDE: Cell<Option<bool>> =
-            const { Cell::new(None) };
-    }
-
-    pub(super) struct StrictInsphereConsistencyOverrideGuard {
-        previous: Option<bool>,
-    }
-
-    impl Drop for StrictInsphereConsistencyOverrideGuard {
-        fn drop(&mut self) {
-            STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(|override_value| {
-                override_value.set(self.previous);
-            });
-        }
-    }
-
-    pub(super) fn strict_insphere_consistency_override() -> Option<bool> {
-        STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(Cell::get)
-    }
-
-    pub(super) fn set_strict_insphere_consistency(
-        enabled: bool,
-    ) -> StrictInsphereConsistencyOverrideGuard {
-        let previous = STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(|override_value| {
-            let previous = override_value.get();
-            override_value.set(Some(enabled));
-            previous
-        });
-        StrictInsphereConsistencyOverrideGuard { previous }
-    }
-}
-
-#[cfg(test)]
 mod tests {
-    use super::test_support::set_strict_insphere_consistency;
     use super::*;
+    use crate::geometry::matrix::test_support::with_la_stack_matrix;
     use crate::geometry::matrix::{Matrix, matrix_get};
     use crate::geometry::point::Point;
     use crate::geometry::predicates;
@@ -521,7 +502,6 @@ mod tests {
     use num_traits::NumCast;
     use rand::{RngExt, SeedableRng};
     use std::assert_matches;
-    use std::thread;
 
     fn matrix_block_is_finite<const N: usize>(matrix: &Matrix<N>, k: usize) -> bool {
         (0..k).all(|row| (0..k).all(|column| matrix_get(matrix, row, column).unwrap().is_finite()))
@@ -707,32 +687,7 @@ mod tests {
     }
 
     #[test]
-    fn test_strict_insphere_consistency_override_is_thread_local() {
-        let process_wide_setting = *PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY;
-        assert_eq!(strict_insphere_consistency_enabled(), process_wide_setting);
-
-        {
-            let _guard = set_strict_insphere_consistency(!process_wide_setting);
-            assert_eq!(strict_insphere_consistency_enabled(), !process_wide_setting);
-
-            {
-                let _nested_guard = set_strict_insphere_consistency(process_wide_setting);
-                assert_eq!(strict_insphere_consistency_enabled(), process_wide_setting);
-            }
-            assert_eq!(strict_insphere_consistency_enabled(), !process_wide_setting);
-
-            let child_setting = thread::spawn(strict_insphere_consistency_enabled)
-                .join()
-                .expect("strict insphere consistency check thread should not panic");
-            assert_eq!(child_setting, process_wide_setting);
-        }
-
-        assert_eq!(strict_insphere_consistency_enabled(), process_wide_setting);
-    }
-
-    #[test]
-    fn test_strict_insphere_consistency_override_exercises_error_path() {
-        let _guard = set_strict_insphere_consistency(true);
+    fn test_strict_insphere_consistency_exercises_error_path() {
         let simplex = vec![
             Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
@@ -742,15 +697,15 @@ mod tests {
         let test_point = Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates");
 
         assert_eq!(
-            robust_insphere(&simplex, &test_point).unwrap(),
+            robust_insphere_with_consistency(&simplex, &test_point, true).unwrap(),
             InSphere::INSIDE
         );
         assert!(
             matches!(
-                robust_insphere_positive_oriented(&simplex, &test_point),
+                robust_insphere_positive_oriented_with_consistency(&simplex, &test_point, true),
                 Err(CoordinateConversionError::InsphereInconsistency { .. })
             ),
-            "strict consistency override should exercise the positive-oriented diagnostic error path"
+            "strict consistency should exercise the positive-oriented diagnostic error path"
         );
     }
 

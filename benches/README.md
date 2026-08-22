@@ -100,7 +100,7 @@ allocation checks, or targeted diagnostics.
 
 | Benchmark | Purpose | Scale | Typical Runtime | Used By |
 |-----------|---------|-------|-----------------|---------|
-| `allocation_hot_paths.rs` | Construction/query/barycenter allocation contracts | Calibrated 2D-5D canary fixtures | ~1-2 min | Manual allocation checks |
+| `allocation_hot_paths.rs` | Bootstrap/insert/query/barycenter allocations | Calibrated 2D-5D canaries | ~1-2 min | Manual allocation checks |
 | `ci_performance_suite.rs` | Public workflow regression contract | Calibrated 2D-5D canaries | ~5-10 min | CI, baselines, `just perf-no-regressions` |
 | `circumsphere_containment.rs` | Circumsphere predicates and solves | 2D-5D predicates, 3D LU/exact solves | ~5 min | Predicate/circumcenter tuning |
 | `cold_path_predicates.rs` | Track predicate paths | Hot, centered, and certified exact cases in 2D-5D | ~2-5 min | Predicate tuning |
@@ -354,7 +354,7 @@ just bench-pachner-stress
 The `just pachner-stress` recipe runs 9,000 vertices in 3D and 1,000 vertices in
 4D; the dimension-specific recipes use the same defaults. These recipes default
 to 100 attempted Pachner steps with topology validation every 10 attempts. The
-direct `delaunay pachner-stress` CLI has larger soak-test defaults: 10,000
+direct `pachner-stress` binary has larger soak-test defaults: 10,000
 vertices in 3D or 1,000 in 4D, 100,000 attempts, and validation every 1,000
 attempts.
 

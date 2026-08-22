@@ -15,6 +15,18 @@ impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for Triangulation<K, U, 
     }
 }
 
+/// Shared mutation surface for algorithms that need a triangulation owner
+/// inside an owner-selected TDS rollback transaction.
+///
+/// Higher proof owners implement this trait so Levels 3–4 algorithms can reuse
+/// the higher owner's rollback snapshot instead of nesting another full TDS
+/// snapshot. The higher owner remains responsible for commit versus rollback
+/// and for restoring any state coupled to the TDS.
+pub trait TriangulationRollbackWindow<K, U, V, const D: usize>: TdsRollbackWindow<U, V, D> {
+    /// Borrows the Levels 3–4 owner for one mutation or validation step.
+    fn triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D>;
+}
+
 /// Scoped rollback guard for a `Triangulation` mutation that snapshots only
 /// the owned TDS while allowing method-level mutation through the owner.
 #[must_use = "rollback transactions restore on drop unless explicitly committed or rolled back"]
@@ -72,6 +84,17 @@ where
 
     fn restore_rollback_tds(&mut self) {
         self.restore();
+    }
+}
+
+impl<K, U, V, const D: usize> TriangulationRollbackWindow<K, U, V, D>
+    for TriangulationRollbackTransaction<'_, K, U, V, D>
+where
+    U: Clone,
+    V: Clone,
+{
+    fn triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D> {
+        self.inner.owner_mut()
     }
 }
 

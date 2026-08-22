@@ -5,8 +5,8 @@ use super::errors::{
     TriangulationConstructionState,
 };
 use super::incidence::SimplexIncidenceRemoval;
-use super::model::{SimplexUuidSortKey, Tds};
-use super::{SimplexKey, TdsRollbackTransaction, VertexKey};
+use super::model::{SimplexUuidSortKey, Tds, UnverifiedTds};
+use super::{SimplexKey, VertexKey};
 use crate::core::collections::{
     CLEANUP_OPERATION_BUFFER_SIZE, Entry, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeySet,
     SimplexRemovalBuffer, SmallBuffer, VertexKeySet, fast_hash_map_with_capacity,
@@ -182,27 +182,6 @@ impl CandidateIncidentRecords {
 }
 
 impl<U, V, const D: usize> Tds<U, V, D> {
-    /// Audits Levels 1–2 before marking this TDS construction complete.
-    ///
-    /// Raw assembly workspaces remain `Incomplete` until their elements,
-    /// mappings, incidence, neighbors, and coherent orientation have all been
-    /// checked by the layer that owns those invariants. On failure, the
-    /// construction state is unchanged.
-    pub(crate) fn complete_construction(&mut self) -> Result<(), TdsError> {
-        let vertex_count = self.number_of_vertices();
-        let simplex_count = self.number_of_simplices();
-        if vertex_count < D + 1 || simplex_count == 0 {
-            return Err(TdsError::IncompleteConstruction {
-                dimension: D,
-                vertex_count,
-                simplex_count,
-            });
-        }
-        self.validate()?;
-        self.construction_state = TriangulationConstructionState::Constructed;
-        Ok(())
-    }
-
     /// Assigns neighbor relationships between simplices based on shared facets with semantic ordering.
     ///
     /// This method efficiently builds neighbor relationships by using the `facet_key_from_vertices`
@@ -2424,59 +2403,76 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             return Ok(0);
         }
 
-        let mut transaction = TdsRollbackTransaction::begin(self);
-        let removed = transaction
-            .tds_mut()
-            .remove_simplices_by_keys(&simplices_to_remove)?;
+        let rollback = self.clone_for_rollback();
+        let removed = self.remove_simplices_by_keys(&simplices_to_remove)?;
         let rebuild_result = (|| -> Result<(), TdsMutationError> {
-            let tds = transaction.tds_mut();
-            tds.assign_neighbors().map_err(TdsMutationError::from)?;
-            tds.assign_incident_simplices()?;
-            tds.is_valid().map_err(TdsMutationError::from)
+            self.assign_neighbors().map_err(TdsMutationError::from)?;
+            self.assign_incident_simplices()?;
+            self.is_valid().map_err(TdsMutationError::from)
         })();
 
         if let Err(error) = rebuild_result {
-            transaction.rollback();
+            self.clone_from_for_rollback(&rollback);
             return Err(error);
         }
 
-        transaction.commit();
         Ok(removed)
+    }
+}
+
+impl<U, V, const D: usize> UnverifiedTds<U, V, D> {
+    /// Consumes fully assembled draft storage and publishes a verified TDS.
+    ///
+    /// The compile-time state changes only after cumulative Levels 1–2
+    /// validation succeeds, so an incomplete workspace can never escape as the
+    /// proof-bearing [`Tds`] specialization.
+    pub(in crate::core::tds) fn publish(mut self) -> Result<Tds<U, V, D>, TdsError> {
+        let vertex_count = self.number_of_vertices();
+        let simplex_count = self.number_of_simplices();
+        let is_empty_complex = vertex_count == 0 && simplex_count == 0;
+        if !is_empty_complex && simplex_count == 0 {
+            return Err(TdsError::IncompleteConstruction {
+                dimension: D,
+                vertex_count,
+                simplex_count,
+            });
+        }
+
+        self.validate()?;
+        self.construction_state = TriangulationConstructionState::Constructed;
+        Ok(self.into_verified())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DelaunayTriangulation;
-    use crate::builder::DelaunayTriangulationBuilder;
-    use crate::core::algorithms::incremental_insertion::InsertionError;
     use crate::core::simplex::Simplex;
+    use crate::core::tds::TdsBuilder;
     use crate::core::tds::errors::TriangulationConstructionState;
-    use crate::deletion::DeleteVertexError;
-    use crate::geometry::point::Point;
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
-    use uuid::Uuid;
 
     #[test]
-    fn complete_construction_rejects_an_incomplete_tds_without_changing_state() {
-        let mut tds: Tds<(), (), 2> = Tds::empty();
+    fn publication_rejects_an_incomplete_tds() {
+        let mut tds: UnverifiedTds<(), (), 2> = UnverifiedTds::empty_unpublished();
+        tds.insert_vertex_with_mapping(vertex![0.0, 0.0].unwrap())
+            .unwrap();
+        assert_matches!(
+            tds.construction_state(),
+            TriangulationConstructionState::Incomplete(1)
+        );
 
-        let error = tds.complete_construction().unwrap_err();
+        let error = tds.publish().unwrap_err();
 
         assert_matches!(
             error,
             TdsError::IncompleteConstruction {
                 dimension: 2,
-                vertex_count: 0,
+                vertex_count: 1,
                 simplex_count: 0,
             }
-        );
-        assert_matches!(
-            tds.construction_state(),
-            TriangulationConstructionState::Incomplete(0)
         );
     }
 
@@ -2506,14 +2502,6 @@ mod tests {
     // TEST HELPER FUNCTIONS
     // =============================================================================
 
-    fn vertex_with_uuid<U, const D: usize>(
-        point: Point<D>,
-        uuid: Uuid,
-        data: Option<U>,
-    ) -> Vertex<U, D> {
-        Vertex::try_new_with_uuid(point, uuid, data).expect("Failed to build vertex")
-    }
-
     fn initial_simplex_vertices_3d() -> [Vertex<(), 3>; 4] {
         [
             vertex!([0.0, 0.0, 0.0]).unwrap(),
@@ -2523,405 +2511,30 @@ mod tests {
         ]
     }
 
-    // =============================================================================
-    // VERTEX ADDITION TESTS
-    // =============================================================================
-
-    #[test]
-    fn test_add_vertex_duplicate_coordinates_rejected() {
-        let initial_vertices = initial_simplex_vertices_3d();
-        let mut dt = DelaunayTriangulation::builder(&initial_vertices)
+    fn tds_from_specs<U: Copy, V, const D: usize>(
+        vertices: &[Vertex<U, D>],
+        simplices: &[Vec<usize>],
+    ) -> Tds<U, V, D> {
+        TdsBuilder::new(vertices, simplices)
+            .simplex_data_type::<V>()
             .build()
-            .unwrap();
-
-        let vertex = vertex!([1.0, 2.0, 3.0]).unwrap();
-        let duplicate = vertex!([1.0, 2.0, 3.0]).unwrap();
-        dt.insert_vertex(vertex).unwrap();
-
-        // Same coordinates again (distinct UUID, constructed via Vertex smart constructors)
-        let result = dt.insert_vertex(duplicate);
-        assert_matches!(
-            &result,
-            Err(InsertionError::DuplicateCoordinates { .. }),
-            "insert() should reject duplicate coordinates created via Vertex::try_new (before UUID), got: {result:?}"
-        );
+            .unwrap()
     }
 
-    #[test]
-    fn test_add_vertex_duplicate_uuid_rejected() {
-        let initial_vertices = initial_simplex_vertices_3d();
-        let mut dt = DelaunayTriangulation::builder(&initial_vertices)
-            .build()
-            .unwrap();
-
-        let vertex1 = vertex!([1.0, 2.0, 3.0]).unwrap();
-        let uuid1 = vertex1.uuid();
-        dt.insert_vertex(vertex1).unwrap();
-
-        let vertex2 = vertex_with_uuid(
-            Point::try_new([4.0, 5.0, 6.0]).expect("finite point coordinates"),
-            uuid1,
-            None,
-        );
-        let result = dt.insert_vertex(vertex2);
-        assert_matches!(
-            &result,
-            Err(InsertionError::DuplicateUuid {
-                entity: EntityKind::Vertex,
-                ..
-            }),
-            "Same UUID with different coordinates should fail with DuplicateUuid"
-        );
+    fn initial_simplex_tds_3d() -> Tds<(), (), 3> {
+        let vertices = initial_simplex_vertices_3d();
+        tds_from_specs(&vertices, &[vec![0, 1, 2, 3]])
     }
 
-    #[test]
-    fn test_add_vertex_increases_counts_and_leaves_tds_valid() {
-        let initial_vertices = initial_simplex_vertices_3d();
-        let mut dt = DelaunayTriangulation::builder(&initial_vertices)
-            .build()
-            .unwrap();
-        let initial_simplex_count = dt.number_of_simplices();
-
-        let new_vertex = vertex!([0.5, 0.5, 0.5]).unwrap();
-        dt.insert_vertex(new_vertex).unwrap();
-
-        assert_eq!(dt.number_of_vertices(), 5);
-        assert!(
-            dt.number_of_simplices() >= initial_simplex_count,
-            "Simplex count should not decrease"
-        );
-        assert!(dt.is_valid_structure().is_ok(), "TDS should remain valid");
-    }
-
-    #[test]
-    fn test_add_vertex_is_accessible_by_uuid_and_coordinates() {
-        let initial_vertices = initial_simplex_vertices_3d();
-        let mut dt = DelaunayTriangulation::builder(&initial_vertices)
-            .build()
-            .unwrap();
-
-        let vertex = vertex!([1.0, 2.0, 3.0]).unwrap();
-        let uuid = vertex.uuid();
-        dt.insert_vertex(vertex).unwrap();
-        assert_eq!(dt.number_of_vertices(), 5);
-
-        // Vertex should be findable by UUID.
-        let vertex_key = dt.vertex_key_from_uuid(&uuid);
-        assert!(
-            vertex_key.is_some(),
-            "Added vertex should be findable by UUID"
-        );
-
-        // Vertex should be in the vertices collection.
-        let stored_vertex = dt.vertex(vertex_key.unwrap()).unwrap();
-        let coords = *stored_vertex.point().coords();
-        let expected = [1.0, 2.0, 3.0];
-        assert!(
-            coords
-                .iter()
-                .zip(expected.iter())
-                .all(|(a, b)| (a - b).abs() < 1e-10),
-            "Stored coordinates should match: got {coords:?}, expected {expected:?}"
-        );
-    }
-
-    // =============================================================================
-    // VERTEX REMOVAL TESTS
-    // =============================================================================
-
-    #[test]
-    fn test_remove_vertex_maintains_topology_consistency() {
-        // Test that remove_vertex properly clears dangling neighbor references
-        // Create a triangulation with multiple simplices
-        let vertices = [
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.5, 1.0]).unwrap(),
-            vertex!([1.5, 1.0]).unwrap(),
-        ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-        // Verify initial state
-        let initial_vertices = dt.number_of_vertices();
-        let initial_simplices = dt.number_of_simplices();
-        assert_eq!(initial_vertices, 4);
-        assert!(initial_simplices > 0);
-
-        // Get a vertex to remove (not a corner to ensure we have remaining simplices)
-        let (vertex_key, vertex_ref) = dt.vertices().next().unwrap();
-        let vertex_uuid = vertex_ref.uuid();
-
-        // Remove the vertex and all simplices containing it
-        let simplices_removed = dt.delete_vertex(vertex_key).unwrap();
-
-        // Verify the vertex was removed
-        assert!(
-            dt.vertex_key_from_uuid(&vertex_uuid).is_none(),
-            "Vertex should be removed from TDS"
-        );
-        assert!(
-            simplices_removed > 0,
-            "At least one simplex should have been removed"
-        );
-        assert_eq!(
-            dt.number_of_vertices(),
-            initial_vertices - 1,
-            "Vertex count should decrease by 1"
-        );
-        assert!(
-            dt.number_of_simplices() < initial_simplices,
-            "Simplex count should decrease"
-        );
-
-        // CRITICAL: Verify that no dangling neighbor references exist
-        // This is the key test for the bug fix
-        for (simplex_key, simplex) in dt.simplices() {
-            if let Some(neighbors) = simplex.neighbors() {
-                for (i, neighbor_opt) in neighbors.enumerate() {
-                    if let Some(neighbor_key) = neighbor_opt {
-                        assert!(
-                            dt.contains_simplex(neighbor_key),
-                            "Simplex {simplex_key:?} has dangling neighbor reference at index {i}: {neighbor_key:?}"
-                        );
-                    }
-                }
-            }
-        }
-
-        // Verify the TDS is valid (this should pass with the bug fix)
-        assert!(
-            dt.is_valid_structure().is_ok(),
-            "TDS should be valid after removing vertex"
-        );
-    }
-
-    #[test]
-    fn test_delete_vertex_rejects_nonexistent_vertex_key() {
-        let vertices = [
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-        ];
-        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-        // Use a key that was never added
-        let nonexistent_key = VertexKey::from(KeyData::from_ffi(u64::MAX));
-
-        let initial_vertices = dt.number_of_vertices();
-        let initial_simplices = dt.number_of_simplices();
-
-        let err = dt.delete_vertex(nonexistent_key).unwrap_err();
-
-        assert_matches!(
-            err,
-            DeleteVertexError::VertexNotFound { vertex_key }
-                if vertex_key == nonexistent_key
-        );
-        assert_eq!(
-            dt.number_of_vertices(),
-            initial_vertices,
-            "Vertex count should not change"
-        );
-        assert_eq!(
-            dt.number_of_simplices(),
-            initial_simplices,
-            "Simplex count should not change"
-        );
-    }
-
-    #[test]
-    fn test_delete_vertex_rejects_stale_vertex_key() {
-        let vertices = [
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-            vertex!([1.0, 1.0]).unwrap(),
-        ];
-        let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-        let vertex_key = dt.vertices().next().unwrap().0;
-
-        // First removal succeeds.
-        let simplices_removed = dt.delete_vertex(vertex_key).unwrap();
-        assert!(simplices_removed > 0);
-        let vertices_after = dt.number_of_vertices();
-        let simplices_after = dt.number_of_simplices();
-
-        let err = dt.delete_vertex(vertex_key).unwrap_err();
-        assert_matches!(
-            err,
-            DeleteVertexError::VertexNotFound { vertex_key: stale_key }
-                if stale_key == vertex_key
-        );
-        assert_eq!(dt.number_of_vertices(), vertices_after);
-        assert_eq!(dt.number_of_simplices(), simplices_after);
-    }
-
-    #[test]
-    fn test_remove_vertex_multiple_dimensions() {
-        // Test remove_vertex in different dimensions
-
-        // 2D test
-        {
-            let vertices_2d = [
-                vertex!([0.0, 0.0]).unwrap(),
-                vertex!([1.0, 0.0]).unwrap(),
-                vertex!([0.0, 1.0]).unwrap(),
-                vertex!([1.0, 1.0]).unwrap(),
-            ];
-            let mut dt_2d: DelaunayTriangulation<_, (), (), 2> =
-                DelaunayTriangulation::builder(&vertices_2d)
-                    .build()
-                    .unwrap();
-            let vertex_key = dt_2d.vertices().next().unwrap().0;
-            let simplices_removed = dt_2d.delete_vertex(vertex_key).unwrap();
-            assert!(simplices_removed > 0);
-            assert!(dt_2d.is_valid_structure().is_ok());
-        }
-
-        // 3D test
-        {
-            let vertices_3d = [
-                vertex!([0.0, 0.0, 0.0]).unwrap(),
-                vertex!([1.0, 0.0, 0.0]).unwrap(),
-                vertex!([0.0, 1.0, 0.0]).unwrap(),
-                vertex!([0.0, 0.0, 1.0]).unwrap(),
-                vertex!([0.2, 0.2, 0.2]).unwrap(),
-            ];
-            let mut dt_3d: DelaunayTriangulation<_, (), (), 3> =
-                DelaunayTriangulation::builder(&vertices_3d)
-                    .build()
-                    .unwrap();
-            let vertex_key = dt_3d
-                .vertices()
-                .find(|(_, vertex)| {
-                    let coords = vertex.point().coords();
-                    coords
-                        .iter()
-                        .zip([0.2, 0.2, 0.2])
-                        .all(|(coord, expected)| (*coord - expected).abs() < 1e-12)
-                })
-                .unwrap()
-                .0;
-            let simplices_removed = dt_3d.delete_vertex(vertex_key).unwrap();
-            assert!(simplices_removed > 0);
-            assert!(dt_3d.is_valid_structure().is_ok());
-        }
-
-        // 4D test
-        {
-            let vertices_4d = [
-                vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
-                vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
-                vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
-                vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
-                vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
-                vertex!([0.2, 0.2, 0.2, 0.2]).unwrap(),
-            ];
-            let mut dt_4d: DelaunayTriangulation<_, (), (), 4> =
-                DelaunayTriangulation::builder(&vertices_4d)
-                    .build()
-                    .unwrap();
-            let vertex_key = dt_4d
-                .vertices()
-                .find(|(_, vertex)| {
-                    let coords = vertex.point().coords();
-                    coords
-                        .iter()
-                        .zip([0.2, 0.2, 0.2, 0.2])
-                        .all(|(coord, expected)| (*coord - expected).abs() < 1e-12)
-                })
-                .unwrap()
-                .0;
-            let simplices_removed = dt_4d.delete_vertex(vertex_key).unwrap();
-            assert!(simplices_removed > 0);
-            assert!(dt_4d.is_valid_structure().is_ok());
-        }
-    }
-
-    #[test]
-    fn test_remove_vertex_no_dangling_references() {
-        // Test that after removing a vertex:
-        // 1. No simplices contain the deleted vertex
-        // 2. No vertices have incident_simplex pointing to a removed simplex
-        // 3. All remaining incident_simplex pointers are valid
-
+    fn two_tetrahedra_tds_3d() -> Tds<(), (), 3> {
         let vertices = [
             vertex!([0.0, 0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
-            // Interior vertex to remove; offset from circumcenter to avoid degenerate configuration
-            vertex!([0.2, 0.2, 0.2]).unwrap(),
+            vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-        // Find the interior vertex by coordinates (order-independent)
-        let interior_coords = [0.2, 0.2, 0.2];
-        let (removed_vertex_key, removed_vertex_uuid) = dt
-            .vertices()
-            .find(|(_, v)| {
-                v.point()
-                    .coords()
-                    .as_slice()
-                    .iter()
-                    .zip(&interior_coords)
-                    .all(|(a, b)| (a - b).abs() < 1e-10)
-            })
-            .map(|(k, v)| (k, v.uuid()))
-            .expect("Interior vertex should exist");
-
-        // Remove the vertex
-        let simplices_removed = dt.delete_vertex(removed_vertex_key).unwrap();
-        assert!(
-            simplices_removed > 0,
-            "Should have removed at least one simplex"
-        );
-
-        // CRITICAL CHECK 1: No simplices should contain the deleted vertex
-        for (simplex_key, simplex) in dt.simplices() {
-            for &vk in simplex.vertices() {
-                assert_ne!(
-                    vk, removed_vertex_key,
-                    "Simplex {simplex_key:?} still references deleted vertex {removed_vertex_key:?}"
-                );
-            }
-        }
-
-        // CRITICAL CHECK 2: The vertex should no longer exist in TDS
-        assert!(
-            dt.vertex_key_from_uuid(&removed_vertex_uuid).is_none(),
-            "Deleted vertex UUID should not be in mapping"
-        );
-        assert!(
-            dt.vertex(removed_vertex_key).is_none(),
-            "Deleted vertex key should not exist in storage"
-        );
-
-        // CRITICAL CHECK 3: All remaining vertices should have valid incident_simplex pointers
-        for (vertex_key, vertex) in dt.vertices() {
-            if let Some(incident_simplex_key) = vertex.incident_simplex() {
-                assert!(
-                    dt.contains_simplex(incident_simplex_key),
-                    "Vertex {vertex_key:?} has dangling incident_simplex pointer to {incident_simplex_key:?}"
-                );
-
-                // Verify the incident simplex actually contains this vertex
-                let incident_simplex = dt.simplex(incident_simplex_key).unwrap();
-                assert!(
-                    incident_simplex.contains_vertex(vertex_key),
-                    "Vertex {vertex_key:?} incident_simplex {incident_simplex_key:?} does not contain the vertex"
-                );
-            }
-        }
-
-        // CRITICAL CHECK 4: TDS should be valid
-        assert!(
-            dt.is_valid_structure().is_ok(),
-            "TDS should be valid after vertex removal"
-        );
+        tds_from_specs(&vertices, &[vec![0, 1, 2, 3], vec![4, 1, 2, 3]])
     }
 
     #[test]
@@ -4065,9 +3678,7 @@ mod tests {
 
     #[test]
     fn test_remove_duplicate_simplices_noop_when_no_duplicates() {
-        let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::builder(&verts).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds = initial_simplex_tds_3d();
         let generation_before = tds.generation();
 
         let removed = tds.remove_duplicate_simplices().unwrap();
@@ -4130,15 +3741,7 @@ mod tests {
     #[test]
     fn test_clear_all_neighbors_and_rebuild() {
         // Use 5 vertices so there are multiple simplices with actual neighbor pointers
-        let vertices = [
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-            vertex!([0.5, 0.5, 0.5]).unwrap(),
-        ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds = two_tetrahedra_tds_3d();
         assert!(tds.number_of_simplices() > 1);
 
         // Multi-simplex: simplices that share facets have Some(neighbor) entries
@@ -4471,15 +4074,7 @@ mod tests {
 
     #[test]
     fn test_remove_simplices_by_keys_batch_repairs_incidence_and_neighbors() {
-        let vertices = [
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-            vertex!([0.5, 0.5, 0.5]).unwrap(),
-        ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds = two_tetrahedra_tds_3d();
         assert!(tds.number_of_simplices() > 1);
 
         // Remove the first simplex.
@@ -4544,9 +4139,7 @@ mod tests {
 
     #[test]
     fn test_normalize_coherent_orientation_handles_single_simplex() {
-        let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::builder(&verts).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds = initial_simplex_tds_3d();
         assert_eq!(tds.number_of_simplices(), 1);
 
         // Single simplex with no neighbors: should succeed without flipping.
@@ -4555,15 +4148,7 @@ mod tests {
 
     #[test]
     fn test_normalize_coherent_orientation_multi_simplex() {
-        let vertices = [
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-            vertex!([0.5, 0.5, 0.5]).unwrap(),
-        ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds = two_tetrahedra_tds_3d();
         assert!(tds.number_of_simplices() > 1);
 
         // Should succeed for a valid multi-simplex triangulation.
@@ -4692,10 +4277,7 @@ mod tests {
             vertex!([1.0, 0.0]; data = 20).unwrap(),
             vertex!([0.0, 1.0]; data = 30).unwrap(),
         ];
-        let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build()
-            .unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds: Tds<i32, (), 2> = tds_from_specs(&vertices, &[vec![0, 1, 2]]);
         let key = tds.vertex_keys().next().unwrap();
 
         let prev = tds.set_vertex_data(key, Some(99)).unwrap();
@@ -4711,8 +4293,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds: Tds<(), (), 2> = tds_from_specs(&vertices, &[vec![0, 1, 2]]);
         let key = tds.vertex_keys().next().unwrap();
 
         let prev = tds.set_vertex_data(key, Some(())).unwrap();
@@ -4736,11 +4317,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .simplex_data_type::<i32>()
-            .build()
-            .unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds: Tds<(), i32, 2> = tds_from_specs(&vertices, &[vec![0, 1, 2]]);
         let key = tds.simplex_keys().next().unwrap();
 
         let prev = tds.set_simplex_data(key, Some(42)).unwrap();
@@ -4755,11 +4332,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .simplex_data_type::<i32>()
-            .build()
-            .unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds: Tds<(), i32, 2> = tds_from_specs(&vertices, &[vec![0, 1, 2]]);
         let key = tds.simplex_keys().next().unwrap();
 
         tds.set_simplex_data(key, Some(1)).unwrap();
@@ -4774,191 +4347,5 @@ mod tests {
         let stale = SimplexKey::from(KeyData::from_ffi(0xDEAD));
         let err = tds.set_simplex_data(stale, Some(1)).unwrap_err();
         assert_matches!(err.as_tds_error(), TdsError::SimplexNotFound { .. });
-    }
-
-    #[test]
-    fn test_set_vertex_data_preserves_triangulation_validity() {
-        let vertices: [Vertex<i32, 2>; 3] = [
-            vertex!([0.0, 0.0]; data = 1i32).unwrap(),
-            vertex!([1.0, 0.0]; data = 2).unwrap(),
-            vertex!([0.0, 1.0]; data = 3).unwrap(),
-        ];
-        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build()
-            .unwrap();
-
-        // Mutate every vertex's data through the DT wrapper.
-        let keys: Vec<_> = dt.vertices().map(|(k, _)| k).collect();
-        for (key, i) in keys.iter().zip(0i32..) {
-            dt.set_vertex_data(*key, Some(i * 100)).unwrap();
-        }
-
-        // Triangulation must remain fully valid.
-        assert!(dt.validate().is_ok());
-
-        // Verify all data was updated.
-        for (key, i) in keys.iter().zip(0i32..) {
-            let v = dt.tds().vertex(*key).unwrap();
-            assert_eq!(v.data, Some(i * 100));
-        }
-    }
-
-    #[test]
-    fn test_set_simplex_data_preserves_triangulation_validity() {
-        let vertices = [
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.5, 1.0]).unwrap(),
-            vertex!([1.5, 0.5]).unwrap(),
-        ];
-        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .simplex_data_type::<i32>()
-            .build()
-            .unwrap();
-        assert!(dt.number_of_simplices() > 1);
-
-        // Mutate every simplex's data through the DT wrapper.
-        let keys: Vec<_> = dt.simplices().map(|(k, _)| k).collect();
-        for (key, i) in keys.iter().zip(0i32..) {
-            dt.set_simplex_data(*key, Some(i)).unwrap();
-        }
-
-        // Triangulation must remain fully valid.
-        assert!(dt.validate().is_ok());
-
-        // Verify all data was updated.
-        for (key, i) in keys.iter().zip(0i32..) {
-            let c = dt.tds().simplex(*key).unwrap();
-            assert_eq!(c.data, Some(i));
-        }
-    }
-
-    #[test]
-    fn test_set_vertex_data_via_delaunay_wrapper() {
-        let vertices: [Vertex<i32, 2>; 3] = [
-            vertex!([0.0, 0.0]; data = 10i32).unwrap(),
-            vertex!([1.0, 0.0]; data = 20).unwrap(),
-            vertex!([0.0, 1.0]; data = 30).unwrap(),
-        ];
-        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build()
-            .unwrap();
-        let key = dt.vertices().next().unwrap().0;
-
-        // Set via Delaunay wrapper
-        let prev = dt.set_vertex_data(key, Some(99)).unwrap();
-        assert!(prev.is_some());
-        assert_eq!(dt.tds().vertex(key).unwrap().data, Some(99));
-
-        // Clear via Delaunay wrapper
-        let prev = dt.set_vertex_data(key, None).unwrap();
-        assert_eq!(prev, Some(99));
-        assert_eq!(dt.tds().vertex(key).unwrap().data, None);
-    }
-
-    #[test]
-    fn test_set_vertex_data_via_delaunay_wrapper_invalid_key_returns_error() {
-        let vertices: [Vertex<i32, 2>; 3] = [
-            vertex!([0.0, 0.0]; data = 10i32).unwrap(),
-            vertex!([1.0, 0.0]; data = 20).unwrap(),
-            vertex!([0.0, 1.0]; data = 30).unwrap(),
-        ];
-        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build()
-            .unwrap();
-        let live_key = dt.vertices().next().unwrap().0;
-        let stale = VertexKey::from(KeyData::from_ffi(0xFEED));
-
-        let err = dt.set_vertex_data(stale, Some(99)).unwrap_err();
-
-        assert_matches!(
-            err.as_tds_error(),
-            TdsError::VertexNotFound {
-                vertex_key,
-                ..
-            } if *vertex_key == stale
-        );
-        assert_eq!(dt.tds().vertex(live_key).unwrap().data, Some(10));
-    }
-
-    #[test]
-    fn test_set_simplex_data_via_delaunay_wrapper() {
-        let vertices = [
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-        ];
-        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .simplex_data_type::<i32>()
-            .build()
-            .unwrap();
-        let key = dt.simplices().next().unwrap().0;
-
-        // Set via Delaunay wrapper
-        let prev = dt.set_simplex_data(key, Some(42)).unwrap();
-        assert_eq!(prev, None);
-        assert_eq!(dt.tds().simplex(key).unwrap().data, Some(42));
-
-        // Clear via Delaunay wrapper
-        let prev = dt.set_simplex_data(key, None).unwrap();
-        assert_eq!(prev, Some(42));
-        assert_eq!(dt.tds().simplex(key).unwrap().data, None);
-    }
-
-    #[test]
-    fn test_set_simplex_data_via_delaunay_wrapper_invalid_key_returns_error() {
-        let vertices = [
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-        ];
-        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .simplex_data_type::<i32>()
-            .build()
-            .unwrap();
-        let live_key = dt.simplices().next().unwrap().0;
-        let stale = SimplexKey::from(KeyData::from_ffi(0xFEED));
-
-        let err = dt.set_simplex_data(stale, Some(42)).unwrap_err();
-
-        assert_matches!(
-            err.as_tds_error(),
-            TdsError::SimplexNotFound {
-                simplex_key,
-                ..
-            } if *simplex_key == stale
-        );
-        assert_eq!(dt.tds().simplex(live_key).unwrap().data, None);
-    }
-
-    #[test]
-    fn test_set_data_via_dt_does_not_invalidate_locate_hint() {
-        let vertices: [Vertex<i32, 2>; 3] = [
-            vertex!([0.0, 0.0]; data = 0i32).unwrap(),
-            vertex!([1.0, 0.0]; data = 0).unwrap(),
-            vertex!([0.0, 1.0]; data = 0).unwrap(),
-        ];
-        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build()
-            .unwrap();
-
-        // Insert a new vertex so the locate hint is populated.
-        let extra = vertex!([0.25, 0.25]; data = 0i32).unwrap();
-        dt.insert_vertex(extra).unwrap();
-
-        // Data mutation should NOT clear the insertion hint.
-        let key = dt.vertices().next().unwrap().0;
-        let prev = dt.set_vertex_data(key, Some(999)).unwrap();
-        assert!(prev.is_some(), "set_vertex_data should find the key");
-        assert_eq!(
-            dt.tds().vertex(key).unwrap().data,
-            Some(999),
-            "stored value should reflect the mutation"
-        );
-
-        // A subsequent insert should still succeed (hint not invalidated).
-        let another = vertex!([0.75, 0.1]; data = 0i32).unwrap();
-        assert!(dt.insert_vertex(another).is_ok());
-        assert!(dt.validate().is_ok());
     }
 }
