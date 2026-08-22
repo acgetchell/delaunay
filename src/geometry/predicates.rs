@@ -931,6 +931,7 @@ pub fn insphere_lifted<const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::matrix::test_support::with_la_stack_matrix;
     use crate::geometry::matrix::{LaError, matrix_set as try_matrix_set};
     use crate::prelude::circumradius;
     use approx::assert_relative_eq;

@@ -342,7 +342,7 @@ For details on validation helpers such as `validate()`, `is_valid()`,
 `is_valid_topology()`, and `is_valid_delaunay()`, see:
 
 ```text
-docs/validation.md
+docs/construction_and_validation.md
 ```
 
 Tests should prefer calling these validation helpers instead of
@@ -395,7 +395,7 @@ Default test recipes are split by target class:
 - `just test-unit` runs Rust lib unit tests in debug and release profiles.
 - `just test-doc` runs Rust doctests in release profile.
 - `just test-integration` runs Rust integration tests.
-- `just test-cli` runs feature-gated CLI integration tests.
+- `just test-cli` runs feature-gated binary unit and CLI integration tests.
 - `just test-python` runs Python tests.
 
 The debug unit-test profile keeps the same 10-second per-test budget as the
@@ -404,10 +404,10 @@ the smallest stable set of test names; do not raise the whole debug profile.
 The periodic T^2 builder smoke test and its matching-explicit-topology variant
 have a 60-second override because debug exact-geometry cost varies materially
 by platform. They remain in the normal suite because they cover distinct public
-builder contracts and are fast in release builds. Two randomized 5D agreement
-checks also receive 60 seconds on Windows because they sit at the 10-second
-boundary there. The optimized 5D intersection agreement check receives the
-same focused override on macOS ARM runners.
+builder contracts and are fast in release builds. The optimized 5D intersection
+agreement check receives a platform-neutral 60-second override because it can
+reach the 10-second boundary on hosted runners. The randomized 5D full-report
+agreement check receives the same focused override on Windows.
 
 The release integration profile similarly grants 60 seconds on Windows only
 to the promoted 4D property families that sit at the 10-second boundary there.
@@ -478,7 +478,7 @@ Run Python tests:
 just test-python
 ```
 
-Run feature-gated CLI integration tests:
+Run feature-gated binary unit and CLI integration tests:
 
 ```bash
 just test-cli

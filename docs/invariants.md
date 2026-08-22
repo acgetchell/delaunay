@@ -51,7 +51,7 @@ Readers primarily interested in **how to use the library** should start with:
 
 - [`README.md`](../README.md)
 - [`docs/workflows.md`](workflows.md)
-- [`docs/validation.md`](validation.md)
+- [`docs/construction_and_validation.md`](construction_and_validation.md)
 - [`docs/limitations.md`](limitations.md)
 - [`docs/numerical_robustness_guide.md`](numerical_robustness_guide.md)
 - [`docs/api_design.md`](api_design.md)
@@ -134,7 +134,7 @@ operation has certified which part of the structure:
 `DelaunayTriangulation::is_valid_delaunay()` is the implemented Level 5 geometric-predicate check
 for an already-formed Delaunay triangulation.
 Cumulative validation is exposed through the `validate` / `validation_report` APIs described in
-[`docs/validation.md`](validation.md).
+[`docs/construction_and_validation.md`](construction_and_validation.md).
 
 The domain owners follow the same layering. A published `Tds` carries the
 Levels 1–2 proof and never represents a partial bootstrap. The empty complex is
@@ -146,15 +146,27 @@ inside the TDS module; every edit that crosses a published domain boundary is a
 checked transition that either preserves Levels 1–2 or reports a typed error
 without publishing the failed state.
 
+This distinction is encoded by a private unpublished wrapper, not only by a
+runtime flag. `TdsDraft` owns `UnverifiedTds<_, _, D>` internally; only its
+consuming `finish()` path can validate and remove that wrapper to return the
+public `Tds`. Snapshot restoration follows the same unpublished path before
+returning a `Tds`. The wrapper is confined to `core::tds`, and the public owner
+therefore keeps its ordinary three-parameter API without exposing publication
+typestate to callers.
+
 `TriangulationBuilder` is the only public TDS → `Triangulation` proof boundary.
-Its `.strict()` mode consumes the Levels 1–2 proof and checks only the missing
+Its default strict mode consumes the Levels 1–2 proof and checks only the missing
 Level 3 topology and Level 4 realization conditions. Strict mode does not
 mutate the input or allocate a rollback snapshot; success preserves the TDS
 owner identity, generation, simplex ordering, and stored orientation exactly.
-The default canonicalizing mode may normalize orientation before the same
+The explicit `.canonicalizing()` mode may normalize orientation before the same
 Levels 3–4 certification. It therefore keeps one TDS snapshot and restores the
 exact input on every failure. The generic `TriangulationDraft` is internal
-publication state, not another public route across the same proof boundary.
+publication state, not another public route across the same proof boundary. It
+stores a crate-private `UnverifiedTriangulation` wrapper until successful
+Levels 3–4 certification consumes that wrapper and returns the public
+`Triangulation`. The public owner likewise keeps its ordinary four-parameter
+API.
 
 `DelaunayRefinementBuilder` is the only public `Triangulation` →
 `DelaunayTriangulation` proof boundary. Its default strict terminal consumes the
@@ -174,28 +186,34 @@ geometric-predicate validation remains a separate certification step.
 
 ### Builder publication contracts
 
-Builders are inert construction requests, public drafts are mutable unpublished
-workspaces, and owners are verified domain values:
+Builders are configurable workflows, drafts are unpublished single-boundary
+representations, workspaces are private mutable algorithm state, and owners are
+verified domain values. The canonical vocabulary and complete promotion ladder
+are defined in
+[`construction_and_validation.md`](construction_and_validation.md#construction-vocabulary).
 
 - `TdsBuilder`, `TriangulationBuilder`, `DelaunayRefinementBuilder`, and
   `DelaunayTriangulationBuilder` collect their layer's input and multiplying
   options.
-- `TdsDraft` accepts staged explicit connectivity, and
-  `DelaunayTriangulationDraft` owns staged point-driven Delaunay inference.
-  Both have genuine mutations before publication. The crate-internal
-  `TriangulationDraft` is transaction state shared by `TriangulationBuilder`
-  and higher-layer drafts. It is not public because a proof-bearing TDS already
-  has complete connectivity and the generic layer has no additional staged
-  mutation to expose.
+- `DelaunayIncrementalBuilder` is the public, long-lived stateful workflow for
+  point-by-point construction.
+- `TdsDraft`, the crate-internal `TriangulationDraft`, and the crate-private
+  `DelaunayTriangulationDraft` each belong to one promotion boundary. A draft
+  is not a second public promotion route merely because a builder uses it.
+- `DelaunayBootstrapWorkspace` and `DelaunayBatchWorkspace` own mutable
+  algorithm state, caches, retries, and repair scheduling that are not proofs.
 - `Tds`, `Triangulation`, and `DelaunayTriangulation` are published owners.
 
-`DelaunayTriangulationDraft` has two disjoint internal states. Its bootstrap
-state owns an unpublished `TriangulationDraft` plus Delaunay insertion caches;
+`DelaunayIncrementalBuilder` has two disjoint internal states. Its bootstrap
+state owns a `TdsDraft` plus the kernel, topology options, staged vertex keys,
+and Delaunay insertion caches;
 it never stores a partially valid `DelaunayTriangulation`. The insertion that
-first creates a maximal simplex attempts canonical Levels 3–4 publication and
-then Level 5 certification. That transition keeps a rollback copy of the small
-bootstrap state and restores its exact owner identity, generation, vertices,
-and caches if either proof fails. After success, the draft stores a verified
+first creates a maximal simplex finishes Levels 1–2, attempts canonical Levels
+3–4 publication, and then performs Level 5 certification. Direct TDS draft
+assembly preserves every `VertexKey` returned during bootstrap. The transition
+keeps a rollback copy of the small bootstrap state and restores its exact owner
+identity, generation, vertices, keys, and caches if any proof fails. After
+success, the builder stores a Levels 1–5
 `DelaunayTriangulation`, and every later insertion uses the owner's normal
 transactional invariant-preserving path. `finish()` publishes the verified
 empty complex, rejects a nonempty partial bootstrap, or cumulatively audits the
@@ -204,26 +222,29 @@ verified state before returning it.
 A verified empty `DelaunayTriangulation` remains a valid published owner, but a
 single vertex insertion in positive dimension would turn it into a nonempty
 partial bootstrap. Published-owner insertion therefore rejects that transition
-with `InsertionError::PublishedOwnerBootstrapRequiresDraft` before changing
+with `InsertionError::PublishedOwnerBootstrapRequiresBuilder` before changing
 storage or caches. Callers that want to grow a triangulation from empty start
-with `DelaunayTriangulationDraft`; once its first maximal simplex is certified,
-the same fluent draft API delegates later insertions to the verified owner.
+with `DelaunayIncrementalBuilder`; once its first maximal simplex is certified,
+the same stateful builder API delegates later insertions to the owner.
 
-The crate-private `DelaunayRefinementCandidate` is a different, narrower type:
+The crate-private `DelaunayTriangulationDraft` is a different, narrower type:
 it can contain only an already valid Levels 1–4 `Triangulation` plus the caches
 that must survive publication. It cannot represent partial connectivity and has
 no mutation API. Strict refinement, repaired refinement, batch construction,
-draft publication, and TDS restoration all cross this same final Level 5
+incremental-builder publication, and TDS restoration all cross this same final Level 5
 publication primitive. Construction paths with complete-point-set provenance
 may use the linear local flip-predicate certificate. That evidence is an
-unforgeable private token bound to the exact topology owner identity, structural
-generation, and global topology; detached or stale evidence falls back to a new
-Level 5 check. Arbitrary refinement uses the global Level 5 check. This keeps the
-proof transition orthogonal without discarding construction-time performance
-evidence.
+unforgeable token created only by Level 5 validation functions and bound to the
+exact topology owner identity, structural generation, and global topology;
+detached or stale evidence falls back to a new Level 5 check. A report-domain
+enum is not accepted as publication evidence. Strict refinement,
+transactional repair, and incremental-builder publication cross the same
+certificate-backed publication boundary after their selected Level 5 check.
+This keeps the proof transition orthogonal without repeating a successful
+predicate pass.
 
-Calling `build()` on a builder or `finish()` on a draft is a publication
-boundary. It must either return an owner carrying every invariant assigned to
+Calling `build()` or `finish()` on a builder, or `finish()` on a staged draft,
+is a publication boundary. It must either return an owner carrying every invariant assigned to
 that layer or return a typed error without exposing the failed intermediate
 state. An empty draft may publish because the empty complex is valid
 vacuously; `TdsBuilder` likewise accepts empty vertex and simplex inputs as the
@@ -238,7 +259,10 @@ The construction hierarchy follows the validation hierarchy:
    coherent stored orientation. It returns a constructed `Tds` only after
    cumulative Levels 1–2 validation succeeds. Coordinates alone are not enough
    to determine a TDS: the core layer must not infer connectivity through a
-   Delaunay or other geometry-specific policy.
+   Delaunay or other geometry-specific policy. When a higher builder parses the
+   same explicit input boundary, it passes `ParsedTdsInput` to `TdsBuilder` so
+   arity, bounds, and within-simplex uniqueness are proved once rather than
+   revalidated from raw vectors.
 2. `TriangulationBuilder` consumes a TDS together with the kernel, topology
    guarantee, global topology, validation policy, and build mode. It preserves
    the Levels 1–2 proof, establishes the requested intrinsic topology, and
@@ -255,9 +279,9 @@ The construction hierarchy follows the validation hierarchy:
 4. `DelaunayTriangulationBuilder` is the separate point-set construction
    workflow. It infers connectivity, establishes the lower proofs, applies its
    Delaunay construction policy, and publishes only after Levels 1–5 succeed.
-   Its private batch workspace and `DelaunayTriangulationDraft` have different
+   Its private batch workspace and `DelaunayIncrementalBuilder` have different
    mutation schedules, but both hand an established Levels 1–4 owner to the
-   same private Level 5 refinement candidate.
+   same private Level 5 draft.
 
 This dependency direction is strict:
 
@@ -273,17 +297,17 @@ explicit input -> TdsBuilder -> Tds
 point set -> DelaunayTriangulationBuilder -> DelaunayTriangulation
 ```
 
-Incremental strategies use public draft paths only at layers that own staged
-mutation:
+Incremental strategies expose staged mutation only where a layer has meaningful
+unfinished state:
 
 ```text
 TdsDraft::finish()                    -> Tds
-DelaunayTriangulationDraft::finish()  -> DelaunayTriangulation
+DelaunayIncrementalBuilder::finish()  -> DelaunayTriangulation
 ```
 
-For a nonempty Delaunay draft, the first full-dimensional simplex is an
+For a nonempty `DelaunayIncrementalBuilder`, the first full-dimensional simplex is an
 internal early publication checkpoint: failure returns
-`DelaunayTriangulationDraftError` and leaves the pre-insertion bootstrap state
+`DelaunayIncrementalBuilderError` and leaves the pre-insertion bootstrap state
 reusable. The public owner is still returned only by `finish()`.
 
 The generic and Delaunay layers each have one public promotion builder with
@@ -291,17 +315,17 @@ explicit modes:
 
 ```text
 Tds -> TriangulationBuilder
-       |-- .strict().build() -> Triangulation
-       `-- .build()          -> Triangulation after transactional canonicalization
+       |-- .build()                    -> Triangulation by strict certification
+       `-- .canonicalizing().build()   -> Triangulation after transactional canonicalization
 
 Triangulation -> DelaunayRefinementBuilder
                  |-- .build()                   -> DelaunayTriangulation
                  `-- .repair_by_flips().build() -> DelaunayTriangulation + repair outcome
 ```
 
-`TriangulationBuilder` strict mode preserves owner identity, generation, and
+`TriangulationBuilder` default strict mode preserves owner identity, generation, and
 simplex ordering on success and avoids a full rollback snapshot. Its
-canonicalizing mode may change simplex ordering and generation on success; its
+explicit canonicalizing mode may change simplex ordering and generation on success; its
 snapshot and copy cost are linear in the TDS representation. Both modes return
 the unchanged TDS on failure and invoke the same non-mutating Levels 3–4
 certification proof. `DelaunayRefinementBuilder` applies the equivalent rule at
@@ -625,8 +649,8 @@ At a high level:
 
 The crate’s incremental construction follows the standard cavity-based approach (CGAL-style; see
 [CGAL Triangulation_3](https://doc.cgal.org/latest/Triangulation_3/index.html) and
-[`src/core/algorithms/incremental_insertion.rs`](../src/core/algorithms/incremental_insertion.rs)):
-[^bowyer1981][^watson1981][^cgal-triangulation3][^impl-incremental-insertion]
+[`src/core/algorithms/insertion.rs`](../src/core/algorithms/insertion.rs)):
+[^bowyer1981][^watson1981][^cgal-triangulation3][^impl-insertion-primitives]
 
 1. **Locate** the simplex containing the query point (facet walking / scan fallback;
    [`src/core/algorithms/locate.rs`](../src/core/algorithms/locate.rs)).[^devillers-walking][^impl-locate]
@@ -748,7 +772,7 @@ Ordering and preprocessing can mitigate (but not eliminate) these issues:
 - Deduplication / near-duplicate rejection avoids many “almost coincident” degeneracies.
 
 For concrete failure modes and recommended workflows, see [`docs/limitations.md`](limitations.md),
-[`docs/workflows.md`](workflows.md), [`docs/validation.md`](validation.md), and the issue
+[`docs/workflows.md`](workflows.md), [`docs/construction_and_validation.md`](construction_and_validation.md), and the issue
 investigation notes in [`docs/archive/`](archive/).
 
 ---
@@ -788,7 +812,7 @@ For the project-wide bibliography (including references not cited here), see [`R
     *The Computer Journal* 24(2), 1981. DOI: <https://doi.org/10.1093/comjnl/24.2.167>.
 [^cgal-triangulation3]: CGAL Project. *3D Triangulations* (Triangulation_3) documentation.
     <https://doc.cgal.org/latest/Triangulation_3/>.
-[^impl-incremental-insertion]: Implementation: [src/core/algorithms/incremental_insertion.rs](../src/core/algorithms/incremental_insertion.rs).
+[^impl-insertion-primitives]: Implementation: [src/core/algorithms/insertion.rs](../src/core/algorithms/insertion.rs).
 [^devillers-walking]: Olivier Devillers, Sylvain Pion, Monique Teillaud. “Walking in a Triangulation.”
     *International Journal of Foundations of Computer Science* 13(2), 2002. DOI: <https://doi.org/10.1142/S0129054102001047>.
 [^impl-locate]: Implementation: [src/core/algorithms/locate.rs](../src/core/algorithms/locate.rs).

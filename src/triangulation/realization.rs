@@ -2087,8 +2087,6 @@ mod tests {
     use crate::geometry::kernel::FastKernel;
     use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
     use crate::triangulation::Triangulation;
-    use crate::triangulation::builder::{TriangulationBuilder, TriangulationBuilderError};
-    use crate::triangulation::validation::TopologyGuarantee;
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use crate::vertex;
     use approx::assert_abs_diff_eq;
@@ -2096,34 +2094,6 @@ mod tests {
 
     fn test_vertex<const D: usize>(coords: [f64; D]) -> Vertex<(), D> {
         vertex!(coords).unwrap()
-    }
-
-    #[test]
-    fn restore_rejects_incomplete_tds_before_installing_domain_context() {
-        let mut tds = Tds::<(), (), 2>::empty_unpublished();
-        tds.insert_vertex_with_mapping(vertex![0.0, 0.0].unwrap())
-            .unwrap();
-
-        let error = TriangulationBuilder::new(tds, FastKernel::new())
-            .topology_guarantee(TopologyGuarantee::PLManifold)
-            .global_topology(GlobalTopology::Euclidean)
-            .strict()
-            .build()
-            .expect_err("incomplete transport storage must not become a Triangulation");
-
-        let (tds, reason) = error.into_parts();
-        assert_matches!(
-            reason,
-            TriangulationBuilderError::RealizationValidation { source }
-                if matches!(
-                    source.as_ref(),
-                    TriangulationRealizationValidationError::IncompleteConstruction {
-                        vertex_count: 1
-                    }
-                )
-        );
-        tds.validate()
-            .expect("failed Levels 3-4 refinement must return the valid Levels 1-2 owner");
     }
 
     fn tds_from_vertices_and_simplices<const D: usize>(

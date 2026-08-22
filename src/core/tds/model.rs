@@ -68,7 +68,7 @@
 //!
 //! | Invariant Type | Enforcement Location | Method |
 //! |---|---|---|
-//! | **Delaunay Property** | incremental insertion (`core::algorithms::incremental_insertion`) | Empty circumsphere test via `insphere()` (best-effort) |
+//! | **Delaunay Property** | incremental insertion (`core::algorithms::insertion`) | Empty circumsphere test via `insphere()` (best-effort) |
 //! | **Facet Sharing** | `Tds::is_valid()` / `Tds::validate()` | Each facet shared by ≤ 2 simplices |
 //! | **No Duplicate Simplices** | `Tds::is_valid()` / `Tds::validate()` | No simplices with identical vertex sets |
 //! | **Neighbor Consistency** | `Tds::is_valid()` / `Tds::validate()` | Mutual neighbor relationships |
@@ -176,7 +176,7 @@
 //! # }
 //! ```
 //!
-//! See [`docs/validation.md`](https://github.com/acgetchell/delaunay/blob/main/docs/validation.md)
+//! See [`docs/construction_and_validation.md`](https://github.com/acgetchell/delaunay/blob/main/docs/construction_and_validation.md)
 //! for a comprehensive validation guide.
 //!
 //! [`Simplex::is_valid()`]: crate::prelude::tds::Simplex::is_valid
@@ -348,6 +348,7 @@ use crate::core::{
 };
 use std::{
     fmt::Debug,
+    ops::{Deref, DerefMut},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -509,6 +510,15 @@ pub trait TopologyOwner {
 /// bugs. Intrinsic topology is intentionally not part of this type's proof;
 /// [`Triangulation`](crate::Triangulation) adds the topology context required to
 /// certify Level 3.
+///
+/// # Type parameters
+///
+/// - `U`: user data stored on vertices;
+/// - `V`: user data stored on maximal simplices;
+/// - `D`: dimension of the complex.
+///
+/// Unpublished storage is represented by [`TdsDraft`](crate::tds::TdsDraft),
+/// so the public owner has no caller-selectable publication state.
 pub struct Tds<U, V, const D: usize> {
     /// Storage map for vertices, allowing stable keys and efficient access.
     pub(in crate::core::tds) vertices: StorageMap<VertexKey, Vertex<U, D>>,
@@ -1156,12 +1166,12 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// ```no_run
     /// use delaunay::prelude::*;
-    /// use delaunay::prelude::construction::DelaunayTriangulationDraft;
+    /// use delaunay::prelude::construction::DelaunayIncrementalBuilder;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)] Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)] Draft(#[from] delaunay::DelaunayTriangulationDraftError),
+    /// #     #[error(transparent)] IncrementalBuild(#[from] delaunay::DelaunayIncrementalBuilderError),
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
@@ -1172,8 +1182,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
-    /// let mut dt: DelaunayTriangulationDraft<_, (), (), 3> =
-    ///     DelaunayTriangulationDraft::new();
+    /// let mut dt: DelaunayIncrementalBuilder<_, (), (), 3> =
+    ///     DelaunayIncrementalBuilder::new();
     /// let vertex1: Vertex<(), 3> = vertex![1.0, 2.0, 3.0]?;
     /// let vertex2: Vertex<(), 3> = vertex![4.0, 5.0, 6.0]?;
     ///
@@ -1245,13 +1255,13 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// ```no_run
     /// use delaunay::prelude::*;
-    /// use delaunay::prelude::construction::DelaunayTriangulationDraft;
+    /// use delaunay::prelude::construction::DelaunayIncrementalBuilder;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)] Coordinates(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// #     #[error(transparent)] Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)] Draft(#[from] delaunay::DelaunayTriangulationDraftError),
+    /// #     #[error(transparent)] IncrementalBuild(#[from] delaunay::DelaunayIncrementalBuilderError),
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
@@ -1260,8 +1270,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
-    /// let mut dt: DelaunayTriangulationDraft<_, (), (), 3> =
-    ///     DelaunayTriangulationDraft::new();
+    /// let mut dt: DelaunayIncrementalBuilder<_, (), (), 3> =
+    ///     DelaunayIncrementalBuilder::new();
     ///
     /// // Start empty
     /// assert_eq!(dt.dim(), -1);
@@ -2282,12 +2292,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         Self::empty_with_construction_state(TriangulationConstructionState::Constructed)
     }
 
-    /// Creates empty unpublished storage for draft-owned bootstrap work.
-    #[must_use]
-    pub(crate) fn empty_unpublished() -> Self {
-        Self::empty_with_construction_state(TriangulationConstructionState::Incomplete(0))
-    }
-
     fn empty_with_construction_state(construction_state: TriangulationConstructionState) -> Self {
         Self {
             vertices: StorageMap::with_key(),
@@ -2299,6 +2303,59 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             generation: Arc::new(AtomicU64::new(0)),
             identity: Arc::new(Uuid::new_v4()),
         }
+    }
+}
+
+/// Crate-private unpublished storage owned by [`TdsDraft`](crate::tds::TdsDraft).
+///
+/// Keeping the wrapper private prevents partially assembled storage from
+/// inhabiting the public proof-bearing [`Tds`] API while avoiding a public
+/// caller-selectable typestate parameter.
+#[derive(Clone, Debug)]
+#[repr(transparent)]
+pub(in crate::core::tds) struct UnverifiedTds<U, V, const D: usize> {
+    pub(in crate::core::tds) storage: Tds<U, V, D>,
+}
+
+impl<U, V, const D: usize> UnverifiedTds<U, V, D> {
+    /// Creates empty storage that cannot be published without validation.
+    #[must_use]
+    pub(in crate::core::tds) fn empty_unpublished() -> Self {
+        Self {
+            storage: Tds::empty_with_construction_state(
+                TriangulationConstructionState::Incomplete(0),
+            ),
+        }
+    }
+
+    /// Returns an internal rollback clone while preserving owner identity.
+    pub(in crate::core::tds) fn clone_for_rollback(&self) -> Self
+    where
+        U: Clone,
+        V: Clone,
+    {
+        Self {
+            storage: self.storage.clone_for_rollback(),
+        }
+    }
+
+    /// Publishes the validated storage by removing its unpublished wrapper.
+    pub(in crate::core::tds) fn into_verified(self) -> Tds<U, V, D> {
+        self.storage
+    }
+}
+
+impl<U, V, const D: usize> Deref for UnverifiedTds<U, V, D> {
+    type Target = Tds<U, V, D>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.storage
+    }
+}
+
+impl<U, V, const D: usize> DerefMut for UnverifiedTds<U, V, D> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.storage
     }
 }
 
@@ -2462,7 +2519,7 @@ mod tests {
 
     #[test]
     fn test_incomplete_construction_state_tracks_vertex_count() {
-        let mut tds: Tds<(), (), 2> = Tds::empty_unpublished();
+        let mut tds: UnverifiedTds<(), (), 2> = UnverifiedTds::empty_unpublished();
 
         let v0 = tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())

@@ -1221,13 +1221,13 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayTriangulationDraft;
+    /// use delaunay::prelude::construction::DelaunayIncrementalBuilder;
     /// use delaunay::prelude::validation::{
     ///     ValidationConfigurationError, ValidationPolicy,
     /// };
     ///
     /// # fn main() -> Result<(), ValidationConfigurationError> {
-    /// let mut dt = DelaunayTriangulationDraft::<_, (), (), 2>::new()
+    /// let mut dt = DelaunayIncrementalBuilder::<_, (), (), 2>::new()
     ///     .finish()
     ///     .expect("the empty complex is a valid Delaunay triangulation");
     ///
@@ -1260,13 +1260,13 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayTriangulationDraft;
+    /// use delaunay::prelude::construction::DelaunayIncrementalBuilder;
     /// use delaunay::prelude::validation::{
     ///     TopologyGuarantee, ValidationConfigurationError,
     /// };
     ///
     /// # fn main() -> Result<(), ValidationConfigurationError> {
-    /// let mut dt = DelaunayTriangulationDraft::<_, (), (), 3>::new()
+    /// let mut dt = DelaunayIncrementalBuilder::<_, (), (), 3>::new()
     ///     .finish()
     ///     .expect("the empty complex is a valid Delaunay triangulation");
     /// dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)?;
@@ -2560,6 +2560,7 @@ mod tests {
     use crate::construction::{DelaunayError, DelaunayResult};
     use crate::core::operations::DelaunayInsertionState;
     use crate::core::tds::{Tds, TdsError};
+    use crate::draft::DelaunayTriangulationDraft;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{CoordinateValidationError, InvalidCoordinateValue};
     use crate::geometry::util::safe_usize_to_scalar;
@@ -2567,7 +2568,6 @@ mod tests {
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::realization::TriangulationRealizationValidationError;
     use crate::triangulation::validation::TriangulationValidationError;
-    use crate::validation::DelaunayRefinementCandidate;
     use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
@@ -3051,7 +3051,7 @@ mod tests {
                 .expect("non-Delaunay fixture connectivity should parse")
                 .build_triangulation()
                 .expect("non-Delaunay fixture should satisfy Levels 1–4");
-        let mut dt = DelaunayRefinementCandidate::from_triangulation(triangulation)
+        let mut dt = DelaunayTriangulationDraft::from_triangulation(triangulation)
             .into_unproven_delaunay_for_test();
         dt.tri.global_topology = GlobalTopology::Spherical;
         dt.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;

@@ -42,7 +42,7 @@ point sets. Euclidean construction is explicitly tested in 2D through 5D, period
 construction is validated on T² and for compact T³ inputs, and bounded spherical S²/S³ construction
 is available as a prototype. Uses [exact predicates] and [Simulation of Simplicity] for robustness and
 degeneracy handling, and [Hilbert curve]s for deterministic insertion ordering and efficient spatial indexing.
-Provides an explicit [5-level validation hierarchy][Validation Guide] on individual elements,
+Provides an explicit [5-level validation hierarchy][Construction and Validation Guide] on individual elements,
 combinatorial consistency, intrinsic PL topology, valid realization in the active
 model, and geometric predicates such as Delaunay. Allows for the complete set of [Pachner moves] up to D=5
 using bistellar flips, vertex insertion and deletion, and the conversion of non-Delaunay
@@ -229,7 +229,7 @@ for the documented coordinate models and dimensions. It does not replace constra
 packages, prove arbitrary abstract PL-manifolds realizable from coordinates, or certify unsupported
 spherical/hyperbolic workflows.
 
-For the detailed contract, see [`docs/validation.md`](docs/validation.md),
+For the detailed contract, see [`docs/construction_and_validation.md`](docs/construction_and_validation.md),
 [`docs/invariants.md`](docs/invariants.md), [`docs/topology.md`](docs/topology.md),
 [`docs/numerical_robustness_guide.md`](docs/numerical_robustness_guide.md),
 [`docs/limitations.md`](docs/limitations.md), and [`benches/README.md`](benches/README.md).
@@ -283,8 +283,8 @@ exposition, see [`papers/validation.tex`](papers/validation.tex) and the compile
 - [Releasing](docs/RELEASING.md) - Changelog, benchmark, and publish workflow.
 - [Roadmap](docs/roadmap.md) - Current release sequence and deferred feature tracks.
 - [Topology](docs/topology.md) - Level 3 Intrinsic PL Topology validation, orientability, and global topology models.
-- [Validation Guide](docs/validation.md) - Validation hierarchy and policy configuration.
-- [Validation Paper](papers/validation.pdf) - Reviewer-facing PDF for the validation architecture.
+- [Construction and Validation Guide](docs/construction_and_validation.md) - Proof-bearing construction, validation hierarchy, and policy configuration.
+- [Construction and Validation Paper](papers/validation.pdf) - Reviewer-facing architecture paper.
 - [Workflows](docs/workflows.md) - Practical recipes for construction, repair, toroidal domains, payloads, and flips.
 
 ## 🧩 Ecosystem
@@ -446,4 +446,4 @@ This project is licensed under the [BSD 3-Clause License](https://github.com/acg
 [readme-hero]: https://raw.githubusercontent.com/acgetchell/delaunay/main/docs/assets/readme/delaunay_spherical_readme.png
 [Secondary maps]: docs/workflows.md#builder-api-auxiliary-vertex-and-simplex-data
 [Simulation of Simplicity]: docs/numerical_robustness_guide.md#simulation-of-simplicity-sos
-[Validation Guide]: docs/validation.md
+[Construction and Validation Guide]: docs/construction_and_validation.md

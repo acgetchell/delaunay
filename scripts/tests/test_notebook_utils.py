@@ -87,6 +87,7 @@ def test_delaunay_command_prefix_falls_back_to_cargo(tmp_path: Path, monkeypatch
     assert notebook_utils.delaunay_command_prefix(tmp_path) == [
         "/tools/cargo",
         "run",
+        "--locked",
         "--profile",
         "perf",
         "--features",

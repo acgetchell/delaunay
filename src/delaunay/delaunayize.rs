@@ -79,6 +79,7 @@ use crate::core::tds::{SimplexKey, TdsMutationError};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::delaunay_model::DelaunayTriangulation;
+use crate::draft::DelaunayTriangulationDraft;
 use crate::geometry::kernel::ExactPredicates;
 use crate::refinement::RefinementError;
 use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
@@ -86,8 +87,8 @@ use crate::triangulation::Triangulation;
 use crate::triangulation::rollback::TriangulationRollbackTransaction;
 use crate::triangulation::validation::TopologyGuarantee;
 use crate::validation::{
-    DelaunayRefinementCandidate, DelaunayTriangulationValidationError,
-    validate_level_five_for_refinement,
+    DelaunayLevelFiveCertificate, DelaunayTriangulationValidationError,
+    certify_level_five_for_refinement,
 };
 use thiserror::Error;
 
@@ -185,7 +186,7 @@ where
             triangulation,
             mode: _,
         } = self;
-        DelaunayRefinementCandidate::from_triangulation(triangulation).try_into_delaunay()
+        DelaunayTriangulationDraft::from_triangulation(triangulation).try_into_delaunay()
     }
 }
 
@@ -744,11 +745,6 @@ where
     U: DataType,
     V: DataType,
 {
-    #[cfg(test)]
-    if tests::force_delaunay_repair_failure_enabled() {
-        return Err(tests::synthetic_repair_error());
-    }
-
     let run = repair_delaunay_with_flips_k2_k3_run_in_transaction(
         transaction,
         kernel,
@@ -770,6 +766,53 @@ where
             },
         )?;
     Ok(run.stats)
+}
+
+trait DelaunayizeOperations<K, U, V, const D: usize>
+where
+    U: Clone,
+    V: Clone,
+{
+    fn repair(
+        &mut self,
+        transaction: &mut TriangulationRollbackTransaction<'_, K, U, V, D>,
+        kernel: &K,
+        topology: TopologyGuarantee,
+        global_topology: GlobalTopology<D>,
+        config: DelaunayizeConfig,
+    ) -> Result<DelaunayRepairStats, DelaunayRepairError>;
+
+    fn certify(
+        &mut self,
+        triangulation: &Triangulation<K, U, V, D>,
+    ) -> Result<DelaunayLevelFiveCertificate<D>, DelaunayTriangulationValidationError>;
+}
+
+struct CanonicalDelaunayizeOperations;
+
+impl<K, U, V, const D: usize> DelaunayizeOperations<K, U, V, D> for CanonicalDelaunayizeOperations
+where
+    K: ExactPredicates<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    fn repair(
+        &mut self,
+        transaction: &mut TriangulationRollbackTransaction<'_, K, U, V, D>,
+        kernel: &K,
+        topology: TopologyGuarantee,
+        global_topology: GlobalTopology<D>,
+        config: DelaunayizeConfig,
+    ) -> Result<DelaunayRepairStats, DelaunayRepairError> {
+        run_configured_delaunay_repair(transaction, kernel, topology, global_topology, config)
+    }
+
+    fn certify(
+        &mut self,
+        triangulation: &Triangulation<K, U, V, D>,
+    ) -> Result<DelaunayLevelFiveCertificate<D>, DelaunayTriangulationValidationError> {
+        certify_level_five_for_refinement(triangulation)
+    }
 }
 
 /// Extracts Delaunay repair counters so fallback-recovered outcomes preserve
@@ -863,13 +906,31 @@ fn failed_delaunay_repair_stats(source: &DelaunayRepairError) -> DelaunayRepairS
     reason = "recoverable Delaunayize failures preserve typed sources on a cold conversion error path"
 )]
 fn delaunayize<K, U, V, const D: usize>(
-    mut triangulation: Triangulation<K, U, V, D>,
+    triangulation: Triangulation<K, U, V, D>,
     config: DelaunayizeConfig,
 ) -> Result<DelaunayizeResult<K, U, V, D>, DelaunayizeRefinementError<K, U, V, D>>
 where
     K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
     V: DataType,
+{
+    delaunayize_with_operations(triangulation, config, &mut CanonicalDelaunayizeOperations)
+}
+
+#[expect(
+    clippy::result_large_err,
+    reason = "recoverable Delaunayize failures preserve typed sources on a cold conversion error path"
+)]
+fn delaunayize_with_operations<K, U, V, O, const D: usize>(
+    mut triangulation: Triangulation<K, U, V, D>,
+    config: DelaunayizeConfig,
+    operations: &mut O,
+) -> Result<DelaunayizeResult<K, U, V, D>, DelaunayizeRefinementError<K, U, V, D>>
+where
+    K: ExactPredicates<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+    O: DelaunayizeOperations<K, U, V, D>,
 {
     let operation = TopologicalOperation::FacetFlip;
     let topology = triangulation.topology_guarantee();
@@ -897,30 +958,26 @@ where
     let global_topology = triangulation.global_topology();
     let mut transaction = TriangulationRollbackTransaction::begin(&mut triangulation);
 
-    match run_configured_delaunay_repair(
-        &mut transaction,
-        &kernel,
-        topology,
-        global_topology,
-        config,
-    ) {
+    match operations.repair(&mut transaction, &kernel, topology, global_topology, config) {
         Ok(delaunay_repair) => {
-            #[cfg(test)]
-            if tests::force_final_validation_failure_enabled() {
-                let source = tests::synthetic_final_validation_error();
-                transaction.rollback();
-                let reason = DelaunayizeError::FinalValidationFailed { source };
-                return Err(RefinementError::new(triangulation, reason));
-            }
-            if let Err(source) = validate_level_five_for_refinement(transaction.triangulation_mut())
-            {
-                transaction.rollback();
-                let reason = DelaunayizeError::FinalValidationFailed { source };
-                return Err(RefinementError::new(triangulation, reason));
-            }
+            let certificate = match operations.certify(transaction.triangulation_mut()) {
+                Ok(certificate) => certificate,
+                Err(source) => {
+                    transaction.rollback();
+                    let reason = DelaunayizeError::FinalValidationFailed { source };
+                    return Err(RefinementError::new(triangulation, reason));
+                }
+            };
             transaction.commit();
-            let triangulation = DelaunayRefinementCandidate::from_triangulation(triangulation)
-                .into_delaunay_after_level_five_check();
+            let triangulation = DelaunayTriangulationDraft::from_triangulation(triangulation)
+                .try_into_delaunay_with_certificate(Some(&certificate))
+                .map_err(|failure| {
+                    let (triangulation, source) = failure.into_parts();
+                    RefinementError::new(
+                        triangulation,
+                        DelaunayizeError::FinalValidationFailed { source },
+                    )
+                })?;
             Ok(DelaunayizeResult {
                 triangulation,
                 outcome: DelaunayizeOutcome {
@@ -972,62 +1029,10 @@ mod tests {
     use crate::vertex;
     use crate::{DelaunayTriangulationBuilder, TriangulationConstructionError};
     use slotmap::KeyData;
-    use std::cell::Cell;
     use std::error::Error as StdError;
 
-    struct ForceDelaunayRepairFailureGuard {
-        prior: bool,
-    }
-
-    struct ForceFinalValidationFailureGuard {
-        prior: bool,
-    }
-
-    impl ForceDelaunayRepairFailureGuard {
-        /// Enables synthetic Delaunay repair failure until the guard is dropped.
-        fn enable() -> Self {
-            Self {
-                prior: set_force_delaunay_repair_failure(true),
-            }
-        }
-    }
-
-    impl ForceFinalValidationFailureGuard {
-        /// Enables synthetic final validation failure until the guard is dropped.
-        fn enable() -> Self {
-            Self {
-                prior: set_force_final_validation_failure(true),
-            }
-        }
-    }
-
-    impl Drop for ForceDelaunayRepairFailureGuard {
-        fn drop(&mut self) {
-            restore_force_delaunay_repair_failure(self.prior);
-        }
-    }
-
-    impl Drop for ForceFinalValidationFailureGuard {
-        fn drop(&mut self) {
-            restore_force_final_validation_failure(self.prior);
-        }
-    }
-
-    // Last-resort fault injection for rollback branches that are hard to
-    // trigger deterministically; thread-local state avoids cross-test leakage.
-    // Remove this once a cleaner harness can reach the branch directly.
-    thread_local! {
-        static FORCE_DELAUNAY_REPAIR_FAILURE: Cell<bool> = const { Cell::new(false) };
-        static FORCE_FINAL_VALIDATION_FAILURE: Cell<bool> = const { Cell::new(false) };
-    }
-
     #[must_use]
-    pub(super) fn force_delaunay_repair_failure_enabled() -> bool {
-        FORCE_DELAUNAY_REPAIR_FAILURE.with(Cell::get)
-    }
-
-    #[must_use]
-    pub(super) fn synthetic_repair_error() -> DelaunayRepairError {
+    fn synthetic_repair_error() -> DelaunayRepairError {
         DelaunayRepairError::NonConvergent {
             max_flips: 0,
             diagnostics: Box::new(DelaunayRepairDiagnostics {
@@ -1046,41 +1051,64 @@ mod tests {
     }
 
     #[must_use]
-    pub(super) fn force_final_validation_failure_enabled() -> bool {
-        FORCE_FINAL_VALIDATION_FAILURE.with(Cell::get)
-    }
-
-    #[must_use]
-    pub(super) fn synthetic_final_validation_error() -> DelaunayTriangulationValidationError {
+    fn synthetic_final_validation_error() -> DelaunayTriangulationValidationError {
         DelaunayTriangulationValidationError::VerificationFailed {
             source: Box::new(DelaunayVerificationError::from(synthetic_repair_error())),
         }
     }
 
-    #[must_use]
-    fn set_force_delaunay_repair_failure(enabled: bool) -> bool {
-        FORCE_DELAUNAY_REPAIR_FAILURE.with(|flag| {
-            let prior = flag.get();
-            flag.set(enabled);
-            prior
-        })
+    struct FailRepairOperations;
+
+    impl<K, U, V, const D: usize> DelaunayizeOperations<K, U, V, D> for FailRepairOperations
+    where
+        K: ExactPredicates<D, Scalar = f64>,
+        U: DataType,
+        V: DataType,
+    {
+        fn repair(
+            &mut self,
+            _transaction: &mut TriangulationRollbackTransaction<'_, K, U, V, D>,
+            _kernel: &K,
+            _topology: TopologyGuarantee,
+            _global_topology: GlobalTopology<D>,
+            _config: DelaunayizeConfig,
+        ) -> Result<DelaunayRepairStats, DelaunayRepairError> {
+            Err(synthetic_repair_error())
+        }
+
+        fn certify(
+            &mut self,
+            triangulation: &Triangulation<K, U, V, D>,
+        ) -> Result<DelaunayLevelFiveCertificate<D>, DelaunayTriangulationValidationError> {
+            certify_level_five_for_refinement(triangulation)
+        }
     }
 
-    fn restore_force_delaunay_repair_failure(prior: bool) {
-        FORCE_DELAUNAY_REPAIR_FAILURE.with(|flag| flag.set(prior));
-    }
+    struct FailCertificationOperations;
 
-    #[must_use]
-    fn set_force_final_validation_failure(enabled: bool) -> bool {
-        FORCE_FINAL_VALIDATION_FAILURE.with(|flag| {
-            let prior = flag.get();
-            flag.set(enabled);
-            prior
-        })
-    }
+    impl<K, U, V, const D: usize> DelaunayizeOperations<K, U, V, D> for FailCertificationOperations
+    where
+        K: ExactPredicates<D, Scalar = f64>,
+        U: DataType,
+        V: DataType,
+    {
+        fn repair(
+            &mut self,
+            transaction: &mut TriangulationRollbackTransaction<'_, K, U, V, D>,
+            kernel: &K,
+            topology: TopologyGuarantee,
+            global_topology: GlobalTopology<D>,
+            config: DelaunayizeConfig,
+        ) -> Result<DelaunayRepairStats, DelaunayRepairError> {
+            run_configured_delaunay_repair(transaction, kernel, topology, global_topology, config)
+        }
 
-    fn restore_force_final_validation_failure(prior: bool) {
-        FORCE_FINAL_VALIDATION_FAILURE.with(|flag| flag.set(prior));
+        fn certify(
+            &mut self,
+            _triangulation: &Triangulation<K, U, V, D>,
+        ) -> Result<DelaunayLevelFiveCertificate<D>, DelaunayTriangulationValidationError> {
+            Err(synthetic_final_validation_error())
+        }
     }
 
     /// Snapshots deliberately malformed raw TDS fixtures for payload-disambiguation tests.
@@ -1396,9 +1424,12 @@ mod tests {
         let before = triangulation.tds.clone_for_rollback();
         let owner_before = triangulation.tds.topology_owner_id();
         let generation_before = triangulation.tds.generation();
-        let _guard = ForceFinalValidationFailureGuard::enable();
-        let failure = delaunayize(triangulation, DelaunayizeConfig::default())
-            .expect_err("synthetic final certification must reject the repaired candidate");
+        let failure = delaunayize_with_operations(
+            triangulation,
+            DelaunayizeConfig::default(),
+            &mut FailCertificationOperations,
+        )
+        .expect_err("synthetic final certification must reject the repaired candidate");
         let (triangulation, reason) = failure.into_parts();
 
         assert!(matches!(
@@ -1449,13 +1480,13 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
-        let _guard = ForceDelaunayRepairFailureGuard::enable();
-        let result = delaunayize(
+        let result = delaunayize_with_operations(
             dt.into_triangulation(),
             DelaunayizeConfig {
                 fallback_rebuild: true,
                 ..DelaunayizeConfig::default()
             },
+            &mut FailRepairOperations,
         )
         .unwrap();
 

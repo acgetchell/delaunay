@@ -82,7 +82,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         self.build_facet_to_simplices_map()
             .and_then(|map| FacetToSimplicesIndex::try_from_map(self, &map).map_err(TdsError::from))
     }
+}
 
+impl<U, V, const D: usize> Tds<U, V, D> {
     /// Builds the raw facet-to-simplices map used by validation and cache internals.
     pub(crate) fn build_facet_to_simplices_map(&self) -> Result<FacetToSimplicesMap, TdsError> {
         if D > usize::from(u8::MAX) {

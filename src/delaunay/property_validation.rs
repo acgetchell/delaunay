@@ -701,7 +701,7 @@ pub fn debug_print_first_delaunay_violation<U, V, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
+    use crate::core::algorithms::insertion::repair_neighbor_pointers;
     use crate::core::simplex::{NeighborSlot, Simplex};
     use crate::core::vertex::Vertex;
     use crate::delaunay_model::DelaunayTriangulation;

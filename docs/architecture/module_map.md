@@ -22,7 +22,7 @@ algorithm machinery that operates on it:
 - `tds/builder.rs` - explicit-connectivity `TdsBuilder` publication boundary.
   It owns raw vertex/simplex specifications and returns a constructed TDS only
   after cumulative Levels 1–2 validation succeeds.
-- `tds/draft.rs` - mutable unpublished `TdsDraft` workspace for explicitly
+- `tds/draft.rs` - mutable unpublished `TdsDraft` representation for explicitly
   supplied vertices and maximal simplices, plus its checked Levels 1–2
   `finish()` publication boundary.
 - `tds/errors.rs` - TDS error/report vocabulary re-export boundary.
@@ -52,8 +52,12 @@ algorithm machinery that operates on it:
 - `algorithms/flips/` - bistellar move vocabulary, mutation and orientation
   engines, validation-context construction, typed errors, queued Delaunay
   repair, and shared local topology/predicate support.
-- `algorithms/` - incremental insertion, point location, and PL-manifold repair
-  algorithms alongside the focused flip module.
+- `algorithms/insertion.rs` - shared cavity topology primitives, neighbor
+  wiring and repair helpers, and insertion failure types. The Levels 3–4
+  insertion algorithm lives in `triangulation/insertion.rs`; this core module
+  does not own a construction workflow.
+- `algorithms/` also owns point location and PL-manifold repair algorithms
+  alongside the focused flip module.
 - `traits/` - core boundary/data trait definitions and facet-incidence analysis.
 - `util/` - shared helpers for UUIDs, hashing, deduplication, allocation
   measurement, facet keys, Jaccard diagnostics, Hilbert ordering, and
@@ -79,9 +83,11 @@ receiving raw access to canonical TDS storage:
   snapshot-free; canonicalizing mode normalizes orientation transactionally.
   Both return the exact input TDS in a recoverable failure.
 - `draft.rs` - crate-internal `TriangulationDraft` publication state shared by
-  `TriangulationBuilder` and higher-layer drafts. It is not a separate public
-  workflow because a proof-bearing TDS already has complete connectivity and
-  the generic layer exposes no further staged mutation.
+  `TriangulationBuilder` and higher-layer construction. Its crate-private
+  `UnverifiedTriangulation` wrapper is removed only after Levels 3–4 certification.
+  It is not a separate public workflow because a proof-bearing TDS already has
+  complete connectivity and the generic layer exposes no further staged
+  mutation.
 - `construction.rs` - generic construction helpers and initial-simplex setup.
 - `insertion.rs` - generic transactional insertion, duplicate detection, and
   insertion telemetry.
@@ -139,14 +145,20 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
   construction. Explicit-connectivity construction delegates through
   `TdsBuilder` and `TriangulationBuilder` before Level 5 certification.
 - `construction.rs` - batch construction options, errors, statistics, and
-  high-level constructors.
-- `draft.rs` - incremental `DelaunayTriangulationDraft` state. Bootstrap owns an
-  unpublished lower-layer draft; the first maximal simplex crosses Levels 3–5
-  failure-atomically, and later mutations operate on a verified owner before
-  the checked `finish()` boundary returns it.
+  high-level constructors. Its private `DelaunayBatchWorkspace` owns mutable
+  construction caches and repair state until it forms the final Level 5 draft.
+- `draft.rs` - private, mutation-free `DelaunayTriangulationDraft`. It stores
+  exactly a Levels 1–4 `Triangulation` plus publication metadata while the
+  single Level 5 promotion is attempted.
+- `incremental_builder.rs` - public `DelaunayIncrementalBuilder` workflow.
+  Its private `DelaunayBootstrapWorkspace` owns an
+  unpublished `TdsDraft` plus kernel/topology context; the first maximal simplex
+  crosses Levels 1–5 failure-atomically without remapping staged vertex keys,
+  and later mutations operate on a verified owner before the checked `finish()`
+  boundary returns it.
 - `insertion.rs` - post-construction vertex insertion and repair orchestration;
   published empty owners reject bootstrap insertion, which belongs to
-  `DelaunayTriangulationDraft`.
+  `DelaunayIncrementalBuilder`.
 - `deletion.rs` - post-construction vertex deletion errors and transactional
   rollback-facing API support.
 - `query.rs` - read-only `DelaunayTriangulation` accessors and traversal
@@ -166,16 +178,17 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
   realization-validation, and empty-cap Delaunay backend using the topology
   space coordinate/metric backend.
 - `validation.rs` - implemented Level 5 Geometric Predicate APIs, validation
-  errors, and the private mutation-free `DelaunayRefinementCandidate` shared by
-  every final Levels 1–4 to Level 5 publication path.
+  errors, reports, and reusable checks consumed by the private draft. Fast-path
+  certificates are created only by the batch workspace in `construction.rs`.
 - `property_validation.rs` - TDS-level Delaunay empty-circumsphere scans and
   repair-oriented violation reports used by Level 5 validation APIs.
 
 `src/lib.rs` wires public modules, root re-exports, focused preludes, and the
 crate-level documentation map. Public workflow modules are exposed directly as
 `delaunay::builder`, `delaunay::construction`, `delaunay::flips`,
-`delaunay::pachner`, `delaunay::repair`, `delaunay::validation`, and focused
-preludes rather than through a nested `delaunay::delaunay` facade. The physical
+`delaunay::incremental_builder`, `delaunay::pachner`, `delaunay::repair`,
+`delaunay::validation`, and focused preludes rather than through a nested
+`delaunay::delaunay` facade. The physical
 location of `flips` and `pachner` under `src/triangulation/` records that these
 operations require only the Levels 1–4 owner.
 
@@ -191,6 +204,36 @@ persists the Levels 1–2 owner; Delaunay serde wraps that snapshot with the
 higher-layer proof context needed for validated restoration.
 `io::visualization` exposes stable UUID-based records for consumers that should
 not depend on runtime slotmap handles.
+
+## Optional Binaries
+
+The opt-in `cli` feature builds two repository-facing binaries without adding
+command-line dependencies to the default library feature set:
+
+- `src/bin/delaunay/main.rs` owns only artifact-process startup and exit status.
+- `src/bin/delaunay/config.rs` owns clap parsing, semantic validation, dispatch,
+  and the artifact binary's typed error boundary.
+- `src/bin/delaunay/generate.rs`, `spherical_hero.rs`, and
+  `validation_demo.rs` each own one direct artifact subcommand's raw arguments,
+  validated configuration, runner, and stable exported schema.
+- `src/bin/pachner_stress/main.rs` owns the independent maintainer diagnostic,
+  including its parser, validated configuration, same-file output conflict
+  checks, telemetry, and runner.
+- `src/bin/shared/cli_output.rs` owns the two binaries' shared validated
+  destinations and path-rich serialization/output errors;
+  `src/bin/delaunay/cli_output.rs` owns the shared component's unit tests.
+
+The binary target is the workflow namespace: `delaunay` exposes `generate`,
+`spherical-hero`, and `validation-demo` directly, while `pachner-stress` accepts
+its diagnostic options directly. There are no redundant `artifact` or
+`diagnose` wrapper subcommands.
+
+Raw paths remain `PathBuf` values at the clap boundary and become
+`ArtifactPath` values during semantic validation. This keeps filesystem
+identity and destination errors out of parsing while preventing distinct path
+spellings from selecting one output file. Machine-readable command-owned JSON
+objects carry both `schema` and `schema_version`; Cargo-backed notebook,
+diagnostic, and `just run` workflows execute with the repository lockfile.
 
 ## Topology Layer
 

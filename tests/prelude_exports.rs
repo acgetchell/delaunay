@@ -15,7 +15,6 @@ use std::{assert_matches, error::Error, iter, mem::size_of, num::NonZeroUsize};
 use approx::{abs_diff_eq, assert_relative_eq};
 use slotmap::KeyData;
 
-use delaunay::DelaunayTriangulationDraftError as RootDelaunayTriangulationDraftError;
 use delaunay::builder::DelaunayTriangulationBuilder as BuilderModuleBuilder;
 use delaunay::construction::{
     ConstructionOptions as ConstructionModuleOptions,
@@ -36,6 +35,10 @@ use delaunay::geometry::{
     LabeledSimplexRealization as GeometryModuleLabeledSimplexRealization,
     validate_simplex_realizations_intersect_only_in_shared_faces as geometry_module_validate_simplex_realizations_intersect_only_in_shared_faces,
 };
+use delaunay::incremental_builder::{
+    DelaunayIncrementalBuilder as ModuleDelaunayIncrementalBuilder,
+    DelaunayIncrementalBuilderError as ModuleDelaunayIncrementalBuilderError,
+};
 use delaunay::pachner::PachnerMoves as DirectPachnerMoves;
 use delaunay::prelude::DelaunayValidationError;
 use delaunay::prelude::algorithms::LocateResult;
@@ -52,9 +55,10 @@ use delaunay::prelude::construction::{
     CoordinateRangeOrdering as ConstructionCoordinateRangeOrdering,
     CoordinateValidationError as ConstructionCoordinateValidationError, DedupPolicy,
     DedupTolerance, DeduplicationError, DelaunayConstructionFailure,
-    DelaunayConstructionRetryFailure, DelaunayError, DelaunayRepairPolicy, DelaunayResult,
-    DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-    DelaunayTriangulationConstructionErrorWithStatistics, DelaunayTriangulationDraftError,
+    DelaunayConstructionRetryFailure, DelaunayError, DelaunayIncrementalBuilder,
+    DelaunayIncrementalBuilderError, DelaunayRepairPolicy, DelaunayResult, DelaunayTriangulation,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    DelaunayTriangulationConstructionErrorWithStatistics,
     DelaunayTriangulationValidationError as ConstructionDelaunayTriangulationValidationError,
     DelaunayVerificationError as ConstructionDelaunayVerificationError, DeleteVertexError,
     ExplicitConstructionError, FinalDelaunayValidationContext, FinalTopologyValidationContext,
@@ -225,6 +229,8 @@ use delaunay::prelude::validation::{
 use delaunay::prelude::{
     ConstructionStatistics as RootPreludeConstructionStatistics,
     CoordinateRange as RootCoordinateRange, DelaunayError as RootDelaunayError,
+    DelaunayIncrementalBuilder as RootPreludeDelaunayIncrementalBuilder,
+    DelaunayIncrementalBuilderError as RootPreludeDelaunayIncrementalBuilderError,
     DelaunayResult as RootDelaunayResult, DelaunayTriangulation as RootDelaunayTriangulation,
     DelaunayTriangulationBuilder as RootDelaunayTriangulationBuilder,
     DelaunayTriangulationConstructionErrorWithStatistics as RootPreludeConstructionErrorWithStatistics,
@@ -293,6 +299,10 @@ use delaunay::{
     ValidatedVisualizationData as RootValidatedVisualizationData,
     VisualizationTopologyGuarantee as RootVisualizationTopologyGuarantee,
     VisualizationTopologyKind as RootVisualizationTopologyKind,
+};
+use delaunay::{
+    DelaunayIncrementalBuilder as RootDelaunayIncrementalBuilder,
+    DelaunayIncrementalBuilderError as RootDelaunayIncrementalBuilderError,
 };
 #[derive(Debug, thiserror::Error)]
 enum RootApiExportTestError {
@@ -523,6 +533,23 @@ fn assert_construction_prelude_unsupported_topology_variants() {
 }
 
 #[test]
+fn incremental_builder_exports_cover_each_intended_public_path() {
+    let _: RootDelaunayIncrementalBuilder<_, (), (), 2> = RootDelaunayIncrementalBuilder::new();
+    let _: ModuleDelaunayIncrementalBuilder<_, (), (), 2> = ModuleDelaunayIncrementalBuilder::new();
+    let _: DelaunayIncrementalBuilder<_, (), (), 2> = DelaunayIncrementalBuilder::new();
+    let _: RootPreludeDelaunayIncrementalBuilder<_, (), (), 2> =
+        RootPreludeDelaunayIncrementalBuilder::new();
+
+    let error = DelaunayIncrementalBuilderError::IncompleteBootstrap {
+        dimension: 2,
+        vertex_count: 1,
+    };
+    let _: &RootDelaunayIncrementalBuilderError = &error;
+    let _: &ModuleDelaunayIncrementalBuilderError = &error;
+    let _: &RootPreludeDelaunayIncrementalBuilderError = &error;
+}
+
+#[test]
 fn construction_prelude_exports_common_delaunay_error_aliases() {
     let source = CoordinateConversionError::InvalidSimplexPointCount {
         actual: 2,
@@ -565,14 +592,15 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
         DelaunayError::Insertion { source: err } if err.as_ref() == &insertion
     );
 
-    let draft = DelaunayTriangulationDraftError::IncompleteBootstrap {
+    let incremental_build = DelaunayIncrementalBuilderError::IncompleteBootstrap {
         dimension: 2,
         vertex_count: 1,
     };
-    let root_draft: RootDelaunayTriangulationDraftError = draft.clone();
+    let root_incremental_build: RootDelaunayIncrementalBuilderError = incremental_build.clone();
     assert_matches!(
-        DelaunayError::from(root_draft),
-        DelaunayError::Draft { source } if source.as_ref() == &draft
+        DelaunayError::from(root_incremental_build),
+        DelaunayError::IncrementalConstruction { source }
+            if source.as_ref() == &incremental_build
     );
 
     let delete_vertex = DeleteVertexError::VertexNotFound {

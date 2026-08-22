@@ -27,7 +27,7 @@
 
 use super::{
     SimplexKey, Tds, TdsError, TdsMutationError, TriangulationConstructionState, VertexKey,
-    incidence::VertexIncidenceIndex,
+    incidence::VertexIncidenceIndex, model::UnverifiedTds,
 };
 use crate::core::{
     collections::{
@@ -852,23 +852,24 @@ impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
             uuid_to_simplex_key,
         } = rebuild_simplices(&uuid_to_vertex_key, self.simplices)?;
 
-        let mut tds = Tds {
-            vertices,
-            simplices,
-            uuid_to_vertex_key,
-            uuid_to_simplex_key,
-            vertex_to_simplices: VertexIncidenceIndex::default(),
-            construction_state: TriangulationConstructionState::Constructed,
-            generation: Arc::new(AtomicU64::new(0)),
-            identity: Arc::new(Uuid::new_v4()),
+        let vertex_count = vertices.len();
+        let mut tds = UnverifiedTds {
+            storage: Tds::<U, V, D> {
+                vertices,
+                simplices,
+                uuid_to_vertex_key,
+                uuid_to_simplex_key,
+                vertex_to_simplices: VertexIncidenceIndex::default(),
+                construction_state: TriangulationConstructionState::Incomplete(vertex_count),
+                generation: Arc::new(AtomicU64::new(0)),
+                identity: Arc::new(Uuid::new_v4()),
+            },
         };
 
         tds.assign_incident_simplices()
             .map_err(|source| TdsSnapshotError::IncidentSimplexRebuildFailed { source })?;
-        tds.validate()
-            .map_err(|source| TdsSnapshotError::ValidationFailed { source })?;
-
-        Ok(tds)
+        tds.publish()
+            .map_err(|source| TdsSnapshotError::ValidationFailed { source })
     }
 }
 

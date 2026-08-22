@@ -5,9 +5,7 @@
 //! slot order, and normalizing coherent orientation after construction or edits.
 //! Predicate implementations remain in the geometry layer.
 
-use crate::core::algorithms::incremental_insertion::{
-    InsertionError, InsertionTopologyValidationContext,
-};
+use crate::core::algorithms::insertion::{InsertionError, InsertionTopologyValidationContext};
 use crate::core::collections::{
     MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SimplexKeySet, SmallBuffer,
     fast_hash_set_with_capacity,

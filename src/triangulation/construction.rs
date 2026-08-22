@@ -7,7 +7,7 @@
 //! with the triangulation type until they can be split into narrower modules.
 
 use crate::core::algorithms::flips::DelaunayRepairError;
-use crate::core::algorithms::incremental_insertion::{
+use crate::core::algorithms::insertion::{
     CavityFillingError, DelaunayRepairFailureContext, HullExtensionReason, InsertionError,
     InsertionTopologyValidationContext, NeighborWiringError, SpatialIndexConstructionFailure,
 };

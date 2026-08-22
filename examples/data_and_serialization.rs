@@ -103,7 +103,6 @@ fn main() -> Result<(), DataExampleError> {
     let restored = TriangulationBuilder::new(tds, AdaptiveKernel::new())
         .topology_guarantee(topology_guarantee)
         .global_topology(global_topology)
-        .strict()
         .build()
         .map_err(RefinementError::into_reason)?;
     restored.validate_realization()?;

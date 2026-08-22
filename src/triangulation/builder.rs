@@ -2,7 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::algorithms::incremental_insertion::InsertionError;
+use crate::core::algorithms::insertion::InsertionError;
 use crate::core::tds::{InvariantError, Tds, TdsError};
 use crate::core::traits::data_type::DataType;
 use crate::geometry::kernel::Kernel;
@@ -27,12 +27,12 @@ pub(super) enum TriangulationBuildMode {
     ///
     /// This mode performs no orientation normalization and allocates no rollback
     /// snapshot. Failure returns the unchanged TDS.
+    #[default]
     Strict,
     /// Normalize orientation transactionally before Levels 3–4 certification.
     ///
-    /// This is the default for backward-compatible builder behavior. Successful
-    /// publication may change simplex ordering and structural generation.
-    #[default]
+    /// This explicit opt-in may change simplex ordering and structural
+    /// generation on successful publication.
     Canonicalizing,
 }
 
@@ -96,19 +96,19 @@ pub type TriangulationBuildFailure<U, V, const D: usize> =
 /// Fluent builder for a proof-bearing Levels 1–4 [`Triangulation`].
 ///
 /// The builder consumes TDS storage, installs kernel and topology context, and
-/// publishes a triangulation only after Levels 3–4 succeed. The default mode
-/// canonicalizes positive geometric orientation and rechecks Levels 1–2 after
-/// that transition. Select [`Self::strict`] when the TDS is already canonical
-/// and publication must not transform it. Neither mode infers connectivity or
-/// repairs arbitrary topology or realization failures.
+/// publishes a triangulation only after Levels 3–4 succeed. The default strict
+/// mode certifies without transforming the supplied TDS. Select
+/// [`Self::canonicalizing`] when publication may normalize positive geometric
+/// orientation. Neither mode infers connectivity or repairs arbitrary topology
+/// or realization failures.
 ///
 /// # Transformation and cost
 ///
-/// Default canonicalizing construction may change stored simplex ordering and
-/// advance the TDS structural generation. It snapshots the canonical TDS
-/// before normalization, adding storage and copy work linear in the TDS
-/// representation. Strict construction performs no orientation mutation and
-/// allocates no rollback snapshot. Either mode returns the exact input TDS in
+/// Strict construction performs no orientation mutation and allocates no
+/// rollback snapshot. Explicit canonicalizing construction may change stored
+/// simplex ordering and advance the TDS structural generation. It snapshots
+/// the canonical TDS before normalization, adding storage and copy work linear
+/// in the TDS representation. Either mode returns the exact input TDS in
 /// [`TriangulationBuildFailure`] when publication fails.
 ///
 /// # Examples
@@ -181,7 +181,7 @@ impl<K, U, V, const D: usize> TriangulationBuilder<K, U, V, D> {
             topology_guarantee: TopologyGuarantee::DEFAULT,
             global_topology: GlobalTopology::DEFAULT,
             validation_policy: None,
-            build_mode: TriangulationBuildMode::Canonicalizing,
+            build_mode: TriangulationBuildMode::Strict,
         }
     }
 
@@ -209,10 +209,10 @@ impl<K, U, V, const D: usize> TriangulationBuilder<K, U, V, D> {
         self
     }
 
-    /// Selects the non-mutating fast path.
+    /// Selects transactional positive-orientation canonicalization before certification.
     #[must_use]
-    pub const fn strict(mut self) -> Self {
-        self.build_mode = TriangulationBuildMode::Strict;
+    pub const fn canonicalizing(mut self) -> Self {
+        self.build_mode = TriangulationBuildMode::Canonicalizing;
         self
     }
 
@@ -237,8 +237,8 @@ where
     /// orientation cannot be normalized, or any cumulative validation layer
     /// through Level 4 rejects the candidate. The failure retains the original
     /// TDS so the caller can repair it or retry with different options. Success
-    /// may return a canonicalized TDS representation. Select [`Self::strict`]
-    /// when success must preserve the supplied representation unchanged.
+    /// preserves the supplied TDS representation by default. Select
+    /// [`Self::canonicalizing`] when success may normalize its orientation.
     pub fn build(self) -> Result<Triangulation<K, U, V, D>, TriangulationBuildFailure<U, V, D>> {
         let validation_policy = self
             .validation_policy
@@ -262,6 +262,14 @@ mod tests {
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::vertex;
     use std::assert_matches;
+
+    #[test]
+    fn build_mode_defaults_to_strict_certification() {
+        assert_eq!(
+            TriangulationBuildMode::default(),
+            TriangulationBuildMode::Strict
+        );
+    }
 
     #[test]
     fn build_publishes_only_a_valid_realization() {
@@ -294,7 +302,6 @@ mod tests {
         let expected_generation = tds.generation();
 
         let triangulation = TriangulationBuilder::new(tds, AdaptiveKernel::new())
-            .strict()
             .build()
             .unwrap();
         let restored = triangulation.into_tds();
@@ -319,7 +326,6 @@ mod tests {
         let expected_generation = strict_tds.generation();
 
         let failure = TriangulationBuilder::new(strict_tds, AdaptiveKernel::new())
-            .strict()
             .build()
             .expect_err("strict publication must not rewrite negative orientation");
         assert_matches!(
@@ -334,6 +340,7 @@ mod tests {
         );
 
         TriangulationBuilder::new(tds, AdaptiveKernel::new())
+            .canonicalizing()
             .build()
             .expect("canonicalizing publication should normalize the same TDS");
     }
@@ -395,6 +402,7 @@ mod tests {
 
         let failure = TriangulationBuilder::new(tds, AdaptiveKernel::new())
             .global_topology(GlobalTopology::Spherical)
+            .canonicalizing()
             .build()
             .expect_err("an open simplex cannot represent a closed spherical topology");
 

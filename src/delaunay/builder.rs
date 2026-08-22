@@ -91,15 +91,15 @@ use crate::construction::{
     InsertionOrderStrategy, RetryPolicy, duration_nanos_saturating,
 };
 use crate::core::algorithms::flips::{DelaunayRepairError, repair_delaunay_with_flips_k2_k3};
-use crate::core::algorithms::incremental_insertion::InsertionError;
+use crate::core::algorithms::insertion::InsertionError;
 use crate::core::collections::{
     FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, PeriodicOffsetBuffer, SmallBuffer, Uuid,
     VertexKeySet,
 };
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
-    InvariantError, SimplexKey, TdsBuilder, TdsBuilderError, TdsConstructionError, TdsError,
-    TdsMutationError, VertexKey,
+    ExplicitSimplexParseError, InvariantError, ParsedTdsInput, SimplexKey, TdsBuilder,
+    TdsBuilderError, TdsConstructionError, TdsError, TdsMutationError, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
@@ -908,62 +908,37 @@ pub enum ExplicitConstructionError {
     },
 }
 
-#[derive(Clone, Copy)]
-struct ValidatedExplicitSimplices<'v> {
-    specs: &'v [Vec<usize>],
-}
-
-impl<'v> ValidatedExplicitSimplices<'v> {
-    fn try_new<const D: usize>(
-        vertex_count: usize,
-        specs: &'v [Vec<usize>],
-    ) -> Result<Self, ExplicitConstructionError> {
-        validate_explicit_simplex_specs::<D>(vertex_count, specs)?;
-        Ok(Self { specs })
-    }
-
-    const fn as_slice(self) -> &'v [Vec<usize>] {
-        self.specs
-    }
-}
-
-/// Validates explicit simplex specifications before storing them in a builder.
-fn validate_explicit_simplex_specs<const D: usize>(
-    vertex_count: usize,
-    simplices: &[Vec<usize>],
-) -> Result<(), ExplicitConstructionError> {
-    if simplices.is_empty() {
-        return Err(ExplicitConstructionError::EmptySimplices);
-    }
-
-    for (simplex_idx, simplex_spec) in simplices.iter().enumerate() {
-        if simplex_spec.len() != D + 1 {
-            return Err(ExplicitConstructionError::InvalidSimplexArity {
-                simplex_index: simplex_idx,
-                actual: simplex_spec.len(),
-                expected: D + 1,
-            });
-        }
-        for (i, &vi) in simplex_spec.iter().enumerate() {
-            if vi >= vertex_count {
-                return Err(ExplicitConstructionError::IndexOutOfBounds {
-                    simplex_index: simplex_idx,
-                    vertex_index: vi,
-                    bound: vertex_count,
-                });
-            }
-            for &vj in &simplex_spec[i + 1..] {
-                if vi == vj {
-                    return Err(ExplicitConstructionError::DuplicateVertexInSimplex {
-                        simplex_index: simplex_idx,
-                        vertex_index: vi,
-                    });
-                }
-            }
+impl From<ExplicitSimplexParseError> for ExplicitConstructionError {
+    fn from(source: ExplicitSimplexParseError) -> Self {
+        match source {
+            ExplicitSimplexParseError::EmptySimplices => Self::EmptySimplices,
+            ExplicitSimplexParseError::InvalidSimplexArity {
+                simplex_index,
+                actual,
+                expected,
+            } => Self::InvalidSimplexArity {
+                simplex_index,
+                actual,
+                expected,
+            },
+            ExplicitSimplexParseError::IndexOutOfBounds {
+                simplex_index,
+                vertex_index,
+                bound,
+            } => Self::IndexOutOfBounds {
+                simplex_index,
+                vertex_index,
+                bound,
+            },
+            ExplicitSimplexParseError::DuplicateVertexInSimplex {
+                simplex_index,
+                vertex_index,
+            } => Self::DuplicateVertexInSimplex {
+                simplex_index,
+                vertex_index,
+            },
         }
     }
-
-    Ok(())
 }
 
 // =============================================================================
@@ -1023,7 +998,7 @@ pub struct DelaunayTriangulationBuilder<'v, U, const D: usize, V = ()> {
     ///
     /// When set, the builder constructs a triangulation from the given vertices and
     /// simplices directly, bypassing point-insertion-based Delaunay construction.
-    explicit_simplices: Option<ValidatedExplicitSimplices<'v>>,
+    explicit_simplices: Option<ParsedTdsInput<'v, U, D>>,
     /// Explicit runtime global topology metadata requested by the caller.
     ///
     /// `None` means the construction path supplies its own default metadata:
@@ -1168,65 +1143,11 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
         vertices: &'v [Vertex<U, D>],
         simplices: &'v [Vec<usize>],
     ) -> Result<Self, ExplicitConstructionError> {
-        Self::try_from_vertices_and_simplices_generic(vertices, simplices)
-    }
-    /// Creates a builder from explicit vertex and simplex specifications.
-    ///
-    /// This constructs a triangulation from the given connectivity without
-    /// Delaunay point insertion.
-    ///
-    /// Simplex arity, bounds, and duplicate indices are validated before the
-    /// builder stores the explicit connectivity. Euclidean explicit meshes are
-    /// checked at Levels 1–4 during a `build_triangulation*` terminal. The
-    /// [`build`](Self::build) and [`build_with_kernel`](Self::build_with_kernel)
-    /// terminals additionally require the Level 5 Delaunay empty-circumsphere
-    /// property. A `build_triangulation*` terminal automatically omits that
-    /// Level 5 work when importing exact degenerate or externally constrained
-    /// connectivity that should remain a generic triangulation.
-    /// Non-Euclidean explicit connectivity is rejected at build time because
-    /// quotient meshes need Level 4 handling before they can be accepted.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ExplicitConstructionError::EmptySimplices`] when no simplices
-    /// are provided, [`ExplicitConstructionError::InvalidSimplexArity`] when a
-    /// simplex does not contain `D + 1` vertex indices,
-    /// [`ExplicitConstructionError::IndexOutOfBounds`] when a simplex references
-    /// a missing vertex, or
-    /// [`ExplicitConstructionError::DuplicateVertexInSimplex`] when a simplex
-    /// repeats a vertex index.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayResult, DelaunayTriangulationBuilder,
-    ///     DelaunayTriangulationConstructionError, Vertex,
-    /// };
-    ///
-    /// # fn main() -> DelaunayResult<()> {
-    /// let vertices: Vec<Vertex<(), 2>> = vec![
-    ///     Vertex::try_new([0.0, 0.0])?,
-    ///     Vertex::try_new([1.0, 0.0])?,
-    ///     Vertex::try_new([0.0, 1.0])?,
-    /// ];
-    /// let simplices = vec![vec![0, 1, 2]];
-    ///
-    /// let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices_generic(&vertices, &simplices)
-    ///     .map_err(DelaunayTriangulationConstructionError::from)?
-    ///     .build()?;
-    ///
-    /// assert_eq!(dt.number_of_vertices(), 3);
-    /// assert_eq!(dt.number_of_simplices(), 1);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn try_from_vertices_and_simplices_generic(
-        vertices: &'v [Vertex<U, D>],
-        simplices: &'v [Vec<usize>],
-    ) -> Result<Self, ExplicitConstructionError> {
-        let explicit_simplices =
-            ValidatedExplicitSimplices::try_new::<D>(vertices.len(), simplices)?;
+        if simplices.is_empty() {
+            return Err(ExplicitConstructionError::EmptySimplices);
+        }
+        let explicit_simplices = ParsedTdsInput::try_new(vertices, simplices)
+            .map_err(ExplicitConstructionError::from)?;
         let mut builder = Self::new(vertices);
         builder.explicit_simplices = Some(explicit_simplices);
         Ok(builder)
@@ -1938,7 +1859,6 @@ where
             }
             let triangulation = Self::build_explicit_triangulation(
                 kernel,
-                self.vertices,
                 simplices,
                 self.topology_guarantee,
                 self.global_topology_or_default(),
@@ -2103,7 +2023,6 @@ where
             }
             let mut triangulation = Self::build_explicit_triangulation(
                 kernel,
-                self.vertices,
                 simplices,
                 self.topology_guarantee,
                 self.global_topology_or_default(),
@@ -2535,8 +2454,7 @@ where
     /// 4. Delegate Levels 3–4 promotion to [`TriangulationBuilder`].
     fn build_explicit_triangulation<K>(
         kernel: &K,
-        vertices: &[Vertex<U, D>],
-        simplices: ValidatedExplicitSimplices<'_>,
+        simplices: ParsedTdsInput<'_, U, D>,
         topology_guarantee: TopologyGuarantee,
         global_topology: GlobalTopology<D>,
     ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
@@ -2545,8 +2463,7 @@ where
     {
         Self::reject_explicit_non_euclidean_topology(global_topology)?;
 
-        let simplex_specs = simplices.as_slice();
-        let tds = TdsBuilder::new(vertices, simplex_specs)
+        let tds = TdsBuilder::from_parsed(simplices)
             .simplex_data_type::<V>()
             .build()
             .map_err(Self::explicit_error_from_tds_builder)?;
@@ -2554,6 +2471,7 @@ where
         TriangulationBuilder::new(tds, kernel.clone())
             .topology_guarantee(topology_guarantee)
             .global_topology(global_topology)
+            .canonicalizing()
             .build()
             .map_err(|failure| {
                 Self::explicit_error_from_triangulation_builder(failure.into_reason())
@@ -3729,9 +3647,7 @@ where
 mod tests {
     use super::*;
     use crate::construction::{DelaunayConstructionFailure, InsertionOrderStrategy};
-    use crate::core::algorithms::incremental_insertion::{
-        TdsConstructionFailure, TdsValidationFailure,
-    };
+    use crate::core::algorithms::insertion::{TdsConstructionFailure, TdsValidationFailure};
     use crate::core::simplex::SimplexValidationError;
     use crate::core::tds::TdsConstructionError;
     use crate::geometry::kernel::RobustKernel;

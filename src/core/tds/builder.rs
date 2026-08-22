@@ -19,6 +19,156 @@ use crate::core::vertex::Vertex;
 use std::marker::PhantomData;
 use thiserror::Error;
 
+/// Parse failures at the raw explicit-connectivity boundary.
+#[derive(Clone, Debug, Error, PartialEq)]
+pub(crate) enum ExplicitSimplexParseError {
+    /// No maximal simplices were supplied for a nonempty vertex set.
+    #[error("no simplices provided for nonempty TDS construction")]
+    EmptySimplices,
+    /// A simplex specification has the wrong arity for dimension `D`.
+    #[error(
+        "simplex {simplex_index} has {actual} vertex indices, expected {expected} for a simplex"
+    )]
+    InvalidSimplexArity {
+        simplex_index: usize,
+        actual: usize,
+        expected: usize,
+    },
+    /// A simplex specification references a missing input vertex.
+    #[error(
+        "simplex {simplex_index} references vertex index {vertex_index}, but the vertex count is {bound}"
+    )]
+    IndexOutOfBounds {
+        simplex_index: usize,
+        vertex_index: usize,
+        bound: usize,
+    },
+    /// A simplex specification repeats one input vertex.
+    #[error("simplex {simplex_index} contains duplicate vertex index {vertex_index}")]
+    DuplicateVertexInSimplex {
+        simplex_index: usize,
+        vertex_index: usize,
+    },
+}
+
+impl From<ExplicitSimplexParseError> for TdsBuilderError {
+    fn from(source: ExplicitSimplexParseError) -> Self {
+        match source {
+            ExplicitSimplexParseError::EmptySimplices => Self::EmptySimplices,
+            ExplicitSimplexParseError::InvalidSimplexArity {
+                simplex_index,
+                actual,
+                expected,
+            } => Self::InvalidSimplexArity {
+                simplex_index,
+                actual,
+                expected,
+            },
+            ExplicitSimplexParseError::IndexOutOfBounds {
+                simplex_index,
+                vertex_index,
+                bound,
+            } => Self::IndexOutOfBounds {
+                simplex_index,
+                vertex_index,
+                bound,
+            },
+            ExplicitSimplexParseError::DuplicateVertexInSimplex {
+                simplex_index,
+                vertex_index,
+            } => Self::DuplicateVertexInSimplex {
+                simplex_index,
+                vertex_index,
+            },
+        }
+    }
+}
+
+/// Parsed explicit TDS input whose simplex indices are locally well formed.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ParsedTdsInput<'a, U, const D: usize> {
+    vertices: &'a [Vertex<U, D>],
+    simplices: &'a [Vec<usize>],
+}
+
+impl<'a, U, const D: usize> ParsedTdsInput<'a, U, D> {
+    /// Parses raw vertex-index connectivity exactly once at the input boundary.
+    pub(crate) fn try_new(
+        vertices: &'a [Vertex<U, D>],
+        simplices: &'a [Vec<usize>],
+    ) -> Result<Self, ExplicitSimplexParseError> {
+        if simplices.is_empty() && !vertices.is_empty() {
+            return Err(ExplicitSimplexParseError::EmptySimplices);
+        }
+
+        for (simplex_index, simplex) in simplices.iter().enumerate() {
+            if simplex.len() != D + 1 {
+                return Err(ExplicitSimplexParseError::InvalidSimplexArity {
+                    simplex_index,
+                    actual: simplex.len(),
+                    expected: D + 1,
+                });
+            }
+
+            for (offset, &vertex_index) in simplex.iter().enumerate() {
+                if vertex_index >= vertices.len() {
+                    return Err(ExplicitSimplexParseError::IndexOutOfBounds {
+                        simplex_index,
+                        vertex_index,
+                        bound: vertices.len(),
+                    });
+                }
+                if simplex[..offset].contains(&vertex_index) {
+                    return Err(ExplicitSimplexParseError::DuplicateVertexInSimplex {
+                        simplex_index,
+                        vertex_index,
+                    });
+                }
+            }
+        }
+
+        Ok(Self {
+            vertices,
+            simplices,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum TdsBuilderInput<'a, U, const D: usize> {
+    Raw {
+        vertices: &'a [Vertex<U, D>],
+        simplices: &'a [Vec<usize>],
+    },
+    Parsed(ParsedTdsInput<'a, U, D>),
+}
+
+impl<'a, U, const D: usize> TdsBuilderInput<'a, U, D> {
+    const fn vertices(&self) -> &'a [Vertex<U, D>] {
+        match self {
+            Self::Raw { vertices, .. } | Self::Parsed(ParsedTdsInput { vertices, .. }) => vertices,
+        }
+    }
+
+    const fn simplices(&self) -> &'a [Vec<usize>] {
+        match self {
+            Self::Raw { simplices, .. } | Self::Parsed(ParsedTdsInput { simplices, .. }) => {
+                simplices
+            }
+        }
+    }
+
+    fn parse(self) -> Result<ParsedTdsInput<'a, U, D>, ExplicitSimplexParseError> {
+        match self {
+            Self::Raw {
+                vertices,
+                simplices,
+            } => ParsedTdsInput::try_new(vertices, simplices),
+            Self::Parsed(parsed) => Ok(parsed),
+        }
+    }
+}
+
 /// Typed failures from explicit Levels 1–2 TDS construction.
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
@@ -159,8 +309,7 @@ pub enum TdsBuilderError {
 /// ```
 #[derive(Clone, Copy, Debug)]
 pub struct TdsBuilder<'a, U, const D: usize, V = ()> {
-    vertices: &'a [Vertex<U, D>],
-    simplices: &'a [Vec<usize>],
+    input: TdsBuilderInput<'a, U, D>,
     _simplex_data: PhantomData<V>,
 }
 
@@ -191,8 +340,18 @@ impl<'a, U, const D: usize> TdsBuilder<'a, U, D> {
     #[must_use]
     pub const fn new(vertices: &'a [Vertex<U, D>], simplices: &'a [Vec<usize>]) -> Self {
         Self {
-            vertices,
-            simplices,
+            input: TdsBuilderInput::Raw {
+                vertices,
+                simplices,
+            },
+            _simplex_data: PhantomData,
+        }
+    }
+
+    /// Creates a builder from input already parsed by a higher boundary.
+    pub(crate) const fn from_parsed(input: ParsedTdsInput<'a, U, D>) -> Self {
+        Self {
+            input: TdsBuilderInput::Parsed(input),
             _simplex_data: PhantomData,
         }
     }
@@ -202,13 +361,13 @@ impl<'a, U, V, const D: usize> TdsBuilder<'a, U, D, V> {
     /// Returns the number of raw input vertices in this request.
     #[must_use]
     pub const fn vertex_count(&self) -> usize {
-        self.vertices.len()
+        self.input.vertices().len()
     }
 
     /// Returns the number of raw maximal-simplex specifications in this request.
     #[must_use]
     pub const fn simplex_count(&self) -> usize {
-        self.simplices.len()
+        self.input.simplices().len()
     }
 
     /// Selects the persisted simplex payload type without changing connectivity.
@@ -246,8 +405,7 @@ impl<'a, U, V, const D: usize> TdsBuilder<'a, U, D, V> {
     #[must_use]
     pub const fn simplex_data_type<W>(self) -> TdsBuilder<'a, U, D, W> {
         TdsBuilder {
-            vertices: self.vertices,
-            simplices: self.simplices,
+            input: self.input,
             _simplex_data: PhantomData,
         }
     }
@@ -269,28 +427,30 @@ impl<'a, U, V, const D: usize> TdsBuilder<'a, U, D, V> {
     where
         U: Copy,
     {
-        self.validate_specs()?;
+        let parsed = self.input.parse().map_err(TdsBuilderError::from)?;
+        let vertices = parsed.vertices;
+        let simplices = parsed.simplices;
 
         let mut draft = TdsDraft::new();
-        let tds = draft.tds_mut();
-        let mut index_to_key = Vec::with_capacity(self.vertices.len());
-        for (vertex_index, vertex) in self.vertices.iter().copied().enumerate() {
-            let vertex_key = tds.insert_vertex_with_mapping(vertex).map_err(|source| {
-                TdsBuilderError::VertexInsertion {
-                    vertex_index,
-                    source: Box::new(source),
-                }
-            })?;
+        let mut index_to_key = Vec::with_capacity(vertices.len());
+        for (vertex_index, vertex) in vertices.iter().copied().enumerate() {
+            let vertex_key =
+                draft
+                    .insert_vertex(vertex)
+                    .map_err(|source| TdsBuilderError::VertexInsertion {
+                        vertex_index,
+                        source: Box::new(source),
+                    })?;
             index_to_key.push(vertex_key);
         }
 
-        self.validate_topology(&index_to_key).map_err(|source| {
+        Self::validate_topology(simplices, &index_to_key).map_err(|source| {
             TdsBuilderError::TopologyValidation {
                 source: Box::new(source),
             }
         })?;
 
-        for (simplex_index, simplex_spec) in self.simplices.iter().enumerate() {
+        for (simplex_index, simplex_spec) in simplices.iter().enumerate() {
             let vertex_keys = Self::simplex_vertex_keys(simplex_spec, &index_to_key);
             let simplex = Simplex::try_new(vertex_keys).map_err(|source| {
                 TdsBuilderError::SimplexCreation {
@@ -298,7 +458,8 @@ impl<'a, U, V, const D: usize> TdsBuilder<'a, U, D, V> {
                     source,
                 }
             })?;
-            tds.insert_simplex_with_mapping_prechecked_topology(simplex)
+            draft
+                .insert_simplex_prechecked_topology(simplex)
                 .map_err(|source| TdsBuilderError::SimplexInsertion {
                     simplex_index,
                     source: Box::new(source),
@@ -319,57 +480,25 @@ impl<'a, U, V, const D: usize> TdsBuilder<'a, U, D, V> {
         })
     }
 
-    /// Rejects malformed raw connectivity before allocating the TDS workspace.
-    fn validate_specs(&self) -> Result<(), TdsBuilderError> {
-        if self.simplices.is_empty() && !self.vertices.is_empty() {
-            return Err(TdsBuilderError::EmptySimplices);
-        }
-
-        for (simplex_index, simplex) in self.simplices.iter().enumerate() {
-            if simplex.len() != D + 1 {
-                return Err(TdsBuilderError::InvalidSimplexArity {
-                    simplex_index,
-                    actual: simplex.len(),
-                    expected: D + 1,
-                });
-            }
-
-            for (offset, &vertex_index) in simplex.iter().enumerate() {
-                if vertex_index >= self.vertices.len() {
-                    return Err(TdsBuilderError::IndexOutOfBounds {
-                        simplex_index,
-                        vertex_index,
-                        bound: self.vertices.len(),
-                    });
-                }
-                if simplex[..offset].contains(&vertex_index) {
-                    return Err(TdsBuilderError::DuplicateVertexInSimplex {
-                        simplex_index,
-                        vertex_index,
-                    });
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     /// Proves cross-simplex uniqueness and facet multiplicity in one linear pass.
-    fn validate_topology(&self, index_to_key: &[VertexKey]) -> Result<(), TdsConstructionError> {
-        self.reject_duplicate_simplices(index_to_key)?;
-        self.reject_overshared_facets(index_to_key)?;
+    fn validate_topology(
+        simplices: &[Vec<usize>],
+        index_to_key: &[VertexKey],
+    ) -> Result<(), TdsConstructionError> {
+        Self::reject_duplicate_simplices(simplices, index_to_key)?;
+        Self::reject_overshared_facets(simplices, index_to_key)?;
         Ok(())
     }
 
     /// Rejects repeated maximal simplices before the unchecked bulk insertion loop.
     fn reject_duplicate_simplices(
-        &self,
+        simplices: &[Vec<usize>],
         index_to_key: &[VertexKey],
     ) -> Result<(), TdsConstructionError> {
         let mut seen: FastHashMap<SimplexVertexKeyBuffer, usize> =
-            fast_hash_map_with_capacity(self.simplices.len());
+            fast_hash_map_with_capacity(simplices.len());
 
-        for (simplex_index, simplex_spec) in self.simplices.iter().enumerate() {
+        for (simplex_index, simplex_spec) in simplices.iter().enumerate() {
             let mut identity = Self::simplex_vertex_keys(simplex_spec, index_to_key);
             identity.as_mut_slice().sort_unstable();
             match seen.entry(identity) {
@@ -395,14 +524,14 @@ impl<'a, U, V, const D: usize> TdsBuilder<'a, U, D, V> {
 
     /// Rejects facet multiplicity above two before neighbor derivation begins.
     fn reject_overshared_facets(
-        &self,
+        simplices: &[Vec<usize>],
         index_to_key: &[VertexKey],
     ) -> Result<(), TdsConstructionError> {
-        let capacity = self.simplices.len().saturating_mul(D.saturating_add(1));
+        let capacity = simplices.len().saturating_mul(D.saturating_add(1));
         let mut incident_counts: FastHashMap<SimplexVertexKeyBuffer, usize> =
             fast_hash_map_with_capacity(capacity);
 
-        for (simplex_index, simplex_spec) in self.simplices.iter().enumerate() {
+        for (simplex_index, simplex_spec) in simplices.iter().enumerate() {
             for facet_index in 0..=D {
                 let mut facet_identity: SimplexVertexKeyBuffer = simplex_spec
                     .iter()
@@ -483,7 +612,11 @@ mod tests {
     #[test]
     fn build_publishes_only_a_complete_valid_tds() {
         let (vertices, simplices) = two_triangle_fixture();
-        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+        let builder = TdsBuilder::new(&vertices, &simplices).simplex_data_type::<usize>();
+        assert_eq!(builder.vertex_count(), 4);
+        assert_eq!(builder.simplex_count(), 2);
+
+        let tds = builder.build().unwrap();
 
         assert_matches!(
             tds.construction_state(),
@@ -492,6 +625,7 @@ mod tests {
         assert!(tds.validate().is_ok());
         assert_eq!(tds.number_of_vertices(), 4);
         assert_eq!(tds.number_of_simplices(), 2);
+        assert!(tds.simplices().all(|(_, simplex)| simplex.data().is_none()));
     }
 
     #[test]
@@ -508,15 +642,26 @@ mod tests {
         );
         assert_matches!(
             TdsBuilder::new(&vertices, &[vec![0, 1]]).build(),
-            Err(TdsBuilderError::InvalidSimplexArity { .. })
+            Err(TdsBuilderError::InvalidSimplexArity {
+                simplex_index: 0,
+                actual: 2,
+                expected: 3,
+            })
         );
         assert_matches!(
             TdsBuilder::new(&vertices, &[vec![0, 1, 3]]).build(),
-            Err(TdsBuilderError::IndexOutOfBounds { .. })
+            Err(TdsBuilderError::IndexOutOfBounds {
+                simplex_index: 0,
+                vertex_index: 3,
+                bound: 3,
+            })
         );
         assert_matches!(
             TdsBuilder::new(&vertices, &[vec![0, 1, 1]]).build(),
-            Err(TdsBuilderError::DuplicateVertexInSimplex { .. })
+            Err(TdsBuilderError::DuplicateVertexInSimplex {
+                simplex_index: 0,
+                vertex_index: 1,
+            })
         );
     }
 
@@ -528,6 +673,18 @@ mod tests {
         let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
         assert_eq!(tds.number_of_vertices(), 0);
         assert_eq!(tds.number_of_simplices(), 0);
+        assert!(tds.validate().is_ok());
+    }
+
+    #[test]
+    fn parsed_input_flows_into_assembly_without_returning_to_raw_state() {
+        let (vertices, simplices) = two_triangle_fixture();
+        let parsed = ParsedTdsInput::try_new(&vertices, &simplices).unwrap();
+
+        let tds = TdsBuilder::from_parsed(parsed).build().unwrap();
+
+        assert_eq!(tds.number_of_vertices(), vertices.len());
+        assert_eq!(tds.number_of_simplices(), simplices.len());
         assert!(tds.validate().is_ok());
     }
 }

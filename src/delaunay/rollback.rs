@@ -4,8 +4,9 @@
 
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::operations::DelaunayInsertionState;
-use crate::core::tds::{Tds, TdsOwnerRollbackTransaction, TdsRollbackOwner};
+use crate::core::tds::{Tds, TdsOwnerRollbackTransaction, TdsRollbackOwner, TdsRollbackWindow};
 use crate::delaunay_model::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
+use crate::triangulation::{Triangulation, rollback::TriangulationRollbackWindow};
 
 impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for DelaunayTriangulation<K, U, V, D> {
     fn rollback_tds(&self) -> &Tds<U, V, D> {
@@ -110,6 +111,32 @@ where
             self.restore();
             self.tds_transaction.commit_in_place();
         }
+    }
+}
+
+impl<K, U, V, const D: usize> TdsRollbackWindow<U, V, D>
+    for DelaunayRollbackTransaction<'_, K, U, V, D>
+where
+    U: Clone,
+    V: Clone,
+{
+    fn rollback_tds_mut(&mut self) -> &mut Tds<U, V, D> {
+        &mut self.tds_transaction.owner_mut().tri.tds
+    }
+
+    fn restore_rollback_tds(&mut self) {
+        self.tds_transaction.restore();
+    }
+}
+
+impl<K, U, V, const D: usize> TriangulationRollbackWindow<K, U, V, D>
+    for DelaunayRollbackTransaction<'_, K, U, V, D>
+where
+    U: Clone,
+    V: Clone,
+{
+    fn triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D> {
+        &mut self.tds_transaction.owner_mut().tri
     }
 }
 

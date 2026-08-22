@@ -2013,7 +2013,7 @@ mod tests {
     use crate::construction::{
         DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
     };
-    use crate::core::algorithms::incremental_insertion::InsertionError;
+    use crate::core::algorithms::insertion::InsertionError;
     use crate::core::tds::{Tds, TdsError, TopologyOwner};
     use crate::core::util::{checked_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::delaunay_model::DelaunayTriangulation;

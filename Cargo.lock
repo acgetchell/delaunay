@@ -320,6 +320,7 @@ dependencies = [
  "proptest",
  "rand 0.10.2",
  "rustc-hash",
+ "same-file",
  "serde",
  "serde_json",
  "slotmap",

@@ -36,7 +36,7 @@
 mod proptest_config;
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, DedupPolicy, DelaunayTriangulation, DelaunayTriangulationDraft,
+    ConstructionOptions, DedupPolicy, DelaunayIncrementalBuilder, DelaunayTriangulation,
     TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::*;
@@ -425,8 +425,8 @@ fn shuffle_points<const D: usize>(mut points: Vec<Point<D>>, seed: u64) -> Vec<P
 fn assert_on_suspicion_sequence_valid<const D: usize>(
     points: Vec<Point<D>>,
 ) -> Result<(), TestCaseError> {
-    let mut dt: DelaunayTriangulationDraft<AdaptiveKernel<f64>, (), (), D> =
-        DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<AdaptiveKernel<f64>, (), (), D> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
     dt.try_set_validation_policy(ValidationPolicy::OnSuspicion)
         .unwrap();
 
@@ -510,8 +510,8 @@ fn assert_non_finite_point_rejected_and_preserves_validity<const D: usize>(
         })
     );
 
-    let empty: DelaunayTriangulationDraft<AdaptiveKernel<f64>, (), (), D> =
-        DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let empty: DelaunayIncrementalBuilder<AdaptiveKernel<f64>, (), (), D> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     prop_assert_eq!(empty.number_of_vertices(), 0);
     prop_assert_eq!(empty.number_of_simplices(), 0);
@@ -555,7 +555,7 @@ enum InsertionOrder3dRunStatus {
 }
 
 fn insert_vertices_3d_no_retry_or_skip(
-    dt: &mut DelaunayTriangulationDraft<AdaptiveKernel<f64>, (), (), 3>,
+    dt: &mut DelaunayIncrementalBuilder<AdaptiveKernel<f64>, (), (), 3>,
     vertices: &[Vertex<(), 3>],
 ) -> InsertionOrder3dRunStatus {
     for (idx, v) in vertices.iter().enumerate() {
@@ -643,8 +643,8 @@ fn regression_insertion_order_3d_case_001() {
         .expect("finite point coordinates"),
     ];
     let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-    let mut dt: DelaunayTriangulationDraft<_, (), (), 3> =
-        DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 3> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     for (idx, v) in vertices.iter().enumerate() {
         let result = dt.insert_best_effort_with_statistics(*v);
@@ -1454,8 +1454,8 @@ fn prop_insertion_order_robustness_3d() {
         // Build triangulation A via incremental insertion, requiring a "clean run":
         // - no retry/perturbation (stats.attempts == 1 for all insertions)
         // - no skipped vertices
-        let mut dt_a: DelaunayTriangulationDraft<_, (), (), 3> =
-            DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
+        let mut dt_a: DelaunayIncrementalBuilder<_, (), (), 3> =
+            DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
         let run_a = insert_vertices_3d_no_retry_or_skip(&mut dt_a, &points);
         match run_a {
             InsertionOrder3dRunStatus::Clean => {}
@@ -1491,8 +1491,8 @@ fn prop_insertion_order_robustness_3d() {
         let mut points_shuffled = points.clone();
         points_shuffled.shuffle(&mut rng);
 
-        let mut dt_b: DelaunayTriangulationDraft<_, (), (), 3> =
-            DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
+        let mut dt_b: DelaunayIncrementalBuilder<_, (), (), 3> =
+            DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
         let run_b = insert_vertices_3d_no_retry_or_skip(&mut dt_b, &points_shuffled);
         match run_b {
             InsertionOrder3dRunStatus::Clean => {}

@@ -695,7 +695,6 @@ where
 /// let triangulation = TriangulationBuilder::new(repaired.tds, FastKernel::new())
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
 ///     .global_topology(GlobalTopology::Euclidean)
-///     .strict()
 ///     .build()
 ///     .map_err(RefinementError::into_reason)?;
 /// assert_ne!(triangulation.validation_policy(), ValidationPolicy::Never);

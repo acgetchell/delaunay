@@ -49,7 +49,7 @@ use crate::core::algorithms::flips::{
     repair_delaunay_local_single_pass, repair_delaunay_local_single_pass_timed,
     repair_delaunay_with_flips_k2_k3,
 };
-use crate::core::algorithms::incremental_insertion::{
+use crate::core::algorithms::insertion::{
     CavityFillingError, DelaunayRepairFailureContext, HullExtensionReason, InsertionError,
     InsertionTopologyValidationContext, NeighborWiringError, SpatialIndexConstructionFailure,
     TdsConstructionFailure,
@@ -81,7 +81,7 @@ use crate::delaunay_model::EuclideanDelaunayReportDomain;
 use crate::delaunay_property_validation::DelaunayValidationError;
 use crate::deletion::DeleteVertexError;
 use crate::diagnostics::{BatchLocalRepairTrigger, ConstructionTelemetry, LocalRepairSample};
-use crate::draft::DelaunayTriangulationDraftError;
+use crate::draft::DelaunayTriangulationDraft;
 use crate::geometry::coordinate_range::CoordinateRange;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
@@ -92,6 +92,7 @@ use crate::geometry::util::{
     RandomPointGenerationError, RandomTriangulationBuilderError, safe_usize_to_scalar,
     simplex_volume,
 };
+use crate::incremental_builder::DelaunayIncrementalBuilderError;
 use crate::io::visualization::{VisualizationDataValidationError, VisualizationExportError};
 use crate::query::{QueryError, SimplexBarycenterError, SimplexDataFillError};
 use crate::repair::DelaunayRepairPolicy;
@@ -114,8 +115,7 @@ use crate::triangulation::validation::{
     TopologyGuarantee, TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
 };
 use crate::validation::{
-    DelaunayLevelFiveCertificate, DelaunayRefinementCandidate,
-    DelaunayTriangulationValidationError, DelaunayVerificationError,
+    DelaunayLevelFiveCertificate, DelaunayTriangulationValidationError, DelaunayVerificationError,
     certify_level_five_via_flip_predicates,
 };
 use core::{cmp::Ordering, fmt};
@@ -225,12 +225,12 @@ pub enum DelaunayError {
         source: Box<InsertionError>,
     },
 
-    /// Unpublished incremental Delaunay construction failed.
+    /// Incremental Delaunay construction failed.
     #[error("{source}")]
-    Draft {
-        /// Underlying draft mutation or publication failure.
+    IncrementalConstruction {
+        /// Underlying incremental builder mutation or publication failure.
         #[source]
-        source: Box<DelaunayTriangulationDraftError>,
+        source: Box<DelaunayIncrementalBuilderError>,
     },
 
     /// Delaunay vertex deletion failed.
@@ -448,9 +448,9 @@ impl From<InsertionError> for DelaunayError {
     }
 }
 
-impl From<DelaunayTriangulationDraftError> for DelaunayError {
-    fn from(source: DelaunayTriangulationDraftError) -> Self {
-        Self::Draft {
+impl From<DelaunayIncrementalBuilderError> for DelaunayError {
+    fn from(source: DelaunayIncrementalBuilderError) -> Self {
+        Self::IncrementalConstruction {
             source: Box::new(source),
         }
     }
@@ -715,7 +715,7 @@ impl fmt::Display for DelaunayConstructionRepairPhase {
 /// This is the typed source for
 /// [`DelaunayConstructionFailure::ShuffledRetryExhausted`]. It preserves whether
 /// the final retry failed while constructing topology or while validating the
-/// Delaunay property of a constructed candidate.
+/// Delaunay property of a constructed batch workspace.
 ///
 /// # Examples
 ///
@@ -3371,7 +3371,7 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
 /// [`DelaunayTriangulation`] prevents deferred Delaunay repair from placing a
 /// merely realized value inside the Levels 1–5 public owner.
 #[derive(Clone, Debug)]
-struct DelaunayConstructionCandidate<K, U, V, const D: usize> {
+struct DelaunayBatchWorkspace<K, U, V, const D: usize> {
     tri: Triangulation<K, U, V, D>,
     insertion_state: DelaunayInsertionState,
     spatial_index: Option<HashGridIndex<D>>,
@@ -3379,7 +3379,7 @@ struct DelaunayConstructionCandidate<K, U, V, const D: usize> {
     delaunay_certificate: Option<DelaunayLevelFiveCertificate<D>>,
 }
 
-impl<K, U, V, const D: usize> DelaunayConstructionCandidate<K, U, V, D>
+impl<K, U, V, const D: usize> DelaunayBatchWorkspace<K, U, V, D>
 where
     K: Kernel<D, Scalar = f64>,
     U: DataType,
@@ -3432,13 +3432,13 @@ where
             euclidean_report_domain,
             delaunay_certificate,
         } = self;
-        let candidate = DelaunayRefinementCandidate::from_parts(
+        let draft = DelaunayTriangulationDraft::from_parts(
             tri,
             insertion_state,
             spatial_index,
             euclidean_report_domain,
         );
-        candidate
+        draft
             .try_into_delaunay_with_certificate(delaunay_certificate.as_ref())
             .map_err(crate::refinement::RefinementError::into_reason)
     }
@@ -3503,9 +3503,8 @@ where
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
-    use crate::draft::DelaunayTriangulationDraft;
+    use crate::incremental_builder::DelaunayIncrementalBuilder;
     use crate::topology::traits::GlobalTopology;
-    use crate::triangulation::draft::TriangulationDraft;
 
     impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
         /// Creates empty default-kernel storage for bootstrap tests.
@@ -3524,7 +3523,7 @@ pub(crate) mod test_support {
         /// Creates a verified empty owner with a caller-selected kernel.
         #[must_use]
         pub(crate) fn with_empty_kernel(kernel: K) -> Self {
-            DelaunayTriangulationDraft::with_kernel_and_topology_context(
+            DelaunayIncrementalBuilder::with_kernel_and_topology_context(
                 kernel,
                 TopologyGuarantee::DEFAULT,
                 GlobalTopology::DEFAULT,
@@ -3539,7 +3538,7 @@ pub(crate) mod test_support {
             kernel: K,
             topology_guarantee: TopologyGuarantee,
         ) -> Self {
-            DelaunayTriangulationDraft::with_kernel_and_topology_context(
+            DelaunayIncrementalBuilder::with_kernel_and_topology_context(
                 kernel,
                 topology_guarantee,
                 GlobalTopology::DEFAULT,
@@ -3555,7 +3554,7 @@ pub(crate) mod test_support {
     {
         /// Forges unverified empty storage for deliberately malformed test fixtures.
         ///
-        /// Normal empty fixtures must use [`DelaunayTriangulationDraft`] and publish
+        /// Normal empty fixtures must use [`DelaunayIncrementalBuilder`] and publish
         /// the valid empty complex. This escape hatch exists only for tests that
         /// intentionally assemble invalid or lower-layer state.
         pub(crate) fn new_unverified_for_test_with_kernel_and_topology_context(
@@ -3566,12 +3565,13 @@ pub(crate) mod test_support {
             let duplicate_tolerance = default_duplicate_tolerance();
 
             Self {
-                tri: TriangulationDraft::empty_unpublished_with_topology_context(
+                tri: Triangulation {
                     kernel,
-                    topology_guarantee,
+                    tds: Tds::empty(),
                     global_topology,
-                )
-                .into_unpublished_triangulation(),
+                    validation_policy: topology_guarantee.default_validation_policy(),
+                    topology_guarantee,
+                },
                 insertion_state: DelaunayInsertionState::new(),
                 spatial_index: HashGridIndex::try_new(duplicate_tolerance).ok(),
                 euclidean_report_domain: if global_topology.is_euclidean() {
@@ -3609,8 +3609,7 @@ where
         grid_cell_size: Option<f64>,
         final_delaunay: FinalDelaunayEnforcement,
         insertion_policy: InsertionConstructionPolicy,
-    ) -> Result<DelaunayConstructionCandidate<K, U, V, D>, DelaunayTriangulationConstructionError>
-    {
+    ) -> Result<DelaunayBatchWorkspace<K, U, V, D>, DelaunayTriangulationConstructionError> {
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
         let enforce_final_delaunay = final_delaunay.enforces_final_delaunay();
 
@@ -3638,15 +3637,15 @@ where
             final_delaunay,
             insertion_policy,
         ) {
-            Ok(mut candidate) => {
+            Ok(mut workspace) => {
                 if !enforce_final_delaunay {
                     log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
-                    return Ok(candidate);
+                    return Ok(workspace);
                 }
-                match candidate.certify_via_flip_predicates() {
+                match workspace.certify_via_flip_predicates() {
                     Ok(()) => {
                         log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
-                        return Ok(candidate);
+                        return Ok(workspace);
                     }
                     Err(source) if is_non_retryable_repair_error(&source) => {
                         let err = Self::map_final_delaunay_repair_error(source);
@@ -3732,7 +3731,7 @@ where
                 final_delaunay,
                 insertion_policy,
             ) {
-                Ok(mut candidate) => {
+                Ok(mut workspace) => {
                     if !enforce_final_delaunay {
                         log_construction_retry_result(
                             attempt,
@@ -3742,9 +3741,9 @@ where
                             None,
                             None,
                         );
-                        return Ok(candidate);
+                        return Ok(workspace);
                     }
-                    match candidate.certify_via_flip_predicates() {
+                    match workspace.certify_via_flip_predicates() {
                         Ok(()) => {
                             log_construction_retry_result(
                                 attempt,
@@ -3754,7 +3753,7 @@ where
                                 None,
                                 None,
                             );
-                            return Ok(candidate);
+                            return Ok(workspace);
                         }
                         Err(source) => {
                             if is_non_retryable_repair_error(&source) {
@@ -3851,10 +3850,7 @@ where
         final_delaunay: FinalDelaunayEnforcement,
         insertion_policy: InsertionConstructionPolicy,
     ) -> Result<
-        (
-            DelaunayConstructionCandidate<K, U, V, D>,
-            ConstructionStatistics,
-        ),
+        (DelaunayBatchWorkspace<K, U, V, D>, ConstructionStatistics),
         DelaunayTriangulationConstructionErrorWithStatistics,
     > {
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
@@ -3888,7 +3884,7 @@ where
                 final_delaunay,
                 insertion_policy,
             ) {
-                Ok((mut candidate, mut stats)) => {
+                Ok((mut workspace, mut stats)) => {
                     if !enforce_final_delaunay {
                         aggregate_stats.merge_from(&stats);
                         log_construction_retry_result(
@@ -3899,10 +3895,10 @@ where
                             None,
                             Some(&stats),
                         );
-                        return Ok((candidate, aggregate_stats));
+                        return Ok((workspace, aggregate_stats));
                     }
                     let delaunay_started = Instant::now();
-                    let delaunay_result = candidate.certify_via_flip_predicates();
+                    let delaunay_result = workspace.certify_via_flip_predicates();
                     stats
                         .telemetry
                         .record_construction_final_delaunay_validation_timing(
@@ -3919,7 +3915,7 @@ where
                                 None,
                                 Some(&stats),
                             );
-                            return Ok((candidate, aggregate_stats));
+                            return Ok((workspace, aggregate_stats));
                         }
                         Err(err) => {
                             aggregate_stats.merge_from(&stats);
@@ -4026,7 +4022,7 @@ where
                 final_delaunay,
                 insertion_policy,
             ) {
-                Ok((mut candidate, mut stats)) => {
+                Ok((mut workspace, mut stats)) => {
                     if !enforce_final_delaunay {
                         aggregate_stats.merge_from(&stats);
                         log_construction_retry_result(
@@ -4037,10 +4033,10 @@ where
                             None,
                             Some(&stats),
                         );
-                        return Ok((candidate, aggregate_stats));
+                        return Ok((workspace, aggregate_stats));
                     }
                     let delaunay_started = Instant::now();
-                    let delaunay_result = candidate.certify_via_flip_predicates();
+                    let delaunay_result = workspace.certify_via_flip_predicates();
                     stats
                         .telemetry
                         .record_construction_final_delaunay_validation_timing(
@@ -4057,7 +4053,7 @@ where
                                 None,
                                 Some(&stats),
                             );
-                            return Ok((candidate, aggregate_stats));
+                            return Ok((workspace, aggregate_stats));
                         }
                         Err(err) => {
                             aggregate_stats.merge_from(&stats);
@@ -4154,8 +4150,7 @@ where
         grid_cell_size: Option<f64>,
         final_delaunay: FinalDelaunayEnforcement,
         insertion_policy: InsertionConstructionPolicy,
-    ) -> Result<DelaunayConstructionCandidate<K, U, V, D>, DelaunayTriangulationConstructionError>
-    {
+    ) -> Result<DelaunayBatchWorkspace<K, U, V, D>, DelaunayTriangulationConstructionError> {
         Self::build_with_kernel_inner_seeded(
             kernel,
             vertices,
@@ -4181,10 +4176,7 @@ where
         final_delaunay: FinalDelaunayEnforcement,
         insertion_policy: InsertionConstructionPolicy,
     ) -> Result<
-        (
-            DelaunayConstructionCandidate<K, U, V, D>,
-            ConstructionStatistics,
-        ),
+        (DelaunayBatchWorkspace<K, U, V, D>, ConstructionStatistics),
         DelaunayTriangulationConstructionErrorWithStatistics,
     > {
         Self::build_with_kernel_inner_seeded_with_construction_statistics(
@@ -4213,10 +4205,7 @@ where
         final_delaunay: FinalDelaunayEnforcement,
         insertion_policy: InsertionConstructionPolicy,
     ) -> Result<
-        (
-            DelaunayConstructionCandidate<K, U, V, D>,
-            ConstructionStatistics,
-        ),
+        (DelaunayBatchWorkspace<K, U, V, D>, ConstructionStatistics),
         DelaunayTriangulationConstructionErrorWithStatistics,
     > {
         let batch_repair_policy = final_delaunay.batch_repair_policy();
@@ -4246,17 +4235,14 @@ where
             },
         )?;
 
-        let mut dt = DelaunayConstructionCandidate::try_from_initial_simplex(
-            tds,
-            kernel,
-            topology_guarantee,
-        )
-        .map_err(
-            |error| DelaunayTriangulationConstructionErrorWithStatistics {
-                error,
-                statistics: ConstructionStatistics::default(),
-            },
-        )?;
+        let mut dt =
+            DelaunayBatchWorkspace::try_from_initial_simplex(tds, kernel, topology_guarantee)
+                .map_err(
+                    |error| DelaunayTriangulationConstructionErrorWithStatistics {
+                        error,
+                        statistics: ConstructionStatistics::default(),
+                    },
+                )?;
 
         // During batch construction, use suspicion-driven validation instead of
         // per-insertion validation.  Running a full O(simplices) topology check after
@@ -4357,8 +4343,7 @@ where
         grid_cell_size: Option<f64>,
         final_delaunay: FinalDelaunayEnforcement,
         insertion_policy: InsertionConstructionPolicy,
-    ) -> Result<DelaunayConstructionCandidate<K, U, V, D>, DelaunayTriangulationConstructionError>
-    {
+    ) -> Result<DelaunayBatchWorkspace<K, U, V, D>, DelaunayTriangulationConstructionError> {
         let batch_repair_policy = final_delaunay.batch_repair_policy();
         let use_global_repair_fallback = final_delaunay.use_global_repair_fallback();
 
@@ -4378,11 +4363,8 @@ where
         let initial_vertices = &vertices[..=D];
         let tds = Triangulation::<K, U, V, D>::build_initial_simplex(initial_vertices)?;
 
-        let mut dt = DelaunayConstructionCandidate::try_from_initial_simplex(
-            tds,
-            kernel,
-            topology_guarantee,
-        )?;
+        let mut dt =
+            DelaunayBatchWorkspace::try_from_initial_simplex(tds, kernel, topology_guarantee)?;
 
         // During batch construction, use suspicion-driven validation instead of
         // per-insertion validation (see _with_construction_statistics variant for
@@ -4429,7 +4411,7 @@ where
     }
 }
 
-impl<K, U, V, const D: usize> DelaunayConstructionCandidate<K, U, V, D>
+impl<K, U, V, const D: usize> DelaunayBatchWorkspace<K, U, V, D>
 where
     K: Kernel<D, Scalar = f64>,
     U: DataType,
@@ -4511,10 +4493,6 @@ where
     }
 
     /// Repairs the currently accumulated batch-local seed frontier.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "local repair control flow keeps telemetry, rollback, and soft-fail handling together"
-    )]
     fn repair_pending_local_seed_simplices(
         &mut self,
         index: usize,
@@ -4528,9 +4506,6 @@ where
         if pending_seed_simplices.is_empty() {
             return Ok(());
         }
-
-        #[cfg(test)]
-        tests::record_batch_local_repair_call();
 
         let seed_simplices_len = pending_seed_simplices.len();
         let max_flips = local_repair_flip_budget::<D>(seed_simplices_len);
@@ -4563,12 +4538,6 @@ where
                 max_flips,
                 timing,
             )
-        };
-        #[cfg(test)]
-        let repair_result = if tests::force_repair_nonconvergent_enabled() {
-            Err(tests::synthetic_nonconvergent_error())
-        } else {
-            repair_result
         };
         let repair_elapsed = repair_started.map(|started| started.elapsed());
         if let Some(telemetry) = construction_telemetry.as_mut() {
@@ -5287,7 +5256,7 @@ where
         if !options.enforces_final_delaunay() {
             return Err(DelaunayTriangulationConstructionError::Level5CertificationDisabled);
         }
-        Self::build_candidate_with_kernel_options(kernel, vertices, topology_guarantee, options)?
+        Self::build_workspace_with_kernel_options(kernel, vertices, topology_guarantee, options)?
             .try_into_delaunay()
             .map_err(
                 |source| DelaunayTriangulationConstructionError::Triangulation {
@@ -5306,23 +5275,22 @@ where
         topology_guarantee: TopologyGuarantee,
         options: ConstructionOptions,
     ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError> {
-        let candidate = Self::build_candidate_with_kernel_options(
+        let workspace = Self::build_workspace_with_kernel_options(
             kernel,
             vertices,
             topology_guarantee,
             options,
         )?;
-        Ok(candidate.into_triangulation())
+        Ok(workspace.into_triangulation())
     }
 
-    /// Builds an unpublished batch-construction candidate for a proof-producing terminal.
-    fn build_candidate_with_kernel_options(
+    /// Builds an unpublished batch workspace for a proof-producing terminal.
+    fn build_workspace_with_kernel_options(
         kernel: &K,
         vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
         options: ConstructionOptions,
-    ) -> Result<DelaunayConstructionCandidate<K, U, V, D>, DelaunayTriangulationConstructionError>
-    {
+    ) -> Result<DelaunayBatchWorkspace<K, U, V, D>, DelaunayTriangulationConstructionError> {
         let ConstructionOptions {
             insertion_order,
             dedup_policy,
@@ -5404,8 +5372,8 @@ where
             result = build_with_vertices(fallback);
         }
 
-        if let Ok(candidate) = &mut result {
-            candidate.tri.validation_policy = validation_policy;
+        if let Ok(workspace) = &mut result {
+            workspace.tri.validation_policy = validation_policy;
         }
         result
     }
@@ -5432,16 +5400,16 @@ where
                 statistics: ConstructionStatistics::default(),
             });
         }
-        let (candidate, mut statistics) = Self::build_candidate_with_kernel_options_and_statistics(
+        let (workspace, mut statistics) = Self::build_workspace_with_kernel_options_and_statistics(
             kernel,
             vertices,
             topology_guarantee,
             options,
         )?;
-        let certification_started = candidate
+        let certification_started = workspace
             .requires_delaunay_certification()
             .then(Instant::now);
-        let result = candidate.try_into_delaunay();
+        let result = workspace.try_into_delaunay();
         if let Some(certification_started) = certification_started {
             statistics
                 .telemetry
@@ -5477,16 +5445,16 @@ where
         (Triangulation<K, U, V, D>, ConstructionStatistics),
         DelaunayTriangulationConstructionErrorWithStatistics,
     > {
-        let (candidate, statistics) = Self::build_candidate_with_kernel_options_and_statistics(
+        let (workspace, statistics) = Self::build_workspace_with_kernel_options_and_statistics(
             kernel,
             vertices,
             topology_guarantee,
             options,
         )?;
-        Ok((candidate.into_triangulation(), statistics))
+        Ok((workspace.into_triangulation(), statistics))
     }
 
-    /// Builds an unpublished statistics-bearing candidate for a proof-producing terminal.
+    /// Builds an unpublished statistics-bearing workspace for a proof-producing terminal.
     #[expect(
         clippy::result_large_err,
         reason = "Builder statistics terminal intentionally returns by-value construction statistics"
@@ -5495,16 +5463,13 @@ where
         clippy::too_many_lines,
         reason = "Statistics constructor handles preprocessing, retry, and fallback aggregation"
     )]
-    fn build_candidate_with_kernel_options_and_statistics(
+    fn build_workspace_with_kernel_options_and_statistics(
         kernel: &K,
         vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
         options: ConstructionOptions,
     ) -> Result<
-        (
-            DelaunayConstructionCandidate<K, U, V, D>,
-            ConstructionStatistics,
-        ),
+        (DelaunayBatchWorkspace<K, U, V, D>, ConstructionStatistics),
         DelaunayTriangulationConstructionErrorWithStatistics,
     > {
         let ConstructionOptions {
@@ -5858,7 +5823,7 @@ where
             // bad input geometry. DegenerateOrientation / NegativeOrientation capture
             // the actual FP-related geometry failures.
             source @ (InsertionError::TopologyValidation { source: _ }
-            | InsertionError::PublishedOwnerBootstrapRequiresDraft { .. }
+            | InsertionError::PublishedOwnerBootstrapRequiresBuilder { .. }
             | InsertionError::TopologyValidationFailed { .. }
             | InsertionError::CavityFilling { .. }
             | InsertionError::NeighborWiring { .. }
@@ -5893,7 +5858,7 @@ where
     /// inconsistency for construction callers.
     pub(crate) fn map_insertion_error(error: InsertionError) -> TriangulationConstructionError {
         match error {
-            InsertionError::PublishedOwnerBootstrapRequiresDraft { dimension } => {
+            InsertionError::PublishedOwnerBootstrapRequiresBuilder { dimension } => {
                 TriangulationConstructionError::InternalInconsistency {
                     message: format!(
                         "published {dimension}D owner entered the unpublished construction path"
@@ -6174,7 +6139,7 @@ mod tests {
         DelaunayRepairPostconditionFailure, DelaunayRepairVerificationContext, FlipContextError,
         FlipPredicateError, FlipPredicateOperation, RepairQueueOrder,
     };
-    use crate::core::algorithms::incremental_insertion::{
+    use crate::core::algorithms::insertion::{
         DelaunayRepairFailureContext, HullExtensionReason, NeighborWiringError,
         SpatialIndexConstructionFailure,
     };
@@ -6202,7 +6167,6 @@ mod tests {
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
-    use std::cell::Cell;
     use std::num::NonZeroUsize;
     use std::sync::Once;
     use std::time::Instant;
@@ -6210,10 +6174,10 @@ mod tests {
 
     type TestDelaunay<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 
-    fn into_construction_candidate<const D: usize>(
+    fn into_batch_workspace<const D: usize>(
         dt: TestDelaunay<D>,
-    ) -> DelaunayConstructionCandidate<AdaptiveKernel<f64>, (), (), D> {
-        DelaunayConstructionCandidate {
+    ) -> DelaunayBatchWorkspace<AdaptiveKernel<f64>, (), (), D> {
+        DelaunayBatchWorkspace {
             tri: dt.tri,
             insertion_state: dt.insertion_state,
             spatial_index: dt.spatial_index,
@@ -6230,22 +6194,22 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut candidate = into_construction_candidate(dt);
+        let mut workspace = into_batch_workspace(dt);
 
-        assert!(candidate.requires_delaunay_certification());
-        candidate.certify_via_flip_predicates().unwrap();
-        assert!(!candidate.requires_delaunay_certification());
+        assert!(workspace.requires_delaunay_certification());
+        workspace.certify_via_flip_predicates().unwrap();
+        assert!(!workspace.requires_delaunay_certification());
 
-        let detached_clone = candidate.clone();
+        let detached_clone = workspace.clone();
         assert!(detached_clone.requires_delaunay_certification());
 
-        candidate.tri.global_topology = GlobalTopology::Hyperbolic;
-        assert!(candidate.requires_delaunay_certification());
-        candidate.tri.global_topology = GlobalTopology::Euclidean;
-        assert!(!candidate.requires_delaunay_certification());
+        workspace.tri.global_topology = GlobalTopology::Hyperbolic;
+        assert!(workspace.requires_delaunay_certification());
+        workspace.tri.global_topology = GlobalTopology::Euclidean;
+        assert!(!workspace.requires_delaunay_certification());
 
-        candidate.tri.tds.mark_topology_modified_for_test();
-        assert!(candidate.requires_delaunay_certification());
+        workspace.tri.tds.mark_topology_modified_for_test();
+        assert!(workspace.requires_delaunay_certification());
     }
 
     impl FinalDelaunayEnforcement {
@@ -6270,64 +6234,6 @@ mod tests {
             self.final_delaunay = self.final_delaunay.without_global_repair_fallback();
             self
         }
-    }
-
-    // Last-resort fault injection for rollback branches that are hard to
-    // trigger deterministically; thread-local state avoids cross-test leakage.
-    // Remove this once a cleaner harness can reach the branch directly.
-    thread_local! {
-        static FORCE_REPAIR_NONCONVERGENT: Cell<bool> = const { Cell::new(false) };
-        static BATCH_LOCAL_REPAIR_CALLS: Cell<usize> = const { Cell::new(0) };
-    }
-
-    #[must_use]
-    pub(super) fn force_repair_nonconvergent_enabled() -> bool {
-        FORCE_REPAIR_NONCONVERGENT.with(Cell::get)
-    }
-
-    #[must_use]
-    pub(super) fn synthetic_nonconvergent_error() -> DelaunayRepairError {
-        DelaunayRepairError::NonConvergent {
-            max_flips: 0,
-            diagnostics: Box::new(DelaunayRepairDiagnostics {
-                facets_checked: 0,
-                flips_performed: 0,
-                max_queue_len: 0,
-                ambiguous_predicates: 0,
-                ambiguous_predicate_samples: Vec::new(),
-                predicate_failures: 0,
-                cycle_detections: 0,
-                cycle_signature_samples: Vec::new(),
-                attempt: 0,
-                queue_order: RepairQueueOrder::Fifo,
-            }),
-        }
-    }
-
-    #[must_use]
-    fn set_force_repair_nonconvergent(enabled: bool) -> bool {
-        FORCE_REPAIR_NONCONVERGENT.with(|flag| {
-            let prior = flag.get();
-            flag.set(enabled);
-            prior
-        })
-    }
-
-    fn restore_force_repair_nonconvergent(prior: bool) {
-        FORCE_REPAIR_NONCONVERGENT.with(|flag| flag.set(prior));
-    }
-
-    fn reset_batch_local_repair_calls() {
-        BATCH_LOCAL_REPAIR_CALLS.with(|calls| calls.set(0));
-    }
-
-    #[must_use]
-    fn batch_local_repair_calls() -> usize {
-        BATCH_LOCAL_REPAIR_CALLS.with(Cell::get)
-    }
-
-    pub(super) fn record_batch_local_repair_call() {
-        BATCH_LOCAL_REPAIR_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
     }
 
     fn synthetic_delaunay_verification_error() -> DelaunayTriangulationValidationError {
@@ -6458,23 +6364,6 @@ mod tests {
         );
     }
 
-    struct ForceRepairNonconvergentGuard {
-        prior: bool,
-    }
-
-    impl ForceRepairNonconvergentGuard {
-        fn enable() -> Self {
-            let prior = set_force_repair_nonconvergent(true);
-            Self { prior }
-        }
-    }
-
-    impl Drop for ForceRepairNonconvergentGuard {
-        fn drop(&mut self) {
-            restore_force_repair_nonconvergent(self.prior);
-        }
-    }
-
     #[test]
     fn test_finalize_bulk_construction_validates_pseudomanifold_topology() {
         init_tracing();
@@ -6484,7 +6373,7 @@ mod tests {
             vertex!([0.0, 2.0]).unwrap(),
             vertex!([2.0, 1.0]).unwrap(),
         ];
-        let mut dt = into_construction_candidate(
+        let mut dt = into_batch_workspace(
             DelaunayTriangulation::builder(&vertices)
                 .topology_guarantee(TopologyGuarantee::Pseudomanifold)
                 .build()
@@ -6527,7 +6416,7 @@ mod tests {
             vertex!([2.0, 0.0]).unwrap(),
             vertex!([0.0, 2.0]).unwrap(),
         ];
-        let mut dt = into_construction_candidate(
+        let mut dt = into_batch_workspace(
             DelaunayTriangulation::builder(&vertices)
                 .topology_guarantee(TopologyGuarantee::Pseudomanifold)
                 .build()
@@ -6793,59 +6682,6 @@ mod tests {
     }
 
     #[test]
-    fn test_batch_4d_forced_nonconvergent_local_repair_canonicalizes_without_stats() {
-        init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
-            vertex!([0.2, 0.2, 0.2, 0.2]).unwrap(),
-            vertex!([0.35, 0.25, 0.15, 0.3]).unwrap(),
-        ];
-
-        let _guard = ForceRepairNonconvergentGuard::enable();
-        let kernel = RobustKernel::<f64>::new();
-        let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 4> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .build_with_kernel(&kernel)
-                .expect(
-                    "D>=4 construction should continue after forced local repair non-convergence",
-                );
-
-        assert_eq!(dt.number_of_vertices(), vertices.len());
-        assert!(dt.validate().is_ok());
-    }
-
-    #[test]
-    fn test_batch_4d_forced_nonconvergent_local_repair_canonicalizes_with_stats() {
-        init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
-            vertex!([0.2, 0.2, 0.2, 0.2]).unwrap(),
-            vertex!([0.35, 0.25, 0.15, 0.3]).unwrap(),
-        ];
-
-        let _guard = ForceRepairNonconvergentGuard::enable();
-        let kernel = RobustKernel::<f64>::new();
-        let (dt, stats) = DelaunayTriangulationBuilder::new(&vertices)
-            .construction_options(ConstructionOptions::default())
-            .build_with_kernel_and_statistics(&kernel)
-            .expect(
-                "D>=4 stats construction should continue after forced local repair non-convergence",
-            );
-
-        assert_eq!(dt.number_of_vertices(), vertices.len());
-        assert_eq!(stats.inserted, vertices.len());
-        assert!(dt.validate().is_ok());
-    }
-
-    #[test]
     fn test_batch_4d_every_n_repair_cadence_runs_with_pending_seeds() {
         init_tracing();
         let vertices = vec![
@@ -6858,19 +6694,17 @@ mod tests {
             vertex!([0.35, 0.25, 0.15, 0.3]).unwrap(),
         ];
 
-        reset_batch_local_repair_calls();
-        let _guard = ForceRepairNonconvergentGuard::enable();
         let kernel = RobustKernel::<f64>::new();
         let options = ConstructionOptions::default()
             .with_batch_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap()));
         let (dt, stats) = DelaunayTriangulationBuilder::new(&vertices)
             .construction_options(options)
             .build_with_kernel_and_statistics(&kernel)
-            .expect("EveryN batch repair should soft-fail forced local non-convergence and finish");
+            .expect("EveryN batch repair should finish");
 
         assert_eq!(dt.number_of_vertices(), vertices.len());
         assert_eq!(stats.inserted, vertices.len());
-        assert_eq!(batch_local_repair_calls(), 1);
+        assert_eq!(stats.telemetry.local_repair_calls, 1);
         assert!(dt.validate().is_ok());
     }
 

@@ -19,7 +19,7 @@ they exercise.
 | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
 | Incremental insertion diagnostics and result types | `use delaunay::prelude::insertion::*` |
 | Post-construction vertex deletion errors and keys | `use delaunay::prelude::deletion::*` |
-| Low-level TDS simplices, facets, keys, and validation reports | `use delaunay::prelude::tds::*` |
+| Construct, stage, inspect, or validate low-level TDS values | `use delaunay::prelude::tds::*` |
 | Points, simplex realizations, coordinate ranges, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
 | Random points or triangulations for examples, tests, and benchmarks | `use delaunay::prelude::generators::*` |
 | Read-only traversal, adjacency, ridge views, simplex barycenters, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |

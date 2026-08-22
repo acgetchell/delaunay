@@ -12,7 +12,7 @@ This document outlines the design and implementation strategy for introducing to
 Level 3 topology validation is implemented at the triangulation layer:
 
 - Entry point: `Triangulation::is_valid()`
-- Reference guide: `docs/validation.md` (recommended starting point)
+- Reference guide: `docs/construction_and_validation.md` (recommended starting point)
 
 The canonical implementation lives in `src/topology/`:
 
@@ -386,7 +386,7 @@ The implementation uses the topology module's helper:
 let topology = validate_triangulation_euler(&self.tds)?;
 ```
 
-For the current user-facing behavior and error-type layering, see `docs/validation.md`.
+For the current user-facing behavior and error-type layering, see `docs/construction_and_validation.md`.
 
 ### Detailed Design: Extended Structures (historical / for reference)
 
@@ -1426,7 +1426,7 @@ pub struct TopologyConfig {
 ```
 
 > Note: The implemented integration is described in the main [Integration Points](#integration-points) section above (kept there to front-load the current guidance).
-> For the current user-facing behavior and error-type layering, see `docs/validation.md`.
+> For the current user-facing behavior and error-type layering, see `docs/construction_and_validation.md`.
 
 ### Integration Points (historical / superseded)
 

@@ -6,10 +6,9 @@
 
 use delaunay::flips::{BistellarFlips, FlipError, SimplexKey};
 use delaunay::prelude::construction::{
-    ConstructionOptions, ConstructionStatistics, DelaunayTriangulation,
+    ConstructionOptions, ConstructionStatistics, DelaunayIncrementalBuilder, DelaunayTriangulation,
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-    DelaunayTriangulationDraft, ExplicitConstructionError, InsertionOrderStrategy, RetryPolicy,
-    TopologyGuarantee, Vertex,
+    ExplicitConstructionError, InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeError};
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
@@ -191,7 +190,7 @@ fn regression_issue_557_triangulation_topology_setter_preserves_levels_one_throu
 #[test]
 fn regression_issue_557_delaunay_topology_setter_preserves_levels_one_through_five() {
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulationDraft::new().finish().unwrap();
+        DelaunayIncrementalBuilder::new().finish().unwrap();
     let previous_topology = dt.global_topology();
 
     let error = dt
@@ -915,7 +914,6 @@ fn assert_composed_level_five_failure_returns_triangulation(
     let triangulation = TriangulationBuilder::new(evolved_tds, RobustKernel::new())
         .topology_guarantee(topology_guarantee)
         .global_topology(global_topology)
-        .strict()
         .build()
         .expect("Levels 3-4 should succeed before Level 5 rejection");
     let failure = DelaunayRefinementBuilder::new(triangulation)
@@ -957,7 +955,6 @@ fn assert_level_three_failure_returns_tds(
     let invalid_error = TriangulationBuilder::new(invalid_tds, RobustKernel::new())
         .topology_guarantee(topology_guarantee)
         .global_topology(global_topology)
-        .strict()
         .build()
         .expect_err("Levels 1-4 reconstruction must reject invalid toroidal topology");
     assert!(
@@ -1037,7 +1034,6 @@ fn regression_issue_557_restores_evolved_toroidal_state_through_level_4() {
     let restored = TriangulationBuilder::new(evolved_tds.clone(), RobustKernel::new())
         .topology_guarantee(topology_guarantee)
         .global_topology(global_topology)
-        .strict()
         .build()
         .expect("Levels 1-4 reconstruction should accept evolved toroidal state");
 

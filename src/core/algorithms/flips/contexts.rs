@@ -1566,7 +1566,7 @@ mod tests {
     use super::super::test_support::init_tracing;
     use super::super::*;
     use super::*;
-    use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
+    use crate::core::algorithms::insertion::repair_neighbor_pointers;
     use crate::core::collections::Uuid;
     use crate::vertex;
     use rand::{RngExt, SeedableRng, rngs::StdRng};

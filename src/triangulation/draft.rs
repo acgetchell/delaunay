@@ -2,26 +2,20 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::algorithms::incremental_insertion::InsertionError;
-use crate::core::collections::spatial_hash_grid::HashGridIndex;
-use crate::core::tds::{SimplexKey, Tds, TdsError, VertexKey};
+use crate::core::tds::Tds;
 use crate::core::traits::data_type::DataType;
-use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::refinement::RefinementError;
-use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
+use crate::topology::traits::topological_space::GlobalTopology;
 use crate::triangulation::Triangulation;
 use crate::triangulation::builder::{
     TriangulationBuildFailure, TriangulationBuildMode, TriangulationBuilderError,
 };
-use crate::triangulation::insertion::DetailedInsertionResult;
+use crate::triangulation::model::UnverifiedTriangulation;
 use crate::triangulation::realization::{
     TriangulationCertificationError, TriangulationRealizationValidationError,
 };
-use crate::triangulation::rollback::TriangulationRollbackTransaction;
-use crate::triangulation::validation::{
-    TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
-};
+use crate::triangulation::validation::{TopologyGuarantee, ValidationPolicy};
 
 /// Crate-internal unpublished Levels 3–4 candidate for a [Triangulation].
 ///
@@ -35,27 +29,26 @@ use crate::triangulation::validation::{
 /// [`TriangulationBuilder`]: crate::TriangulationBuilder
 #[derive(Clone, Debug)]
 pub struct TriangulationDraft<K, U, V, const D: usize> {
-    triangulation: Triangulation<K, U, V, D>,
+    triangulation: UnverifiedTriangulation<K, U, V, D>,
     selected_validation_policy: Option<ValidationPolicy>,
 }
 
 impl<K, U, V, const D: usize> TriangulationDraft<K, U, V, D> {
     /// Creates an unpublished candidate with explicit topology context.
     #[must_use]
-    pub const fn with_topology_context(
+    pub(crate) const fn with_topology_context(
         tds: Tds<U, V, D>,
         kernel: K,
         topology_guarantee: TopologyGuarantee,
         global_topology: GlobalTopology<D>,
     ) -> Self {
         Self {
-            triangulation: Triangulation {
-                kernel,
+            triangulation: UnverifiedTriangulation::with_topology_context(
                 tds,
-                global_topology,
-                validation_policy: topology_guarantee.default_validation_policy(),
+                kernel,
                 topology_guarantee,
-            },
+                global_topology,
+            ),
             selected_validation_policy: None,
         }
     }
@@ -65,105 +58,9 @@ impl<K, U, V, const D: usize> TriangulationDraft<K, U, V, D> {
     /// Compatibility with the topology guarantee is checked by
     /// [finish](Self::finish).
     #[must_use]
-    pub const fn validation_policy(mut self, validation_policy: ValidationPolicy) -> Self {
+    pub(crate) const fn validation_policy(mut self, validation_policy: ValidationPolicy) -> Self {
         self.selected_validation_policy = Some(validation_policy);
         self
-    }
-
-    /// Creates incomplete storage exclusively for a higher unpublished draft.
-    #[must_use]
-    pub(crate) fn empty_unpublished_with_topology_context(
-        kernel: K,
-        topology_guarantee: TopologyGuarantee,
-        global_topology: GlobalTopology<D>,
-    ) -> Self
-    where
-        K: Kernel<D>,
-    {
-        Self {
-            triangulation: Triangulation::new_unpublished_with_topology_context(
-                kernel,
-                topology_guarantee,
-                global_topology,
-            ),
-            selected_validation_policy: None,
-        }
-    }
-
-    /// Clones an unpublished workspace for a failure-atomic publication attempt.
-    #[must_use]
-    pub(crate) fn clone_for_rollback(&self) -> Self
-    where
-        K: Clone,
-        U: Clone,
-        V: Clone,
-    {
-        Self {
-            triangulation: Triangulation {
-                kernel: self.triangulation.kernel.clone(),
-                tds: self.triangulation.tds.clone_for_rollback(),
-                global_topology: self.triangulation.global_topology,
-                validation_policy: self.triangulation.validation_policy,
-                topology_guarantee: self.triangulation.topology_guarantee,
-            },
-            selected_validation_policy: self.selected_validation_policy,
-        }
-    }
-
-    /// Returns the number of vertices currently staged in this unpublished workspace.
-    pub(crate) fn number_of_vertices(&self) -> usize {
-        self.triangulation.number_of_vertices()
-    }
-
-    /// Returns the number of maximal simplices currently staged in this workspace.
-    pub(crate) fn number_of_simplices(&self) -> usize {
-        self.triangulation.number_of_simplices()
-    }
-
-    /// Returns the dimensionality reported by the unpublished storage.
-    pub(crate) fn dim(&self) -> i32 {
-        self.triangulation.dim()
-    }
-
-    /// Returns the topology guarantee selected for eventual publication.
-    pub(crate) const fn topology_guarantee(&self) -> TopologyGuarantee {
-        self.triangulation.topology_guarantee()
-    }
-
-    /// Returns the global topology selected for eventual publication.
-    pub(crate) const fn global_topology(&self) -> GlobalTopology<D> {
-        self.triangulation.global_topology()
-    }
-
-    /// Returns the high-level topology kind selected for eventual publication.
-    pub(crate) const fn topology_kind(&self) -> TopologyKind {
-        self.triangulation.topology_kind()
-    }
-
-    /// Returns the validation policy retained after publication.
-    pub(crate) const fn retained_validation_policy(&self) -> ValidationPolicy {
-        self.triangulation.validation_policy()
-    }
-
-    /// Updates a compatible validation policy without exposing the unpublished owner.
-    pub(crate) fn try_set_validation_policy(
-        &mut self,
-        validation_policy: ValidationPolicy,
-    ) -> Result<(), ValidationConfigurationError> {
-        self.triangulation
-            .try_set_validation_policy(validation_policy)?;
-        self.selected_validation_policy = Some(validation_policy);
-        Ok(())
-    }
-
-    /// Returns whether staged simplices currently have coherent orientation.
-    pub(crate) fn is_coherently_oriented(&self) -> bool {
-        self.triangulation.is_coherently_oriented()
-    }
-
-    /// Validates the staged Levels 1–2 structure without publishing it.
-    pub(crate) fn validate_structure(&self) -> Result<(), TdsError> {
-        self.triangulation.validate_structure()
     }
 }
 
@@ -173,30 +70,6 @@ where
     U: DataType,
     V: DataType,
 {
-    /// Returns a staged vertex by key without exposing the unpublished owner.
-    pub(crate) fn vertex(&self, key: VertexKey) -> Option<&Vertex<U, D>> {
-        self.triangulation.vertex(key)
-    }
-
-    /// Performs one transactional insertion inside the unpublished workspace.
-    pub(crate) fn insert_with_statistics_seeded_indexed_detailed(
-        &mut self,
-        vertex: Vertex<U, D>,
-        hint: Option<SimplexKey>,
-        perturbation_seed: u64,
-        index: Option<&mut HashGridIndex<D>>,
-    ) -> Result<DetailedInsertionResult, InsertionError> {
-        self.triangulation
-            .insert_with_statistics_seeded_indexed_detailed(
-                vertex,
-                None,
-                hint,
-                perturbation_seed,
-                index,
-                None,
-            )
-    }
-
     /// Publishes the staged workspace through canonicalizing Levels 3–4 validation.
     pub(crate) fn finish_canonicalizing(
         self,
@@ -227,7 +100,7 @@ where
             .try_set_validation_policy(validation_policy)
         {
             return Err(RefinementError::new(
-                self.triangulation.tds,
+                self.triangulation.into_tds(),
                 TriangulationBuilderError::ValidationConfiguration { source },
             ));
         }
@@ -238,56 +111,36 @@ where
                 .certify_levels_three_four()
                 .map_err(map_certification_error)
             {
-                return Err(RefinementError::new(self.triangulation.tds, source));
+                return Err(RefinementError::new(self.triangulation.into_tds(), source));
             }
-            return Ok(self.triangulation);
+            return Ok(self.triangulation.into_verified());
         }
 
-        let publication = {
-            let mut transaction = TriangulationRollbackTransaction::begin(&mut self.triangulation);
-            let result: Result<(), TriangulationBuilderError> = (|| {
-                let triangulation = transaction.triangulation_mut();
-                triangulation
-                    .normalize_and_promote_positive_orientation()
-                    .map_err(
-                        |source| TriangulationBuilderError::OrientationNormalization {
-                            source: Box::new(source),
-                        },
-                    )?;
-                triangulation
-                    .tds
-                    .complete_construction()
-                    .map_err(|source| TriangulationBuilderError::StructuralValidation {
+        let original_tds = self.triangulation.tds.clone_for_rollback();
+        let publication: Result<(), TriangulationBuilderError> = (|| {
+            self.triangulation
+                .normalize_and_promote_positive_orientation()
+                .map_err(
+                    |source| TriangulationBuilderError::OrientationNormalization {
                         source: Box::new(source),
-                    })?;
-                triangulation
-                    .validate_geometric_nondegeneracy()
-                    .map_err(|source| TriangulationBuilderError::GeometricNondegeneracy {
-                        source: Box::new(source),
-                    })?;
-                triangulation
-                    .certify_levels_three_four()
-                    .map_err(map_certification_error)?;
-                Ok(())
-            })();
-
-            match result {
-                Ok(()) => {
-                    transaction.commit();
-                    Ok(())
-                }
-                Err(source) => {
-                    transaction.rollback();
-                    Err(source)
-                }
-            }
-        };
+                    },
+                )?;
+            self.triangulation
+                .validate_geometric_nondegeneracy()
+                .map_err(|source| TriangulationBuilderError::GeometricNondegeneracy {
+                    source: Box::new(source),
+                })?;
+            self.triangulation
+                .certify_levels_three_four()
+                .map_err(map_certification_error)?;
+            Ok(())
+        })();
 
         if let Err(source) = publication {
-            return Err(RefinementError::new(self.triangulation.tds, source));
+            return Err(RefinementError::new(original_tds, source));
         }
 
-        Ok(self.triangulation)
+        Ok(self.triangulation.into_verified())
     }
 }
 
@@ -322,26 +175,10 @@ mod test_support {
     impl<K, U, V, const D: usize> TriangulationDraft<K, U, V, D> {
         /// Consumes this layer's marker while a higher unpublished test fixture retains it.
         #[must_use]
-        pub(crate) fn into_unpublished_triangulation(self) -> Triangulation<K, U, V, D> {
+        pub(in crate::triangulation) fn into_unpublished_triangulation(
+            self,
+        ) -> UnverifiedTriangulation<K, U, V, D> {
             self.triangulation
-        }
-
-        /// Returns the unpublished storage identity for rollback regression tests.
-        pub(crate) fn topology_owner_id(&self) -> crate::core::tds::TopologyOwnerId {
-            self.triangulation.tds.topology_owner_id()
-        }
-
-        /// Returns the unpublished structural generation for rollback regression tests.
-        pub(crate) fn topology_generation(&self) -> u64 {
-            self.triangulation.tds.generation()
-        }
-
-        /// Selects an incompatible publication policy for rollback fault injection.
-        pub(crate) const fn select_validation_policy_unchecked_for_test(
-            &mut self,
-            validation_policy: ValidationPolicy,
-        ) {
-            self.selected_validation_policy = Some(validation_policy);
         }
     }
 }

@@ -5,7 +5,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::algorithms::incremental_insertion::{
+use crate::core::algorithms::insertion::{
     CavityFillingError, CavityRepairStage, InsertionError, InsertionTopologyValidationContext,
     external_facets_for_boundary, fill_cavity_replacing_simplices, repair_neighbor_pointers,
     repair_neighbor_pointers_local, wire_cavity_neighbors,
@@ -113,15 +113,6 @@ fn quality_error_to_tds_error(simplex_key: SimplexKey, error: QualityError) -> T
 pub struct LocalFacetRepairOutcome {
     /// Number of simplices actually removed from the TDS.
     pub(crate) removed_count: usize,
-    /// Simplices selected for removal before they were deleted.
-    #[cfg_attr(
-        not(debug_assertions),
-        expect(
-            dead_code,
-            reason = "Removed-simplex keys are retained for debug logging and future local repair diagnostics"
-        )
-    )]
-    pub(crate) removed_simplices: SimplexKeyBuffer,
     /// Surviving one-hop neighbors whose back-references may have been cleared.
     pub(crate) frontier_simplices: SimplexKeyBuffer,
     /// Vertices touched by simplices removed during local repair.
@@ -1258,7 +1249,6 @@ where
         if issues.is_empty() {
             return Ok(LocalFacetRepairOutcome {
                 removed_count: 0,
-                removed_simplices: SimplexKeyBuffer::new(),
                 frontier_simplices: SimplexKeyBuffer::new(),
                 affected_vertices: IncidentRepairVertexBuffer::new(),
             });
@@ -1285,7 +1275,6 @@ where
 
         Ok(LocalFacetRepairOutcome {
             removed_count,
-            removed_simplices: to_remove,
             frontier_simplices,
             affected_vertices,
         })

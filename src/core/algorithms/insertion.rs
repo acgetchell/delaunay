@@ -1,6 +1,11 @@
-//! Incremental Delaunay insertion using cavity-based algorithm.
+//! Shared low-level primitives and failure types for vertex insertion.
 //!
-//! This module implements efficient incremental insertion following CGAL's approach:
+//! This module provides the cavity topology operations used by
+//! `triangulation::insertion`, plus the typed failures shared by construction,
+//! insertion, repair, and validation. It does not own the public incremental
+//! construction workflow; that belongs to `delaunay::incremental_builder`.
+//!
+//! Cavity-based insertion follows CGAL's approach:
 //! 1. Locate the simplex containing the new point (facet walking)
 //! 2. Find conflict region (BFS with in_sphere tests)
 //! 3. Extract cavity boundary facets
@@ -1173,7 +1178,7 @@ impl From<&DelaunayRepairError> for DelaunayRepairErrorKind {
 #[non_exhaustive]
 pub enum InsertionErrorKind {
     /// Bootstrap insertion was attempted through an already published owner.
-    PublishedOwnerBootstrapRequiresDraft,
+    PublishedOwnerBootstrapRequiresBuilder,
     /// Conflict-region search failed.
     ConflictRegion,
     /// Point location failed.
@@ -1725,11 +1730,11 @@ pub enum InsertionError {
     /// Published invariant-bearing owners may be empty or full-dimensional, but
     /// they never expose the intermediate state containing vertices without a
     /// maximal simplex. Incremental construction from empty belongs to the
-    /// corresponding draft API.
+    /// corresponding incremental builder API.
     #[error(
-        "cannot bootstrap a published {dimension}D triangulation; use its draft API for incremental construction"
+        "cannot bootstrap a published {dimension}D triangulation; use its incremental builder API"
     )]
-    PublishedOwnerBootstrapRequiresDraft {
+    PublishedOwnerBootstrapRequiresBuilder {
         /// Requested triangulation dimension.
         dimension: usize,
     },
@@ -2051,7 +2056,7 @@ impl InsertionError {
             // overflow, etc.). Non-manifold topology detection uses the dedicated
             // `NonManifoldTopology` variant.
             Self::NeighborWiring { .. }
-            | Self::PublishedOwnerBootstrapRequiresDraft { .. }
+            | Self::PublishedOwnerBootstrapRequiresBuilder { .. }
             | Self::Location { .. }
             | Self::RealizationValidationFailed { .. }
             | Self::DelaunayValidationFailed { .. }

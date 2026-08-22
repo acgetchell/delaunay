@@ -1,10 +1,23 @@
 //! Public contract tests for the layered proof builders.
 
+use delaunay::prelude::construction::DelaunayIncrementalBuilder;
 use delaunay::prelude::delaunayize::DelaunayRefinementBuilder;
 use delaunay::prelude::geometry::AdaptiveKernel;
-use delaunay::prelude::tds::{Tds, TdsBuilder, TdsBuilderError};
+use delaunay::prelude::tds::{Tds, TdsBuilder, TdsBuilderError, VertexKey};
 use delaunay::prelude::triangulation::TriangulationBuilder;
 use delaunay::vertex;
+
+fn inspect_incremental_builder_without_construction_bounds<K, U, V, const D: usize>(
+    builder: &DelaunayIncrementalBuilder<K, U, V, D>,
+    vertex_key: VertexKey,
+) -> (usize, usize, i32, bool) {
+    (
+        builder.number_of_vertices(),
+        builder.number_of_simplices(),
+        builder.dim(),
+        builder.vertex(vertex_key).is_some(),
+    )
+}
 
 #[test]
 fn strict_proof_chain_preserves_explicit_tds_representation() {
@@ -25,7 +38,6 @@ fn strict_proof_chain_preserves_explicit_tds_representation() {
     let owner = tds.topology_owner_id();
     let generation = tds.generation();
     let triangulation = TriangulationBuilder::new(tds, AdaptiveKernel::new())
-        .strict()
         .build()
         .unwrap();
     assert_eq!(triangulation.topology_generation(), generation);
@@ -59,5 +71,16 @@ fn tds_builder_reports_malformed_connectivity_with_typed_context() {
             vertex_index: 3,
             bound: 3,
         })
+    );
+}
+
+#[test]
+fn incremental_builder_inspection_does_not_repeat_construction_bounds() {
+    let mut builder: DelaunayIncrementalBuilder<_, (), (), 2> = DelaunayIncrementalBuilder::new();
+    let vertex_key = builder.insert_vertex(vertex!([0.0, 0.0]).unwrap()).unwrap();
+
+    assert_eq!(
+        inspect_incremental_builder_without_construction_bounds(&builder, vertex_key),
+        (1, 0, 0, true)
     );
 }

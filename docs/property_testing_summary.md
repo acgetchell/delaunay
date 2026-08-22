@@ -8,7 +8,8 @@ answers "what randomized invariants do we test, and how do I run or reproduce
 them?" Diagnostics answers "what evidence do I collect when something fails?"
 
 For the theory behind the invariants, see [`invariants.md`](invariants.md). For
-validation API semantics, see [`validation.md`](validation.md).
+validation API semantics, see
+[`construction_and_validation.md`](construction_and_validation.md).
 
 This document is intentionally current-only. Historical notes belong in
 [`docs/archive/`](archive/).
@@ -161,7 +162,7 @@ Current generated corpus:
 ## Writing New Properties
 
 - Tie each property to a named invariant from [`invariants.md`](invariants.md),
-  [`validation.md`](validation.md), or a focused issue.
+  [`construction_and_validation.md`](construction_and_validation.md), or a focused issue.
 - Prefer dimension-generic coverage across 2D-5D when the runtime is reasonable.
 - Use generated inputs that satisfy the preconditions being tested; reject
   out-of-scope cases with `prop_assume!` instead of weakening assertions.

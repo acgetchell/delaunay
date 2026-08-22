@@ -231,10 +231,10 @@ fn explicit_import_benchmark_ids() -> String {
 
 fn proof_boundary_benchmark_ids() -> String {
     [
-        "proof_boundaries/{promote_2d,certify_2d}",
-        "proof_boundaries/{promote_3d,certify_3d}",
-        "proof_boundaries/{promote_4d,certify_4d}",
-        "proof_boundaries/{promote_5d,certify_5d}",
+        "proof_boundaries/{promote_default_strict_2d,promote_canonicalizing_2d,certify_2d}",
+        "proof_boundaries/{promote_default_strict_3d,promote_canonicalizing_3d,certify_3d}",
+        "proof_boundaries/{promote_default_strict_4d,promote_canonicalizing_4d,certify_4d}",
+        "proof_boundaries/{promote_default_strict_5d,promote_canonicalizing_5d,certify_5d}",
     ]
     .join(";")
 }
@@ -292,10 +292,10 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
         },
         ApiBenchmarkEntry {
             group: "proof_boundaries",
-            public_api: "TriangulationBuilder::new(...).strict().build();DelaunayRefinementBuilder::new(...).build()",
+            public_api: "TriangulationBuilder::new(...).build();DelaunayRefinementBuilder::new(...).build()",
             dimensions: "2,3,4,5",
             benchmark_ids: proof_boundary_benchmark_ids(),
-            note: "measure_level_3_4_promotion_from_proof_bearing_tds_and_strict_level_5_certification_independently",
+            note: "compare_default_strict_and_canonicalizing_level_3_4_promotion_then_measure_strict_level_5_certification_independently",
         },
         ApiBenchmarkEntry {
             group: "bistellar_flips",
@@ -538,7 +538,6 @@ fn prepare_proof_boundary_fixture<const D: usize>(
     TriangulationBuilder::new(tds.clone(), AdaptiveKernel::new())
         .topology_guarantee(topology_guarantee)
         .global_topology(global_topology)
-        .strict()
         .build()
         .or_abort();
     DelaunayRefinementBuilder::new(triangulation.clone())
@@ -1496,22 +1495,43 @@ fn bench_proof_boundary_case<const D: usize>(
 ) {
     let parameter = format!("simplices_{}", fixture.simplex_count);
     group.throughput(Throughput::Elements(fixture.simplex_count as u64));
-    group.bench_function(BenchmarkId::new(format!("promote_{D}d"), &parameter), |b| {
-        b.iter_batched(
-            || (fixture.tds.clone(), AdaptiveKernel::new()),
-            |(tds, kernel)| {
-                black_box(
-                    TriangulationBuilder::new(tds, kernel)
-                        .topology_guarantee(fixture.topology_guarantee)
-                        .global_topology(fixture.global_topology)
-                        .strict()
-                        .build()
-                        .or_abort(),
-                );
-            },
-            BatchSize::LargeInput,
-        );
-    });
+    group.bench_function(
+        BenchmarkId::new(format!("promote_default_strict_{D}d"), &parameter),
+        |b| {
+            b.iter_batched(
+                || (fixture.tds.clone(), AdaptiveKernel::new()),
+                |(tds, kernel)| {
+                    black_box(
+                        TriangulationBuilder::new(tds, kernel)
+                            .topology_guarantee(fixture.topology_guarantee)
+                            .global_topology(fixture.global_topology)
+                            .build()
+                            .or_abort(),
+                    );
+                },
+                BatchSize::LargeInput,
+            );
+        },
+    );
+    group.bench_function(
+        BenchmarkId::new(format!("promote_canonicalizing_{D}d"), &parameter),
+        |b| {
+            b.iter_batched(
+                || (fixture.tds.clone(), AdaptiveKernel::new()),
+                |(tds, kernel)| {
+                    black_box(
+                        TriangulationBuilder::new(tds, kernel)
+                            .topology_guarantee(fixture.topology_guarantee)
+                            .global_topology(fixture.global_topology)
+                            .canonicalizing()
+                            .build()
+                            .or_abort(),
+                    );
+                },
+                BatchSize::LargeInput,
+            );
+        },
+    );
     group.bench_function(BenchmarkId::new(format!("certify_{D}d"), parameter), |b| {
         b.iter_batched(
             || fixture.triangulation.clone(),
@@ -1901,25 +1921,29 @@ fn benchmark_proof_boundaries(c: &mut Criterion) {
     let mut group = c.benchmark_group("proof_boundaries");
     group.sample_size(10);
 
-    if benchmark_selected(&filters, "proof_boundaries/promote_2d")
+    if benchmark_selected(&filters, "proof_boundaries/promote_default_strict_2d")
+        || benchmark_selected(&filters, "proof_boundaries/promote_canonicalizing_2d")
         || benchmark_selected(&filters, "proof_boundaries/certify_2d")
     {
         let fixture = prepare_proof_boundary_fixture::<2>(42, EXPLICIT_IMPORT_COUNT_2D);
         bench_proof_boundary_case(&mut group, &fixture);
     }
-    if benchmark_selected(&filters, "proof_boundaries/promote_3d")
+    if benchmark_selected(&filters, "proof_boundaries/promote_default_strict_3d")
+        || benchmark_selected(&filters, "proof_boundaries/promote_canonicalizing_3d")
         || benchmark_selected(&filters, "proof_boundaries/certify_3d")
     {
         let fixture = prepare_proof_boundary_fixture::<3>(123, EXPLICIT_IMPORT_COUNT_3D);
         bench_proof_boundary_case(&mut group, &fixture);
     }
-    if benchmark_selected(&filters, "proof_boundaries/promote_4d")
+    if benchmark_selected(&filters, "proof_boundaries/promote_default_strict_4d")
+        || benchmark_selected(&filters, "proof_boundaries/promote_canonicalizing_4d")
         || benchmark_selected(&filters, "proof_boundaries/certify_4d")
     {
         let fixture = prepare_proof_boundary_fixture::<4>(456, EXPLICIT_IMPORT_COUNT_4D);
         bench_proof_boundary_case(&mut group, &fixture);
     }
-    if benchmark_selected(&filters, "proof_boundaries/promote_5d")
+    if benchmark_selected(&filters, "proof_boundaries/promote_default_strict_5d")
+        || benchmark_selected(&filters, "proof_boundaries/promote_canonicalizing_5d")
         || benchmark_selected(&filters, "proof_boundaries/certify_5d")
     {
         let fixture = prepare_proof_boundary_fixture::<5>(789, EXPLICIT_IMPORT_COUNT_5D);

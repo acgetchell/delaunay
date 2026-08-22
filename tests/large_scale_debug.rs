@@ -105,9 +105,10 @@
 #![forbid(unsafe_code)]
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, ConstructionStatistics, DelaunayRepairPolicy, DelaunayTriangulation,
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionErrorWithStatistics,
-    DelaunayTriangulationDraft, InitialSimplexStrategy, TopologyGuarantee, Vertex,
+    ConstructionOptions, ConstructionStatistics, DelaunayIncrementalBuilder, DelaunayRepairPolicy,
+    DelaunayTriangulation, DelaunayTriangulationBuilder,
+    DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
+    TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::delaunayize::DelaunayRefinementBuilder;
 use delaunay::prelude::diagnostics::ConstructionTelemetry;
@@ -1395,8 +1396,8 @@ where
                 println!("Shuffled insertion order with seed {shuffle_seed}");
             }
 
-            let mut dt: DelaunayTriangulationDraft<_, (), (), D> =
-                DelaunayTriangulationDraft::with_kernel_and_topology_guarantee(
+            let mut dt: DelaunayIncrementalBuilder<_, (), (), D> =
+                DelaunayIncrementalBuilder::with_kernel_and_topology_guarantee(
                     RobustKernel::<f64>::new(),
                     topology_guarantee,
                 );

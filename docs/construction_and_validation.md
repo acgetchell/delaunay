@@ -1,10 +1,94 @@
-# Triangulation Validation Guide
+# Construction and Validation Guide
 
 <!-- markdownlint-configure-file { "MD033": { "allowed_elements": ["img"] } } -->
 
-This document is the developer-facing validation contract for the `delaunay`
-library. It explains the validation hierarchy and gives practical guidance on
-when and how to use each validation level.
+This document is the developer-facing construction and validation contract for
+the `delaunay` library. It defines the proof-bearing construction vocabulary,
+explains how representations are promoted through the validation hierarchy,
+and gives practical guidance on when and how to use each validation level.
+
+## Construction vocabulary
+
+The type name states what role a representation plays. These terms are not
+interchangeable:
+
+| Term | Visibility | Contract |
+|---|---|---|
+| **Builder** | Usually public | Configurable construction workflow returning an owner or typed error; it may cross several proof boundaries. |
+| **Draft** | Usually crate-private | Unpublished state at one proof boundary, containing the lower representation needed for promotion. |
+| **Workspace** | Private | Mutable bootstrap, repair, retry, cache, or scheduling state; its existence proves no invariant. |
+| **Owner** | Public | Domain value whose type carries cumulative invariants: `Tds` 1–2, `Triangulation` 1–4, Delaunay 1–5. |
+
+A builder is not called a draft merely because it has not finished, and a
+workspace is not called a draft merely because it is private. The ambiguous
+name *candidate* is avoided for construction state: a single-boundary proof
+value is a draft, while mutable algorithm state is a workspace.
+
+The current names apply that vocabulary directly:
+
+- `TdsBuilder`, `TriangulationBuilder`, `DelaunayRefinementBuilder`,
+  `DelaunayTriangulationBuilder`, and `DelaunayIncrementalBuilder` are public
+  workflows with caller-selected options.
+- `TdsDraft`, `TriangulationDraft`, and the crate-private
+  `DelaunayTriangulationDraft` are unpublished representations associated with
+  one proof boundary.
+- `DelaunayBootstrapWorkspace` and `DelaunayBatchWorkspace` are private
+  mutable algorithm state. They must produce the appropriate draft or verified
+  lower owner before publication.
+
+## Incremental proof pipeline
+
+Construction proceeds from weaker representations to stronger proof-bearing
+owners. Each promotion preserves the proofs already established and checks only
+the missing layer unless the caller explicitly requests a cumulative audit:
+
+```text
+raw vertices + explicit simplex specifications
+    -> TdsBuilder / TdsDraft
+    -> Tds                                  [Levels 1–2]
+    -> TriangulationBuilder / TriangulationDraft
+    -> Triangulation                        [Levels 1–4]
+    -> DelaunayRefinementBuilder / DelaunayTriangulationDraft
+    -> DelaunayTriangulation                [Levels 1–5]
+```
+
+Point-driven construction adds orchestration without reversing this dependency:
+
+```text
+DelaunayTriangulationBuilder -> DelaunayBatchWorkspace
+DelaunayIncrementalBuilder   -> DelaunayBootstrapWorkspace(TdsDraft)
+
+both -> Tds -> Triangulation -> DelaunayTriangulationDraft
+     -> DelaunayTriangulation
+```
+
+The incremental builder spans more than one proof boundary, which is exactly
+why it is a builder rather than a Delaunay draft. Before a first maximal simplex
+exists, its bootstrap workspace owns a `TdsDraft`. Once connectivity is
+publishable, it establishes Levels 1–2, then Levels 3–4, then Level 5. Later
+insertions use the verified owner's transactional mutation path.
+
+Construction and insertion are separate responsibilities even though both may
+process vertices one at a time:
+
+| Module | Responsibility |
+|---|---|
+| `delaunay/incremental_builder.rs` | Public construction lifecycle from an empty bootstrap workspace to a finished Levels 1–5 owner. |
+| `triangulation/insertion.rs` | Transactional insertion into a Levels 1–4 `Triangulation`. |
+| `delaunay/insertion.rs` | Post-construction insertion into a Levels 1–5 owner, including Delaunay repair and rollback. |
+| `core/algorithms/insertion.rs` | Shared cavity and neighbor helpers plus insertion failures; it owns no builder or owner. |
+
+The core insertion module is therefore an implementation dependency of both
+builder-driven and post-construction insertion, not an alternative incremental
+builder.
+
+Every terminal has the same correctness rule: success returns a valid owner for
+that layer; failure returns a typed error and does not expose an invalid owner.
+Consuming owner-to-owner promotions return the original lower owner on failure
+when retry is meaningful. Strict promotion checks only the missing proof and
+avoids rollback storage; an explicitly selected mutating mode uses a workspace
+and rollback. Level 5 fast-path evidence is accepted only when validation binds
+it to the exact owner identity, generation, and topology being promoted.
 
 ## Notebook-generated validation gallery
 
@@ -91,7 +175,7 @@ This separation is why Level 3 does not change when spherical support is added:
 PL-manifoldness is intrinsic, while spherical realization belongs in Level 4 and
 spherical Delaunay belongs in Level 5.
 
-## Validation Hierarchy
+## Construction and Validation Hierarchy
 
 ```text
 Level 1: Element Validity
@@ -307,10 +391,10 @@ boundaries:
   the supplied `TopologyGuarantee`, `GlobalTopology`, and optional validation
   policy. The consumed `Tds` already proves Levels 1–2, so publication checks
   only Level 3 intrinsic topology and Level 4 realization.
-- `.strict()` selects certification-only publication. It preserves owner
+- The default `build()` terminal selects strict certification-only publication. It preserves owner
   identity, generation, simplex ordering, and stored orientation; neither
   checks nor repairs Level 5 and avoids a rollback snapshot.
-- The default canonicalizing mode may normalize geometric orientation before
+- Explicit `.canonicalizing()` mode may normalize geometric orientation before
   the same final Levels 3–4 proof. That successful transformation may change
   simplex ordering and generation. A storage-linear TDS snapshot makes the
   mutation failure-atomic. Both modes return `TriangulationBuildFailure` with
@@ -327,6 +411,12 @@ boundaries:
   [Bistellar (Pachner) Moves and Delaunay Repair](../REFERENCES.md#bistellar-pachner-moves-and-delaunay-repair),
   while typed budget exhaustion and rollback define the narrower executable
   contract.
+- Batch point-set construction and transactional refinement may reuse a
+  successful Level 5 predicate pass through a private certificate created by
+  the validation boundary and bound to the exact topology owner, generation,
+  and global topology. Report-domain metadata alone cannot bypass the ordinary
+  Level 5 publication check; stale or missing evidence triggers that check
+  again.
 - Restoring a Delaunay value from TDS storage uses those same boundaries in
   order: strict `TriangulationBuilder`, then strict
   `DelaunayRefinementBuilder`. There is no public shortcut with a stage-union

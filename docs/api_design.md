@@ -71,10 +71,10 @@ inferred from a point set. Each `build()` is a failure-atomic publication
 boundary: it returns a fully valid owner for that layer or a typed error.
 
 Each proof transition has one public fluent builder. `TriangulationBuilder`
-defaults to canonicalizing mode; `.strict()` selects non-mutating Levels 3–4
-certification. Strict success preserves owner identity, generation, simplex
+defaults to non-mutating Levels 3–4 certification; `.canonicalizing()` selects
+transactional orientation normalization before that proof. Strict success preserves owner identity, generation, simplex
 ordering, and avoids a rollback snapshot. Canonicalizing success may normalize
-simplex orientation and advance the structural generation, so that mode keeps a
+simplex orientation and advance the structural generation, so canonicalizing mode keeps a
 storage-linear snapshot and restores the exact input TDS on failure. Both modes
 share the same final Levels 3–4 certification implementation and return the
 unchanged input TDS on failure.
@@ -88,31 +88,47 @@ connectivity at these proof boundaries. See
 [`invariants.md`](invariants.md#builder-publication-contracts) for the complete
 contract.
 
-Public unpublished construction uses `TdsDraft` to stage explicit vertices and
-maximal simplices, and `DelaunayTriangulationDraft` to infer connectivity while
-incrementally inserting points. Both expose genuine staged mutations before
-`finish()` validates and returns the corresponding proof-bearing owner. The
-generic layer has no public `TriangulationDraft`: once a TDS exists, its
+Public staged construction uses `TdsDraft` for explicit vertices and maximal
+simplices, and `DelaunayIncrementalBuilder` for point-driven connectivity
+inference. Both expose genuine mutations before `finish()` returns the
+corresponding proof-bearing owner, but their nouns reflect different scopes:
+`TdsDraft` belongs to one Levels 1–2 publication boundary, while the incremental
+builder orchestrates every boundary through Level 5. The generic layer has no
+public `TriangulationDraft`: once a TDS exists, its
 explicit connectivity is complete, so `TriangulationBuilder` is the single
-canonicalizing publication API. An internal `TriangulationDraft` remains only
+publication API with strict and canonicalizing modes. An internal `TriangulationDraft` remains only
 as unpublished implementation state shared by that builder and higher-layer
 construction. The verified empty complex is publishable, while a non-empty TDS
 bootstrap without a maximal simplex is not.
 
-Internally, a Delaunay draft stores a lower-layer `TriangulationDraft` only
-during bootstrap. The first maximal simplex must pass Levels 3–5 before the
-draft changes state to a verified `DelaunayTriangulation`; a failed transition
-restores the exact pre-insertion bootstrap. Subsequent insertions use the
+Internally, `TdsDraft` and `TriangulationDraft` use distinct crate-private
+unpublished wrappers, so incomplete or uncertified storage cannot be mistaken
+for its published owner without adding caller-selectable typestate parameters
+to the public types. `DelaunayIncrementalBuilder` uses a private
+`DelaunayBootstrapWorkspace` that stores `TdsDraft` together with its kernel and
+topology options. The first maximal
+simplex must pass Levels 1–5 before the
+builder changes state to a verified `DelaunayTriangulation`; a failed transition
+restores the exact pre-insertion bootstrap, while successful publication keeps
+the `VertexKey`s already returned to the caller. Subsequent insertions use the
 verified owner's transactional path. The private, mutation-free
-`DelaunayRefinementCandidate` is reserved for the final
+`DelaunayTriangulationDraft` is reserved for the final
 `Triangulation`-to-`DelaunayTriangulation` proof transition and is shared by
-strict refinement, repair, batch construction, draft publication, and
-restoration. Thus the draft and candidate are complementary rather than two
-public ways to perform the same operation.
+strict refinement, repair, batch construction, incremental-builder publication, and
+restoration. The separate private `DelaunayBatchWorkspace` owns the mutable
+algorithm and cache state used by point-set batch construction; it is not a
+proof-bearing draft.
+
+The Delaunay builder parses explicit simplex indices once and carries that
+typed evidence into `TdsBuilder`; the lower builder does not reinterpret the
+same raw vectors. Likewise, Level 5 publication accepts retained fast-path
+evidence only as a validation-created certificate tied to owner identity,
+generation, and global topology. Callers cannot select that fast path with
+metadata alone.
 
 The valid empty complex may be published, but positive-dimensional insertion on
 that published owner cannot expose a partial bootstrap. Construct incrementally
-from empty through `DelaunayTriangulationDraft`; use
+from empty through `DelaunayIncrementalBuilder`; use
 `DelaunayTriangulation::insert_vertex` only after a maximal simplex exists.
 
 ### Simple Construction: `DelaunayTriangulationBuilder`
@@ -187,7 +203,7 @@ fn main() -> DelaunayResult<()> {
   feedback for incompatible policy/guarantee pairs.
 - **Custom repair policies**: Configure Delaunay repair behavior
 
-See `docs/topology.md` for more on toroidal triangulations and `docs/validation.md`
+See `docs/topology.md` for more on toroidal triangulations and `docs/construction_and_validation.md`
 for topology guarantee and validation policy details.
 
 ### Key Characteristics
@@ -508,7 +524,8 @@ let report = dt.validation_report();
 ### Internal Organization
 
 - **Builder API**: Implemented in `delaunay::construction`, `delaunay::builder`,
-  and `core::algorithms::incremental_insertion`
+  and `delaunay::incremental_builder`; shared insertion primitives and failures
+  live separately in `core::algorithms::insertion`
 - **Pachner Move API**: Implemented in `delaunay::pachner` over the primitive
   `delaunay::flips` trait and `core::algorithms::flips` internals
 - **Low-level primitives**: Context builders and flip application functions are `pub(crate)` in `core::algorithms::flips`
@@ -721,7 +738,7 @@ changed or ambiguous simplices receive no payload.
 
 - **Bistellar flip theory**: See
   [Bistellar (Pachner) Moves and Delaunay Repair](../REFERENCES.md#bistellar-pachner-moves-and-delaunay-repair)
-- **Validation framework**: See `docs/validation.md` for detailed validation guide
+- **Validation framework**: See `docs/construction_and_validation.md` for detailed validation guide
 - **Invariant rationale**: See [`invariants.md`](invariants.md) for theory and implementation pointers
 - **Topology analysis**: See `docs/topology.md` for topological concepts
 - **API implementation**: See `delaunay::pachner` and `delaunay::flips` module documentation

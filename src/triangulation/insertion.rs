@@ -6,7 +6,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::algorithms::incremental_insertion::{
+use crate::core::algorithms::insertion::{
     CavityFillingError, CavityRepairStage, HullExtensionReason, InsertionError, extend_hull,
     external_facets_for_boundary, fill_cavity_replacing_simplices,
     split_2d_boundary_edge_in_simplex_if_needed, wire_cavity_neighbors,
@@ -42,7 +42,9 @@ use crate::triangulation::locality::{
     replace_simplices_and_record_removed, retain_simplices_and_record_removed,
 };
 use crate::triangulation::realization::TriangulationRealizationValidationError;
-use crate::triangulation::rollback::TriangulationRollbackTransaction;
+use crate::triangulation::rollback::{
+    TriangulationRollbackTransaction, TriangulationRollbackWindow,
+};
 use std::borrow::Cow;
 use std::env;
 use std::sync::{
@@ -67,6 +69,59 @@ const DEFAULT_PERTURBATION_RETRIES: usize = 3;
 /// Headroom used when rebuilding the duplicate-coordinate grid for a larger tolerance.
 const DUPLICATE_INDEX_REBUILD_GROWTH_FACTOR: f64 = 2.0;
 
+/// Relative length-scale threshold shared by every incremental duplicate check.
+const DUPLICATE_RELATIVE_TOLERANCE: f64 = 1e-10_f64;
+
+/// Derive the duplicate threshold from a candidate and the geometry that gives
+/// its local coordinate scale meaning.
+pub fn duplicate_coordinate_tolerance_from_references<'a, const D: usize>(
+    coords: &[f64; D],
+    references: impl IntoIterator<Item = &'a [f64; D]>,
+) -> f64 {
+    let mut axis_min = *coords;
+    let mut axis_max = *coords;
+    let mut magnitude_scale = coords
+        .iter()
+        .fold(0.0_f64, |scale, coordinate| scale.max(coordinate.abs()));
+    let mut saw_reference = false;
+
+    for reference in references {
+        saw_reference = true;
+        for i in 0..D {
+            let coordinate = reference[i];
+            axis_min[i] = axis_min[i].min(coordinate);
+            axis_max[i] = axis_max[i].max(coordinate);
+            magnitude_scale = magnitude_scale.max(coordinate.abs());
+        }
+    }
+
+    let feature_scale = if saw_reference {
+        axis_min
+            .iter()
+            .zip(axis_max)
+            .fold(0.0, |span_squared, (minimum, maximum)| {
+                let span = maximum - minimum;
+                span.mul_add(span, span_squared)
+            })
+            .sqrt()
+    } else {
+        1.0
+    };
+
+    scale_aware_duplicate_coordinate_tolerance(feature_scale, magnitude_scale)
+}
+
+/// Combine relative geometry scale with an ULP floor for translated inputs.
+fn scale_aware_duplicate_coordinate_tolerance(feature_scale: f64, magnitude_scale: f64) -> f64 {
+    let relative_tolerance = DUPLICATE_RELATIVE_TOLERANCE * feature_scale;
+    let ulp_tolerance = f64::EPSILON * 16.0 * magnitude_scale;
+    let mut tolerance = relative_tolerance.max(ulp_tolerance);
+    if !tolerance.is_finite() || tolerance <= 0.0 {
+        tolerance = DUPLICATE_RELATIVE_TOLERANCE;
+    }
+    tolerance
+}
+
 static DUPLICATE_DETECTION_TOTAL: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_DETECTION_GRID_USED: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_DETECTION_GRID_FALLBACKS: AtomicU64 = AtomicU64::new(0);
@@ -77,10 +132,6 @@ static CAVITY_REDUCTION_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
 static CAVITY_REDUCTION_TRACE_EMITTED: AtomicBool = AtomicBool::new(false);
 
 fn duplicate_detection_metrics_enabled() -> bool {
-    #[cfg(test)]
-    if tests::duplicate_detection_force_enabled() {
-        return true;
-    }
     *DUPLICATE_DETECTION_ENABLED.get_or_init(|| env::var_os("DELAUNAY_DUPLICATE_METRICS").is_some())
 }
 
@@ -311,7 +362,21 @@ pub fn record_duplicate_detection_metrics(
     candidate_count: usize,
     fell_back: bool,
 ) {
-    if !duplicate_detection_metrics_enabled() {
+    record_duplicate_detection_metrics_if_enabled(
+        duplicate_detection_metrics_enabled(),
+        used_grid,
+        candidate_count,
+        fell_back,
+    );
+}
+
+fn record_duplicate_detection_metrics_if_enabled(
+    enabled: bool,
+    used_grid: bool,
+    candidate_count: usize,
+    fell_back: bool,
+) {
+    if !enabled {
         return;
     }
     DUPLICATE_DETECTION_TOTAL.fetch_add(1, Ordering::Relaxed);
@@ -388,6 +453,19 @@ pub struct DetailedInsertionResult {
     pub delaunay_repair_required: bool,
 }
 
+/// Input and derived geometry reused by every perturbation attempt inside one
+/// rollback window.
+struct PreparedInsertion<U, const D: usize> {
+    stats: InsertionStatistics,
+    telemetry: InsertionTelemetry,
+    original_coords: [f64; D],
+    original_uuid: Uuid,
+    current_vertex: Vertex<U, D>,
+    hint: Option<SimplexKey>,
+    local_scale: f64,
+    duplicate_tolerance: f64,
+}
+
 // =============================================================================
 // Geometric Operations (Requires Extra Numeric Conversion Bounds)
 // =============================================================================
@@ -416,7 +494,11 @@ where
     /// ```
     #[must_use]
     pub fn duplicate_detection_metrics() -> Option<DuplicateDetectionMetrics> {
-        if !duplicate_detection_metrics_enabled() {
+        Self::duplicate_detection_metrics_if_enabled(duplicate_detection_metrics_enabled())
+    }
+
+    fn duplicate_detection_metrics_if_enabled(enabled: bool) -> Option<DuplicateDetectionMetrics> {
+        if !enabled {
             return None;
         }
         Some(DuplicateDetectionMetrics {
@@ -425,63 +507,6 @@ where
             grid_fallbacks: DUPLICATE_DETECTION_GRID_FALLBACKS.load(Ordering::Relaxed),
             grid_candidates: DUPLICATE_DETECTION_GRID_CANDIDATES.load(Ordering::Relaxed),
         })
-    }
-
-    /// Insert a vertex with statistics, using a custom perturbation seed and an optional
-    /// spatial hash-grid index, and also return the simplices that cavity reduction touched
-    /// and left in place.
-    ///
-    /// The extra seed set stays internal so bulk construction and debug rebuilds can widen
-    /// their local repair frontier without changing the public insertion API.
-    pub(crate) fn insert_with_statistics_seeded_indexed_detailed(
-        &mut self,
-        vertex: Vertex<U, D>,
-        conflict_simplices: Option<&SimplexKeyBuffer>,
-        hint: Option<SimplexKey>,
-        perturbation_seed: u64,
-        index: Option<&mut HashGridIndex<D>>,
-        bulk_index: Option<usize>,
-    ) -> Result<DetailedInsertionResult, InsertionError> {
-        self.insert_with_statistics_seeded_indexed_detailed_with_telemetry(
-            vertex,
-            conflict_simplices,
-            hint,
-            perturbation_seed,
-            index,
-            bulk_index,
-            InsertionTelemetryMode::CountsOnly,
-        )
-    }
-
-    /// Insert a vertex with statistics and explicitly selected telemetry collection.
-    ///
-    /// Use [`InsertionTelemetryMode::CountsAndTimings`] only when the caller will
-    /// consume elapsed-time telemetry; the default detailed insertion path records
-    /// counters without paying per-attempt `Instant::now()` costs.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Internal detailed insertion carries perturbation, spatial-index, trace, and telemetry knobs"
-    )]
-    pub(crate) fn insert_with_statistics_seeded_indexed_detailed_with_telemetry(
-        &mut self,
-        vertex: Vertex<U, D>,
-        conflict_simplices: Option<&SimplexKeyBuffer>,
-        hint: Option<SimplexKey>,
-        perturbation_seed: u64,
-        index: Option<&mut HashGridIndex<D>>,
-        bulk_index: Option<usize>,
-        telemetry_mode: InsertionTelemetryMode,
-    ) -> Result<DetailedInsertionResult, InsertionError> {
-        self.insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
-            vertex,
-            conflict_simplices,
-            hint,
-            perturbation_seed,
-            index,
-            bulk_index,
-            telemetry_mode,
-            false,
-        )
     }
 
     /// Runs detailed insertion with a scaffolding-specific degeneracy policy.
@@ -516,12 +541,49 @@ where
         )
     }
 
-    /// Transactional insertion with automatic rollback and perturbation retry, plus
-    /// the local-repair seed simplices discovered while shaping the cavity.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Complex insertion logic; splitting further would harm readability"
-    )]
+    /// Runs detailed insertion inside a caller-owned rollback window.
+    ///
+    /// Higher proof owners use this entry point to keep insertion, perturbation
+    /// retries, repair, and postcondition checks inside one owner-level snapshot.
+    pub(crate) fn insert_with_statistics_seeded_indexed_detailed_in_rollback_window<W>(
+        transaction: &mut W,
+        vertex: Vertex<U, D>,
+        conflict_simplices: Option<&SimplexKeyBuffer>,
+        hint: Option<SimplexKey>,
+        perturbation_seed: u64,
+        mut index: Option<&mut HashGridIndex<D>>,
+        bulk_index: Option<usize>,
+    ) -> Result<DetailedInsertionResult, InsertionError>
+    where
+        W: TriangulationRollbackWindow<K, U, V, D>,
+    {
+        let mut prepared =
+            transaction
+                .triangulation_mut()
+                .prepare_insertion(vertex, hint, index.as_deref_mut());
+        if let Some(skipped) = transaction
+            .triangulation_mut()
+            .duplicate_skip(&mut prepared, index.as_deref())
+        {
+            return Ok(skipped);
+        }
+
+        Self::insert_prepared_in_rollback_window(
+            transaction,
+            prepared,
+            conflict_simplices,
+            DEFAULT_PERTURBATION_RETRIES,
+            perturbation_seed,
+            index,
+            bulk_index,
+            InsertionTelemetryMode::CountsOnly,
+            false,
+            true,
+        )
+    }
+
+    /// Transactional insertion with automatic rollback and perturbation retry,
+    /// plus the local-repair seeds discovered while shaping the cavity.
     #[expect(
         clippy::too_many_arguments,
         reason = "Transactional insertion needs the bulk-index diagnostic context for #204 tracing"
@@ -538,14 +600,44 @@ where
         telemetry_mode: InsertionTelemetryMode,
         retry_degenerate_realization: bool,
     ) -> Result<DetailedInsertionResult, InsertionError> {
-        let mut stats = InsertionStatistics::default();
-        let mut telemetry = InsertionTelemetry::default();
+        let mut prepared = self.prepare_insertion(vertex, hint, index.as_deref_mut());
+
+        // Rejecting an unchanged duplicate does not need a rollback snapshot.
+        if let Some(skipped) = self.duplicate_skip(&mut prepared, index.as_deref()) {
+            return Ok(skipped);
+        }
+
+        let mut transaction = TriangulationRollbackTransaction::begin(self);
+        let result = Self::insert_prepared_in_rollback_window(
+            &mut transaction,
+            prepared,
+            conflict_simplices,
+            max_perturbation_attempts,
+            perturbation_seed,
+            index,
+            bulk_index,
+            telemetry_mode,
+            retry_degenerate_realization,
+            true,
+        );
+
+        // The shared attempt engine restores before every non-success return.
+        // Committing here therefore either publishes the successful insertion or
+        // closes a window that is already back at its original TDS state.
+        transaction.commit();
+        result
+    }
+
+    /// Derives retry geometry once before a rollback window starts so duplicate
+    /// rejection remains snapshot-free for ordinary triangulation callers.
+    fn prepare_insertion(
+        &self,
+        vertex: Vertex<U, D>,
+        hint: Option<SimplexKey>,
+        index: Option<&mut HashGridIndex<D>>,
+    ) -> PreparedInsertion<U, D> {
         let original_coords = *vertex.point().coords();
         let original_uuid = vertex.uuid();
-        let mut current_vertex = vertex;
-        // Reuse the caller's spatial index as a locate-hint source when batch insertion did
-        // not already provide a better hint. This keeps retries and bulk runs on the same
-        // point-location path.
         let mut hint = hint;
         if hint.is_none()
             && let Some(index_ref) = index.as_deref()
@@ -553,37 +645,96 @@ where
             hint = self.select_locate_hint_from_hash_grid(&original_coords, index_ref);
         }
 
-        // Scale perturbations against the local neighborhood so retries stay small relative
-        // to the nearby geometry instead of using a single global epsilon.
         let local_scale = self.estimate_local_perturbation_scale(&original_coords, hint);
-
         let duplicate_tolerance =
             self.estimate_duplicate_coordinate_tolerance(&original_coords, hint);
-        self.ensure_duplicate_index_cell_size(index.as_deref_mut(), duplicate_tolerance);
+        self.ensure_duplicate_index_cell_size(index, duplicate_tolerance);
 
+        let stats = InsertionStatistics {
+            attempts: 1,
+            ..InsertionStatistics::default()
+        };
+        PreparedInsertion {
+            stats,
+            telemetry: InsertionTelemetry::default(),
+            original_coords,
+            original_uuid,
+            current_vertex: vertex,
+            hint,
+            local_scale,
+            duplicate_tolerance,
+        }
+    }
+
+    /// Converts a duplicate-coordinate observation into the standard unchanged
+    /// insertion result without opening or mutating a rollback window.
+    fn duplicate_skip(
+        &self,
+        prepared: &mut PreparedInsertion<U, D>,
+        index: Option<&HashGridIndex<D>>,
+    ) -> Option<DetailedInsertionResult> {
+        let error = self.duplicate_coordinates_error(
+            prepared.current_vertex.point().coords(),
+            prepared.duplicate_tolerance,
+            index,
+        )?;
+        prepared.stats.result = InsertionResult::SkippedDuplicate;
+        #[cfg(debug_assertions)]
+        tracing::debug!("SKIPPED: {error}");
+        Some(DetailedInsertionResult {
+            outcome: InsertionOutcome::Skipped { error },
+            stats: prepared.stats,
+            telemetry: prepared.telemetry,
+            repair_seed_simplices: SimplexKeyBuffer::new(),
+            delaunay_repair_required: false,
+        })
+    }
+
+    /// Executes every perturbation attempt against one rollback snapshot.
+    ///
+    /// Failed attempts restore the TDS in place before retrying. Every skipped
+    /// or error return also leaves the window restored, while success leaves the
+    /// inserted state ready for the caller-selected owner to commit.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The attempt loop keeps rollback, retry classification, and telemetry together"
+    )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The attempt engine carries the existing retry, index, and diagnostic policy"
+    )]
+    fn insert_prepared_in_rollback_window<W>(
+        transaction: &mut W,
+        mut prepared: PreparedInsertion<U, D>,
+        conflict_simplices: Option<&SimplexKeyBuffer>,
+        max_perturbation_attempts: usize,
+        perturbation_seed: u64,
+        mut index: Option<&mut HashGridIndex<D>>,
+        bulk_index: Option<usize>,
+        telemetry_mode: InsertionTelemetryMode,
+        retry_degenerate_realization: bool,
+        initial_duplicate_checked: bool,
+    ) -> Result<DetailedInsertionResult, InsertionError>
+    where
+        W: TriangulationRollbackWindow<K, U, V, D>,
+    {
         // Base perturbation epsilon: ≈ √machine_epsilon for f64.
         let epsilon_value: f64 = 1e-8;
 
         for attempt in 0..=max_perturbation_attempts {
-            stats.attempts = attempt + 1;
+            prepared.stats.attempts = attempt + 1;
 
             // Attempt 0 uses the caller's coordinates verbatim; later attempts apply a
             // deterministic signed perturbation so the same seed reproduces the same path.
             if attempt > 0 {
-                let mut perturbed_coords = original_coords;
-                // Progressive local-scale perturbation: magnitude grows ×10 per attempt.
-                //   attempt 1: base × local_scale × 10
-                //   attempt 2: base × local_scale × 100
-                //   attempt 3: base × local_scale × 1000
+                let mut perturbed_coords = prepared.original_coords;
                 #[expect(
                     clippy::cast_possible_truncation,
                     clippy::cast_possible_wrap,
                     reason = "attempt is at most DEFAULT_PERTURBATION_RETRIES (3), fits in i32"
                 )]
                 let scale_factor = 10.0_f64.powi(attempt as i32);
-                let epsilon = epsilon_value * scale_factor;
-
-                let perturbation_scale = epsilon * local_scale;
+                let perturbation_scale = epsilon_value * scale_factor * prepared.local_scale;
                 for (idx, coord) in perturbed_coords.iter_mut().enumerate() {
                     #[expect(
                         clippy::cast_precision_loss,
@@ -609,74 +760,38 @@ where
                     *coord += signed_perturbation * coord_scale;
                 }
 
-                // Preserve the caller-provided vertex UUID across perturbation retries.
-                // This ensures the inserted vertex retains its original identity even if we have
-                // to retry with perturbed coordinates.
                 let perturbed_point = Point::try_new(perturbed_coords)
                     .map_err(|source| InsertionError::PerturbedCoordinateInvalid { source })?;
-                current_vertex = Vertex::from_validated_point_with_uuid(
+                prepared.current_vertex = Vertex::from_validated_point_with_uuid(
                     perturbed_point,
-                    original_uuid,
-                    current_vertex.data,
+                    prepared.original_uuid,
+                    prepared.current_vertex.data,
                 );
             }
 
-            // Duplicate coordinate detection uses the hash grid when available; otherwise it
-            // falls back to a linear scan (O(n·D) per insertion, O(n²·D) worst-case).
-            if let Some(error) = self.duplicate_coordinates_error(
-                current_vertex.point().coords(),
-                duplicate_tolerance,
-                index.as_deref(),
-            ) {
-                stats.result = InsertionResult::SkippedDuplicate;
-                #[cfg(debug_assertions)]
-                tracing::debug!("SKIPPED: {error}");
-                return Ok(DetailedInsertionResult {
-                    outcome: InsertionOutcome::Skipped { error },
-                    stats,
-                    telemetry,
-                    repair_seed_simplices: SimplexKeyBuffer::new(),
-                    delaunay_repair_required: false,
-                });
+            if (!initial_duplicate_checked || attempt > 0)
+                && let Some(skipped) = transaction
+                    .triangulation_mut()
+                    .duplicate_skip(&mut prepared, index.as_deref())
+            {
+                return Ok(skipped);
             }
 
-            let simplices_before_attempt = self.tds.number_of_simplices();
-            let vertices_before_attempt = self.tds.number_of_vertices();
-
-            let mut transaction = TriangulationRollbackTransaction::begin(self);
-
-            // Try insertion.
-            //
-            // Topology safety net: ensure we don't commit an insertion that breaks Level 3 topology.
-            // If the cavity-based insertion produces an Euler/topology mismatch, roll back and retry a
-            // conservative fallback (star-split of the containing simplex) within the same transactional attempt.
-            #[cfg(test)]
-            // Test-only hook for deterministic coverage of the rollback + perturbation retry
-            // success path, which is otherwise rare under the adaptive SoS predicates.
-            let result = if tests::take_force_next_insertion_retryable_failure() {
-                Err(InsertionError::NonManifoldTopology {
-                    facet_hash: 0x000F_0CED,
-                    simplex_count: 3,
-                })
-            } else {
-                Self::try_insert_with_topology_safety_net(
-                    &mut transaction,
-                    current_vertex,
-                    conflict_simplices,
-                    hint,
-                    attempt,
-                    &mut telemetry,
-                    telemetry_mode,
+            let (simplices_before_attempt, vertices_before_attempt) = {
+                let triangulation = transaction.triangulation_mut();
+                (
+                    triangulation.tds.number_of_simplices(),
+                    triangulation.tds.number_of_vertices(),
                 )
             };
-            #[cfg(not(test))]
+
             let result = Self::try_insert_with_topology_safety_net(
-                &mut transaction,
-                current_vertex,
+                transaction,
+                prepared.current_vertex,
                 conflict_simplices,
-                hint,
+                prepared.hint,
                 attempt,
-                &mut telemetry,
+                &mut prepared.telemetry,
                 telemetry_mode,
             );
 
@@ -689,8 +804,8 @@ where
                     ..
                 }) => {
                     let (vertex_key, hint) = inserted;
-                    stats.simplices_removed_during_repair = simplices_removed;
-                    stats.result = InsertionResult::Inserted;
+                    prepared.stats.simplices_removed_during_repair = simplices_removed;
+                    prepared.stats.result = InsertionResult::Inserted;
                     #[cfg(debug_assertions)]
                     if attempt > 0 {
                         tracing::debug!(
@@ -698,83 +813,89 @@ where
                         );
                     }
 
-                    transaction.commit();
-                    // Only the committed attempt updates the duplicate index. Earlier
-                    // retries all rolled back to the pre-attempt triangulation state.
+                    // Only the successful attempt updates the duplicate index. A
+                    // higher-level owner invalidates that index if a later post-step rolls back.
                     if let Some(index) = index.as_deref_mut()
-                        && let Some(vertex) = self.tds.vertex(vertex_key)
+                        && let Some(coords) = transaction
+                            .triangulation_mut()
+                            .tds
+                            .vertex(vertex_key)
+                            .map(|vertex| *vertex.point().coords())
                     {
-                        index.insert_vertex(vertex_key, vertex.point().coords());
+                        index.insert_vertex(vertex_key, &coords);
                     }
 
                     return Ok(DetailedInsertionResult {
                         outcome: InsertionOutcome::Inserted { vertex_key, hint },
-                        stats,
-                        telemetry,
+                        stats: prepared.stats,
+                        telemetry: prepared.telemetry,
                         repair_seed_simplices,
                         delaunay_repair_required,
                     });
                 }
-                Err(e) => {
-                    transaction.rollback();
+                Err(error) => {
+                    transaction.restore_rollback_tds();
 
-                    // Handle duplicate coordinates specially - skip immediately without retry
-                    if matches!(e, InsertionError::DuplicateCoordinates { .. }) {
-                        stats.result = InsertionResult::SkippedDuplicate;
+                    if matches!(error, InsertionError::DuplicateCoordinates { .. }) {
+                        prepared.stats.result = InsertionResult::SkippedDuplicate;
                         #[cfg(debug_assertions)]
-                        tracing::debug!("SKIPPED: {e}");
+                        tracing::debug!("SKIPPED: {error}");
                         return Ok(DetailedInsertionResult {
-                            outcome: InsertionOutcome::Skipped { error: e },
-                            stats,
-                            telemetry,
+                            outcome: InsertionOutcome::Skipped { error },
+                            stats: prepared.stats,
+                            telemetry: prepared.telemetry,
                             repair_seed_simplices: SimplexKeyBuffer::new(),
                             delaunay_repair_required: false,
                         });
                     }
 
-                    // Check if this is a retryable error (geometric degeneracy)
-                    let is_retryable = e.is_retryable()
+                    let is_retryable = error.is_retryable()
                         || (retry_degenerate_realization
                             && matches!(
-                                e,
+                                error,
                                 InsertionError::RealizationValidationFailed {
                                     source:
                                         TriangulationRealizationValidationError::DegenerateSimplex { .. },
                                 }
                             ));
 
-                    // Emit the conflict summary after rollback so the trace captures the
-                    // restored manifold state that the next retry will start from.
                     if retryable_skip_trace_enabled()
-                        && let Some(detail) = retryable_conflict_trace_detail(&e)
+                        && let Some(detail) = retryable_conflict_trace_detail(&error)
                     {
+                        let (simplices_after_rollback, vertices_after_rollback) = {
+                            let triangulation = transaction.triangulation_mut();
+                            (
+                                triangulation.tds.number_of_simplices(),
+                                triangulation.tds.number_of_vertices(),
+                            )
+                        };
                         log_retryable_conflict_skip(
                             bulk_index,
-                            original_uuid,
+                            prepared.original_uuid,
                             attempt + 1,
                             max_perturbation_attempts + 1,
                             attempt > 0,
                             is_retryable && attempt < max_perturbation_attempts,
                             simplices_before_attempt,
                             vertices_before_attempt,
-                            self.tds.number_of_simplices(),
-                            self.tds.number_of_vertices(),
+                            simplices_after_rollback,
+                            vertices_after_rollback,
                             &detail,
-                            &e,
+                            &error,
                         );
                     }
 
                     if is_retryable && attempt < max_perturbation_attempts {
                         #[cfg(debug_assertions)]
                         tracing::debug!(
-                            "RETRYING: Attempt {} failed with: {e}. Applying perturbation...",
+                            "RETRYING: Attempt {} failed with: {error}. Applying perturbation...",
                             attempt + 1
                         );
                     } else if is_retryable {
-                        stats.result = InsertionResult::SkippedDegeneracy;
+                        prepared.stats.result = InsertionResult::SkippedDegeneracy;
                         #[cfg(debug_assertions)]
                         tracing::debug!(
-                            "SKIPPED: Could not insert vertex after {} attempts (max perturbation ≈ {:.0e} × local_scale). Last error: {e}. Vertex skipped to maintain manifold.",
+                            "SKIPPED: Could not insert vertex after {} attempts (max perturbation ≈ {:.0e} × local_scale). Last error: {error}. Vertex skipped to maintain manifold.",
                             max_perturbation_attempts + 1,
                             epsilon_value
                                 * 10.0_f64.powi(
@@ -789,17 +910,14 @@ where
                                 ),
                         );
                         return Ok(DetailedInsertionResult {
-                            outcome: InsertionOutcome::Skipped { error: e },
-                            stats,
-                            telemetry,
-                            // Skipped insertions do not mutate the triangulation, so any
-                            // intermediate cavity-seed hints are irrelevant to callers.
+                            outcome: InsertionOutcome::Skipped { error },
+                            stats: prepared.stats,
+                            telemetry: prepared.telemetry,
                             repair_seed_simplices: SimplexKeyBuffer::new(),
                             delaunay_repair_required: false,
                         });
                     } else {
-                        // Non-retryable structural error (e.g., duplicate UUID)
-                        return Err(e);
+                        return Err(error);
                     }
                 }
             }
@@ -852,37 +970,6 @@ where
         best.map(|(_, simplex_key)| simplex_key)
     }
 
-    /// Returns the f64 relative tolerance used for duplicate-coordinate detection.
-    const fn duplicate_relative_tolerance() -> f64 {
-        1e-10_f64
-    }
-
-    /// Keeps duplicate-scale estimates tied to existing geometry rather than
-    /// hard-coding a scalar-unit epsilon.
-    fn include_duplicate_scale_reference(
-        point_coords: &[f64; D],
-        axis_min: &mut [f64; D],
-        axis_max: &mut [f64; D],
-        magnitude_scale: &mut f64,
-        saw_reference: &mut bool,
-    ) {
-        *saw_reference = true;
-        for i in 0..D {
-            let coord = point_coords[i];
-            if coord < axis_min[i] {
-                axis_min[i] = coord;
-            }
-            if coord > axis_max[i] {
-                axis_max[i] = coord;
-            }
-
-            let abs = coord.abs();
-            if abs > *magnitude_scale {
-                *magnitude_scale = abs;
-            }
-        }
-    }
-
     /// Estimates a duplicate-coordinate tolerance from the local simplex span plus
     /// a small ULP-scaled floor for translated coordinate systems.
     fn estimate_duplicate_coordinate_tolerance(
@@ -890,66 +977,24 @@ where
         coords: &[f64; D],
         hint: Option<SimplexKey>,
     ) -> f64 {
-        let mut axis_min = *coords;
-        let mut axis_max = *coords;
-        let mut magnitude_scale = 0.0;
-        let mut saw_reference = false;
-        let mut local_feature_scale = None;
-
-        for coord in coords {
-            let abs = (*coord).abs();
-            if abs > magnitude_scale {
-                magnitude_scale = abs;
-            }
-        }
-
         if let Some(simplex_key) = hint
             && let Some(simplex) = self.tds.simplex(simplex_key)
         {
-            for &vkey in simplex.vertices() {
-                if let Some(vertex) = self.tds.vertex(vkey) {
-                    Self::include_duplicate_scale_reference(
-                        vertex.point().coords(),
-                        &mut axis_min,
-                        &mut axis_max,
-                        &mut magnitude_scale,
-                        &mut saw_reference,
-                    );
-                }
-            }
+            return duplicate_coordinate_tolerance_from_references(
+                coords,
+                simplex.vertices().iter().filter_map(|&vertex_key| {
+                    self.tds
+                        .vertex(vertex_key)
+                        .map(|vertex| vertex.point().coords())
+                }),
+            );
         }
 
-        if !saw_reference {
-            let local_scale = self.estimate_local_perturbation_scale(coords, None);
-            if local_scale.is_finite() && local_scale > 0.0 {
-                if local_scale > magnitude_scale {
-                    magnitude_scale = local_scale;
-                }
-                local_feature_scale = Some(local_scale);
-            }
-        }
-
-        let feature_scale = local_feature_scale.unwrap_or_else(|| {
-            let mut span_sq = 0.0;
-            for i in 0..D {
-                let span = axis_max[i] - axis_min[i];
-                span_sq = span.mul_add(span, span_sq);
-            }
-            span_sq.sqrt()
+        let feature_scale = self.estimate_local_perturbation_scale(coords, None);
+        let magnitude_scale = coords.iter().fold(feature_scale, |scale, coordinate| {
+            scale.max(coordinate.abs())
         });
-        let relative_tolerance = Self::duplicate_relative_tolerance() * feature_scale;
-        let ulp_tolerance = f64::EPSILON * 16.0 * magnitude_scale;
-        let mut tolerance = if relative_tolerance > ulp_tolerance {
-            relative_tolerance
-        } else {
-            ulp_tolerance
-        };
-
-        if !tolerance.is_finite() || tolerance <= 0.0 {
-            tolerance = Self::duplicate_relative_tolerance();
-        }
-
-        tolerance
+        scale_aware_duplicate_coordinate_tolerance(feature_scale, magnitude_scale)
     }
 
     /// Rebuilds the duplicate index when a scale-aware tolerance grows beyond
@@ -1133,15 +1178,18 @@ where
 
     /// Attempt an insertion, and if Level 3 validation fails, roll back and try a
     /// conservative star-split fallback of the containing simplex.
-    fn try_insert_with_topology_safety_net(
-        transaction: &mut TriangulationRollbackTransaction<'_, K, U, V, D>,
+    fn try_insert_with_topology_safety_net<W>(
+        transaction: &mut W,
         vertex: Vertex<U, D>,
         conflict_simplices: Option<&SimplexKeyBuffer>,
         hint: Option<SimplexKey>,
         attempt: usize,
         telemetry: &mut InsertionTelemetry,
         telemetry_mode: InsertionTelemetryMode,
-    ) -> Result<TryInsertImplOk, InsertionError> {
+    ) -> Result<TryInsertImplOk, InsertionError>
+    where
+        W: TriangulationRollbackWindow<K, U, V, D>,
+    {
         let mut insert_ok = transaction.triangulation_mut().try_insert_impl(
             vertex,
             conflict_simplices,
@@ -1172,7 +1220,7 @@ where
             );
         if let Err(validation_err) = validation_result {
             // Roll back to snapshot and attempt a star-split fallback for interior points.
-            transaction.restore();
+            transaction.restore_rollback_tds();
             return transaction
                 .triangulation_mut()
                 .try_star_split_fallback_after_topology_failure(
@@ -1883,12 +1931,6 @@ where
                     suspicion.simplices_removed = true;
                     delaunay_repair_required = true;
                 }
-
-                #[cfg(debug_assertions)]
-                tracing::debug!(
-                    removed_simplices = ?repair.removed_simplices,
-                    "Removed {removed} simplices (total: {total_removed})"
-                );
 
                 // Early exit if repair succeeded
                 facet_sharing_known_valid = self.tds.validate_facet_sharing().is_ok();
@@ -2749,12 +2791,6 @@ where
                             suspicion.simplices_removed = true;
                         }
 
-                        #[cfg(debug_assertions)]
-                        tracing::debug!(
-                            removed_simplices = ?repair.removed_simplices,
-                            "Removed {removed} simplices (total: {total_removed})"
-                        );
-
                         // Early exit if repair succeeded
                         facet_sharing_known_valid = self.tds.validate_facet_sharing().is_ok();
                         if facet_sharing_known_valid {
@@ -2892,37 +2928,7 @@ mod tests {
         vertex,
     };
     use slotmap::KeyData;
-    use std::{
-        assert_matches,
-        cell::Cell,
-        sync::atomic::{AtomicBool, Ordering as AtomicOrdering},
-    };
-
-    static DUPLICATE_DETECTION_FORCE_ENABLED: AtomicBool = AtomicBool::new(false);
-
-    thread_local! {
-        static FORCE_NEXT_INSERTION_RETRYABLE_FAILURE: Cell<bool> = const { Cell::new(false) };
-    }
-
-    pub(super) fn duplicate_detection_force_enabled() -> bool {
-        DUPLICATE_DETECTION_FORCE_ENABLED.load(AtomicOrdering::Relaxed)
-    }
-
-    fn set_duplicate_detection_force_enabled(enabled: bool) -> bool {
-        DUPLICATE_DETECTION_FORCE_ENABLED.swap(enabled, AtomicOrdering::Relaxed)
-    }
-
-    pub(super) fn take_force_next_insertion_retryable_failure() -> bool {
-        FORCE_NEXT_INSERTION_RETRYABLE_FAILURE.replace(false)
-    }
-
-    fn set_force_next_insertion_retryable_failure(enabled: bool) -> bool {
-        FORCE_NEXT_INSERTION_RETRYABLE_FAILURE.replace(enabled)
-    }
-
-    fn restore_force_next_insertion_retryable_failure(prior: bool) {
-        FORCE_NEXT_INSERTION_RETRYABLE_FAILURE.set(prior);
-    }
+    use std::assert_matches;
 
     fn insert<K, U, V, const D: usize>(
         tri: &mut Triangulation<K, U, V, D>,
@@ -3005,23 +3011,6 @@ mod tests {
             false,
         )?;
         Ok((detail.outcome, detail.stats))
-    }
-
-    struct ForceNextRetryableInsertionFailureGuard {
-        prior: bool,
-    }
-
-    impl ForceNextRetryableInsertionFailureGuard {
-        fn enable() -> Self {
-            let prior = set_force_next_insertion_retryable_failure(true);
-            Self { prior }
-        }
-    }
-
-    impl Drop for ForceNextRetryableInsertionFailureGuard {
-        fn drop(&mut self) {
-            restore_force_next_insertion_retryable_failure(self.prior);
-        }
     }
 
     #[test]
@@ -3183,34 +3172,20 @@ mod tests {
     }
 
     #[test]
-    fn test_duplicate_detection_metrics_force_enable() {
-        struct DuplicateDetectionGuard {
-            prior: bool,
-        }
-
-        impl DuplicateDetectionGuard {
-            fn enable() -> Self {
-                Self {
-                    prior: set_duplicate_detection_force_enabled(true),
-                }
-            }
-        }
-
-        impl Drop for DuplicateDetectionGuard {
-            fn drop(&mut self) {
-                set_duplicate_detection_force_enabled(self.prior);
-            }
-        }
-
-        let _guard = DuplicateDetectionGuard::enable();
-
-        let before = Triangulation::<FastKernel<f64>, (), (), 2>::duplicate_detection_metrics()
+    fn test_duplicate_detection_metrics_recording() {
+        let before =
+            Triangulation::<FastKernel<f64>, (), (), 2>::duplicate_detection_metrics_if_enabled(
+                true,
+            )
             .expect("duplicate detection metrics should be enabled");
 
-        record_duplicate_detection_metrics(true, 3, false);
-        record_duplicate_detection_metrics(false, 0, true);
+        record_duplicate_detection_metrics_if_enabled(true, true, 3, false);
+        record_duplicate_detection_metrics_if_enabled(true, false, 0, true);
 
-        let after = Triangulation::<FastKernel<f64>, (), (), 2>::duplicate_detection_metrics()
+        let after =
+            Triangulation::<FastKernel<f64>, (), (), 2>::duplicate_detection_metrics_if_enabled(
+                true,
+            )
             .expect("duplicate detection metrics should be enabled");
 
         assert!(after.total_checks > before.total_checks);
@@ -3603,13 +3578,15 @@ mod tests {
 
         let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
         let detail = tri
-            .insert_with_statistics_seeded_indexed_detailed(
+            .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
                 vertex!([2.0, 2.0, 2.0]).unwrap(),
                 None,
                 hint,
                 0,
                 None,
                 None,
+                InsertionTelemetryMode::CountsOnly,
+                false,
             )
             .unwrap();
 
@@ -3653,13 +3630,15 @@ mod tests {
         let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
         let empty_conflicts = SimplexKeyBuffer::new();
         let detail = tri
-            .insert_with_statistics_seeded_indexed_detailed(
+            .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
                 vertex!([2.0, 2.0, 2.0]).unwrap(),
                 Some(&empty_conflicts),
                 hint,
                 0,
                 None,
                 None,
+                InsertionTelemetryMode::CountsOnly,
+                false,
             )
             .unwrap();
 
@@ -3703,13 +3682,15 @@ mod tests {
         let mut conflict_simplices = SimplexKeyBuffer::new();
         conflict_simplices.push(start_simplex);
         let detail = tri
-            .insert_with_statistics_seeded_indexed_detailed(
+            .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
                 vertex!([0.25, 0.25]).unwrap(),
                 Some(&conflict_simplices),
                 Some(start_simplex),
                 0,
                 None,
                 None,
+                InsertionTelemetryMode::CountsOnly,
+                false,
             )
             .unwrap();
 
@@ -4739,37 +4720,13 @@ mod tests {
         ]
     }
 
-    /// Exercise both successful perturbation retry (`attempt > 0`) and
-    /// exhaustion (`SkippedDegeneracy`) paths with deterministic 4D fixtures.
+    /// Exercise perturbation retry exhaustion (`SkippedDegeneracy`) with a
+    /// deterministic 4D fixture.
     ///
     /// Covers: progressive scale factor, perturbation coordinate generation
-    /// with `perturbation_seed == 0`, retry decision, retry success, and
-    /// retry exhaustion.
+    /// with `perturbation_seed == 0`, retry decisions, and retry exhaustion.
     #[test]
-    fn test_perturbation_retry_and_exhaustion_4d() {
-        let initial_vertices: Vec<Vertex<(), 4>> = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let tds = Triangulation::<AdaptiveKernel<f64>, (), (), 4>::build_initial_simplex(
-            &initial_vertices,
-        )
-        .unwrap();
-        let mut retry_success_tri = Triangulation::<AdaptiveKernel<f64>, (), (), 4>::new_with_tds(
-            AdaptiveKernel::new(),
-            tds,
-        );
-
-        let _guard = ForceNextRetryableInsertionFailureGuard::enable();
-        let retry_success_vertex = vertex!([0.2, 0.2, 0.2, 0.2]).unwrap();
-        let (_outcome, retry_success_stats) =
-            insert_with_statistics(&mut retry_success_tri, retry_success_vertex, None, None)
-                .unwrap();
-        let saw_retry = retry_success_stats.used_perturbation() && retry_success_stats.success();
-
+    fn test_perturbation_retry_exhaustion_4d() {
         let mut exhaustion_tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
             Triangulation::new_empty(AdaptiveKernel::new());
         let mut saw_exhausted_skip = false;
@@ -4786,10 +4743,6 @@ mod tests {
         }
 
         assert!(
-            saw_retry,
-            "deterministic 4D fixture did not trigger a successful perturbation retry"
-        );
-        assert!(
             saw_exhausted_skip,
             "deterministic 4D adversarial repro did not trigger retry exhaustion"
         );
@@ -4802,7 +4755,7 @@ mod tests {
     /// (lines using `perturbation_seed ^ ...`).
     ///
     /// Uses the same deterministic 4D repro as
-    /// [`test_perturbation_retry_and_exhaustion_4d`].
+    /// [`test_perturbation_retry_exhaustion_4d`].
     #[test]
     fn test_perturbation_retry_seeded_branch_4d() {
         let mut tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =

@@ -6,7 +6,7 @@
 \raggedbottom{}
 \acmJournal{TOMS}
 
-\title{Validation Architecture in delaunay}
+\title{Construction and Validation Architecture in delaunay}
 
 \author{Adam Getchell}
 \email{adam@adamgetchell.org}
@@ -39,8 +39,8 @@
 
 \begin{itemize}
   \item \AuthorTodo{State the problem and motivation.}
-  \item \AuthorTodo{Explain why validation architecture matters for a
-    scientific computational-geometry library.}
+  \item \AuthorTodo{Explain why proof-bearing construction and validation
+    architecture matter for a scientific computational-geometry library.}
   \item \AuthorTodo{Summarize the central contribution in your own words.}
   \item \AuthorTodo{Preview the paper structure.}
 \end{itemize}
@@ -79,7 +79,86 @@ toroidal, and spherical spaces.
     terminology.}
 \end{itemize}
 
-\section{Validation Hierarchy}
+\section{Proof-Bearing Construction Architecture}
+
+\subsection{Vocabulary and API Roles}
+
+\begin{itemize}
+    \raggedright
+  \item \AuthorTodo{Define a published owner as a domain value whose Rust type
+      carries cumulative invariants. Suggested examples: \texttt{Tds},
+    \texttt{Triangulation}, and \texttt{DelaunayTriangulation}.}
+  \item \AuthorTodo{Define a builder as a configurable public workflow that
+      may coordinate several proof boundaries before returning an owner or a
+      typed failure. Suggested examples: \texttt{TdsBuilder},
+      \texttt{TriangulationBuilder}, \texttt{DelaunayRefinementBuilder},
+      \texttt{DelaunayTriangulation}\hspace{0pt}\texttt{Builder}, and
+    \texttt{DelaunayIncremental}\hspace{0pt}\texttt{Builder}.}
+  \item \AuthorTodo{Define a draft as an unpublished representation attached
+      to one promotion boundary. Suggested examples: \texttt{TdsDraft},
+      \texttt{TriangulationDraft}, and the private
+    \texttt{DelaunayTriangulation}\hspace{0pt}\texttt{Draft}.}
+  \item \AuthorTodo{Define a workspace as private mutable algorithm state that
+      may contain incomplete bootstrap, repair, retry, cache, or
+      scheduling data.
+      Suggested examples:
+      \texttt{DelaunayBootstrap}\hspace{0pt}\texttt{Workspace} and
+    \texttt{DelaunayBatch}\hspace{0pt}\texttt{Workspace}.}
+  \item \AuthorTodo{Explain why the architecture avoids the ambiguous term
+      ``candidate'': a proof-boundary value is a draft, while mutable algorithm
+    state is a workspace.}
+\end{itemize}
+
+\subsection{Incremental Promotion Through Proof Layers}
+
+\begin{itemize}
+    \raggedright
+  \item \AuthorTodo{Present the explicit-connectivity ladder: raw vertices and
+      simplex specifications to \texttt{Tds} at Levels 1--2, then
+      \texttt{Triangulation} at Levels 1--4, then
+    \texttt{DelaunayTriangulation} at Levels 1--5.}
+  \item \AuthorTodo{Explain that each promotion preserves established lower
+      proofs and checks only the missing layer unless a cumulative diagnostic
+    audit is explicitly requested.}
+  \item \AuthorTodo{Describe why lower layers cannot infer connectivity using
+      a higher-layer Delaunay policy. Suggested contrast: explicit simplex
+      specifications at the TDS boundary versus point-set inference in a
+    Delaunay builder.}
+  \item \AuthorTodo{Describe the point-driven batch path through
+      \texttt{DelaunayBatch}\hspace{0pt}\texttt{Workspace} and the final
+      private
+    \texttt{DelaunayTriangulation}\hspace{0pt}\texttt{Draft}.}
+  \item \AuthorTodo{Describe the incremental path through
+      \texttt{DelaunayIncremental}\hspace{0pt}\texttt{Builder}: bootstrap in a
+      \texttt{DelaunayBootstrap}\hspace{0pt}\texttt{Workspace} containing
+      \texttt{TdsDraft}, followed
+      by ordered Levels 1--2, 3--4, and 5 promotion when the first
+      maximal simplex
+    exists.}
+  \item \AuthorTodo{Explain why the public incremental type is a builder rather
+      than a draft: it is long-lived, fluent, and coordinates multiple proof
+    boundaries before and after the first maximal simplex.}
+\end{itemize}
+
+\subsection{Failure Atomicity, Recovery, and Fast Paths}
+
+\begin{itemize}
+  \item \AuthorTodo{State the publication rule: success returns a valid owner
+      for the promised layer; failure returns a typed error and never exposes an
+    invalid published owner.}
+  \item \AuthorTodo{Describe consuming promotions that return the original
+    lower owner on failure so callers may retry with a different policy.}
+  \item \AuthorTodo{Contrast strict, non-mutating promotion with explicitly
+    selected canonicalization or repair modes that use rollback workspaces.}
+  \item \AuthorTodo{Explain how construction-owned fast-path evidence is bound
+      to the exact owner identity, structural generation, and topology so stale
+    evidence cannot publish a stronger owner.}
+  \item \AuthorTodo{Discuss the empty-complex boundary: empty drafts are
+      trivially publishable when their layer invariants hold, while nonempty
+    partial bootstrap state cannot be published.}
+\end{itemize}
+
+\section{Construction and Validation Hierarchy}
 
 \begin{figure}[htbp]
   \centering
@@ -224,6 +303,11 @@ toroidal, and spherical spaces.
 \end{center}
 
 \begin{itemize}
+  \item \AuthorTodo{Relate each public builder terminal and private draft to
+    the proof-bearing owner it publishes.}
+  \item \AuthorTodo{Distinguish builder options, draft promotion state,
+      workspace mutation state, and owner-level validation methods in the API
+    map.}
   \item \AuthorTodo{Map the five validation levels onto the Rust API surface.}
   \item \AuthorTodo{Describe the role of fast-fail checks, diagnostics,
     reports, and cumulative validation.}
@@ -323,6 +407,9 @@ toroidal, and spherical spaces.
 \begin{itemize}
   \item \AuthorTodo{Discuss extensibility to additional realization models and
     predicate families.}
+  \item \AuthorTodo{Discuss whether the Draft/Builder/Workspace vocabulary
+      generalizes to regular, weighted, constrained, and non-Delaunay
+    triangulation workflows.}
   \item \AuthorTodo{Discuss limitations of the current implementation.}
   \item \AuthorTodo{Identify open validation and benchmarking questions.}
 \end{itemize}

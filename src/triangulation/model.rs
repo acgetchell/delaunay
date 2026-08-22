@@ -12,6 +12,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::ops::{Deref, DerefMut};
+
 use crate::core::tds::{
     SimplexKey, Tds, TdsMutationError, TopologyOwner, TopologyOwnerId, VertexKey,
 };
@@ -28,8 +30,9 @@ use crate::triangulation::validation::{TopologyGuarantee, ValidationPolicy};
 /// triangulation satisfies the same contract vacuously.
 ///
 /// Use [`TriangulationBuilder`](crate::TriangulationBuilder) for this proof
-/// transition. Its strict mode performs non-mutating certification of an
-/// already canonical TDS; its default mode may canonicalize orientation. Use
+/// transition. Its default strict mode performs non-mutating certification of
+/// an already canonical TDS; explicit canonicalizing mode may normalize
+/// orientation. Use
 /// [`Triangulation::into_tds`] to demote the owner explicitly. Consume a
 /// triangulation with [`DelaunayRefinementBuilder`](crate::DelaunayRefinementBuilder)
 /// to certify Level 5 strictly or repair and certify the Delaunay property.
@@ -38,8 +41,10 @@ use crate::triangulation::validation::{TopologyGuarantee, ValidationPolicy};
 /// - `K`: Geometric kernel implementing predicates
 /// - `U`: User data type for vertices
 /// - `V`: User data type for simplices
-/// - `D`: Dimension of the triangulation
+/// - `D`: Dimension of the triangulation.
 ///
+/// Unpublished Levels 3–4 state remains inside the crate-private construction
+/// draft, so the public owner has no caller-selectable publication state.
 #[derive(Clone, Debug)]
 pub struct Triangulation<K, U, V, const D: usize> {
     /// The geometric kernel for predicates.
@@ -114,25 +119,6 @@ where
     #[must_use]
     pub fn into_tds(self) -> Tds<U, V, D> {
         self.tds
-    }
-
-    /// Creates empty storage with explicit validation and global-topology context.
-    ///
-    /// Construction paths use this helper when topology metadata must be present
-    /// before later validation, boundary classification, or Euler checks run.
-    #[inline]
-    pub(crate) fn new_unpublished_with_topology_context(
-        kernel: K,
-        topology_guarantee: TopologyGuarantee,
-        global_topology: GlobalTopology<D>,
-    ) -> Self {
-        Self {
-            kernel,
-            tds: Tds::empty_unpublished(),
-            global_topology,
-            validation_policy: topology_guarantee.default_validation_policy(),
-            topology_guarantee,
-        }
     }
 
     /// Sets the auxiliary data on a vertex, returning the previous value.
@@ -256,6 +242,57 @@ where
     }
 }
 
+/// Crate-private unpublished Levels 3–4 owner used only inside the construction draft.
+#[derive(Clone, Debug)]
+#[repr(transparent)]
+pub(in crate::triangulation) struct UnverifiedTriangulation<K, U, V, const D: usize> {
+    pub(in crate::triangulation) storage: Triangulation<K, U, V, D>,
+}
+
+impl<K, U, V, const D: usize> UnverifiedTriangulation<K, U, V, D> {
+    /// Creates unpublished storage with the selected topology context.
+    pub(in crate::triangulation) const fn with_topology_context(
+        tds: Tds<U, V, D>,
+        kernel: K,
+        topology_guarantee: TopologyGuarantee,
+        global_topology: GlobalTopology<D>,
+    ) -> Self {
+        Self {
+            storage: Triangulation {
+                kernel,
+                tds,
+                global_topology,
+                validation_policy: topology_guarantee.default_validation_policy(),
+                topology_guarantee,
+            },
+        }
+    }
+
+    /// Publishes the certified owner by removing its unpublished wrapper.
+    pub(in crate::triangulation) fn into_verified(self) -> Triangulation<K, U, V, D> {
+        self.storage
+    }
+
+    /// Recovers the input TDS when publication fails.
+    pub(in crate::triangulation) fn into_tds(self) -> Tds<U, V, D> {
+        self.storage.tds
+    }
+}
+
+impl<K, U, V, const D: usize> Deref for UnverifiedTriangulation<K, U, V, D> {
+    type Target = Triangulation<K, U, V, D>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.storage
+    }
+}
+
+impl<K, U, V, const D: usize> DerefMut for UnverifiedTriangulation<K, U, V, D> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.storage
+    }
+}
+
 /// Test-only constructors for deliberately unpublished owner fixtures.
 #[cfg(test)]
 pub mod test_support {
@@ -268,11 +305,13 @@ pub mod test_support {
         /// Creates empty storage for tests that exercise bootstrap transitions.
         #[must_use]
         pub(crate) fn new_empty(kernel: K) -> Self {
-            Self::new_unpublished_with_topology_context(
+            Self {
                 kernel,
-                TopologyGuarantee::DEFAULT,
-                GlobalTopology::DEFAULT,
-            )
+                tds: Tds::empty(),
+                global_topology: GlobalTopology::DEFAULT,
+                validation_policy: TopologyGuarantee::DEFAULT.default_validation_policy(),
+                topology_guarantee: TopologyGuarantee::DEFAULT,
+            }
         }
     }
 }
@@ -318,12 +357,13 @@ mod tests {
 
     #[test]
     fn explicit_empty_context_sets_requested_topology_and_policy() {
-        let tri: Triangulation<FastKernel<f64>, (), (), 3> =
-            Triangulation::new_unpublished_with_topology_context(
-                FastKernel::new(),
-                TopologyGuarantee::Pseudomanifold,
-                GlobalTopology::Spherical,
-            );
+        let tri: Triangulation<FastKernel<f64>, (), (), 3> = Triangulation {
+            kernel: FastKernel::new(),
+            tds: Tds::empty(),
+            global_topology: GlobalTopology::Spherical,
+            validation_policy: TopologyGuarantee::Pseudomanifold.default_validation_policy(),
+            topology_guarantee: TopologyGuarantee::Pseudomanifold,
+        };
 
         assert_eq!(tri.global_topology, GlobalTopology::Spherical);
         assert_eq!(tri.topology_guarantee, TopologyGuarantee::Pseudomanifold);

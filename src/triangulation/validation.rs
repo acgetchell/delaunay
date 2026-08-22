@@ -106,9 +106,7 @@
 //! with the correct boundary behavior (a necessary condition), but does not attempt to
 //! distinguish spheres/balls from other manifolds (not sufficient in general).
 
-use crate::core::algorithms::incremental_insertion::{
-    InsertionError, InsertionTopologyValidationContext,
-};
+use crate::core::algorithms::insertion::{InsertionError, InsertionTopologyValidationContext};
 use crate::core::collections::{
     FacetToSimplicesMap, FastHashMap, FastHashSet, SimplexKeyBuffer, SimplexKeySet,
     VertexKeyBuffer, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
@@ -2199,8 +2197,8 @@ fn start_insertion_timing(telemetry_mode: InsertionTelemetryMode) -> Option<Inst
 mod tests {
     use super::*;
     use crate::core::algorithms::flips::{DelaunayRepairError, DelaunayRepairPostconditionFailure};
-    use crate::core::algorithms::incremental_insertion::CavityFillingError;
-    use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
+    use crate::core::algorithms::insertion::CavityFillingError;
+    use crate::core::algorithms::insertion::repair_neighbor_pointers;
     use crate::core::collections::{NeighborBuffer, SimplexVertexKeyBuffer};
     use crate::core::facet::FacetError;
     use crate::core::operations::InsertionOutcome;
@@ -2208,11 +2206,11 @@ mod tests {
     use crate::core::tds::{GeometricError, NeighborValidationError, Tds};
     use crate::core::vertex::Vertex;
     use crate::delaunay_model::DelaunayTriangulation;
-    use crate::draft::DelaunayTriangulationDraft;
     use crate::geometry::coordinate_range::CoordinateRange;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
     use crate::geometry::util::generate_random_points_in_range_seeded;
+    use crate::incremental_builder::DelaunayIncrementalBuilder;
     use crate::repair::DelaunayRepairPolicy;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::realization::TriangulationRealizationValidationError;
@@ -4404,13 +4402,15 @@ mod tests {
                             .unwrap();
 
                         let detail = tri
-                            .insert_with_statistics_seeded_indexed_detailed(
+                            .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
                                 unit_simplex_interior_vertex::<$dim>(),
                                 None,
                                 None,
                                 0,
                                 None,
                                 None,
+                                InsertionTelemetryMode::CountsOnly,
+                                false,
                             )
                             .unwrap();
 
@@ -4640,18 +4640,18 @@ mod tests {
             .expect("validated range should generate finite points");
         let mut points = points.into_iter();
 
-        let mut draft: DelaunayTriangulationDraft<_, (), (), 3> =
-            DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
-        draft
+        let mut builder: DelaunayIncrementalBuilder<_, (), (), 3> =
+            DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
+        builder
             .try_set_validation_policy(ValidationPolicy::ExplicitOnly)
             .unwrap();
         for point in points.by_ref().take(4) {
-            draft
+            builder
                 .insert_vertex(Vertex::from_validated_point(point, None))
-                .expect("the initial draft simplex should publish");
+                .expect("the initial maximal simplex should publish");
         }
 
-        let mut dt = draft.finish().expect("the bootstrap should be complete");
+        let mut dt = builder.finish().expect("the bootstrap should be complete");
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
 
         for (i, point) in points.enumerate() {
@@ -4707,13 +4707,15 @@ mod tests {
 
             let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
             let detail = tri
-                .insert_with_statistics_seeded_indexed_detailed(
+                .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
                     test_vertex([0.25, 0.25]),
                     None,
                     hint,
                     0,
                     None,
                     None,
+                    InsertionTelemetryMode::CountsOnly,
+                    false,
                 )
                 .unwrap();
 

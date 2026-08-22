@@ -70,6 +70,22 @@ def test_bare_just_shows_curated_help() -> None:
     assert "Use 'just --list' for the complete grouped recipe reference." in result.stdout
 
 
+def test_run_recipe_uses_the_repository_lockfile() -> None:
+    """The companion CLI should never resolve a different dependency graph."""
+    result = run_just("--dry-run", "run")
+    command = result.stdout + result.stderr
+
+    assert "cargo run --locked --profile perf --features cli --bin delaunay --" in command
+
+
+def test_cli_recipe_runs_binary_unit_and_integration_targets() -> None:
+    """The maintained CLI lane should execute both feature-gated test targets."""
+    result = run_just("--dry-run", "test-cli")
+    command = result.stdout + result.stderr
+
+    assert ("cargo nextest run --release --profile ci --features cli --bin delaunay --bin pachner-stress --test cli") in command
+
+
 def test_check_code_includes_dependency_hygiene() -> None:
     """The comprehensive code check should include unused dependency analysis."""
     dependencies = {dependency["recipe"] for dependency in just_recipes()["check-code"]["dependencies"]}

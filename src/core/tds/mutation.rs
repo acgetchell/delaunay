@@ -5,8 +5,8 @@ use super::errors::{
     TriangulationConstructionState,
 };
 use super::incidence::SimplexIncidenceRemoval;
-use super::model::{SimplexUuidSortKey, Tds};
-use super::{SimplexKey, TdsRollbackTransaction, VertexKey};
+use super::model::{SimplexUuidSortKey, Tds, UnverifiedTds};
+use super::{SimplexKey, VertexKey};
 use crate::core::collections::{
     CLEANUP_OPERATION_BUFFER_SIZE, Entry, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeySet,
     SimplexRemovalBuffer, SmallBuffer, VertexKeySet, fast_hash_map_with_capacity,
@@ -182,28 +182,6 @@ impl CandidateIncidentRecords {
 }
 
 impl<U, V, const D: usize> Tds<U, V, D> {
-    /// Audits Levels 1–2 before marking this TDS construction complete.
-    ///
-    /// Raw assembly workspaces remain `Incomplete` until their elements,
-    /// mappings, incidence, neighbors, and coherent orientation have all been
-    /// checked by the layer that owns those invariants. On failure, the
-    /// construction state is unchanged.
-    pub(crate) fn complete_construction(&mut self) -> Result<(), TdsError> {
-        let vertex_count = self.number_of_vertices();
-        let simplex_count = self.number_of_simplices();
-        let is_empty_complex = vertex_count == 0 && simplex_count == 0;
-        if !is_empty_complex && (vertex_count < D + 1 || simplex_count == 0) {
-            return Err(TdsError::IncompleteConstruction {
-                dimension: D,
-                vertex_count,
-                simplex_count,
-            });
-        }
-        self.validate()?;
-        self.construction_state = TriangulationConstructionState::Constructed;
-        Ok(())
-    }
-
     /// Assigns neighbor relationships between simplices based on shared facets with semantic ordering.
     ///
     /// This method efficiently builds neighbor relationships by using the `facet_key_from_vertices`
@@ -2425,24 +2403,44 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             return Ok(0);
         }
 
-        let mut transaction = TdsRollbackTransaction::begin(self);
-        let removed = transaction
-            .tds_mut()
-            .remove_simplices_by_keys(&simplices_to_remove)?;
+        let rollback = self.clone_for_rollback();
+        let removed = self.remove_simplices_by_keys(&simplices_to_remove)?;
         let rebuild_result = (|| -> Result<(), TdsMutationError> {
-            let tds = transaction.tds_mut();
-            tds.assign_neighbors().map_err(TdsMutationError::from)?;
-            tds.assign_incident_simplices()?;
-            tds.is_valid().map_err(TdsMutationError::from)
+            self.assign_neighbors().map_err(TdsMutationError::from)?;
+            self.assign_incident_simplices()?;
+            self.is_valid().map_err(TdsMutationError::from)
         })();
 
         if let Err(error) = rebuild_result {
-            transaction.rollback();
+            self.clone_from_for_rollback(&rollback);
             return Err(error);
         }
 
-        transaction.commit();
         Ok(removed)
+    }
+}
+
+impl<U, V, const D: usize> UnverifiedTds<U, V, D> {
+    /// Consumes fully assembled draft storage and publishes a verified TDS.
+    ///
+    /// The compile-time state changes only after cumulative Levels 1–2
+    /// validation succeeds, so an incomplete workspace can never escape as the
+    /// proof-bearing [`Tds`] specialization.
+    pub(in crate::core::tds) fn publish(mut self) -> Result<Tds<U, V, D>, TdsError> {
+        let vertex_count = self.number_of_vertices();
+        let simplex_count = self.number_of_simplices();
+        let is_empty_complex = vertex_count == 0 && simplex_count == 0;
+        if !is_empty_complex && simplex_count == 0 {
+            return Err(TdsError::IncompleteConstruction {
+                dimension: D,
+                vertex_count,
+                simplex_count,
+            });
+        }
+
+        self.validate()?;
+        self.construction_state = TriangulationConstructionState::Constructed;
+        Ok(self.into_verified())
     }
 }
 
@@ -2457,12 +2455,16 @@ mod tests {
     use std::assert_matches;
 
     #[test]
-    fn complete_construction_rejects_an_incomplete_tds_without_changing_state() {
-        let mut tds: Tds<(), (), 2> = Tds::empty_unpublished();
+    fn publication_rejects_an_incomplete_tds() {
+        let mut tds: UnverifiedTds<(), (), 2> = UnverifiedTds::empty_unpublished();
         tds.insert_vertex_with_mapping(vertex![0.0, 0.0].unwrap())
             .unwrap();
+        assert_matches!(
+            tds.construction_state(),
+            TriangulationConstructionState::Incomplete(1)
+        );
 
-        let error = tds.complete_construction().unwrap_err();
+        let error = tds.publish().unwrap_err();
 
         assert_matches!(
             error,
@@ -2471,10 +2473,6 @@ mod tests {
                 vertex_count: 1,
                 simplex_count: 0,
             }
-        );
-        assert_matches!(
-            tds.construction_state(),
-            TriangulationConstructionState::Incomplete(1)
         );
     }
 

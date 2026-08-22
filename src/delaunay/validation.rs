@@ -13,20 +13,19 @@ use crate::core::algorithms::flips::{
     verify_tds_via_flip_predicates_assuming_connected,
 };
 use crate::core::collections::ViolationBuffer;
-use crate::core::collections::spatial_hash_grid::HashGridIndex;
-use crate::core::operations::DelaunayInsertionState;
 use crate::core::tds::{
     InvariantError, InvariantKind, InvariantViolation, SimplexKey, Tds, TdsError, TopologyOwnerId,
     TriangulationValidationReport,
 };
 use crate::core::traits::data_type::DataType;
-use crate::delaunay_model::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
+use crate::delaunay_model::DelaunayTriangulation;
 #[cfg(feature = "diagnostics")]
 use crate::delaunay_property_validation::debug_print_first_delaunay_violation as debug_print_first_tds_delaunay_violation;
 use crate::delaunay_property_validation::{
     DelaunayValidationError, DelaunayViolationReport,
     delaunay_violation_report as tds_delaunay_violation_report, is_delaunay_property_only,
 };
+use crate::draft::DelaunayTriangulationDraft;
 use crate::geometry::kernel::Kernel;
 use crate::refinement::RefinementError;
 use crate::repair::DelaunayRepairOperation;
@@ -37,50 +36,6 @@ use crate::triangulation::realization::TriangulationRealizationValidationError;
 use crate::triangulation::validation::{TopologyGuarantee, TriangulationValidationError};
 use std::num::NonZeroUsize;
 use thiserror::Error;
-
-/// Level 5 evidence bound to one exact topology owner state.
-///
-/// The private fields prevent other modules from manufacturing a certificate
-/// from a generation counter alone. Construction may retain this token across
-/// non-topological bookkeeping, while any owner, generation, or topology-model
-/// change makes it inapplicable and forces recertification at publication.
-#[derive(Clone, Debug)]
-pub(crate) struct DelaunayLevelFiveCertificate<const D: usize> {
-    owner_id: TopologyOwnerId,
-    generation: u64,
-    global_topology: GlobalTopology<D>,
-}
-
-impl<const D: usize> DelaunayLevelFiveCertificate<D> {
-    /// Returns whether this evidence describes the candidate's exact topology state.
-    pub(crate) fn applies_to<K, U, V>(&self, triangulation: &Triangulation<K, U, V, D>) -> bool {
-        self.owner_id == triangulation.tds.topology_owner_id()
-            && self.generation == triangulation.tds.generation()
-            && self.global_topology == triangulation.global_topology
-    }
-}
-
-/// Runs the construction-time Level 5 predicate certificate and binds its proof
-/// to the exact owner state that was checked.
-pub(crate) fn certify_level_five_via_flip_predicates<K, U, V, const D: usize>(
-    triangulation: &Triangulation<K, U, V, D>,
-) -> Result<DelaunayLevelFiveCertificate<D>, DelaunayRepairError>
-where
-    K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
-{
-    verify_tds_via_flip_predicates_assuming_connected(
-        &triangulation.tds,
-        &triangulation.kernel,
-        triangulation.global_topology,
-    )?;
-    Ok(DelaunayLevelFiveCertificate {
-        owner_id: triangulation.tds.topology_owner_id(),
-        generation: triangulation.tds.generation(),
-        global_topology: triangulation.global_topology,
-    })
-}
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
@@ -156,115 +111,33 @@ where
     }
 }
 
-/// Level 5 refinement workspace containing an already proven Levels 1–4 owner.
+/// Level 5 evidence bound to one exact topology state.
 ///
-/// This candidate is distinct from incremental draft state: it never contains
-/// partial connectivity or an unproven lower-layer owner. Its consuming
-/// transition keeps the Level 5 check adjacent to construction of the final
-/// [`DelaunayTriangulation`].
+/// Only the validation functions in this module can create a certificate.
+/// Publication checks its owner, generation, and topology provenance before
+/// using it, so validation evidence cannot outlive a topology mutation.
 #[derive(Clone, Debug)]
-pub(crate) struct DelaunayRefinementCandidate<K, U, V, const D: usize> {
-    triangulation: Triangulation<K, U, V, D>,
-    insertion_state: DelaunayInsertionState,
-    spatial_index: Option<HashGridIndex<D>>,
-    euclidean_report_domain: EuclideanDelaunayReportDomain,
+pub(crate) struct DelaunayLevelFiveCertificate<const D: usize> {
+    owner_id: TopologyOwnerId,
+    generation: u64,
+    global_topology: GlobalTopology<D>,
 }
 
-impl<K, U, V, const D: usize> DelaunayRefinementCandidate<K, U, V, D> {
-    /// Wraps a Levels 1–4 triangulation for Delaunay-specific certification.
-    pub(crate) const fn from_triangulation(triangulation: Triangulation<K, U, V, D>) -> Self {
+impl<const D: usize> DelaunayLevelFiveCertificate<D> {
+    /// Captures the exact topology state whose Level 5 predicate just passed.
+    fn for_triangulation<K, U, V>(triangulation: &Triangulation<K, U, V, D>) -> Self {
         Self {
-            triangulation,
-            insertion_state: DelaunayInsertionState::new(),
-            spatial_index: None,
-            euclidean_report_domain: EuclideanDelaunayReportDomain::Unproven,
+            owner_id: triangulation.tds.topology_owner_id(),
+            generation: triangulation.tds.generation(),
+            global_topology: triangulation.global_topology,
         }
     }
 
-    /// Retains construction-owned caches and provenance across final publication.
-    pub(crate) const fn from_parts(
-        triangulation: Triangulation<K, U, V, D>,
-        insertion_state: DelaunayInsertionState,
-        spatial_index: Option<HashGridIndex<D>>,
-        euclidean_report_domain: EuclideanDelaunayReportDomain,
-    ) -> Self {
-        Self {
-            triangulation,
-            insertion_state,
-            spatial_index,
-            euclidean_report_domain,
-        }
-    }
-}
-
-impl<K, U, V, const D: usize> DelaunayRefinementCandidate<K, U, V, D>
-where
-    K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
-{
-    /// Promotes the proof-bearing Levels 1–4 owner by checking only Level 5.
-    ///
-    /// `Triangulation` already represents the cumulative Levels 1–4 proof.
-    /// Revalidating those layers here would weaken the type into an unchecked
-    /// data bag and duplicate work at every refinement boundary.
-    pub(crate) fn try_into_delaunay(
-        self,
-    ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationRefinementError<K, U, V, D>>
-    {
-        if let Err(reason) = self.validate_level_five() {
-            return Err(RefinementError::new(self.triangulation, reason));
-        }
-
-        Ok(self.into_delaunay_after_level_five_check())
-    }
-
-    /// Publishes using retained Level 5 evidence when it still matches exactly.
-    ///
-    /// Missing or stale evidence falls back to the ordinary checked transition,
-    /// so this terminal cannot publish an owner from a detached generation token.
-    pub(crate) fn try_into_delaunay_with_certificate(
-        self,
-        certificate: Option<&DelaunayLevelFiveCertificate<D>>,
-    ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationRefinementError<K, U, V, D>>
-    {
-        if certificate.is_some_and(|certificate| certificate.applies_to(&self.triangulation)) {
-            return Ok(self.into_delaunay_after_level_five_check());
-        }
-        self.try_into_delaunay()
-    }
-
-    /// Checks only the Level 5 predicate while retaining candidate ownership.
-    pub(crate) fn validate_level_five(&self) -> Result<(), DelaunayTriangulationValidationError> {
-        if self.euclidean_report_domain.supports_local_certificate()
-            && self.triangulation.global_topology().is_euclidean()
-        {
-            return verify_tds_via_flip_predicates_assuming_connected(
-                &self.triangulation.tds,
-                &self.triangulation.kernel,
-                self.triangulation.global_topology,
-            )
-            .map_err(|source| {
-                DelaunayTriangulationValidationError::VerificationFailed {
-                    source: Box::new(DelaunayVerificationError::from(source)),
-                }
-            });
-        }
-        validate_level_five_for_refinement(&self.triangulation)
-    }
-
-    /// Publishes a candidate immediately after its attached Level 5 check succeeds.
-    ///
-    /// This trusted step is kept on the private candidate and must remain
-    /// adjacent to the successful check or a transaction commit that performed
-    /// the same check against the candidate's exact triangulation state.
-    pub(crate) fn into_delaunay_after_level_five_check(self) -> DelaunayTriangulation<K, U, V, D> {
-        DelaunayTriangulation {
-            tri: self.triangulation,
-            insertion_state: self.insertion_state,
-            spatial_index: self.spatial_index,
-            euclidean_report_domain: self.euclidean_report_domain,
-        }
+    /// Returns whether this evidence describes the owner's exact topology state.
+    pub(crate) fn applies_to<K, U, V>(&self, triangulation: &Triangulation<K, U, V, D>) -> bool {
+        self.owner_id == triangulation.tds.topology_owner_id()
+            && self.generation == triangulation.tds.generation()
+            && self.global_topology == triangulation.global_topology
     }
 }
 
@@ -273,9 +146,9 @@ where
 /// Delaunayize uses this borrowed form before committing its outer rollback
 /// transaction, ensuring that a failed final check can still restore and return
 /// the original triangulation.
-pub(crate) fn validate_level_five_for_refinement<K, U, V, const D: usize>(
+pub(crate) fn certify_level_five_for_refinement<K, U, V, const D: usize>(
     triangulation: &Triangulation<K, U, V, D>,
-) -> Result<(), DelaunayTriangulationValidationError>
+) -> Result<DelaunayLevelFiveCertificate<D>, DelaunayTriangulationValidationError>
 where
     K: Kernel<D, Scalar = f64>,
     U: DataType,
@@ -300,7 +173,32 @@ where
         )?;
     }
 
-    Ok(())
+    Ok(DelaunayLevelFiveCertificate::for_triangulation(
+        triangulation,
+    ))
+}
+
+/// Certifies Level 5 through flip predicates and returns state-bound evidence.
+///
+/// Batch retry selection uses this variant because the successful predicate
+/// pass is already part of its repair decision. Returning the same proof type
+/// lets final publication reuse that work without weakening the boundary.
+pub(crate) fn certify_level_five_via_flip_predicates<K, U, V, const D: usize>(
+    triangulation: &Triangulation<K, U, V, D>,
+) -> Result<DelaunayLevelFiveCertificate<D>, DelaunayRepairError>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    verify_tds_via_flip_predicates_assuming_connected(
+        &triangulation.tds,
+        &triangulation.kernel,
+        triangulation.global_topology,
+    )?;
+    Ok(DelaunayLevelFiveCertificate::for_triangulation(
+        triangulation,
+    ))
 }
 
 /// Typed source for Level 5 Delaunay verification failures.
@@ -1142,7 +1040,6 @@ where
     /// let triangulation = TriangulationBuilder::new(tds, FastKernel::new())
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
     ///     .global_topology(GlobalTopology::Euclidean)
-    ///     .strict()
     ///     .build()
     ///     .expect("Levels 1-2 storage should satisfy Levels 3-4");
     /// let reconstructed = DelaunayRefinementBuilder::new(triangulation)
@@ -1173,10 +1070,9 @@ where
         let triangulation = TriangulationBuilder::new(tds, kernel)
             .topology_guarantee(topology_guarantee)
             .global_topology(global_topology)
-            .strict()
             .build()
             .map_err(|failure| DelaunayTdsRestorationError::Triangulation { failure })?;
-        DelaunayRefinementCandidate::from_triangulation(triangulation)
+        DelaunayTriangulationDraft::from_triangulation(triangulation)
             .try_into_delaunay()
             .map_err(|failure| DelaunayTdsRestorationError::Delaunay { failure })
     }
@@ -1191,6 +1087,7 @@ mod tests {
     };
     use crate::core::tds::{SimplexKey, TdsBuilder, VertexKey};
     use crate::core::vertex::Vertex;
+    use crate::delaunay_model::EuclideanDelaunayReportDomain;
     use crate::geometry::coordinate_range::CoordinateRange;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::point::Point;
@@ -1202,40 +1099,6 @@ mod tests {
     use std::assert_matches;
     use std::{error::Error, sync::Once};
     use uuid::Uuid;
-
-    impl<K, U, V, const D: usize> DelaunayRefinementCandidate<K, U, V, D> {
-        /// Builds an intentionally unproven test candidate from raw parts.
-        pub(crate) const fn assemble_unchecked_for_test(
-            tds: Tds<U, V, D>,
-            kernel: K,
-            topology_guarantee: TopologyGuarantee,
-            global_topology: GlobalTopology<D>,
-        ) -> Self {
-            Self {
-                triangulation: Triangulation {
-                    kernel,
-                    tds,
-                    global_topology,
-                    validation_policy: topology_guarantee.default_validation_policy(),
-                    topology_guarantee,
-                },
-                insertion_state: DelaunayInsertionState::new(),
-                spatial_index: None,
-                euclidean_report_domain: EuclideanDelaunayReportDomain::Unproven,
-            }
-        }
-
-        /// Deliberately bypasses Level 5 promotion for validation and internal
-        /// repair failure tests.
-        pub(crate) fn into_unproven_delaunay_for_test(self) -> DelaunayTriangulation<K, U, V, D> {
-            DelaunayTriangulation {
-                tri: self.triangulation,
-                insertion_state: self.insertion_state,
-                spatial_index: self.spatial_index,
-                euclidean_report_domain: self.euclidean_report_domain,
-            }
-        }
-    }
 
     #[derive(Clone, Debug)]
     struct PanickingKernel;
@@ -1294,7 +1157,7 @@ mod tests {
     fn unchecked_test_delaunay_from_tds<const D: usize>(
         tds: Tds<(), (), D>,
     ) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
-        DelaunayRefinementCandidate::assemble_unchecked_for_test(
+        DelaunayTriangulationDraft::assemble_unchecked_for_test(
             tds,
             AdaptiveKernel::new(),
             TopologyGuarantee::Pseudomanifold,
@@ -1414,7 +1277,7 @@ mod tests {
         let global_topology = source.global_topology();
         let source_tds = source.into_triangulation().into_tds();
 
-        let mut triangulation = DelaunayRefinementCandidate::assemble_unchecked_for_test(
+        let mut triangulation = DelaunayTriangulationDraft::assemble_unchecked_for_test(
             source_tds,
             PanickingKernel,
             topology_guarantee,
@@ -1432,7 +1295,7 @@ mod tests {
     #[test]
     fn failed_complete_point_set_certificate_falls_back_to_global_report() {
         let triangulation = shared_facet_flip_adversary::<2>();
-        let mut triangulation = DelaunayRefinementCandidate::from_triangulation(triangulation)
+        let mut triangulation = DelaunayTriangulationDraft::from_triangulation(triangulation)
             .into_unproven_delaunay_for_test();
         triangulation.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
 
@@ -1451,7 +1314,7 @@ mod tests {
         );
         assert!(verify_complete_euclidean_tds_via_robust_flip_predicates(&tds).is_ok());
 
-        let triangulation = DelaunayRefinementCandidate::assemble_unchecked_for_test(
+        let triangulation = DelaunayTriangulationDraft::assemble_unchecked_for_test(
             tds,
             PanickingKernel,
             TopologyGuarantee::Pseudomanifold,
@@ -1643,6 +1506,29 @@ mod tests {
         triangulation
             .validate_realization()
             .expect("failed Level 5 refinement must return the valid Levels 1-4 owner");
+    }
+
+    #[test]
+    fn report_domain_cannot_select_local_level_five_publication() {
+        let triangulation = shared_facet_flip_adversary::<2>();
+        let mut draft = DelaunayTriangulationDraft::from_triangulation(triangulation);
+        draft.set_euclidean_report_domain_for_test(EuclideanDelaunayReportDomain::CompletePointSet);
+
+        let failure = draft
+            .try_into_delaunay()
+            .expect_err("the adversarial shared facet must fail global Level 5 verification");
+        let (triangulation, reason) = failure.into_parts();
+        assert_matches!(
+            reason,
+            DelaunayTriangulationValidationError::VerificationFailed { source }
+                if matches!(
+                    source.as_ref(),
+                    DelaunayVerificationError::EmptyCircumsphere { .. }
+                )
+        );
+        triangulation
+            .validate_realization()
+            .expect("failed Level 5 promotion must return the valid Levels 1-4 owner");
     }
 
     #[test]

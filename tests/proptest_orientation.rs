@@ -15,7 +15,7 @@
 mod proptest_config;
 
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, DelaunayTriangulationDraft, TopologyGuarantee,
+    DelaunayIncrementalBuilder, DelaunayTriangulation, TopologyGuarantee,
 };
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::insertion::InsertionOutcome;
@@ -138,8 +138,8 @@ macro_rules! gen_orientation_incremental_props {
                         try_vertices_from_points(&points).expect("finite point coordinates")
                     })
                 ) {
-                    let mut dt: DelaunayTriangulationDraft<_, (), (), $dim> =
-                        DelaunayTriangulationDraft::with_topology_guarantee(
+                    let mut dt: DelaunayIncrementalBuilder<_, (), (), $dim> =
+                        DelaunayIncrementalBuilder::with_topology_guarantee(
                             TopologyGuarantee::PLManifold,
                         );
 

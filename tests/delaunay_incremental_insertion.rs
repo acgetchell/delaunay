@@ -13,8 +13,8 @@ use approx::assert_relative_eq;
 use delaunay::prelude::algorithms::LocateResult;
 use delaunay::prelude::collections::MAX_PRACTICAL_DIMENSION_SIZE;
 use delaunay::prelude::construction::{
-    ConstructionOptions, DedupPolicy, DelaunayTriangulation, DelaunayTriangulationBuilder,
-    DelaunayTriangulationDraft, TopologyGuarantee, Vertex, vertex,
+    ConstructionOptions, DedupPolicy, DelaunayIncrementalBuilder, DelaunayTriangulation,
+    DelaunayTriangulationBuilder, TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::geometry::{AdaptiveKernel, Point, RobustKernel};
 use delaunay::prelude::tds::{
@@ -657,8 +657,8 @@ macro_rules! test_bootstrap_key_stability {
         pastey::paste! {
             #[test]
             fn [<test_bootstrap_key_stability_ $dim d>]() {
-                let mut dt: DelaunayTriangulationDraft<_, (), (), $dim> =
-                    DelaunayTriangulationDraft::with_topology_guarantee(
+                let mut dt: DelaunayIncrementalBuilder<_, (), (), $dim> =
+                    DelaunayIncrementalBuilder::with_topology_guarantee(
                         TopologyGuarantee::PLManifold,
                     );
 
@@ -763,8 +763,8 @@ fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
     let v3 = Vertex::try_new_with_uuid(Point::try_from([0.0, 1.0]).unwrap(), uuid3, None).unwrap();
 
     // Bootstrap insertion: vertices inserted in order v1, v2, v3
-    let mut dt: DelaunayTriangulationDraft<_, (), (), 2> =
-        DelaunayTriangulationDraft::with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 2> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let key1 = dt.insert_vertex(v1).unwrap();
     assert_eq!(dt.number_of_vertices(), 1);
