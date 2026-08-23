@@ -60,6 +60,9 @@ workflow references do not need to be loaded preemptively.
   example-only changes use the matching focused validators from
   `docs/dev/commands.md`; compose those validators once each when multiple
   focused surfaces changed.
+- **Find local MacTeX tools before declaring them missing.** On macOS, prepend
+  `/Library/TeX/texbin` to `PATH` when commands such as `chktex` are not visible
+  to a non-interactive shell; see `docs/dev/commands.md`.
 - **Do not edit generated changelogs manually.** Changelog and documentation
   maintenance rules live in `docs/dev/docs.md`.
 - **Treat paper prose as author-owned.** Agents must not add substantive
@@ -79,7 +82,7 @@ workflow references do not need to be loaded preemptively.
 
 - **Language**: Rust
 - **Project**: d-dimensional Delaunay triangulation library
-- **MSRV**: 1.97.1
+- **MSRV**: 1.98.0
 - **Edition**: 2024
 - **Primary architecture hub**: `docs/code_organization.md`
 
@@ -190,9 +193,10 @@ enforce that contract.
   `delaunay::prelude::pachner::*` for Pachner workflows; import primitive
   bistellar flips directly only for testing, benchmarking, or documenting that
   primitive layer.
-- Pre-1.0 breaking changes are allowed when correctness, orthogonality, or
-  performance require them, but they must be intentional and documented through
-  the commit/changelog workflow.
+- Pre-1.0 breaking changes are allowed when correctness, orthogonality,
+  performance, or simplicity require them. Do not preserve stale APIs with
+  compatibility aliases or shims; make breaks intentional and document them
+  through the commit/changelog workflow.
 - Performance is subordinate to scientific invariants. Use the
   benchmark-before/after workflow in `docs/dev/perf-tuning.md` for
   performance-sensitive changes, and treat timings from invariant-violating

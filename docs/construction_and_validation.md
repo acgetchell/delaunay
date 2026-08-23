@@ -1,10 +1,120 @@
-# Triangulation Validation Guide
+# Construction and Validation Guide
 
 <!-- markdownlint-configure-file { "MD033": { "allowed_elements": ["img"] } } -->
 
-This document is the developer-facing validation contract for the `delaunay`
-library. It explains the validation hierarchy and gives practical guidance on
-when and how to use each validation level.
+This document is the developer-facing construction and validation contract for
+the `delaunay` library. It defines the proof-bearing construction vocabulary,
+explains how representations are promoted through the validation hierarchy,
+and gives practical guidance on when and how to use each validation level.
+
+## Construction vocabulary
+
+The type name states what role a representation plays. These terms are not
+interchangeable:
+
+| Term | Visibility | Contract |
+|---|---|---|
+| **Builder** | Usually public | Configurable construction workflow returning an owner or typed error; it may cross several proof boundaries. |
+| **Draft** | Usually crate-private | Unpublished state at one proof boundary, containing the lower representation needed for promotion. |
+| **Workspace** | Private | Mutable bootstrap, repair, retry, cache, or scheduling state; its existence proves no invariant. |
+| **Owner** | Public | Domain value whose type carries cumulative invariants: `Tds` 1–2, `Triangulation` 1–4, Delaunay 1–5. |
+
+A builder is not called a draft merely because it has not finished, and a
+workspace is not called a draft merely because it is private. The ambiguous
+name *candidate* is avoided for construction state: a single-boundary proof
+value is a draft, while mutable algorithm state is a workspace.
+
+The current names apply that vocabulary directly:
+
+- `TdsBuilder`, `TriangulationBuilder`, `DelaunayRefinementBuilder`,
+  `DelaunayTriangulationBuilder`, and `DelaunayIncrementalBuilder` are public
+  workflows with caller-selected options.
+- `TdsDraft`, `TriangulationDraft`, and the crate-private
+  `DelaunayTriangulationDraft` are unpublished representations associated with
+  one proof boundary.
+- `DelaunayBootstrapWorkspace` and `DelaunayBatchWorkspace` are private
+  mutable algorithm state. They must produce the appropriate draft or verified
+  lower owner before publication.
+
+## Incremental proof pipeline
+
+Construction proceeds from weaker representations to stronger proof-bearing
+owners. Each promotion preserves the proofs already established and checks only
+the missing layer unless the caller explicitly requests a cumulative audit:
+
+```text
+raw vertices + explicit simplex specifications
+    -> TdsBuilder / TdsDraft
+    -> Tds                                  [Levels 1–2]
+    -> TriangulationBuilder / TriangulationDraft
+    -> Triangulation                        [Levels 1–4]
+    -> DelaunayRefinementBuilder / DelaunayTriangulationDraft
+    -> DelaunayTriangulation                [Levels 1–5]
+```
+
+Point-driven construction adds orchestration without reversing this dependency:
+
+```text
+DelaunayTriangulationBuilder -> DelaunayBatchWorkspace
+DelaunayIncrementalBuilder   -> DelaunayBootstrapWorkspace(TdsDraft)
+
+both -> Tds -> Triangulation -> DelaunayTriangulationDraft
+     -> DelaunayTriangulation
+```
+
+The incremental builder spans more than one proof boundary, which is exactly
+why it is a builder rather than a Delaunay draft. Before a first maximal simplex
+exists, its bootstrap workspace owns a `TdsDraft`. Once connectivity is
+publishable, it establishes Levels 1–2, then Levels 3–4, then Level 5. Later
+insertions use the verified owner's transactional mutation path.
+
+Construction and insertion are separate responsibilities even though both may
+process vertices one at a time:
+
+| Module | Responsibility |
+|---|---|
+| `delaunay/incremental_builder.rs` | Public construction lifecycle from an empty bootstrap workspace to a finished Levels 1–5 owner. |
+| `triangulation/insertion.rs` | Transactional insertion into a Levels 1–4 `Triangulation`. |
+| `delaunay/insertion.rs` | Post-construction insertion into a Levels 1–5 owner, including Delaunay repair and rollback. |
+| `core/algorithms/insertion.rs` | Shared cavity and neighbor helpers plus insertion failures; it owns no builder or owner. |
+
+The core insertion module is therefore an implementation dependency of both
+builder-driven and post-construction insertion, not an alternative incremental
+builder.
+
+Every terminal has the same correctness rule: success returns a valid owner for
+that layer; failure returns a typed error and does not expose an invalid owner.
+Consuming owner-to-owner promotions return the original lower owner on failure
+when retry is meaningful. Strict promotion checks only the missing proof and
+avoids rollback storage; an explicitly selected mutating mode uses a workspace
+and rollback. Level 5 fast-path evidence is accepted only when validation binds
+it to the exact owner identity, generation, and topology being promoted.
+
+Some Level 3 facts are not recoverable by recomputing local incidence. In D ≥ 4,
+the current vertex-link checks cannot in general prove that a nontrivial link is
+a PL sphere or ball; similarly, the presence of boundary and a particular Euler
+value do not prove that a complex is a ball. Checked Euclidean Delaunay
+construction therefore attaches crate-private provenance for its simplex seed
+and link-preserving cavity replacements, and checked periodic construction
+attaches provenance for its image-point quotient. This evidence is not a public
+builder option. Explicit simplex lists, deserialized TDS storage, and values
+demoted with `Triangulation::into_tds` must re-establish the proof or select the
+weaker `Pseudomanifold` contract; copying topology metadata cannot forge it.
+Point-driven construction is consequently gated by `ExactPredicates<D>`, which
+the built-in kernels implement through D=6. In D >= 4, heuristic cavity
+reshaping, fan-based vertex-star retriangulation, and arbitrary simplex-removal
+repair invalidate provenance and cannot commit under the `PLManifold` contract.
+
+Derived proof-bearing values follow the same rule without joining the five-level
+owner hierarchy. `ConvexHull::try_from_triangulation` builds private draft
+storage, copies only stable vertex data, certifies facet arity, uniqueness,
+nondegeneracy, and global supporting-hyperplane convexity, and only then returns
+`ConvexHull`. The published hull contains no TDS keys or handles and needs no
+later `validate(source)` call; its facet identifiers are derived from sorted
+vertex UUIDs rather than source-local slot keys. By contrast, derived topology used immediately by
+another operation remains borrowed: `ConflictRegion<'tri>` binds read-only
+conflict and cavity views to one triangulation, and `LocalFacetRepairGuard<'tri>`
+retains a mutable owner borrow from detection through transactional repair.
 
 ## Notebook-generated validation gallery
 
@@ -91,7 +201,7 @@ This separation is why Level 3 does not change when spherical support is added:
 PL-manifoldness is intrinsic, while spherical realization belongs in Level 4 and
 spherical Delaunay belongs in Level 5.
 
-## Validation Hierarchy
+## Construction and Validation Hierarchy
 
 ```text
 Level 1: Element Validity
@@ -300,42 +410,49 @@ The resulting domain guarantee remains `TopologyGuarantee::PLManifold`.
 
 ## Strict construction and realized-state reconstruction
 
-Fresh Delaunay construction and restoration of evolved state have different
-validation boundaries:
+Fresh construction and restoration of evolved state have different validation
+boundaries:
 
-- Builder construction and
-  `DelaunayTriangulation::try_from_tds_with_topology_context` are strict. The
-  TDS supplies Levels 1–2; the composed promotions check Levels 3–4 and Level 5
-  before returning an owner with the cumulative Levels 1–5 guarantee.
-- `Triangulation::try_from_tds_with_topology_context` restores the supplied
-  `TopologyGuarantee` and `GlobalTopology`. The consumed `Tds` already proves
-  Levels 1–2, so promotion checks only Level 3 intrinsic topology and Level 4
-  realization. The returned value therefore carries the cumulative Levels
-  1–4 guarantee without repeating lower-layer validation. It preserves the
-  input TDS exactly and neither checks nor repairs Level 5. A
-  `TriangulationRefinementError` retains the unchanged `Tds` together with its
-  `TriangulationRealizationValidationError`, keeping this boundary independent
-  of Delaunay-only variants.
-- `DelaunayTriangulation::try_from_triangulation` performs strict no-repair
-  Level 5 certification. `delaunayize` and `delaunayize_by_flips` consume a
-  Levels 1–4 triangulation, perform bounded repair, and return a Levels 1–5
-  owner only after Level 5 certification. The input type supplies the lower
-  four proofs; successful transactional flips preserve them rather than
-  causing the conversion boundary to revalidate them. Their flip stage follows the
+- `TriangulationBuilder` is the sole Levels 3–4 publication path. It restores
+  the supplied `TopologyGuarantee`, `GlobalTopology`, and optional validation
+  policy. The consumed `Tds` already proves Levels 1–2, so publication checks
+  only Level 3 intrinsic topology and Level 4 realization.
+- The default `build()` terminal selects strict certification-only publication. It preserves owner
+  identity, generation, simplex ordering, and stored orientation; neither
+  checks nor repairs Level 5 and avoids a rollback snapshot.
+- Explicit `.canonicalizing()` mode may normalize geometric orientation before
+  the same final Levels 3–4 proof. That successful transformation may change
+  simplex ordering and generation. A storage-linear TDS snapshot makes the
+  mutation failure-atomic. Both modes return `TriangulationBuildFailure` with
+  the exact input TDS if publication fails.
+- `DelaunayRefinementBuilder` is the sole Level 5 publication path from an
+  existing `Triangulation`. Its default `.build()` terminal checks Level 5
+  without mutation or a rollback snapshot. Its `.repair_by_flips()` type state
+  enables bounded repair, `.max_flips(...)`, and
+  `.fallback_rebuild(...)`; it publishes a Levels 1–5 owner only after final
+  certification. The input type supplies the lower four proofs; successful
+  transactional flips preserve them rather than causing the boundary to
+  revalidate them. The flip stage follows the
   regular-triangulation framework cited under
   [Bistellar (Pachner) Moves and Delaunay Repair](../REFERENCES.md#bistellar-pachner-moves-and-delaunay-repair),
   while typed budget exhaustion and rollback define the narrower executable
   contract.
+- Batch point-set construction and transactional refinement may reuse a
+  successful Level 5 predicate pass through a private certificate created by
+  the validation boundary and bound to the exact topology owner, generation,
+  and global topology. Report-domain metadata alone cannot bypass the ordinary
+  Level 5 publication check; stale or missing evidence triggers that check
+  again.
+- Restoring a Delaunay value from TDS storage uses those same boundaries in
+  order: strict `TriangulationBuilder`, then strict
+  `DelaunayRefinementBuilder`. There is no public shortcut with a stage-union
+  error. The owner type returned by the failed builder identifies the stage.
 
 All consuming promotions are recoverable. `RefinementError<T, E>` couples the
 still-valid lower-layer owner `T` to the typed rejection reason `E`; callers can
-borrow either part or consume the carrier with `into_parts()`. The composed
-`Tds`-to-`DelaunayTriangulation` constructors use
-`DelaunayTdsRefinementError` to identify whether rejection occurred before or
-after the intermediate `Triangulation` proof was established. Repairing
-promotion keeps one rollback snapshot alive through flips, orientation
-normalization, and final Level 5 certification, and returns the restored
-Levels 1–4 owner on every failure.
+borrow either part or consume the carrier with `into_parts()`. Repair mode keeps
+one rollback snapshot alive through flips and final Level 5 certification, and
+returns the restored Levels 1–4 owner on every failure.
 
 Use the realized-state boundary for checkpoints created after valid local moves
 when Delaunay optimality is not an invariant of the evolved model. Use
@@ -603,17 +720,27 @@ certification.
    Use `dt.validate_vertex_links()` for an explicit owner-level check.
 5. **Intrinsic orientability** (for the 2D/3D PL-manifold guarantees):
    Ordinary and periodic shared-facet parity constraints must admit a coherent assignment.
-   Use `Triangulation::orientation_witness()` to obtain the opaque
-   simplex-reversal certificate directly. A parity obstruction is reported as
-   the typed Level 3 `TriangulationValidationError::NonOrientable` diagnostic.
+   Use `Triangulation::orientation_witness()` to obtain the opaque,
+   owner-borrowing simplex-reversal certificate directly. Its simplex keys
+   cannot outlive or span mutation of their source topology. A parity obstruction
+   is reported as the typed Level 3
+   `TriangulationValidationError::NonOrientable` diagnostic.
 6. **Connectedness**: All simplices form a single connected component in the simplex neighbor graph
    - Detected via a graph traversal over neighbor pointers (O(N·D))
 7. **No isolated vertices**: Every vertex must be incident to at least one simplex
-8. **Euler Characteristic**: χ matches expected topology (when an expectation is defined)
+8. **f-vector and Euler characteristic**: Level 3 recomputes the full f-vector
+   from canonical topology, derives χ as its alternating sum, and compares χ with
+   the expected topology when an expectation is defined
    - Empty: χ = 0
    - Single simplex / Ball(D): χ = 1
    - Closed sphere S^D: χ = 1 + (-1)^D
    - Unknown: χ is computed but not enforced
+
+The f-vector describes the exact current triangulation rather than its
+PL-homeomorphism class. A successful bistellar move may change individual
+`f_k` counts while preserving their alternating sum χ. It is therefore
+recomputed at validation boundaries instead of maintained as authoritative
+mutable state.
 
 Intrinsic orientability is distinct from Level 2 stored-ordering coherence:
 reversing one stored simplex can violate `Tds::is_valid()` without changing
@@ -813,9 +940,10 @@ enough for future regular, weighted, Gabriel, alpha, constrained, or related pre
 
 ### What It Checks
 
-- **Delaunay property**: verified via local flip predicates (k=2/k=3 and
-  inverses), equivalent to the empty-circumsphere condition for properly
-  constructed triangulations
+- **Delaunay property**: Euclidean owners are verified against the global
+  empty-circumsphere condition, with local flip predicates (k=2/k=3 and
+  inverses) serving as a fast sufficient certificate when they reach their
+  stronger normal form; non-Euclidean owners use topology-aware local predicates
 - Uses geometric predicates from the kernel (`insphere` test)
 - **Spherical prototype**: `SphericalDelaunayTriangulation` keeps Level 5 Geometric Predicates
   backend-specific. Its `S^2`/`S^3` path checks the spherical empty-cap
@@ -831,15 +959,16 @@ enough for future regular, weighted, Gabriel, alpha, constrained, or related pre
   [Issue #120 Investigation](archive/issue_120_investigation.md).
 - **Fallback rebuild**: If flip-based conversion does not converge, a Levels
   1–4 `Triangulation` can opt into bounded rebuild recovery through
-  `delaunayize(tri, DelaunayizeConfig::default().with_fallback_rebuild(true))`.
+  `DelaunayRefinementBuilder::new(tri).repair_by_flips().fallback_rebuild(true).build()`.
   This requires `TopologyGuarantee::PLManifold` and `K: ExactPredicates`.
   See [Numerical Robustness Guide](numerical_robustness_guide.md).
 
 ### Complexity
 
 - **Time**:
-  - `DelaunayTriangulation::is_valid_delaunay()` (Level 5 only): O(simplices) local flip-predicate verification.
-  - `DelaunayTriangulation::validate()` (Levels 1–5): Levels 1-4 plus O(simplices) local flip-predicate verification.
+  - `DelaunayTriangulation::is_valid_delaunay()` (Level 5 only): O(simplices) when the local
+    certificate succeeds; O(simplices × vertices) for the exact Euclidean fallback.
+  - `DelaunayTriangulation::validate()` (Levels 1–5): Levels 1-4 plus the same certified Level 5 path.
   - `DelaunayTriangulation::delaunay_report()` (Level 5 only): O(simplices) when complete Euclidean
     point-set provenance and robust local predicates certify a valid report; O(simplices × vertices)
     for the exact fallback when Euclidean connectivity is unproven or the local certificate fails or
@@ -860,8 +989,8 @@ fallback rebuild additionally snapshots vertices and simplex payload identity.
 - **Critical Applications**: When Delaunay guarantees are essential (interpolation, mesh quality)
 - **Tests**: After construction to verify correctness
 - **Debug**: Investigating geometric issues or suspected violations
-- **Avoid**: Report generation in hot loops, especially when connectivity is unproven and may require the
-  O(simplices × vertices) fallback. The boolean `is_valid_delaunay()` check remains O(simplices).
+- **Avoid**: Repeated Level 5 validation in hot loops, especially when connectivity
+  is unproven or degenerate and may require the O(simplices × vertices) fallback.
 
 ### Example
 
@@ -925,11 +1054,13 @@ Start: Do you need to validate?
   combinatorial bookkeeping (roughly O(simplices × D²)).
 - Level 4 Valid Realization checks simplex degeneracy and pairwise realized-simplex
   intersections, using bounding boxes before exact rational witness construction.
-- Level 5 `DelaunayTriangulation::is_valid_delaunay()` verifies the implemented Delaunay predicate
-  family via local flip predicates after Level 4 realization validation.
-- The O(simplices × vertices) brute-force empty-circumsphere check is not used by
-  `is_valid_delaunay()`, but report APIs use it when connectivity lacks complete-point-set provenance or
-  the local certificate fails or is inconclusive.
+- Level 5 `DelaunayTriangulation::is_valid_delaunay()` verifies the implemented
+  Delaunay predicate family after Level 4 realization validation. For complete
+  Euclidean point sets it accepts a successful local certificate and otherwise
+  uses the exact global empty-circumsphere check.
+- The O(simplices × vertices) empty-circumsphere path is the Euclidean fallback
+  when connectivity lacks complete-point-set provenance or the stronger local
+  flip-normal-form check fails or is inconclusive.
 
 In practice, `DelaunayTriangulation::validate()` is usually dominated by Level 3 Intrinsic PL Topology work or
 Level 4 pairwise realization checks, depending on mesh size and overlap candidates.
@@ -1082,10 +1213,10 @@ but the validator itself does not mutate the triangulation.
 or missing higher-dimensional flip coverage
 **Fix**: Keep flip repair enabled, handle insertion errors, check for near-coplanar/collinear points,
 and select the kernel whose tie-handling and diagnostic policy matches the
-workflow. `delaunayize` requires `K: ExactPredicates`; `AdaptiveKernel`,
-`RobustKernel`, and `FastKernel` satisfy that bound through D ≤ 5. If conversion
+workflow. Flip-repair refinement requires `K: ExactPredicates`; `AdaptiveKernel`,
+`RobustKernel`, and `FastKernel` satisfy that bound through D ≤ 6. If conversion
 fails to converge, enable the opt-in rebuild through
-`DelaunayizeConfig::default().with_fallback_rebuild(true)` (requires
+`.repair_by_flips().fallback_rebuild(true)` (requires
 PL-manifold + `ExactPredicates`).
 
 ---
@@ -1102,8 +1233,8 @@ PL-manifold + `ExactPredicates`).
 | 3 | `Triangulation::validate()` | `triangulation` | O(N×D²) |
 | 4 | `Triangulation::is_valid_realization()` | `triangulation` | O(simplices² × f(D)) |
 | 4 | `Triangulation::validate_realization()` | `triangulation` | O(simplices × D²) + O(simplices² × f(D)) |
-| 5 | `DelaunayTriangulation::is_valid_delaunay()` | `delaunay` | O(simplices) |
-| 5 | `DelaunayTriangulation::validate()` | `delaunay` | Levels 1-4 + O(simplices) |
+| 5 | `DelaunayTriangulation::is_valid_delaunay()` | `delaunay` | O(simplices) certified fast path; O(simplices × vertices) fallback |
+| 5 | `DelaunayTriangulation::validate()` | `delaunay` | Levels 1-4 + certified fast path or exact fallback |
 | — | `DelaunayTriangulation::validation_report()` | `delaunay` | Levels 1-4 + O(simplices) certified fast path; O(simplices × vertices) fallback |
 
 ---

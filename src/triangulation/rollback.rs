@@ -4,6 +4,7 @@
 
 use crate::core::tds::{Tds, TdsOwnerRollbackTransaction, TdsRollbackOwner, TdsRollbackWindow};
 use crate::triangulation::Triangulation;
+use crate::triangulation::validation::TopologyConstructionProvenance;
 
 impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for Triangulation<K, U, V, D> {
     fn rollback_tds(&self) -> &Tds<U, V, D> {
@@ -15,6 +16,24 @@ impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for Triangulation<K, U, 
     }
 }
 
+/// Shared mutation surface for algorithms that need a triangulation owner
+/// inside an owner-selected TDS rollback transaction.
+///
+/// Higher proof owners implement this trait so Levels 3–4 algorithms can reuse
+/// the higher owner's rollback snapshot instead of nesting another full TDS
+/// snapshot. The higher owner remains responsible for commit versus rollback
+/// and for restoring any state coupled to the TDS.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "explicit crate visibility documents sharing with higher owner layers"
+)]
+pub(crate) trait TriangulationRollbackWindow<K, U, V, const D: usize>:
+    TdsRollbackWindow<U, V, D>
+{
+    /// Borrows the Levels 3–4 owner for one mutation or validation step.
+    fn triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D>;
+}
+
 /// Scoped rollback guard for a `Triangulation` mutation that snapshots only
 /// the owned TDS while allowing method-level mutation through the owner.
 #[must_use = "rollback transactions restore on drop unless explicitly committed or rolled back"]
@@ -24,6 +43,8 @@ where
     V: Clone,
 {
     inner: TdsOwnerRollbackTransaction<'tri, Triangulation<K, U, V, D>, U, V, D>,
+    topology_construction_provenance_snapshot: TopologyConstructionProvenance,
+    finished: bool,
 }
 
 impl<'tri, K, U, V, const D: usize> TriangulationRollbackTransaction<'tri, K, U, V, D>
@@ -33,8 +54,11 @@ where
 {
     /// Begins a rollback window by snapshotting the canonical TDS owner.
     pub(crate) fn begin(owner: &'tri mut Triangulation<K, U, V, D>) -> Self {
+        let topology_construction_provenance_snapshot = owner.topology_construction_provenance;
         Self {
             inner: TdsOwnerRollbackTransaction::begin(owner),
+            topology_construction_provenance_snapshot,
+            finished: false,
         }
     }
 
@@ -47,16 +71,34 @@ where
     /// open for another attempt.
     pub(crate) fn restore(&mut self) {
         self.inner.restore();
+        self.inner.owner_mut().topology_construction_provenance =
+            self.topology_construction_provenance_snapshot;
     }
 
     /// Commits the mutation, preventing the drop guard from restoring the snapshot.
-    pub(crate) fn commit(self) {
-        self.inner.commit();
+    pub(crate) fn commit(mut self) {
+        self.inner.commit_in_place();
+        self.finished = true;
     }
 
     /// Restores the snapshot and closes the transaction.
-    pub(crate) fn rollback(self) {
-        self.inner.rollback();
+    pub(crate) fn rollback(mut self) {
+        self.restore();
+        self.inner.commit_in_place();
+        self.finished = true;
+    }
+}
+
+impl<K, U, V, const D: usize> Drop for TriangulationRollbackTransaction<'_, K, U, V, D>
+where
+    U: Clone,
+    V: Clone,
+{
+    fn drop(&mut self) {
+        if !self.finished {
+            self.restore();
+            self.inner.commit_in_place();
+        }
     }
 }
 
@@ -72,6 +114,17 @@ where
 
     fn restore_rollback_tds(&mut self) {
         self.restore();
+    }
+}
+
+impl<K, U, V, const D: usize> TriangulationRollbackWindow<K, U, V, D>
+    for TriangulationRollbackTransaction<'_, K, U, V, D>
+where
+    U: Clone,
+    V: Clone,
+{
+    fn triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D> {
+        self.inner.owner_mut()
     }
 }
 
@@ -151,6 +204,61 @@ mod tests {
         transaction.commit();
     }
 
+    fn assert_rollback_restores_topology_provenance<const D: usize>() {
+        let mut triangulation: Triangulation<FastKernel<f64>, (), (), D> =
+            Triangulation::new_empty(FastKernel::new());
+        triangulation.topology_construction_provenance =
+            TopologyConstructionProvenance::EuclideanDelaunayInsertion;
+
+        let mut transaction = TriangulationRollbackTransaction::begin(&mut triangulation);
+        transaction
+            .triangulation_mut()
+            .topology_construction_provenance = TopologyConstructionProvenance::Unproven;
+        transaction.rollback();
+
+        assert_eq!(
+            triangulation.topology_construction_provenance,
+            TopologyConstructionProvenance::EuclideanDelaunayInsertion
+        );
+    }
+
+    fn assert_drop_restores_topology_provenance<const D: usize>() {
+        let mut triangulation: Triangulation<FastKernel<f64>, (), (), D> =
+            Triangulation::new_empty(FastKernel::new());
+        triangulation.topology_construction_provenance =
+            TopologyConstructionProvenance::EuclideanDelaunayInsertion;
+
+        {
+            let mut transaction = TriangulationRollbackTransaction::begin(&mut triangulation);
+            transaction
+                .triangulation_mut()
+                .topology_construction_provenance = TopologyConstructionProvenance::Unproven;
+        }
+
+        assert_eq!(
+            triangulation.topology_construction_provenance,
+            TopologyConstructionProvenance::EuclideanDelaunayInsertion
+        );
+    }
+
+    fn assert_commit_keeps_topology_provenance<const D: usize>() {
+        let mut triangulation: Triangulation<FastKernel<f64>, (), (), D> =
+            Triangulation::new_empty(FastKernel::new());
+        triangulation.topology_construction_provenance =
+            TopologyConstructionProvenance::EuclideanDelaunayInsertion;
+
+        let mut transaction = TriangulationRollbackTransaction::begin(&mut triangulation);
+        transaction
+            .triangulation_mut()
+            .topology_construction_provenance = TopologyConstructionProvenance::Unproven;
+        transaction.commit();
+
+        assert_eq!(
+            triangulation.topology_construction_provenance,
+            TopologyConstructionProvenance::Unproven
+        );
+    }
+
     #[test]
     fn triangulation_transaction_drop_restores_tds() {
         assert_rollback_dimensions!(assert_drop_restores_tds);
@@ -164,5 +272,20 @@ mod tests {
     #[test]
     fn triangulation_transaction_restore_allows_tds_field_replacement() {
         assert_rollback_dimensions!(assert_restore_allows_tds_field_replacement);
+    }
+
+    #[test]
+    fn triangulation_transaction_rollback_restores_topology_provenance() {
+        assert_rollback_dimensions!(assert_rollback_restores_topology_provenance);
+    }
+
+    #[test]
+    fn triangulation_transaction_drop_restores_topology_provenance() {
+        assert_rollback_dimensions!(assert_drop_restores_topology_provenance);
+    }
+
+    #[test]
+    fn triangulation_transaction_commit_keeps_topology_provenance() {
+        assert_rollback_dimensions!(assert_commit_keeps_topology_provenance);
     }
 }

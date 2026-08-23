@@ -24,7 +24,7 @@ use std::assert_matches;
 
 use delaunay::flips::FlipError;
 use delaunay::prelude::construction::{
-    DelaunayConstructionFailure, DelaunayConstructionRetryFailure, DelaunayTriangulation,
+    DelaunayConstructionFailure, DelaunayConstructionRetryFailure,
     DelaunayTriangulationConstructionError,
 };
 use delaunay::prelude::tds::{FacetError, SimplexKey};
@@ -33,13 +33,14 @@ use delaunay::prelude::validation::{
 };
 use slotmap::KeyData;
 
+#[cfg(feature = "slow-tests")]
+use flip_fixtures::{
+    ADVERSARIAL_K2_POINTS_5D, ADVERSARIAL_POINTS_4D, ADVERSARIAL_POINTS_5D, STABLE_K2_POINTS_5D,
+    STABLE_POINTS_4D, STABLE_POINTS_5D,
+};
 use flip_fixtures::{
     ADVERSARIAL_POINTS_2D, ADVERSARIAL_POINTS_3D, DEGENERATE_POINTS_3D, STABLE_POINTS_2D,
     STABLE_POINTS_3D,
-};
-#[cfg(feature = "slow-tests")]
-use flip_fixtures::{
-    ADVERSARIAL_POINTS_4D, ADVERSARIAL_POINTS_5D, STABLE_POINTS_4D, STABLE_POINTS_5D,
 };
 #[cfg(feature = "slow-tests")]
 use flip_workflows::verify_k3_roundtrip;
@@ -214,7 +215,7 @@ fn flip_fixtures_cover_stable_5d_k1_workflow() {
 #[cfg(feature = "slow-tests")]
 #[test]
 fn flip_fixtures_cover_stable_5d_k2_workflow() {
-    verify_roundtrip_fixture_move(STABLE_POINTS_5D, CandidateFilter::Any, RoundtripMove::K2);
+    verify_roundtrip_fixture_move(STABLE_K2_POINTS_5D, CandidateFilter::Any, RoundtripMove::K2);
 }
 
 #[cfg(feature = "slow-tests")]
@@ -237,7 +238,7 @@ fn flip_fixtures_cover_adversarial_5d_k1_workflow() {
 #[test]
 fn flip_fixtures_cover_adversarial_5d_k2_workflow() {
     verify_roundtrip_fixture_move(
-        ADVERSARIAL_POINTS_5D,
+        ADVERSARIAL_K2_POINTS_5D,
         CandidateFilter::TouchesAdversarialFeature,
         RoundtripMove::K2,
     );
@@ -547,7 +548,9 @@ fn verify_roundtrip_fixture_move<const D: usize>(
     points: &[[f64; D]],
     filter: CandidateFilter,
     roundtrip_move: RoundtripMove,
-) {
+) where
+    delaunay::prelude::geometry::RobustKernel<f64>: delaunay::prelude::geometry::ExactPredicates<D>,
+{
     let base_dt = build_flip_dt(points).expect("benchmark flip fixture should build");
     assert_topology_and_delaunay_valid(&base_dt, "benchmark flip fixture");
 
@@ -599,7 +602,8 @@ fn assert_topology_and_delaunay_valid<const D: usize>(dt: &FlipTriangulation<D>,
         .unwrap_or_else(|err| panic!("{context} should pass Levels 1-3: {err}"));
     dt.is_valid_realization()
         .unwrap_or_else(|err| panic!("{context} should pass Level 4 realization: {err}"));
-    DelaunayTriangulation::try_from_triangulation(dt.clone())
+    delaunay::DelaunayRefinementBuilder::new(dt.clone())
+        .build()
         .unwrap_or_else(|err| panic!("{context} should pass Level 5: {err}"));
 }
 

@@ -9,7 +9,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::algorithms::incremental_insertion::InsertionError;
+use crate::core::algorithms::insertion::InsertionError;
 use crate::core::tds::{SimplexKey, VertexKey};
 use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
 use crate::triangulation::validation::TopologyGuarantee;

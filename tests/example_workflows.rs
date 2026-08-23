@@ -7,7 +7,7 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::geometry::{CoordinateConversionError, CoordinateValidationError};
 use delaunay::prelude::query::{
-    ConvexHull, ConvexHullConstructionError, ConvexHullValidationError, Point, QueryError,
+    ConvexHull, ConvexHullConstructionError, ConvexHullQueryError, Point, QueryError,
     TopologyIndexBuildError,
 };
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
@@ -42,23 +42,15 @@ fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestErr
     assert!(!boundary_facets.is_empty());
 
     let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
-    hull.validate(dt.as_triangulation())?;
     assert_eq!(hull.number_of_facets(), boundary_facets.len());
 
     let inside = Point::try_new([0.25, 0.25, 0.25])?;
     let outside = Point::try_new([2.0, 2.0, 2.0])?;
 
-    assert!(!hull.is_point_outside(&inside, dt.as_triangulation())?);
-    assert!(hull.is_point_outside(&outside, dt.as_triangulation())?);
-    assert!(
-        !hull
-            .find_visible_facets(&outside, dt.as_triangulation())?
-            .is_empty()
-    );
-    assert!(
-        hull.find_nearest_visible_facet(&outside, dt.as_triangulation())?
-            .is_some()
-    );
+    assert!(!hull.is_point_outside(&inside)?);
+    assert!(hull.is_point_outside(&outside)?);
+    assert!(!hull.find_visible_facets(&outside)?.is_empty());
+    assert!(hull.find_nearest_visible_facet(&outside)?.is_some());
 
     Ok(())
 }
@@ -82,10 +74,10 @@ enum WorkflowTestError {
         #[source]
         source: Box<ConvexHullConstructionError>,
     },
-    #[error("convex hull validation failed: {source}")]
-    ConvexHullValidation {
+    #[error("convex hull query failed: {source}")]
+    ConvexHullQuery {
         #[source]
-        source: Box<ConvexHullValidationError>,
+        source: Box<ConvexHullQueryError>,
     },
 }
 
@@ -97,9 +89,9 @@ impl From<ConvexHullConstructionError> for WorkflowTestError {
     }
 }
 
-impl From<ConvexHullValidationError> for WorkflowTestError {
-    fn from(source: ConvexHullValidationError) -> Self {
-        Self::ConvexHullValidation {
+impl From<ConvexHullQueryError> for WorkflowTestError {
+    fn from(source: ConvexHullQueryError) -> Self {
+        Self::ConvexHullQuery {
             source: Box::new(source),
         }
     }

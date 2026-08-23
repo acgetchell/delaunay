@@ -11,8 +11,8 @@ Historical design notes, investigations, and completed optimization roadmaps liv
 - [`../examples/README.md`](../examples/README.md): public-workflow coverage across runnable Rust examples and notebooks.
 - [`api_design.md`](api_design.md): construction, vertex lifecycle, and Pachner move APIs.
 - [`topology.md`](topology.md): Level 3 Intrinsic PL Topology invariants (manifold checks, orientability, Euler characteristic).
-- [`validation.md`](validation.md): the five-level validation model (Levels 1–5) and how to configure it.
-- [`../papers/validation.pdf`](../papers/validation.pdf): reviewer-facing validation architecture paper.
+- [`construction_and_validation.md`](construction_and_validation.md): proof-bearing construction, the five validation levels, and their configuration.
+- [`../papers/validation.pdf`](../papers/validation.pdf): reviewer-facing construction and validation architecture paper.
 - [`diagnostics.md`](diagnostics.md): opt-in diagnostic helpers, structured reports, and debug switches.
 - [`mesh_export.md`](mesh_export.md): stable simplicial-complex export schema for notebooks and downstream tools.
 - [`workflows.md`](workflows.md): practical recipes for construction, deletion, and local Pachner moves.

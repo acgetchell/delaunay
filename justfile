@@ -18,11 +18,11 @@ cargo_edit_version := "0.13.13"
 cargo_llvm_cov_version := "0.9.0"
 cargo_machete_version := "0.9.2"
 clippy_sarif_version := "0.8.0"
-dprint_version := "0.56.0"
+dprint_version := "0.56.1"
 git_cliff_version := "2.13.1"
 just_version := "1.58.0"
 nextest_version := "0.9.143"
-rumdl_version := "0.2.58"
+rumdl_version := "0.2.60"
 samply_version := "0.13.1"
 sarif_fmt_version := "0.8.0"
 taplo_version := "0.10.0"
@@ -335,7 +335,7 @@ help-workflows:
     @echo "  just test-unit          # Debug and release Rust lib unit tests"
     @echo "  just test-integration   # Release integration tests, including proptests"
     @echo "  just test-integration-fast # Integration tests without proptests"
-    @echo "  just test-cli           # CLI-feature integration tests"
+    @echo "  just test-cli           # CLI-feature binary unit and integration tests"
     @echo "  just test-doc           # Release doctests"
     @echo "  just test-python        # Python support-script tests"
     @echo "  just test-slow          # Explicit slow correctness bucket"
@@ -776,8 +776,8 @@ perf-help:
     @echo "                              # 4D random-walk Pachner diagnostics with CSV/JSON artifacts"
     @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
     @echo "  just profile v0.7.5        # v0.7.5 code on its declared Rust toolchain"
-    @echo "  just profile 1.97.1        # Current tree on Rust 1.97.1"
-    @echo "  just profile 1.97.1 v0.7.5 # v0.7.5 code on Rust 1.97.1"
+    @echo "  just profile 1.98.0        # Current tree on Rust 1.98.0"
+    @echo "  just profile 1.98.0 v0.7.5 # v0.7.5 code on Rust 1.98.0"
 
 # Quick pre-push 2D-5D large-scale wall-clock smoke guard.
 [group('benchmarks and performance')]
@@ -1090,7 +1090,7 @@ python-typecheck: _ensure-uv
 # Run the opt-in companion binary with the CLI feature and perf profile.
 [group('build and setup')]
 run *args:
-    cargo run --profile perf --features cli --bin delaunay -- {{ args }}
+    cargo run --locked --profile perf --features cli --bin delaunay -- {{ args }}
 
 # Run the complete non-mutating Rust validation surface.
 [group('validation')]
@@ -1100,7 +1100,8 @@ rust-core-check: fmt-check clippy doc-check semgrep semgrep-test
 # Repository-owned Semgrep rules for project-specific Rust diagnostics.
 [group('validation')]
 semgrep: _ensure-uv
-    uv run --locked semgrep --error --strict --timeout 120 --config semgrep.yaml .
+    # Serialize repository scans to avoid Semgrep shared-state races across workers.
+    uv run --locked semgrep --error --strict --timeout 120 --jobs 1 --config semgrep.yaml .
 
 # Test the repository-owned Semgrep rules against their fixtures.
 [group('validation')]
@@ -1406,10 +1407,10 @@ test: test-rust test-python
 test-allocation: _ensure-nextest
     cargo nextest run --profile ci --test allocation_api --features count-allocations -- --nocapture
 
-# Run CLI-feature integration tests in the release profile.
+# Run CLI-feature binary unit and integration tests in the release profile.
 [group('tests and coverage')]
 test-cli: _ensure-nextest
-    cargo nextest run --release --profile ci --features cli --test cli
+    cargo nextest run --release --profile ci --features cli --bin delaunay --bin pachner-stress --test cli
 
 # Run diagnostics-feature integration tests with captured output.
 [group('diagnostics')]

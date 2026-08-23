@@ -18,7 +18,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange};
+use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, ExactPredicates};
 use delaunay::try_vertices_from_points;
 use std::hint::black_box;
 use std::time::Duration;
@@ -61,7 +61,10 @@ fn generate_vertices<const D: usize>(requested_vertices: usize, seed: u64) -> Ve
 }
 
 /// Build the triangulation snapshot that each benchmark iteration clones.
-fn build_clone_source<const D: usize>(requested_vertices: usize, seed_base: u64) -> CloneSource<D> {
+fn build_clone_source<const D: usize>(requested_vertices: usize, seed_base: u64) -> CloneSource<D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let seed = seed_for_case::<D>(requested_vertices, seed_base);
     let vertices = generate_vertices::<D>(requested_vertices, seed);
     let triangulation: BenchTriangulation<D> =
@@ -88,7 +91,9 @@ fn bench_dimension<const D: usize>(
     dim_label: &str,
     counts: &[usize],
     seed_base: u64,
-) {
+) where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let mut group = c.benchmark_group(format!("triangulation_clone/{dim_label}"));
     group.sample_size(SAMPLE_SIZE);
     group.warm_up_time(WARM_UP_TIME);

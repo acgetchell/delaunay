@@ -3,12 +3,12 @@
 //! Public API roundtrip tests for Pachner/bistellar flips.
 
 use delaunay::flips::{BistellarFlips, FlipFailureKind, FlipFeasibility, FlipMutationError};
-use delaunay::{TdsConstructionFailure, vertex};
+use delaunay::{DelaunayRefinementBuilder, TdsConstructionFailure, vertex};
 use std::assert_matches;
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayError, DelaunayResult, DelaunayTriangulation,
-    DelaunayTriangulationBuilder, InsertionOrderStrategy, TopologyGuarantee, Vertex,
+    ConstructionOptions, DelaunayError, DelaunayResult, DelaunayTriangulationBuilder,
+    InsertionOrderStrategy, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::RobustKernel;
 #[cfg(feature = "slow-tests")]
@@ -95,7 +95,7 @@ fn topology_and_delaunay_valid<const D: usize>(
     tri: &Triangulation<RobustKernel<f64>, (), (), D>,
 ) -> bool {
     tri.validate_realization().is_ok()
-        && DelaunayTriangulation::try_from_triangulation(tri.clone()).is_ok()
+        && DelaunayRefinementBuilder::new(tri.clone()).build().is_ok()
 }
 
 fn assert_topology_and_delaunay_valid<const D: usize>(
@@ -106,7 +106,8 @@ fn assert_topology_and_delaunay_valid<const D: usize>(
         .unwrap_or_else(|err| panic!("{context} should pass Levels 1-3: {err}"));
     tri.is_valid_realization()
         .unwrap_or_else(|err| panic!("{context} should pass Level 4 realization: {err}"));
-    DelaunayTriangulation::try_from_triangulation(tri.clone())
+    DelaunayRefinementBuilder::new(tri.clone())
+        .build()
         .unwrap_or_else(|err| panic!("{context} should pass Level 5: {err}"));
 }
 
@@ -582,7 +583,10 @@ fn build_dt_4d(points: &[[f64; 4]], fixture_name: &str) -> Tri4 {
 }
 
 /// Builds a minimal Euclidean D-simplex fixture for dimension smoke tests.
-fn build_minimal_simplex_dt<const D: usize>() -> Tri<D> {
+fn build_minimal_simplex_dt<const D: usize>() -> Tri<D>
+where
+    RobustKernel<f64>: delaunay::prelude::geometry::ExactPredicates<D>,
+{
     let vertices = minimal_simplex_vertices::<D>();
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
@@ -763,7 +767,10 @@ fn assert_duplicate_vertex_uuid_error<T>(result: Result<T, FlipError>, duplicate
 }
 
 /// Exercises public `PachnerMove::K1Insert` feasibility and mutation in one dimension.
-fn assert_public_k1_insert_feasibility_smoke<const D: usize>() {
+fn assert_public_k1_insert_feasibility_smoke<const D: usize>()
+where
+    RobustKernel<f64>: delaunay::prelude::geometry::ExactPredicates<D>,
+{
     let tri = build_minimal_simplex_dt::<D>();
     let simplex_key = first_simplex_generic(&tri);
     let vertex: Vertex<(), D> = vertex!(simplex_centroid_generic(&tri, simplex_key))

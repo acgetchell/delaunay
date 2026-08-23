@@ -23,7 +23,7 @@ use crate::core::collections::{
     CavityBoundaryBuffer, FacetToSimplicesMap, FastHashMap, FastHashSet, FastHasher,
     MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SimplexSecondaryMap, SmallBuffer,
 };
-use crate::core::facet::FacetHandle;
+use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::tds::{SimplexKey, Tds, VertexKey};
 use crate::core::util::canonical_points::{
     CanonicalFacetPointError, CanonicalSimplexPointError, sorted_facet_points_with_extra,
@@ -184,6 +184,14 @@ pub enum ConflictError {
         simplex_key: SimplexKey,
     },
 
+    /// A computed cavity-boundary handle could not be promoted to a borrowed facet view.
+    #[error("computed cavity boundary contains an invalid facet: {source}")]
+    InvalidBoundaryFacet {
+        /// Underlying facet parsing error.
+        #[source]
+        source: FacetError,
+    },
+
     /// Geometric predicate failed
     #[error("Predicate error: {source}")]
     PredicateError {
@@ -271,9 +279,10 @@ pub enum ConflictError {
     /// Ridge fan detected (many facets sharing same (D-2)-simplex).
     ///
     /// When a single conflict region contains multiple ridge fans,
-    /// [`extract_cavity_boundary`] accumulates the removal candidates from every
-    /// fan into `extra_simplices` before returning, so a single cavity-reduction step
-    /// can shrink all of them at once. In that case:
+    /// [`ConflictRegion::boundary`](crate::query::ConflictRegion::boundary) and
+    /// the insertion path accumulate the removal candidates from every fan into
+    /// `extra_simplices` before returning, so a single cavity-reduction step can
+    /// shrink all of them at once. In that case:
     ///
     /// - `facet_count` and `ridge_vertex_count` describe the **first** fan that
     ///   the boundary walk observed (a representative example, not an aggregate).
@@ -1207,9 +1216,8 @@ const fn conflict_simplex_points_error(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::algorithms::{locate, find_conflict_region, LocateResult};
+/// use delaunay::prelude::algorithms::LocateResult;
 /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
-/// use delaunay::prelude::geometry::FastKernel;
 /// use delaunay::prelude::geometry::Point;
 /// use delaunay::prelude::geometry::Coordinate;
 ///
@@ -1235,7 +1243,6 @@ const fn conflict_simplex_points_error(
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
-/// let kernel = FastKernel::<f64>::new();
 /// // Point inside the 4-simplex
 /// let query_point = Point::try_from([0.2, 0.2, 0.2, 0.2])?;
 ///
@@ -1253,7 +1260,7 @@ const fn conflict_simplex_points_error(
     clippy::too_many_lines,
     reason = "function is long due to complex locate logic and should be split when refactoring"
 )]
-pub fn find_conflict_region<K, U, V, const D: usize>(
+pub(crate) fn find_conflict_region<K, U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     kernel: &K,
     point: &Point<D>,
@@ -1436,33 +1443,12 @@ where
 ///
 /// Returns the number of missed simplices (0 means the BFS result is complete).
 ///
-/// # Examples
-///
-/// ```rust
-/// # #[cfg(feature = "diagnostics")]
-/// # {
-/// use delaunay::prelude::collections::SimplexKeyBuffer;
-/// use delaunay::prelude::diagnostics::verify_conflict_region_completeness;
-/// use delaunay::prelude::geometry::{AdaptiveKernel, Point};
-/// use delaunay::prelude::tds::Tds;
-///
-/// let tds: Tds<(), (), 2> = Tds::empty();
-/// let kernel = AdaptiveKernel::<f64>::new();
-/// let point = Point::<2>::default();
-/// let bfs_conflicts = SimplexKeyBuffer::new();
-///
-/// let missed = verify_conflict_region_completeness(
-///     &tds,
-///     &kernel,
-///     &point,
-///     &bfs_conflicts,
-/// );
-/// assert_eq!(missed, 0);
-/// # }
-/// ```
+/// Public diagnostic callers use
+/// [`ConflictRegion::number_of_missed_simplices`](crate::query::ConflictRegion::number_of_missed_simplices);
+/// insertion uses this raw helper internally.
 #[cfg(feature = "diagnostics")]
 #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
-pub fn verify_conflict_region_completeness<K, U, V, const D: usize>(
+pub(crate) fn verify_conflict_region_completeness<K, U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     kernel: &K,
     point: &Point<D>,
@@ -1605,75 +1591,13 @@ where
 ///    - If neighbor is NOT in conflict (or is None/hull), it's a boundary facet
 /// 3. Return all boundary facets as `FacetHandle`s
 ///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::algorithms::extract_cavity_boundary;
-/// use delaunay::prelude::collections::SimplexKeyBuffer;
-/// use delaunay::prelude::tds::Tds;
-///
-/// # fn main() -> Result<(), delaunay::prelude::algorithms::ConflictError> {
-/// let tds: Tds<(), (), 3> = Tds::empty();
-/// let boundary = extract_cavity_boundary(&tds, &SimplexKeyBuffer::new())?;
-/// assert!(boundary.is_empty());
-/// # Ok(())
-/// # }
-/// ```
-///
-///
-/// ```rust
-/// use delaunay::prelude::algorithms::LocateResult;
-/// use delaunay::prelude::DelaunayTriangulationBuilder;
-/// use delaunay::prelude::geometry::FastKernel;
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
-///
-/// # #[derive(Debug, thiserror::Error)]
-/// # enum ExampleError {
-/// #     #[error(transparent)]
-/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-/// #     #[error(transparent)]
-/// #     Locate(#[from] delaunay::prelude::algorithms::LocateError),
-/// #     #[error(transparent)]
-/// #     Conflict(#[from] delaunay::prelude::algorithms::ConflictError),
-/// #     #[error(transparent)]
-/// #     Facet(#[from] delaunay::prelude::tds::FacetError),
-/// #     #[error(transparent)]
-/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-/// # }
-/// # fn main() -> Result<(), ExampleError> {
-/// // Create a 4D simplex
-/// let vertices = vec![
-///     delaunay::vertex![0.0, 0.0, 0.0, 0.0]?,
-///     delaunay::vertex![1.0, 0.0, 0.0, 0.0]?,
-///     delaunay::vertex![0.0, 1.0, 0.0, 0.0]?,
-///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
-///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
-/// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-///
-/// let kernel = FastKernel::<f64>::new();
-/// let query_point = Point::try_from([0.2, 0.2, 0.2, 0.2])?;
-///
-/// // Locate and find conflict region
-/// let location = dt.locate(&query_point, None)?;
-/// if let LocateResult::InsideSimplex(simplex_key) = location {
-///     let conflict_simplices = dt.find_conflict_region(&query_point, simplex_key)?;
-///
-///     // Extract cavity boundary
-///     let boundary_facets = dt.simplex_facets(simplex_key)?.collect::<Result<Vec<_>, _>>()?;
-///
-///     // For a single 4-simplex, all 5 facets are on the boundary (convex hull)
-///     assert_eq!(boundary_facets.len(), 5);
-/// }
-/// # Ok(())
-/// # }
-/// ```
+/// Public callers obtain the parsed, owner-bound cavity through
+/// [`ConflictRegion::boundary`](crate::query::ConflictRegion::boundary).
 #[expect(
     clippy::too_many_lines,
     reason = "Long function; keep boundary extraction logic in one place for clarity"
 )]
-pub fn extract_cavity_boundary<U, V, const D: usize>(
+pub(crate) fn extract_cavity_boundary<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     conflict_simplices: &SimplexKeyBuffer,
 ) -> Result<CavityBoundaryBuffer, ConflictError> {
@@ -2096,8 +2020,10 @@ mod tests {
     use super::*;
     use crate::core::collections::NeighborBuffer;
     use crate::core::simplex::Simplex;
+    use crate::core::test_support::single_simplex_tds;
+    #[cfg(feature = "diagnostics")]
+    use crate::core::test_support::tds_from_specs;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
-    use crate::prelude::DelaunayTriangulation;
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
@@ -2146,8 +2072,8 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds();
+        let dt = single_simplex_tds(&vertices);
+        let tds = &dt;
         let simplex_key = tds.simplex_keys().next().unwrap();
         let simplex = tds.simplex(simplex_key).unwrap();
 
@@ -2319,18 +2245,18 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
 
         // Get the single simplex
-        let simplex_key = dt.tds().simplex_keys().next().unwrap();
-        let simplex = dt.tds().simplex(simplex_key).unwrap();
+        let simplex_key = dt.simplex_keys().next().unwrap();
+        let simplex = dt.simplex(simplex_key).unwrap();
 
         // Get simplex vertices in order
         let simplex_points: Vec<Point<2>> = simplex
             .vertices()
             .iter()
-            .map(|&vkey| *dt.tds().vertex(vkey).unwrap().point())
+            .map(|&vkey| *dt.vertex(vkey).unwrap().point())
             .collect();
 
         tracing::debug!("Simplex vertices: {simplex_points:?}");
@@ -2345,7 +2271,7 @@ mod tests {
         // For each facet, test if point is outside using the actual function
         for facet_idx in 0..3 {
             let result =
-                is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &query_inside);
+                is_point_outside_facet(&dt, &kernel, simplex_key, facet_idx, &query_inside);
             let is_outside = result.unwrap();
 
             tracing::debug!(
@@ -2365,7 +2291,7 @@ mod tests {
 
         for facet_idx in 0..3 {
             let result =
-                is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &query_outside);
+                is_point_outside_facet(&dt, &kernel, simplex_key, facet_idx, &query_outside);
             let is_outside = result.unwrap();
 
             tracing::debug!("Outside point - Facet {facet_idx}: is_outside={is_outside}");
@@ -2399,16 +2325,16 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
 
         // Point inside the triangle
         let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
-        let result = locate(dt.tds(), &kernel, &point, None);
+        let result = locate(&dt, &kernel, &point, None);
 
         match result {
             Ok(LocateResult::InsideSimplex(simplex_key)) => {
-                assert!(dt.tds().contains_simplex(simplex_key));
+                assert!(dt.contains_simplex(simplex_key));
             }
             _ => panic!("Expected point to be inside a simplex, got {result:?}"),
         }
@@ -2422,16 +2348,16 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
 
         // Point inside the tetrahedron
         let point = Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates");
-        let result = locate(dt.tds(), &kernel, &point, None);
+        let result = locate(&dt, &kernel, &point, None);
 
         match result {
             Ok(LocateResult::InsideSimplex(simplex_key)) => {
-                assert!(dt.tds().contains_simplex(simplex_key));
+                assert!(dt.contains_simplex(simplex_key));
             }
             _ => panic!("Expected point to be inside a simplex, got {result:?}"),
         }
@@ -2444,12 +2370,12 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
 
         // Point far outside the triangle
         let point = Point::try_new([10.0, 10.0]).expect("finite point coordinates");
-        let result = locate(dt.tds(), &kernel, &point, None);
+        let result = locate(&dt, &kernel, &point, None);
 
         assert_matches!(result, Ok(LocateResult::Outside));
     }
@@ -2462,12 +2388,12 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
 
         // Point far outside the tetrahedron
         let point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
-        let result = locate(dt.tds(), &kernel, &point, None);
+        let result = locate(&dt, &kernel, &point, None);
 
         assert_matches!(result, Ok(LocateResult::Outside));
     }
@@ -2480,14 +2406,14 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
 
         // Get a valid simplex as hint
-        let hint_simplex = dt.tds().simplex_keys().next().unwrap();
+        let hint_simplex = dt.simplex_keys().next().unwrap();
         let point = Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates");
 
-        let result = locate(dt.tds(), &kernel, &point, Some(hint_simplex));
+        let result = locate(&dt, &kernel, &point, Some(hint_simplex));
         assert_matches!(result, Ok(LocateResult::InsideSimplex(_)));
     }
 
@@ -2498,11 +2424,11 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = RobustKernel::<f64>::default();
 
         let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
-        let result = locate(dt.tds(), &kernel, &point, None);
+        let result = locate(&dt, &kernel, &point, None);
 
         assert_matches!(result, Ok(LocateResult::InsideSimplex(_)));
     }
@@ -2517,14 +2443,13 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let mut tds = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
 
-        let simplex_key = dt.tds().simplex_keys().next().unwrap();
+        let simplex_key = tds.simplex_keys().next().unwrap();
 
         // ⚠️ Dangerous test-only mutation: create a neighbor self-loop on every facet.
-        let simplex = dt.tds_mut_for_repair().simplex_mut(simplex_key).unwrap();
+        let simplex = tds.simplex_mut(simplex_key).unwrap();
         let mut neighbors = NeighborBuffer::<Option<SimplexKey>>::new();
         neighbors.resize(3, Some(simplex_key));
         simplex.set_neighbors_from_keys(neighbors).unwrap();
@@ -2532,7 +2457,7 @@ mod tests {
         // Point outside the simplex: walking will attempt to cross a facet, hit the self-loop,
         // detect a cycle, and fall back to scan.
         let point = Point::try_new([10.0, 10.0]).expect("finite point coordinates");
-        let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, None).unwrap();
+        let (result, stats) = locate_with_stats(&tds, &kernel, &point, None).unwrap();
 
         assert_matches!(result, LocateResult::Outside);
         assert!(stats.fell_back_to_scan());
@@ -2556,15 +2481,15 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
 
-        let simplex_key = dt.tds().simplex_keys().next().unwrap();
+        let simplex_key = dt.simplex_keys().next().unwrap();
         let point = Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates"); // Inside tetrahedron
 
         // Test all facets - point should not be outside any of them
         for facet_idx in 0..4 {
-            let result = is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &point);
+            let result = is_point_outside_facet(&dt, &kernel, simplex_key, facet_idx, &point);
             assert_matches!(result, Ok(false));
         }
     }
@@ -2577,17 +2502,17 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
 
-        let simplex_key = dt.tds().simplex_keys().next().unwrap();
+        let simplex_key = dt.simplex_keys().next().unwrap();
         let point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates"); // Outside tetrahedron
 
         // At least one facet should show the point as outside
         let mut found_outside = false;
         for facet_idx in 0..4 {
             if matches!(
-                is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &point),
+                is_point_outside_facet(&dt, &kernel, simplex_key, facet_idx, &point),
                 Ok(true)
             ) {
                 found_outside = true;
@@ -2607,12 +2532,12 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = RobustKernel::<f64>::default();
 
         // Point very close to an edge but still inside
         let point = Point::try_new([0.01, 0.01]).expect("finite point coordinates");
-        let result = locate(dt.tds(), &kernel, &point, None);
+        let result = locate(&dt, &kernel, &point, None);
 
         // Should either be inside or on the edge, not outside
         match result {
@@ -2627,11 +2552,11 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(vertex!($coords).unwrap()),+
             ];
-            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+            let dt = single_simplex_tds(&vertices);
             let kernel = FastKernel::<f64>::new();
 
             let point = Point::try_new($inside_point).expect("finite point coordinates");
-            let result = locate(dt.tds(), &kernel, &point, None);
+            let result = locate(&dt, &kernel, &point, None);
 
             assert!(
                 matches!(result, Ok(LocateResult::InsideSimplex(_))),
@@ -2691,13 +2616,13 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(vertex!($coords).unwrap()),+
             ];
-            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+            let dt = single_simplex_tds(&vertices);
             let kernel = FastKernel::<f64>::new();
 
-            let start_simplex = dt.tds().simplex_keys().next().unwrap();
+            let start_simplex = dt.simplex_keys().next().unwrap();
             let point = Point::try_new($inside_point).expect("finite point coordinates");
 
-            let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
+            let conflict_simplices = find_conflict_region(&dt, &kernel, &point, start_simplex).unwrap();
 
             assert_eq!(
                 conflict_simplices.len(),
@@ -2761,14 +2686,13 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
 
-        let start_simplex = dt.tds().simplex_keys().next().unwrap();
+        let start_simplex = dt.simplex_keys().next().unwrap();
         let point = Point::try_new([10.0, 10.0, 10.0]).expect("finite point coordinates"); // Far outside
 
-        let conflict_simplices =
-            find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
+        let conflict_simplices = find_conflict_region(&dt, &kernel, &point, start_simplex).unwrap();
 
         // Should find zero simplices in conflict
         assert_eq!(
@@ -2785,14 +2709,14 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
 
         // Create invalid simplex key
         let invalid_simplex = SimplexKey::from(KeyData::from_ffi(999_999));
         let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
 
-        let result = find_conflict_region(dt.tds(), &kernel, &point, invalid_simplex);
+        let result = find_conflict_region(&dt, &kernel, &point, invalid_simplex);
 
         assert!(
             matches!(result, Err(ConflictError::InvalidStartSimplex { .. })),
@@ -2808,14 +2732,13 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = RobustKernel::<f64>::default();
 
-        let start_simplex = dt.tds().simplex_keys().next().unwrap();
+        let start_simplex = dt.simplex_keys().next().unwrap();
         let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
 
-        let conflict_simplices =
-            find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
+        let conflict_simplices = find_conflict_region(&dt, &kernel, &point, start_simplex).unwrap();
 
         assert_eq!(
             conflict_simplices.len(),
@@ -2830,13 +2753,13 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(vertex!($coords).unwrap()),+
             ];
-            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+            let dt = single_simplex_tds(&vertices);
 
-            let start_simplex = dt.tds().simplex_keys().next().unwrap();
+            let start_simplex = dt.simplex_keys().next().unwrap();
             let mut conflict_simplices = SimplexKeyBuffer::new();
             conflict_simplices.push(start_simplex);
 
-            let boundary = extract_cavity_boundary(dt.tds(), &conflict_simplices).unwrap();
+            let boundary = extract_cavity_boundary(&dt, &conflict_simplices).unwrap();
 
             assert_eq!(
                 boundary.len(),
@@ -2904,11 +2827,11 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
 
         let conflict_simplices = SimplexKeyBuffer::new(); // Empty
 
-        let boundary = extract_cavity_boundary(dt.tds(), &conflict_simplices).unwrap();
+        let boundary = extract_cavity_boundary(&dt, &conflict_simplices).unwrap();
 
         assert_eq!(
             boundary.len(),
@@ -2924,14 +2847,13 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
         let point = Point::try_new([0.25, 0.25]).expect("finite point coordinates");
 
         let invalid_hint = SimplexKey::from(KeyData::from_ffi(999_999));
-        let expected_start = dt.tds().simplex_keys().next().unwrap();
-        let (result, stats) =
-            locate_with_stats(dt.tds(), &kernel, &point, Some(invalid_hint)).unwrap();
+        let expected_start = dt.simplex_keys().next().unwrap();
+        let (result, stats) = locate_with_stats(&dt, &kernel, &point, Some(invalid_hint)).unwrap();
 
         assert_matches!(result, LocateResult::InsideSimplex(_));
         assert_eq!(stats.start_simplex, expected_start);
@@ -2946,19 +2868,19 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
-        let expected_simplex = dt.tds().simplex_keys().next().unwrap();
+        let expected_simplex = dt.simplex_keys().next().unwrap();
 
         let inside = Point::try_new([0.2, 0.2]).expect("finite point coordinates");
         let outside = Point::try_new([3.0, 3.0]).expect("finite point coordinates");
 
         assert_eq!(
-            locate_by_scan(dt.tds(), &kernel, &inside).unwrap(),
+            locate_by_scan(&dt, &kernel, &inside).unwrap(),
             LocateResult::InsideSimplex(expected_simplex)
         );
         assert_eq!(
-            locate_by_scan(dt.tds(), &kernel, &outside).unwrap(),
+            locate_by_scan(&dt, &kernel, &outside).unwrap(),
             LocateResult::Outside
         );
     }
@@ -3081,12 +3003,12 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
         let point = Point::try_new([0.2, 0.2]).expect("finite point coordinates");
-        let hint = dt.tds().simplex_keys().next().unwrap();
+        let hint = dt.simplex_keys().next().unwrap();
 
-        let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, Some(hint)).unwrap();
+        let (result, stats) = locate_with_stats(&dt, &kernel, &point, Some(hint)).unwrap();
 
         assert_matches!(result, LocateResult::InsideSimplex(_));
         assert_eq!(stats.start_simplex, hint);
@@ -3113,13 +3035,13 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
 
         let invalid = SimplexKey::from(KeyData::from_ffi(424_242));
         let mut conflict_simplices = SimplexKeyBuffer::new();
         conflict_simplices.push(invalid);
 
-        let err = extract_cavity_boundary(dt.tds(), &conflict_simplices).unwrap_err();
+        let err = extract_cavity_boundary(&dt, &conflict_simplices).unwrap_err();
         assert_matches!(
             err,
             ConflictError::InvalidStartSimplex { simplex_key } if simplex_key == invalid
@@ -3453,11 +3375,11 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
         let point = Point::try_new([0.25_f64, 0.25_f64]).expect("finite point coordinates");
 
-        let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, None).unwrap();
+        let (result, stats) = locate_with_stats(&dt, &kernel, &point, None).unwrap();
 
         assert_matches!(result, LocateResult::InsideSimplex(_));
         assert!(!stats.used_hint, "None hint should set used_hint = false");
@@ -3479,13 +3401,13 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(vertex!($coords).unwrap()),+
             ];
-            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+            let dt = single_simplex_tds(&vertices);
             let kernel = FastKernel::<f64>::new();
 
-            let start_simplex = dt.tds().simplex_keys().next().unwrap();
+            let start_simplex = dt.simplex_keys().next().unwrap();
             let point = Point::try_new($inside_point).expect("finite point coordinates");
 
-            let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
+            let conflict_simplices = find_conflict_region(&dt, &kernel, &point, start_simplex).unwrap();
             assert!(
                 !conflict_simplices.is_empty(),
                 "BFS should find at least 1 conflict simplex for interior point in {}D",
@@ -3493,7 +3415,7 @@ mod tests {
             );
 
             let missed = verify_conflict_region_completeness(
-                dt.tds(),
+                &dt,
                 &kernel,
                 &point,
                 &conflict_simplices,
@@ -3569,14 +3491,14 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
 
         // Point inside the circumcircle — the single simplex should be in conflict.
         let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
         let empty_bfs = SimplexKeyBuffer::new();
 
-        let missed = verify_conflict_region_completeness(dt.tds(), &kernel, &point, &empty_bfs);
+        let missed = verify_conflict_region_completeness(&dt, &kernel, &point, &empty_bfs);
         assert!(
             missed > 0,
             "Empty BFS result should detect missed conflict simplices"
@@ -3593,18 +3515,16 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let kernel = FastKernel::<f64>::new();
 
-        let start_simplex = dt.tds().simplex_keys().next().unwrap();
+        let start_simplex = dt.simplex_keys().next().unwrap();
         let point = Point::try_new([10.0, 10.0, 10.0]).expect("finite point coordinates");
 
-        let conflict_simplices =
-            find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
+        let conflict_simplices = find_conflict_region(&dt, &kernel, &point, start_simplex).unwrap();
         assert!(conflict_simplices.is_empty());
 
-        let missed =
-            verify_conflict_region_completeness(dt.tds(), &kernel, &point, &conflict_simplices);
+        let missed = verify_conflict_region_completeness(&dt, &kernel, &point, &conflict_simplices);
         assert_eq!(
             missed, 0,
             "Outside point should produce zero missed simplices"
@@ -3631,13 +3551,13 @@ mod tests {
             vertex!([4.0, 3.0]).unwrap(),
             vertex!([0.0, 3.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = tds_from_specs(&vertices, &[vec![0, 1, 2], vec![0, 2, 3]]);
         let kernel = FastKernel::<f64>::new();
 
-        let start_simplex = dt.tds().simplex_keys().next().unwrap();
+        let start_simplex = dt.simplex_keys().next().unwrap();
         let point = Point::try_new([2.0, 1.5]).expect("finite point coordinates");
 
-        let full_conflict = find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
+        let full_conflict = find_conflict_region(&dt, &kernel, &point, start_simplex).unwrap();
         assert!(
             full_conflict.len() >= 2,
             "Expected ≥2 conflict simplices for center query in 2-triangle mesh, got {}",
@@ -3648,7 +3568,7 @@ mod tests {
         let mut truncated = SimplexKeyBuffer::new();
         truncated.push(full_conflict[0]);
 
-        let missed = verify_conflict_region_completeness(dt.tds(), &kernel, &point, &truncated);
+        let missed = verify_conflict_region_completeness(&dt, &kernel, &point, &truncated);
         assert!(
             missed >= 1,
             "Truncated BFS should detect at least 1 missed conflict simplex, got {missed}"

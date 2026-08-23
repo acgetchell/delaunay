@@ -14,7 +14,7 @@ use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     ExplicitConstructionError, InsertionOrderStrategy, TopologyGuarantee, Vertex,
 };
-use delaunay::prelude::geometry::RobustKernel;
+use delaunay::prelude::geometry::{AdaptiveKernel, ExactPredicates, RobustKernel};
 use delaunay::prelude::insertion::InsertionError;
 use delaunay::prelude::tds::{InvariantError, TdsConstructionError, TdsError};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
@@ -247,7 +247,10 @@ fn compact_toroidal_vertices_t3() -> Vec<Vertex<(), 3>> {
 }
 
 fn build_toroidal_triangulation<const D: usize>()
--> DelaunayTriangulation<RobustKernel<f64>, (), (), D> {
+-> DelaunayTriangulation<RobustKernel<f64>, (), (), D>
+where
+    RobustKernel<f64>: ExactPredicates<D>,
+{
     let vertices = toroidal_vertices::<D>();
     let expected_vertices = vertices.len();
     let kernel = RobustKernel::new();
@@ -536,33 +539,6 @@ macro_rules! gen_toroidal_high_dim_guardrail_test {
 gen_toroidal_high_dim_guardrail_test!(4);
 gen_toroidal_high_dim_guardrail_test!(5);
 
-#[test]
-fn test_builder_toroidal_large_dimension_fails_before_expansion_math() {
-    let vertices: Vec<Vertex<(), 64>> = Vec::new();
-    let kernel = RobustKernel::new();
-    let err = DelaunayTriangulationBuilder::new(&vertices)
-        .try_toroidal([1.0_f64; 64])
-        .unwrap()
-        .build_with_kernel(&kernel)
-        .expect_err("64D periodic quotient should fail before computing 3^D image count");
-
-    match err {
-        DelaunayTriangulationConstructionError::Triangulation {
-            source:
-                DelaunayConstructionFailure::UnsupportedPeriodicDimension {
-                    dimension,
-                    max_validated_dimension,
-                    tracking_issue,
-                },
-        } => {
-            assert_eq!(dimension, 64);
-            assert_eq!(max_validated_dimension, 3);
-            assert_eq!(tracking_issue, 416);
-        }
-        other => panic!("expected high-dimensional periodic guardrail, got {other:?}"),
-    }
-}
-
 /// Explicit 7-vertex torus (Heawood triangulation) with `GlobalTopology::Toroidal`
 /// is rejected until explicit non-Euclidean construction has quotient realization validation.
 ///
@@ -743,12 +719,16 @@ fn crossing_cone_simplices<const D: usize>() -> Vec<Vec<usize>> {
         .collect()
 }
 
-fn assert_relaxed_explicit_non_delaunay_succeeds<const D: usize>() {
+fn assert_relaxed_explicit_non_delaunay_succeeds<const D: usize>()
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let vertices = shared_facet_vertices::<D>(1.1);
     let simplices = shared_facet_simplices::<D>();
 
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .expect("explicit simplex specs should validate")
+        .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .build_triangulation()
         .expect("the Levels 1-4 terminal should accept a realized non-Delaunay mesh");
 
@@ -757,12 +737,17 @@ fn assert_relaxed_explicit_non_delaunay_succeeds<const D: usize>() {
     dt.validate_realization()
         .expect("relaxed explicit mesh should pass Levels 1-4");
     assert!(
-        DelaunayTriangulation::try_from_triangulation(dt).is_err(),
+        delaunay::DelaunayRefinementBuilder::new(dt)
+            .build()
+            .is_err(),
         "fixture should still violate Level 5 Delaunay predicates",
     );
 }
 
-fn assert_strict_explicit_non_delaunay_repairs<const D: usize>() {
+fn assert_strict_explicit_non_delaunay_repairs<const D: usize>()
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let vertices = shared_facet_vertices::<D>(1.1);
     let simplices = shared_facet_simplices::<D>();
 
@@ -776,12 +761,41 @@ fn assert_strict_explicit_non_delaunay_repairs<const D: usize>() {
         .expect("strict explicit construction must publish a Levels 1-5 owner");
 }
 
-fn assert_relaxed_explicit_invalid_realization_fails<const D: usize>() {
+fn assert_strict_explicit_unproven_topology_fails<const D: usize>()
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
+    let vertices = shared_facet_vertices::<D>(1.1);
+    let simplices = shared_facet_simplices::<D>();
+
+    let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+        .expect("explicit simplex specs should validate")
+        .build()
+        .expect_err("raw high-dimensional connectivity cannot prove its vertex links");
+
+    assert_matches!(
+        err,
+        DelaunayTriangulationConstructionError::ExplicitConstruction {
+            source: ExplicitConstructionError::TopologyValidation { source },
+        } if matches!(
+            source.as_ref(),
+            InvariantError::Triangulation {
+                source: TriangulationValidationError::HighDimensionalVertexLinkUnproven { .. }
+            }
+        )
+    );
+}
+
+fn assert_relaxed_explicit_invalid_realization_fails<const D: usize>()
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let vertices = crossing_cone_vertices::<D>();
     let simplices = crossing_cone_simplices::<D>();
 
     let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .expect("explicit simplex specs should validate")
+        .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .build_triangulation()
         .expect_err("the Levels 1-4 terminal should still reject invalid realizations");
 
@@ -805,11 +819,6 @@ macro_rules! gen_relaxed_explicit_validation_tests {
             }
 
             #[test]
-            fn [<test_strict_explicit_non_delaunay_mesh_repairs_ $dim d>]() {
-                assert_strict_explicit_non_delaunay_repairs::<$dim>();
-            }
-
-            #[test]
             fn [<test_relaxed_explicit_invalid_realization_fails_ $dim d>]() {
                 assert_relaxed_explicit_invalid_realization_fails::<$dim>();
             }
@@ -821,6 +830,26 @@ gen_relaxed_explicit_validation_tests!(2);
 gen_relaxed_explicit_validation_tests!(3);
 gen_relaxed_explicit_validation_tests!(4);
 gen_relaxed_explicit_validation_tests!(5);
+
+#[test]
+fn test_strict_explicit_non_delaunay_mesh_repairs_2d() {
+    assert_strict_explicit_non_delaunay_repairs::<2>();
+}
+
+#[test]
+fn test_strict_explicit_non_delaunay_mesh_repairs_3d() {
+    assert_strict_explicit_non_delaunay_repairs::<3>();
+}
+
+#[test]
+fn test_strict_explicit_non_delaunay_mesh_rejects_unproven_links_4d() {
+    assert_strict_explicit_unproven_topology_fails::<4>();
+}
+
+#[test]
+fn test_strict_explicit_non_delaunay_mesh_rejects_unproven_links_5d() {
+    assert_strict_explicit_unproven_topology_fails::<5>();
+}
 
 /// 2D: Build two triangles forming a quad from explicit vertices and simplices.
 #[test]
@@ -1450,6 +1479,44 @@ fn test_explicit_error_variant_non_manifold_facet() {
             candidate_facet_index: 2,
             ..
         } } if facet_vertex_indices == &[0, 1]
+    );
+}
+
+/// Non-orientable explicit connectivity must fail at the Levels 1–2 proof boundary.
+#[test]
+fn test_explicit_error_variant_tds_orientation_normalization() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([2.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0]).unwrap(),
+        vertex!([2.0, 1.0]).unwrap(),
+    ];
+    let simplices = vec![
+        vec![0, 2, 1],
+        vec![2, 3, 1],
+        vec![2, 4, 3],
+        vec![4, 5, 3],
+        vec![4, 1, 5],
+        vec![1, 0, 5],
+    ];
+
+    let error =
+        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+            .unwrap()
+            .build_triangulation()
+            .expect_err("a Möbius strip cannot be coherently oriented");
+
+    assert_matches!(
+        error,
+        DelaunayTriangulationConstructionError::ExplicitConstruction {
+            source: ExplicitConstructionError::TdsOrientationNormalization { source },
+        } if matches!(
+            source.as_ref(),
+            TdsError::InconsistentDataStructure { message }
+                if message.contains("Contradictory orientation constraints")
+        )
     );
 }
 

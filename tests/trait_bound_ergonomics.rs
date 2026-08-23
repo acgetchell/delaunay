@@ -4,19 +4,16 @@ use std::{assert_matches, hash::Hasher};
 
 use delaunay::DelaunayTriangulation;
 use delaunay::prelude::Triangulation;
-use delaunay::prelude::algorithms::{
-    ConflictError, LocateError, extract_cavity_boundary, find_conflict_region, locate,
-    locate_with_stats,
+use delaunay::prelude::algorithms::{LocateError, locate, locate_with_stats};
+use delaunay::prelude::construction::{
+    DelaunayIncrementalBuilder, GlobalTopology, TopologyGuarantee,
 };
-use delaunay::prelude::collections::SimplexKeyBuffer;
-use delaunay::prelude::construction::{GlobalTopology, TopologyGuarantee, TopologyKind};
 use delaunay::prelude::geometry::{
     Coordinate, CoordinateValidationError, FastKernel, Point, surface_measure,
 };
 use delaunay::prelude::query::{FacetIncidenceAnalysis, QueryError, TopologyIndexBuildError};
 use delaunay::prelude::tds::{
-    FacetView, InvariantError, SimplexKey, Tds, TdsError, Vertex, VertexKey,
-    verify_facet_index_consistency,
+    FacetView, InvariantError, SimplexKey, Tds, Vertex, VertexKey, verify_facet_index_consistency,
 };
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
 use uuid::Uuid;
@@ -120,32 +117,17 @@ fn triangulation_topology_metadata_setter_does_not_require_kernel_bounds() {
 
 #[test]
 fn read_only_topology_apis_accept_non_datatype_payloads() {
-    let tri: Triangulation<FastKernel<f64>, Payload, Payload, 2> =
-        Triangulation::new_empty(FastKernel::new());
-
-    assert_eq!(tri.number_of_vertices(), 0);
-    assert_eq!(tri.number_of_simplices(), 0);
-    assert_eq!(
-        tri.boundary_facets()
-            .unwrap()
-            .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
-            .unwrap(),
-        0
-    );
-
-    let incidence = tri.incidence().unwrap();
-    let edge_index = tri.build_edge_index().unwrap();
-    let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
-    assert_eq!(edge_index.number_of_edges(), 0);
-    assert_eq!(
-        incidence.number_of_adjacent_simplices(VertexKey::default()),
-        0
-    );
-    assert_eq!(edge_index.number_of_incident_edges(VertexKey::default()), 0);
-    assert_eq!(
-        neighbor_index.number_of_simplex_neighbors(SimplexKey::default()),
-        0
-    );
+    fn triangulation_queries_compile(tri: &Triangulation<FastKernel<f64>, Payload, Payload, 2>) {
+        let _ = tri.number_of_vertices();
+        let _ = tri.number_of_simplices();
+        let _ = tri.boundary_facets();
+        let _ = tri.incidence();
+        let _ = tri.build_edge_index();
+        let _ = tri.build_simplex_neighbor_index();
+    }
+    let compile_contract: fn(&Triangulation<FastKernel<f64>, Payload, Payload, 2>) =
+        triangulation_queries_compile;
+    std::hint::black_box(compile_contract);
 
     let tds: Tds<Payload, Payload, 2> = Tds::empty();
     assert!(tds.build_facet_to_simplices_index().unwrap().is_empty());
@@ -157,14 +139,29 @@ fn read_only_topology_apis_accept_non_datatype_payloads() {
 
 #[test]
 fn locate_and_conflict_apis_accept_non_datatype_payloads() {
+    fn owner_queries_compile(
+        tri: &Triangulation<FastKernel<f64>, Payload, Payload, 2>,
+        dt: &DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2>,
+        point: &Point<2>,
+    ) {
+        let _ = tri.locate(point, None);
+        let _ = tri.locate_with_stats(point, None);
+        let _ = tri.find_conflict_region(point, SimplexKey::default());
+        let _ = dt.locate(point, None);
+        let _ = dt.locate_with_stats(point, None);
+        let _ = dt.find_conflict_region(point, SimplexKey::default());
+    }
+    type OwnerQueriesCompileFn = fn(
+        &Triangulation<FastKernel<f64>, Payload, Payload, 2>,
+        &DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2>,
+        &Point<2>,
+    );
+    let compile_contract: OwnerQueriesCompileFn = owner_queries_compile;
+    std::hint::black_box(compile_contract);
+
     let point = Point::try_new([0.25, 0.25]).unwrap();
     let kernel = FastKernel::new();
     let tds: Tds<Payload, Payload, 2> = Tds::empty();
-    let empty_conflict_region = SimplexKeyBuffer::default();
-    let tri: Triangulation<FastKernel<f64>, Payload, Payload, 2> =
-        Triangulation::new_empty(FastKernel::new());
-    let dt: DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2> =
-        DelaunayTriangulation::with_empty_kernel(FastKernel::new());
 
     assert_matches!(
         locate(&tds, &kernel, &point, None),
@@ -173,40 +170,6 @@ fn locate_and_conflict_apis_accept_non_datatype_payloads() {
     assert_matches!(
         locate_with_stats(&tds, &kernel, &point, None),
         Err(LocateError::EmptyTriangulation)
-    );
-    assert_matches!(
-        find_conflict_region(&tds, &kernel, &point, SimplexKey::default()),
-        Err(ConflictError::InvalidStartSimplex { .. })
-    );
-    assert_matches!(
-        extract_cavity_boundary(&tds, &empty_conflict_region),
-        Ok(boundary) if boundary.is_empty()
-    );
-
-    assert_matches!(
-        tri.locate(&point, None),
-        Err(LocateError::EmptyTriangulation)
-    );
-    assert_matches!(
-        tri.locate_with_stats(&point, None),
-        Err(LocateError::EmptyTriangulation)
-    );
-    assert_matches!(
-        tri.find_conflict_region(&point, SimplexKey::default()),
-        Err(ConflictError::InvalidStartSimplex { .. })
-    );
-
-    assert_matches!(
-        dt.locate(&point, None),
-        Err(LocateError::EmptyTriangulation)
-    );
-    assert_matches!(
-        dt.locate_with_stats(&point, None),
-        Err(LocateError::EmptyTriangulation)
-    );
-    assert_matches!(
-        dt.find_conflict_region(&point, SimplexKey::default()),
-        Err(ConflictError::InvalidStartSimplex { .. })
     );
 }
 
@@ -219,58 +182,43 @@ fn tds_equality_accepts_non_datatype_payloads() {
 }
 
 #[test]
-fn delaunay_empty_query_wrappers_accept_non_datatype_payloads()
--> Result<(), TraitBoundErgonomicsError> {
-    let mut dt: DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2> =
-        DelaunayTriangulation::with_empty_kernel(FastKernel::new());
+fn delaunay_query_wrappers_accept_non_datatype_payloads() {
+    // Compile-only contract: `Payload` deliberately does not implement `DataType`.
+    fn queries_compile(
+        dt: &mut DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2>,
+    ) -> Result<(), TraitBoundErgonomicsError> {
+        let _ = dt.number_of_vertices();
+        let _ = dt.number_of_simplices();
+        let _ = dt.topology_guarantee();
+        let _ = dt.global_topology();
+        let _ = dt.topology_kind();
+        dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .unwrap();
+        let _ = dt.facets();
+        let _ = dt.edges();
+        let _ = dt.incident_edges(VertexKey::default());
+        let _ = dt.simplex_neighbors(SimplexKey::default());
+        let _ = dt.simplex_vertices(SimplexKey::default());
+        let _ = dt.vertex_coords(VertexKey::default());
+        let _ = dt.incidence()?;
+        let _ = dt.build_edge_index()?;
+        let _ = dt.build_simplex_neighbor_index()?;
+        Ok(())
+    }
+    type QueriesCompileFn = fn(
+        &mut DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2>,
+    ) -> Result<(), TraitBoundErgonomicsError>;
+    let compile_contract: QueriesCompileFn = queries_compile;
+    std::hint::black_box(compile_contract);
 
-    assert_eq!(dt.number_of_vertices(), 0);
-    assert_eq!(dt.number_of_simplices(), 0);
-    assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
-    assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
-    assert_eq!(dt.topology_kind(), TopologyKind::Euclidean);
-
-    dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
-        .unwrap();
-    assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
-
-    assert!(dt.facets().next().is_none());
-    assert_eq!(dt.edges().count(), 0);
-    assert_eq!(dt.incident_edges(VertexKey::default()).count(), 0);
-    assert_eq!(dt.simplex_neighbors(SimplexKey::default()).count(), 0);
+    let empty: DelaunayTriangulation<_, (), (), 2> =
+        DelaunayIncrementalBuilder::new().finish().unwrap();
+    let point = Point::try_new([0.25, 0.25]).unwrap();
+    assert_eq!(empty.number_of_vertices(), 0);
     assert_matches!(
-        dt.simplex_vertices(SimplexKey::default()),
-        Err(TdsError::SimplexNotFound { .. })
+        empty.locate(&point, None),
+        Err(LocateError::EmptyTriangulation)
     );
-    assert_eq!(dt.vertex_coords(VertexKey::default()), None);
-
-    let incidence = dt.incidence()?;
-    let edge_index = dt.build_edge_index()?;
-    let neighbor_index = dt.build_simplex_neighbor_index()?;
-    assert_eq!(edge_index.edges().count(), 0);
-    assert_eq!(
-        incidence.adjacent_simplices(VertexKey::default()).count(),
-        0
-    );
-    assert_eq!(edge_index.incident_edges(VertexKey::default()).count(), 0);
-    assert_eq!(
-        neighbor_index
-            .simplex_neighbors(SimplexKey::default())
-            .count(),
-        0
-    );
-
-    let dt_with_topology: DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2> =
-        DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
-            FastKernel::new(),
-            TopologyGuarantee::Pseudomanifold,
-        );
-    assert_eq!(
-        dt_with_topology.topology_guarantee(),
-        TopologyGuarantee::Pseudomanifold
-    );
-
-    Ok(())
 }
 
 #[test]

@@ -19,7 +19,7 @@ use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::delaunay_model::DelaunayTriangulation;
 use crate::geometry::coordinate_range::{CoordinateRange, CoordinateRangeError};
-use crate::geometry::kernel::{AdaptiveKernel, Kernel};
+use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates};
 use crate::geometry::point::Point;
 use crate::triangulation::construction::{
     FinalTopologyValidationContext, TriangulationConstructionError,
@@ -278,7 +278,7 @@ fn validate_random_triangulation<K, U, V, const D: usize>(
     dt: DelaunayTriangulation<K, U, V, D>,
 ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
 where
-    K: Kernel<D, Scalar = f64>,
+    K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -315,7 +315,7 @@ fn random_triangulation_try_build<K, U, V, const D: usize>(
     topology_guarantee: TopologyGuarantee,
 ) -> Result<Option<DelaunayTriangulation<K, U, V, D>>, DelaunayTriangulationConstructionError>
 where
-    K: Kernel<D, Scalar = f64>,
+    K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -377,6 +377,7 @@ fn random_triangulation_try_with_vertices<U, V, const D: usize>(
 where
     U: DataType,
     V: DataType,
+    AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     let adaptive_kernel = make_adaptive_kernel();
     let mut last_error = None;
@@ -567,6 +568,7 @@ pub fn try_generate_random_triangulation<U, V, const D: usize>(
 where
     U: DataType,
     V: DataType,
+    AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
@@ -641,6 +643,7 @@ pub fn try_generate_random_triangulation_with_topology_guarantee<U, V, const D: 
 where
     U: DataType,
     V: DataType,
+    AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     let bounds = CoordinateRange::try_from(bounds)
         .map_err(RandomPointGenerationError::from)
@@ -727,6 +730,7 @@ pub fn generate_random_triangulation_in_range<U, V, const D: usize>(
 where
     U: DataType,
     V: DataType,
+    AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     generate_random_triangulation_in_range_with_topology_guarantee(
         n_points,
@@ -813,6 +817,7 @@ pub fn generate_random_triangulation_in_range_with_topology_guarantee<U, V, cons
 where
     U: DataType,
     V: DataType,
+    AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     let n_points = RandomPointCount::<D>::try_new(n_points)?.get();
 
@@ -1339,6 +1344,7 @@ impl<const D: usize, U, V> RandomTriangulationBuilder<D, U, V> {
     where
         U: DataType,
         V: DataType,
+        AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         let n_points = self.n_points.get();
 
@@ -1444,7 +1450,6 @@ mod tests {
         assert!(triangulation.number_of_simplices() > 0);
         assert!(
             triangulation
-                .tds()
                 .vertices()
                 .all(|(_, vertex)| vertex.data().is_none())
         );
@@ -1642,7 +1647,6 @@ mod tests {
                 .build()
                 .unwrap();
         let vertex_data: Vec<_> = triangulation_with_data
-            .tds()
             .vertices()
             .filter_map(|(_, vertex)| vertex.data().copied())
             .collect();
@@ -1812,7 +1816,7 @@ mod tests {
             "Expected at least 3 vertices in 2D triangulation with data, got {}",
             tri_with_char_array.number_of_vertices()
         );
-        tri_with_char_array.tds().is_valid().unwrap();
+        tri_with_char_array.is_valid_structure().unwrap();
 
         // Convert the char array to a string to demonstrate string-like usage
         let char_array_data = ['v', 'e', 'r', 't', 'e', 'x', '_', 'd'];
@@ -1849,7 +1853,7 @@ mod tests {
             "Expected at least 4 vertices in 3D triangulation with data, got {}",
             tri_with_int_data.number_of_vertices()
         );
-        tri_with_int_data.tds().is_valid().unwrap();
+        tri_with_int_data.is_valid_structure().unwrap();
 
         // Test without data (None)
         let tri_no_data = try_generate_random_triangulation::<(), (), 2>(
@@ -1865,6 +1869,6 @@ mod tests {
             "Expected at least 3 vertices in 2D triangulation without data, got {}",
             tri_no_data.number_of_vertices()
         );
-        tri_no_data.tds().is_valid().unwrap();
+        tri_no_data.is_valid_structure().unwrap();
     }
 }

@@ -87,7 +87,7 @@ Public API: `DelaunayTriangulation::boundary_facets`
 
 #### Convex hull
 
-Public API: `ConvexHull::from_triangulation`
+Public API: `ConvexHull::try_from_triangulation`
 
 | Benchmark ID | Dimension | Input | Variant | Mean | 95% CI |
 |--------------|-----------|-------|---------|------|--------|

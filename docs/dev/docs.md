@@ -23,6 +23,9 @@ repository.
 - `docs/dev/notebooks.md` owns notebook cell identity, execution, and artifact
   policy.
 - `docs/code_organization.md` is the required-reading architecture hub.
+- `docs/construction_and_validation.md` owns proof-bearing construction
+  vocabulary, promotion boundaries, validation levels, and validation-policy
+  guidance.
 - `docs/architecture/README.md` indexes focused architecture references.
 - `REFERENCES.md` owns literature references.
 - `CITATION.cff` owns citation metadata.

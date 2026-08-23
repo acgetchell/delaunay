@@ -1126,8 +1126,8 @@ mod tests {
     use super::super::test_support::init_tracing;
     use super::super::*;
     use super::*;
-    use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
-    use crate::core::collections::Uuid;
+    use crate::core::algorithms::insertion::repair_neighbor_pointers;
+    use crate::core::test_support::{assert_same_vertex_simplex_topology, snapshot_topology};
     use crate::vertex;
     use proptest::prelude::*;
     use slotmap::KeyData;
@@ -1671,69 +1671,6 @@ mod tests {
         );
         assert_simplex_offsets_by_vertex(&tds, neighbor_key_glue, &expected_left_replacement);
         assert!(tds.is_valid().is_ok());
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    struct TopologySnapshot {
-        vertices: Vec<Uuid>,
-        simplex_vertices: Vec<Vec<Uuid>>,
-        simplex_neighbors: Vec<Vec<Option<Uuid>>>,
-    }
-
-    fn snapshot_topology<const D: usize>(tds: &Tds<(), (), D>) -> TopologySnapshot {
-        let mut vertices: Vec<Uuid> = tds.vertices().map(|(_, vertex)| vertex.uuid()).collect();
-        vertices.sort();
-
-        let mut simplex_vertices: Vec<Vec<Uuid>> = tds
-            .simplices()
-            .map(|(_, simplex)| {
-                let mut uuids: Vec<Uuid> = simplex
-                    .vertices()
-                    .iter()
-                    .map(|&vkey| tds.vertex(vkey).expect("vertex key missing in TDS").uuid())
-                    .collect();
-                uuids.sort();
-                uuids
-            })
-            .collect();
-        simplex_vertices.sort();
-
-        let simplex_neighbors = snapshot_neighbors(tds);
-
-        TopologySnapshot {
-            vertices,
-            simplex_vertices,
-            simplex_neighbors,
-        }
-    }
-
-    fn snapshot_neighbors<const D: usize>(tds: &Tds<(), (), D>) -> Vec<Vec<Option<Uuid>>> {
-        let mut simplex_neighbors: Vec<Vec<Option<Uuid>>> = tds
-            .simplices()
-            .map(|(_, simplex)| {
-                let mut neighbors: Vec<Option<Uuid>> = simplex
-                    .neighbors()
-                    .map(|neighbor_keys| {
-                        neighbor_keys
-                            .map(|neighbor| {
-                                neighbor.and_then(|neighbor_key| {
-                                    tds.simplex(neighbor_key).map(Simplex::uuid)
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                neighbors.sort();
-                neighbors
-            })
-            .collect();
-        simplex_neighbors.sort();
-        simplex_neighbors
-    }
-
-    fn assert_same_vertex_simplex_topology(actual: &TopologySnapshot, expected: &TopologySnapshot) {
-        assert_eq!(actual.vertices, expected.vertices);
-        assert_eq!(actual.simplex_vertices, expected.simplex_vertices);
     }
 
     #[test]

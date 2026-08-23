@@ -13,7 +13,7 @@ use delaunay::prelude::construction::{
     DelaunayConstructionFailure, DelaunayTriangulation, DelaunayTriangulationBuilder,
     DelaunayTriangulationConstructionError, TopologyGuarantee, Vertex,
 };
-use delaunay::prelude::delaunayize::{DelaunayizeConfig, delaunayize};
+use delaunay::prelude::delaunayize::DelaunayRefinementBuilder;
 use delaunay::prelude::generators::{
     RandomPointCount, generate_random_points_in_ball_seeded,
     try_generate_random_triangulation_with_topology_guarantee,
@@ -262,7 +262,9 @@ fn debug_issue_120_empty_circumsphere_5d() {
         .topology_guarantee(TopologyGuarantee::PLManifold)
         .build_triangulation()
         .unwrap_or_else(|err| panic!("5D debug configuration failed to construct: {err}"));
-    let converted = delaunayize(tri, DelaunayizeConfig::default())
+    let converted = DelaunayRefinementBuilder::new(tri)
+        .repair_by_flips()
+        .build()
         .unwrap_or_else(|err| panic!("5D debug conversion failed: {err}"));
     let stats = &converted.outcome.delaunay_repair;
     test_debug_info!(
@@ -277,7 +279,9 @@ fn debug_issue_120_empty_circumsphere_5d() {
         .topology_guarantee(TopologyGuarantee::PLManifold)
         .build_triangulation_with_kernel(&RobustKernel::new())
         .unwrap_or_else(|err| panic!("5D robust fixture should realize: {err}"));
-    let converted_robust = delaunayize(tri_robust, DelaunayizeConfig::default())
+    let converted_robust = DelaunayRefinementBuilder::new(tri_robust)
+        .repair_by_flips()
+        .build()
         .unwrap_or_else(|err| panic!("5D robust fixture should convert: {err}"));
     let robust_stats = &converted_robust.outcome.delaunay_repair;
     test_debug_info!(
@@ -879,7 +883,9 @@ fn regression_issue_228_exact_predicate_paths_3d_fast() {
         .topology_guarantee(TopologyGuarantee::PLManifold)
         .build_triangulation()
         .expect("3D exact-predicate fast regression must cross the Levels 1-4 boundary (#228)");
-    let dt = delaunayize(triangulation, DelaunayizeConfig::default())
+    let dt = DelaunayRefinementBuilder::new(triangulation)
+        .repair_by_flips()
+        .build()
         .expect("3D exact-predicate fast regression repair must not fail (#228)")
         .triangulation;
 

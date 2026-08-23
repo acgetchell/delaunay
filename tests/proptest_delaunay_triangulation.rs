@@ -16,8 +16,8 @@
 //! - **Incremental insertion validity** - Triangulation remains valid after each insertion
 //! - **Duplicate coordinate rejection** - Geometric duplicate detection at insertion time
 //!
-//! ### Delaunay Property (Fast O(N) via Flip Predicates)
-//! - **Empty circumsphere condition** - No vertex lies strictly inside any simplex's circumsphere (2D-5D; verified via flip predicates)
+//! ### Delaunay Property
+//! - **Empty circumsphere condition** - No vertex lies strictly inside any simplex's circumsphere (2D-5D)
 //! - **Insertion-order robustness** - Levels 1–3 validity across insertion orders (2D-5D; Delaunay property not asserted; see Issue #120)
 //! - **Duplicate cloud integration** - Full pipeline with messy real-world inputs (2D-5D: duplicates + near-duplicates)
 //!
@@ -27,20 +27,21 @@
 //!
 //! ## Performance Note
 //!
-//! Delaunay property validation now uses `DelaunayTriangulation::verify_via_flip_predicates()` which checks
-//! local flip configurations (O(simplices)) instead of the naive O(simplices × vertices) brute-force.
-//! This provides ~40-100x speedup for property-based testing while remaining equally correct.
+//! Delaunay property validation uses a fast local certificate for the common
+//! case and the exact global empty-circumsphere check when the stronger local
+//! flip-normal-form check is inconclusive.
 
 #[macro_use]
 #[path = "common/proptest_config.rs"]
 mod proptest_config;
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, DedupPolicy, DelaunayTriangulation, TopologyGuarantee, Vertex,
+    ConstructionOptions, DedupPolicy, DelaunayIncrementalBuilder, DelaunayIncrementalBuilderError,
+    DelaunayTriangulation, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::insertion::InsertionOutcome;
-use delaunay::prelude::validation::ValidationPolicy;
+use delaunay::prelude::validation::{DelaunayTriangulationValidationError, ValidationPolicy};
 use delaunay::try_vertices_from_points;
 use delaunay::vertex;
 use proptest::prelude::*;
@@ -423,9 +424,12 @@ fn shuffle_points<const D: usize>(mut points: Vec<Point<D>>, seed: u64) -> Vec<P
 /// sequence.
 fn assert_on_suspicion_sequence_valid<const D: usize>(
     points: Vec<Point<D>>,
-) -> Result<(), TestCaseError> {
-    let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+) -> Result<(), TestCaseError>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
+    let mut dt: DelaunayIncrementalBuilder<AdaptiveKernel<f64>, (), (), D> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
     dt.try_set_validation_policy(ValidationPolicy::OnSuspicion)
         .unwrap();
 
@@ -433,11 +437,20 @@ fn assert_on_suspicion_sequence_valid<const D: usize>(
         let result = dt.insert_best_effort_with_statistics(vertex!(point.into()).unwrap());
 
         if dt.number_of_simplices() > 0 {
-            let validation = dt.validate();
+            let structure_validation = dt.validate_structure();
             prop_assert!(
-                validation.is_ok(),
-                "{D}D OnSuspicion validation failed after cospherical attempt {idx}: result={result:?}, validation={:?}",
-                validation.err()
+                structure_validation.is_ok(),
+                "{D}D OnSuspicion structure validation failed after cospherical attempt {idx}: result={result:?}, validation={:?}",
+                structure_validation.err()
+            );
+
+            let topology_validation = dt
+                .owner_topology_report()
+                .expect("a nonempty simplex set has a published owner");
+            prop_assert!(
+                topology_validation.is_ok(),
+                "{D}D OnSuspicion topology validation failed after cospherical attempt {idx}: result={result:?}, validation={:?}",
+                topology_validation.err()
             );
         }
     }
@@ -447,10 +460,10 @@ fn assert_on_suspicion_sequence_valid<const D: usize>(
         "{D}D OnSuspicion cospherical sequence did not create any simplices"
     );
 
-    let validation = dt.validate();
+    let validation = dt.finish();
     prop_assert!(
         validation.is_ok(),
-        "{D}D OnSuspicion final Level 1-4 validation failed after cospherical sequence: {:?}",
+        "{D}D OnSuspicion final Levels 1-5 validation failed after cospherical sequence: {:?}",
         validation.err()
     );
 
@@ -499,7 +512,10 @@ fn assert_non_finite_point_rejected_and_preserves_validity<const D: usize>(
     coords: [f64; D],
     axis: usize,
     value: f64,
-) -> Result<(), TestCaseError> {
+) -> Result<(), TestCaseError>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     prop_assert_eq!(
         Point::<D>::try_new(coords),
         Err(CoordinateValidationError::InvalidCoordinate {
@@ -509,17 +525,12 @@ fn assert_non_finite_point_rejected_and_preserves_validity<const D: usize>(
         })
     );
 
-    let empty: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let empty: DelaunayIncrementalBuilder<AdaptiveKernel<f64>, (), (), D> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     prop_assert_eq!(empty.number_of_vertices(), 0);
     prop_assert_eq!(empty.number_of_simplices(), 0);
-    let empty_validation = empty.validate();
-    prop_assert!(
-        empty_validation.is_ok(),
-        "{D}D empty triangulation became invalid after rejected non-finite insertion: {:?}",
-        empty_validation.err()
-    );
+    prop_assert!(empty.finish().is_ok());
 
     let dt = DelaunayTriangulation::builder(initial_vertices)
         .topology_guarantee(TopologyGuarantee::PLManifold)
@@ -559,7 +570,7 @@ enum InsertionOrder3dRunStatus {
 }
 
 fn insert_vertices_3d_no_retry_or_skip(
-    dt: &mut DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>,
+    dt: &mut DelaunayIncrementalBuilder<AdaptiveKernel<f64>, (), (), 3>,
     vertices: &[Vertex<(), 3>],
 ) -> InsertionOrder3dRunStatus {
     for (idx, v) in vertices.iter().enumerate() {
@@ -647,8 +658,8 @@ fn regression_insertion_order_3d_case_001() {
         .expect("finite point coordinates"),
     ];
     let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 3> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     for (idx, v) in vertices.iter().enumerate() {
         let result = dt.insert_best_effort_with_statistics(*v);
@@ -1390,12 +1401,12 @@ fn prop_insertion_order_robustness_3d() {
         rejected_run_a_used_retry: usize,
         rejected_run_a_used_skip: usize,
         rejected_run_a_non_retryable_error: usize,
-        rejected_run_a_invalid_levels_1_to_3: usize,
+        rejected_run_a_invalid_levels_1_to_3_publication: usize,
 
         rejected_run_b_used_retry: usize,
         rejected_run_b_used_skip: usize,
         rejected_run_b_non_retryable_error: usize,
-        rejected_run_b_invalid_levels_1_to_3: usize,
+        rejected_run_b_invalid_levels_1_to_3_publication: usize,
 
         rejected_new_a_failed: usize,
         rejected_new_a_skipped_vertices: usize,
@@ -1458,8 +1469,8 @@ fn prop_insertion_order_robustness_3d() {
         // Build triangulation A via incremental insertion, requiring a "clean run":
         // - no retry/perturbation (stats.attempts == 1 for all insertions)
         // - no skipped vertices
-        let mut dt_a: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+        let mut dt_a: DelaunayIncrementalBuilder<_, (), (), 3> =
+            DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
         let run_a = insert_vertices_3d_no_retry_or_skip(&mut dt_a, &points);
         match run_a {
             InsertionOrder3dRunStatus::Clean => {}
@@ -1483,21 +1494,36 @@ fn prop_insertion_order_robustness_3d() {
             }
         }
 
-        let validation_a = dt_a.as_triangulation().validate();
-        if let Err(e) = validation_a {
-            stats.rejected_run_a_invalid_levels_1_to_3 += 1;
-            return Err(TestCaseError::reject(format!(
-                "3D: Triangulation A (clean insertion run) failed Levels 1–3 validation (treated as out of scope): {e:?}"
-            )));
-        }
+        let dt_a = match dt_a.finish() {
+            Ok(dt) => dt,
+            Err(error)
+                if matches!(
+                    &error,
+                    DelaunayIncrementalBuilderError::FinalValidation {
+                        source: DelaunayTriangulationValidationError::Tds { .. }
+                            | DelaunayTriangulationValidationError::Triangulation { .. },
+                    }
+                ) =>
+            {
+                stats.rejected_run_a_invalid_levels_1_to_3_publication += 1;
+                return Err(TestCaseError::reject(format!(
+                    "3D: Triangulation A (clean insertion run) failed Levels 1–3 publication validation (treated as out of scope): {error:?}"
+                )));
+            }
+            Err(error) => {
+                return Err(TestCaseError::fail(format!(
+                    "3D: Triangulation A (clean insertion run) failed Level 4 or Level 5 certification: {error:?}"
+                )));
+            }
+        };
 
         // Build triangulation B with shuffled order, same retry/skip rejection.
         let mut rng = rand::rngs::StdRng::seed_from_u64(0x00DE_C0DE);
         let mut points_shuffled = points.clone();
         points_shuffled.shuffle(&mut rng);
 
-        let mut dt_b: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+        let mut dt_b: DelaunayIncrementalBuilder<_, (), (), 3> =
+            DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
         let run_b = insert_vertices_3d_no_retry_or_skip(&mut dt_b, &points_shuffled);
         match run_b {
             InsertionOrder3dRunStatus::Clean => {}
@@ -1521,13 +1547,28 @@ fn prop_insertion_order_robustness_3d() {
             }
         }
 
-        let validation_b = dt_b.as_triangulation().validate();
-        if let Err(e) = validation_b {
-            stats.rejected_run_b_invalid_levels_1_to_3 += 1;
-            return Err(TestCaseError::reject(format!(
-                "3D: Triangulation B (clean insertion run) failed Levels 1–3 validation (treated as out of scope): {e:?}"
-            )));
-        }
+        let dt_b = match dt_b.finish() {
+            Ok(dt) => dt,
+            Err(error)
+                if matches!(
+                    &error,
+                    DelaunayIncrementalBuilderError::FinalValidation {
+                        source: DelaunayTriangulationValidationError::Tds { .. }
+                            | DelaunayTriangulationValidationError::Triangulation { .. },
+                    }
+                ) =>
+            {
+                stats.rejected_run_b_invalid_levels_1_to_3_publication += 1;
+                return Err(TestCaseError::reject(format!(
+                    "3D: Triangulation B (clean insertion run) failed Levels 1–3 publication validation (treated as out of scope): {error:?}"
+                )));
+            }
+            Err(error) => {
+                return Err(TestCaseError::fail(format!(
+                    "3D: Triangulation B (clean insertion run) failed Level 4 or Level 5 certification: {error:?}"
+                )));
+            }
+        };
 
         // Both should have inserted all vertices (we reject Skipped cases above).
         prop_assert_eq!(
@@ -1663,11 +1704,11 @@ fn prop_insertion_order_robustness_3d() {
             stats.rejected_run_a_used_retry,
             stats.rejected_run_a_used_skip,
             stats.rejected_run_a_non_retryable_error,
-            stats.rejected_run_a_invalid_levels_1_to_3,
+            stats.rejected_run_a_invalid_levels_1_to_3_publication,
             stats.rejected_run_b_used_retry,
             stats.rejected_run_b_used_skip,
             stats.rejected_run_b_non_retryable_error,
-            stats.rejected_run_b_invalid_levels_1_to_3,
+            stats.rejected_run_b_invalid_levels_1_to_3_publication,
             stats.rejected_new_a_failed,
             stats.rejected_new_a_skipped_vertices,
             stats.rejected_new_a_invalid_levels_1_to_3,
@@ -2021,3 +2062,53 @@ gen_duplicate_cloud_test!(2, 2);
 gen_duplicate_cloud_test!(3, 3);
 gen_duplicate_cloud_test!(4, 4);
 gen_duplicate_cloud_test!(5, 5, #[cfg(feature = "slow-tests")]);
+
+#[test]
+fn duplicate_cloud_4d_accepts_global_delaunay_when_inverse_flip_remains() {
+    let points = [
+        [1e-6, -93.508_455_015_806_32, -78.945_537_198_317_24, 1e-6],
+        [1e-6, -1e-6, 32.624_409_067_227_11, -91.061_618_050_876_49],
+        [1e-6, -1e-6, 1e-6, 63.126_514_742_920_96],
+        [
+            -1e-6,
+            66.319_734_204_548_9,
+            -51.253_018_808_818_474,
+            -85.511_003_761_007_96,
+        ],
+        [
+            -92.095_497_651_501_38,
+            -61.369_257_763_013_76,
+            -33.243_436_198_884_43,
+            1e-6,
+        ],
+        [
+            -41.192_702_672_956_16,
+            -3.020_677_560_415_026,
+            -38.161_731_404_340_33,
+            -18.561_637_984_897_34,
+        ],
+        [
+            -89.670_231_108_311_33,
+            -41.645_135_709_705_634,
+            -79.897_625_724_736_46,
+            92.874_569_322_774_19,
+        ],
+        [1e-6, -93.508_455_015_806_32, -78.945_537_198_317_24, 1e-6],
+        [1.1e-6, -9e-7, 32.624_409_167_227_114, -91.061_617_950_876_5],
+    ]
+    .map(|coords| Point::try_new(coords).expect("finite point coordinates"));
+    let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
+    let options =
+        ConstructionOptions::default().with_dedup_policy(DedupPolicy::try_epsilon(1e-6).unwrap());
+
+    let dt = DelaunayTriangulation::builder(&vertices)
+        .construction_options(options)
+        .build()
+        .expect("the globally Delaunay duplicate cloud should publish");
+
+    assert!(
+        dt.verify_via_flip_predicates().is_err(),
+        "the fixture must retain the stronger inverse-flip normal-form mismatch"
+    );
+    assert!(dt.is_valid_delaunay().is_ok());
+}

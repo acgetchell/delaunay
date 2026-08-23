@@ -8,7 +8,7 @@
 
 use crate::core::collections::NeighborBuffer;
 use crate::core::simplex::NeighborSlot;
-use crate::core::tds::{SimplexKey, Tds, VertexKey};
+use crate::core::tds::{SimplexKey, VertexKey};
 use crate::core::vertex::Vertex;
 use crate::delaunay_model::DelaunayTriangulation;
 use crate::geometry::traits::coordinate::InvalidCoordinateValue;
@@ -33,12 +33,6 @@ pub const VISUALIZATION_SCHEMA: &str = "delaunay.simplicial_complex";
 
 /// Current [`VisualizationData`] schema version.
 pub const VISUALIZATION_SCHEMA_VERSION: u32 = 1;
-
-/// Compatibility schema name used by the mesh-export alias.
-pub const MESH_EXPORT_SCHEMA: &str = VISUALIZATION_SCHEMA;
-
-/// Compatibility schema version used by the mesh-export alias.
-pub const MESH_EXPORT_SCHEMA_VERSION: u32 = VISUALIZATION_SCHEMA_VERSION;
 
 /// Stable topology-kind schema category used by [`VisualizationMetadata`].
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -317,7 +311,7 @@ impl<const D: usize, VertexAttributes, SimplexAttributes, AdjacencyAttributes, G
     ///     vertex![0.0, 1.0]?,
     /// ];
     /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let export = triangulation.to_mesh_export()?;
+    /// let export = triangulation.to_visualization_data()?;
     ///
     /// export.validate()?;
     /// # Ok(())
@@ -610,30 +604,6 @@ pub struct AdjacencyRecord<Attributes = ()> {
     #[serde(default = "no_attributes", skip_serializing_if = "Option::is_none")]
     pub attributes: Option<Attributes>,
 }
-
-/// Default mesh-export alias for callers that do not need extra attributes.
-///
-/// This is an owned, detached interchange snapshot, not a live borrowed view
-/// over the source triangulation.
-pub type MeshExport<const D: usize> = VisualizationData<D>;
-
-/// Validated mesh-export alias for callers that do not need extra attributes.
-pub type ValidatedMeshExport<const D: usize> = ValidatedVisualizationData<D>;
-
-/// Default vertex-record alias for callers that do not need extra attributes.
-pub type MeshVertexRecord<const D: usize> = VertexRecord<D>;
-
-/// Default simplex-record alias for callers that do not need extra attributes.
-pub type MeshSimplexRecord = SimplexRecord;
-
-/// Default adjacency-record alias for callers that do not need extra attributes.
-pub type MeshAdjacencyRecord = AdjacencyRecord;
-
-/// Compatibility error alias for mesh export callers.
-pub type MeshExportError = VisualizationExportError;
-
-/// Compatibility validation-error alias for mesh export callers.
-pub type MeshExportValidationError = VisualizationDataValidationError;
 
 /// Errors that can occur while exporting visualization data.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -933,8 +903,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// ```
     pub fn to_visualization_data(&self) -> Result<VisualizationData<D>, VisualizationExportError> {
-        let tds = self.tds();
-        let mut vertices: Vec<_> = tds
+        let mut vertices: Vec<_> = self
             .vertices()
             .map(|(_, vertex)| VertexRecord {
                 id: vertex.uuid(),
@@ -944,16 +913,16 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
             .collect();
         vertices.sort_by_key(|record| record.id);
 
-        let mut simplices = Vec::with_capacity(tds.number_of_simplices());
-        let mut adjacency = Vec::with_capacity(tds.number_of_simplices().saturating_mul(D + 1));
-        for (_, simplex) in tds.simplices() {
+        let mut simplices = Vec::with_capacity(self.number_of_simplices());
+        let mut adjacency = Vec::with_capacity(self.number_of_simplices().saturating_mul(D + 1));
+        for (_, simplex) in self.simplices() {
             let simplex_id = simplex.uuid();
             let vertex_ids = simplex
                 .vertices()
                 .iter()
                 .copied()
                 .map(|vertex_key| {
-                    tds.vertex(vertex_key).map(Vertex::uuid).ok_or(
+                    self.vertex(vertex_key).map(Vertex::uuid).ok_or(
                         VisualizationExportError::MissingVertex {
                             simplex_id,
                             vertex_key,
@@ -968,7 +937,8 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
                 attributes: None,
             });
             push_adjacency_records(
-                tds,
+                |neighbor_key| self.simplex_uuid_from_key(neighbor_key),
+                D + 1,
                 simplex_id,
                 simplex.neighbor_slots().map(NeighborBuffer::as_slice),
                 &mut adjacency,
@@ -993,48 +963,6 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
             simplices,
             adjacency,
         })
-    }
-
-    /// Exports this triangulation as the default stable mesh interchange value.
-    ///
-    /// This is an ergonomic alias for [`to_visualization_data`](Self::to_visualization_data)
-    /// when callers want the v1 generic simplicial-complex schema without extra
-    /// downstream attributes.
-    ///
-    /// Like [`to_visualization_data`](Self::to_visualization_data), this returns
-    /// an owned, detached snapshot. Mutating the source triangulation after
-    /// export does not update the mesh export.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MeshExportError`] under the same conditions as
-    /// [`to_visualization_data`](Self::to_visualization_data).
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayResult, DelaunayTriangulationBuilder, vertex,
-    /// };
-    /// use delaunay::prelude::export::MESH_EXPORT_SCHEMA;
-    ///
-    /// # fn main() -> DelaunayResult<()> {
-    /// let vertices = vec![
-    ///     vertex![0.0, 0.0, 0.0]?,
-    ///     vertex![1.0, 0.0, 0.0]?,
-    ///     vertex![0.0, 1.0, 0.0]?,
-    ///     vertex![0.0, 0.0, 1.0]?,
-    /// ];
-    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    ///
-    /// let export = triangulation.to_mesh_export()?;
-    ///
-    /// assert_eq!(export.metadata.schema, MESH_EXPORT_SCHEMA);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn to_mesh_export(&self) -> Result<MeshExport<D>, MeshExportError> {
-        self.to_visualization_data()
     }
 }
 
@@ -1239,19 +1167,20 @@ fn missing_source_facet_vertex<SimplexAttributes>(
         .find(|vertex_id| !neighbor_simplex.vertex_ids.contains(vertex_id))
 }
 
-/// Resolves facet-neighbor slots to stable adjacency records.
-fn push_adjacency_records<U, V, const D: usize>(
-    tds: &Tds<U, V, D>,
+/// Resolves facet-neighbor slots through an owner-level UUID lookup.
+fn push_adjacency_records(
+    simplex_uuid_from_key: impl Fn(SimplexKey) -> Option<Uuid>,
+    expected_neighbor_count: usize,
     simplex_id: Uuid,
     neighbor_slots: Option<&[NeighborSlot]>,
     adjacency: &mut Vec<AdjacencyRecord>,
 ) -> Result<(), VisualizationExportError> {
     let slots =
         neighbor_slots.ok_or(VisualizationExportError::UnassignedNeighborBuffer { simplex_id })?;
-    if slots.len() != D + 1 {
+    if slots.len() != expected_neighbor_count {
         return Err(VisualizationExportError::InvalidNeighborCount {
             simplex_id,
-            expected: D + 1,
+            expected: expected_neighbor_count,
             actual: slots.len(),
         });
     }
@@ -1264,12 +1193,11 @@ fn push_adjacency_records<U, V, const D: usize>(
                 neighbor_simplex_id: None,
                 attributes: None,
             },
-            NeighborSlot::Neighbor(neighbor_key) => tds
-                .simplex(neighbor_key)
-                .map(|neighbor| AdjacencyRecord {
+            NeighborSlot::Neighbor(neighbor_key) => simplex_uuid_from_key(neighbor_key)
+                .map(|neighbor_simplex_id| AdjacencyRecord {
                     simplex_id,
                     facet_index,
-                    neighbor_simplex_id: Some(neighbor.uuid()),
+                    neighbor_simplex_id: Some(neighbor_simplex_id),
                     attributes: None,
                 })
                 .ok_or(VisualizationExportError::MissingNeighbor {
@@ -1297,12 +1225,12 @@ mod tests {
 
     #[test]
     fn push_adjacency_records_rejects_wrong_neighbor_arity() {
-        let tds: Tds<(), (), 2> = Tds::empty();
         let simplex_id = Uuid::from_u128(0x3000_0000_0000_0000_0000_0000_0000_0001);
         let mut adjacency = Vec::new();
 
         let error = push_adjacency_records(
-            &tds,
+            |_| None,
+            3,
             simplex_id,
             Some(&[NeighborSlot::Boundary]),
             &mut adjacency,
@@ -1322,12 +1250,12 @@ mod tests {
 
     #[test]
     fn push_adjacency_records_rejects_unassigned_neighbor_slot() {
-        let tds: Tds<(), (), 2> = Tds::empty();
         let simplex_id = Uuid::from_u128(0x3000_0000_0000_0000_0000_0000_0000_0002);
         let mut adjacency = Vec::new();
 
         let error = push_adjacency_records(
-            &tds,
+            |_| None,
+            3,
             simplex_id,
             Some(&[
                 NeighborSlot::Unassigned,
@@ -1350,13 +1278,13 @@ mod tests {
 
     #[test]
     fn push_adjacency_records_rejects_dangling_neighbor_key() {
-        let tds: Tds<(), (), 2> = Tds::empty();
         let simplex_id = Uuid::from_u128(0x3000_0000_0000_0000_0000_0000_0000_0003);
         let neighbor_key = SimplexKey::from(KeyData::from_ffi(1));
         let mut adjacency = Vec::new();
 
         let error = push_adjacency_records(
-            &tds,
+            |_| None,
+            3,
             simplex_id,
             Some(&[
                 NeighborSlot::Neighbor(neighbor_key),

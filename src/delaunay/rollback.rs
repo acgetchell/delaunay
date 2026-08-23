@@ -4,8 +4,10 @@
 
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::operations::DelaunayInsertionState;
-use crate::core::tds::{Tds, TdsOwnerRollbackTransaction, TdsRollbackOwner};
+use crate::core::tds::{Tds, TdsOwnerRollbackTransaction, TdsRollbackOwner, TdsRollbackWindow};
 use crate::delaunay_model::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
+use crate::triangulation::validation::TopologyConstructionProvenance;
+use crate::triangulation::{Triangulation, rollback::TriangulationRollbackWindow};
 
 impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for DelaunayTriangulation<K, U, V, D> {
     fn rollback_tds(&self) -> &Tds<U, V, D> {
@@ -38,6 +40,7 @@ where
     insertion_state_snapshot: DelaunayInsertionState,
     spatial_index_snapshot: Option<HashGridIndex<D>>,
     euclidean_report_domain_snapshot: EuclideanDelaunayReportDomain,
+    topology_construction_provenance_snapshot: TopologyConstructionProvenance,
     spatial_index_rollback: DelaunaySpatialIndexRollback,
     finished: bool,
 }
@@ -54,6 +57,7 @@ where
     ) -> Self {
         let insertion_state_snapshot = owner.insertion_state;
         let euclidean_report_domain_snapshot = owner.euclidean_report_domain;
+        let topology_construction_provenance_snapshot = owner.tri.topology_construction_provenance;
         let spatial_index_snapshot = match spatial_index_rollback {
             DelaunaySpatialIndexRollback::Restore => owner.spatial_index.clone(),
             DelaunaySpatialIndexRollback::Invalidate => None,
@@ -64,6 +68,7 @@ where
             insertion_state_snapshot,
             spatial_index_snapshot,
             euclidean_report_domain_snapshot,
+            topology_construction_provenance_snapshot,
             spatial_index_rollback,
             finished: false,
         }
@@ -80,6 +85,7 @@ where
         let owner = self.tds_transaction.owner_mut();
         owner.insertion_state = self.insertion_state_snapshot;
         owner.euclidean_report_domain = self.euclidean_report_domain_snapshot;
+        owner.tri.topology_construction_provenance = self.topology_construction_provenance_snapshot;
         owner.spatial_index = match self.spatial_index_rollback {
             DelaunaySpatialIndexRollback::Restore => self.spatial_index_snapshot.clone(),
             DelaunaySpatialIndexRollback::Invalidate => None,
@@ -113,6 +119,32 @@ where
     }
 }
 
+impl<K, U, V, const D: usize> TdsRollbackWindow<U, V, D>
+    for DelaunayRollbackTransaction<'_, K, U, V, D>
+where
+    U: Clone,
+    V: Clone,
+{
+    fn rollback_tds_mut(&mut self) -> &mut Tds<U, V, D> {
+        &mut self.tds_transaction.owner_mut().tri.tds
+    }
+
+    fn restore_rollback_tds(&mut self) {
+        self.restore();
+    }
+}
+
+impl<K, U, V, const D: usize> TriangulationRollbackWindow<K, U, V, D>
+    for DelaunayRollbackTransaction<'_, K, U, V, D>
+where
+    U: Clone,
+    V: Clone,
+{
+    fn triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D> {
+        &mut self.tds_transaction.owner_mut().tri
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,6 +166,8 @@ mod tests {
     }
 
     fn test_triangulation<const D: usize>() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>
+    where
+        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
     {
         let vertices = simplex_vertices::<D>();
         DelaunayTriangulation::builder(&vertices).build().unwrap()
@@ -158,9 +192,7 @@ mod tests {
     ) -> VertexKey {
         let vertex = vertex!([0.25; D]).unwrap();
         transaction
-            .delaunay_mut()
-            .tri
-            .tds
+            .rollback_tds_mut()
             .insert_vertex_with_mapping(vertex)
             .unwrap()
     }
@@ -174,9 +206,13 @@ mod tests {
         }};
     }
 
-    fn assert_restore_policy_drop_restores_auxiliary_state<const D: usize>() {
+    fn assert_restore_policy_drop_restores_auxiliary_state<const D: usize>()
+    where
+        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+    {
         let mut triangulation = test_triangulation::<D>();
         let report_domain_before = triangulation.euclidean_report_domain;
+        let provenance_before = triangulation.tri.topology_construction_provenance;
         let hint_before = triangulation.simplices().next().map(|(key, _)| key);
         triangulation.insertion_state.last_inserted_simplex = hint_before;
         let spatial_index_before = seed_spatial_index(&mut triangulation);
@@ -197,6 +233,11 @@ mod tests {
             transaction
                 .delaunay_mut()
                 .invalidate_euclidean_report_domain();
+            transaction
+                .delaunay_mut()
+                .tri
+                .topology_construction_provenance =
+                crate::triangulation::validation::TopologyConstructionProvenance::Unproven;
         }
 
         assert_eq!(triangulation.number_of_vertices(), vertices_before);
@@ -213,9 +254,16 @@ mod tests {
             spatial_index_before
         );
         assert_eq!(triangulation.euclidean_report_domain, report_domain_before);
+        assert_eq!(
+            triangulation.tri.topology_construction_provenance,
+            provenance_before
+        );
     }
 
-    fn assert_invalidate_policy_drop_drops_spatial_index<const D: usize>() {
+    fn assert_invalidate_policy_drop_drops_spatial_index<const D: usize>()
+    where
+        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+    {
         let mut triangulation = test_triangulation::<D>();
         let hint_before = triangulation.simplices().next().map(|(key, _)| key);
         triangulation.insertion_state.last_inserted_simplex = hint_before;
@@ -244,7 +292,10 @@ mod tests {
         assert!(triangulation.spatial_index.is_none());
     }
 
-    fn assert_commit_keeps_mutations<const D: usize>() {
+    fn assert_commit_keeps_mutations<const D: usize>()
+    where
+        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+    {
         let mut triangulation = test_triangulation::<D>();
         let hint_before = triangulation.simplices().next().map(|(key, _)| key);
         triangulation.insertion_state.last_inserted_simplex = hint_before;
@@ -274,7 +325,10 @@ mod tests {
         assert!(triangulation.spatial_index.is_none());
     }
 
-    fn assert_explicit_rollback_restores_auxiliary_state<const D: usize>() {
+    fn assert_explicit_rollback_restores_auxiliary_state<const D: usize>()
+    where
+        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+    {
         let mut triangulation = test_triangulation::<D>();
         let report_domain_before = triangulation.euclidean_report_domain;
         let hint_before = triangulation.simplices().next().map(|(key, _)| key);

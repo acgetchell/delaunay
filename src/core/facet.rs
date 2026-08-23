@@ -1183,6 +1183,18 @@ pub(crate) fn try_incident_facet_view_for_facet_key<U, V, const D: usize>(
     })
 }
 
+/// Verifies that one raw incidence entry resolves under the TDS paired with it.
+///
+/// This keeps lightweight topology proofs owner-bound without allocating the
+/// parsed public [`FacetToSimplicesIndex`].
+pub(crate) fn validate_facet_incidence_entry<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    facet_key: u64,
+    handles: &SmallBuffer<FacetHandle, 2>,
+) -> Result<(), FacetError> {
+    FacetIncidence::try_from_index_entry(tds, facet_key, handles).map(drop)
+}
+
 /// Borrowed view over one parsed facet-incidence entry.
 ///
 /// The view borrows the [`FacetToSimplicesIndex`] entry and carries the [`Tds`]
@@ -2220,16 +2232,11 @@ pub fn facet_key_from_vertices(vertices: &[VertexKey]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builder::DelaunayTriangulationBuilder;
-    use crate::construction::{
-        ConstructionOptions, InitialSimplexStrategy, InsertionOrderStrategy,
-    };
     use crate::core::tds::{Tds, VertexKey};
+    use crate::core::test_support::single_simplex_tds;
     use crate::core::vertex::Vertex;
-    use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::triangulation::Triangulation;
-    use crate::triangulation::validation::TopologyGuarantee;
     use crate::vertex;
     use slotmap::{KeyData, SlotMap};
     use std::assert_matches;
@@ -2286,12 +2293,12 @@ mod tests {
     fn test_facet_error_handling() {
         // Create a 1D triangulation (2 vertices forming an edge)
         let vertices = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test invalid facet index (should be 0 or 1 for 1D, facet_index >= 2 is invalid)
         assert_matches!(
-            FacetView::try_new(dt.tds(), simplex_key, 99),
+            FacetView::try_new(&dt, simplex_key, 99),
             Err(FacetError::InvalidFacetIndex { .. })
         );
     }
@@ -2305,11 +2312,11 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
+        let facet = FacetView::try_new(&dt, simplex_key, 0).unwrap();
         assert_eq!(facet.simplex_key(), simplex_key);
         assert_eq!(facet.facet_index(), 0);
     }
@@ -2322,11 +2329,11 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
-        let handle = FacetHandle::try_new(dt.tds(), simplex_key, 1).unwrap();
-        let view = handle.view(dt.tds()).unwrap();
+        let handle = FacetHandle::try_new(&dt, simplex_key, 1).unwrap();
+        let view = handle.view(&dt).unwrap();
 
         assert_eq!(view.simplex_key(), simplex_key);
         assert_eq!(view.facet_index(), 1);
@@ -2352,11 +2359,9 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.5, 1.0]).unwrap(),
         ];
-        let dt_2d = DelaunayTriangulation::builder(&vertices_2d)
-            .build()
-            .unwrap();
+        let dt_2d = single_simplex_tds(&vertices_2d);
         let simplex_key_2d = dt_2d.simplices().next().unwrap().0;
-        let result_2d = FacetView::try_new(dt_2d.tds(), simplex_key_2d, 0);
+        let result_2d = FacetView::try_new(&dt_2d, simplex_key_2d, 0);
 
         // Assert that the result is Ok
         assert!(result_2d.is_ok());
@@ -2365,11 +2370,9 @@ mod tests {
 
         // Test 1D case: Create an edge (1D simplex with 2 vertices)
         let vertices_1d = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
-        let dt_1d = DelaunayTriangulation::builder(&vertices_1d)
-            .build()
-            .unwrap();
+        let dt_1d = single_simplex_tds(&vertices_1d);
         let simplex_key_1d = dt_1d.simplices().next().unwrap().0;
-        let result_1d = FacetView::try_new(dt_1d.tds(), simplex_key_1d, 0);
+        let result_1d = FacetView::try_new(&dt_1d, simplex_key_1d, 0);
 
         // Assert that the result is Ok
         assert!(result_1d.is_ok());
@@ -2386,11 +2389,11 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test invalid facet index (3D simplex has vertices 0-3, facet index 4 is invalid)
-        assert!(FacetView::try_new(dt.tds(), simplex_key, 4).is_err());
+        assert!(FacetView::try_new(&dt, simplex_key, 4).is_err());
     }
 
     #[test]
@@ -2402,11 +2405,11 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
+        let facet = FacetView::try_new(&dt, simplex_key, 0).unwrap();
         assert_eq!(facet.vertices().count(), 3);
     }
 
@@ -2423,13 +2426,13 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet views with same facet index (should be equal)
-        let facet1 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
-        let facet2 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
-        let facet3 = FacetView::try_new(dt.tds(), simplex_key, 1).unwrap();
+        let facet1 = FacetView::try_new(&dt, simplex_key, 0).unwrap();
+        let facet2 = FacetView::try_new(&dt, simplex_key, 0).unwrap();
+        let facet3 = FacetView::try_new(&dt, simplex_key, 1).unwrap();
 
         assert_eq!(facet1, facet2);
         assert_ne!(facet1, facet3);
@@ -2444,10 +2447,10 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
+        let facet = FacetView::try_new(&dt, simplex_key, 0).unwrap();
         let cloned_facet = facet.clone();
 
         // Verify clones are equal
@@ -2474,10 +2477,10 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
+        let facet = FacetView::try_new(&dt, simplex_key, 0).unwrap();
         let debug_str = format!("{facet:?}");
 
         assert!(debug_str.contains("FacetView"));
@@ -2499,25 +2502,17 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]; data = 3).unwrap(),
             vertex!([0.0, 0.0, 1.0]; data = 4).unwrap(),
         ];
-        let options = ConstructionOptions::default()
-            .with_insertion_order(InsertionOrderStrategy::Input)
-            .with_initial_simplex_strategy(InitialSimplexStrategy::First);
-        let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
-            DelaunayTriangulationBuilder::new(&vertices)
-                .topology_guarantee(TopologyGuarantee::DEFAULT)
-                .construction_options(options)
-                .build()
-                .unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
+        let facet = FacetView::try_new(&dt, simplex_key, 0).unwrap();
 
         let facet_vertices: Vec<_> = facet.vertices().collect();
         assert_eq!(facet_vertices.len(), 3); // 3D facet should have 3 vertices (D)
-        let simplex = dt.tds().simplex(simplex_key).expect("simplex exists");
+        let simplex = dt.simplex(simplex_key).expect("simplex exists");
         for &vertex_key in simplex.vertices().iter().skip(1) {
-            let expected_data = dt.tds().vertex(vertex_key).unwrap().data;
+            let expected_data = dt.vertex(vertex_key).unwrap().data;
             assert!(
                 facet_vertices.iter().any(|v| v.data == expected_data),
                 "Expected facet vertex data {expected_data:?} not found"
@@ -2543,11 +2538,11 @@ mod tests {
                 fn $test_name() {
                     // Test basic facet view creation
                     let vertices = $vertices;
-                    let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+                    let dt = single_simplex_tds(&vertices);
                     let simplex_key = dt.simplices().next().unwrap().0;
 
                     // Create facet view for facet 0 (excludes vertex 0)
-                    let facet = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
+                    let facet = FacetView::try_new(&dt, simplex_key, 0).unwrap();
 
                     // Facet of D-dimensional simplex is (D-1)-dimensional with D vertices
                     assert_eq!(facet.vertices().count(), $expected_facet_vertices,
@@ -2559,18 +2554,18 @@ mod tests {
                     fn [<$test_name _key_consistency>]() {
                         // Test FacetKey computation consistency
                         let vertices = $vertices;
-                        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+                        let dt = single_simplex_tds(&vertices);
                         let simplex_key = dt.simplices().next().unwrap().0;
 
                         // Create same facet twice
-                        let facet1 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
-                        let facet2 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
+                        let facet1 = FacetView::try_new(&dt, simplex_key, 0).unwrap();
+                        let facet2 = FacetView::try_new(&dt, simplex_key, 0).unwrap();
 
                         assert_eq!(facet1.key(), facet2.key(),
                             "Same facet should produce same key");
 
                         // Create different facet
-                        let facet3 = FacetView::try_new(dt.tds(), simplex_key, 1).unwrap();
+                        let facet3 = FacetView::try_new(&dt, simplex_key, 1).unwrap();
                         assert_ne!(facet1.key(), facet3.key(),
                             "Different facets should produce different keys");
                     }
@@ -2579,12 +2574,12 @@ mod tests {
                     fn [<$test_name _equality>]() {
                         // Test facet equality comparison
                         let vertices = $vertices;
-                        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+                        let dt = single_simplex_tds(&vertices);
                         let simplex_key = dt.simplices().next().unwrap().0;
 
-                        let facet1 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
-                        let facet2 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
-                        let facet3 = FacetView::try_new(dt.tds(), simplex_key, 1).unwrap();
+                        let facet1 = FacetView::try_new(&dt, simplex_key, 0).unwrap();
+                        let facet2 = FacetView::try_new(&dt, simplex_key, 0).unwrap();
+                        let facet3 = FacetView::try_new(&dt, simplex_key, 1).unwrap();
 
                         assert!(facet1 == facet2, "Same facet should be equal");
                         assert!(facet1 != facet3, "Different facets should not be equal");
@@ -2594,7 +2589,7 @@ mod tests {
                     fn [<$test_name _all_facets>]() {
                         // Test iterating through all facets of a simplex
                         let vertices = $vertices;
-                        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+                        let dt = single_simplex_tds(&vertices);
                         let simplex_key = dt.simplices().next().unwrap().0;
 
                         // D+1 dimensional simplex should have D+1 facets (one opposite each vertex)
@@ -2602,7 +2597,7 @@ mod tests {
                         let mut facet_keys = HashSet::new();
 
                         for i in 0..expected_facets {
-                            let facet = FacetView::try_new(dt.tds(), simplex_key, u8::try_from(i).unwrap()).unwrap();
+                            let facet = FacetView::try_new(&dt, simplex_key, u8::try_from(i).unwrap()).unwrap();
                             facet_keys.insert(facet.key());
                         }
 
@@ -2649,17 +2644,11 @@ mod tests {
     fn facet_1d_edge() {
         // Create 1D triangulation (edge with 2 vertices)
         let vertices = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
-        let options = ConstructionOptions::default()
-            .with_insertion_order(InsertionOrderStrategy::Input)
-            .with_initial_simplex_strategy(InitialSimplexStrategy::First);
-        let dt = DelaunayTriangulation::builder(&vertices)
-            .construction_options(options)
-            .build()
-            .unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
+        let facet = FacetView::try_new(&dt, simplex_key, 0).unwrap();
 
         // Facet of 1D edge is a point (0D) with 1 vertex
         assert_eq!(facet.vertices().count(), 1);
@@ -3023,13 +3012,13 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet views for different facets
-        let facet1 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap(); // excludes vertex 0
-        let facet2 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap(); // same facet
-        let facet3 = FacetView::try_new(dt.tds(), simplex_key, 1).unwrap(); // excludes vertex 1 (different facet)
+        let facet1 = FacetView::try_new(&dt, simplex_key, 0).unwrap(); // excludes vertex 0
+        let facet2 = FacetView::try_new(&dt, simplex_key, 0).unwrap(); // same facet
+        let facet3 = FacetView::try_new(&dt, simplex_key, 1).unwrap(); // excludes vertex 1 (different facet)
 
         // Both facet1 and facet2 reference the same facet, so same key
         assert_eq!(
@@ -3050,15 +3039,15 @@ mod tests {
     fn facet_vertices_empty_simplex() {
         // Test edge case of minimal simplex (1D edge with 2 vertices)
         let vertices = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet with vertex 0 as opposite - should have only vertex 1 in facet
-        let facet = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
+        let facet = FacetView::try_new(&dt, simplex_key, 0).unwrap();
         assert_eq!(facet.vertices().count(), 1);
 
         // Test the opposite case - vertex 1 as opposite should have only vertex 0 in facet
-        let other_facet = FacetView::try_new(dt.tds(), simplex_key, 1).unwrap();
+        let other_facet = FacetView::try_new(&dt, simplex_key, 1).unwrap();
         assert_eq!(other_facet.vertices().count(), 1);
     }
 
@@ -3071,11 +3060,11 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 2 (excludes vertex 2)
-        let facet = FacetView::try_new(dt.tds(), simplex_key, 2).unwrap();
+        let facet = FacetView::try_new(&dt, simplex_key, 2).unwrap();
 
         // Should have all vertices except vertex at index 2
         assert_eq!(facet.vertices().count(), 3);
@@ -3091,13 +3080,13 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet1 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
-        let facet2 = FacetView::try_new(dt.tds(), simplex_key, 1).unwrap();
-        let facet3 = FacetView::try_new(dt.tds(), simplex_key, 2).unwrap();
-        let facet4 = FacetView::try_new(dt.tds(), simplex_key, 3).unwrap();
+        let facet1 = FacetView::try_new(&dt, simplex_key, 0).unwrap();
+        let facet2 = FacetView::try_new(&dt, simplex_key, 1).unwrap();
+        let facet3 = FacetView::try_new(&dt, simplex_key, 2).unwrap();
+        let facet4 = FacetView::try_new(&dt, simplex_key, 3).unwrap();
 
         // All facets should be different because they have different facet indices
         // (i.e., different opposite vertices)
@@ -3118,15 +3107,15 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create two facet views that reference the same facet
-        let facet1 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
-        let facet2 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
+        let facet1 = FacetView::try_new(&dt, simplex_key, 0).unwrap();
+        let facet2 = FacetView::try_new(&dt, simplex_key, 0).unwrap();
 
         // Create a different facet
-        let facet3 = FacetView::try_new(dt.tds(), simplex_key, 1).unwrap();
+        let facet3 = FacetView::try_new(&dt, simplex_key, 1).unwrap();
 
         // Test that facet keys are consistent for the same facet
         assert_eq!(facet1.key(), facet2.key());
@@ -3191,16 +3180,16 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test valid facet creation
-        let facet_view = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
+        let facet_view = FacetView::try_new(&dt, simplex_key, 0).unwrap();
         assert_eq!(facet_view.simplex_key(), simplex_key);
         assert_eq!(facet_view.facet_index(), 0);
 
         // Test invalid facet index
-        let result = FacetView::try_new(dt.tds(), simplex_key, 10);
+        let result = FacetView::try_new(&dt, simplex_key, 10);
         assert_matches!(result, Err(FacetError::InvalidFacetIndex { .. }));
     }
 
@@ -3213,18 +3202,17 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet_view = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
+        let facet_view = FacetView::try_new(&dt, simplex_key, 0).unwrap();
 
         // Facet opposite to vertex 0 should have 3 vertices (D vertices in D-1 facet)
         let facet_vertices: Vec<_> = facet_view.vertices().collect();
         assert_eq!(facet_vertices.len(), 3);
 
-        let simplex = dt.tds().simplex(simplex_key).expect("simplex exists");
+        let simplex = dt.simplex(simplex_key).expect("simplex exists");
         let opposite_vertex = dt
-            .tds()
             .vertex(simplex.vertices()[0])
             .expect("opposite vertex exists");
 
@@ -3245,19 +3233,16 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet_view = FacetView::try_new(dt.tds(), simplex_key, 1).unwrap();
+        let facet_view = FacetView::try_new(&dt, simplex_key, 1).unwrap();
         let opposite = facet_view.opposite_vertex();
 
         // The opposite vertex should be the vertex at index 1
-        let simplex = dt.tds().simplex(simplex_key).expect("simplex exists");
+        let simplex = dt.simplex(simplex_key).expect("simplex exists");
         let simplex_vertex_keys = simplex.vertices();
-        let expected_vertex = dt
-            .tds()
-            .vertex(simplex_vertex_keys[1])
-            .expect("vertex exists");
+        let expected_vertex = dt.vertex(simplex_vertex_keys[1]).expect("vertex exists");
         assert_eq!(opposite.uuid(), expected_vertex.uuid());
     }
 
@@ -3270,10 +3255,10 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet_view = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
+        let facet_view = FacetView::try_new(&dt, simplex_key, 0).unwrap();
         let key = facet_view.key();
 
         // Key should be non-zero for valid facet
@@ -3289,10 +3274,10 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet_views = dt.tds().try_simplex_facets(simplex_key).unwrap();
+        let facet_views = dt.try_simplex_facets(simplex_key).unwrap();
         let facet_count = facet_views.len();
 
         // 3D simplex (tetrahedron) should have 4 facets
@@ -3318,12 +3303,12 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet_view1 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
-        let facet_view2 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
-        let facet_view3 = FacetView::try_new(dt.tds(), simplex_key, 1).unwrap();
+        let facet_view1 = FacetView::try_new(&dt, simplex_key, 0).unwrap();
+        let facet_view2 = FacetView::try_new(&dt, simplex_key, 0).unwrap();
+        let facet_view3 = FacetView::try_new(&dt, simplex_key, 1).unwrap();
 
         // Same facet should be equal
         assert_eq!(facet_view1, facet_view2);
@@ -3341,10 +3326,10 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let dt = single_simplex_tds(&vertices);
         let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet_view = FacetView::try_new(dt.tds(), simplex_key, 1).unwrap();
+        let facet_view = FacetView::try_new(&dt, simplex_key, 1).unwrap();
         let debug_str = format!("{facet_view:?}");
 
         assert!(debug_str.contains("FacetView"));

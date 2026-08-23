@@ -2,8 +2,8 @@
 //!
 //! This module provides robust orientation and insphere predicates for
 //! Delaunay triangulation. The predicates layer exact arithmetic with optional
-//! diagnostic consistency checking and Simulation of Simplicity (`SoS`) fallback
-//! for degenerate and near-degenerate point configurations.
+//! diagnostic consistency checking and a conservative geometric fallback above
+//! the exact dimension envelope.
 
 #![forbid(unsafe_code)]
 
@@ -11,10 +11,8 @@ use super::predicates::{
     InSphere, Orientation, insphere_distance, relative_insphere_classification,
     relative_insphere_determinant_sign, relative_insphere_signs, try_orientation_from_matrix,
 };
-use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::geometry::matrix::{MAX_STACK_MATRIX_DIM, matrix_set};
 use crate::geometry::point::Point;
-use crate::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
 use crate::geometry::traits::coordinate::CoordinateConversionError;
 use core::{cmp::Ordering, hint::cold_path};
 use std::sync::LazyLock;
@@ -25,14 +23,8 @@ static PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
 /// Returns whether strict insphere consistency diagnostics are active.
 ///
 /// Production code reads `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` once per
-/// process. Unit tests can override the value for the current test thread so
-/// branch coverage does not depend on process-wide environment mutation.
+/// process.
 fn strict_insphere_consistency_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(enabled) = test_support::strict_insphere_consistency_override() {
-        return enabled;
-    }
-
     *PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY
 }
 
@@ -106,9 +98,10 @@ pub enum InsphereConsistencyError {
 ///    set, a diagnostic consistency check against a distance-based insphere.
 ///    This does not override the exact result; it only hard-fails for
 ///    deterministic witness capture.
-/// 3. A [`Simulation of Simplicity`](crate::geometry::sos) fallback. This is
-///    only reached when the exact-sign computation itself is unsupported, such
-///    as D ≥ 6 where the insphere matrix exceeds the stack-matrix limit.
+/// 3. A distance-based fallback when exact-sign computation is unsupported,
+///    such as D ≥ 7. This preserves explicit `BOUNDARY` results; it does not
+///    claim the [`ExactPredicates`](crate::geometry::kernel::ExactPredicates)
+///    contract outside the supported range.
 ///
 /// # Sign Convention
 ///
@@ -174,12 +167,24 @@ pub enum InsphereConsistencyError {
 ///
 /// Absolute-coordinate squared-norm overflow is avoided by using the
 /// relative-coordinate lifted formulation shared with
-/// [`crate::geometry::predicates::insphere_lifted`] for D ≤ 5. If a relative
+/// [`crate::geometry::predicates::insphere_lifted`] for D ≤ 6. If a relative
 /// squared norm is non-finite, the error is returned instead of falling through
 /// to a symbolic classification.
 pub fn robust_insphere<const D: usize>(
     simplex_points: &[Point<D>],
     test_point: &Point<D>,
+) -> Result<InSphere, CoordinateConversionError> {
+    robust_insphere_with_consistency(
+        simplex_points,
+        test_point,
+        strict_insphere_consistency_enabled(),
+    )
+}
+
+fn robust_insphere_with_consistency<const D: usize>(
+    simplex_points: &[Point<D>],
+    test_point: &Point<D>,
+    strict_consistency: bool,
 ) -> Result<InSphere, CoordinateConversionError> {
     if simplex_points.len() != D + 1 {
         return Err(CoordinateConversionError::InvalidSimplexPointCount {
@@ -190,9 +195,9 @@ pub fn robust_insphere<const D: usize>(
     }
 
     // Strategy 1: Exact-sign determinant approach with adaptive tolerance.
-    match relative_exact_insphere(simplex_points, test_point) {
+    let exact_error = match relative_exact_insphere(simplex_points, test_point) {
         Ok(result) => {
-            if strict_insphere_consistency_enabled() {
+            if strict_consistency {
                 // Strategy 2: Diagnostic consistency check against distance-based insphere.
                 // The exact-sign result is provably correct for finite inputs; a disagreement
                 // from insphere_distance reflects f64 rounding in the distance-based check,
@@ -213,62 +218,21 @@ pub fn robust_insphere<const D: usize>(
             }
             return Ok(result);
         }
-        Err(error) if should_use_sos_fallback(&error) => {}
+        Err(error) if should_use_geometric_fallback(&error) => error,
         Err(error) => return Err(error),
-    }
+    };
 
-    // Strategy 3: Geometric + SoS fallback — only reached when exact-sign
-    // computation itself failed (e.g. unsupported matrix size for D ≥ 6).
+    // Strategy 3: Geometric fallback — only reached when exact-sign
+    // computation itself failed (e.g. unsupported matrix size for D ≥ 7).
     // `cold_path()` nudges the optimizer to keep Strategies 1–2 lean; the
     // vast majority of calls return before reaching this point.
     //
-    // First try insphere_distance (circumcenter/radius based — no matrix
-    // determinant needed, works at any dimension).  This handles the
-    // non-degenerate cases correctly.  Only if the result is BOUNDARY
-    // (truly degenerate) do we apply SoS tie-breaking.
+    // `insphere_distance` is circumcenter/radius based and works at any
+    // dimension. It is not an exact-sign proof, so preserve its explicit
+    // boundary classification rather than laundering it through unsupported
+    // symbolic expansion.
     cold_path();
-    if let Ok(geometric_result) = insphere_distance(simplex_points, *test_point)
-        && geometric_result != InSphere::BOUNDARY
-    {
-        return Ok(geometric_result);
-    }
-
-    // SoS tie-breaking for the truly degenerate case (BOUNDARY or
-    // insphere_distance itself failed).  The SoS cofactor minors are one
-    // size smaller, so this succeeds where the full insphere matrix
-    // dispatch does not.
-    let mut f64_simplex: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
-        SmallBuffer::with_capacity(simplex_points.len());
-    for point in simplex_points {
-        f64_simplex.push(*point);
-    }
-    let f64_test = *test_point;
-
-    // Use exact orientation when available; fall back to SoS only when the
-    // exact predicate reports DEGENERATE (or fails entirely).
-    let abs_orient: i32 = match robust_orientation(simplex_points) {
-        Ok(Orientation::POSITIVE) => 1,
-        Ok(Orientation::NEGATIVE) => -1,
-        _ => sos_orientation_sign(&f64_simplex)?,
-    };
-    let raw_insphere = sos_insphere_sign(&f64_simplex, &f64_test)?;
-
-    // Apply the same parity-aware normalization as AdaptiveKernel:
-    // orient_factor = (-1)^(D+1) × abs_orient, because the insphere
-    // convention requires negating the relative orientation and
-    // rel_orient = (-1)^D × abs_orient.
-    let orient_factor = if D.is_multiple_of(2) {
-        -abs_orient
-    } else {
-        abs_orient
-    };
-    let sign = raw_insphere * orient_factor;
-
-    Ok(if sign > 0 {
-        InSphere::INSIDE
-    } else {
-        InSphere::OUTSIDE
-    })
+    insphere_distance(simplex_points, *test_point).map_err(|_| exact_error)
 }
 
 /// Robust insphere for a simplex already known to be in positive orientation.
@@ -280,6 +244,18 @@ pub(crate) fn robust_insphere_positive_oriented<const D: usize>(
     simplex_points: &[Point<D>],
     test_point: &Point<D>,
 ) -> Result<InSphere, CoordinateConversionError> {
+    robust_insphere_positive_oriented_with_consistency(
+        simplex_points,
+        test_point,
+        strict_insphere_consistency_enabled(),
+    )
+}
+
+fn robust_insphere_positive_oriented_with_consistency<const D: usize>(
+    simplex_points: &[Point<D>],
+    test_point: &Point<D>,
+    strict_consistency: bool,
+) -> Result<InSphere, CoordinateConversionError> {
     if simplex_points.len() != D + 1 {
         return Err(CoordinateConversionError::InvalidSimplexPointCount {
             actual: simplex_points.len(),
@@ -287,8 +263,8 @@ pub(crate) fn robust_insphere_positive_oriented<const D: usize>(
             dimension: D,
         });
     }
-    if D > 5 {
-        return robust_insphere(simplex_points, test_point);
+    if D > 6 {
+        return robust_insphere_with_consistency(simplex_points, test_point, strict_consistency);
     }
 
     let determinant_sign = relative_insphere_determinant_sign(simplex_points, test_point)?;
@@ -300,7 +276,7 @@ pub(crate) fn robust_insphere_positive_oriented<const D: usize>(
         Ordering::Equal => InSphere::BOUNDARY,
     };
 
-    if strict_insphere_consistency_enabled()
+    if strict_consistency
         && let ConsistencyResult::Inconsistent(error) =
             verify_insphere_consistency(simplex_points, test_point, result)
     {
@@ -316,9 +292,9 @@ pub(crate) fn robust_insphere_positive_oriented<const D: usize>(
     Ok(result)
 }
 
-/// Whether an exact-sign failure should fall through to the geometric + `SoS` fallback.
+/// Whether an exact-sign failure should fall through to the geometric fallback.
 #[inline]
-const fn should_use_sos_fallback(error: &CoordinateConversionError) -> bool {
+const fn should_use_geometric_fallback(error: &CoordinateConversionError) -> bool {
     matches!(
         error,
         CoordinateConversionError::UnsupportedMatrixDimension { .. }
@@ -334,9 +310,9 @@ fn relative_exact_insphere<const D: usize>(
     simplex_points: &[Point<D>],
     test_point: &Point<D>,
 ) -> Result<InSphere, CoordinateConversionError> {
-    if D > 5 {
+    if D > 6 {
         return Err(CoordinateConversionError::UnsupportedMatrixDimension {
-            requested: D + 2,
+            requested: D + 1,
             max: MAX_STACK_MATRIX_DIM,
         });
     }
@@ -474,46 +450,9 @@ fn verify_insphere_consistency<const D: usize>(
 }
 
 #[cfg(test)]
-mod test_support {
-    use std::cell::Cell;
-
-    thread_local! {
-        static STRICT_INSPHERE_CONSISTENCY_OVERRIDE: Cell<Option<bool>> =
-            const { Cell::new(None) };
-    }
-
-    pub(super) struct StrictInsphereConsistencyOverrideGuard {
-        previous: Option<bool>,
-    }
-
-    impl Drop for StrictInsphereConsistencyOverrideGuard {
-        fn drop(&mut self) {
-            STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(|override_value| {
-                override_value.set(self.previous);
-            });
-        }
-    }
-
-    pub(super) fn strict_insphere_consistency_override() -> Option<bool> {
-        STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(Cell::get)
-    }
-
-    pub(super) fn set_strict_insphere_consistency(
-        enabled: bool,
-    ) -> StrictInsphereConsistencyOverrideGuard {
-        let previous = STRICT_INSPHERE_CONSISTENCY_OVERRIDE.with(|override_value| {
-            let previous = override_value.get();
-            override_value.set(Some(enabled));
-            previous
-        });
-        StrictInsphereConsistencyOverrideGuard { previous }
-    }
-}
-
-#[cfg(test)]
 mod tests {
-    use super::test_support::set_strict_insphere_consistency;
     use super::*;
+    use crate::geometry::matrix::test_support::with_la_stack_matrix;
     use crate::geometry::matrix::{Matrix, matrix_get};
     use crate::geometry::point::Point;
     use crate::geometry::predicates;
@@ -521,7 +460,6 @@ mod tests {
     use num_traits::NumCast;
     use rand::{RngExt, SeedableRng};
     use std::assert_matches;
-    use std::thread;
 
     fn matrix_block_is_finite<const N: usize>(matrix: &Matrix<N>, k: usize) -> bool {
         (0..k).all(|row| (0..k).all(|column| matrix_get(matrix, row, column).unwrap().is_finite()))
@@ -707,32 +645,7 @@ mod tests {
     }
 
     #[test]
-    fn test_strict_insphere_consistency_override_is_thread_local() {
-        let process_wide_setting = *PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY;
-        assert_eq!(strict_insphere_consistency_enabled(), process_wide_setting);
-
-        {
-            let _guard = set_strict_insphere_consistency(!process_wide_setting);
-            assert_eq!(strict_insphere_consistency_enabled(), !process_wide_setting);
-
-            {
-                let _nested_guard = set_strict_insphere_consistency(process_wide_setting);
-                assert_eq!(strict_insphere_consistency_enabled(), process_wide_setting);
-            }
-            assert_eq!(strict_insphere_consistency_enabled(), !process_wide_setting);
-
-            let child_setting = thread::spawn(strict_insphere_consistency_enabled)
-                .join()
-                .expect("strict insphere consistency check thread should not panic");
-            assert_eq!(child_setting, process_wide_setting);
-        }
-
-        assert_eq!(strict_insphere_consistency_enabled(), process_wide_setting);
-    }
-
-    #[test]
-    fn test_strict_insphere_consistency_override_exercises_error_path() {
-        let _guard = set_strict_insphere_consistency(true);
+    fn test_strict_insphere_consistency_exercises_error_path() {
         let simplex = vec![
             Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
@@ -742,15 +655,15 @@ mod tests {
         let test_point = Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates");
 
         assert_eq!(
-            robust_insphere(&simplex, &test_point).unwrap(),
+            robust_insphere_with_consistency(&simplex, &test_point, true).unwrap(),
             InSphere::INSIDE
         );
         assert!(
             matches!(
-                robust_insphere_positive_oriented(&simplex, &test_point),
+                robust_insphere_positive_oriented_with_consistency(&simplex, &test_point, true),
                 Err(CoordinateConversionError::InsphereInconsistency { .. })
             ),
-            "strict consistency override should exercise the positive-oriented diagnostic error path"
+            "strict consistency should exercise the positive-oriented diagnostic error path"
         );
     }
 
@@ -940,7 +853,7 @@ mod tests {
     }
 
     #[test]
-    fn test_robust_insphere_errors_when_relative_squared_norm_overflows() {
+    fn test_robust_insphere_classifies_when_f64_relative_squared_norm_overflows() {
         let simplex = vec![
             Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
@@ -949,10 +862,10 @@ mod tests {
         ];
         let far_point = Point::try_new([1.0e155, 0.0, 0.0]).expect("finite point coordinates");
 
-        let error = robust_insphere(&simplex, &far_point).unwrap_err();
-        assert!(
-            matches!(error, CoordinateConversionError::NonFiniteValue { .. }),
-            "relative squared-norm overflow should surface as a typed conversion error, got {error:?}"
+        assert_eq!(
+            robust_insphere(&simplex, &far_point).unwrap(),
+            InSphere::OUTSIDE,
+            "the rational cold path must classify finite input without first rounding its squared norm"
         );
     }
 
@@ -1829,12 +1742,9 @@ mod tests {
     }
 
     #[test]
-    fn test_sos_fallback_insphere_via_6d() {
-        // D=6 → insphere matrix is 8×8, exceeding MAX_STACK_MATRIX_DIM=7.
-        // relative_exact_insphere returns Err on every call, so
-        // robust_insphere falls through to the SoS fallback (Strategy 3).
-        // SoS cofactor minors are 6×6 (within the 7-dim limit), so this
-        // succeeds where the full matrix dispatch does not.
+    fn test_relative_exact_insphere_supports_6d_boundary() {
+        // D=6 uses the 7×7 relative lifted matrix, so exact boundary
+        // classification no longer requires an unsupported 8×8 absolute matrix.
         let simplex: Vec<Point<6>> = vec![
             Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
@@ -1848,13 +1758,9 @@ mod tests {
         // Exactly cospherical point: (1,1,0,…,0) lies on the circumsphere
         // of the standard 6-simplex (circumcenter = (1/2,…,1/2),
         // circumradius² = 3/2, |(1,1,0,…,0) - c|² = 3/2).
-        // insphere_distance returns BOUNDARY, forcing the SoS path.
         let cospherical =
             Point::try_new([1.0, 1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates");
         let result = robust_insphere(&simplex, &cospherical).unwrap();
-        assert!(
-            result == InSphere::INSIDE || result == InSphere::OUTSIDE,
-            "SoS fallback must resolve BOUNDARY to INSIDE or OUTSIDE, got {result:?}"
-        );
+        assert_eq!(result, InSphere::BOUNDARY);
     }
 }

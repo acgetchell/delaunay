@@ -18,7 +18,7 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point};
+use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, ExactPredicates, Point};
 use delaunay::prelude::tds::VertexKey;
 use delaunay::try_vertices_from_points;
 use std::hint::black_box;
@@ -326,7 +326,10 @@ fn build_success_source<const D: usize>(
     requested_vertices: usize,
     seed_base: u64,
     preferred_kind: FixtureKind,
-) -> DeletionSource<D> {
+) -> DeletionSource<D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     for attempt in 0..SEED_SEARCH_ATTEMPTS {
         let attempt_seed = u64::try_from(attempt).or_abort();
         let seed = seed_for_case::<D>(requested_vertices, seed_base)
@@ -356,7 +359,10 @@ fn build_success_source<const D: usize>(
 }
 
 /// Build the source triangulation for invalid-deletion rollback measurements.
-fn build_rollback_source<const D: usize>() -> DeletionSource<D> {
+fn build_rollback_source<const D: usize>() -> DeletionSource<D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let vertices = simplex_vertices::<D>();
     let triangulation: BenchTriangulation<D> =
         DelaunayTriangulation::builder(&vertices).build().or_abort();
@@ -387,7 +393,9 @@ fn bench_success_dimension<const D: usize>(
     dim_label: &str,
     counts: &[usize],
     seed_base: u64,
-) {
+) where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let mut group = c.benchmark_group(format!("delete_vertex/success/{dim_label}"));
     group.sample_size(SAMPLE_SIZE);
     group.warm_up_time(WARM_UP_TIME);
@@ -428,7 +436,10 @@ fn bench_success_dimension<const D: usize>(
 }
 
 /// Register the minimal-simplex rollback case for one dimension.
-fn bench_rollback_dimension<const D: usize>(c: &mut Criterion, dim_label: &str) {
+fn bench_rollback_dimension<const D: usize>(c: &mut Criterion, dim_label: &str)
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let source = build_rollback_source::<D>();
     let mut group = c.benchmark_group(format!("delete_vertex/rollback/{dim_label}"));
     group.sample_size(SAMPLE_SIZE);

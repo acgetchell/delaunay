@@ -25,10 +25,11 @@ use delaunay::prelude::generators::{
 };
 use delaunay::prelude::geometry::{
     AdaptiveKernel, CoordinateConversionError, CoordinateRange, CoordinateRangeError,
-    CoordinateValidationError, QualityError, normalized_volume, radius_ratio,
+    CoordinateValidationError, ExactPredicates, QualityError, normalized_volume, radius_ratio,
 };
 use delaunay::prelude::query::{
-    ConvexHull, ConvexHullConstructionError, Point, QueryError, TopologyIndexBuildError,
+    ConvexHull, ConvexHullConstructionError, ConvexHullQueryError, Point, QueryError,
+    TopologyIndexBuildError,
 };
 
 type WorkflowTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
@@ -52,6 +53,11 @@ enum WorkflowExampleError {
         #[source]
         source: Box<ConvexHullConstructionError>,
     },
+    #[error("convex hull query failed: {source}")]
+    ConvexHullQuery {
+        #[source]
+        source: Box<ConvexHullQueryError>,
+    },
     #[error("retry attempt count must be non-zero")]
     ZeroRetryAttempts,
     #[error(transparent)]
@@ -74,6 +80,14 @@ impl From<ConvexHullConstructionError> for WorkflowExampleError {
     }
 }
 
+impl From<ConvexHullQueryError> for WorkflowExampleError {
+    fn from(source: ConvexHullQueryError) -> Self {
+        Self::ConvexHullQuery {
+            source: Box::new(source),
+        }
+    }
+}
+
 fn main() -> Result<(), WorkflowExampleError> {
     let bounds = CoordinateRange::try_new(-100.0_f64, 100.0)?;
     run_case::<3>("3D", 750, 873, bounds)?;
@@ -90,7 +104,10 @@ fn run_case<const D: usize>(
     point_count: usize,
     seed: u64,
     bounds: CoordinateRange<f64>,
-) -> Result<(), WorkflowExampleError> {
+) -> Result<(), WorkflowExampleError>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let points = generate_random_points_in_range_seeded::<D>(point_count, bounds, seed)?;
     let vertices = try_vertices_from_points(&points)?;
     let options = ConstructionOptions::default()
@@ -141,21 +158,21 @@ fn run_case<const D: usize>(
 
     println!(
         "  hull query: centroid outside? {}",
-        hull.is_point_outside(&inside, dt.as_triangulation())?
+        hull.is_point_outside(&inside)?
     );
     println!(
         "  hull query: exterior outside? {}",
-        hull.is_point_outside(&outside, dt.as_triangulation())?
+        hull.is_point_outside(&outside)?
     );
 
-    let visible_facets = hull.find_visible_facets(&outside, dt.as_triangulation())?;
+    let visible_facets = hull.find_visible_facets(&outside)?;
     println!(
         "  facets visible from exterior point: {}",
         visible_facets.len()
     );
 
-    if let Some(index) = hull.find_nearest_visible_facet(&outside, dt.as_triangulation())? {
-        println!("  nearest visible facet index: {index}");
+    if let Some(facet) = hull.find_nearest_visible_facet(&outside)? {
+        println!("  nearest visible facet index: {}", facet.index());
     }
 
     Ok(())

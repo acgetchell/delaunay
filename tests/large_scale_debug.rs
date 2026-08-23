@@ -105,11 +105,12 @@
 #![forbid(unsafe_code)]
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, ConstructionStatistics, DelaunayRepairPolicy, DelaunayTriangulation,
+    ConstructionOptions, ConstructionStatistics, DelaunayIncrementalBuilder,
+    DelaunayIncrementalBuilderError, DelaunayRepairPolicy, DelaunayTriangulation,
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionErrorWithStatistics,
     InitialSimplexStrategy, TopologyGuarantee, Vertex,
 };
-use delaunay::prelude::delaunayize::{DelaunayizeConfig, delaunayize};
+use delaunay::prelude::delaunayize::DelaunayRefinementBuilder;
 use delaunay::prelude::diagnostics::ConstructionTelemetry;
 use delaunay::prelude::generators::{
     generate_random_points_in_ball_seeded, generate_random_points_in_range_seeded,
@@ -121,8 +122,10 @@ use delaunay::prelude::geometry::{
 use delaunay::prelude::insertion::InsertionResult;
 use delaunay::prelude::insertion::{InsertionOutcome, InsertionStatistics};
 use delaunay::prelude::repair::DelaunayCheckPolicy;
-use delaunay::prelude::tds::{InvariantKind, TriangulationValidationReport};
-use delaunay::prelude::validation::{ValidationCadence, ValidationPolicy};
+use delaunay::prelude::tds::{InvariantKind, TdsErrorKind, TriangulationValidationReport};
+use delaunay::prelude::validation::{
+    DelaunayTriangulationValidationError, ValidationCadence, ValidationPolicy,
+};
 use delaunay::vertex;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 #[cfg(feature = "slow-tests")]
@@ -372,7 +375,7 @@ fn bulk_progress_every_from_env() -> Option<usize> {
 }
 
 fn env_flag(name: &str) -> bool {
-    env::var(name).ok().is_some_and(|v| {
+    env::var(name).is_ok_and(|v| {
         let v = v.trim();
         !v.is_empty() && v != "0" && v != "false"
     })
@@ -752,6 +755,49 @@ fn classify_validation_report(report: &TriangulationValidationReport) -> DebugOu
         |violation| (violation.kind, format!("{}", violation.error)),
     );
     DebugOutcome::ValidationFailure { kind, details }
+}
+
+fn tds_invariant_kind(error: &delaunay::prelude::tds::TdsError) -> InvariantKind {
+    match TdsErrorKind::from(error) {
+        TdsErrorKind::InvalidVertex => InvariantKind::VertexValidity,
+        TdsErrorKind::InvalidSimplex
+        | TdsErrorKind::FailedToCreateSimplex
+        | TdsErrorKind::DimensionMismatch
+        | TdsErrorKind::IncompleteConstruction => InvariantKind::SimplexValidity,
+        TdsErrorKind::InvalidNeighbors
+        | TdsErrorKind::NotNeighbors
+        | TdsErrorKind::IndexOutOfBounds
+        | TdsErrorKind::InconsistentDataStructure
+        | TdsErrorKind::FacetError => InvariantKind::NeighborConsistency,
+        TdsErrorKind::OrientationViolation => InvariantKind::CoherentOrientation,
+        TdsErrorKind::DuplicateSimplices => InvariantKind::DuplicateSimplices,
+        TdsErrorKind::FacetSharingViolation => InvariantKind::FacetSharing,
+        TdsErrorKind::MappingInconsistency => InvariantKind::VertexMappings,
+        TdsErrorKind::VertexKeyRetrievalFailed | TdsErrorKind::VertexNotFound => {
+            InvariantKind::SimplexVertexKeys
+        }
+        TdsErrorKind::SimplexNotFound
+        | TdsErrorKind::RemovedSimplexStillIncident
+        | TdsErrorKind::VertexIncidenceMismatch => InvariantKind::VertexIncidence,
+        TdsErrorKind::Geometric => InvariantKind::Realization,
+        TdsErrorKind::DuplicateCoordinatesInSimplex => InvariantKind::SimplexCoordinateUniqueness,
+        _ => InvariantKind::Topology,
+    }
+}
+
+fn final_validation_kind(error: &DelaunayIncrementalBuilderError) -> Option<InvariantKind> {
+    let DelaunayIncrementalBuilderError::FinalValidation { source } = error else {
+        return None;
+    };
+    Some(match source {
+        DelaunayTriangulationValidationError::Tds { source } => tds_invariant_kind(source),
+        DelaunayTriangulationValidationError::Realization { .. } => InvariantKind::Realization,
+        DelaunayTriangulationValidationError::VerificationFailed { .. }
+        | DelaunayTriangulationValidationError::RepairOperationFailed { .. } => {
+            InvariantKind::DelaunayProperty
+        }
+        _ => InvariantKind::Topology,
+    })
 }
 
 fn print_validation_report(report: &TriangulationValidationReport) {
@@ -1395,8 +1441,8 @@ where
                 println!("Shuffled insertion order with seed {shuffle_seed}");
             }
 
-            let mut dt: DelaunayTriangulation<_, (), (), D> =
-                DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
+            let mut dt: DelaunayIncrementalBuilder<_, (), (), D> =
+                DelaunayIncrementalBuilder::with_kernel_and_topology_guarantee(
                     RobustKernel::<f64>::new(),
                     topology_guarantee,
                 );
@@ -1450,11 +1496,10 @@ where
                         );
                         println!("  error: {err}");
 
-                        if let Err(report) = dt.validation_report() {
-                            print_validation_report(&report);
-                        } else {
-                            println!("validation_report: OK (after rollback)");
-                        }
+                        println!(
+                            "draft retained {} vertices after rollback",
+                            dt.number_of_vertices()
+                        );
                         let outcome = DebugOutcome::ConstructionFailure {
                             error: format!("{err}"),
                         };
@@ -1471,20 +1516,23 @@ where
                 if inserted_this_loop
                     && had_simplices
                     && validation_cadence.should_validate(summary.inserted)
-                    && let Err(e) = dt.as_triangulation().is_valid_topology()
                 {
-                    println!("Topology validation failed at idx={idx}: {e}");
-                    let outcome = if let Err(report) = dt.validation_report() {
+                    if let Err(error) = dt.validate_structure() {
+                        println!("Structure validation failed at idx={idx}: {error}");
+                        let outcome = DebugOutcome::ValidationFailure {
+                            kind: tds_invariant_kind(&error),
+                            details: error.to_string(),
+                        };
+                        print_abort_summary::<D>(&outcome, seed, n_points, "periodic validation");
+                        return outcome;
+                    }
+                    if let Some(Err(report)) = dt.owner_topology_report() {
+                        println!("Topology validation failed at idx={idx}");
                         print_validation_report(&report);
-                        classify_validation_report(&report)
-                    } else {
-                        DebugOutcome::ValidationFailure {
-                            kind: InvariantKind::Topology,
-                            details: format!("{e}"),
-                        }
-                    };
-                    print_abort_summary::<D>(&outcome, seed, n_points, "periodic validation");
-                    return outcome;
+                        let outcome = classify_validation_report(&report);
+                        print_abort_summary::<D>(&outcome, seed, n_points, "periodic validation");
+                        return outcome;
+                    }
                 }
 
                 if (idx + 1) % progress_every == 0 {
@@ -1509,7 +1557,27 @@ where
 
             print_insertion_summary(&summary, t_insert.elapsed(), false);
 
-            dt
+            match dt.finish() {
+                Ok(dt) => dt,
+                Err(error) => {
+                    let outcome = final_validation_kind(&error).map_or_else(
+                        || DebugOutcome::ConstructionFailure {
+                            error: format!("draft publication failed: {error}"),
+                        },
+                        |kind| DebugOutcome::ValidationFailure {
+                            kind,
+                            details: error.to_string(),
+                        },
+                    );
+                    print_abort_summary::<D>(
+                        &outcome,
+                        seed,
+                        n_points,
+                        "incremental draft publication",
+                    );
+                    return outcome;
+                }
+            }
         }
     };
 
@@ -1539,15 +1607,14 @@ where
         println!();
         println!("Running final Triangulation -> DelaunayTriangulation conversion...");
         let t_repair = Instant::now();
-        let repair_config = repair_max_flips.map_or_else(
-            || DelaunayizeConfig::default().with_fallback_rebuild(fallback_rebuild),
-            |max_flips| {
-                DelaunayizeConfig::default()
-                    .with_fallback_rebuild(fallback_rebuild)
-                    .with_delaunay_max_flips(max_flips)
-            },
-        );
-        match delaunayize(dt.into_triangulation(), repair_config) {
+        let repair = DelaunayRefinementBuilder::new(dt.into_triangulation())
+            .repair_by_flips()
+            .fallback_rebuild(fallback_rebuild);
+        let repair = match repair_max_flips {
+            Some(max_flips) => repair.max_flips(max_flips),
+            None => repair,
+        };
+        match repair.build() {
             Ok(converted) => {
                 let outcome = converted.outcome;
                 println!(

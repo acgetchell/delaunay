@@ -6554,7 +6554,7 @@ def main() -> None:
     try:
         project_root: Path
         if hasattr(args, "project_root") and args.project_root is not None:
-            project_root = args.project_root.resolve()
+            project_root = cast("Path", args.project_root).resolve()
             if not (project_root / "Cargo.toml").exists():
                 parser.error(f"--project-root must contain Cargo.toml (got: {project_root})")
         else:

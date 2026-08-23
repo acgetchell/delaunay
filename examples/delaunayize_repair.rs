@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
-//! # Delaunayize-by-Flips Repair Example
+//! # Delaunay Refinement Repair Example
 //!
-//! This example demonstrates the **delaunayize-by-flips** workflow that
+//! This example demonstrates the flip-repair mode of [`DelaunayRefinementBuilder`], which
 //! consumes a Levels 1–4 triangulation and performs bounded flip-based
 //! Delaunay repair before Level 5 certification.
 //!
@@ -95,7 +95,9 @@ fn already_delaunay_3d() -> Result<(), DelaunayizeRepairExampleError> {
         dt.number_of_simplices()
     );
 
-    let result = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default())
+    let result = DelaunayRefinementBuilder::new(dt.into_triangulation())
+        .repair_by_flips()
+        .build()
         .map_err(RefinementError::into_reason)?;
     print_outcome(&result.outcome);
 
@@ -129,7 +131,9 @@ fn already_delaunay_4d() -> Result<(), DelaunayizeRepairExampleError> {
         dt.number_of_simplices()
     );
 
-    let result = delaunayize(dt.into_triangulation(), DelaunayizeConfig::default())
+    let result = DelaunayRefinementBuilder::new(dt.into_triangulation())
+        .repair_by_flips()
+        .build()
         .map_err(RefinementError::into_reason)?;
     print_outcome(&result.outcome);
 
@@ -192,7 +196,7 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
             continue;
         };
         if proposal.attempt_on(&mut trial).is_ok()
-            && DelaunayTriangulation::try_from_triangulation(trial).is_err()
+            && DelaunayRefinementBuilder::new(trial).build().is_err()
         {
             violating_facet = Some(facet);
             break;
@@ -208,7 +212,7 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
         .propose_pachner(PachnerMove::K2 { facet })?
         .attempt_on(&mut tri)?;
     assert!(!selected_flip.new_simplices.is_empty());
-    tri = match DelaunayTriangulation::try_from_triangulation(tri) {
+    tri = match DelaunayRefinementBuilder::new(tri).build() {
         Ok(_) => {
             println!(
                 "  Applied selected k=2 flip, but Delaunay property remained satisfied (unexpected)"
@@ -225,8 +229,10 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
     };
 
     // Repair.
-    let result =
-        delaunayize(tri, DelaunayizeConfig::default()).map_err(RefinementError::into_reason)?;
+    let result = DelaunayRefinementBuilder::new(tri)
+        .repair_by_flips()
+        .build()
+        .map_err(RefinementError::into_reason)?;
     print_outcome(&result.outcome);
 
     result.triangulation.validate()?;
@@ -253,17 +259,14 @@ fn custom_config_2d() -> Result<(), DelaunayizeRepairExampleError> {
     let dt: DelaunayTriangulation<_, (), (), 2> =
         DelaunayTriangulationBuilder::new(&vertices).build()?;
 
-    let config = DelaunayizeConfig::default()
-        .with_delaunay_max_flips(100)
-        .with_fallback_rebuild(true);
+    println!("  Config: max_flips=100, fallback=true");
 
-    println!(
-        "  Config: max_flips={:?}, fallback={}",
-        config.delaunay_max_flips, config.fallback_rebuild,
-    );
-
-    let result =
-        delaunayize(dt.into_triangulation(), config).map_err(RefinementError::into_reason)?;
+    let result = DelaunayRefinementBuilder::new(dt.into_triangulation())
+        .repair_by_flips()
+        .max_flips(100)
+        .fallback_rebuild(true)
+        .build()
+        .map_err(RefinementError::into_reason)?;
     print_outcome(&result.outcome);
 
     result.triangulation.validate()?;

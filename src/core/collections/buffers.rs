@@ -18,10 +18,6 @@ use crate::core::tds::{SimplexKey, VertexKey};
 /// from it, ensuring consistent sizing across the codebase.
 pub const CLEANUP_OPERATION_BUFFER_SIZE: usize = 16;
 
-/// Size constant for operations that work with a small number of valid simplices.
-/// 4 is sufficient since valid facets are shared by at most 2 simplices, with some headroom.
-const SMALL_SIMPLEX_OPERATION_BUFFER_SIZE: usize = 4;
-
 /// Collection for tracking simplices to remove during cleanup operations.
 /// Most cleanup operations affect a small number of simplices.
 ///
@@ -53,60 +49,6 @@ pub type ViolationBuffer = SmallBuffer<SimplexKey, CLEANUP_OPERATION_BUFFER_SIZE
 /// - **Performance**: Avoids heap allocation during simplex creation
 /// - **Typical Size**: 4-8 simplices in well-conditioned triangulations (D+1 for simple cavity)
 pub type SimplexKeyBuffer = SmallBuffer<SimplexKey, CLEANUP_OPERATION_BUFFER_SIZE>;
-
-/// Collection for tracking bad simplices (Delaunay violations) during insertion.
-/// Bad simplices are those whose circumsphere contains the newly inserted point.
-///
-/// # Optimization Rationale
-///
-/// - **Stack Allocation**: Up to 16 simplices (covers most cavity scenarios)
-/// - **Use Case**: Bowyer-Watson algorithm, `find_bad_simplices()` return type
-/// - **Performance**: Avoids heap allocation in hot path during point insertion
-/// - **Typical Size**: 1-8 simplices in well-conditioned triangulations
-///
-/// # Usage
-///
-/// This buffer is used as the return type for `find_bad_simplices()` and related methods.
-/// The capacity of 16 is generous for typical Delaunay cavities while remaining stack-allocated.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::collections::algorithm_buffers::BadSimplexBuffer;
-///
-/// // Accumulate bad simplices during insertion
-/// let mut bad_simplices: BadSimplexBuffer = BadSimplexBuffer::new();
-/// assert!(bad_simplices.is_empty());
-/// ```
-pub type BadSimplexBuffer = SmallBuffer<SimplexKey, CLEANUP_OPERATION_BUFFER_SIZE>;
-
-/// Collection for tracking valid simplices during facet sharing fixes.
-/// Most invalid sharing situations involve only a few simplices per facet.
-///
-/// # Optimization Rationale
-///
-/// - **Stack Allocation**: Up to 4 simplices (more than enough for valid facets)
-/// - **Use Case**: Facet validation, topology repair
-/// - **Performance**: Stack-only for typical geometric repair operations
-pub type ValidSimplicesBuffer = SmallBuffer<SimplexKey, SMALL_SIMPLEX_OPERATION_BUFFER_SIZE>;
-
-/// Buffer for storing facet information during boundary analysis.
-/// Sized for typical simplex operations (D+1 facets per simplex).
-///
-/// # Optimization Rationale
-///
-/// - **Stack Allocation**: Up to `MAX_PRACTICAL_DIMENSION_SIZE` facet handles
-/// - **Use Case**: Boundary analysis, facet enumeration
-/// - **Performance**: Handles simplices up to 7D on stack
-/// - **Type Safety**: Uses `FacetHandle` instead of raw tuples to prevent errors
-///
-/// # Type Safety
-///
-/// This buffer uses `FacetHandle` rather than `(SimplexKey, FacetIndex)` tuples to:
-/// - Prevent accidental swapping of `simplex_key` and `facet_index`
-/// - Make the API more self-documenting
-/// - Enable future extensions without breaking changes
-pub type FacetInfoBuffer = SmallBuffer<FacetHandle, MAX_PRACTICAL_DIMENSION_SIZE>;
 
 /// Buffer for storing cavity boundary facets during insertion/removal operations.
 ///
@@ -231,21 +173,6 @@ pub type PeriodicOffsetBuffer<const D: usize> = SmallBuffer<[i8; D], MAX_PRACTIC
 /// - Temporary point storage during algorithms
 pub type GeometricPointBuffer<T, const D: usize> =
     SmallBuffer<[T; D], MAX_PRACTICAL_DIMENSION_SIZE>;
-
-/// Size constant for batch point processing operations.
-/// 16 provides sufficient capacity for typical geometric algorithm batches.
-const BATCH_PROCESSING_BUFFER_SIZE: usize = 16;
-
-/// Temporary buffer for storing points during geometric operations.
-/// Sized for typical batch processing operations.
-///
-/// # Optimization Rationale
-///
-/// - **Stack Allocation**: Up to 16 points for batch operations
-/// - **Generic Dimension**: Works with any coordinate type and dimension
-/// - **Use Case**: Point processing, geometric transformations
-/// - **Performance**: Avoids allocation for small point batches
-pub type PointBuffer<T, const D: usize> = SmallBuffer<[T; D], BATCH_PROCESSING_BUFFER_SIZE>;
 
 #[cfg(test)]
 mod tests {

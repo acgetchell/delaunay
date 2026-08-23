@@ -9,7 +9,7 @@ manuscript prose.
 
 The repository keeps three validation artifacts with distinct ownership:
 
-- `docs/validation.md` is the canonical developer-facing validation contract.
+- `docs/construction_and_validation.md` is the canonical developer-facing construction and validation contract.
 - `papers/validation.tex` is the mathematical and architecture exposition.
 - `notebooks/01_validation.ipynb` is the source of truth for reproducible figures.
 

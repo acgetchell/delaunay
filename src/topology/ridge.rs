@@ -101,11 +101,11 @@ pub enum RidgeCandidateError {
 ///
 /// // In 2D, a ridge is a vertex because it has arity D - 1.
 /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(1))?;
-/// let star = dt.ridge_star_simplices(&ridge)?;
+/// let query = dt.ridge_query(&ridge)?;
 /// let view = dt.ridge_view(&ridge)?;
 ///
 /// assert_eq!(ridge.as_slice(), view.vertex_keys());
-/// assert_eq!(star.as_slice(), view.incident_simplices());
+/// assert_eq!(query.incident_simplices(), view.incident_simplices());
 /// # Ok(())
 /// # }
 /// ```
@@ -988,59 +988,6 @@ pub(crate) fn simplex_star_simplices<U, V, const D: usize>(
     }
 
     Ok(star_simplices)
-}
-
-/// Computes the star of a ridge candidate as the set of incident D-simplices.
-///
-/// Prefer [`RidgeCandidate::query`] or [`RidgeCandidate::view`] when a caller
-/// also needs borrowed ridge vertices. This helper is the lightweight public
-/// entry point for star enumeration.
-///
-/// # Errors
-///
-/// Returns [`ManifoldError::Tds`] when any ridge vertex is missing from the
-/// [`Tds`] or a candidate star simplex cannot resolve its vertex keys.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::*;
-/// use delaunay::prelude::topology::validation::{
-///     ManifoldError, RidgeCandidate, RidgeCandidateError, ridge_star_simplices,
-/// };
-///
-/// # #[derive(Debug, thiserror::Error)]
-/// # enum ExampleError {
-/// #     #[error(transparent)]
-/// #     Construction(#[from] DelaunayTriangulationConstructionError),
-/// #     #[error(transparent)]
-/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-/// #     #[error(transparent)]
-/// #     Ridge(#[from] RidgeCandidateError),
-/// #     #[error(transparent)]
-/// #     Manifold(#[from] ManifoldError),
-/// # }
-/// # fn main() -> Result<(), ExampleError> {
-/// let vertices = [
-///     delaunay::vertex![0.0, 0.0, 0.0]?,
-///     delaunay::vertex![1.0, 0.0, 0.0]?,
-///     delaunay::vertex![0.0, 1.0, 0.0]?,
-///     delaunay::vertex![0.0, 0.0, 1.0]?,
-/// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-///
-/// // In 3D, a ridge is an edge because it has arity D - 1.
-/// let ridge = RidgeCandidate::<3>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(2))?;
-/// let star = dt.ridge_star_simplices(&ridge)?;
-/// assert!(!star.is_empty());
-/// # Ok(())
-/// # }
-/// ```
-pub fn ridge_star_simplices<U, V, const D: usize>(
-    tds: &Tds<U, V, D>,
-    ridge_candidate: &RidgeCandidate<D>,
-) -> Result<SmallBuffer<SimplexKey, 8>, ManifoldError> {
-    simplex_star_simplices(tds, ridge_candidate.as_slice())
 }
 
 /// Extracts every lifted image of a ridge candidate in one simplex frame.
@@ -1999,7 +1946,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ridge_star_simplices_returns_incident_simplices_for_vertex_ridge_in_2d() {
+    fn test_ridge_query_returns_incident_simplices_for_vertex_ridge_in_2d() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
@@ -2037,15 +1984,15 @@ mod tests {
             .unwrap();
 
         let ridge_candidate = RidgeCandidate::<2>::try_from_vertices([v0]).unwrap();
-        let star = ridge_star_simplices(&tds, &ridge_candidate).unwrap();
-        let star_set: SimplexKeySet = star.iter().copied().collect();
+        let ridge_query = ridge_candidate.query(&tds).unwrap();
+        let star_set: SimplexKeySet = ridge_query.incident_simplices().iter().copied().collect();
 
         let expected: SimplexKeySet = [c012, c013, c023].into_iter().collect();
         assert_eq!(star_set, expected);
     }
 
     #[test]
-    fn test_ridge_star_simplices_returns_full_edge_star_in_3d() {
+    fn test_ridge_query_returns_full_edge_star_in_3d() {
         let mut tds: Tds<(), (), 3> = Tds::empty();
 
         let v0 = tds
@@ -2082,9 +2029,7 @@ mod tests {
 
         let ridge_candidate = RidgeCandidate::<3>::try_from_vertices([v0, v1]).unwrap();
         let ridge_query = ridge_candidate.query(&tds).unwrap();
-        let star = ridge_star_simplices(&tds, &ridge_candidate).unwrap();
         let query_star = ridge_query.incident_simplices();
-        let star_set: SimplexKeySet = star.iter().copied().collect();
         let query_star_set: SimplexKeySet = query_star.iter().copied().collect();
         let ridge_view = ridge_candidate.view(&tds).unwrap();
         let view_star_set: SimplexKeySet =
@@ -2119,7 +2064,6 @@ mod tests {
         let expected: SimplexKeySet = [c0123, c0134, c0142].into_iter().collect();
         assert_eq!(ridge_query.ridge_candidate(), &ridge_candidate);
         assert_eq!(ridge_query.vertex_keys(), ridge_candidate.as_slice());
-        assert_eq!(star_set, expected);
         assert_eq!(query_star_set, expected);
         assert_eq!(view_star_set, expected);
         assert_eq!(ridge_view.ridge_candidate(), &ridge_candidate);
@@ -2138,7 +2082,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ridge_star_simplices_errors_on_missing_vertex_key() {
+    fn test_ridge_query_errors_on_missing_vertex_key() {
         let tds: Tds<(), (), 2> = Tds::empty();
         let missing = VertexKey::from(KeyData::from_ffi(u64::MAX));
 
@@ -2155,14 +2099,6 @@ mod tests {
                 assert!(context.contains("ridge query"));
             }
             other => panic!("Expected ridge view VertexNotFound error, got {other:?}"),
-        }
-        match ridge_star_simplices(&tds, &ridge_candidate) {
-            Err(ManifoldError::Tds {
-                source: TdsError::VertexNotFound { vertex_key, .. },
-            }) => {
-                assert_eq!(vertex_key, missing);
-            }
-            other => panic!("Expected VertexNotFound error, got {other:?}"),
         }
     }
 

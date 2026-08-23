@@ -154,7 +154,7 @@ def delaunay_command_prefix(root: Path, *, require_built_binary: bool = False) -
     if cargo is None:
         message = "cargo executable was not found on PATH; set DELAUNAY_BINARY to a built binary"
         raise RuntimeError(message)
-    return [cargo, "run", "--profile", "perf", "--features", "cli", "--bin", "delaunay", "--"]
+    return [cargo, "run", "--locked", "--profile", "perf", "--features", "cli", "--bin", "delaunay", "--"]
 
 
 def run_command(command: list[str], *, cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:

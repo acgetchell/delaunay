@@ -1,43 +1,39 @@
 #![forbid(unsafe_code)]
+#![deny(dead_code_pub_in_binary)]
 
-//! Configuration and execution for the opt-in `delaunay` command-line binary.
-//!
-//! This module belongs to the companion binary enabled by the Cargo `cli`
-//! feature. It keeps command-line parsing, raw-argument validation, notebook
-//! artifact generation, and diagnostic Pachner-stress execution outside the
-//! library API while still using the same typed validation boundaries.
+//! Standalone validated Pachner-move stress diagnostic.
+
+#[path = "../shared/cli_output.rs"]
+mod cli_output;
 
 use std::{
     fmt::{self, Display},
     fs::{self, File},
     io::{self, BufWriter, Write},
-    num::{NonZeroU32, NonZeroUsize, TryFromIntError},
-    path::{Path, PathBuf},
+    num::{NonZeroUsize, TryFromIntError},
+    path::{Component, Path, PathBuf},
     process::ExitCode,
     time::Instant,
 };
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Parser, ValueEnum};
 use delaunay::{
-    DelaunayTriangulation, InvariantError, VisualizationExportError,
+    InvariantError,
     prelude::{
         construction::{
             ConstructionOptions, DelaunayTriangulationBuilder,
-            DelaunayTriangulationConstructionError, RetryPolicy, SphericalDelaunayBuilder,
-            SphericalDelaunayConstructionError, TopologyGuarantee, Vertex, vertex,
+            DelaunayTriangulationConstructionError, RetryPolicy, TopologyGuarantee, Vertex, vertex,
         },
-        generators::{
-            RandomPointGenerationError, generate_random_points_in_ball_seeded,
-            generate_random_points_in_range_seeded,
-        },
+        generators::{RandomPointGenerationError, generate_random_points_in_range_seeded},
         geometry::{
-            CoordinateConversionError, CoordinateRange, CoordinateRangeError, Point, RobustKernel,
+            CoordinateConversionError, CoordinateRange, CoordinateRangeError, ExactPredicates,
+            RobustKernel,
         },
         pachner::{
             EdgeKey, FacetHandle, FlipError, PachnerMove, PachnerMoveResult, PachnerMoves,
             RidgeHandle, SimplexKey, TriangleHandle, TriangleHandleError, VertexKey,
         },
-        query::{ConvexHull, ConvexHullConstructionError, QueryError},
+        query::QueryError,
         tds::{FacetError, TdsError},
         triangulation::Triangulation,
     },
@@ -45,7 +41,8 @@ use delaunay::{
 };
 use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 use serde::Serialize;
-use uuid::Uuid;
+
+use crate::cli_output::{ArtifactOutputError, ArtifactPath, write_json_output};
 
 type PachnerStressTriangulation<const D: usize> = Triangulation<RobustKernel<f64>, (), (), D>;
 
@@ -56,298 +53,18 @@ const DEFAULT_KEY_REFRESH_EVERY: usize = 256;
 const DEFAULT_RETRY_ATTEMPTS: usize = 24;
 const DEFAULT_VALIDATE_EVERY: usize = 1_000;
 const PACHNER_STRESS_VALIDATION_SCOPE_LABEL: &str = "topology";
+const PACHNER_STRESS_EXPORT_SCHEMA: &str = "delaunay.pachner_stress";
+const PACHNER_STRESS_EXPORT_SCHEMA_VERSION: u32 = 1;
 const DEFAULT_VERTEX_GROWTH_DIVISOR: usize = 10;
 const DEFAULT_VERTEX_SHRINK_DIVISOR: usize = 20;
-const DEFAULT_GENERATE_DIMENSION: usize = 3;
-const DEFAULT_GENERATE_VERTICES: usize = 100;
-const DEFAULT_GENERATE_SEED: u64 = 0xD3_1A_05_25_03;
-const CONVEX_HULL_EXPORT_SCHEMA: &str = "delaunay.convex_hull";
-const CONVEX_HULL_EXPORT_SCHEMA_VERSION: u32 = 1;
-const VALIDATION_DEMO_EXPORT_SCHEMA: &str = "delaunay.validation_demo";
-const VALIDATION_DEMO_EXPORT_SCHEMA_VERSION: u32 = 1;
-const SPHERICAL_HERO_EXPORT_SCHEMA: &str = "delaunay.spherical_hero";
-const SPHERICAL_HERO_EXPORT_SCHEMA_VERSION: u32 = 1;
 
-/// Top-level command-line parser for the opt-in binary.
+/// Raw command-line arguments for the `pachner-stress` diagnostic binary.
 #[derive(Debug, Parser)]
 #[command(
-    name = "delaunay",
+    name = "pachner-stress",
     version,
-    about = "Generate and diagnose d-dimensional Delaunay triangulations"
+    about = "Run validated Pachner-move stress diagnostics"
 )]
-pub struct DelaunayCliArgs {
-    #[command(subcommand)]
-    command: DelaunayCommandArgs,
-}
-
-impl DelaunayCliArgs {
-    /// Parse raw process arguments with clap.
-    ///
-    /// Clap prints diagnostics and exits the process for malformed command
-    /// lines. Use [`Self::into_validated`] afterward to turn parsed raw values
-    /// into a command whose semantic invariants have been checked.
-    pub fn from_args() -> Self {
-        Self::parse()
-    }
-
-    /// Convert raw parsed arguments into a validated command.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CliError`] when parsed arguments are syntactically valid but
-    /// violate command semantics, such as unsupported generation dimensions,
-    /// too few vertices for the requested dimension, or invalid Pachner stress
-    /// counts.
-    pub fn into_validated(self) -> Result<ValidatedDelaunayCommand, CliError> {
-        Ok(ValidatedDelaunayCommand(self.command.into_validated()?))
-    }
-}
-
-/// Print a process-level error and return a failing exit code.
-pub fn exit_with_error(error: impl Display) -> ExitCode {
-    let stderr = io::stderr();
-    let mut handle = stderr.lock();
-    let _ = writeln!(handle, "error: {error}");
-    ExitCode::FAILURE
-}
-
-/// Validated CLI command accepted by the binary runner.
-#[derive(Debug)]
-pub struct ValidatedDelaunayCommand(DelaunayCommand);
-
-impl ValidatedDelaunayCommand {
-    /// Run this validated command.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CliError`] when command execution fails. Failure modes include
-    /// artifact I/O or JSON serialization errors, random point generation,
-    /// Euclidean or spherical triangulation construction, visualization or
-    /// convex-hull export, validation-demo invariant drift, and Pachner stress
-    /// diagnostic failures.
-    pub fn run(self) -> Result<(), CliError> {
-        match self.0 {
-            DelaunayCommand::Generate(command) => run_generate(&command),
-            DelaunayCommand::SphericalHero(command) => run_spherical_hero(&command),
-            DelaunayCommand::ValidationDemo(command) => run_validation_demo(&command),
-            DelaunayCommand::PachnerStress { config, artifacts } => {
-                run_pachner_stress(config, &artifacts)?;
-                Ok(())
-            }
-        }
-    }
-}
-
-/// Validated binary subcommands.
-#[derive(Debug)]
-enum DelaunayCommand {
-    Generate(GenerateCommand),
-    SphericalHero(SphericalHeroConfig),
-    ValidationDemo(ValidationDemoConfig),
-    PachnerStress {
-        config: PachnerStressConfig,
-        artifacts: PachnerStressArtifacts,
-    },
-}
-
-/// Raw binary subcommands parsed by clap.
-#[derive(Debug, Subcommand)]
-enum DelaunayCommandArgs {
-    /// Generate a random Delaunay triangulation or visualization export.
-    Generate(GenerateArgs),
-    /// Emit a deterministic `S^2` triangulation for the notebook-backed README hero.
-    SphericalHero(SphericalHeroArgs),
-    /// Emit deterministic validation-level failure examples for notebooks.
-    ValidationDemo(ValidationDemoArgs),
-    /// Run a direct Pachner move stress workload.
-    PachnerStress(PachnerStressArgs),
-}
-
-impl DelaunayCommandArgs {
-    /// Parse raw subcommand arguments into a semantically validated command.
-    fn into_validated(self) -> Result<DelaunayCommand, CliError> {
-        match self {
-            Self::Generate(args) => args.into_validated(),
-            Self::SphericalHero(args) => Ok(DelaunayCommand::SphericalHero(args.into_validated()?)),
-            Self::ValidationDemo(args) => {
-                Ok(DelaunayCommand::ValidationDemo(args.into_validated()))
-            }
-            Self::PachnerStress(args) => args.into_validated(),
-        }
-    }
-}
-
-/// Raw command-line arguments for `delaunay spherical-hero`.
-#[derive(Debug, Args)]
-struct SphericalHeroArgs {
-    /// Number of deterministic Fibonacci-sphere vertices.
-    #[arg(short = 'n', long, default_value_t = 160)]
-    vertices: usize,
-    /// Write JSON to a file instead of stdout.
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-}
-
-impl SphericalHeroArgs {
-    /// Validate the `S^2` vertex count.
-    fn into_validated(self) -> Result<SphericalHeroConfig, CliError> {
-        let vertices =
-            u32::try_from(self.vertices).map_err(|_| CliError::SphericalHeroVertexCount {
-                value: self.vertices,
-            })?;
-        let vertices = NonZeroU32::new(vertices)
-            .filter(|vertices| vertices.get() >= 4)
-            .ok_or(CliError::TooFewVertices {
-                dimension: 2,
-                vertices: self.vertices,
-                minimum: 4,
-            })?;
-        Ok(SphericalHeroConfig {
-            vertices,
-            output: self.output,
-        })
-    }
-}
-
-/// Validated deterministic `S^2` hero configuration.
-#[derive(Debug)]
-struct SphericalHeroConfig {
-    vertices: NonZeroU32,
-    output: Option<PathBuf>,
-}
-
-/// Generated object requested by the companion binary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-enum GenerateKind {
-    /// Emit the generated Delaunay triangulation as the crate's serde JSON.
-    Triangulation,
-    /// Emit generic simplicial-complex visualization primitives as JSON.
-    Visualization,
-    /// Emit the generated triangulation's convex-hull facets as JSON.
-    ConvexHull,
-}
-
-/// Random point distribution requested by the companion binary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-enum GenerateDistribution {
-    /// Uniform points in the unit cube `[0, 1]^D`.
-    Cube,
-    /// Uniform points in the radius-1 ball centered at the origin.
-    Ball,
-}
-
-/// Raw command-line arguments for `delaunay generate`.
-#[derive(Debug, Args)]
-struct GenerateArgs {
-    /// Output object to generate.
-    #[arg(value_enum, default_value = "triangulation")]
-    kind: GenerateKind,
-    /// Dimension to generate.
-    #[arg(short = 'd', long, default_value_t = DEFAULT_GENERATE_DIMENSION)]
-    dimension: usize,
-    /// Number of random input vertices.
-    #[arg(short = 'n', long, default_value_t = DEFAULT_GENERATE_VERTICES)]
-    vertices: usize,
-    /// Random point distribution.
-    #[arg(long, value_enum, default_value = "cube")]
-    distribution: GenerateDistribution,
-    /// Random seed.
-    #[arg(long, default_value_t = DEFAULT_GENERATE_SEED)]
-    seed: u64,
-    /// Write JSON to a file instead of stdout.
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-}
-
-impl GenerateArgs {
-    /// Validate generation arguments and choose the const-generic runner.
-    fn into_validated(self) -> Result<DelaunayCommand, CliError> {
-        match self.dimension {
-            2 => Ok(DelaunayCommand::Generate(GenerateCommand::D2(
-                GenerateConfig::try_new(self)?,
-            ))),
-            3 => Ok(DelaunayCommand::Generate(GenerateCommand::D3(
-                GenerateConfig::try_new(self)?,
-            ))),
-            4 => Ok(DelaunayCommand::Generate(GenerateCommand::D4(
-                GenerateConfig::try_new(self)?,
-            ))),
-            5 => Ok(DelaunayCommand::Generate(GenerateCommand::D5(
-                GenerateConfig::try_new(self)?,
-            ))),
-            dimension => Err(CliError::UnsupportedGenerateDimension { dimension }),
-        }
-    }
-}
-
-/// Validated generation command by dimension.
-#[derive(Debug)]
-enum GenerateCommand {
-    D2(GenerateConfig<2>),
-    D3(GenerateConfig<3>),
-    D4(GenerateConfig<4>),
-    D5(GenerateConfig<5>),
-}
-
-/// Validated generation configuration for one const-generic dimension.
-#[derive(Debug)]
-struct GenerateConfig<const D: usize> {
-    kind: GenerateKind,
-    vertices: NonZeroUsize,
-    distribution: GenerateDistribution,
-    seed: u64,
-    output: Option<PathBuf>,
-}
-
-impl<const D: usize> GenerateConfig<D> {
-    /// Validate dimension-dependent generation limits.
-    fn try_new(args: GenerateArgs) -> Result<Self, CliError> {
-        let minimum = D + 1;
-        let vertices = validated_nonzero_count(
-            args.vertices,
-            |vertices| vertices.get() >= minimum,
-            || CliError::TooFewVertices {
-                dimension: D,
-                vertices: args.vertices,
-                minimum,
-            },
-        )?;
-
-        Ok(Self {
-            kind: args.kind,
-            vertices,
-            distribution: args.distribution,
-            seed: args.seed,
-            output: args.output,
-        })
-    }
-}
-
-/// Raw command-line arguments for `delaunay validation-demo`.
-#[derive(Debug, Args)]
-struct ValidationDemoArgs {
-    /// Write JSON to a file instead of stdout.
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-}
-
-impl ValidationDemoArgs {
-    /// Convert raw validation-demo arguments into a passive artifact config.
-    fn into_validated(self) -> ValidationDemoConfig {
-        ValidationDemoConfig {
-            output: self.output,
-        }
-    }
-}
-
-/// Validated configuration for the generated validation-model demo artifact.
-#[derive(Debug)]
-struct ValidationDemoConfig {
-    output: Option<PathBuf>,
-}
-
-/// Raw command-line arguments for `delaunay pachner-stress`.
-#[derive(Debug, Args)]
 struct PachnerStressArgs {
     /// Stress dimension.
     #[arg(long, value_enum, default_value = "3d")]
@@ -386,7 +103,7 @@ struct PachnerStressArgs {
 
 impl PachnerStressArgs {
     /// Convert raw stress-test options into invariant-bearing run settings.
-    fn into_validated(self) -> Result<DelaunayCommand, CliError> {
+    fn into_validated(self) -> Result<PachnerStressCommand, PachnerStressError> {
         let config = PachnerStressConfig::try_new(PachnerStressConfigInput {
             mode: self.mode,
             dimension: self.dimension,
@@ -410,676 +127,36 @@ impl PachnerStressArgs {
         })?;
         let artifacts =
             PachnerStressArtifacts::try_new(self.progress_csv, self.summary_json, !self.quiet)?;
-        Ok(DelaunayCommand::PachnerStress { config, artifacts })
+        Ok(PachnerStressCommand { config, artifacts })
     }
 }
 
-/// Detached convex-hull export used by notebooks and support scripts.
-#[derive(Debug, Serialize)]
-struct ConvexHullExport<const D: usize> {
-    schema: &'static str,
-    schema_version: u32,
-    dimension: usize,
-    vertex_count: usize,
-    simplex_count: usize,
-    facet_count: usize,
-    facets: Vec<ConvexHullFacetRecord<D>>,
-}
-
-/// One convex-hull facet in deterministic iterator order.
-#[derive(Debug, Serialize)]
-struct ConvexHullFacetRecord<const D: usize> {
-    index: usize,
-    vertex_ids: Vec<Uuid>,
-    coordinates: Vec<Vec<f64>>,
-}
-
-/// Detached `S^2` triangulation rendered by the spherical hero notebook.
-#[derive(Debug, Serialize)]
-struct SphericalHeroExport {
-    schema: &'static str,
-    schema_version: u32,
-    intrinsic_dimension: usize,
-    ambient_dimension: usize,
-    vertices: Vec<Vec<f64>>,
-    simplices: Vec<Vec<usize>>,
-}
-
-/// Notebook-facing validation-model artifact generated by public failure paths.
-#[derive(Debug, Serialize)]
-struct ValidationDemoExport {
-    schema: &'static str,
-    schema_version: u32,
-    dimension: usize,
-    valid_baseline: ValidationDemoCase,
-    cases: Vec<ValidationDemoCase>,
-}
-
-/// One validation-level example with diagnostic text and renderable geometry.
-#[derive(Debug, Serialize)]
-struct ValidationDemoCase {
-    level: u8,
-    layer: &'static str,
-    title: &'static str,
-    status: &'static str,
-    public_check: &'static str,
-    public_reference: &'static str,
-    input_summary: &'static str,
-    explanation: &'static str,
-    diagnostic: String,
-    visual: ValidationDemoVisual,
-}
-
-/// Geometry and emphasis metadata for notebook-generated validation figures.
-#[derive(Debug, Serialize)]
-struct ValidationDemoVisual {
-    points: Vec<ValidationDemoPoint>,
-    simplices: Vec<Vec<usize>>,
-    highlighted_simplices: Vec<usize>,
-    highlighted_edges: Vec<[usize; 2]>,
-    invalid_points: Vec<usize>,
-    isolated_points: Vec<usize>,
-    duplicate_simplices: Vec<Vec<usize>>,
-    circumcircle: Option<ValidationDemoCircle>,
-}
-
-/// One labeled 2D point in a validation demo visual.
-#[derive(Debug, Serialize)]
-struct ValidationDemoPoint {
-    label: &'static str,
-    coordinates: [f64; 2],
-}
-
-/// Circumcircle witness for the Level 5 empty-circumsphere example.
-#[derive(Debug, Serialize)]
-struct ValidationDemoCircle {
-    center: [f64; 2],
-    radius: f64,
-}
-
-/// Dispatch a validated generation command to its const-generic implementation.
-fn run_generate(command: &GenerateCommand) -> Result<(), CliError> {
-    match command {
-        GenerateCommand::D2(config) => run_generate_dimension(config),
-        GenerateCommand::D3(config) => run_generate_dimension(config),
-        GenerateCommand::D4(config) => run_generate_dimension(config),
-        GenerateCommand::D5(config) => run_generate_dimension(config),
-    }
-}
-
-/// Generate and emit one artifact for a concrete dimension.
-fn run_generate_dimension<const D: usize>(config: &GenerateConfig<D>) -> Result<(), CliError> {
-    let triangulation =
-        build_generated_delaunay::<D>(config.vertices, config.seed, config.distribution)?;
-    match config.kind {
-        GenerateKind::Triangulation => {
-            write_json_output(&triangulation, config.output.as_deref())?;
-        }
-        GenerateKind::Visualization => {
-            let visualization = triangulation.to_visualization_data()?;
-            write_json_output(&visualization, config.output.as_deref())?;
-        }
-        GenerateKind::ConvexHull => {
-            let hull = build_convex_hull_export(&triangulation)?;
-            write_json_output(&hull, config.output.as_deref())?;
-        }
-    }
-    Ok(())
-}
-
-/// Generate the validation-model artifact used by the notebook quickstart.
-fn run_validation_demo(config: &ValidationDemoConfig) -> Result<(), CliError> {
-    let export = build_validation_demo_export()?;
-    write_json_output(&export, config.output.as_deref())?;
-    Ok(())
-}
-
-/// Build and emit a deterministic `S^2` Delaunay triangulation in `R^3`.
-fn run_spherical_hero(config: &SphericalHeroConfig) -> Result<(), CliError> {
-    let vertex_count = config.vertices.get();
-    let count = f64::from(vertex_count);
-    let golden_angle = std::f64::consts::PI * (3.0 - 5.0_f64.sqrt());
-    let points = (0..vertex_count)
-        .map(|index| {
-            let position = f64::from(index) + 0.5;
-            let z = 1.0 - 2.0 * position / count;
-            let radial = (1.0 - z * z).sqrt();
-            let azimuth = golden_angle * f64::from(index);
-            [radial * azimuth.cos(), radial * azimuth.sin(), z]
-        })
-        .collect::<Vec<_>>();
-    let triangulation = SphericalDelaunayBuilder::<2>::try_new(points)?.build()?;
-    let export = SphericalHeroExport {
-        schema: SPHERICAL_HERO_EXPORT_SCHEMA,
-        schema_version: SPHERICAL_HERO_EXPORT_SCHEMA_VERSION,
-        intrinsic_dimension: triangulation.dimension(),
-        ambient_dimension: triangulation.ambient_dimension(),
-        vertices: triangulation
-            .points()
-            .iter()
-            .map(|point| point.coords().to_vec())
-            .collect(),
-        simplices: triangulation
-            .simplices()
-            .iter()
-            .map(|simplex| simplex.vertex_indices().to_vec())
-            .collect(),
+fn main() -> ExitCode {
+    let command = match PachnerStressArgs::parse().into_validated() {
+        Ok(command) => command,
+        Err(error) => return exit_with_error(error),
     };
-    write_json_output(&export, config.output.as_deref())?;
-    Ok(())
+
+    run(&command).map_or_else(exit_with_error, |()| ExitCode::SUCCESS)
 }
 
-/// Build a random PL-manifold Delaunay triangulation for CLI export.
-fn build_generated_delaunay<const D: usize>(
-    vertex_count: NonZeroUsize,
-    seed: u64,
-    distribution: GenerateDistribution,
-) -> Result<DelaunayTriangulation<RobustKernel<f64>, (), (), D>, CliError> {
-    let points = match distribution {
-        GenerateDistribution::Cube => generate_random_points_in_range_seeded::<D>(
-            vertex_count.get(),
-            CoordinateRange::try_new(0.0_f64, 1.0)?,
-            seed,
-        )?,
-        GenerateDistribution::Ball => {
-            generate_random_points_in_ball_seeded::<D>(vertex_count.get(), 1.0, seed)?
-        }
-    };
-    let vertices = try_vertices_from_points(&points)?;
-    Ok(DelaunayTriangulationBuilder::new(&vertices)
-        .topology_guarantee(TopologyGuarantee::PLManifold)
-        .build_with_kernel(&RobustKernel::new())?)
+fn exit_with_error(error: impl Display) -> ExitCode {
+    let stderr = io::stderr();
+    let mut handle = stderr.lock();
+    let _ = writeln!(handle, "error: {error}");
+    ExitCode::FAILURE
 }
 
-/// Convert a triangulation into the stable convex-hull JSON schema.
-fn build_convex_hull_export<const D: usize>(
-    triangulation: &DelaunayTriangulation<RobustKernel<f64>, (), (), D>,
-) -> Result<ConvexHullExport<D>, CliError> {
-    let hull = ConvexHull::try_from_triangulation(triangulation.as_triangulation())?;
-    let facets = hull
-        .try_facets(triangulation.as_triangulation())?
-        .enumerate()
-        .map(|(index, facet)| {
-            let facet = facet?;
-            let (vertex_ids, coordinates) = facet
-                .vertices()
-                .map(|vertex| (vertex.uuid(), vertex.point().coords().to_vec()))
-                .unzip();
-            Ok::<_, CliError>(ConvexHullFacetRecord {
-                index,
-                vertex_ids,
-                coordinates,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(ConvexHullExport {
-        schema: CONVEX_HULL_EXPORT_SCHEMA,
-        schema_version: CONVEX_HULL_EXPORT_SCHEMA_VERSION,
-        dimension: D,
-        vertex_count: triangulation.number_of_vertices(),
-        simplex_count: triangulation.number_of_simplices(),
-        facet_count: facets.len(),
-        facets,
-    })
+/// Opaque validated Pachner stress command accepted by the CLI dispatcher.
+#[derive(Debug)]
+struct PachnerStressCommand {
+    config: PachnerStressConfig,
+    artifacts: PachnerStressArtifacts,
 }
 
-/// Build the deterministic validation examples rendered by the notebook.
-fn build_validation_demo_export() -> Result<ValidationDemoExport, CliError> {
-    Ok(ValidationDemoExport {
-        schema: VALIDATION_DEMO_EXPORT_SCHEMA,
-        schema_version: VALIDATION_DEMO_EXPORT_SCHEMA_VERSION,
-        dimension: 2,
-        valid_baseline: validation_demo_valid_baseline()?,
-        cases: vec![
-            validation_demo_level_1(),
-            validation_demo_level_2()?,
-            validation_demo_level_3()?,
-            validation_demo_level_4()?,
-            validation_demo_level_5()?,
-        ],
-    })
-}
-
-/// Generate a passing explicit triangle used as the visual baseline.
-fn validation_demo_valid_baseline() -> Result<ValidationDemoCase, CliError> {
-    let coordinates = [[0.0, 0.0], [1.0, 0.0], [0.5, 0.866_025_403_784_438_6]];
-    let simplices = vec![vec![0, 1, 2]];
-    let vertices = demo_vertices(&coordinates)?;
-    let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
-        .map_err(|source| CliError::ValidationDemoInvariant {
-            case: "valid baseline",
-            message: format!("explicit builder parse failed unexpectedly: {source}"),
-        })?
-        .build()?;
-    dt.validate()
-        .map_err(|source| CliError::ValidationDemoInvariant {
-            case: "valid baseline",
-            message: format!("explicit baseline failed validation unexpectedly: {source}"),
-        })?;
-
-    Ok(ValidationDemoCase {
-        level: 0,
-        layer: "Valid baseline",
-        title: "Passing explicit Delaunay triangle",
-        status: "passed",
-        public_check: "DelaunayTriangulation::validate",
-        public_reference: "tests/triangulation_builder.rs::test_explicit_validate_delaunay_mesh",
-        input_summary: "Three non-collinear vertices and one triangle",
-        explanation: "This baseline passes the cumulative validation path before the failure rows isolate each layer.",
-        diagnostic: format!(
-            "validate() passed with {} vertices and {} simplex",
-            dt.number_of_vertices(),
-            dt.number_of_simplices()
-        ),
-        visual: demo_visual(coordinates, simplices),
-    })
-}
-
-/// Generate the Level 1 finite-coordinate failure example.
-fn validation_demo_level_1() -> ValidationDemoCase {
-    let diagnostic = Point::<2>::try_new([f64::NAN, 0.0])
-        .expect_err("non-finite point must fail Level 1 coordinate validation")
-        .to_string();
-    let mut visual = demo_visual([[0.0, 0.0]], Vec::new());
-    visual.invalid_points.push(0);
-
-    ValidationDemoCase {
-        level: 1,
-        layer: "Elements",
-        title: "Non-finite point coordinate",
-        status: "failed_as_expected",
-        public_check: "Point::<2>::try_new",
-        public_reference: "src/geometry/point.rs::point_is_valid_f64",
-        input_summary: "Point::<2>::try_new([NaN, 0.0])",
-        explanation: "Element validation rejects non-finite coordinates before they can enter a vertex, simplex, or TDS.",
-        diagnostic,
-        visual,
-    }
-}
-
-/// Generate the Level 2 duplicate-simplex structural failure example.
-fn validation_demo_level_2() -> Result<ValidationDemoCase, CliError> {
-    let coordinates = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
-    let simplices = vec![vec![0, 1, 2], vec![0, 1, 2]];
-    let diagnostic =
-        explicit_builder_failure("Level 2 duplicate simplex", coordinates, &simplices)?;
-    let mut visual = demo_visual(coordinates, simplices);
-    visual.duplicate_simplices.push(vec![0, 1, 2]);
-    visual.highlighted_simplices = vec![0, 1];
-
-    Ok(ValidationDemoCase {
-        level: 2,
-        layer: "Structure",
-        title: "Duplicate maximal simplex",
-        status: "failed_as_expected",
-        public_check: "DelaunayTriangulationBuilder::try_from_vertices_and_simplices(...).build",
-        public_reference: "tests/triangulation_builder.rs::test_explicit_error_variant_duplicate_simplices_structural_validation",
-        input_summary: "Two copies of simplex [0, 1, 2]",
-        explanation: "The TDS layer rejects duplicate maximal simplices because the incidence structure would no longer be a well-defined complex.",
-        diagnostic,
-        visual,
-    })
-}
-
-/// Generate the Level 3 isolated-vertex topology failure example.
-fn validation_demo_level_3() -> Result<ValidationDemoCase, CliError> {
-    let coordinates = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.45, 0.85]];
-    let simplices = vec![vec![0, 1, 2]];
-    let diagnostic = explicit_builder_failure("Level 3 isolated vertex", coordinates, &simplices)?;
-    let mut visual = demo_visual(coordinates, simplices);
-    visual.isolated_points.push(3);
-
-    Ok(ValidationDemoCase {
-        level: 3,
-        layer: "Topology",
-        title: "Unreferenced vertex",
-        status: "failed_as_expected",
-        public_check: "Triangulation::is_valid_topology",
-        public_reference: "tests/triangulation_builder.rs::test_explicit_unreferenced_vertices_rejected",
-        input_summary: "One valid triangle plus vertex D unused by any simplex",
-        explanation: "The topology layer rejects isolated vertices because every vertex must belong to the triangulated space.",
-        diagnostic,
-        visual,
-    })
-}
-
-/// Generate the Level 4 invalid Euclidean realization failure example.
-fn validation_demo_level_4() -> Result<ValidationDemoCase, CliError> {
-    let coordinates = [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]];
-    let simplices = vec![vec![0, 1, 2]];
-    let diagnostic = explicit_builder_failure(
-        "Level 4 invalid Euclidean realization",
-        coordinates,
-        &simplices,
-    )?;
-    let mut visual = demo_visual(coordinates, simplices);
-    visual.highlighted_simplices = vec![0];
-    visual.highlighted_edges.push([0, 2]);
-
-    Ok(ValidationDemoCase {
-        level: 4,
-        layer: "Valid realization",
-        title: "Degenerate realized simplex",
-        status: "failed_as_expected",
-        public_check: "Triangulation::validate_realization",
-        public_reference: "tests/triangulation_builder.rs::test_explicit_error_variant_geometric_nondegeneracy",
-        input_summary: "One triangle whose three vertices are collinear",
-        explanation: "The Euclidean coordinate realization is invalid because the abstract 2-simplex collapses to zero area.",
-        diagnostic,
-        visual,
-    })
-}
-
-/// Generate the Level 5 non-Delaunay diagonal failure example.
-fn validation_demo_level_5() -> Result<ValidationDemoCase, CliError> {
-    let coordinates = [[0.0, 0.0], [4.0, 0.0], [4.0, 2.0], [1.0, 2.0]];
-    let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
-    let diagnostic = strict_delaunay_certification_failure(coordinates, &simplices)?;
-    let mut visual = demo_visual(coordinates, simplices);
-    visual.highlighted_simplices.push(0);
-    visual.highlighted_edges.push([0, 2]);
-    visual.invalid_points.push(3);
-    visual.circumcircle = Some(ValidationDemoCircle {
-        center: [2.0, 1.0],
-        radius: 5.0_f64.sqrt(),
-    });
-
-    Ok(ValidationDemoCase {
-        level: 5,
-        layer: "Delaunay",
-        title: "Interior point in a circumcircle",
-        status: "failed_as_expected",
-        public_check: "DelaunayTriangulation::try_from_triangulation",
-        public_reference: "tests/triangulation_builder.rs::test_relaxed_explicit_non_delaunay_mesh_succeeds_2d",
-        input_summary: "Quadrilateral triangulated with diagonal AC instead of BD",
-        explanation: "Point D lies inside the circumcircle of triangle ABC, so the chosen diagonal violates the local Delaunay property.",
-        diagnostic,
-        visual,
-    })
-}
-
-/// Return the diagnostic from strict Level 5 certification of valid Levels 1–4 input.
-fn strict_delaunay_certification_failure<const N: usize>(
-    coordinates: [[f64; 2]; N],
-    simplices: &[Vec<usize>],
-) -> Result<String, CliError> {
-    const CASE: &str = "Level 5 non-Delaunay diagonal";
-
-    let vertices = demo_vertices(&coordinates)?;
-    let triangulation =
-        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, simplices)
-            .map_err(|source| CliError::ValidationDemoInvariant {
-                case: CASE,
-                message: format!(
-                    "explicit builder parse failed before the intended layer: {source}"
-                ),
-            })?
-            .build_triangulation()
-            .map_err(|source| CliError::ValidationDemoInvariant {
-                case: CASE,
-                message: format!(
-                    "Levels 1-4 construction failed before strict Level 5 certification: {source}"
-                ),
-            })?;
-
-    match DelaunayTriangulation::try_from_triangulation(triangulation) {
-        Ok(_) => Err(CliError::ValidationDemoInvariant {
-            case: CASE,
-            message: "expected strict Level 5 certification to fail, but it passed".to_owned(),
-        }),
-        Err(error) => Ok(stable_validation_demo_diagnostic(&error.to_string())),
-    }
-}
-
-/// Return the diagnostic from a public explicit-builder case that must fail.
-fn explicit_builder_failure<const N: usize>(
-    case: &'static str,
-    coordinates: [[f64; 2]; N],
-    simplices: &[Vec<usize>],
-) -> Result<String, CliError> {
-    let vertices = demo_vertices(&coordinates)?;
-    let builder =
-        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, simplices)
-            .map_err(|source| CliError::ValidationDemoInvariant {
-                case,
-                message: format!(
-                    "explicit builder parse failed before the intended layer: {source}"
-                ),
-            })?;
-
-    match builder.build() {
-        Ok(_) => Err(CliError::ValidationDemoInvariant {
-            case,
-            message: "expected the explicit validation case to fail, but it passed".to_owned(),
-        }),
-        Err(error) => Ok(stable_validation_demo_diagnostic(&error.to_string())),
-    }
-}
-
-/// Remove run-specific identifiers from validation-demo diagnostics so paper
-/// artifacts are reproducible while preserving the diagnostic shape.
-fn stable_validation_demo_diagnostic(diagnostic: &str) -> String {
-    let bytes = diagnostic.as_bytes();
-    let mut normalized = String::with_capacity(diagnostic.len());
-    let mut index = 0;
-
-    while index < bytes.len() {
-        if is_uuid_at(bytes, index) {
-            normalized.push_str("<uuid>");
-            index += 36;
-            continue;
-        }
-        if let Some(character) = diagnostic[index..].chars().next() {
-            normalized.push(character);
-            index += character.len_utf8();
-        } else {
-            break;
-        }
-    }
-
-    normalized
-}
-
-/// Detect an ASCII UUID literal at a byte offset in a diagnostic string.
-fn is_uuid_at(bytes: &[u8], start: usize) -> bool {
-    if start + 36 > bytes.len() {
-        return false;
-    }
-    for offset in 0..36 {
-        let byte = bytes[start + offset];
-        if matches!(offset, 8 | 13 | 18 | 23) {
-            if byte != b'-' {
-                return false;
-            }
-        } else if !byte.is_ascii_hexdigit() {
-            return false;
-        }
-    }
-    true
-}
-
-/// Convert finite 2D coordinates into vertices for explicit-builder demos.
-fn demo_vertices(coordinates: &[[f64; 2]]) -> Result<Vec<Vertex<(), 2>>, CliError> {
-    coordinates
-        .iter()
-        .map(|coords| vertex!(*coords).map_err(|source| CliError::CoordinateConversion { source }))
-        .collect()
-}
-
-/// Build notebook-renderable visual metadata from case coordinates.
-fn demo_visual<const N: usize>(
-    coordinates: [[f64; 2]; N],
-    simplices: Vec<Vec<usize>>,
-) -> ValidationDemoVisual {
-    ValidationDemoVisual {
-        points: coordinates
-            .into_iter()
-            .enumerate()
-            .map(|(index, coordinates)| ValidationDemoPoint {
-                label: match index {
-                    0 => "A",
-                    1 => "B",
-                    2 => "C",
-                    3 => "D",
-                    4 => "E",
-                    _ => "?",
-                },
-                coordinates,
-            })
-            .collect(),
-        simplices,
-        highlighted_simplices: Vec::new(),
-        highlighted_edges: Vec::new(),
-        invalid_points: Vec::new(),
-        isolated_points: Vec::new(),
-        duplicate_simplices: Vec::new(),
-        circumcircle: None,
-    }
-}
-
-/// Write pretty JSON either to a requested path or stdout.
-fn write_json_output(value: &impl Serialize, path: Option<&Path>) -> Result<(), CliError> {
-    if let Some(path) = path {
-        ensure_parent_dir(path)?;
-        let file = File::create(path)?;
-        let mut writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(&mut writer, value)?;
-        writer.flush()?;
-    } else {
-        let stdout = io::stdout();
-        let mut handle = stdout.lock();
-        serde_json::to_writer_pretty(&mut handle, value)?;
-        writeln!(handle)?;
-    }
-    Ok(())
-}
-
-/// Command-line execution errors.
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum CliError {
-    /// Unsupported dimension slipped past CLI parsing.
-    #[error("generate supports dimensions 2 through 5, got {dimension}")]
-    UnsupportedGenerateDimension {
-        /// Requested dimension.
-        dimension: usize,
-    },
-    /// The requested vertex count cannot support the dimension.
-    #[error("{dimension}D generation requires at least {minimum} vertices, got {vertices}")]
-    TooFewVertices {
-        /// Runtime dimension.
-        dimension: usize,
-        /// Requested vertex count.
-        vertices: usize,
-        /// Minimum supported vertex count.
-        minimum: usize,
-    },
-    /// I/O failed while writing an artifact.
-    #[error(transparent)]
-    Io {
-        /// Typed I/O source error.
-        #[from]
-        source: io::Error,
-    },
-    /// JSON serialization failed while writing an artifact.
-    #[error(transparent)]
-    Json {
-        /// Typed serialization source error.
-        #[from]
-        source: serde_json::Error,
-    },
-    /// Coordinate range construction failed.
-    #[error(transparent)]
-    CoordinateRange {
-        /// Typed coordinate-range source error.
-        #[from]
-        source: CoordinateRangeError<f64>,
-    },
-    /// Random point generation failed.
-    #[error(transparent)]
-    PointGeneration {
-        /// Typed point-generation source error.
-        #[from]
-        source: RandomPointGenerationError,
-    },
-    /// Point-to-vertex conversion failed.
-    #[error(transparent)]
-    CoordinateConversion {
-        /// Typed coordinate-conversion source error.
-        #[from]
-        source: CoordinateConversionError,
-    },
-    /// Delaunay construction failed.
-    #[error(transparent)]
-    Construction {
-        /// Typed Delaunay-construction source error.
-        #[from]
-        source: DelaunayTriangulationConstructionError,
-    },
-    /// Spherical Delaunay construction failed.
-    #[error(transparent)]
-    SphericalConstruction {
-        /// Typed spherical-construction source error.
-        #[from]
-        source: SphericalDelaunayConstructionError,
-    },
-    /// The spherical hero count cannot be represented exactly by its plotting generator.
-    #[error("spherical hero vertex count is too large: {value}")]
-    SphericalHeroVertexCount {
-        /// Requested vertex count.
-        value: usize,
-    },
-    /// Generic visualization export failed.
-    #[error(transparent)]
-    Visualization {
-        /// Typed visualization-export source error.
-        #[from]
-        source: VisualizationExportError,
-    },
-    /// Convex hull extraction failed.
-    #[error(transparent)]
-    ConvexHull {
-        /// Boxed convex-hull source error.
-        source: Box<ConvexHullConstructionError>,
-    },
-    /// Facet-view extraction failed.
-    #[error(transparent)]
-    Facet {
-        /// Typed facet source error.
-        #[from]
-        source: FacetError,
-    },
-    /// A generated validation-demo case no longer fails at the intended boundary.
-    #[error("validation demo case {case} is inconsistent: {message}")]
-    ValidationDemoInvariant {
-        /// Validation-demo case label.
-        case: &'static str,
-        /// Explanation of the unexpected result.
-        message: String,
-    },
-    /// Pachner stress failed.
-    #[error(transparent)]
-    PachnerStress {
-        /// Boxed Pachner-stress source error.
-        source: Box<PachnerStressError>,
-    },
-}
-
-impl From<ConvexHullConstructionError> for CliError {
-    fn from(source: ConvexHullConstructionError) -> Self {
-        Self::ConvexHull {
-            source: Box::new(source),
-        }
-    }
-}
-
-impl From<PachnerStressError> for CliError {
-    fn from(source: PachnerStressError) -> Self {
-        Self::PachnerStress {
-            source: Box::new(source),
-        }
-    }
+/// Execute one validated Pachner stress command.
+fn run(command: &PachnerStressCommand) -> Result<(), PachnerStressError> {
+    run_pachner_stress(command.config, &command.artifacts).map(|_| ())
 }
 
 /// Supported dimensions for the manual Pachner stress diagnostic.
@@ -1159,7 +236,7 @@ impl PachnerStressMode {
 /// Positive count arguments validated by the Pachner stress diagnostic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum PachnerStressCountArgument {
+enum PachnerStressCountArgument {
     /// Attempted Pachner moves.
     Attempts,
     /// Validation and progress-reporting cadence.
@@ -1173,7 +250,7 @@ pub enum PachnerStressCountArgument {
 /// Stress move context for an inserted-face arity diagnostic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum PachnerStressInsertedFaceContext {
+enum PachnerStressInsertedFaceContext {
     /// Any forward move whose inserted face should determine an inverse move.
     ForwardMove,
     /// The edge witness expected after a k=2 forward move.
@@ -1193,7 +270,7 @@ impl Display for PachnerStressInsertedFaceContext {
 /// Expected inserted-face arity for a stress move witness.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum PachnerStressInsertedFaceArity {
+enum PachnerStressInsertedFaceArity {
     /// A forward move must insert a vertex, edge, or triangle for supported inverses.
     InvertibleForwardMove,
     /// A k=2 forward move must insert an edge.
@@ -1233,7 +310,7 @@ impl Display for PachnerStressCountArgument {
 struct PachnerStressConfig {
     mode: PachnerStressMode,
     dimension: PachnerStressDimension,
-    vertex_count: NonZeroUsize,
+    pub vertex_count: NonZeroUsize,
     move_attempts: NonZeroUsize,
     validate_every: NonZeroUsize,
     key_refresh_every: NonZeroUsize,
@@ -1246,14 +323,14 @@ struct PachnerStressConfig {
 /// Validated constructor input for one Pachner stress workload.
 #[derive(Clone, Copy, Debug)]
 struct PachnerStressConfigInput {
-    mode: PachnerStressMode,
-    dimension: PachnerStressDimension,
-    vertex_count: usize,
-    move_attempts: NonZeroUsize,
-    validate_every: NonZeroUsize,
-    key_refresh_every: NonZeroUsize,
-    retry_attempts: NonZeroUsize,
-    seed: u64,
+    pub mode: PachnerStressMode,
+    pub dimension: PachnerStressDimension,
+    pub vertex_count: usize,
+    pub move_attempts: NonZeroUsize,
+    pub validate_every: NonZeroUsize,
+    pub key_refresh_every: NonZeroUsize,
+    pub retry_attempts: NonZeroUsize,
+    pub seed: u64,
 }
 
 impl PachnerStressConfig {
@@ -1292,22 +369,22 @@ impl PachnerStressConfig {
     }
 
     /// Positive number of attempted moves in this exact workload.
-    const fn move_attempts(self) -> NonZeroUsize {
+    pub const fn move_attempts(self) -> NonZeroUsize {
         self.move_attempts
     }
 
     /// Positive periodic validation cadence.
-    const fn validate_every(self) -> NonZeroUsize {
+    pub const fn validate_every(self) -> NonZeroUsize {
         self.validate_every
     }
 
     /// Positive cached-key refresh cadence.
-    const fn key_refresh_every(self) -> NonZeroUsize {
+    pub const fn key_refresh_every(self) -> NonZeroUsize {
         self.key_refresh_every
     }
 
     /// Retry attempts for randomized Delaunay construction.
-    const fn retry_attempts(self) -> NonZeroUsize {
+    pub const fn retry_attempts(self) -> NonZeroUsize {
         self.retry_attempts
     }
 
@@ -1320,8 +397,8 @@ impl PachnerStressConfig {
 /// Artifact paths and stdout behavior for one diagnostic run.
 #[derive(Debug)]
 struct PachnerStressArtifacts {
-    progress_csv: Option<PathBuf>,
-    summary_json: Option<PathBuf>,
+    progress_csv: Option<ArtifactPath>,
+    summary_json: Option<ArtifactPath>,
     stdout: bool,
 }
 
@@ -1332,11 +409,14 @@ impl PachnerStressArtifacts {
         summary_json: Option<PathBuf>,
         stdout: bool,
     ) -> Result<Self, PachnerStressError> {
+        let progress_csv = progress_csv.map(ArtifactPath::try_new).transpose()?;
+        let summary_json = summary_json.map(ArtifactPath::try_new).transpose()?;
         if let (Some(progress_csv), Some(summary_json)) = (&progress_csv, &summary_json)
-            && progress_csv == summary_json
+            && artifact_paths_conflict(progress_csv, summary_json)?
         {
             return Err(PachnerStressError::DuplicateArtifactPath {
-                path: progress_csv.clone(),
+                progress_path: progress_csv.as_path().to_owned(),
+                summary_path: summary_json.as_path().to_owned(),
             });
         }
 
@@ -1346,6 +426,108 @@ impl PachnerStressArtifacts {
             stdout,
         })
     }
+}
+
+fn artifact_paths_conflict(
+    first: &ArtifactPath,
+    second: &ArtifactPath,
+) -> Result<bool, PachnerStressError> {
+    let first_identity = artifact_path_identity(first.as_path())?;
+    let second_identity = artifact_path_identity(second.as_path())?;
+    if first_identity == second_identity {
+        return Ok(true);
+    }
+
+    let first_exists = try_artifact_exists(first.as_path())?;
+    let second_exists = try_artifact_exists(second.as_path())?;
+    if !first_exists || !second_exists {
+        return Ok(false);
+    }
+
+    same_file::is_same_file(first.as_path(), second.as_path()).map_err(|source| {
+        PachnerStressError::ArtifactCompareIdentity {
+            first: first.as_path().to_owned(),
+            second: second.as_path().to_owned(),
+            source,
+        }
+    })
+}
+
+fn artifact_path_identity(path: &Path) -> Result<PathBuf, PachnerStressError> {
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        let working_directory = std::env::current_dir()
+            .map_err(|source| PachnerStressError::ArtifactWorkingDirectory { source })?;
+        working_directory.join(path)
+    };
+    canonicalize_existing_prefix(&absolute).map(platform_identity)
+}
+
+fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, PachnerStressError> {
+    let mut identity = PathBuf::new();
+    let mut missing_suffix = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if missing_suffix.as_os_str().is_empty() {
+                    identity.pop();
+                } else {
+                    missing_suffix.pop();
+                }
+            }
+            Component::Prefix(_) | Component::RootDir => {
+                identity.push(component.as_os_str());
+            }
+            Component::Normal(name) if missing_suffix.as_os_str().is_empty() => {
+                let candidate = identity.join(name);
+                match candidate.try_exists() {
+                    Ok(true) => {
+                        identity = fs::canonicalize(&candidate).map_err(|source| {
+                            PachnerStressError::ArtifactResolveIdentity {
+                                path: candidate,
+                                source,
+                            }
+                        })?;
+                    }
+                    Ok(false) => missing_suffix.push(name),
+                    Err(source) => {
+                        return Err(PachnerStressError::ArtifactInspect {
+                            path: candidate,
+                            source,
+                        });
+                    }
+                }
+            }
+            Component::Normal(name) => missing_suffix.push(name),
+        }
+    }
+
+    if identity.as_os_str().is_empty() {
+        return Err(PachnerStressError::ArtifactUnresolvablePath {
+            path: path.to_owned(),
+        });
+    }
+    identity.push(missing_suffix);
+    Ok(identity)
+}
+
+fn platform_identity(path: PathBuf) -> PathBuf {
+    if cfg!(any(target_os = "macos", target_os = "windows")) {
+        PathBuf::from(path.to_string_lossy().to_lowercase())
+    } else {
+        path
+    }
+}
+
+fn try_artifact_exists(path: &Path) -> Result<bool, PachnerStressError> {
+    path.try_exists()
+        .map_err(|source| PachnerStressError::ArtifactInspect {
+            path: path.to_owned(),
+            source,
+        })
 }
 
 /// Initial triangulation metadata emitted before the stress workload starts.
@@ -1380,6 +562,8 @@ struct PachnerStressReport {
 /// JSON summary written by the diagnostic CLI.
 #[derive(Clone, Debug, Serialize)]
 struct PachnerStressSummary {
+    schema: &'static str,
+    schema_version: u32,
     dimension: usize,
     label: &'static str,
     mode: &'static str,
@@ -1434,20 +618,31 @@ impl PachnerStressCounters {
 /// Report sink for scriptable Pachner stress artifacts.
 struct PachnerStressReporter {
     stdout: bool,
-    progress_writer: Option<BufWriter<File>>,
+    progress: Option<ProgressArtifact>,
+}
+
+/// Open progress destination retained so streaming errors keep path context.
+struct ProgressArtifact {
+    path: ArtifactPath,
+    writer: BufWriter<File>,
 }
 
 impl PachnerStressReporter {
     /// Create the requested file sinks and emit a CSV header when needed.
     fn try_new(artifacts: &PachnerStressArtifacts) -> Result<Self, PachnerStressError> {
-        let progress_writer = artifacts
+        let progress = artifacts
             .progress_csv
-            .as_deref()
-            .map(create_progress_writer)
+            .as_ref()
+            .map(|path| {
+                Ok::<_, PachnerStressError>(ProgressArtifact {
+                    path: path.clone(),
+                    writer: create_progress_writer(path)?,
+                })
+            })
             .transpose()?;
         Ok(Self {
             stdout: artifacts.stdout,
-            progress_writer,
+            progress,
         })
     }
 
@@ -1466,8 +661,9 @@ impl PachnerStressReporter {
                 source.vertices,
                 source.simplices,
                 source.seed
-            )?;
-            handle.flush()?;
+            )
+            .map_err(PachnerStressError::stdout)?;
+            handle.flush().map_err(PachnerStressError::stdout)?;
         }
         Ok(())
     }
@@ -1490,15 +686,16 @@ impl PachnerStressReporter {
                 config.label(),
                 config.mode.label(),
                 PACHNER_STRESS_VALIDATION_SCOPE_LABEL
-            )?;
+            )
+            .map_err(PachnerStressError::stdout)?;
             if let Some(vertices) = vertices {
-                write!(handle, " vertices={vertices}")?;
+                write!(handle, " vertices={vertices}").map_err(PachnerStressError::stdout)?;
             }
             if let Some(simplices) = simplices {
-                write!(handle, " simplices={simplices}")?;
+                write!(handle, " simplices={simplices}").map_err(PachnerStressError::stdout)?;
             }
-            writeln!(handle)?;
-            handle.flush()?;
+            writeln!(handle).map_err(PachnerStressError::stdout)?;
+            handle.flush().map_err(PachnerStressError::stdout)?;
         }
         Ok(())
     }
@@ -1533,12 +730,13 @@ impl PachnerStressReporter {
                 progress.acceptance_rate,
                 progress.vertices,
                 progress.simplices
-            )?;
-            handle.flush()?;
+            )
+            .map_err(PachnerStressError::stdout)?;
+            handle.flush().map_err(PachnerStressError::stdout)?;
         }
-        if let Some(writer) = &mut self.progress_writer {
+        if let Some(progress_artifact) = &mut self.progress {
             writeln!(
-                writer,
+                progress_artifact.writer,
                 "{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{},{}",
                 config.dimension.value(),
                 config.label(),
@@ -1556,8 +754,15 @@ impl PachnerStressReporter {
                 progress.acceptance_rate,
                 progress.vertices,
                 progress.simplices
-            )?;
-            writer.flush()?;
+            )
+            .map_err(|source| PachnerStressError::ArtifactWrite {
+                path: progress_artifact.path.as_path().to_owned(),
+                source,
+            })?;
+            progress_artifact
+                .writer
+                .flush()
+                .map_err(|source| progress_artifact.path.flush_error(source))?;
         }
         Ok(())
     }
@@ -1592,16 +797,20 @@ impl PachnerStressReporter {
                 report.attempts_per_second,
                 report.final_vertices,
                 report.final_simplices
-            )?;
-            handle.flush()?;
+            )
+            .map_err(PachnerStressError::stdout)?;
+            handle.flush().map_err(PachnerStressError::stdout)?;
         }
         Ok(())
     }
 
     /// Flush any open file sinks.
     fn finish(&mut self) -> Result<(), PachnerStressError> {
-        if let Some(writer) = &mut self.progress_writer {
-            writer.flush()?;
+        if let Some(progress_artifact) = &mut self.progress {
+            progress_artifact
+                .writer
+                .flush()
+                .map_err(|source| progress_artifact.path.flush_error(source))?;
         }
         Ok(())
     }
@@ -1705,7 +914,10 @@ fn run_pachner_stress(
 fn run_pachner_stress_dimension<const D: usize>(
     config: PachnerStressConfig,
     artifacts: &PachnerStressArtifacts,
-) -> Result<PachnerStressSummary, PachnerStressError> {
+) -> Result<PachnerStressSummary, PachnerStressError>
+where
+    RobustKernel<f64>: ExactPredicates<D>,
+{
     let mut reporter = PachnerStressReporter::try_new(artifacts)?;
     let mut tri = build_pachner_stress_dt::<D>(config, &reporter)?;
     let source = PachnerStressSource {
@@ -1748,6 +960,8 @@ fn run_pachner_stress_dimension<const D: usize>(
     reporter.finish()?;
 
     let summary = PachnerStressSummary {
+        schema: PACHNER_STRESS_EXPORT_SCHEMA,
+        schema_version: PACHNER_STRESS_EXPORT_SCHEMA_VERSION,
         dimension: D,
         label: config.label(),
         mode: config.mode.label(),
@@ -1773,7 +987,10 @@ fn run_pachner_stress_dimension<const D: usize>(
 fn build_pachner_stress_dt<const D: usize>(
     config: PachnerStressConfig,
     reporter: &PachnerStressReporter,
-) -> Result<PachnerStressTriangulation<D>, PachnerStressError> {
+) -> Result<PachnerStressTriangulation<D>, PachnerStressError>
+where
+    RobustKernel<f64>: ExactPredicates<D>,
+{
     reporter.emit_stage(
         config,
         "generate_points_start",
@@ -2207,47 +1424,35 @@ fn three_distinct_indices(rng: &mut (impl Rng + ?Sized), len: usize) -> Option<[
     Some([first, second, third])
 }
 
-/// Create a parent directory when the caller requested a file artifact.
-fn ensure_parent_dir(path: &Path) -> Result<(), io::Error> {
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent)?;
-    }
-    Ok(())
-}
-
 /// Open a progress CSV and write its stable header.
-fn create_progress_writer(path: &Path) -> Result<BufWriter<File>, PachnerStressError> {
-    ensure_parent_dir(path)?;
-    let mut writer = BufWriter::new(File::create(path)?);
+fn create_progress_writer(path: &ArtifactPath) -> Result<BufWriter<File>, PachnerStressError> {
+    let mut writer = path.create_writer()?;
     writeln!(
         writer,
         "dimension,label,mode,validation_scope,sequence,step,attempts,accepted,rejected,candidate_misses,\
          proposal_rejections,validations,validation_nanos,acceptance_rate,vertices,simplices"
-    )?;
-    writer.flush()?;
+    )
+    .map_err(|source| PachnerStressError::ArtifactWrite {
+        path: path.as_path().to_owned(),
+        source,
+    })?;
+    writer.flush().map_err(|source| path.flush_error(source))?;
     Ok(writer)
 }
 
 /// Write the stable run-level summary JSON artifact.
 fn write_summary_json(
-    path: &Path,
+    path: &ArtifactPath,
     summary: &PachnerStressSummary,
 ) -> Result<(), PachnerStressError> {
-    ensure_parent_dir(path)?;
-    let file = File::create(path)?;
-    let mut writer = BufWriter::new(file);
-    serde_json::to_writer_pretty(&mut writer, summary)?;
-    writer.flush()?;
+    write_json_output(summary, Some(path))?;
     Ok(())
 }
 
 /// Errors surfaced by the Pachner stress diagnostic runner.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum PachnerStressError {
+enum PachnerStressError {
     /// A positive count was required.
     #[error("{argument} must be positive, got {value}")]
     NonPositive {
@@ -2268,20 +1473,77 @@ pub enum PachnerStressError {
         minimum: usize,
     },
 
-    /// I/O failed while writing diagnostic artifacts.
-    #[error("failed to write Pachner stress artifact: {source}")]
-    Io {
-        /// Underlying I/O error.
+    /// Artifact validation or file output failed.
+    #[error(transparent)]
+    Artifact {
+        /// Typed artifact destination or output error.
         #[from]
+        source: ArtifactOutputError,
+    },
+
+    /// The process working directory could not be read for path comparison.
+    #[error("failed to resolve the working directory for an artifact path: {source}")]
+    ArtifactWorkingDirectory {
+        /// Underlying operating-system error.
+        #[source]
         source: io::Error,
     },
 
-    /// JSON serialization failed while writing the summary artifact.
-    #[error("failed to write Pachner stress summary JSON: {source}")]
-    Json {
-        /// Underlying JSON serialization error.
-        #[from]
-        source: serde_json::Error,
+    /// A diagnostic artifact path component could not be inspected.
+    #[error("failed to inspect artifact path {path:?}: {source}")]
+    ArtifactInspect {
+        /// Path being inspected.
+        path: PathBuf,
+        /// Underlying operating-system error.
+        #[source]
+        source: io::Error,
+    },
+
+    /// No existing ancestor could anchor an artifact identity.
+    #[error("artifact path has no resolvable existing ancestor: {path:?}")]
+    ArtifactUnresolvablePath {
+        /// Rejected path.
+        path: PathBuf,
+    },
+
+    /// An existing path prefix could not be canonicalized.
+    #[error("failed to resolve artifact path identity for {path:?}: {source}")]
+    ArtifactResolveIdentity {
+        /// Existing prefix being canonicalized.
+        path: PathBuf,
+        /// Underlying operating-system error.
+        #[source]
+        source: io::Error,
+    },
+
+    /// Two existing diagnostic destinations could not be compared.
+    #[error("failed to compare artifact paths {first:?} and {second:?}: {source}")]
+    ArtifactCompareIdentity {
+        /// First output path.
+        first: PathBuf,
+        /// Second output path.
+        second: PathBuf,
+        /// Underlying operating-system error.
+        #[source]
+        source: io::Error,
+    },
+
+    /// Streaming a diagnostic artifact failed.
+    #[error("failed to write artifact {path:?}: {source}")]
+    ArtifactWrite {
+        /// Requested artifact path.
+        path: PathBuf,
+        /// Underlying operating-system error.
+        #[source]
+        source: io::Error,
+    },
+
+    /// Writing machine-readable telemetry to stdout failed.
+    #[error("failed to write Pachner stress telemetry to stdout: {source}")]
+    Stdout {
+        /// Underlying standard-output error.
+        #[source]
+        source: io::Error,
     },
 
     /// Coordinate range construction failed.
@@ -2394,12 +1656,23 @@ pub enum PachnerStressError {
         source: TriangleHandleError,
     },
 
-    /// Two requested artifacts target the same path.
-    #[error("progress CSV and summary JSON must use different paths: {path:?}")]
+    /// Two requested artifacts target the same file identity.
+    #[error(
+        "progress CSV and summary JSON must use different paths; got {progress_path:?} and {summary_path:?}"
+    )]
     DuplicateArtifactPath {
-        /// Path supplied for multiple artifacts.
-        path: PathBuf,
+        /// Requested progress CSV path.
+        progress_path: PathBuf,
+        /// Requested summary JSON path.
+        summary_path: PathBuf,
     },
+}
+
+impl PachnerStressError {
+    /// Attach the stdout destination to telemetry I/O failures.
+    const fn stdout(source: io::Error) -> Self {
+        Self::Stdout { source }
+    }
 }
 
 /// Convert a raw positive count into `NonZeroUsize`.
@@ -2427,42 +1700,14 @@ fn validated_nonzero_count<E>(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
     use std::{
         fs,
-        num::NonZeroUsize,
-        path::{Path, PathBuf},
+        path::Path,
         time::{SystemTime, UNIX_EPOCH},
     };
-
-    use clap::Parser;
-
-    use super::{
-        CliError, DelaunayCliArgs, DelaunayCommand, GenerateCommand, GenerateConfig,
-        GenerateDistribution, PachnerStressArtifacts, PachnerStressConfig,
-        PachnerStressConfigInput, PachnerStressCountArgument, PachnerStressDimension,
-        PachnerStressError, PachnerStressInsertedFaceArity, PachnerStressInsertedFaceContext,
-        PachnerStressMode, build_validation_demo_export, create_progress_writer, positive_nonzero,
-    };
-
-    fn assert_empty_path_rejected_by_clap(args: &[&str], argument: &str) {
-        let error = DelaunayCliArgs::try_parse_from(args.iter().copied())
-            .expect_err("empty path should fail during clap parsing");
-        let message = error.to_string();
-        assert!(message.contains("a value is required"));
-        assert!(message.contains(argument));
-    }
-
-    fn validated_generate_3d(args: &[&str]) -> GenerateConfig<3> {
-        let command = DelaunayCliArgs::try_parse_from(args)
-            .expect("CLI arguments should parse")
-            .into_validated()
-            .expect("CLI arguments should validate");
-
-        match command.0 {
-            DelaunayCommand::Generate(GenerateCommand::D3(config)) => config,
-            other => panic!("expected 3D generate command, got {other:?}"),
-        }
-    }
 
     fn target_artifact_path(label: &str, extension: &str) -> PathBuf {
         let stamp = SystemTime::now()
@@ -2470,126 +1715,12 @@ mod tests {
             .expect("system clock should be after UNIX epoch")
             .as_nanos();
         PathBuf::from("target")
-            .join("config-tests")
+            .join("pachner-stress-tests")
             .join(format!("{label}-{stamp}.{extension}"))
     }
 
     #[test]
-    fn generate_defaults_to_cube_distribution() {
-        let config = validated_generate_3d(&[
-            "delaunay",
-            "generate",
-            "triangulation",
-            "--dimension",
-            "3",
-            "--vertices",
-            "4",
-        ]);
-
-        assert_eq!(config.distribution, GenerateDistribution::Cube);
-    }
-
-    #[test]
-    fn generate_accepts_ball_distribution() {
-        let config = validated_generate_3d(&[
-            "delaunay",
-            "generate",
-            "triangulation",
-            "--dimension",
-            "3",
-            "--vertices",
-            "4",
-            "--distribution",
-            "ball",
-        ]);
-
-        assert_eq!(config.distribution, GenerateDistribution::Ball);
-    }
-
-    #[test]
-    fn generate_config_carries_validated_nonzero_vertex_count() {
-        let config = validated_generate_3d(&[
-            "delaunay",
-            "generate",
-            "triangulation",
-            "--dimension",
-            "3",
-            "--vertices",
-            "4",
-        ]);
-
-        assert_eq!(config.vertices.get(), 4);
-    }
-
-    #[test]
-    fn generate_zero_vertices_preserves_typed_too_few_vertices_error() {
-        let error = DelaunayCliArgs::try_parse_from([
-            "delaunay",
-            "generate",
-            "triangulation",
-            "--dimension",
-            "3",
-            "--vertices",
-            "0",
-        ])
-        .expect("CLI arguments should parse")
-        .into_validated()
-        .expect_err("zero vertices should fail generate validation");
-
-        let CliError::TooFewVertices {
-            dimension,
-            vertices,
-            minimum,
-        } = error
-        else {
-            panic!("expected TooFewVertices error, got {error:?}");
-        };
-        assert_eq!(dimension, 3);
-        assert_eq!(vertices, 0);
-        assert_eq!(minimum, 4);
-    }
-
-    #[cfg(target_pointer_width = "64")]
-    #[test]
-    fn spherical_hero_rejects_counts_that_exceed_exact_generator_range() {
-        let requested = usize::try_from(u64::from(u32::MAX) + 1)
-            .expect("64-bit usize should represent u32::MAX + 1");
-        let error = DelaunayCliArgs::try_parse_from([
-            "delaunay",
-            "spherical-hero",
-            "--vertices",
-            &requested.to_string(),
-        ])
-        .expect("CLI arguments should parse")
-        .into_validated()
-        .expect_err("oversized spherical count should fail validation");
-
-        let CliError::SphericalHeroVertexCount { value } = error else {
-            panic!("expected SphericalHeroVertexCount error, got {error:?}");
-        };
-        assert_eq!(value, requested);
-    }
-
-    #[test]
-    fn generate_rejects_unknown_distribution() {
-        let error = DelaunayCliArgs::try_parse_from([
-            "delaunay",
-            "generate",
-            "triangulation",
-            "--dimension",
-            "3",
-            "--vertices",
-            "4",
-            "--distribution",
-            "sphere",
-        ])
-        .expect_err("unknown distribution should fail during parsing");
-
-        assert!(error.to_string().contains("invalid value"));
-    }
-
-    #[test]
-    fn pachner_positive_count_errors_preserve_typed_argument() {
+    fn positive_count_errors_preserve_typed_argument() {
         let error = positive_nonzero(PachnerStressCountArgument::ValidateEvery, 0)
             .expect_err("zero should fail positive-count validation");
 
@@ -2602,7 +1733,7 @@ mod tests {
     }
 
     #[test]
-    fn pachner_zero_vertices_preserves_typed_too_few_vertices_error() {
+    fn zero_vertices_preserve_typed_too_few_vertices_error() {
         let error = PachnerStressConfig::try_new(PachnerStressConfigInput {
             mode: PachnerStressMode::RoundTrip,
             dimension: PachnerStressDimension::Three,
@@ -2629,7 +1760,7 @@ mod tests {
     }
 
     #[test]
-    fn pachner_inserted_face_arity_errors_preserve_typed_context() {
+    fn inserted_face_arity_errors_preserve_typed_context() {
         let error = PachnerStressError::InsertedFaceArity {
             context: PachnerStressInsertedFaceContext::ForwardMove,
             expected: PachnerStressInsertedFaceArity::InvertibleForwardMove,
@@ -2655,21 +1786,112 @@ mod tests {
     }
 
     #[test]
-    fn pachner_artifacts_reject_duplicate_paths_before_storage() {
+    fn artifacts_reject_duplicate_paths_before_storage() {
         let path = PathBuf::from("target/notebooks/pachner/shared.csv");
         let error = PachnerStressArtifacts::try_new(Some(path.clone()), Some(path), true)
             .expect_err("duplicate artifact paths should fail validation");
 
-        let PachnerStressError::DuplicateArtifactPath { path } = error else {
+        let PachnerStressError::DuplicateArtifactPath {
+            progress_path,
+            summary_path,
+        } = error
+        else {
             panic!("expected DuplicateArtifactPath error, got {error:?}");
         };
-        assert_eq!(path, Path::new("target/notebooks/pachner/shared.csv"));
+        assert_eq!(
+            progress_path,
+            Path::new("target/notebooks/pachner/shared.csv")
+        );
+        assert_eq!(
+            summary_path,
+            Path::new("target/notebooks/pachner/shared.csv")
+        );
     }
 
     #[test]
-    fn pachner_progress_writer_flushes_header_on_create() {
-        let path = target_artifact_path("pachner-progress-header", "csv");
-        let writer = create_progress_writer(&path)
+    fn lexical_aliases_share_one_diagnostic_artifact_identity() {
+        let directory = target_artifact_path("lexical-alias", "dir");
+        let direct = ArtifactPath::try_new(directory.join("summary.json"))
+            .expect("direct output path should validate");
+        let alias = ArtifactPath::try_new(directory.join("nested/../summary.json"))
+            .expect("aliased output path should validate");
+
+        assert!(
+            artifact_paths_conflict(&direct, &alias)
+                .expect("diagnostic artifact identities should compare")
+        );
+    }
+
+    #[test]
+    fn existing_hard_link_aliases_share_one_diagnostic_artifact_identity() {
+        let directory = target_artifact_path("hard-link-alias", "dir");
+        fs::create_dir_all(&directory).expect("scratch directory should be created");
+        let original = directory.join("original.json");
+        let alias = directory.join("alias.json");
+        fs::write(&original, b"fixture").expect("scratch artifact should be written");
+        fs::hard_link(&original, &alias).expect("scratch hard link should be created");
+
+        let original = ArtifactPath::try_new(original).expect("original path should validate");
+        let alias = ArtifactPath::try_new(alias).expect("hard-link path should validate");
+        assert!(
+            artifact_paths_conflict(&original, &alias)
+                .expect("existing diagnostic artifact identities should compare")
+        );
+
+        fs::remove_dir_all(directory).expect("scratch hard-link fixture should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_prefixes_share_one_missing_diagnostic_artifact_identity() {
+        let directory = target_artifact_path("symlink-prefix-alias", "dir");
+        let real_directory = directory.join("real");
+        let alias_directory = directory.join("alias");
+        fs::create_dir_all(&real_directory).expect("real scratch directory should be created");
+        symlink(Path::new("real"), &alias_directory)
+            .expect("scratch directory symlink should be created");
+
+        let direct = ArtifactPath::try_new(real_directory.join("summary.json"))
+            .expect("direct missing-file path should validate");
+        let alias = ArtifactPath::try_new(alias_directory.join("summary.json"))
+            .expect("symlinked missing-file path should validate");
+        assert!(
+            artifact_paths_conflict(&direct, &alias)
+                .expect("symlinked diagnostic artifact identities should compare")
+        );
+
+        fs::remove_dir_all(directory).expect("scratch symlink fixture should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parent_traversal_resolves_existing_symlink_components_first() {
+        let directory = target_artifact_path("symlink-parent-alias", "dir");
+        let real_directory = directory.join("real");
+        let nested_directory = real_directory.join("nested");
+        let alias_directory = directory.join("alias");
+        fs::create_dir_all(&nested_directory).expect("nested scratch directory should be created");
+        symlink(Path::new("real/nested"), &alias_directory)
+            .expect("scratch directory symlink should be created");
+
+        let direct = ArtifactPath::try_new(real_directory.join("summary.json"))
+            .expect("direct missing-file path should validate");
+        let alias = ArtifactPath::try_new(alias_directory.join("../summary.json"))
+            .expect("symlink-parent missing-file path should validate");
+        assert!(
+            artifact_paths_conflict(&direct, &alias)
+                .expect("symlink-parent diagnostic artifact identities should compare")
+        );
+
+        fs::remove_dir_all(directory).expect("scratch symlink fixture should be removed");
+    }
+
+    #[test]
+    fn progress_writer_flushes_header_on_create() {
+        let path = target_artifact_path("progress-header", "csv");
+        let artifact_path =
+            ArtifactPath::try_new(path.clone()).expect("progress path should validate");
+        let writer = create_progress_writer(&artifact_path)
             .expect("progress writer should create parent directories and header");
         let visible_len = fs::metadata(&path)
             .expect("progress CSV should exist while writer is alive")
@@ -2680,16 +1902,17 @@ mod tests {
         );
         drop(writer);
 
-        let header = fs::read_to_string(path).expect("progress CSV header should be readable");
+        let header = fs::read_to_string(&path).expect("progress CSV header should be readable");
         assert_eq!(
             header,
             "dimension,label,mode,validation_scope,sequence,step,attempts,accepted,rejected,candidate_misses,\
              proposal_rejections,validations,validation_nanos,acceptance_rate,vertices,simplices\n"
         );
+        fs::remove_file(path).expect("progress CSV fixture should be removed");
     }
 
     #[test]
-    fn pachner_stress_clamps_validate_every_to_move_attempts() {
+    fn config_clamps_validate_every_to_move_attempts() {
         let config = PachnerStressConfig::try_new(PachnerStressConfigInput {
             mode: PachnerStressMode::RoundTrip,
             dimension: PachnerStressDimension::Three,
@@ -2707,107 +1930,5 @@ mod tests {
         assert_eq!(config.validate_every().get(), 2);
         assert_eq!(config.key_refresh_every().get(), 7);
         assert_eq!(config.retry_attempts().get(), 4);
-    }
-
-    #[test]
-    fn generate_rejects_empty_output_path_during_parsing() {
-        assert_empty_path_rejected_by_clap(
-            &[
-                "delaunay",
-                "generate",
-                "triangulation",
-                "--dimension",
-                "3",
-                "--vertices",
-                "4",
-                "--output",
-                "",
-            ],
-            "--output",
-        );
-    }
-
-    #[test]
-    fn validation_demo_accepts_output_path() {
-        let command = DelaunayCliArgs::try_parse_from([
-            "delaunay",
-            "validation-demo",
-            "--output",
-            "target/notebooks/validation/demo.json",
-        ])
-        .expect("CLI arguments should parse")
-        .into_validated()
-        .expect("CLI arguments should validate");
-
-        match command.0 {
-            DelaunayCommand::ValidationDemo(config) => {
-                assert_eq!(
-                    config.output.as_deref(),
-                    Some(Path::new("target/notebooks/validation/demo.json"))
-                );
-            }
-            other => panic!("expected validation-demo command, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn validation_demo_rejects_empty_output_path_during_parsing() {
-        assert_empty_path_rejected_by_clap(
-            &["delaunay", "validation-demo", "--output", ""],
-            "--output",
-        );
-    }
-
-    #[test]
-    fn pachner_stress_rejects_empty_artifact_paths_during_parsing() {
-        assert_empty_path_rejected_by_clap(
-            &["delaunay", "pachner-stress", "--progress-csv", ""],
-            "--progress-csv",
-        );
-        assert_empty_path_rejected_by_clap(
-            &["delaunay", "pachner-stress", "--summary-json", ""],
-            "--summary-json",
-        );
-    }
-
-    #[test]
-    fn validation_demo_export_covers_each_validation_level() {
-        let export = build_validation_demo_export().expect("validation demo should build");
-
-        assert_eq!(export.schema, "delaunay.validation_demo");
-        assert_eq!(export.schema_version, 1);
-        assert_eq!(export.valid_baseline.status, "passed");
-        assert_eq!(
-            export
-                .cases
-                .iter()
-                .map(|case| case.level)
-                .collect::<Vec<_>>(),
-            vec![1, 2, 3, 4, 5]
-        );
-        assert!(
-            export
-                .cases
-                .iter()
-                .all(|case| case.status == "failed_as_expected")
-        );
-        assert_eq!(export.cases[3].layer, "Valid realization");
-        assert_eq!(
-            export.cases[4].public_check,
-            "DelaunayTriangulation::try_from_triangulation"
-        );
-    }
-
-    #[test]
-    fn validation_demo_export_is_reproducible_across_runs() {
-        let first = build_validation_demo_export().expect("first validation demo should build");
-        let second = build_validation_demo_export().expect("second validation demo should build");
-
-        let first_json =
-            serde_json::to_value(&first).expect("first validation demo should serialize");
-        let second_json =
-            serde_json::to_value(&second).expect("second validation demo should serialize");
-
-        assert_eq!(first_json, second_json);
     }
 }

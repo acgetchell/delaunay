@@ -6,21 +6,19 @@
 //!
 //! # Algorithm
 //!
-//! Points are symbolically perturbed by infinitesimals εᵢ such that
-//! ε₀ << ε₁ << … << εₙ (i.e. higher-indexed points receive larger
-//! perturbations).  The perturbation is purely symbolic: no floating-point
-//! values are changed.
-//!
-//! For an `n×n` matrix whose determinant is exactly zero, the SoS expansion
-//! evaluates cofactors in reverse lexicographic `(row, column)` order.  The
-//! first non-zero cofactor determines the sign of the perturbed determinant.
+//! Every point coordinate receives a distinct symbolic infinitesimal ordered
+//! first by the point's position in the supplied slice and then by coordinate.
+//! Determinants are expanded as exact sparse polynomials. The constant term is
+//! the ordinary exact predicate; on a true degeneracy, the least exponent in
+//! that canonical hierarchy determines the sign. No floating-point coordinate
+//! is modified and no finite-order cofactor truncation is used.
 //!
 //! # Key Properties
 //!
 //! - **Deterministic**: same input always produces the same sign
 //! - **No coordinate modification**: purely a decision rule
 //! - **Always non-zero**: returns ±1, never 0
-//! - **Dimension-generic**: works for any D
+//! - **Dimension-bounded**: complete exact expansion is implemented through D=6
 //! - **Translation-invariant**: orientation minors retain the homogeneous "1"
 //!   column, ensuring that shifting all points by a constant vector does not
 //!   change the result
@@ -33,12 +31,16 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::collections::{GeometricPointBuffer, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
-use crate::geometry::matrix::{Matrix, matrix_fast_filter, matrix_set};
+use crate::geometry::matrix::{BigRational, Signed, rational_from_f64};
 use crate::geometry::point::Point;
+use crate::geometry::predicates::{
+    Orientation, relative_insphere_determinant_sign, simplex_orientation,
+};
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, DegenerateSimplexReason, InvalidCoordinateValue,
 };
+use num_traits::Zero;
+use std::collections::BTreeMap;
 
 // =============================================================================
 // PUBLIC API
@@ -61,10 +63,8 @@ use crate::geometry::traits::coordinate::{
 ///
 /// # Translation Invariance
 ///
-/// The `SoS` expansion computes cofactors by removing one row and one
-/// *coordinate* column, always retaining the constant "1" column.  The
-/// resulting D×D minors are translation-invariant because the "1" column
-/// allows row reduction that cancels any uniform translation of the inputs.
+/// Coordinate perturbations are applied before the homogeneous determinant is
+/// expanded, so the retained constant column preserves translation invariance.
 ///
 /// # Arguments
 ///
@@ -80,8 +80,7 @@ use crate::geometry::traits::coordinate::{
 ///
 /// - [`CoordinateConversionError::InvalidSimplexPointCount`] if
 ///   `points.len() != D + 1`.
-/// - [`CoordinateConversionError::DegenerateSimplex`] if all cofactors vanish
-///   (usually identical points).
+/// - [`CoordinateConversionError::UnsupportedMatrixDimension`] above D=6.
 /// - [`CoordinateConversionError::NonFiniteValue`] if any coordinate is
 ///   NaN or infinite.
 pub fn sos_orientation_sign<const D: usize>(
@@ -96,7 +95,7 @@ pub fn sos_orientation_sign<const D: usize>(
     }
 
     // Reject non-finite coordinates (NaN / ±∞) before entering the
-    // cofactor expansion.  Non-finite values would silently produce
+    // symbolic expansion. Non-finite values would silently produce
     // meaningless determinant signs.
     for (point_idx, point) in points.iter().enumerate() {
         for (coord_idx, &val) in point.coords().iter().enumerate() {
@@ -109,43 +108,46 @@ pub fn sos_orientation_sign<const D: usize>(
         }
     }
 
-    let n = D + 1; // matrix dimension
-
-    // Build coordinate block from the (D+1)×(D+1) homogeneous orientation
-    // matrix.  Full matrix columns: [coords (D cols), 1].
-    //
-    // The constant "1" column is NOT symbolically perturbed, so the SoS
-    // expansion only iterates over coordinate columns (j = 0..D-1).
-    let coords: GeometricPointBuffer<f64, D> = points.iter().map(|p| *p.coords()).collect();
-
-    // Edelsbrunner & Mücke SoS expansion: iterate (row, coord_col) in reverse
-    // order.  The first non-zero cofactor determines the sign.
-    //
-    // For each (remove_row, remove_col), the minor is D×D: the remaining D-1
-    // coordinate columns plus the constant "1" column.  Because the "1" column
-    // is always retained, the minor's determinant is translation-invariant.
-    for remove_row in (0..n).rev() {
-        for remove_col in (0..D).rev() {
-            let minor_sign = orientation_cofactor_det::<D>(&coords, remove_row, remove_col)?;
-
-            if minor_sign != 0 {
-                let cofactor_sign = if (remove_row + remove_col).is_multiple_of(2) {
-                    1
-                } else {
-                    -1
-                };
-                return Ok(cofactor_sign * minor_sign);
-            }
-        }
+    if D > 6 {
+        return Err(CoordinateConversionError::UnsupportedMatrixDimension {
+            requested: D + 1,
+            max: 7,
+        });
     }
 
-    // All first-order cofactors vanished.  The Edelsbrunner & Mücke SoS
-    // perturbation guarantees a non-zero cofactor for *distinct* points,
-    // so this can only happen when points are identical — an invalid input.
-    Err(CoordinateConversionError::DegenerateSimplex {
-        dimension: D,
-        reason: DegenerateSimplexReason::VanishingSosCofactors,
-    })
+    // The ordinary exact determinant is the constant term of the symbolic
+    // polynomial. Resolve it before constructing the complete expansion so
+    // callers that defensively invoke SoS on a nondegenerate input do not pay
+    // for the genuinely degenerate cold path.
+    match simplex_orientation(points)? {
+        Orientation::NEGATIVE => return Ok(-1),
+        Orientation::POSITIVE => return Ok(1),
+        Orientation::DEGENERATE => {}
+    }
+
+    let one = constant_polynomial(1.0)?;
+    let matrix: Vec<Vec<_>> = points
+        .iter()
+        .enumerate()
+        .map(|(row, point)| {
+            let mut values: Vec<_> = point
+                .coords()
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(column, value)| coordinate_polynomial(value, row * D + column))
+                .collect::<Result<_, _>>()?;
+            values.push(one.clone());
+            Ok(values)
+        })
+        .collect::<Result<_, CoordinateConversionError>>()?;
+
+    polynomial_determinant_leading_sign(&matrix).ok_or(
+        CoordinateConversionError::DegenerateSimplex {
+            dimension: D,
+            reason: DegenerateSimplexReason::VanishingSosPolynomial,
+        },
+    )
 }
 
 /// Compute the `SoS` in-sphere sign for a degenerate configuration.
@@ -166,9 +168,8 @@ pub fn sos_orientation_sign<const D: usize>(
 ///
 /// where `Δpᵢ = pᵢ - p₀` and `t` is the test point.
 ///
-/// The `SoS` expansion uses cofactors from this full (D+1)×(D+1) lifted matrix,
-/// including the lifted (squared-norm) column, so the expansion correctly
-/// accounts for the complete insphere geometry.
+/// Symbolic coordinates are lifted before the complete determinant polynomial
+/// is expanded, so coordinate and squared-norm perturbations remain coherent.
 ///
 /// # Raw Determinant Sign
 ///
@@ -192,8 +193,7 @@ pub fn sos_orientation_sign<const D: usize>(
 ///
 /// - [`CoordinateConversionError::InvalidSimplexPointCount`] if
 ///   `simplex.len() != D + 1`.
-/// - [`CoordinateConversionError::DegenerateSimplex`] if all cofactors vanish
-///   (usually identical points).
+/// - [`CoordinateConversionError::UnsupportedMatrixDimension`] above D=6.
 /// - [`CoordinateConversionError::NonFiniteValue`] if any coordinate is
 ///   NaN or infinite.
 pub fn sos_insphere_sign<const D: usize>(
@@ -228,59 +228,62 @@ pub fn sos_insphere_sign<const D: usize>(
         }
     }
 
-    let n = D + 1; // matrix dimension: (D+1)×(D+1)
-
-    // Build the full (D+1)×(D+1) lifted insphere matrix using relative
-    // coordinates centered on simplex[0].
-    // Columns: [Δcoords (D cols), ‖Δp‖² (1 col)] = D+1 columns total.
-    let base_coords = simplex[0].coords();
-
-    let mut rel_coords: GeometricPointBuffer<f64, D> = SmallBuffer::with_capacity(n);
-    let mut lifted_col: SmallBuffer<f64, MAX_PRACTICAL_DIMENSION_SIZE> =
-        SmallBuffer::with_capacity(n);
-
-    for point in simplex.iter().skip(1) {
-        let mut rel = [0.0f64; D];
-        for j in 0..D {
-            rel[j] = point.coords()[j] - base_coords[j];
-        }
-        let sq_norm: f64 = rel.iter().fold(0.0f64, |acc, &x| x.mul_add(x, acc));
-        rel_coords.push(rel);
-        lifted_col.push(sq_norm);
+    if D > 6 {
+        return Err(CoordinateConversionError::UnsupportedMatrixDimension {
+            requested: D + 2,
+            max: 8,
+        });
     }
 
-    // Test point row.
-    let mut test_rel = [0.0f64; D];
-    for j in 0..D {
-        test_rel[j] = test.coords()[j] - base_coords[j];
-    }
-    let test_sq_norm: f64 = test_rel.iter().fold(0.0f64, |acc, &x| x.mul_add(x, acc));
-    rel_coords.push(test_rel);
-    lifted_col.push(test_sq_norm);
-
-    // Edelsbrunner & Mücke SoS expansion on the full (D+1)×(D+1) lifted
-    // matrix.  All D+1 columns (D coordinate + 1 lifted) are symbolically
-    // perturbed, so we iterate over all column positions.
-    for remove_row in (0..n).rev() {
-        for remove_col in (0..n).rev() {
-            let minor_sign =
-                insphere_cofactor_det::<D>(&rel_coords, &lifted_col, remove_row, remove_col)?;
-
-            if minor_sign != 0 {
-                let cofactor_sign = if (remove_row + remove_col).is_multiple_of(2) {
-                    1
-                } else {
-                    -1
-                };
-                return Ok(cofactor_sign * minor_sign);
-            }
-        }
+    // As for orientation, the unperturbed exact determinant is the constant
+    // term. The complete symbolic polynomial is necessary only when that term
+    // vanishes.
+    let ordinary_sign = relative_insphere_determinant_sign(simplex, test)?;
+    if ordinary_sign != 0 {
+        return Ok(ordinary_sign);
     }
 
-    // All cofactors vanished — same reasoning as `sos_orientation_sign`.
-    Err(CoordinateConversionError::DegenerateSimplex {
-        dimension: D,
-        reason: DegenerateSimplexReason::VanishingSosCofactors,
+    let points = simplex.iter().chain(core::iter::once(test));
+    let one = constant_polynomial(1.0)?;
+    let zero = constant_polynomial(0.0)?;
+    let matrix: Vec<Vec<_>> = points
+        .enumerate()
+        .map(|(row, point)| {
+            let coordinates: Vec<_> = point
+                .coords()
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(column, value)| coordinate_polynomial(value, row * D + column))
+                .collect::<Result<_, CoordinateConversionError>>()?;
+            let lift = coordinates
+                .iter()
+                .try_fold(zero.clone(), |sum, coordinate| {
+                    Ok::<_, CoordinateConversionError>(add_polynomials(
+                        sum,
+                        multiply_polynomials(coordinate, coordinate)?,
+                        1,
+                    ))
+                })?;
+            let mut values = coordinates;
+            values.push(lift);
+            values.push(one.clone());
+            Ok(values)
+        })
+        .collect::<Result<_, CoordinateConversionError>>()?;
+
+    let absolute_sign = polynomial_determinant_leading_sign(&matrix).ok_or(
+        CoordinateConversionError::DegenerateSimplex {
+            dimension: D,
+            reason: DegenerateSimplexReason::VanishingSosPolynomial,
+        },
+    )?;
+    // Row subtraction and translation from the absolute lifted determinant to
+    // the relative formulation used by the kernels contributes (-1)^(D+1).
+    Ok(if D.is_multiple_of(2) {
+        -absolute_sign
+    } else {
+        absolute_sign
     })
 }
 
@@ -288,119 +291,176 @@ pub fn sos_insphere_sign<const D: usize>(
 // INTERNAL HELPERS
 // =============================================================================
 
-/// Compute the sign of the D×D minor from the (D+1)×(D+1) homogeneous
-/// orientation matrix, removing `remove_row` and coordinate column
-/// `remove_col`.
+/// Base-3 encoding of a symbolic monomial.
 ///
-/// The removed column index refers to the coordinate block (0..D).  The
-/// constant "1" column is always retained, ensuring translation invariance.
-/// The resulting minor has D-1 coordinate columns + 1 "one" column = D columns
-/// and D rows, giving a D×D determinant.
-fn orientation_cofactor_det<const D: usize>(
-    coords: &[[f64; D]],
-    remove_row: usize,
-    remove_col: usize,
-) -> Result<i32, CoordinateConversionError> {
-    if D == 0 {
-        return Ok(1); // 0×0 determinant = 1
-    }
+/// Variable `i` contributes `3^i`; squaring contributes `2 * 3^i`. A
+/// determinant selects at most one entry per point row, so no coordinate
+/// variable can have degree above two. Base 3 therefore has no carries and
+/// numeric key order is exactly the reverse-lexicographic perturbation order:
+/// every combination of earlier variables precedes the next variable. D=6
+/// insphere uses 48 variables, well inside `u128`.
+type Monomial = u128;
+type Polynomial = BTreeMap<Monomial, BigRational>;
 
-    // D is a const generic, so use Matrix::<D>::zero() directly; runtime
-    // dispatch is only needed when the matrix dimension is not statically known.
-    let mut matrix = Matrix::<D>::zero();
-    let mut r = 0;
-    for (i, coord_row) in coords.iter().enumerate() {
-        if i == remove_row {
-            continue;
-        }
-        let mut c = 0;
-        // Coordinate columns, skipping the removed one.
-        for (j, &val) in coord_row.iter().enumerate() {
-            if j == remove_col {
-                continue;
-            }
-            matrix_set(&mut matrix, r, c, val)?;
-            c += 1;
-        }
-        // Constant "1" column (always present in the minor).
-        matrix_set(&mut matrix, r, c, 1.0)?;
-        r += 1;
-    }
+/// Largest determinant matrix produced by the public D ≤ 6 `SoS` predicates.
+const MAX_SOS_MATRIX_DIMENSION: usize = 8;
+/// Exact subset-DP transition count for an 8×8 determinant: `8 * 2^7`.
+const MAX_SOS_SUBSET_TRANSITIONS: usize = 1_024;
+/// Conservative monomial-pair bound for the generated D=6 in-sphere matrix.
+///
+/// Its column term maxima are `[2, 2, 2, 2, 2, 2, 13, 1]`; the complete
+/// subset expansion therefore performs at most this many coefficient products.
+/// The guard bounds malformed private inputs without truncating any supported
+/// public D ≤ 6 predicate.
+const MAX_SOS_MONOMIAL_PAIR_PRODUCTS: usize = 55_631_284;
 
-    Ok(exact_det_sign(&matrix))
+fn constant_polynomial(value: f64) -> Result<Polynomial, CoordinateConversionError> {
+    let coefficient =
+        rational_from_f64(value).ok_or_else(|| CoordinateConversionError::NonFiniteValue {
+            coordinate_index: 0,
+            coordinate_value: InvalidCoordinateValue::from_debug(&value),
+        })?;
+    let mut polynomial = Polynomial::new();
+    if !coefficient.is_zero() {
+        polynomial.insert(0, coefficient);
+    }
+    Ok(polynomial)
 }
 
-/// Compute the sign of the D×D minor from the (D+1)×(D+1) lifted insphere
-/// matrix, removing `remove_row` and column `remove_col`.
-///
-/// The full matrix has D relative-coordinate columns (indices 0..D-1) followed
-/// by 1 lifted (‖Δp‖²) column (index D).
-fn insphere_cofactor_det<const D: usize>(
-    rel_coords: &[[f64; D]],
-    lifted_col: &[f64],
-    remove_row: usize,
-    remove_col: usize,
-) -> Result<i32, CoordinateConversionError> {
-    if D == 0 {
-        return Ok(1);
+fn coordinate_polynomial(
+    value: f64,
+    variable: usize,
+) -> Result<Polynomial, CoordinateConversionError> {
+    let mut polynomial = constant_polynomial(value)?;
+    let exponent_power = u32::try_from(variable).map_err(|_| {
+        CoordinateConversionError::UnsupportedMatrixDimension {
+            requested: variable + 1,
+            max: 48,
+        }
+    })?;
+    let exponent = 3_u128.checked_pow(exponent_power).ok_or(
+        CoordinateConversionError::UnsupportedMatrixDimension {
+            requested: variable + 1,
+            max: 48,
+        },
+    )?;
+    polynomial.insert(
+        exponent,
+        rational_from_f64(1.0).expect("one is a finite IEEE-754 value"),
+    );
+    Ok(polynomial)
+}
+
+fn add_polynomials(mut left: Polynomial, right: Polynomial, sign: i32) -> Polynomial {
+    for (monomial, coefficient) in right {
+        let entry = left.entry(monomial).or_insert_with(BigRational::zero);
+        if sign > 0 {
+            *entry += coefficient;
+        } else {
+            *entry -= coefficient;
+        }
+        if entry.is_zero() {
+            left.remove(&monomial);
+        }
+    }
+    left
+}
+
+fn multiply_polynomials(
+    left: &Polynomial,
+    right: &Polynomial,
+) -> Result<Polynomial, CoordinateConversionError> {
+    let mut product = Polynomial::new();
+    for (left_monomial, left_coefficient) in left {
+        for (right_monomial, right_coefficient) in right {
+            let monomial = left_monomial.checked_add(*right_monomial).ok_or(
+                CoordinateConversionError::UnsupportedMatrixDimension {
+                    requested: 49,
+                    max: 48,
+                },
+            )?;
+            let entry = product.entry(monomial).or_insert_with(BigRational::zero);
+            *entry += left_coefficient.clone() * right_coefficient.clone();
+            if entry.is_zero() {
+                product.remove(&monomial);
+            }
+        }
+    }
+    Ok(product)
+}
+
+/// Multiplies one determinant-DP term while enforcing the complete supported
+/// `SoS` expansion's practical monomial-work bound.
+fn multiply_polynomials_with_work_bound(
+    left: &Polynomial,
+    right: &Polynomial,
+    monomial_pair_products: &mut usize,
+) -> Option<Polynomial> {
+    let pair_products = left.len().checked_mul(right.len())?;
+    *monomial_pair_products = monomial_pair_products.checked_add(pair_products)?;
+    if *monomial_pair_products > MAX_SOS_MONOMIAL_PAIR_PRODUCTS {
+        return None;
+    }
+    multiply_polynomials(left, right).ok()
+}
+
+/// Returns the leading determinant sign, or `None` for malformed matrices or
+/// private inputs outside the complete D ≤ 6 subset/monomial work envelope.
+fn polynomial_determinant_leading_sign(matrix: &[Vec<Polynomial>]) -> Option<i32> {
+    let dimension = matrix.len();
+    if matrix.iter().any(|row| row.len() != dimension) {
+        return None;
+    }
+    if dimension == 0 {
+        return Some(1);
+    }
+    if dimension > MAX_SOS_MATRIX_DIMENSION {
+        return None;
+    }
+    let state_count = 1usize.checked_shl(u32::try_from(dimension).ok()?)?;
+    let transition_count = dimension.checked_mul(state_count / 2)?;
+    if transition_count > MAX_SOS_SUBSET_TRANSITIONS {
+        return None;
     }
 
-    let num_rows = D + 1;
-    let num_cols = D + 1;
+    let mut monomial_pair_products = 0;
+    let mut partials = vec![None; state_count];
+    partials[0] = Some(constant_polynomial(1.0).ok()?);
 
-    // D is a const generic, so use Matrix::<D>::zero() directly; runtime
-    // dispatch is only needed when the matrix dimension is not statically known.
-    let mut matrix = Matrix::<D>::zero();
-    let mut r = 0;
-    for i in 0..num_rows {
-        if i == remove_row {
+    for mask in 0usize..state_count {
+        let row = mask.count_ones() as usize;
+        if row >= dimension {
             continue;
         }
-        let mut c = 0;
-        // Iterate over all columns of the lifted matrix.  Column indices
-        // 0..D are relative-coordinate columns; index D is the lifted
-        // (squared-norm) column.  We skip `remove_col` and pack the rest
-        // into the minor.
-        #[expect(clippy::needless_range_loop, reason = "mixed data sources")]
-        for j in 0..num_cols {
-            if j == remove_col {
+        // Every predecessor has a smaller numeric mask, so all contributions
+        // are complete before this state is visited and the polynomial can be
+        // consumed instead of deep-cloned.
+        let Some(partial) = partials[mask].take() else {
+            continue;
+        };
+        for (column, entry) in matrix[row].iter().enumerate() {
+            if mask & (1 << column) != 0 {
                 continue;
             }
-            let val = if j < D {
-                rel_coords[i][j]
+            let term =
+                multiply_polynomials_with_work_bound(&partial, entry, &mut monomial_pair_products)?;
+            let sign = if (mask >> (column + 1)).count_ones() % 2 == 0 {
+                1
             } else {
-                lifted_col[i]
+                -1
             };
-            matrix_set(&mut matrix, r, c, val)?;
-            c += 1;
+            let next = mask | (1 << column);
+            partials[next] = Some(match partials[next].take() {
+                Some(existing) => add_polynomials(existing, term, sign),
+                None if sign > 0 => term,
+                None => add_polynomials(Polynomial::new(), term, -1),
+            });
         }
-        r += 1;
     }
 
-    Ok(exact_det_sign(&matrix))
-}
-
-/// Compute the exact sign of a matrix determinant
-///
-/// Uses the two-stage approach:
-/// 1. `det_direct_with_errbound()` for D ≤ 4 (provable fast filter)
-/// 2. `det_sign_exact()` for exact result
-///
-/// Returns -1, 0, or +1.
-pub(crate) fn exact_det_sign<const N: usize>(matrix: &Matrix<N>) -> i32 {
-    // Stage 1: fast filter with provable error bound (D ≤ 4).
-    if let Ok(Some((det, bound))) = matrix_fast_filter(matrix) {
-        if det > bound {
-            return 1;
-        }
-        if det < -bound {
-            return -1;
-        }
-        // |det| ≤ bound: inconclusive, fall through to exact.
-    }
-
-    // Stage 2: exact sign via Bareiss algorithm in BigRational.
-    i32::from(matrix.det_sign_exact().as_i8())
+    let determinant = partials[state_count - 1].as_ref()?;
+    let coefficient = determinant.first_key_value()?.1;
+    Some(if coefficient.is_positive() { 1 } else { -1 })
 }
 
 // =============================================================================
@@ -466,15 +526,15 @@ mod tests {
     }
 
     // =========================================================================
-    // MACRO-GENERATED PER-DIMENSION TESTS (2D–5D)
+    // MACRO-GENERATED PER-DIMENSION TESTS (2D–6D)
     // =========================================================================
 
     /// Generate the standard `SoS` tests for a given dimension:
     ///
     /// - orientation: degenerate nonzero, deterministic, translation-invariant
-    /// - insphere: cospherical nonzero, deterministic (10 calls),
+    /// - insphere: cospherical nonzero, deterministic,
     ///   translation-invariant
-    /// - fallback: orientation all-identical → Err, insphere all-identical → Err
+    /// - repeated coordinates: deterministic symbolic ordering
     macro_rules! gen_sos_dim_tests {
         ($dim:literal) => {
             pastey::paste! {
@@ -515,13 +575,9 @@ mod tests {
                 #[test]
                 fn [<test_sos_insphere_ $dim d_cospherical_deterministic>]() {
                     let (simplex, test) = cospherical_points::<$dim>();
-                    let results: Vec<i32> = (0..10)
-                        .map(|_| sos_insphere_sign(&simplex, &test).unwrap())
-                        .collect();
-                    assert!(
-                        results.iter().all(|&r| r == results[0]),
-                        "SoS insphere must be deterministic across calls"
-                    );
+                    let first = sos_insphere_sign(&simplex, &test).unwrap();
+                    let second = sos_insphere_sign(&simplex, &test).unwrap();
+                    assert_eq!(first, second, "SoS insphere must be deterministic");
                 }
 
                 #[test]
@@ -540,28 +596,16 @@ mod tests {
                 }
 
                 #[test]
-                fn [<test_sos_orientation_ $dim d_all_identical_returns_err>]() {
+                fn [<test_sos_orientation_ $dim d_all_identical_is_symbolically_ordered>]() {
                     let points = vec![Point::try_new([0.0; $dim]).expect("finite point coordinates"); $dim + 1];
-                    assert_eq!(
-                        sos_orientation_sign(&points),
-                        Err(CoordinateConversionError::DegenerateSimplex {
-                            dimension: $dim,
-                            reason: DegenerateSimplexReason::VanishingSosCofactors,
-                        })
-                    );
+                    assert_ne!(sos_orientation_sign(&points).unwrap(), 0);
                 }
 
                 #[test]
-                fn [<test_sos_insphere_ $dim d_all_identical_returns_err>]() {
+                fn [<test_sos_insphere_ $dim d_all_identical_is_symbolically_ordered>]() {
                     let simplex = vec![Point::try_new([1.0; $dim]).expect("finite point coordinates"); $dim + 1];
                     let test_pt = Point::try_new([1.0; $dim]).expect("finite point coordinates");
-                    assert_eq!(
-                        sos_insphere_sign(&simplex, &test_pt),
-                        Err(CoordinateConversionError::DegenerateSimplex {
-                            dimension: $dim,
-                            reason: DegenerateSimplexReason::VanishingSosCofactors,
-                        })
-                    );
+                    assert_ne!(sos_insphere_sign(&simplex, &test_pt).unwrap(), 0);
                 }
             }
         };
@@ -572,6 +616,36 @@ mod tests {
     gen_sos_dim_tests!(4);
     gen_sos_dim_tests!(5);
 
+    #[test]
+    fn complete_orientation_expansion_supports_6d() {
+        let points = degenerate_orient_points::<6>();
+        let sign = sos_orientation_sign(&points).unwrap();
+        assert!(matches!(sign, -1 | 1));
+    }
+
+    #[test]
+    fn complete_insphere_expansion_supports_6d() {
+        let (simplex, test) = cospherical_points::<6>();
+        let sign = sos_insphere_sign(&simplex, &test).unwrap();
+        assert!(matches!(sign, -1 | 1));
+    }
+
+    #[test]
+    fn complete_expansion_resolves_four_collinear_points_in_three_dimensions() {
+        let points = [
+            Point::try_new([0.0, 0.0, 0.0]).unwrap(),
+            Point::try_new([1.0, 0.0, 0.0]).unwrap(),
+            Point::try_new([2.0, 0.0, 0.0]).unwrap(),
+            Point::try_new([3.0, 0.0, 0.0]).unwrap(),
+        ];
+
+        assert_ne!(sos_orientation_sign(&points).unwrap(), 0);
+        assert_eq!(
+            sos_orientation_sign(&points).unwrap(),
+            sos_orientation_sign(&points).unwrap()
+        );
+    }
+
     // =========================================================================
     // SOS ORIENTATION — NON-DEGENERATE SPOT CHECK
     // =========================================================================
@@ -579,7 +653,7 @@ mod tests {
     #[test]
     fn test_sos_orientation_nondegenerate_returns_correct_sign() {
         // Positive orientation triangle.  For this specific non-degenerate
-        // configuration the leading SoS cofactor agrees with the true
+        // configuration the leading SoS term agrees with the true
         // orientation.  (SoS is only guaranteed correct for degenerate inputs;
         // the caller should never invoke SoS for non-degenerate cases.)
         let positive = vec![
@@ -628,111 +702,6 @@ mod tests {
                 dimension: 2,
             })
         );
-    }
-
-    // =========================================================================
-    // INTERNAL HELPER TESTS
-    // =========================================================================
-
-    #[test]
-    fn test_exact_det_sign_identity_2x2() {
-        let m = Matrix::<2>::try_from_rows([[1.0, 0.0], [0.0, 1.0]]).unwrap();
-        assert_eq!(exact_det_sign(&m), 1);
-    }
-
-    #[test]
-    fn test_exact_det_sign_singular_2x2() {
-        let m = Matrix::<2>::try_from_rows([[1.0, 2.0], [2.0, 4.0]]).unwrap();
-        assert_eq!(exact_det_sign(&m), 0);
-    }
-
-    #[test]
-    fn test_exact_det_sign_negative_2x2() {
-        let m = Matrix::<2>::try_from_rows([[0.0, 1.0], [1.0, 0.0]]).unwrap();
-        assert_eq!(exact_det_sign(&m), -1);
-    }
-
-    // =========================================================================
-    // EXACT_DET_SIGN — 3×3, 4×4, 5×5
-    // =========================================================================
-
-    #[test]
-    fn test_exact_det_sign_identity_3x3() {
-        let m = Matrix::<3>::try_from_rows([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
-            .unwrap();
-        assert_eq!(exact_det_sign(&m), 1);
-    }
-
-    #[test]
-    fn test_exact_det_sign_negative_3x3() {
-        // Swapping two rows of the identity negates the determinant.
-        let m = Matrix::<3>::try_from_rows([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
-            .unwrap();
-        assert_eq!(exact_det_sign(&m), -1);
-    }
-
-    #[test]
-    fn test_exact_det_sign_identity_4x4() {
-        let m = Matrix::<4>::try_from_rows([
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ])
-        .unwrap();
-        assert_eq!(exact_det_sign(&m), 1);
-    }
-
-    #[test]
-    fn test_exact_det_sign_identity_5x5_bareiss_only() {
-        // D ≥ 5: det_direct() and det_errbound() return None.
-        // Only the Bareiss exact path runs.
-        let m = Matrix::<5>::try_from_rows([
-            [1.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ])
-        .unwrap();
-        assert_eq!(exact_det_sign(&m), 1);
-    }
-
-    // =========================================================================
-    // EXACT_DET_SIGN — NEAR-SINGULAR (INCONCLUSIVE FAST FILTER → BAREISS)
-    // =========================================================================
-
-    #[test]
-    fn test_exact_det_sign_near_singular_uses_bareiss() {
-        // Base matrix [[1,2,3],[4,5,6],[7,8,9]] is exactly singular.
-        // Adding 2^-50 to entry (0,0) gives det = -3 × 2^-50 ≈ -2.66e-15.
-        // This is much smaller than the error bound (~8e-13), so the fast
-        // filter is inconclusive and Bareiss resolves the sign exactly.
-        let perturbation = f64::from_bits(0x3CD0_0000_0000_0000); // 2^-50
-        let m = Matrix::<3>::try_from_rows([
-            [1.0 + perturbation, 2.0, 3.0],
-            [4.0, 5.0, 6.0],
-            [7.0, 8.0, 9.0],
-        ])
-        .unwrap();
-        assert_eq!(exact_det_sign(&m), -1);
-    }
-
-    // =========================================================================
-    // EXACT_DET_SIGN — OVERFLOW / NON-FINITE RECOVERY
-    // =========================================================================
-
-    #[test]
-    fn test_exact_det_sign_overflow_det_recovered_by_bareiss() {
-        // Entries are finite but det_direct overflows to infinity.
-        // The is_finite() guard skips Stage 1; Bareiss computes exactly.
-        let m = Matrix::<2>::try_from_rows([[1e200, 0.0], [0.0, 1e200]]).unwrap();
-        assert_eq!(exact_det_sign(&m), 1);
-    }
-
-    #[test]
-    fn test_exact_det_sign_rejects_nan_entry_at_matrix_boundary() {
-        assert!(Matrix::<2>::try_from_rows([[f64::NAN, 0.0], [0.0, 1.0]]).is_err());
     }
 
     // =========================================================================

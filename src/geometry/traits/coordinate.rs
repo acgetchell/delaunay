@@ -237,16 +237,19 @@ impl fmt::Display for FiniteCoordinateValue {
 pub enum DegenerateSimplexReason {
     /// The simplex orientation determinant is exactly zero.
     ZeroOrientation,
-    /// All symbolic-perturbation cofactors vanished, usually because the input
-    /// points are identical in the evaluated coordinate representation.
-    VanishingSosCofactors,
+    /// The complete symbolic-perturbation determinant is identically zero.
+    ///
+    /// Supported positive dimensions provide at least one perturbable
+    /// coordinate per point, so this is reserved for dimension-zero input or
+    /// an internal symbolic-construction defect.
+    VanishingSosPolynomial,
 }
 
 impl fmt::Display for DegenerateSimplexReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ZeroOrientation => f.write_str("zero orientation"),
-            Self::VanishingSosCofactors => f.write_str("vanishing SoS cofactors"),
+            Self::VanishingSosPolynomial => f.write_str("vanishing SoS polynomial"),
         }
     }
 }
@@ -1282,8 +1285,8 @@ mod tests {
             "zero orientation"
         );
         assert_eq!(
-            DegenerateSimplexReason::VanishingSosCofactors.to_string(),
-            "vanishing SoS cofactors"
+            DegenerateSimplexReason::VanishingSosPolynomial.to_string(),
+            "vanishing SoS polynomial"
         );
     }
 

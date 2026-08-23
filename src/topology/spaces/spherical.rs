@@ -423,13 +423,12 @@ impl<const D: usize> SphericalMetric<D> {
                 });
             }
         }
-        let inverse_radius = 1.0 / self.radius;
         let cosine = a
             .coords()
             .iter()
             .zip(b.coords().iter())
             .fold(0.0, |acc, (&left, &right)| {
-                (left * inverse_radius).mul_add(right * inverse_radius, acc)
+                (left / self.radius).mul_add(right / self.radius, acc)
             });
         let distance = self.radius * cosine.clamp(-1.0, 1.0).acos();
         if distance.is_finite() {
@@ -593,7 +592,10 @@ pub(crate) fn normalize_unit_sphere_coordinates(coords: &mut [f64]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::{assert_matches, f64::consts::FRAC_1_SQRT_2};
+    use std::{
+        assert_matches,
+        f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2},
+    };
 
     use approx::assert_relative_eq;
 
@@ -646,6 +648,23 @@ mod tests {
             .expect("large-radius dot product should avoid overflow");
 
         assert_relative_eq!(distance / radius, std::f64::consts::FRAC_PI_4);
+    }
+
+    #[test]
+    fn spherical_distance_handles_subnormal_radius_without_reciprocal_overflow() {
+        let radius = f64::MIN_POSITIVE / 2.0;
+        let metric = SphericalMetric::<2>::try_new(radius)
+            .expect("positive subnormal radius should define a metric");
+        let x = SphericalPoint::<2>::try_new_with_radius([1.0, 0.0, 0.0], radius)
+            .expect("axis point should normalize onto a tiny sphere");
+        let y = SphericalPoint::<2>::try_new_with_radius([0.0, 1.0, 0.0], radius)
+            .expect("orthogonal point should normalize onto a tiny sphere");
+
+        let distance = metric
+            .try_distance(&x, &y)
+            .expect("tiny finite arc length should remain representable");
+
+        assert_relative_eq!(distance / radius, FRAC_PI_2);
     }
 
     #[test]

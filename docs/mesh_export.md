@@ -1,4 +1,4 @@
-# Mesh Export Schema
+# Visualization Export Schema
 
 `delaunay` exposes a generic simplicial-complex export model for analysis,
 visualization, notebooks, ML pipelines, and downstream crates. The API lives in
@@ -7,23 +7,23 @@ visualization, notebooks, ML pipelines, and downstream crates. The API lives in
 
 This format is distinct from the internal `Tds` serde snapshot. Use `Tds` /
 `DelaunayTriangulation` serde when you need validated Rust round-trip
-persistence. Use mesh export when another tool needs stable ids, coordinates,
-connectivity, and adjacency without depending on private handle formatting. A
-mesh export is an owned, detached interchange snapshot; regenerate it after
+persistence. Use visualization export when another tool needs stable ids,
+coordinates, connectivity, and adjacency without depending on private handle
+formatting. A visualization export is an owned, detached interchange snapshot; regenerate it after
 mutating the source triangulation.
 
 ## Rust API
 
-Call `DelaunayTriangulation::to_mesh_export()` for the default schema, or
-`DelaunayTriangulation::to_visualization_data()` when the generic
-visualization name communicates the workflow more clearly.
+Call `DelaunayTriangulation::to_visualization_data()` to create the default
+schema.
 
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::export::{
-    MeshExport, MeshExportError, MeshExportValidationError, ValidatedMeshExport,
+    ValidatedVisualizationData, VisualizationData, VisualizationDataValidationError,
+    VisualizationExportError,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 
@@ -34,9 +34,9 @@ enum ExampleError {
     #[error(transparent)]
     Coordinate(#[from] CoordinateConversionError),
     #[error(transparent)]
-    Export(#[from] MeshExportError),
+    Export(#[from] VisualizationExportError),
     #[error(transparent)]
-    Validation(#[from] MeshExportValidationError),
+    Validation(#[from] VisualizationDataValidationError),
     #[error(transparent)]
     Serde(#[from] serde_json::Error),
 }
@@ -48,10 +48,10 @@ fn main() -> Result<(), ExampleError> {
         vertex![0.0, 1.0]?,
     ];
     let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    let export = triangulation.to_mesh_export()?;
+    let export = triangulation.to_visualization_data()?;
     let json = serde_json::to_string_pretty(&export)?;
-    let decoded: MeshExport<2> = serde_json::from_str(&json)?;
-    let validated: ValidatedMeshExport<2> = decoded.into_validated()?;
+    let decoded: VisualizationData<2> = serde_json::from_str(&json)?;
+    let validated: ValidatedVisualizationData<2> = decoded.into_validated()?;
 
     assert!(json.contains("delaunay.simplicial_complex"));
     assert_eq!(validated.vertices().len(), 3);
@@ -128,15 +128,15 @@ boundary facet.
 
 After deserializing JSON from another process or file, call `into_validated()`
 before handing records to topology-aware code. It parses the raw DTO into a
-`ValidatedMeshExport` proof-bearing wrapper; use `validate()` only when a
-one-off check is enough. Validation checks schema metadata, topology category
-strings, dimensional arity, counts, non-nil and duplicate ids, finite coordinate
-values, connectivity references, one adjacency record per simplex facet, and
-reciprocal non-boundary adjacency whose neighbor actually contains the source
-facet vertices. It does not turn the records into canonical Rust `Tds` storage,
-but the validated wrapper does canonicalize detached record order by stable ids
-for deterministic serialization. Use triangulation/TDS serde when the goal is
-validated Rust hydration.
+`ValidatedVisualizationData` proof-bearing wrapper; use `validate()` only when
+a one-off check is enough. Validation checks schema metadata, topology category
+strings, dimensional arity, counts, non-nil and duplicate ids, finite
+coordinate values, connectivity references, one adjacency record per simplex
+facet, and reciprocal non-boundary adjacency whose neighbor actually contains
+the source facet vertices. It does not turn the records into canonical Rust
+`Tds` storage, but the validated wrapper does canonicalize detached record order
+by stable ids for deterministic serialization. Use triangulation/TDS serde when
+the goal is validated Rust hydration.
 
 ## Downstream Extension
 

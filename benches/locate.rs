@@ -26,7 +26,7 @@ use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationBuilder, Vertex,
 };
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point};
+use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, ExactPredicates, Point};
 use delaunay::prelude::tds::SimplexKey;
 use delaunay::try_vertices_from_points;
 use std::hint::black_box;
@@ -73,7 +73,10 @@ fn query_bounds() -> CoordinateRange<f64> {
 }
 
 /// Build one deterministic triangulation plus an inside-the-hull query batch.
-fn build_source<const D: usize>(requested_vertices: usize, seed_base: u64) -> LocateSource<D> {
+fn build_source<const D: usize>(requested_vertices: usize, seed_base: u64) -> LocateSource<D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     for attempt in 0..SEED_SEARCH_ATTEMPTS {
         let attempt_seed = u64::try_from(attempt).or_abort();
         let seed = seed_for_case::<D>(requested_vertices, seed_base)
@@ -127,7 +130,9 @@ fn bench_locate_dimension<const D: usize>(
     dim_label: &str,
     counts: &[usize],
     seed_base: u64,
-) {
+) where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let sources: Vec<LocateSource<D>> = counts
         .iter()
         .map(|&requested_vertices| build_source::<D>(requested_vertices, seed_base))

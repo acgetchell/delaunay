@@ -153,7 +153,7 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 - **Structural Invariants (Fast)**:
   - Incremental insertion maintains validity after each insertion
   - Duplicate coordinate rejection (geometric duplicate detection at insertion time)
-- **Delaunay Property (Fast O(N) via Flip Predicates)**:
+- **Delaunay Property**:
   - Empty circumsphere condition - No vertex lies strictly inside any simplex's circumsphere
   - Insertion-order robustness - Levels 1–3 validity across insertion orders
   - Duplicate cloud integration - Full pipeline with messy real-world inputs
@@ -162,7 +162,8 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 
 **Implementation:** Bistellar flips (k=2 facets, k=3 ridges) with automatic Delaunay repair:
 
-- Fast O(N) flip-based validation provides 40-100x speedup over brute-force
+- Fast O(N) flip predicates certify the common case; exact global validation
+  handles degenerate cases outside the stronger flip normal form
 - Automatic repair runs after insertion/deletion via `DelaunayRepairPolicy`
 - Inverse edge/triangle queues for 4D/5D repair
 - See `src/core/algorithms/flips/` for implementation
@@ -239,8 +240,8 @@ that a valid SoS implementation must satisfy.
 **Test Coverage:**
 
 - **Orientation Non-Degeneracy**: SoS orientation returns ±1 for
-  first-order-resolvable exactly degenerate (co-hyperplanar) inputs and a typed
-  `VanishingSosCofactors` error when every first-order cofactor vanishes
+  exactly degenerate (co-hyperplanar) inputs, including lower-rank cases whose
+  leading nonzero symbolic term occurs beyond first order
 - **Orientation Determinism**: same degenerate input always produces the same sign
 - **Orientation Translation Invariance**: shifting all points by a constant integer offset preserves the sign
 - **Insphere Non-Degeneracy**: SoS insphere always returns ±1 for exactly co-spherical (hyper-rectangle vertex) inputs
@@ -353,6 +354,7 @@ Core integration coverage currently includes:
 - [`delaunay_repair_fallback.rs`](./delaunay_repair_fallback.rs)
 - [`delaunay_edge_cases.rs`](./delaunay_edge_cases.rs)
 - [`delaunayize_workflow.rs`](./delaunayize_workflow.rs)
+- [`proof_builders.rs`](./proof_builders.rs)
 - [`triangulation_builder.rs`](./triangulation_builder.rs)
 - [`public_topology_api.rs`](./public_topology_api.rs)
 - [`euler_characteristic.rs`](./euler_characteristic.rs)
@@ -374,18 +376,30 @@ Integration tests for serialization ensuring vertex identifiers and associated d
 
 #### [`delaunayize_workflow.rs`](./delaunayize_workflow.rs)
 
-Integration tests for the consuming `delaunayize` workflow and its explicit
-`delaunayize_by_flips` alias, validating the public API in `delaunay::delaunayize`.
+Integration tests for the consuming `DelaunayRefinementBuilder` workflow,
+validating flip-repair mode in `delaunay::delaunayize`.
 
 **Test Coverage:**
 
-- **Config Defaults**: `DelaunayizeConfig` default values
-- **Non-Delaunay PL-Manifold Repair**: 2D and 3D success cases
-- **Fallback Behavior**: fallback off/on does not trigger on valid triangulations
-- **Outcome Stats**: stats populated correctly after repair
+- **Bounded Repair**: a zero flip budget reaches the repair engine and rolls back
+- **Non-Delaunay PL-Manifold Repair**: a known 3D violation requires and accepts flips
+- **Topology Precondition**: fallback cannot bypass the PL-manifold requirement
+- **Typed Errors and Outcome Stats**: public payloads remain inspectable
 - **Determinism**: repeat runs produce identical outcome stats
 
 **Run with:** `cargo test --test delaunayize_workflow`
+
+#### [`proof_builders.rs`](./proof_builders.rs)
+
+Cross-crate contract tests for the explicit proof chain.
+
+**Test Coverage:**
+
+- **TDS Boundary**: malformed connectivity returns exact typed builder context
+- **Strict Promotion**: TDS representation, owner, generation, and payload survive
+  strict TDS → Triangulation → Delaunay promotion unchanged
+
+**Run with:** `cargo test --test proof_builders`
 
 ### 🐛 Regression and Error Reproduction
 
@@ -601,14 +615,14 @@ use delaunay::prelude::query::{
     extract_vertex_coordinate_set,    // HashSet<Point<D>>
     extract_edge_set,                  // Result<HashSet<(u128, u128)>, FacetError>
     extract_facet_identifier_set,      // Result<HashSet<u64>, FacetError>
-    extract_hull_facet_set,            // Result<HashSet<u64>, ConvexHullConstructionError>
+    extract_hull_facet_set,            // HashSet<u64> from a certified hull snapshot
 };
 ```
 
 **Features:**
 
 - Deterministic canonicalization (sorted edges/facets)
-- Uses existing `FacetView::key()` API for facet identification
+- Derives facet identifiers from sorted stable vertex UUIDs so comparisons remain valid across topology owners
 - Safe f64 conversions with overflow detection (2^53 limit)
 - No external hashing dependencies
 
@@ -705,8 +719,8 @@ use delaunay::prelude::query::{ConvexHull, extract_hull_facet_set};
 let hull1 = ConvexHull::try_from_triangulation(tri)?;
 let hull2 = ConvexHull::try_from_triangulation(tri)?;
 
-let facets1 = extract_hull_facet_set(&hull1, tri)?;
-let facets2 = extract_hull_facet_set(&hull2, tri)?;
+let facets1 = extract_hull_facet_set(&hull1);
+let facets2 = extract_hull_facet_set(&hull2);
 
 assert_jaccard_gte!(
     &facets1,

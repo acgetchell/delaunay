@@ -29,8 +29,9 @@
 //!   Task-oriented, end-to-end usage recipes (Builder API, Edit API, validation,
 //!   repairs, diagnostics, and statistics).
 //!
-//! - **docs/validation.md**:
-//!   Formal definitions of validation Levels 1–5, their costs, and guidance on when
+//! - **`docs/construction_and_validation.md`**:
+//!   Construction vocabulary, proof-bearing promotion boundaries, formal
+//!   definitions of validation Levels 1–5, their costs, and guidance on when
 //!   each level should be applied.
 //!
 //! - **docs/diagnostics.md**:
@@ -66,7 +67,7 @@
 //! | Validation policies, errors, reports, PL-manifold link errors, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
 //! | Topology validation, Euler characteristic, ridge queries | `use delaunay::prelude::topology::validation::*` |
 //! | Topological spaces, topology traits, spherical point/metric backends, lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
-//! | Low-level TDS simplices, facets, keys | `use delaunay::prelude::tds::*` |
+//! | Construct, stage, inspect, or validate low-level TDS values | `use delaunay::prelude::tds::*` |
 //! | Collection types (`FastHashMap`, etc.) | `use delaunay::prelude::collections::*` |
 //! | Broad convenience import for exploratory code | `use delaunay::prelude::*` |
 //!
@@ -262,12 +263,11 @@
 //! [`DelaunayTriangulation`] (Levels 1–5). Consuming promotion constructors
 //! check only the invariant layers missing from their input type. If a promotion
 //! fails, [`RefinementError`] retains the unchanged lower-layer owner together
-//! with the typed rejection reason. The direct TDS-to-Delaunay constructors use
-//! [`DelaunayTdsRefinementError`] to preserve whether the strongest recovered
-//! owner is the original TDS or the intermediate triangulation.
+//! with the typed rejection reason. Each proof boundary has one fluent builder,
+//! so the owner returned on failure identifies the failed stage directly.
 //!
-//! Strict promotions move canonical storage without cloning it. Repairing
-//! [`delaunayize::delaunayize`] keeps one rollback snapshot through flips,
+//! Strict promotions move canonical storage without cloning it. Repair mode on
+//! [`DelaunayRefinementBuilder`] keeps one rollback snapshot through flips,
 //! orientation normalization, and final Level 5 certification; any failure
 //! restores and returns the original Levels 1–4 triangulation.
 //!
@@ -277,8 +277,8 @@
 //! (Element Validity → Combinatorial Consistency → Intrinsic PL Topology →
 //! Valid Realization → Geometric Predicates). The
 //! canonical guide (when to use each level, complexity, examples, troubleshooting) lives in
-//! `docs/validation.md`:
-//! <https://github.com/acgetchell/delaunay/blob/main/docs/validation.md>
+//! `docs/construction_and_validation.md`:
+//! <https://github.com/acgetchell/delaunay/blob/main/docs/construction_and_validation.md>
 //!
 //! In brief:
 //! - Level 1 (elements / `Vertex` + `Simplex`): `Vertex::is_valid()` /
@@ -298,9 +298,13 @@
 //!
 //! ### Automatic Levels 1–4 validation during insertion (`ValidationPolicy`)
 //!
-//! In addition to explicit validation calls, incremental construction (`new()` / `insert*()`) can run an
-//! automatic **global Levels 1–4** validation pass after insertion, controlled by
+//! In addition to explicit validation calls, post-construction insertion through
+//! [`DelaunayTriangulation::insert_vertex`] can run an automatic **global
+//! Levels 1–4** validation pass, controlled by
 //! [`ValidationPolicy`](crate::prelude::validation::ValidationPolicy).
+//! [`DelaunayIncrementalBuilder`] carries the same policy across its first
+//! publication boundary and later insertions into its private proof-bearing
+//! owner; its pre-publication bootstrap remains a construction workflow.
 //!
 //! The initial policy is derived from the active topology guarantee. The default
 //! [`TopologyGuarantee::PLManifold`](crate::prelude::TopologyGuarantee::PLManifold)
@@ -456,6 +460,97 @@
     reason = "`pub(crate)` keeps internal cross-module intent visible while `core` is private"
 )]
 mod core {
+    #[cfg(test)]
+    pub(crate) mod test_support {
+        use crate::core::simplex::Simplex;
+        use crate::core::tds::{Tds, TdsBuilder};
+        use crate::core::vertex::Vertex;
+        use uuid::Uuid;
+
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub(crate) struct TopologySnapshot {
+            pub(crate) vertices: Vec<Uuid>,
+            pub(crate) simplex_vertices: Vec<Vec<Uuid>>,
+            pub(crate) simplex_neighbors: Vec<Vec<Option<Uuid>>>,
+        }
+
+        pub(crate) fn tds_from_specs<U: Copy, const D: usize>(
+            vertices: &[Vertex<U, D>],
+            simplices: &[Vec<usize>],
+        ) -> Tds<U, (), D> {
+            TdsBuilder::new(vertices, simplices)
+                .build()
+                .expect("shared TDS fixture should be valid")
+        }
+
+        pub(crate) fn single_simplex_tds<U: Copy, const D: usize>(
+            vertices: &[Vertex<U, D>],
+        ) -> Tds<U, (), D> {
+            tds_from_specs(vertices, &[(0..vertices.len()).collect()])
+        }
+
+        pub(crate) fn snapshot_topology<const D: usize>(tds: &Tds<(), (), D>) -> TopologySnapshot {
+            let mut vertices: Vec<Uuid> = tds.vertices().map(|(_, vertex)| vertex.uuid()).collect();
+            vertices.sort();
+
+            let mut simplex_vertices: Vec<Vec<Uuid>> = tds
+                .simplices()
+                .map(|(_, simplex)| {
+                    let mut uuids: Vec<Uuid> = simplex
+                        .vertices()
+                        .iter()
+                        .map(|&vertex_key| {
+                            tds.vertex(vertex_key)
+                                .expect("vertex key missing in TDS")
+                                .uuid()
+                        })
+                        .collect();
+                    uuids.sort();
+                    uuids
+                })
+                .collect();
+            simplex_vertices.sort();
+
+            TopologySnapshot {
+                vertices,
+                simplex_vertices,
+                simplex_neighbors: snapshot_neighbors(tds),
+            }
+        }
+
+        pub(crate) fn assert_same_vertex_simplex_topology(
+            actual: &TopologySnapshot,
+            expected: &TopologySnapshot,
+        ) {
+            assert_eq!(actual.vertices, expected.vertices);
+            assert_eq!(actual.simplex_vertices, expected.simplex_vertices);
+        }
+
+        fn snapshot_neighbors<const D: usize>(tds: &Tds<(), (), D>) -> Vec<Vec<Option<Uuid>>> {
+            let mut simplex_neighbors: Vec<Vec<Option<Uuid>>> = tds
+                .simplices()
+                .map(|(_, simplex)| {
+                    let mut neighbors: Vec<Option<Uuid>> = simplex
+                        .neighbors()
+                        .map(|neighbor_keys| {
+                            neighbor_keys
+                                .map(|neighbor| {
+                                    neighbor.and_then(|neighbor_key| {
+                                        tds.simplex(neighbor_key).map(Simplex::uuid)
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    neighbors.sort();
+                    neighbors
+                })
+                .collect();
+            simplex_neighbors.sort();
+            simplex_neighbors
+        }
+    }
+
     /// Triangulation algorithms for construction, maintenance, and querying.
     pub mod algorithms {
         /// Bistellar flip operations for triangulations.
@@ -478,7 +573,7 @@ mod core {
         ///   Triangulations"
         /// - Bistellar flips implementation notebook (Warp Drive)
         pub mod flips {
-            use crate::core::algorithms::incremental_insertion::{
+            use crate::core::algorithms::insertion::{
                 CavityFillingError, HullExtensionReason, InsertionError, InsertionErrorKind,
                 InsertionTopologyValidationContext, NeighborWiringError,
                 SpatialIndexConstructionFailure, TdsConstructionFailure, TdsValidationFailure,
@@ -506,7 +601,7 @@ mod core {
             use crate::core::vertex::Vertex;
             use crate::geometry::kernel::{Kernel, RobustKernel};
             use crate::geometry::point::Point;
-            use crate::geometry::predicates::{Orientation, simplex_orientation_fast_filter_sign};
+            use crate::geometry::predicates::Orientation;
             use crate::geometry::robust_predicates::robust_orientation;
             use crate::geometry::traits::coordinate::{
                 CoordinateConversionError, CoordinateValidationError, CoordinateValues,
@@ -598,8 +693,8 @@ mod core {
                 vertices_to_points, vertices_to_points_with_optional_lift,
             };
         }
-        /// Incremental cavity-based insertion.
-        pub mod incremental_insertion;
+        /// Shared cavity-based insertion primitives and failure types.
+        pub mod insertion;
         /// Point location algorithms (facet walking).
         pub mod locate;
         /// Bounded deterministic PL-manifold topology repair.
@@ -736,6 +831,8 @@ mod core {
     pub mod operations;
     /// Triangulation data structure internals.
     pub mod tds {
+        mod builder;
+        mod draft;
         mod equality;
         pub mod errors;
         pub(crate) mod incidence;
@@ -746,6 +843,9 @@ mod core {
         mod snapshot;
         mod validation;
 
+        pub(crate) use builder::{ExplicitSimplexParseError, ParsedTdsInput};
+        pub use builder::{TdsBuilder, TdsBuilderError};
+        pub use draft::{TdsDraft, TdsDraftError, TdsDraftInsertionError};
         pub use errors::*;
         pub use keys::{SimplexKey, VertexKey};
         pub use model::{Tds, TopologyOwner, TopologyOwnerId};
@@ -760,7 +860,6 @@ mod core {
         pub(crate) mod canonical_points;
         pub mod deduplication;
         pub mod facet_keys;
-        pub mod facet_utils;
         pub mod hashing;
         pub mod hilbert;
         pub mod measurement;
@@ -769,7 +868,6 @@ mod core {
         // Re-export utility internals within the private core namespace.
         pub use deduplication::*;
         pub use facet_keys::*;
-        pub use facet_utils::*;
         pub use hashing::*;
         pub use hilbert::*;
         pub use measurement::*;
@@ -793,7 +891,9 @@ mod core {
 
 /// Internal Levels 3–4 realized triangulation owner and workflows.
 pub(crate) mod triangulation {
+    pub mod builder;
     pub mod construction;
+    pub mod draft;
     pub mod flips;
     pub mod insertion;
     pub mod jaccard;
@@ -900,7 +1000,7 @@ pub(crate) mod delaunay_query;
 /// Delaunay-level rollback guards for mutation windows with auxiliary state.
 #[path = "delaunay/rollback.rs"]
 pub(crate) mod delaunay_rollback;
-/// End-to-end "repair then delaunayize" workflow.
+/// End-to-end Delaunay refinement workflow.
 #[path = "delaunay/delaunayize.rs"]
 pub mod delaunayize;
 /// Post-construction vertex deletion operations.
@@ -909,6 +1009,11 @@ pub(crate) mod deletion;
 /// Construction and performance diagnostics.
 #[path = "delaunay/diagnostics.rs"]
 pub mod diagnostics;
+/// Unpublished Level 5 proof state.
+#[path = "delaunay/draft.rs"]
+mod draft;
+#[path = "delaunay/incremental_builder.rs"]
+pub mod incremental_builder;
 /// Triangulation editing operations (bistellar flips).
 pub use crate::triangulation::flips;
 /// Post-construction vertex insertion operations.
@@ -952,7 +1057,7 @@ pub use crate::construction::{
     DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
     InsertionOrderStrategy, RetryPolicy,
 };
-pub use crate::core::algorithms::incremental_insertion::{
+pub use crate::core::algorithms::insertion::{
     CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind, DelaunayRepairFailureContext,
     HullExtensionReason, InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage,
     InsertionError, InsertionErrorKind, InsertionErrorSourceKind,
@@ -978,11 +1083,11 @@ pub use crate::delaunay_property_validation::{
     delaunay_violation_report, find_delaunay_violations,
 };
 pub use crate::delaunay_query::SimplexDataFillError;
+pub use crate::delaunayize::DelaunayRefinementBuilder;
 pub use crate::deletion::DeleteVertexError;
+pub use crate::incremental_builder::{DelaunayIncrementalBuilder, DelaunayIncrementalBuilderError};
 pub use crate::io::visualization::{
-    AdjacencyRecord, MESH_EXPORT_SCHEMA, MESH_EXPORT_SCHEMA_VERSION, MeshAdjacencyRecord,
-    MeshExport, MeshExportError, MeshExportValidationError, MeshSimplexRecord, MeshVertexRecord,
-    SimplexRecord, VISUALIZATION_SCHEMA, VISUALIZATION_SCHEMA_VERSION, ValidatedMeshExport,
+    AdjacencyRecord, SimplexRecord, VISUALIZATION_SCHEMA, VISUALIZATION_SCHEMA_VERSION,
     ValidatedVisualizationData, VertexRecord, VisualizationData, VisualizationDataValidationError,
     VisualizationExportError, VisualizationMetadata, VisualizationTopologyGuarantee,
     VisualizationTopologyKind,
@@ -1001,6 +1106,9 @@ pub use crate::topology::spaces::spherical::{
     SphericalMetric, SphericalPoint, SphericalPointError,
 };
 pub use crate::triangulation::Triangulation;
+pub use crate::triangulation::builder::{
+    TriangulationBuildFailure, TriangulationBuilder, TriangulationBuilderError,
+};
 pub use crate::triangulation::construction::{
     FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
 };
@@ -1010,15 +1118,16 @@ pub use crate::triangulation::realization::{
     PeriodicDomainPeriodError, TriangulationRealizationIntersectionDetail,
     TriangulationRealizationSimplexDetail, TriangulationRealizationSimplexPairDetail,
     TriangulationRealizationValidationError, TriangulationRealizationValidationErrorKind,
-    TriangulationRealizationValidationReport, TriangulationRefinementError,
+    TriangulationRealizationValidationReport,
 };
+pub use crate::triangulation::repair::LocalFacetRepairGuard;
 pub use crate::triangulation::validation::{
     OrientationWitness, TopologyGuarantee, TriangulationValidationError,
     ValidationConfigurationError, ValidationPolicy,
 };
 pub use crate::validation::{
-    DelaunayTdsRefinementError, DelaunayTriangulationRefinementError,
-    DelaunayTriangulationValidationError, DelaunayVerificationError, DelaunayVerificationErrorKind,
+    DelaunayTriangulationRefinementError, DelaunayTriangulationValidationError,
+    DelaunayVerificationError, DelaunayVerificationErrorKind,
 };
 
 /// Creates vertices from points by re-validating coordinates at the public boundary.
@@ -1163,10 +1272,7 @@ pub mod topology {
         BoundaryFacetClassification, ManifoldError, classify_boundary_facet,
         validate_closed_boundary, validate_ridge_links, validate_vertex_links,
     };
-    pub use ridge::{
-        RidgeCandidate, RidgeCandidateError, RidgeLinkView, RidgeQuery, RidgeView,
-        ridge_star_simplices,
-    };
+    pub use ridge::{RidgeCandidate, RidgeCandidateError, RidgeLinkView, RidgeQuery, RidgeView};
     pub use traits::*;
 }
 
@@ -1192,16 +1298,14 @@ pub mod topology {
 /// ```
 pub mod collections {
     pub use crate::core::collections::{
-        Entry, FacetIndex, FacetIssuesMap, FacetSharingSimplicesBuffer, FacetVertexMap,
-        FastBuildHasher, FastHashMap, FastHashSet, FastHasher, KeyBasedSimplexMap,
-        KeyBasedVertexMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, PeriodicOffsetBuffer,
-        SecureHashMap, SecureHashSet, SimplexKeyBuffer, SimplexKeySet, SimplexNeighborsMap,
-        SimplexSecondaryMap, SimplexToVertexUuidsMap, SimplexVertexBuffer, SimplexVertexKeyBuffer,
-        SimplexVertexKeysMap, SimplexVertexUuidBuffer, SimplexVerticesMap, SmallBuffer, Uuid,
-        UuidToSimplexKeyMap, UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet, VertexSecondaryMap,
-        VertexToSimplicesMap, VertexUuidBuffer, VertexUuidSet, fast_hash_map_with_capacity,
-        fast_hash_set_with_capacity, small_buffer_with_capacity_2, small_buffer_with_capacity_8,
-        small_buffer_with_capacity_16,
+        Entry, FacetIndex, FacetSharingSimplicesBuffer, FastBuildHasher, FastHashMap, FastHashSet,
+        FastHasher, KeyBasedSimplexMap, KeyBasedVertexMap, MAX_PRACTICAL_DIMENSION_SIZE,
+        NeighborBuffer, PeriodicOffsetBuffer, SecureHashMap, SecureHashSet, SimplexKeyBuffer,
+        SimplexKeySet, SimplexNeighborsMap, SimplexSecondaryMap, SimplexVertexBuffer,
+        SimplexVertexKeyBuffer, SimplexVertexKeysMap, SimplexVertexUuidBuffer, SimplexVerticesMap,
+        SmallBuffer, Uuid, UuidToSimplexKeyMap, UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet,
+        VertexSecondaryMap, VertexToSimplicesMap, VertexUuidBuffer, VertexUuidSet,
+        fast_hash_map_with_capacity, fast_hash_set_with_capacity,
     };
 
     /// Expert aliases for algorithm-local scratch buffers.
@@ -1211,9 +1315,8 @@ pub mod collections {
     /// avoid accidental broad imports.
     pub mod algorithm_buffers {
         pub use crate::core::collections::{
-            BadSimplexBuffer, CLEANUP_OPERATION_BUFFER_SIZE, CavityBoundaryBuffer, FacetInfoBuffer,
-            GeometricPointBuffer, PointBuffer, SimplexRemovalBuffer, ValidSimplicesBuffer,
-            ViolationBuffer,
+            CLEANUP_OPERATION_BUFFER_SIZE, CavityBoundaryBuffer, GeometricPointBuffer,
+            SimplexRemovalBuffer, ViolationBuffer,
         };
     }
 }
@@ -1245,9 +1348,8 @@ pub mod tds {
     pub use crate::core::simplex::*;
     pub use crate::core::tds::*;
     pub use crate::core::util::{
-        UuidValidationError, checked_facet_key_from_vertex_keys, facet_view_to_vertices,
-        facet_views_are_adjacent, make_uuid, measure_with_result, stable_hash_u64_slice,
-        usize_to_u8, validate_uuid, verify_facet_index_consistency,
+        UuidValidationError, checked_facet_key_from_vertex_keys, make_uuid, measure_with_result,
+        stable_hash_u64_slice, usize_to_u8, validate_uuid, verify_facet_index_consistency,
     };
     pub use crate::core::vertex::*;
     pub use crate::triangulation::jaccard::{
@@ -1281,13 +1383,9 @@ pub mod tds {
 /// # }
 /// ```
 pub mod algorithms {
-    #[cfg(feature = "diagnostics")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
-    pub use crate::core::algorithms::locate::verify_conflict_region_completeness;
     pub use crate::core::algorithms::locate::{
         ConflictError, InternalInconsistencySite, LocateError, LocateFallback,
-        LocateFallbackReason, LocateResult, LocateStats, extract_cavity_boundary,
-        find_conflict_region, locate, locate_with_stats,
+        LocateFallbackReason, LocateResult, LocateStats, locate, locate_with_stats,
     };
 }
 
@@ -1326,8 +1424,8 @@ pub mod query {
     pub use crate::flips::RidgeHandle;
     pub use crate::geometry::Point;
     pub use crate::geometry::algorithms::convex_hull::{
-        ConvexHull, ConvexHullConstructionError, ConvexHullInsufficientDataReason,
-        ConvexHullValidationError,
+        ConvexHull, ConvexHullConstructionError, ConvexHullFacetView,
+        ConvexHullInsufficientDataReason, ConvexHullQueryError, ConvexHullVertex,
     };
     pub use crate::geometry::kernel::{
         AdaptiveKernel, ExactPredicates, FastKernel, Kernel, RobustKernel,
@@ -1348,7 +1446,9 @@ pub mod query {
         extract_hull_facet_set, extract_vertex_coordinate_set, format_jaccard_report,
         jaccard_distance, jaccard_index,
     };
-    pub use crate::triangulation::query::QueryError;
+    pub use crate::triangulation::query::{
+        CavityBoundary, ConflictRegion, ConflictSimplexView, QueryError,
+    };
     pub use crate::{DelaunayTriangulation, Triangulation};
     pub use crate::{SimplexBarycenterError, SimplexDataFillError};
 }
@@ -1368,9 +1468,10 @@ pub mod prelude {
         ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
         ConstructionStatistics, DedupPolicy, DedupTolerance, DelaunayCheckPolicy,
         DelaunayConstructionFailure, DelaunayConstructionRepairPhase,
-        DelaunayConstructionRetryFailure, DelaunayError, DelaunayRepairOperation,
-        DelaunayRepairPolicy, DelaunayResult, DelaunayTdsRefinementError, DelaunayTriangulation,
-        DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+        DelaunayConstructionRetryFailure, DelaunayError, DelaunayIncrementalBuilder,
+        DelaunayIncrementalBuilderError, DelaunayRefinementBuilder, DelaunayRepairOperation,
+        DelaunayRepairPolicy, DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder,
+        DelaunayTriangulationConstructionError,
         DelaunayTriangulationConstructionErrorWithStatistics, DelaunayTriangulationRefinementError,
         DelaunayTriangulationValidationError, DelaunayVerificationError,
         DelaunayVerificationErrorKind, DuplicateDetectionMetrics, FinalDelaunayValidationContext,
@@ -1385,8 +1486,8 @@ pub mod prelude {
         TriangulationRealizationIntersectionDetail, TriangulationRealizationSimplexDetail,
         TriangulationRealizationSimplexPairDetail, TriangulationRealizationValidationError,
         TriangulationRealizationValidationErrorKind, TriangulationRealizationValidationReport,
-        TriangulationRefinementError, TriangulationValidationError, TriangulationValidationReport,
-        ValidationConfigurationError, ValidationPolicy, try_vertices_from_points,
+        TriangulationValidationError, TriangulationValidationReport, ValidationConfigurationError,
+        ValidationPolicy, try_vertices_from_points,
     };
 
     // Re-export utility items, but avoid exporting the util module names themselves.
@@ -1402,8 +1503,8 @@ pub mod prelude {
         try_hilbert_sort_by_stable, try_hilbert_sort_by_unstable, try_hilbert_sorted_indices,
     };
     pub use crate::core::util::{
-        DeduplicationError, dedup_vertices_epsilon, dedup_vertices_exact,
-        filter_vertices_excluding, try_dedup_vertices_epsilon,
+        DeduplicationError, dedup_vertices_exact, filter_vertices_excluding,
+        try_dedup_vertices_epsilon,
     };
     pub use crate::delaunay_property_validation::{
         DelaunayValidationError, DelaunayViolationDetail, DelaunayViolationReport,
@@ -1415,9 +1516,8 @@ pub mod prelude {
         jaccard_distance, jaccard_index, measure_with_result,
     };
     pub use crate::tds::{
-        UuidValidationError, checked_facet_key_from_vertex_keys, facet_view_to_vertices,
-        facet_views_are_adjacent, make_uuid, stable_hash_u64_slice, usize_to_u8, validate_uuid,
-        verify_facet_index_consistency,
+        UuidValidationError, checked_facet_key_from_vertex_keys, make_uuid, stable_hash_u64_slice,
+        usize_to_u8, validate_uuid, verify_facet_index_consistency,
     };
     pub use crate::topology::{
         GlobalTopology, GlobalTopologyModelError, TopologyError, TopologyKind,
@@ -1470,11 +1570,14 @@ pub mod prelude {
         quality::*, robust_predicates::*, traits::coordinate::*, util::*,
     };
 
-    /// Batch construction options, builders, and construction errors.
+    /// Delaunay construction workflows, options, and typed errors.
     ///
-    /// This focused prelude is for callers configuring Delaunay construction
-    /// without importing the broader triangulation editing and repair
-    /// surface.
+    /// Use [`DelaunayTriangulationBuilder`] when the input vertices are already
+    /// available as a batch. Use
+    /// [`DelaunayIncrementalBuilder`] when
+    /// vertices arrive one at a time before a full-dimensional simplex exists.
+    /// Both workflows return a proof-bearing [`DelaunayTriangulation`] without
+    /// importing the broader editing and repair surface.
     ///
     /// # Examples
     ///
@@ -1533,11 +1636,15 @@ pub mod prelude {
         };
         pub use crate::vertex;
         pub use crate::{
-            CavityFillingError, CavityRepairStage, DelaunayTriangulation, DeleteVertexError,
+            CavityFillingError, CavityRepairStage, DelaunayIncrementalBuilder,
+            DelaunayIncrementalBuilderError, DelaunayTriangulation, DeleteVertexError,
             FinalDelaunayValidationContext, FinalTopologyValidationContext,
             SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
             TriangulationConstructionError, TriangulationRealizationValidationError,
             try_vertices_from_points,
+        };
+        pub use crate::{
+            TriangulationBuildFailure, TriangulationBuilder, TriangulationBuilderError,
         };
     }
 
@@ -1578,7 +1685,7 @@ pub mod prelude {
     /// # }
     /// ```
     pub mod triangulation {
-        pub use crate::collections::{FacetIssuesMap, SimplexKeyBuffer, SmallBuffer};
+        pub use crate::collections::{SimplexKeyBuffer, SmallBuffer};
         pub use crate::geometry::kernel::{
             AdaptiveKernel, ExactPredicates, FastKernel, Kernel, RobustKernel,
         };
@@ -1599,14 +1706,14 @@ pub mod prelude {
         pub use crate::topology::manifold::ManifoldError;
         pub use crate::vertex;
         pub use crate::{
-            InsertionError, PeriodicDomainPeriodError, RefinementError,
+            InsertionError, LocalFacetRepairGuard, PeriodicDomainPeriodError, RefinementError,
             SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
+            TriangulationBuildFailure, TriangulationBuilder, TriangulationBuilderError,
             TriangulationConstructionError, TriangulationRealizationIntersectionDetail,
             TriangulationRealizationSimplexDetail, TriangulationRealizationSimplexPairDetail,
             TriangulationRealizationValidationError, TriangulationRealizationValidationErrorKind,
-            TriangulationRealizationValidationReport, TriangulationRefinementError,
-            TriangulationValidationError, TriangulationValidationReport,
-            ValidationConfigurationError, ValidationPolicy,
+            TriangulationRealizationValidationReport, TriangulationValidationError,
+            TriangulationValidationReport, ValidationConfigurationError, ValidationPolicy,
         };
     }
 
@@ -1797,11 +1904,11 @@ pub mod prelude {
         };
     }
 
-    /// End-to-end Delaunay conversion workflow.
+    /// End-to-end Delaunay refinement workflow.
     ///
     /// Self-contained: a single `use delaunay::prelude::delaunayize::*`
     /// import brings in [`DelaunayTriangulationBuilder`], [`DelaunayTriangulation`],
-    /// and all delaunayize-specific types.
+    /// and all Delaunay-refinement types.
     pub mod delaunayize {
         pub use crate::delaunayize::*;
         pub use crate::{DelaunayTriangulation, DelaunayTriangulationBuilder, RefinementError};
@@ -1822,14 +1929,13 @@ pub mod prelude {
         pub use crate::topology::manifold::ManifoldError;
         pub use crate::validation::*;
         pub use crate::{
-            DelaunayTdsRefinementError, DelaunayTriangulationRefinementError,
-            DelaunayTriangulationValidationError, DelaunayVerificationError,
-            DelaunayVerificationErrorKind, OrientationWitness, PeriodicDomainPeriodError,
-            RefinementError, SphericalDelaunayValidationError, SphericalValidationLayer,
-            TopologyGuarantee, TriangulationRealizationIntersectionDetail,
-            TriangulationRealizationSimplexDetail, TriangulationRealizationSimplexPairDetail,
-            TriangulationRealizationValidationError, TriangulationRealizationValidationErrorKind,
-            TriangulationRealizationValidationReport, TriangulationRefinementError,
+            DelaunayTriangulationRefinementError, DelaunayTriangulationValidationError,
+            DelaunayVerificationError, DelaunayVerificationErrorKind, OrientationWitness,
+            PeriodicDomainPeriodError, RefinementError, SphericalDelaunayValidationError,
+            SphericalValidationLayer, TopologyGuarantee,
+            TriangulationRealizationIntersectionDetail, TriangulationRealizationSimplexDetail,
+            TriangulationRealizationSimplexPairDetail, TriangulationRealizationValidationError,
+            TriangulationRealizationValidationErrorKind, TriangulationRealizationValidationReport,
             TriangulationValidationError, TriangulationValidationReport,
             ValidationConfigurationError, ValidationPolicy,
         };
@@ -1851,17 +1957,15 @@ pub mod prelude {
     /// ```
     pub mod collections {
         pub use crate::collections::{
-            Entry, FacetIndex, FacetIssuesMap, FacetSharingSimplicesBuffer, FastBuildHasher,
-            FastHashMap, FastHashSet, FastHasher, KeyBasedSimplexMap, KeyBasedVertexMap,
+            Entry, FacetIndex, FacetSharingSimplicesBuffer, FastBuildHasher, FastHashMap,
+            FastHashSet, FastHasher, KeyBasedSimplexMap, KeyBasedVertexMap,
             MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, PeriodicOffsetBuffer, SecureHashMap,
             SecureHashSet, SimplexKeyBuffer, SimplexKeySet, SimplexNeighborsMap,
-            SimplexSecondaryMap, SimplexToVertexUuidsMap, SimplexVertexBuffer,
-            SimplexVertexKeyBuffer, SimplexVertexKeysMap, SimplexVertexUuidBuffer,
-            SimplexVerticesMap, SmallBuffer, Uuid, UuidToSimplexKeyMap, UuidToVertexKeyMap,
-            VertexKeyBuffer, VertexKeySet, VertexSecondaryMap, VertexToSimplicesMap,
-            VertexUuidBuffer, VertexUuidSet, fast_hash_map_with_capacity,
-            fast_hash_set_with_capacity, small_buffer_with_capacity_2,
-            small_buffer_with_capacity_8, small_buffer_with_capacity_16,
+            SimplexSecondaryMap, SimplexVertexBuffer, SimplexVertexKeyBuffer, SimplexVertexKeysMap,
+            SimplexVertexUuidBuffer, SimplexVerticesMap, SmallBuffer, Uuid, UuidToSimplexKeyMap,
+            UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet, VertexSecondaryMap,
+            VertexToSimplicesMap, VertexUuidBuffer, VertexUuidSet, fast_hash_map_with_capacity,
+            fast_hash_set_with_capacity,
         };
 
         /// Expert aliases for algorithm-local scratch buffers.
@@ -1871,14 +1975,14 @@ pub mod prelude {
         /// collections prelude to avoid accidental broad imports.
         pub mod algorithm_buffers {
             pub use crate::collections::algorithm_buffers::{
-                BadSimplexBuffer, CLEANUP_OPERATION_BUFFER_SIZE, CavityBoundaryBuffer,
-                FacetInfoBuffer, GeometricPointBuffer, PointBuffer, SimplexRemovalBuffer,
-                ValidSimplicesBuffer, ViolationBuffer,
+                CLEANUP_OPERATION_BUFFER_SIZE, CavityBoundaryBuffer, GeometricPointBuffer,
+                SimplexRemovalBuffer, ViolationBuffer,
             };
         }
     }
 
-    /// Focused exports for low-level topology data structures.
+    /// Focused exports for constructing, staging, inspecting, and validating
+    /// low-level topology data structures.
     ///
     /// This prelude also exposes [`TopologyOwner`] and [`TopologyOwnerId`] for
     /// proposal and borrowed-view workflows that need runtime topology identity.
@@ -1929,6 +2033,7 @@ pub mod prelude {
             robust_predicates::{
                 ConsistencyResult, InsphereConsistencyError, robust_insphere, robust_orientation,
             },
+            sos::{sos_insphere_sign, sos_orientation_sign},
             traits::coordinate::{
                 Coordinate, CoordinateConversionError, CoordinateConversionValue,
                 CoordinateIdentity, CoordinateRepresentation, CoordinateValidationError,
@@ -1971,8 +2076,7 @@ pub mod prelude {
     pub mod algorithms {
         pub use crate::algorithms::{
             ConflictError, InternalInconsistencySite, LocateError, LocateFallback,
-            LocateFallbackReason, LocateResult, LocateStats, extract_cavity_boundary,
-            find_conflict_region, locate, locate_with_stats,
+            LocateFallbackReason, LocateResult, LocateStats, locate, locate_with_stats,
         };
     }
 
@@ -1991,9 +2095,6 @@ pub mod prelude {
     /// assert!(NeighborSlot::Boundary.is_boundary());
     /// ```
     pub mod diagnostics {
-        #[cfg(feature = "diagnostics")]
-        #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
-        pub use crate::algorithms::verify_conflict_region_completeness;
         #[cfg(feature = "diagnostics")]
         #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
         pub use crate::debug_print_first_delaunay_violation;
@@ -2018,7 +2119,7 @@ pub mod prelude {
     /// use delaunay::prelude::construction::{
     ///     DelaunayResult, DelaunayTriangulationBuilder, vertex,
     /// };
-    /// use delaunay::prelude::export::MESH_EXPORT_SCHEMA;
+    /// use delaunay::prelude::export::VISUALIZATION_SCHEMA;
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
@@ -2027,19 +2128,17 @@ pub mod prelude {
     ///     vertex![0.0, 1.0]?,
     /// ];
     /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let export = triangulation.to_mesh_export()?;
+    /// let export = triangulation.to_visualization_data()?;
     ///
-    /// assert_eq!(export.metadata.schema, MESH_EXPORT_SCHEMA);
+    /// assert_eq!(export.metadata.schema, VISUALIZATION_SCHEMA);
     /// # Ok(())
     /// # }
     /// ```
     pub mod export {
         pub use crate::geometry::traits::coordinate::InvalidCoordinateValue;
         pub use crate::io::visualization::{
-            AdjacencyRecord, MESH_EXPORT_SCHEMA, MESH_EXPORT_SCHEMA_VERSION, MeshAdjacencyRecord,
-            MeshExport, MeshExportError, MeshExportValidationError, MeshSimplexRecord,
-            MeshVertexRecord, SimplexRecord, VISUALIZATION_SCHEMA, VISUALIZATION_SCHEMA_VERSION,
-            ValidatedMeshExport, ValidatedVisualizationData, VertexRecord, VisualizationData,
+            AdjacencyRecord, SimplexRecord, VISUALIZATION_SCHEMA, VISUALIZATION_SCHEMA_VERSION,
+            ValidatedVisualizationData, VertexRecord, VisualizationData,
             VisualizationDataValidationError, VisualizationExportError, VisualizationMetadata,
             VisualizationTopologyGuarantee, VisualizationTopologyKind,
         };
@@ -2109,8 +2208,8 @@ pub mod prelude {
         // Read-only algorithms
         pub use crate::assert_jaccard_gte;
         pub use crate::geometry::algorithms::convex_hull::{
-            ConvexHull, ConvexHullConstructionError, ConvexHullInsufficientDataReason,
-            ConvexHullValidationError,
+            ConvexHull, ConvexHullConstructionError, ConvexHullFacetView,
+            ConvexHullInsufficientDataReason, ConvexHullQueryError, ConvexHullVertex,
         };
         pub use crate::query::{
             JaccardComputationError, extract_edge_set, extract_facet_identifier_set,
@@ -2211,7 +2310,6 @@ pub mod prelude {
             };
             pub use crate::topology::ridge::{
                 RidgeCandidate, RidgeCandidateError, RidgeLinkView, RidgeQuery, RidgeView,
-                ridge_star_simplices,
             };
             pub use crate::topology::traits::{
                 GlobalTopology, GlobalTopologyModelError, TopologicalSpace, TopologyError,
@@ -2230,14 +2328,6 @@ pub mod prelude {
     }
 }
 
-/// The function `is_normal` checks that structs implement `auto` traits.
-/// Traits are checked at compile time, so this function is only used for
-/// testing.
-#[must_use]
-pub const fn is_normal<T: Send + Sync + Unpin>() -> bool {
-    true
-}
-
 // =============================================================================
 // TESTS
 // =============================================================================
@@ -2248,6 +2338,7 @@ mod tests {
     use crate::{
         DelaunayTriangulation, PlManifoldRepairConfig, PlManifoldRepairError,
         PlManifoldRepairStage, PlManifoldRepairStats, PlManifoldTdsRepairResult,
+        TriangulationBuildFailure, TriangulationBuilder,
         core::{
             adjacency::TriangulationAdjacency, edge::EdgeKey, simplex::Simplex, tds::Tds,
             vertex::Vertex,
@@ -2255,11 +2346,9 @@ mod tests {
         geometry::{
             Point, algorithms::convex_hull::ConvexHull, kernel::FastKernel, util::CircumcenterError,
         },
-        is_normal,
         prelude::delaunayize::{
-            DelaunayTriangulationConstructionError, DelaunayizeConfig, DelaunayizeError,
-            DelaunayizeOutcome, DelaunayizeRefinementError, SimplexDataRestoreError,
-            SimplexValidationError,
+            DelaunayTriangulationConstructionError, DelaunayizeError, DelaunayizeOutcome,
+            DelaunayizeRefinementError, SimplexDataRestoreError, SimplexValidationError,
         },
         prelude::repair::{
             DelaunayCheckPolicy, DelaunayRepairError, DelaunayRepairPolicy, DelaunayRepairStats,
@@ -2281,38 +2370,37 @@ mod tests {
 
     #[test]
     fn normal_types() {
-        assert!(is_normal::<Point<3>>());
-        assert!(is_normal::<Vertex<(), 3>>());
-        assert!(is_normal::<Simplex<(), 4>>());
-        assert!(is_normal::<Tds<(), (), 4>>());
-        assert!(is_normal::<Triangulation<FastKernel<f64>, (), (), 3>>());
-        assert!(is_normal::<DelaunayTriangulation<FastKernel<f64>, (), (), 3>>());
-        assert!(is_normal::<ConvexHull<(), (), 3>>());
-        assert!(is_normal::<EdgeKey>());
-        assert!(is_normal::<TriangulationAdjacency<'static>>());
-        assert!(is_normal::<DelaunayizeConfig>());
-        assert!(is_normal::<DelaunayizeOutcome>());
-        assert!(is_normal::<DelaunayizeError>());
-        assert!(is_normal::<RefinementError<u8, DelaunayizeError>>());
-        assert!(is_normal::<
-            DelaunayizeRefinementError<FastKernel<f64>, (), (), 3>,
-        >());
-        assert!(is_normal::<TriangulationRefinementError<(), (), 3>>());
-        assert!(is_normal::<
-            DelaunayTriangulationRefinementError<FastKernel<f64>, (), (), 3>,
-        >());
-        assert!(is_normal::<DelaunayRepairError>());
-        assert!(is_normal::<DelaunayRepairStats>());
-        assert!(is_normal::<PlManifoldRepairError>());
-        assert!(is_normal::<PlManifoldRepairRefinementError<(), (), 3>>());
-        assert!(is_normal::<PlManifoldRepairStage>());
-        assert!(is_normal::<PlManifoldRepairStats<(), (), 3>>());
-        assert!(is_normal::<PlManifoldRepairConfig>());
-        assert!(is_normal::<PlManifoldTdsRepairResult<(), (), 3>>());
-        assert!(is_normal::<SimplexDataRestoreError>());
-        assert!(is_normal::<SimplexValidationError>());
-        assert!(is_normal::<DelaunayError>());
-        assert!(is_normal::<DelaunayTriangulationConstructionError>());
+        const fn assert_normal<T: Send + Sync + Unpin>() {}
+
+        assert_normal::<Point<3>>();
+        assert_normal::<Vertex<(), 3>>();
+        assert_normal::<Simplex<(), 4>>();
+        assert_normal::<Tds<(), (), 4>>();
+        assert_normal::<Triangulation<FastKernel<f64>, (), (), 3>>();
+        assert_normal::<DelaunayTriangulation<FastKernel<f64>, (), (), 3>>();
+        assert_normal::<TriangulationBuilder<FastKernel<f64>, (), (), 3>>();
+        assert_normal::<DelaunayRefinementBuilder<FastKernel<f64>, (), (), 3>>();
+        assert_normal::<ConvexHull<(), 3>>();
+        assert_normal::<EdgeKey>();
+        assert_normal::<TriangulationAdjacency<'static>>();
+        assert_normal::<DelaunayizeOutcome>();
+        assert_normal::<DelaunayizeError>();
+        assert_normal::<RefinementError<u8, DelaunayizeError>>();
+        assert_normal::<DelaunayizeRefinementError<FastKernel<f64>, (), (), 3>>();
+        assert_normal::<TriangulationBuildFailure<(), (), 3>>();
+        assert_normal::<DelaunayTriangulationRefinementError<FastKernel<f64>, (), (), 3>>();
+        assert_normal::<DelaunayRepairError>();
+        assert_normal::<DelaunayRepairStats>();
+        assert_normal::<PlManifoldRepairError>();
+        assert_normal::<PlManifoldRepairRefinementError<(), (), 3>>();
+        assert_normal::<PlManifoldRepairStage>();
+        assert_normal::<PlManifoldRepairStats<(), (), 3>>();
+        assert_normal::<PlManifoldRepairConfig>();
+        assert_normal::<PlManifoldTdsRepairResult<(), (), 3>>();
+        assert_normal::<SimplexDataRestoreError>();
+        assert_normal::<SimplexValidationError>();
+        assert_normal::<DelaunayError>();
+        assert_normal::<DelaunayTriangulationConstructionError>();
     }
 
     #[test]
@@ -2590,15 +2678,11 @@ mod tests {
 
         // Test point visibility
         let outside_point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
-        let is_outside = hull
-            .is_point_outside(&outside_point, dt.as_triangulation())
-            .unwrap();
+        let is_outside = hull.is_point_outside(&outside_point).unwrap();
         assert!(is_outside);
 
         let inside_point = Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates");
-        let is_outside = hull
-            .is_point_outside(&inside_point, dt.as_triangulation())
-            .unwrap();
+        let is_outside = hull.is_point_outside(&inside_point).unwrap();
         assert!(!is_outside);
     }
 

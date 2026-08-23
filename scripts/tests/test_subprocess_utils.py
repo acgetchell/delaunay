@@ -16,7 +16,7 @@ import pytest
 # Add scripts directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from typing import Never
+from typing import IO, Any, Never, cast
 
 from subprocess_utils import (
     ExecutableNotFoundError,
@@ -307,6 +307,42 @@ class TestSecurityFeatures:
         """Test that callers cannot replace the wrapper-managed stdin stream."""
         with pytest.raises(ValueError, match="Overriding 'stdin' is not allowed"):
             run_git_command_with_input(["hash-object", "--stdin"], "test content", stdin=subprocess.PIPE)
+
+    @pytest.mark.parametrize(
+        ("run_options", "expected_encoding", "expected_errors"),
+        [
+            ({}, "utf-8", "strict"),
+            ({"encoding": "", "errors": ""}, "utf-8", "strict"),
+            ({"encoding": "ascii", "errors": "backslashreplace"}, "ascii", "backslashreplace"),
+        ],
+    )
+    def test_run_git_command_with_input_forwards_resolved_codec_options(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        run_options: dict[str, Any],
+        expected_encoding: str,
+        expected_errors: str,
+    ) -> None:
+        """Resolved codec options govern both input encoding and subprocess output."""
+        observed: dict[str, object] = {}
+
+        def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            stdin = cast("IO[bytes]", kwargs["stdin"])
+            observed["encoding"] = kwargs["encoding"]
+            observed["errors"] = kwargs["errors"]
+            observed["payload"] = stdin.read()
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        monkeypatch.setattr("subprocess_utils.get_safe_executable", lambda _command: "git")
+        monkeypatch.setattr("subprocess.run", fake_run)
+
+        run_git_command_with_input(["hash-object", "--stdin"], "café", **run_options)
+
+        assert observed == {
+            "encoding": expected_encoding,
+            "errors": expected_errors,
+            "payload": "café".encode(expected_encoding, expected_errors),
+        }
 
     def test_run_git_command_with_input_accepts_bytes(self) -> None:
         """Test that git stdin helpers accept bytes payloads."""

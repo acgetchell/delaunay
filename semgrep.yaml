@@ -114,6 +114,7 @@ rules:
       exclude:
         - "/src/triangulation/jaccard.rs"
     patterns:
+      - pattern-regex: '(?s)\A.*std::collections::(?:HashMap|HashSet|\{[^;\n]*(?:HashMap|HashSet)).*\z'
       - pattern-either:
           - pattern: use std::collections::HashMap;
           - pattern: use std::collections::HashSet;
@@ -317,43 +318,41 @@ rules:
               ...
           }
 
-  - id: delaunay.rust.no-module-scope-cfg-test-use
+  - id: delaunay.rust.no-cfg-test-items-outside-test-modules
     languages:
       - generic
     severity: WARNING
-    message: "Move test-only imports into the test module instead of gating module-scope use items with #[cfg(test)]."
+    message: "Keep #[cfg(test)] on an explicit test or test_support module, not on individual production items or statements."
     metadata:
       category: maintainability
-      tracking_issue: "https://github.com/acgetchell/delaunay/issues/253"
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
       rationale: >-
-        Module-scope `#[cfg(test)] use` items make production imports depend on
-        test-only compilation. Unit-test dependencies should live inside the
-        `#[cfg(test)] mod tests` block that uses them.
+        Decorating individual declarations or statements in production modules
+        with `#[cfg(test)]` spreads test scaffolding through the production
+        surface. Test-only code should be owned by an explicit test module.
     paths:
       include:
         - "/src/**/*.rs"
         - "/tests/**/*.rs"
         - "/benches/**/*.rs"
         - "/examples/**/*.rs"
-    pattern-regex: '(?m)^[ \t]*#\[cfg\(test\)\][ \t]*\n[ \t]*use[ \t]+[^;]+;'
+    pattern-regex: '(?m)^[ \t]*#\[cfg\(test\)\][^\n]*\n(?![ \t]*(?:pub(?:\([^\)\n]+\))?[ \t]+)?mod[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*\{)' # yamllint disable-line rule:line-length
 
-  - id: delaunay.rust.no-cfg-test-items-outside-test-modules
+  - id: delaunay.rust.no-dead-code-suppressions-in-src
     languages:
       - generic
     severity: WARNING
-    message: "Move test-only items into a #[cfg(test)] test or test_support module."
+    message: "Remove or use dead production code instead of suppressing the dead_code lint."
     metadata:
       category: maintainability
-      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
       rationale: >-
-        Decorating functions, impls, or data declarations in production modules
-        with `#[cfg(test)]` spreads test scaffolding through the production
-        surface. Test-only items should be owned by an explicit test module.
+        Production dead-code suppressions preserve unused APIs and implementation
+        paths that Rust would otherwise identify. Test support belongs in an
+        explicit test module; feature-specific code should use its owning cfg.
     paths:
       include:
         - "/src/**/*.rs"
-        - "/tests/**/*.rs"
-    pattern-regex: '(?m)^[ \t]*#\[cfg\(test\)\][^\n]*\n(?:[ \t]*#\[[^\]\n]*\][^\n]*\n|[ \t]*#\[[^\n]*\n(?:[ \t]+[^\n]*\n){0,8}[ \t]*[)\]]+[^\n]*\n|[ \t]*///[^\n]*\n|[ \t]*\n){0,8}[ \t]*(?:pub(?:\([^\)\n]+\))?[ \t]+)?(?:(?:const|async)[ \t]+)?(?:fn|impl|struct|enum|type|static|const)\b' # yamllint disable-line rule:line-length
+    pattern-regex: '(?m)^[ \t]*#!?\[[^\]]{0,800}\b(?:allow|expect)\([^\]]{0,800}\bdead_code\b[^\]]{0,800}\]' # yamllint disable-line rule:line-length
 
   - id: delaunay.rust.no-public-api-cfg-test-shim
     languages:
@@ -537,7 +536,7 @@ rules:
     languages:
       - generic
     severity: WARNING
-    message: "Use the current f64-coordinate API: Point<D>, Vertex<U, D>, Tds<U, V, D>, ConvexHull<U, V, D>, and Point::try_new/try_from."
+    message: "Use the current f64-coordinate API: Point<D>, Vertex<U, D>, Tds<U, V, D>, ConvexHull<U, D>, and Point::try_new/try_from."
     metadata:
       category: maintainability
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
@@ -557,7 +556,7 @@ rules:
       exclude:
         - "/docs/archive/**"
     pattern-regex: >-
-      \b(?:Point\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Vertex\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,[^>\n,]+,\s*[^>\n]+>|VertexBuilder\s*::\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Tds\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Simplex\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|DelaunayTriangulationBuilder\s*<\s*(?:'[^,]+,\s*)?(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|ConvexHull\s*<\s*(?:_|T|f64|K|K::Scalar|FastKernel\s*<[^>\n]+>|AdaptiveKernel\s*<[^>\n]+>|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,[^>\n,]+,\s*[^>\n,]+,\s*[^>\n]+>|ConvexHull(?:2D|3D|4D)\s*<\s*(?:_|T|f64|K|K::Scalar|FastKernel\s*<[^>\n]+>|AdaptiveKernel\s*<[^>\n]+>|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Point::new\s*\()
+      \b(?:Point\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Vertex\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,[^>\n,]+,\s*[^>\n]+>|VertexBuilder\s*::\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Tds\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Simplex\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|DelaunayTriangulationBuilder\s*<\s*(?:'[^,]+,\s*)?(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|ConvexHull\s*<\s*(?:[^,\n]+|FastKernel\s*<[^>\n]+>|AdaptiveKernel\s*<[^>\n]+>)\s*,[^>\n,]+,\s*[^>\n]+>|Point::new\s*\()
 
   - id: delaunay.rust.no-raw-point-coordinate-storage
     languages:
@@ -1174,6 +1173,52 @@ rules:
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-regex: '^\s*pub\s+(?:const\s+)?fn\s+tds\s*(?:<[^>{}]*>)?\s*\('
 
+  - id: delaunay.rust.no-delaunay-tds-accessor-method
+    languages:
+      - rust
+    severity: WARNING
+    message: "Use DelaunayTriangulation owner queries; consume it into Triangulation/Tds for intentionally low-level storage workflows."
+    metadata:
+      category: api
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/503"
+      rationale: >-
+        DelaunayTriangulation is the proof-bearing Level 5 owner. A crate-private
+        tds() accessor lets ordinary code bypass that boundary and couples
+        Delaunay workflows to raw storage. Low-level workflows should consume
+        the owner through into_triangulation() and then into_tds().
+    paths:
+      include:
+        - "/src/delaunay/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
+                  ...
+              }
+          - pattern-inside: |
+              impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
+              where
+                  K: $K_BOUND,
+                  U: $U_BOUND,
+                  V: $V_BOUND,
+              {
+                  ...
+              }
+          - pattern-inside: |
+              impl<K, U, V> DelaunayTriangulation<K, U, V, 2> {
+                  ...
+              }
+          - pattern-inside: |
+              impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
+                  ...
+              }
+          - pattern-inside: |
+              impl DelaunayOwnerFixture {
+                  ...
+              }
+      - pattern: fn tds(...) -> $RET { ... }
+
   - id: delaunay.rust.no-tds-accessor-in-doctests
     languages:
       - generic
@@ -1430,7 +1475,7 @@ rules:
         - "/src/geometry/util/circumsphere.rs"
         - "/src/geometry/quality.rs"
         - "/src/triangulation/construction.rs"
-        - "/src/core/algorithms/incremental_insertion.rs"
+        - "/src/core/algorithms/insertion.rs"
         - "/src/core/algorithms/flips/**"
         - "/src/delaunay/construction.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
@@ -2113,23 +2158,65 @@ rules:
         - "/tests/semgrep/src/project_rules/rust_style.rs"
     pattern-regex: '\binto_(?:structurally|realization)_validated_delaunay\b'
 
-  - id: delaunay.rust.no-unproven-delaunay-candidate-storage
+  - id: delaunay.rust.delaunay-draft-must-store-triangulation
     languages:
-      - generic
+      - rust
     severity: ERROR
-    message: "Store unproven candidates as Triangulation, not DelaunayTriangulation."
+    message: "A DelaunayTriangulationDraft must store Triangulation, not DelaunayTriangulation."
     metadata:
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
       rationale: >-
-        A staging DTO must not contain the proof-bearing Levels 1-5 owner before
-        Level 5 certification. Keeping Triangulation in the candidate makes the
-        final Delaunay construction structurally dependent on a validation proof.
+        A Level 5 draft must not contain the proof-bearing Levels 1-5 owner
+        before certification. Keeping the immediately lower Triangulation owner
+        in the draft makes publication structurally dependent on a Level 5 proof.
     paths:
       include:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/rust_style.rs"
-    pattern-regex: '(?s)\bstruct\s+DelaunayTriangulationCandidate(?:\s*<[^{}]*>)?\s*\{[^}]*:\s*DelaunayTriangulation(?:\s*<[^{}]*>)?'
+    patterns:
+      - pattern: |
+          struct $STRUCT {
+            ...,
+            $FIELD: $TYPE,
+            ...
+          }
+      - metavariable-regex:
+          metavariable: $STRUCT
+          regex: "^DelaunayTriangulationDraft$"
+      - metavariable-regex:
+          metavariable: $TYPE
+          regex: '^(?:[A-Za-z_][A-Za-z0-9_]*::)*DelaunayTriangulation(?:\s*<[\s\S]*>)?$'
+
+  - id: delaunay.rust.delaunay-batch-workspace-must-store-triangulation
+    languages:
+      - rust
+    severity: ERROR
+    message: "A DelaunayBatchWorkspace must store Triangulation, not DelaunayTriangulation."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
+      rationale: >-
+        Mutable batch construction state has not necessarily established Level
+        5. Storing the public Levels 1-5 owner in that workspace would make the
+        type claim stronger invariants than the algorithm has proved.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    patterns:
+      - pattern: |
+          struct $STRUCT {
+            ...,
+            $FIELD: $TYPE,
+            ...
+          }
+      - metavariable-regex:
+          metavariable: $STRUCT
+          regex: "^DelaunayBatchWorkspace$"
+      - metavariable-regex:
+          metavariable: $TYPE
+          regex: '^(?:[A-Za-z_][A-Za-z0-9_]*::)*DelaunayTriangulation(?:\s*<[\s\S]*>)?$'
 
   - id: delaunay.rust.no-cumulative-revalidation-delaunay-promotion
     languages:
@@ -2222,7 +2309,7 @@ rules:
     severity: ERROR
     message: >-
       Keep trusted Delaunay publication adjacent to Level 5 certification in
-      the validation boundary or the outer delaunayize transaction.
+      the private draft or the outer delaunayize transaction.
     metadata:
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
@@ -2235,9 +2322,10 @@ rules:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/rust_style.rs"
       exclude:
+        - "/src/delaunay/draft.rs"
         - "/src/delaunay/validation.rs"
         - "/src/delaunay/delaunayize.rs"
-    pattern-regex: '\.into_delaunay_after_level_five_check\s*\('
+    pattern-regex: '\.publish_verified\s*\('
 
   - id: delaunay.rust.no-public-in-place-delaunay-repair
     languages:
@@ -2335,7 +2423,7 @@ rules:
     pattern-either:
       - pattern-regex: '\bfn\s+validate_constructed_triangulation\b'
       - pattern-regex: '(?s)\.build_with_kernel\s*\([^)]*\)\s*\.map\s*\(\s*DelaunayTriangulation::into_triangulation\s*\)'
-      - pattern-regex: '(?s)\bfn\s+build_candidate_with_kernel_options(?:_and_statistics)?\b[^{};]*->\s*Result\s*<[^{};]*\bSelf\b'
+      - pattern-regex: '(?s)\bfn\s+build_workspace_with_kernel_options(?:_and_statistics)?\b[^{};]*->\s*Result\s*<[^{};]*\bSelf\b'
 
   - id: delaunay.rust.no-unproven-triangulation-assembly-storage
     languages:
@@ -2346,7 +2434,7 @@ rules:
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
       rationale: >-
-        Triangulation is the Levels 1-4 proof-bearing owner. A raw assembly DTO
+        Triangulation is the Levels 1-4 proof-bearing owner. A raw assembly workspace
         that stores Triangulation before cumulative validation recreates the
         same invalid-state bug one layer lower. Store Tds plus validation
         context, and construct Triangulation only inside a consuming smart
@@ -2356,8 +2444,92 @@ rules:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/rust_style.rs"
     pattern-either:
-      - pattern-regex: '(?s)\bstruct\s+TriangulationAssemblyCandidate(?:\s*<[^{}]*>)?\s*\{[^}]*:\s*Triangulation(?:\s*<[^{}]*>)?'
+      - pattern-regex: '(?s)\bstruct\s+TriangulationAssemblyWorkspace(?:\s*<[^{}]*>)?\s*\{[^}]*:\s*Triangulation(?:\s*<[^{}]*>)?'
       - pattern-regex: '\bfn\s+try_into_structurally_valid_triangulation\b'
+
+  - id: delaunay.rust.proof-owners-must-not-expose-publication-typestate
+    languages:
+      - generic
+    severity: ERROR
+    message: "Public proof owners must keep publication state behind Draft wrappers, not expose it as a generic parameter."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Tds and Triangulation are already the published proof-bearing types.
+        Adding a State parameter stabilizes crate-internal publication machinery
+        in downstream signatures and competes with the Draft vocabulary.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: >-
+      (?s)\bpub\s+struct\s+(?:Tds|Triangulation)\s*<[^>{}]*\bState\b[^>{}]*>
+
+  - id: delaunay.rust.tds-draft-must-store-unverified-state
+    languages:
+      - generic
+    severity: ERROR
+    message: "TdsDraft must store the private UnverifiedTds wrapper, not the published Tds owner."
+    metadata:
+      category: correctness
+      rationale: >-
+        A draft is allowed to be incomplete. Encoding that state in a private
+        wrapper prevents incomplete Levels 1-2 storage from being confused
+        with a published Tds without exposing typestate in the public Tds API.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: '(?s)\bstruct\s+TdsDraft(?:\s*<[^{}]*>)?\s*\{[^}]*\bstorage\s*:\s*Tds\s*<\s*[^,>]+\s*,\s*[^,>]+\s*,\s*[^,>]+\s*>'
+
+  - id: delaunay.rust.triangulation-draft-must-store-unverified-state
+    languages:
+      - generic
+    severity: ERROR
+    message: "TriangulationDraft must store the private UnverifiedTriangulation wrapper."
+    metadata:
+      category: correctness
+      rationale: >-
+        Levels 3-4 publication state must remain a distinct private wrapper
+        until cumulative topology and realization certification succeeds,
+        without exposing typestate in the public Triangulation API.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: >-
+      (?sx)\bstruct\s+TriangulationDraft(?:\s*<[^{}]*>)?\s*\{
+      [^}]*\btriangulation\s*:\s*Triangulation\s*<
+      \s*[^,>]+\s*,\s*[^,>]+\s*,\s*[^,>]+\s*,\s*[^,>]+\s*>
+
+  - id: delaunay.rust.delaunay-bootstrap-workspace-must-use-tds-draft
+    languages:
+      - rust
+    severity: ERROR
+    message: "Delaunay bootstrap must stage partial connectivity only in TdsDraft."
+    metadata:
+      category: correctness
+      rationale: >-
+        Before the first maximal simplex exists, neither raw Tds storage nor a
+        higher proof owner carries the required connectivity proof. Delaunay
+        bootstrap must retain TdsDraft until Levels 1-2 publication succeeds.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    patterns:
+      - pattern: |
+          struct $STRUCT {
+            ...,
+            $FIELD: $TYPE,
+            ...
+          }
+      - metavariable-regex:
+          metavariable: $STRUCT
+          regex: "^DelaunayBootstrapWorkspace$"
+      - metavariable-regex:
+          metavariable: $TYPE
+          regex: '^(?:[A-Za-z_][A-Za-z0-9_]*::)*(?:Tds|TriangulationDraft|Triangulation|DelaunayTriangulationDraft|DelaunayTriangulation)(?:\s*<[\s\S]*>)?$'
 
   - id: delaunay.rust.tds-defined-only-in-canonical-model
     languages:

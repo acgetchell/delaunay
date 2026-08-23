@@ -37,18 +37,25 @@ use crate::construction::{
     ConstructionOptions, DelaunayTriangulationConstructionError, InitialSimplexStrategy,
 };
 use crate::geometry::Point;
-use crate::geometry::algorithms::convex_hull::{ConvexHull, ConvexHullConstructionError};
+use crate::geometry::algorithms::convex_hull::{
+    ConvexHull, ConvexHullConstructionError, ConvexHullQueryError,
+};
+use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates};
 use crate::geometry::predicates::{Orientation, simplex_orientation};
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateValidationError};
 use crate::geometry::util::safe_usize_to_scalar;
 use crate::tds::{
-    FacetError, InvariantError, Simplex, SimplexValidationError, Tds, TdsConstructionError,
-    TdsError, TdsMutationError, Vertex,
+    InvariantError, Simplex, SimplexValidationError, Tds, TdsConstructionError, TdsError,
+    TdsMutationError, Vertex,
 };
-use crate::topology::characteristics::validation::validate_triangulation_euler_from_validated_facet_map;
+use crate::topology::characteristics::validation::{
+    EulerClassificationEvidence,
+    validate_triangulation_euler_from_validated_facet_map_with_evidence,
+};
 use crate::topology::manifold::{
-    ManifoldError, ValidatedFacetDegreeMap, validate_closed_boundary_from_validated_facet_map,
-    validate_ridge_links, validate_vertex_links_from_validated_facet_map,
+    HighDimensionalLinkEvidence, ManifoldError, ValidatedFacetDegreeMap,
+    validate_closed_boundary_from_validated_facet_map, validate_ridge_links,
+    validate_vertex_links_from_validated_facet_map_with_evidence,
 };
 use crate::topology::spaces::spherical::{
     SphericalMetric, SphericalPoint, SphericalPointError, ambient_array_from_slice,
@@ -211,6 +218,32 @@ pub struct SphericalDelaunayTriangulation<const D: usize> {
     points: Vec<SphericalPoint<D>>,
     simplices: Vec<SphericalSimplex<D>>,
     radius: f64,
+    construction_provenance: SphericalConstructionProvenance,
+}
+
+/// Private evidence for the convex-polytope boundary theorem used at Level 3.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum SphericalConstructionProvenance {
+    #[default]
+    Unproven,
+    /// Facets were extracted from a checked full-dimensional ambient convex hull.
+    AmbientConvexHullBoundary,
+}
+
+impl SphericalConstructionProvenance {
+    const fn link_evidence(self) -> HighDimensionalLinkEvidence {
+        match self {
+            Self::Unproven => HighDimensionalLinkEvidence::Unproven,
+            Self::AmbientConvexHullBoundary => HighDimensionalLinkEvidence::PreservedByConstruction,
+        }
+    }
+
+    const fn euler_evidence(self) -> EulerClassificationEvidence {
+        match self {
+            Self::Unproven => EulerClassificationEvidence::Unproven,
+            Self::AmbientConvexHullBoundary => EulerClassificationEvidence::SphericalBoundary,
+        }
+    }
 }
 
 impl<const D: usize> SphericalDelaunayTriangulation<D> {
@@ -735,26 +768,26 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
         let facet_to_simplices = tds
             .build_facet_to_simplices_map()
             .map_err(intrinsic_tds_error)?;
-        let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)
-            .map_err(intrinsic_manifold_error)?;
+        let facet_to_simplices =
+            ValidatedFacetDegreeMap::try_from_facet_map(&tds, &facet_to_simplices)
+                .map_err(intrinsic_manifold_error)?;
         validate_closed_boundary_from_validated_facet_map(
-            &tds,
             facet_to_simplices,
             GlobalTopology::Spherical,
         )
         .map_err(intrinsic_manifold_error)?;
         validate_ridge_links(&tds).map_err(intrinsic_manifold_error)?;
-        validate_vertex_links_from_validated_facet_map(
-            &tds,
+        validate_vertex_links_from_validated_facet_map_with_evidence(
             facet_to_simplices,
             GlobalTopology::Spherical,
+            self.construction_provenance.link_evidence(),
         )
         .map_err(intrinsic_manifold_error)?;
 
-        let topology_result = validate_triangulation_euler_from_validated_facet_map(
-            &tds,
+        let topology_result = validate_triangulation_euler_from_validated_facet_map_with_evidence(
             facet_to_simplices,
             GlobalTopology::Spherical,
+            self.construction_provenance.euler_evidence(),
         )
         .map_err(intrinsic_topology_support_error)?;
         if let Some(expected) = topology_result.expected
@@ -1265,7 +1298,10 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
     /// `D`-simplices after validation.
     fn build_with_ambient<const A: usize>(
         self,
-    ) -> Result<SphericalDelaunayTriangulation<D>, SphericalDelaunayConstructionError> {
+    ) -> Result<SphericalDelaunayTriangulation<D>, SphericalDelaunayConstructionError>
+    where
+        AdaptiveKernel<f64>: ExactPredicates<A>,
+    {
         if A != D + 1 {
             return Err(
                 SphericalDelaunayConstructionError::AmbientDimensionMismatch {
@@ -1307,23 +1343,16 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
         let origin = Point::<A>::try_new([0.0; A]).map_err(|source| {
             SphericalDelaunayConstructionError::AmbientOriginValidation { source }
         })?;
-        if hull.is_point_outside(&origin, &ambient).map_err(|source| {
-            SphericalDelaunayConstructionError::ConvexHull {
+        if hull.is_point_outside(&origin).map_err(|source| {
+            SphericalDelaunayConstructionError::ConvexHullQuery {
                 source: Box::new(source),
             }
         })? {
             return Err(SphericalDelaunayConstructionError::OriginOutsideConvexHull);
         }
 
-        let facets = hull.try_facets(&ambient).map_err(|source| {
-            SphericalDelaunayConstructionError::ConvexHull {
-                source: Box::new(source),
-            }
-        })?;
         let mut simplices = Vec::with_capacity(hull.number_of_facets());
-        for (simplex_index, facet_result) in facets.enumerate() {
-            let facet = facet_result
-                .map_err(|source| SphericalDelaunayConstructionError::Facet { source })?;
+        for (simplex_index, facet) in hull.facets().enumerate() {
             let mut simplex_vertices = Vec::with_capacity(D + 1);
             for vertex in facet.vertices() {
                 let original_index = vertex.data().copied().ok_or(
@@ -1347,6 +1376,7 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
             points: self.points,
             simplices,
             radius: self.radius,
+            construction_provenance: SphericalConstructionProvenance::AmbientConvexHullBoundary,
         };
         spherical.validate_topology().map_err(|source| {
             SphericalDelaunayConstructionError::TopologyValidation {
@@ -1621,12 +1651,12 @@ pub enum SphericalDelaunayConstructionError {
         source: Box<ConvexHullConstructionError>,
     },
 
-    /// A hull facet view failed to resolve.
-    #[error("ambient hull facet failed to resolve: {source}")]
-    Facet {
-        /// Underlying facet error.
+    /// A query on the certified ambient convex hull failed.
+    #[error("ambient convex-hull query failed: {source}")]
+    ConvexHullQuery {
+        /// Underlying convex-hull query error.
         #[source]
-        source: FacetError,
+        source: Box<ConvexHullQueryError>,
     },
 
     /// Normalized points did not surround the sphere center.
@@ -1948,6 +1978,7 @@ mod tests {
     use std::assert_matches;
 
     use super::*;
+    use crate::tds::FacetError;
 
     fn spherical_triangle(vertices: [usize; 3], vertex_count: usize) -> SphericalSimplex<2> {
         SphericalSimplex::<2>::try_new(vertices.to_vec(), vertex_count)
@@ -2036,6 +2067,7 @@ mod tests {
             points: tetrahedron_boundary_points(),
             simplices: Vec::new(),
             radius: 1.0,
+            construction_provenance: SphericalConstructionProvenance::Unproven,
         };
 
         assert_matches!(
@@ -2055,6 +2087,7 @@ mod tests {
                 spherical_triangle([2, 1, 0], vertex_count),
             ],
             radius: 1.0,
+            construction_provenance: SphericalConstructionProvenance::Unproven,
         };
 
         assert_matches!(
@@ -2076,6 +2109,7 @@ mod tests {
                 vertices: vec![0, 1, 4],
             }],
             radius: 1.0,
+            construction_provenance: SphericalConstructionProvenance::Unproven,
         };
 
         assert_matches!(
@@ -2098,6 +2132,7 @@ mod tests {
             points,
             simplices: vec![spherical_triangle([0, 1, 2], vertex_count)],
             radius: 1.0,
+            construction_provenance: SphericalConstructionProvenance::Unproven,
         };
 
         assert_matches!(
@@ -2118,6 +2153,7 @@ mod tests {
             points,
             simplices: tetrahedron_boundary_simplices(vertex_count),
             radius: 1.0,
+            construction_provenance: SphericalConstructionProvenance::Unproven,
         };
 
         assert_matches!(
@@ -2134,6 +2170,7 @@ mod tests {
             points,
             simplices: tetrahedron_boundary_simplices(vertex_count),
             radius: 2.0,
+            construction_provenance: SphericalConstructionProvenance::Unproven,
         };
 
         assert_matches!(
@@ -2156,6 +2193,7 @@ mod tests {
             points: vec![unit, radius_two],
             simplices: Vec::new(),
             radius: 1.0,
+            construction_provenance: SphericalConstructionProvenance::Unproven,
         };
 
         assert_matches!(
@@ -2178,6 +2216,7 @@ mod tests {
             points,
             simplices: tetrahedron_boundary_simplices(vertex_count),
             radius,
+            construction_provenance: SphericalConstructionProvenance::Unproven,
         };
 
         triangulation
@@ -2209,6 +2248,7 @@ mod tests {
             points,
             simplices,
             radius: 1.0,
+            construction_provenance: SphericalConstructionProvenance::AmbientConvexHullBoundary,
         };
 
         triangulation
@@ -2245,6 +2285,7 @@ mod tests {
                 spherical_triangle([1, 2, 3], vertex_count),
             ],
             radius: 1.0,
+            construction_provenance: SphericalConstructionProvenance::Unproven,
         };
 
         triangulation
@@ -2277,6 +2318,7 @@ mod tests {
                 spherical_triangle([1, 2, 3], vertex_count),
             ],
             radius: 1.0,
+            construction_provenance: SphericalConstructionProvenance::Unproven,
         };
 
         triangulation
@@ -2318,6 +2360,7 @@ mod tests {
                 spherical_triangle([4, 5, 6], vertex_count),
             ],
             radius: 1.0,
+            construction_provenance: SphericalConstructionProvenance::Unproven,
         };
 
         assert_matches!(

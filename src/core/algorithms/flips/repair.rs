@@ -1308,7 +1308,7 @@ where
     }
 }
 
-/// Crate-internal TDS verifier for the Delaunay property via local flip predicates.
+/// Crate-internal TDS verifier for the local Delaunay flip normal form.
 ///
 /// Public Delaunay owners expose this as
 /// [`DelaunayTriangulation::verify_via_flip_predicates`](crate::DelaunayTriangulation::verify_via_flip_predicates).
@@ -1319,9 +1319,11 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`DelaunayRepairError::PostconditionFailed`] if any flip predicate detects
-/// a Delaunay violation, or [`DelaunayRepairError::VerificationFailed`] if
-/// verification cannot evaluate the local predicates.
+/// Returns [`DelaunayRepairError::PostconditionFailed`] if any repair-driving
+/// flip remains applicable, or [`DelaunayRepairError::VerificationFailed`] if
+/// verification cannot evaluate the local predicates. For degenerate Euclidean
+/// point sets, failure of this stronger normal-form check does not by itself
+/// disprove the empty-circumsphere property.
 pub(crate) fn verify_tds_via_flip_predicates_assuming_connected<K, U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     kernel: &K,
@@ -1370,7 +1372,7 @@ where
     verify_delaunay_with_topology(tds, &RobustKernel::new(), GlobalTopology::Euclidean)
 }
 
-/// Verify the Delaunay property via local flip predicates under a global topology model.
+/// Verify the local Delaunay flip normal form under a global topology model.
 ///
 /// For periodic topologies this evaluates predicates in lifted coordinates using the
 /// per-simplex periodic vertex offsets stored on quotient simplices.
@@ -1976,9 +1978,9 @@ mod tests {
     use super::super::test_support::init_tracing;
     use super::super::*;
     use super::*;
-    use crate::DelaunayTriangulation;
-    use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
-    use crate::core::collections::Uuid;
+    use crate::core::algorithms::insertion::repair_neighbor_pointers;
+    use crate::core::tds::TdsBuilder;
+    use crate::core::test_support::snapshot_topology;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::triangulation::validation::TopologyGuarantee;
     use crate::vertex;
@@ -1998,63 +2000,20 @@ mod tests {
     {
         verify_delaunay_with_topology(tds, kernel, GlobalTopology::DEFAULT)
     }
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    struct TopologySnapshot {
-        vertices: Vec<Uuid>,
-        simplex_vertices: Vec<Vec<Uuid>>,
-        simplex_neighbors: Vec<Vec<Option<Uuid>>>,
+
+    /// Builds the two-triangle disk used by queue-frontier tests directly at
+    /// the Levels 1–2 boundary those tests exercise.
+    fn two_triangle_tds() -> Tds<(), (), 2> {
+        let vertices = [
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 0.2]).unwrap(),
+        ];
+        let simplices = [vec![0, 1, 3], vec![0, 3, 2]];
+        TdsBuilder::new(&vertices, &simplices).build().unwrap()
     }
 
-    fn snapshot_topology<const D: usize>(tds: &Tds<(), (), D>) -> TopologySnapshot {
-        let mut vertices: Vec<Uuid> = tds.vertices().map(|(_, vertex)| vertex.uuid()).collect();
-        vertices.sort();
-
-        let mut simplex_vertices: Vec<Vec<Uuid>> = tds
-            .simplices()
-            .map(|(_, simplex)| {
-                let mut uuids: Vec<Uuid> = simplex
-                    .vertices()
-                    .iter()
-                    .map(|&vkey| tds.vertex(vkey).expect("vertex key missing in TDS").uuid())
-                    .collect();
-                uuids.sort();
-                uuids
-            })
-            .collect();
-        simplex_vertices.sort();
-
-        let simplex_neighbors = snapshot_neighbors(tds);
-
-        TopologySnapshot {
-            vertices,
-            simplex_vertices,
-            simplex_neighbors,
-        }
-    }
-
-    fn snapshot_neighbors<const D: usize>(tds: &Tds<(), (), D>) -> Vec<Vec<Option<Uuid>>> {
-        let mut simplex_neighbors: Vec<Vec<Option<Uuid>>> = tds
-            .simplices()
-            .map(|(_, simplex)| {
-                let mut neighbors: Vec<Option<Uuid>> = simplex
-                    .neighbors()
-                    .map(|neighbor_keys| {
-                        neighbor_keys
-                            .map(|neighbor| {
-                                neighbor.and_then(|neighbor_key| {
-                                    tds.simplex(neighbor_key).map(Simplex::uuid)
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                neighbors.sort();
-                neighbors
-            })
-            .collect();
-        simplex_neighbors.sort();
-        simplex_neighbors
-    }
     fn synthetic_simplex_key(index: u64) -> SimplexKey {
         SimplexKey::from(KeyData::from_ffi(index))
     }
@@ -2374,15 +2333,7 @@ mod tests {
     #[test]
     fn test_repair_run_full_reseed_preserves_mutation_frontier() {
         init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-            vertex!([1.0, 0.2]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds();
+        let tds = two_triangle_tds();
         let local_simplex = tds.simplex_keys().next().unwrap();
         let outcome = RepairAttemptOutcome {
             postcondition_required: false,
@@ -2406,15 +2357,7 @@ mod tests {
     #[test]
     fn test_repair_k2_empty_seed_does_not_full_reseed() {
         init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-            vertex!([1.0, 0.2]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds = two_triangle_tds();
         let before = snapshot_topology(&tds);
         let kernel = AdaptiveKernel::<f64>::new();
         let config = RepairAttemptConfig {
@@ -2443,15 +2386,7 @@ mod tests {
     #[test]
     fn test_repair_queue_k2_local_seed() {
         init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-            vertex!([1.0, 0.2]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tds = dt.tds().clone();
+        let mut tds = two_triangle_tds();
         let kernel = AdaptiveKernel::<f64>::new();
 
         let seed_simplex = tds.simplex_keys().next().unwrap();

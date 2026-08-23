@@ -728,12 +728,11 @@ macro_rules! test_facet_topology_invariant {
                         let simplex_keys: Vec<_> = tri.simplices().map(|(k, _)| k).collect();
 
                         // Validate no over-shared facets
-                        let issues = tri.detect_local_facet_issues(&simplex_keys)?;
+                        let has_issues = tri.has_local_facet_issues(&simplex_keys)?;
                         prop_assert!(
-                            issues.is_none(),
-                            "{}D: Triangulation has {} over-shared facets (violates manifold topology invariant)",
-                            $dim,
-                            issues.as_ref().map_or(0, |m| m.len())
+                            !has_issues,
+                            "{}D: Triangulation has over-shared facets (violates manifold topology invariant)",
+                            $dim
                         );
                     }
                 }
@@ -758,17 +757,16 @@ macro_rules! test_facet_topology_invariant {
                         let simplex_keys: Vec<_> = tri.simplices().map(|(k, _)| k).collect();
 
                         // If there are any issues, repair them
-                        if let Some(issues) = tri.detect_local_facet_issues(&simplex_keys)? {
-                            let _removed = tri.repair_local_facet_issues(&issues, usize::MAX)?;
+                        if let Some(repair) = tri.local_facet_repair(&simplex_keys)? {
+                            let _removed = repair.repair(usize::MAX)?;
 
                             // After repair, re-check - should have no issues
                             let simplex_keys_after: Vec<_> = tri.simplices().map(|(k, _)| k).collect();
-                            let issues_after = tri.detect_local_facet_issues(&simplex_keys_after)?;
+                            let issues_after = tri.has_local_facet_issues(&simplex_keys_after)?;
                             prop_assert!(
-                                issues_after.is_none(),
-                                "{}D: After repair, {} over-shared facets still remain",
-                                $dim,
-                                issues_after.as_ref().map_or(0, |m| m.len())
+                                !issues_after,
+                                "{}D: After repair, over-shared facets still remain",
+                                $dim
                             );
                         }
                     }
@@ -791,9 +789,9 @@ macro_rules! test_facet_topology_invariant {
                         let tri = dt.as_triangulation();
 
                         // Empty simplex list should always return None
-                        let issues = tri.detect_local_facet_issues(&[])?;
+                        let issues = tri.has_local_facet_issues(&[])?;
                         prop_assert!(
-                            issues.is_none(),
+                            !issues,
                             "{}D: Empty simplex list should have no issues",
                             $dim
                         );
@@ -859,17 +857,16 @@ macro_rules! gen_high_dim_facet_topology_smoke {
 
                     let tri = dt.as_triangulation();
                     let simplex_keys: Vec<_> = tri.simplices().map(|(key, _)| key).collect();
-                    let issues = tri.detect_local_facet_issues(&simplex_keys)?;
+                    let issues = tri.has_local_facet_issues(&simplex_keys)?;
                     prop_assert!(
-                        issues.is_none(),
-                        "{}D active facet-topology smoke should have no over-shared facets: {:?}",
-                        $dim,
-                        issues
+                        !issues,
+                        "{}D active facet-topology smoke should have no over-shared facets",
+                        $dim
                     );
 
-                    let empty_issues = tri.detect_local_facet_issues(&[])?;
+                    let empty_issues = tri.has_local_facet_issues(&[])?;
                     prop_assert!(
-                        empty_issues.is_none(),
+                        !empty_issues,
                         "{}D active facet-topology smoke empty scope should have no issues",
                         $dim
                     );

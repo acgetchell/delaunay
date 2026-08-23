@@ -18,28 +18,14 @@ use uuid::Uuid;
 // CONSTRUCTION STATE TYPES
 // =============================================================================
 
-/// Represents the construction state of a triangulation.
-///
-/// # Examples
-///
-/// ```
-/// use delaunay::prelude::tds::TriangulationConstructionState;
-///
-/// let state = TriangulationConstructionState::Incomplete(2);
-/// std::assert_matches!(state, TriangulationConstructionState::Incomplete(2));
-///
-/// let default_state = TriangulationConstructionState::default();
-/// std::assert_matches!(
-///     default_state,
-///     TriangulationConstructionState::Incomplete(0)
-/// );
-/// ```
+/// Crate-internal publication state carried by draft-owned TDS storage.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TriangulationConstructionState {
+pub(crate) enum TriangulationConstructionState {
     /// The triangulation has insufficient vertices to form a complete D-dimensional triangulation.
     /// Contains the number of vertices currently stored.
     Incomplete(usize),
-    /// The triangulation is complete and valid with at least D+1 vertices and proper simplex structure.
+    /// The TDS has crossed its Levels 1–2 publication boundary; this includes
+    /// the verified empty complex.
     Constructed,
 }
 
@@ -1092,6 +1078,8 @@ pub enum TriangulationValidationErrorKind {
     RidgeLinkNotManifold,
     /// A vertex link failed PL-manifold validation.
     VertexLinkNotManifold,
+    /// A high-dimensional link lacked construction evidence for its PL type.
+    HighDimensionalVertexLinkUnproven,
     /// The intrinsic simplex-orientation constraints are contradictory.
     NonOrientable,
     /// Euler characteristic did not match the expected classification.
@@ -1123,6 +1111,9 @@ impl From<&TriangulationValidationError> for TriangulationValidationErrorKind {
             TriangulationValidationError::RidgeLinkNotManifold { .. } => Self::RidgeLinkNotManifold,
             TriangulationValidationError::VertexLinkNotManifold { .. } => {
                 Self::VertexLinkNotManifold
+            }
+            TriangulationValidationError::HighDimensionalVertexLinkUnproven { .. } => {
+                Self::HighDimensionalVertexLinkUnproven
             }
             TriangulationValidationError::NonOrientable { .. } => Self::NonOrientable,
             TriangulationValidationError::EulerCharacteristicMismatch { .. } => {
@@ -1465,6 +1456,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "exhaustive mapping keeps each validation error adjacent to its expected stable kind"
+    )]
     fn triangulation_validation_error_kind_from_error_preserves_all_variants() {
         let vertex_key = VertexKey::from(KeyData::from_ffi(3));
         let cases = [
@@ -1530,6 +1525,13 @@ mod tests {
                     interior_vertex: true,
                 },
                 TriangulationValidationErrorKind::VertexLinkNotManifold,
+            ),
+            (
+                TriangulationValidationError::HighDimensionalVertexLinkUnproven {
+                    vertex_key,
+                    dimension: 3,
+                },
+                TriangulationValidationErrorKind::HighDimensionalVertexLinkUnproven,
             ),
             (
                 TriangulationValidationError::EulerCharacteristicMismatch {

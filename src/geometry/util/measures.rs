@@ -590,8 +590,9 @@ pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumc
                     dimension: 1,
                 });
             }
-            // A 0-dimensional point has measure 0
-            Ok(0.0)
+            // The intrinsic measure of a 0-simplex is one: its empty Gram
+            // determinant and 0! normalization are both one.
+            Ok(1.0)
         }
         2 => {
             // 2D: Length of line segment (1D facet in 2D space)
@@ -835,7 +836,7 @@ pub fn surface_measure<U, V, const D: usize>(
 mod tests {
     use super::*;
     use crate::{
-        core::{traits::facet_incidence_analysis::FacetIncidenceAnalysis, vertex::Vertex},
+        core::vertex::Vertex,
         delaunay_model::DelaunayTriangulation,
         geometry::{matrix::LaError, point::Point, traits::coordinate::InvalidCoordinateValue},
         vertex,
@@ -1123,10 +1124,10 @@ mod tests {
 
     #[test]
     fn test_facet_measure_1d_point() {
-        // 1D facet is a single point (0-dimensional) - measure should be 0
+        // A 1D facet is a 0-simplex, whose intrinsic measure is one.
         let points = vec![Point::try_new([5.0]).expect("finite point coordinates")];
         let measure = facet_measure(&points).unwrap();
-        assert_relative_eq!(measure, 0.0, epsilon = 1e-10);
+        assert_relative_eq!(measure, 1.0, epsilon = 1e-10);
     }
 
     #[test]
@@ -1603,8 +1604,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -1652,8 +1652,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -1986,8 +1985,7 @@ mod tests {
             DelaunayTriangulation::builder(&vertices2).build().unwrap();
 
         let boundary_facets1: Vec<_> = dt1
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2013,8 +2011,7 @@ mod tests {
             .clone();
 
         let boundary_facets2: Vec<_> = dt2
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2065,8 +2062,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2094,8 +2090,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 4> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2130,8 +2125,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2204,8 +2198,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
-            .tds()
-            .one_sided_facets()
+            .boundary_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();

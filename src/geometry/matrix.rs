@@ -20,17 +20,22 @@
 /// wrappers such as [`determinant`] can preserve exact failure context without
 /// exposing the rest of `la-stack` to downstream callers.
 pub use la_stack::LaError;
-use la_stack::{BigRational, Matrix as LaMatrix};
-pub(crate) use la_stack::{DEFAULT_SINGULAR_TOL, SingularityReason, Vector as LaVector};
+use la_stack::Matrix as LaMatrix;
+pub(crate) use la_stack::{
+    BigRational, DEFAULT_SINGULAR_TOL, FromPrimitive, Signed, SingularityReason, Vector as LaVector,
+};
+use num_traits::Zero;
 use thiserror::Error;
 
 /// Stack-matrix dispatch limit.
 ///
 /// This is chosen so that common predicate matrices can be built as:
 /// - orientation: (D+1)×(D+1)
-/// - insphere: (D+2)×(D+2)
+/// - relative-coordinate insphere: (D+1)×(D+1)
 ///
-/// With `MAX_STACK_MATRIX_DIM = 7`, we support up to `D = 5` for insphere.
+/// With `MAX_STACK_MATRIX_DIM = 7`, the relative predicate supports through
+/// `D = 6`. Absolute lifted matrices still require `D+2` rows and therefore
+/// have a lower stack limit.
 pub const MAX_STACK_MATRIX_DIM: usize = la_stack::MAX_STACK_MATRIX_DISPATCH_DIM;
 
 /// Stack-allocated matrix type used by this crate for fixed-size linear algebra.
@@ -132,16 +137,6 @@ macro_rules! try_with_la_stack_matrix {
     }};
 }
 
-/// Create a zero matrix with the same const-generic dimension as `_template`.
-///
-/// This is useful inside `with_la_stack_matrix!` bodies where the concrete `N`
-/// is hidden by the macro dispatch: calling `matrix_zero_like(&existing)` lets
-/// the compiler infer `N` without a second macro expansion.
-#[inline]
-pub(crate) fn matrix_zero_like<const D: usize>(_template: &Matrix<D>) -> Matrix<D> {
-    Matrix::<D>::zero()
-}
-
 /// Read one entry from a stack matrix, preserving backend index diagnostics.
 ///
 /// This wrapper keeps predicate and geometry helper code on the checked
@@ -199,12 +194,119 @@ pub(crate) fn solve_exact_runtime_system(
     }))
 }
 
+/// Converts one finite IEEE-754 value to the exact rational it represents.
+#[inline]
+pub(crate) fn rational_from_f64(value: f64) -> Option<BigRational> {
+    value
+        .is_finite()
+        .then(|| BigRational::from_f64(value))
+        .flatten()
+}
+
+/// Solves a square system whose coefficients were formed in exact arithmetic.
+///
+/// Unlike [`solve_exact_runtime_system`], this entry point does not round an
+/// already-derived coefficient back through `f64`. It is the shared cold path
+/// for geometry whose matrix entries themselves require exact construction.
+#[expect(
+    clippy::needless_range_loop,
+    reason = "index-based elimination keeps pivot row and column operations explicit"
+)]
+pub(crate) fn solve_rational_system(
+    mut matrix: Vec<Vec<BigRational>>,
+    mut rhs: Vec<BigRational>,
+) -> Option<Vec<BigRational>> {
+    let dimension = rhs.len();
+    if matrix.len() != dimension || matrix.iter().any(|row| row.len() != dimension) {
+        return None;
+    }
+
+    for pivot_col in 0..dimension {
+        let pivot_row = (pivot_col..dimension).find(|&row| !matrix[row][pivot_col].is_zero())?;
+        if pivot_row != pivot_col {
+            matrix.swap(pivot_col, pivot_row);
+            rhs.swap(pivot_col, pivot_row);
+        }
+
+        let pivot = matrix[pivot_col][pivot_col].clone();
+        for row in pivot_col + 1..dimension {
+            if matrix[row][pivot_col].is_zero() {
+                continue;
+            }
+            let factor = matrix[row][pivot_col].clone() / pivot.clone();
+            matrix[row][pivot_col] = BigRational::from_integer(0.into());
+            for column in pivot_col + 1..dimension {
+                matrix[row][column] = matrix[row][column].clone()
+                    - factor.clone() * matrix[pivot_col][column].clone();
+            }
+            rhs[row] = rhs[row].clone() - factor * rhs[pivot_col].clone();
+        }
+    }
+
+    let zero = BigRational::from_integer(0.into());
+    let mut solution = vec![zero; dimension];
+    for row in (0..dimension).rev() {
+        let mut value = rhs[row].clone();
+        for column in row + 1..dimension {
+            value -= matrix[row][column].clone() * solution[column].clone();
+        }
+        solution[row] = value / matrix[row][row].clone();
+    }
+    Some(solution)
+}
+
+/// Returns the sign of a square rational determinant.
+///
+/// The elimination is used only after a floating-point interval filter is
+/// inconclusive, so allocation and rational growth remain on the cold path.
+#[expect(
+    clippy::needless_range_loop,
+    reason = "index-based elimination keeps determinant row operations explicit"
+)]
+pub(crate) fn rational_determinant_sign(mut matrix: Vec<Vec<BigRational>>) -> Option<i32> {
+    let dimension = matrix.len();
+    if matrix.iter().any(|row| row.len() != dimension) {
+        return None;
+    }
+    if dimension == 0 {
+        return Some(1);
+    }
+
+    let mut sign = 1;
+    for pivot_col in 0..dimension {
+        let Some(pivot_row) = (pivot_col..dimension).find(|&row| !matrix[row][pivot_col].is_zero())
+        else {
+            return Some(0);
+        };
+        if pivot_row != pivot_col {
+            matrix.swap(pivot_col, pivot_row);
+            sign = -sign;
+        }
+
+        let pivot = matrix[pivot_col][pivot_col].clone();
+        if pivot.is_negative() {
+            sign = -sign;
+        }
+        for row in pivot_col + 1..dimension {
+            if matrix[row][pivot_col].is_zero() {
+                continue;
+            }
+            let factor = matrix[row][pivot_col].clone() / pivot.clone();
+            for column in pivot_col + 1..dimension {
+                matrix[row][column] = matrix[row][column].clone()
+                    - factor.clone() * matrix[pivot_col][column].clone();
+            }
+        }
+    }
+    Some(sign)
+}
+
 /// Return a determinant and its certified error bound when the f64 fast filter supports the matrix size.
 ///
 /// `Ok(None)` means the closed-form direct determinant path is unavailable or
 /// inconclusive for this matrix size, including arithmetic overflow or
 /// underflow-sensitive evaluation. Callers should continue to exact arithmetic;
-/// `la-stack` matrices are finite by construction in v0.4.4.
+/// `la-stack` matrices are finite by construction.
 #[inline]
 pub(crate) fn matrix_fast_filter<const D: usize>(
     m: &Matrix<D>,
@@ -246,13 +348,19 @@ pub fn determinant<const D: usize>(m: &Matrix<D>) -> Result<f64, LaError> {
     }
 }
 
-/// Dispatch a runtime `k` to a stack-allocated matrix for concise unit tests.
 #[cfg(test)]
-macro_rules! with_la_stack_matrix {
-    ($k:expr, |$m:ident| $body:block) => {{
-        la_stack::try_with_stack_matrix!($k, |mut $m| -> Result<_, la_stack::LaError> { Ok($body) })
+pub(crate) mod test_support {
+    /// Dispatch a runtime `k` to a stack-allocated matrix for concise unit tests.
+    macro_rules! with_la_stack_matrix {
+        ($k:expr, |$m:ident| $body:block) => {{
+            la_stack::try_with_stack_matrix!($k, |mut $m| -> Result<_, la_stack::LaError> {
+                Ok($body)
+            })
             .expect("test requested an unsupported stack matrix size")
-    }};
+        }};
+    }
+
+    pub(crate) use with_la_stack_matrix;
 }
 
 #[cfg(test)]
@@ -314,51 +422,6 @@ mod tests {
             error.to_string(),
             StackMatrixDispatchError::La { source }.to_string()
         );
-    }
-
-    #[test]
-    fn matrix_zero_like_returns_zero_matrix_of_same_size() {
-        let k = 4;
-        with_la_stack_matrix!(k, |original| {
-            // Populate with non-zero data using an f64 counter (avoids usize→f64 cast).
-            let mut val = 1.0_f64;
-            for i in 0..k {
-                for j in 0..k {
-                    matrix_set(&mut original, i, j, val).unwrap();
-                    val += 1.0;
-                }
-            }
-
-            let zero = matrix_zero_like(&original);
-
-            // All entries must be zero.
-            for i in 0..k {
-                for j in 0..k {
-                    assert_relative_eq!(matrix_get(&zero, i, j).unwrap(), 0.0);
-                }
-            }
-
-            // Original must be unchanged.
-            let mut expected = 1.0_f64;
-            for i in 0..k {
-                for j in 0..k {
-                    assert_relative_eq!(matrix_get(&original, i, j).unwrap(), expected);
-                    expected += 1.0;
-                }
-            }
-        });
-    }
-
-    #[test]
-    fn matrix_zero_like_works_across_dispatch_sizes() {
-        // Verify it compiles and returns zero for several representative sizes.
-        for &k in &[2_usize, 3, 6, MAX_STACK_MATRIX_DIM] {
-            with_la_stack_matrix!(k, |m| {
-                let zero = matrix_zero_like(&m);
-                assert_relative_eq!(matrix_get(&zero, 0, 0).unwrap(), 0.0);
-                assert_relative_eq!(matrix_get(&zero, k - 1, k - 1).unwrap(), 0.0);
-            });
-        }
     }
 
     #[test]

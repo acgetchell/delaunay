@@ -5,7 +5,7 @@
 
 use super::{
     FacetIndex, FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer,
-    SimplexVertexKeyBuffer, SimplexVertexUuidBuffer, SmallBuffer, Uuid, VertexUuidSet,
+    SimplexVertexKeyBuffer, SmallBuffer,
 };
 use crate::core::facet::FacetHandle;
 use crate::core::tds::{SimplexKey, VertexKey};
@@ -41,15 +41,7 @@ pub(crate) type FacetToSimplicesMap = FastHashMap<u64, SmallBuffer<FacetHandle, 
 /// - **Typical Pattern**: 3-4 simplices in most over-sharing cases
 /// - **Performance**: Stack allocation for common over-sharing patterns
 ///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::collections::FacetIssuesMap;
-///
-/// let issues: FacetIssuesMap = FacetIssuesMap::default();
-/// assert!(issues.is_empty());
-/// ```
-pub type FacetIssuesMap = FastHashMap<u64, SmallBuffer<(SimplexKey, FacetIndex), 4>>;
+pub(crate) type FacetIssuesMap = FastHashMap<u64, SmallBuffer<(SimplexKey, FacetIndex), 4>>;
 
 /// Simplex neighbor mapping optimized for typical simplex degrees.
 /// Most simplices have a small number of neighbors (D+1 faces, so at most D+1 neighbors).
@@ -137,42 +129,6 @@ pub type SimplexVerticesMap = FastHashMap<SimplexKey, FastHashSet<VertexKey>>;
 /// assert!(simplex_vertex_keys.is_empty());
 /// ```
 pub type SimplexVertexKeysMap = FastHashMap<SimplexKey, SimplexVertexKeyBuffer>;
-
-/// Mapping from facet keys to vertex sets for hull algorithms.
-/// Used in convex hull and Voronoi diagram construction.
-///
-/// # Optimization Rationale
-///
-/// - **Key**: `u64` facet hash for O(1) lookup
-/// - **Value**: `VertexUuidSet` for fast set operations
-/// - **Use Case**: Hull algorithms, visibility determination
-/// - **Performance**: Optimized for geometric algorithm patterns
-pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
-
-/// Mapping from simplex UUIDs to their vertex UUIDs (optimized for internal operations).
-/// Uses stack-allocated buffers for vertex UUID storage.
-///
-/// # Optimization Rationale
-///
-/// - **Key**: Simplex UUID for stable identification
-/// - **Value**: `SimplexVertexUuidBuffer` for stack-allocated vertex UUID storage (D+1 UUIDs)
-/// - **Use Case**: Internal operations, temporary mappings, validation
-/// - **Performance**: Stack allocation for typical simplex vertex counts, avoids heap for D ≤ 7
-///
-/// # Serialization Note
-///
-/// For serialization/deserialization, use `FastHashMap<Uuid, Vec<Uuid>>` instead,
-/// as serde doesn't natively serialize `SmallVec`. Convert using `.to_vec()` when serializing.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::collections::SimplexToVertexUuidsMap;
-///
-/// let mapping: SimplexToVertexUuidsMap = SimplexToVertexUuidsMap::default();
-/// assert!(mapping.is_empty());
-/// ```
-pub type SimplexToVertexUuidsMap = FastHashMap<Uuid, SimplexVertexUuidBuffer>;
 
 #[cfg(test)]
 mod tests {

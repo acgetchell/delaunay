@@ -770,6 +770,14 @@ pub enum FlipNeighborRepairFailure {
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum FlipNeighborWiringError {
+    /// Bootstrap insertion was attempted through an already published owner.
+    #[error(
+        "published {dimension}D owner reached flip neighbor wiring during bootstrap; use its incremental builder API"
+    )]
+    PublishedOwnerBootstrapRequiresBuilder {
+        /// Requested triangulation dimension.
+        dimension: usize,
+    },
     /// Boundary extraction failed before replacement simplices were created.
     #[error("flip boundary extraction failed: {source}")]
     BoundaryExtraction {
@@ -899,6 +907,9 @@ pub enum FlipNeighborWiringError {
 impl From<InsertionError> for FlipNeighborWiringError {
     fn from(source: InsertionError) -> Self {
         match source {
+            InsertionError::PublishedOwnerBootstrapRequiresBuilder { dimension } => {
+                Self::PublishedOwnerBootstrapRequiresBuilder { dimension }
+            }
             InsertionError::NeighborWiring { reason } => Self::NeighborWiring { source: reason },
             InsertionError::NonManifoldTopology {
                 facet_hash,
@@ -961,6 +972,13 @@ pub enum FlipMutationError {
         /// Underlying TDS construction error.
         #[source]
         source: TdsConstructionFailure,
+    },
+    /// Vertex removal failed after an inverse k=1 flip.
+    #[error("vertex removal failed: {source}")]
+    VertexRemoval {
+        /// Underlying TDS mutation error.
+        #[source]
+        source: TdsMutationError,
     },
     /// Replacement-simplex insertion failed.
     #[error("simplex insertion failed: {source}")]
@@ -2036,6 +2054,9 @@ impl From<&DelaunayRepairHeuristicRebuildFailure> for DelaunayRepairHeuristicReb
 
 pub(super) const fn insertion_error_kind(source: &InsertionError) -> InsertionErrorKind {
     match source {
+        InsertionError::PublishedOwnerBootstrapRequiresBuilder { .. } => {
+            InsertionErrorKind::PublishedOwnerBootstrapRequiresBuilder
+        }
         InsertionError::ConflictRegion { source: _ } => InsertionErrorKind::ConflictRegion,
         InsertionError::Location { source: _ } => InsertionErrorKind::Location,
         InsertionError::CavityFilling { .. } => InsertionErrorKind::CavityFilling,
@@ -2223,7 +2244,7 @@ impl From<DelaunayRepairError> for FlipNeighborRepairFailure {
 mod tests {
     use super::super::*;
     use super::*;
-    use crate::core::algorithms::incremental_insertion::DelaunayRepairFailureContext;
+    use crate::core::algorithms::insertion::DelaunayRepairFailureContext;
     use crate::core::algorithms::locate::LocateResult;
     use crate::core::collections::{SimplexVertexKeyBuffer, SimplexVertexUuidBuffer, Uuid};
     use crate::core::tds::TdsError;
@@ -2564,6 +2585,17 @@ mod tests {
 
     #[test]
     fn flip_neighbor_wiring_classifies_and_preserves_boundary_sources() {
+        let bootstrap_error =
+            InsertionError::PublishedOwnerBootstrapRequiresBuilder { dimension: 3 };
+        assert_eq!(
+            insertion_error_kind(&bootstrap_error),
+            InsertionErrorKind::PublishedOwnerBootstrapRequiresBuilder
+        );
+        assert_eq!(
+            FlipNeighborWiringError::from(bootstrap_error),
+            FlipNeighborWiringError::PublishedOwnerBootstrapRequiresBuilder { dimension: 3 }
+        );
+
         let topology_error = InsertionError::TopologyValidation {
             source: TdsError::InconsistentDataStructure {
                 message: "broken topology".to_string(),

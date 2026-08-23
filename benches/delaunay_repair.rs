@@ -33,7 +33,7 @@ use criterion::{
     measurement::WallTime,
 };
 use delaunay::prelude::construction::{DelaunayTriangulationBuilder, Vertex};
-use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeOutcome, delaunayize};
+use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeOutcome};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{
     AdaptiveKernel, CoordinateRange, ExactPredicates, Kernel, Point,
@@ -179,7 +179,10 @@ where
             continue;
         };
 
-        let Ok(probe) = delaunayize(triangulation.clone(), DelaunayizeConfig::default()) else {
+        let Ok(probe) = DelaunayRefinementBuilder::new(triangulation.clone())
+            .repair_by_flips()
+            .build()
+        else {
             continue;
         };
         if !requirement.accepts(&probe.outcome) {
@@ -249,7 +252,10 @@ fn bench_repair_dimension<const D: usize>(
                     || source.triangulation.clone(),
                     |triangulation| {
                         black_box(
-                            delaunayize(triangulation, DelaunayizeConfig::default()).or_abort(),
+                            DelaunayRefinementBuilder::new(triangulation)
+                                .repair_by_flips()
+                                .build()
+                                .or_abort(),
                         );
                     },
                     BatchSize::SmallInput,
@@ -297,7 +303,12 @@ fn bench_transaction_pressure_case<const D: usize>(
             b.iter_batched(
                 || source.triangulation.clone(),
                 |triangulation| {
-                    black_box(delaunayize(triangulation, DelaunayizeConfig::default()).or_abort());
+                    black_box(
+                        DelaunayRefinementBuilder::new(triangulation)
+                            .repair_by_flips()
+                            .build()
+                            .or_abort(),
+                    );
                 },
                 BatchSize::SmallInput,
             );

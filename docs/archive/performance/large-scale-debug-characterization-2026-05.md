@@ -8,7 +8,7 @@
 This snapshot preserves the large-scale observations that were formerly
 repeated in `docs/limitations.md`. The harness generated deterministic points,
 performed batch construction and final flip repair, and required the final
-[Levels 1–4 validation report](../../validation.md#validation-hierarchy) to
+[Levels 1–4 validation report](../../construction_and_validation.md#construction-and-validation-hierarchy) to
 pass mathematical element/combinatorial, intrinsic PL-topology, and geometric
 realization invariants.
 

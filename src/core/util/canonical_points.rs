@@ -15,6 +15,10 @@
 //! # Conventions
 //!
 //! - **Insphere**: sort all D+1 simplex vertices by key; test point is separate.
+//!   When the same D+2-vertex circuit admits reciprocal queries, choose the
+//!   simplex/test-point partition by stable vertex identity before evaluation;
+//!   separately evaluating both partitions gives positional `SoS` different
+//!   perturbation assignments.
 //! - **Orientation for comparison**: sort D facet vertices by key, extra vertex
 //!   (opposite or query) always last.
 //! - **Orientation for degeneracy check**: sort all D+1 vertices by key.

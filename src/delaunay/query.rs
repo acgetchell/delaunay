@@ -13,7 +13,7 @@ use crate::core::adjacency::{
 };
 use crate::core::algorithms::flips::{FlipError, RidgeHandle};
 use crate::core::algorithms::locate::{ConflictError, LocateError, LocateResult, LocateStats};
-use crate::core::collections::{SimplexKeyBuffer, SimplexSecondaryMap, SmallBuffer, Uuid};
+use crate::core::collections::{SimplexSecondaryMap, Uuid};
 use crate::core::edge::{EdgeKey, EdgeKeyError, EdgeView};
 use crate::core::facet::{
     AllFacetsIter, BoundaryFacetsIter, FacetError, FacetHandle, FacetToSimplicesIndex, FacetView,
@@ -21,7 +21,7 @@ use crate::core::facet::{
 };
 use crate::core::simplex::Simplex;
 use crate::core::tds::{
-    InvariantError, InvariantViolation, SimplexKey, Tds, TdsError, TdsMutationError,
+    InvariantError, InvariantViolation, SimplexKey, TdsError, TdsMutationError,
     TriangulationValidationReport, VertexKey,
 };
 use crate::core::traits::data_type::{DataCopy, DataType};
@@ -38,7 +38,7 @@ use crate::topology::manifold::ManifoldError;
 use crate::topology::ridge::{RidgeCandidate, RidgeQuery, RidgeView};
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, TopologyKind};
 use crate::triangulation::Triangulation;
-use crate::triangulation::query::{QueryError, SimplexBarycenterError};
+use crate::triangulation::query::{ConflictRegion, QueryError, SimplexBarycenterError};
 use crate::triangulation::validation::{
     TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
 };
@@ -1049,11 +1049,6 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         Ok(())
     }
 
-    #[must_use]
-    pub(crate) const fn tds(&self) -> &Tds<U, V, D> {
-        &self.tri.tds
-    }
-
     pub(crate) const fn invalidate_locate_hint_cache(&mut self) {
         self.insertion_state.last_inserted_simplex = None;
     }
@@ -1226,13 +1221,15 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayTriangulation;
+    /// use delaunay::prelude::construction::DelaunayIncrementalBuilder;
     /// use delaunay::prelude::validation::{
     ///     ValidationConfigurationError, ValidationPolicy,
     /// };
     ///
     /// # fn main() -> Result<(), ValidationConfigurationError> {
-    /// let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+    /// let mut dt = DelaunayIncrementalBuilder::<_, (), (), 2>::new()
+    ///     .finish()
+    ///     .expect("the empty complex is a valid Delaunay triangulation");
     ///
     /// dt.try_set_validation_policy(ValidationPolicy::Always)?;
     /// assert_eq!(
@@ -1263,13 +1260,15 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayTriangulation;
+    /// use delaunay::prelude::construction::DelaunayIncrementalBuilder;
     /// use delaunay::prelude::validation::{
     ///     TopologyGuarantee, ValidationConfigurationError,
     /// };
     ///
     /// # fn main() -> Result<(), ValidationConfigurationError> {
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    /// let mut dt = DelaunayIncrementalBuilder::<_, (), (), 3>::new()
+    ///     .finish()
+    ///     .expect("the empty complex is a valid Delaunay triangulation");
     /// dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)?;
     ///
     /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
@@ -1785,50 +1784,6 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         omit_b: u8,
     ) -> Result<RidgeHandle, FlipError> {
         self.tri.ridge_handle(simplex_key, omit_a, omit_b)
-    }
-
-    /// Returns the simplex star incident to a ridge candidate.
-    ///
-    /// This is a convenience wrapper around
-    /// [`Triangulation::ridge_star_simplices`](crate::Triangulation::ridge_star_simplices).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ManifoldError`] if any ridge vertex is stale or incidence
-    /// bookkeeping cannot be traversed.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayResult, DelaunayTriangulationBuilder,
-    /// };
-    /// use delaunay::prelude::query::RidgeCandidate;
-    ///
-    /// # fn main() -> DelaunayResult<()> {
-    /// let vertices = [
-    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
-    /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let Ok(ridge) = RidgeCandidate::<3>::try_from_vertices(
-    ///     dt.vertices().map(|(key, _)| key).take(2),
-    /// ) else {
-    ///     return Ok(());
-    /// };
-    ///
-    /// let star = dt.ridge_star_simplices(&ridge)?;
-    /// assert!(!star.is_empty());
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn ridge_star_simplices(
-        &self,
-        ridge_candidate: &RidgeCandidate<D>,
-    ) -> Result<SmallBuffer<SimplexKey, 8>, ManifoldError> {
-        self.tri.ridge_star_simplices(ridge_candidate)
     }
 
     /// Revalidates a ridge candidate and returns a borrowed ridge query.
@@ -2366,7 +2321,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         &self,
         point: &Point<D>,
         start_simplex: SimplexKey,
-    ) -> Result<SimplexKeyBuffer, ConflictError>
+    ) -> Result<ConflictRegion<'_, K, U, V, D>, ConflictError>
     where
         K: Kernel<D, Scalar = f64>,
     {
@@ -2560,7 +2515,8 @@ mod tests {
     use crate::builder::DelaunayTriangulationBuilder;
     use crate::construction::{DelaunayError, DelaunayResult};
     use crate::core::operations::DelaunayInsertionState;
-    use crate::core::tds::TdsError;
+    use crate::core::tds::{Tds, TdsError};
+    use crate::draft::DelaunayTriangulationDraft;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{CoordinateValidationError, InvalidCoordinateValue};
     use crate::geometry::util::safe_usize_to_scalar;
@@ -2568,7 +2524,6 @@ mod tests {
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::realization::TriangulationRealizationValidationError;
     use crate::triangulation::validation::TriangulationValidationError;
-    use crate::validation::DelaunayTriangulationCandidate;
     use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
@@ -2623,7 +2578,10 @@ mod tests {
     }
 
     /// Asserts that the simplex barycenter of the standard fixture is `1 / (D + 1)`.
-    fn assert_standard_simplex_barycenter<const D: usize>() {
+    fn assert_standard_simplex_barycenter<const D: usize>()
+    where
+        crate::geometry::kernel::AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+    {
         let vertices = standard_simplex_vertices::<D>();
         let dt: DelaunayTriangulation<_, (), (), D> = DelaunayTriangulationBuilder::new(&vertices)
             .build()
@@ -2653,7 +2611,7 @@ mod tests {
         )
         .expect("unit toroidal domain is valid");
         let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::with_empty_kernel_and_topology_context(
+            DelaunayTriangulation::new_unverified_for_test_with_kernel_and_topology_context(
                 FastKernel::new(),
                 TopologyGuarantee::Pseudomanifold,
                 topology,
@@ -2870,7 +2828,7 @@ mod tests {
         )
         .expect("unit toroidal domain is valid");
         let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::with_empty_kernel_and_topology_context(
+            DelaunayTriangulation::new_unverified_for_test_with_kernel_and_topology_context(
                 FastKernel::new(),
                 TopologyGuarantee::Pseudomanifold,
                 topology,
@@ -2912,7 +2870,7 @@ mod tests {
         )
         .expect("huge finite toroidal domain is valid");
         let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::with_empty_kernel_and_topology_context(
+            DelaunayTriangulation::new_unverified_for_test_with_kernel_and_topology_context(
                 FastKernel::new(),
                 TopologyGuarantee::Pseudomanifold,
                 topology,
@@ -3052,7 +3010,7 @@ mod tests {
                 .expect("non-Delaunay fixture connectivity should parse")
                 .build_triangulation()
                 .expect("non-Delaunay fixture should satisfy Levels 1–4");
-        let mut dt = DelaunayTriangulationCandidate::from_triangulation(triangulation)
+        let mut dt = DelaunayTriangulationDraft::from_triangulation(triangulation)
             .into_unproven_delaunay_for_test();
         dt.tri.global_topology = GlobalTopology::Spherical;
         dt.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
@@ -3372,15 +3330,21 @@ mod tests {
             ValidationPolicy::ExplicitOnly
         );
 
-        // try_from_tds() is a separate reconstruction path and should also
-        // default to the topology guarantee policy after validation succeeds.
+        // Internal serde reconstruction should also default to the topology
+        // guarantee policy after validation succeeds.
         let tds = DelaunayTriangulationBuilder::new(&vertices)
             .build()
             .unwrap()
             .into_triangulation()
             .into_tds();
         let dt_from_tds: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_from_tds(tds, FastKernel::new()).unwrap();
+            DelaunayTriangulation::try_restore_from_tds_with_topology_context(
+                tds,
+                FastKernel::new(),
+                TopologyGuarantee::DEFAULT,
+                GlobalTopology::DEFAULT,
+            )
+            .unwrap();
         assert_eq!(
             dt_from_tds.validation_policy(),
             ValidationPolicy::ExplicitOnly
@@ -3529,71 +3493,29 @@ mod tests {
     }
 
     #[test]
-    fn test_tds_accessor_provides_readonly_access() {
-        init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
+    fn data_setters_delegate_to_the_canonical_tds() {
+        let vertices = [
+            vertex!([0.0, 0.0]; data = 10i32).unwrap(),
+            vertex!([1.0, 0.0]; data = 20).unwrap(),
+            vertex!([0.0, 1.0]; data = 30).unwrap(),
         ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-        // Access TDS via immutable reference
-        let tds = dt.tds();
-        assert_eq!(tds.number_of_vertices(), 3);
-        assert_eq!(tds.number_of_simplices(), 1);
-
-        // Verify we can call other TDS methods
-        assert!(tds.is_valid().is_ok());
-        assert!(tds.simplex_keys().next().is_some());
-    }
-
-    #[test]
-    fn test_tds_accessor_reflects_insertions() {
-        init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-        ];
-        let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-        // Before insertion
-        assert_eq!(dt.tds().number_of_vertices(), 3);
-
-        // Insert a new vertex
-        dt.insert_vertex(vertex![0.3, 0.3].unwrap()).unwrap();
-
-        // After insertion, TDS accessor reflects the change
-        assert_eq!(dt.tds().number_of_vertices(), 4);
-        assert!(dt.tds().number_of_simplices() > 1);
-    }
-
-    #[test]
-    fn test_tds_accessors_maintain_validation_invariants() {
-        init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let mut dt: DelaunayTriangulation<_, (), (), 4> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-        // Verify TDS is valid through accessor
-        assert!(dt.tds().is_valid().is_ok());
-
-        // Insert additional vertex
-        dt.insert_vertex(vertex![0.2, 0.2, 0.2, 0.2].unwrap())
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+            .simplex_data_type::<i32>()
+            .build()
             .unwrap();
 
-        // TDS should still be valid after mutation
-        assert!(dt.tds().is_valid().is_ok());
-        assert!(dt.tds().validate().is_ok());
+        let vertex_key = dt.vertices().next().unwrap().0;
+        let previous_vertex_data = dt.vertex(vertex_key).unwrap().data;
+        assert_eq!(
+            dt.set_vertex_data(vertex_key, Some(99)).unwrap(),
+            previous_vertex_data
+        );
+        assert_eq!(dt.vertex(vertex_key).unwrap().data, Some(99));
+
+        let simplex_key = dt.simplices().next().unwrap().0;
+        assert_eq!(dt.set_simplex_data(simplex_key, Some(42)).unwrap(), None);
+        assert_eq!(dt.simplex(simplex_key).unwrap().data(), Some(&42));
+        dt.validate().unwrap();
     }
 
     #[test]

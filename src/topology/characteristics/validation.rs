@@ -15,6 +15,20 @@ use crate::topology::{
     traits::topological_space::{GlobalTopology, TopologyError},
 };
 
+/// Internal construction evidence used to select a value-level Euler law.
+///
+/// Boundary incidence alone does not distinguish a ball from an annulus or a
+/// handlebody. Raw storage therefore remains unclassified for nontrivial
+/// complexes; only a proof-bearing owner may supply these tags.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum EulerClassificationEvidence {
+    #[default]
+    Unproven,
+    EuclideanBall,
+    PeriodicToroid,
+    SphericalBoundary,
+}
+
 /// Result of Euler characteristic validation.
 ///
 /// Contains the computed Euler characteristic, expected value based on
@@ -158,6 +172,19 @@ pub fn validate_triangulation_euler<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     global_topology: GlobalTopology<D>,
 ) -> Result<TopologyCheckResult, TopologyError> {
+    validate_triangulation_euler_with_evidence(
+        tds,
+        global_topology,
+        EulerClassificationEvidence::Unproven,
+    )
+}
+
+/// Validates Euler characteristic with owner-held classification evidence.
+pub(crate) fn validate_triangulation_euler_with_evidence<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    global_topology: GlobalTopology<D>,
+    evidence: EulerClassificationEvidence,
+) -> Result<TopologyCheckResult, TopologyError> {
     // Precompute the facet map once and reuse it for both counting and classification.
     //
     // Avoid building the map for empty triangulations.
@@ -168,35 +195,34 @@ pub fn validate_triangulation_euler<U, V, const D: usize>(
             .map_err(|source| TopologyError::FacetMapBuild { source })?
     };
 
-    let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)
+    let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(tds, &facet_to_simplices)
         .map_err(|source| TopologyError::BoundaryClassification {
             source: Box::new(source),
         })?;
-    validate_triangulation_euler_from_validated_facet_map(tds, facet_to_simplices, global_topology)
+    validate_triangulation_euler_from_validated_facet_map_with_evidence(
+        facet_to_simplices,
+        global_topology,
+        evidence,
+    )
 }
 
-/// Computes the Euler check while reusing an already-validated facet-degree map.
-///
-/// This keeps [`Triangulation`](crate::prelude::triangulation::Triangulation)
-/// Level-3 validation from rebuilding the same incidence map while preserving
-/// the public boundary contract: one-sided incidence is classified against
-/// [`GlobalTopology`] before it affects the expected χ.
-///
-/// # Errors
-///
-/// Returns [`TopologyError::BoundaryClassification`] if one-sided incidence is
-/// incompatible with `global_topology`.
-pub(crate) fn validate_triangulation_euler_from_validated_facet_map<U, V, const D: usize>(
-    tds: &Tds<U, V, D>,
-    facet_to_simplices: ValidatedFacetDegreeMap<'_>,
+/// Computes the Euler check using owner-held construction evidence.
+pub(crate) fn validate_triangulation_euler_from_validated_facet_map_with_evidence<
+    U,
+    V,
+    const D: usize,
+>(
+    facet_to_simplices: ValidatedFacetDegreeMap<'_, U, V, D>,
     global_topology: GlobalTopology<D>,
+    evidence: EulerClassificationEvidence,
 ) -> Result<TopologyCheckResult, TopologyError> {
+    let tds = facet_to_simplices.tds();
     let counts = count_simplices_with_facet_to_simplices_map(tds, facet_to_simplices.as_map());
     let chi = euler_characteristic(&counts);
 
     let num_simplices = tds.number_of_simplices();
     let has_boundary = num_simplices != 0
-        && has_boundary_facets_in_validated_facet_map(tds, facet_to_simplices, global_topology)
+        && has_boundary_facets_in_validated_facet_map(facet_to_simplices, global_topology)
             .map_err(|source| TopologyError::BoundaryClassification {
                 source: Box::new(source),
             })?;
@@ -205,12 +231,21 @@ pub(crate) fn validate_triangulation_euler_from_validated_facet_map<U, V, const 
         TopologyClassification::Empty
     } else if num_simplices == 1 && has_boundary {
         TopologyClassification::SingleSimplex(D)
-    } else if has_boundary {
-        TopologyClassification::Ball(D)
-    } else if global_topology.is_toroidal() {
-        TopologyClassification::ClosedToroid(D)
     } else {
-        TopologyClassification::ClosedSphere(D)
+        match (evidence, has_boundary, global_topology.is_toroidal()) {
+            (EulerClassificationEvidence::EuclideanBall, true, false) => {
+                TopologyClassification::Ball(D)
+            }
+            (EulerClassificationEvidence::PeriodicToroid, false, true) => {
+                TopologyClassification::ClosedToroid(D)
+            }
+            (EulerClassificationEvidence::SphericalBoundary, false, false)
+                if matches!(global_topology, GlobalTopology::Spherical) =>
+            {
+                TopologyClassification::ClosedSphere(D)
+            }
+            _ => TopologyClassification::Unknown,
+        }
     };
 
     let expected = expected_chi_for(&classification);
@@ -236,7 +271,9 @@ pub(crate) fn validate_triangulation_euler_from_validated_facet_map<U, V, const 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::tds::TdsBuilder;
     use crate::topology::characteristics::euler::TopologyClassification;
+    use crate::vertex;
 
     #[test]
     fn test_topology_check_result_is_valid() {
@@ -270,5 +307,36 @@ mod tests {
             notes: vec![],
         };
         assert!(unknown_result.is_valid()); // Unknown classification is considered valid
+    }
+
+    #[test]
+    fn boundary_incidence_does_not_misclassify_an_annulus_as_a_ball() {
+        let vertices = [
+            vertex![-2.0, -2.0].unwrap(),
+            vertex![2.0, -2.0].unwrap(),
+            vertex![2.0, 2.0].unwrap(),
+            vertex![-2.0, 2.0].unwrap(),
+            vertex![-1.0, -1.0].unwrap(),
+            vertex![1.0, -1.0].unwrap(),
+            vertex![1.0, 1.0].unwrap(),
+            vertex![-1.0, 1.0].unwrap(),
+        ];
+        let simplices = [
+            vec![0, 1, 5],
+            vec![0, 5, 4],
+            vec![1, 2, 6],
+            vec![1, 6, 5],
+            vec![2, 3, 7],
+            vec![2, 7, 6],
+            vec![3, 0, 4],
+            vec![3, 4, 7],
+        ];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+
+        let result = validate_triangulation_euler(&tds, GlobalTopology::Euclidean).unwrap();
+
+        assert_eq!(result.chi, 0);
+        assert_eq!(result.classification, TopologyClassification::Unknown);
+        assert_eq!(result.expected, None);
     }
 }

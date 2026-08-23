@@ -95,6 +95,29 @@ pub const STABLE_POINTS_5D: &[[f64; 5]] = &[
     [0.08, 0.18, 0.12, 0.14, 0.16],
 ];
 
+/// Stable 5D bipyramid used for the public k=2 roundtrip workflow.
+///
+/// The first five points form the shared 4-simplex at `x_5 = 0`; the final
+/// two points lie on opposite sides of that facet. Unlike the denser stable
+/// fixture, their connecting edge is absent, so the k=2 move and its inverse
+/// are both admissible.
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    allow(
+        dead_code,
+        reason = "5D fixture certification is gated behind slow-tests in the integration suite"
+    )
+)]
+pub const STABLE_K2_POINTS_5D: &[[f64; 5]] = &[
+    [0.0, 0.0, 0.0, 0.0, 0.0],
+    [1.0, 0.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0, 0.0],
+    [0.2, 0.2, 0.2, 0.2, 0.85],
+    [0.2, 0.2, 0.2, 0.2, -0.85],
+];
+
 /// Adversarial 2D PL-manifold configuration for explicit bistellar flips.
 ///
 /// Includes cospherical square corners, near-boundary points close to hull
@@ -186,6 +209,28 @@ pub const ADVERSARIAL_POINTS_5D: &[[f64; 5]] = &[
     [0.16, 0.16, 0.16, 0.16, 0.16 + 1.0e-12],
     [0.160_000_001, 0.16, 0.16, 0.16, 0.16],
     [1.0e6, -1.0e6, 1.0e6, -1.0e6, 1.0e6],
+];
+
+/// Near-boundary 5D bipyramid used for the adversarial public k=2 roundtrip.
+///
+/// This keeps the k=2 support sparse and admissible while placing one shared
+/// facet vertex at a nonzero `1e-9` coordinate, so the benchmark exercises the
+/// adversarial near-boundary regime without an unrelated dense-circuit search.
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    allow(
+        dead_code,
+        reason = "5D fixture certification is gated behind slow-tests in the integration suite"
+    )
+)]
+pub const ADVERSARIAL_K2_POINTS_5D: &[[f64; 5]] = &[
+    [1.0e-9, 0.0, 0.0, 0.0, 0.0],
+    [1.0, 0.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0, 0.0],
+    [0.2, 0.2, 0.2, 0.2, 0.85],
+    [0.2, 0.2, 0.2, 0.2, -0.85],
 ];
 
 /// Intentionally invalid 3D fixture used to prove benchmark setup rejects

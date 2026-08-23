@@ -250,7 +250,7 @@ pub mod pl_manifold {
         let facet_map = tds
             .build_facet_to_simplices_map()
             .map_err(|source| PlManifoldRepairFixtureError::StructuralValidation { source })?;
-        if ValidatedFacetDegreeMap::try_from_facet_map(&facet_map).is_ok() {
+        if ValidatedFacetDegreeMap::try_from_facet_map(&tds, &facet_map).is_ok() {
             return Err(PlManifoldRepairFixtureError::MissingOversharedFacet { cluster_count });
         }
 
@@ -493,9 +493,9 @@ pub mod pl_manifold {
         tds: &Tds<(), (), D>,
     ) -> Result<(), ManifoldError> {
         let facet_to_simplices = tds.build_facet_to_simplices_map()?;
-        let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)?;
+        let facet_to_simplices =
+            ValidatedFacetDegreeMap::try_from_facet_map(tds, &facet_to_simplices)?;
         validate_closed_boundary_from_validated_facet_map(
-            tds,
             facet_to_simplices,
             GlobalTopology::Euclidean,
         )
@@ -506,9 +506,9 @@ pub mod pl_manifold {
         tds: &Tds<(), (), D>,
     ) -> Result<(), ManifoldError> {
         let facet_to_simplices = tds.build_facet_to_simplices_map()?;
-        let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)?;
+        let facet_to_simplices =
+            ValidatedFacetDegreeMap::try_from_facet_map(tds, &facet_to_simplices)?;
         validate_vertex_links_from_validated_facet_map(
-            tds,
             facet_to_simplices,
             GlobalTopology::Euclidean,
         )

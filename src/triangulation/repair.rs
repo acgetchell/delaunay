@@ -5,7 +5,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::algorithms::incremental_insertion::{
+use crate::core::algorithms::insertion::{
     CavityFillingError, CavityRepairStage, InsertionError, InsertionTopologyValidationContext,
     external_facets_for_boundary, fill_cavity_replacing_simplices, repair_neighbor_pointers,
     repair_neighbor_pointers_local, wire_cavity_neighbors,
@@ -113,19 +113,48 @@ fn quality_error_to_tds_error(simplex_key: SimplexKey, error: QualityError) -> T
 pub struct LocalFacetRepairOutcome {
     /// Number of simplices actually removed from the TDS.
     pub(crate) removed_count: usize,
-    /// Simplices selected for removal before they were deleted.
-    #[cfg_attr(
-        not(debug_assertions),
-        expect(
-            dead_code,
-            reason = "Removed-simplex keys are retained for debug logging and future local repair diagnostics"
-        )
-    )]
-    pub(crate) removed_simplices: SimplexKeyBuffer,
     /// Surviving one-hop neighbors whose back-references may have been cleared.
     pub(crate) frontier_simplices: SimplexKeyBuffer,
     /// Vertices touched by simplices removed during local repair.
     pub(crate) affected_vertices: IncidentRepairVertexBuffer,
+}
+
+/// Owner-bound proposal for repairing locally over-shared facets.
+///
+/// The guard borrows the triangulation mutably from detection through repair,
+/// so its internal storage keys cannot be paired with another topology owner or
+/// invalidated by an intervening mutation. Dropping the guard performs no work.
+#[must_use = "call repair to apply the detected local-facet repair"]
+pub struct LocalFacetRepairGuard<'tri, K, U, V, const D: usize> {
+    triangulation: &'tri mut Triangulation<K, U, V, D>,
+    issues: FacetIssuesMap,
+}
+
+impl<K, U, V, const D: usize> LocalFacetRepairGuard<'_, K, U, V, D> {
+    /// Returns the number of over-shared canonical facets in this proposal.
+    #[must_use]
+    pub fn number_of_issues(&self) -> usize {
+        self.issues.len()
+    }
+}
+
+impl<K, U, V, const D: usize> LocalFacetRepairGuard<'_, K, U, V, D>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    /// Applies the proposed repair transactionally.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InsertionError`] if the removal budget is exceeded or any
+    /// quality, topology-repair, or postcondition check fails. Failure restores
+    /// the triangulation to the state captured when this guard was created.
+    pub fn repair(self, max_simplices_removed: usize) -> Result<usize, InsertionError> {
+        self.triangulation
+            .repair_local_facet_issues_transactionally(&self.issues, max_simplices_removed)
+    }
 }
 
 /// Internal result from vertex deletion, including local simplices that should
@@ -477,6 +506,11 @@ where
         let retriangulation_result = {
             let tri = transaction.triangulation_mut();
             (|| -> Result<VertexRemovalOutcome, InvariantError> {
+                // An arbitrary fan of a vertex-star boundary is not, by
+                // itself, a proof that every D >= 4 link remains a PL
+                // sphere/ball. The mandatory publication boundary below will
+                // reject a PL-manifold commit unless that fact can be proved.
+                tri.invalidate_link_construction_provenance();
                 // Fill cavity with fan triangulation BEFORE removing old simplices
                 // Use fan triangulation that skips boundary facets which already include the apex
                 let new_simplices = tri
@@ -731,6 +765,10 @@ where
         let result = {
             let tri = transaction.triangulation_mut();
             (|| -> Result<usize, InvariantError> {
+                // Direct storage removal is not a link-preserving construction
+                // theorem. Full topology validation below must not consume the
+                // pre-removal provenance.
+                tri.invalidate_link_construction_provenance();
                 let simplices_removed =
                     tri.tds
                         .remove_vertex(vertex_key)
@@ -1077,18 +1115,18 @@ where
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let simplex_keys: Vec<_> = dt.simplices().map(|(ck, _)| ck).collect();
-    /// let issues = dt
+    /// let has_issues = dt
     ///     .as_triangulation()
-    ///     .detect_local_facet_issues(&simplex_keys)
+    ///     .has_local_facet_issues(&simplex_keys)
     ///     ?;
-    /// assert!(issues.is_none());
+    /// assert!(!has_issues);
     ///
     /// // Note: This method is most useful for checking newly created simplices
     /// // after insertion/removal operations.
     /// # Ok(())
     /// # }
     /// ```
-    pub fn detect_local_facet_issues(
+    pub(crate) fn detect_local_facet_issues(
         &self,
         simplices: &[SimplexKey],
     ) -> Result<Option<FacetIssuesMap>, TdsError> {
@@ -1258,7 +1296,6 @@ where
         if issues.is_empty() {
             return Ok(LocalFacetRepairOutcome {
                 removed_count: 0,
-                removed_simplices: SimplexKeyBuffer::new(),
                 frontier_simplices: SimplexKeyBuffer::new(),
                 affected_vertices: IncidentRepairVertexBuffer::new(),
             });
@@ -1274,6 +1311,10 @@ where
                 attempted,
             });
         }
+        // Facet degree alone cannot certify the PL type of links after
+        // arbitrary simplex removal in D >= 4. The enclosing transaction will
+        // restore this evidence if a PL-manifold postcondition rejects repair.
+        self.invalidate_link_construction_provenance();
         let mut affected_vertices = IncidentRepairVertexBuffer::new();
         self.extend_incident_repair_vertices_from_simplices(&to_remove, &mut affected_vertices);
         let frontier_simplices = self.collect_local_repair_frontier(issues, &to_remove);
@@ -1285,93 +1326,13 @@ where
 
         Ok(LocalFacetRepairOutcome {
             removed_count,
-            removed_simplices: to_remove,
             frontier_simplices,
             affected_vertices,
         })
     }
 
-    /// Repairs over-shared facets by removing lower-quality simplices.
-    ///
-    /// Uses geometric quality metrics (`radius_ratio`) to select which simplices to keep
-    /// when a facet is shared by more than 2 simplices. UUID ordering is used as a tie-breaker
-    /// when simplices have equal quality. Errors if quality computation or conversion fails.
-    ///
-    /// # Performance
-    ///
-    /// - **Complexity**: O(m * q) where m = number of problematic facets, q = quality computation cost
-    /// - **Localized**: Only processes simplices involved in detected issues
-    ///
-    /// # Arguments
-    ///
-    /// * `issues` - Detected facet issues map from `detect_local_facet_issues()`
-    /// * `max_simplices_removed` - Maximum simplices this repair may remove
-    ///
-    /// # Returns
-    ///
-    /// Number of simplices removed during repair.
-    ///
-    /// This public wrapper is transactional: if removal, neighbor repair,
-    /// incident-simplex assignment, or final validation fails, the TDS is
-    /// restored to its pre-call state.
-    ///
-    /// # Errors
-    ///
-    /// Returns an [`InsertionError`] if quality evaluation, facet bookkeeping,
-    /// neighbor repair, incident-simplex assignment, or final topology
-    /// validation fails. Returns
-    /// [`InsertionError::MaxSimplicesRemovedExceeded`] when the selected repair
-    /// would remove more simplices than `max_simplices_removed` allows; in that
-    /// case the original TDS is restored before returning the error.
-    ///
-    /// `repair_local_facet_issues` uses a localized radius-ratio heuristic to choose
-    /// problematic simplices for removal and repair. The heuristic is inspired by the same
-    /// local cavity and simplex-quality ideas cited for vertex deletion; see `REFERENCES.md`
-    /// entries \[1\]-\[5\]. It may fail or choose an overly aggressive repair near degenerate or
-    /// nearly-coplanar cavities, inverted simplices, or scalar ranges where small numeric epsilons
-    /// hide facet distinctions. Use robust predicates, explicit epsilon thresholds, bounded
-    /// budgets, and transactional fallbacks when calling it from public repair paths.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-    /// };
-    /// use delaunay::prelude::insertion::InsertionError;
-    /// use delaunay::prelude::triangulation::{FacetIssuesMap};
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Insertion(#[from] InsertionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// // Start with a valid 2D simplex.
-    /// let vertices = vec![
-    ///     delaunay::vertex![0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0]?,
-    /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
-    ///
-    /// // Empty issues map => nothing to remove.
-    /// let mut tri = dt.into_triangulation();
-    /// let removed = tri.repair_local_facet_issues(&FacetIssuesMap::default(), 0)?;
-    /// assert_eq!(removed, 0);
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// In practice, this method is typically called with issues detected by
-    /// [`detect_local_facet_issues`](Self::detect_local_facet_issues) after insertion/removal
-    /// operations.
-    pub fn repair_local_facet_issues(
+    /// Applies one already owner-bound local-facet proposal transactionally.
+    fn repair_local_facet_issues_transactionally(
         &mut self,
         issues: &FacetIssuesMap,
         max_simplices_removed: usize,
@@ -1417,6 +1378,41 @@ where
                 Err(error)
             }
         }
+    }
+
+    /// Detects whether `simplices` participate in any over-shared local facet.
+    ///
+    /// This read-only query exposes only the diagnostic fact, not the
+    /// runtime-local key map used by repair.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsError`] if live simplex or vertex storage is inconsistent.
+    pub fn has_local_facet_issues(&self, simplices: &[SimplexKey]) -> Result<bool, TdsError> {
+        Ok(self.detect_local_facet_issues(simplices)?.is_some())
+    }
+
+    /// Creates an owner-bound local-facet repair proposal.
+    ///
+    /// Returns `Ok(None)` when the supplied local simplex set has no over-shared
+    /// facet. While a returned guard exists, Rust prevents mutation of the
+    /// triangulation outside the guard; [`LocalFacetRepairGuard::repair`] then
+    /// applies the exact detected proposal transactionally.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsError`] if live simplex or vertex storage is inconsistent.
+    pub fn local_facet_repair(
+        &mut self,
+        simplices: &[SimplexKey],
+    ) -> Result<Option<LocalFacetRepairGuard<'_, K, U, V, D>>, TdsError> {
+        let Some(issues) = self.detect_local_facet_issues(simplices)? else {
+            return Ok(None);
+        };
+        Ok(Some(LocalFacetRepairGuard {
+            triangulation: self,
+            issues,
+        }))
     }
 }
 
@@ -1605,10 +1601,8 @@ mod tests {
                         .unwrap();
                     let mut tri = Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
 
-                    // Empty issues map: should remove nothing
-                    let empty_issues = FacetIssuesMap::default();
-                    let removed = tri.repair_local_facet_issues(&empty_issues, 0).unwrap();
-                    assert_eq!(removed, 0, "{}D: Empty issues should remove 0 simplices", $dim);
+                    let simplex_keys: Vec<_> = tri.simplices().map(|(key, _)| key).collect();
+                    assert!(tri.local_facet_repair(&simplex_keys).unwrap().is_none());
                     assert_eq!(tri.tds.number_of_simplices(), 1, "{}D: Should still have 1 simplex", $dim);
                 }
             }
@@ -1646,31 +1640,30 @@ mod tests {
                         .map(|(k, _)| k)
                         .expect("Interior vertex not found");
 
-                    let initial_simplex_count = dt.tds().number_of_simplices();
+                    let initial_simplex_count = dt.number_of_simplices();
                     dt.delete_vertex(interior_vertex_key)
                         .expect("Failed to remove vertex");
 
                     // After removal, should have fewer simplices (or same if just 1 simplex left)
-                    assert!(dt.tds().number_of_simplices() <= initial_simplex_count,
+                    assert!(dt.number_of_simplices() <= initial_simplex_count,
                         "{}D: Simplex count should not increase after removal", $dim);
 
                     // Verify neighbor pointer consistency:
                     // 1. No dangling pointers (all neighbor keys exist)
                     // 2. Neighbor relationships are symmetric
-                    for (simplex_key, simplex) in dt.tds().simplices() {
+                    for (simplex_key, simplex) in dt.simplices() {
                         if let Some(neighbors) = simplex.neighbors() {
                             for (facet_idx, neighbor_opt) in neighbors.enumerate() {
                                 if let Some(neighbor_key) = neighbor_opt {
                                     // Verify neighbor exists
                                     assert!(
-                                        dt.tds().contains_simplex(neighbor_key),
+                                        dt.contains_simplex(neighbor_key),
                                         "{}D: Simplex {simplex_key:?} has neighbor pointer to non-existent simplex {neighbor_key:?}",
                                         $dim
                                     );
 
                                     // Verify symmetry: neighbor should point back to us
                                     let neighbor_simplex = dt
-                                        .tds()
                                         .simplex(neighbor_key)
                                         .expect("Neighbor simplex should exist");
                                     if let Some(mut neighbor_neighbors) = neighbor_simplex.neighbors() {
@@ -2358,7 +2351,7 @@ mod tests {
         );
         assert_eq!(dt.number_of_vertices(), initial_vertices);
         assert_eq!(dt.number_of_simplices(), initial_simplices);
-        assert!(dt.tds().contains_vertex_key(vertex_key));
+        assert!(dt.contains_vertex_key(vertex_key));
     }
 
     // =========================================================================
@@ -2411,13 +2404,16 @@ mod tests {
 
         // Now detect issues.
         let all_simplices: Vec<_> = tri.tds.simplex_keys().collect();
-        let issues = tri.detect_local_facet_issues(&all_simplices).unwrap();
-        assert!(issues.is_some(), "Should detect over-shared facet");
+        assert!(tri.has_local_facet_issues(&all_simplices).unwrap());
         let before_repair = tri.tds.clone_for_rollback();
         let owner_before = tri.tds.topology_owner_id();
         let generation_before = tri.tds.generation();
 
-        match tri.repair_local_facet_issues(&issues.unwrap(), usize::MAX) {
+        let repair = tri
+            .local_facet_repair(&all_simplices)
+            .unwrap()
+            .expect("over-shared facet should produce a repair guard");
+        match repair.repair(usize::MAX) {
             Ok(removed) => {
                 assert_eq!(removed, 1);
                 tri.validate()
@@ -2613,14 +2609,14 @@ mod tests {
     #[test]
     fn test_repair_local_facet_issues_rolls_back_invalid_public_repair() {
         let (mut tri, original_simplices, _, _) = build_overshared_edge_fixture();
-        let issues = tri
-            .detect_local_facet_issues(&original_simplices)
-            .unwrap()
-            .expect("three simplices sharing one edge should be detected as over-shared");
         let original_simplex_count = tri.tds.number_of_simplices();
         let original_vertex_count = tri.tds.number_of_vertices();
 
-        let result = tri.repair_local_facet_issues(&issues, usize::MAX);
+        let result = tri
+            .local_facet_repair(&original_simplices)
+            .unwrap()
+            .expect("three simplices sharing one edge should produce a repair guard")
+            .repair(usize::MAX);
 
         assert!(
             result.is_err(),
@@ -2639,13 +2635,13 @@ mod tests {
     #[test]
     fn test_repair_local_facet_issues_respects_removal_budget() {
         let (mut tri, original_simplices, _, _) = build_overshared_edge_fixture();
-        let issues = tri
-            .detect_local_facet_issues(&original_simplices)
-            .unwrap()
-            .expect("three simplices sharing one edge should be detected as over-shared");
         let original_simplex_count = tri.tds.number_of_simplices();
 
-        let result = tri.repair_local_facet_issues(&issues, 0);
+        let result = tri
+            .local_facet_repair(&original_simplices)
+            .unwrap()
+            .expect("three simplices sharing one edge should produce a repair guard")
+            .repair(0);
 
         assert_matches!(
             result,

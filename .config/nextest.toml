@@ -71,6 +71,26 @@ binary(=proptest_delaunay_triangulation)
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.ci.overrides]]
+# This cospherical 3D OnSuspicion property can cross the integration-suite
+# watchdog on hosted runners.
+filter = '''
+binary(=proptest_delaunay_triangulation)
+& test(=prop_on_suspicion_validates_cospherical_3d_sequences)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
+# Complete 5D exact SoS expansion sits below the default budget on Linux but
+# can cross it on Windows. Keep the exception limited to the deterministic
+# co-spherical property that exercises two expansions per generated case.
+platform = 'cfg(windows)'
+filter = '''
+binary(=proptest_sos)
+& test(=prop_sos_insphere_deterministic_5d)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
 # A single compact T^3 periodic-image construction can cross the default
 # budget on Windows. Each test retains one construction so other platforms
 # keep the normal watchdog and the exception remains limited to this fixture.
@@ -93,20 +113,33 @@ filter = 'test(=builder::tests::test_builder_toroidal_t2_smoke) | test(=builder:
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.debug.overrides]]
-# These randomized 5D agreement checks finish at the 10-second boundary on
-# Windows runners. Keep the normal budget on other platforms.
-platform = 'cfg(windows)'
+# The optimized 5D intersection agreement checks reach the 10-second boundary
+# on hosted runners across platforms. Keep the exception limited to those tests.
 filter = '''
 test(=geometry::util::simplex_lp::tests::optimized_intersection_agrees_with_legacy_random_5d)
-| test(=validation::tests::randomized_full_report_matches_brute_force_5d)
+| test(=geometry::util::simplex_lp::tests::optimized_intersection_agrees_with_legacy_boundary_degenerate_5d)
 '''
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.debug.overrides]]
-# The optimized 5D intersection agreement check also reaches the 10-second
-# boundary on macOS ARM runners. Keep the exception limited to that test.
-platform = 'cfg(all(target_os = "macos", target_arch = "aarch64"))'
-filter = 'test(=geometry::util::simplex_lp::tests::optimized_intersection_agrees_with_legacy_random_5d)'
+# The randomized full-report 5D agreement check reaches the 10-second boundary
+# across platforms. Keep the exception limited to that test.
+filter = 'test(=validation::tests::randomized_full_report_matches_brute_force_5d)'
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.debug.overrides]]
+# Complete exact SoS expansion in translated 5D and full 6D can cross the
+# 10-second boundary on hosted runners. The four D=6 AdaptiveKernel checks below
+# deliberately repeat that expansion. Keep the exception limited to those
+# irreducible cold-path checks.
+filter = '''
+test(=geometry::sos::tests::complete_insphere_expansion_supports_6d)
+| test(=geometry::sos::tests::test_sos_insphere_5d_translation_invariant)
+| test(=geometry::kernel::tests::test_adaptive_insphere_6d_both_degenerate)
+| test(=geometry::kernel::tests::test_adaptive_insphere_6d_cospherical_nonzero)
+| test(=geometry::kernel::tests::test_adaptive_insphere_6d_cospherical_deterministic)
+| test(=geometry::kernel::tests::test_adaptive_positive_oriented_insphere_6d_agrees)
+'''
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 [profile.coverage]

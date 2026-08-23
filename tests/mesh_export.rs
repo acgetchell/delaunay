@@ -13,12 +13,12 @@ use delaunay::prelude::construction::{
     DelaunayTriangulationConstructionError, TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::export::{
-    AdjacencyRecord, InvalidCoordinateValue, MESH_EXPORT_SCHEMA, MESH_EXPORT_SCHEMA_VERSION,
-    MeshExport, MeshExportError, SimplexRecord, ValidatedMeshExport, ValidatedVisualizationData,
-    VertexRecord, VisualizationData, VisualizationDataValidationError, VisualizationExportError,
-    VisualizationMetadata, VisualizationTopologyGuarantee, VisualizationTopologyKind,
+    AdjacencyRecord, InvalidCoordinateValue, SimplexRecord, VISUALIZATION_SCHEMA,
+    VISUALIZATION_SCHEMA_VERSION, ValidatedVisualizationData, VertexRecord, VisualizationData,
+    VisualizationDataValidationError, VisualizationExportError, VisualizationMetadata,
+    VisualizationTopologyGuarantee, VisualizationTopologyKind,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
+use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateConversionError, ExactPredicates};
 use delaunay::prelude::topology::spaces::TopologyKind;
 use uuid::Uuid;
 
@@ -29,7 +29,7 @@ enum MeshExportTestError {
     #[error(transparent)]
     Coordinate(#[from] CoordinateConversionError),
     #[error(transparent)]
-    Export(#[from] MeshExportError),
+    Export(#[from] VisualizationExportError),
     #[error(transparent)]
     Validation(#[from] VisualizationDataValidationError),
     #[error(transparent)]
@@ -41,7 +41,7 @@ struct OpaqueAttribute;
 #[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 struct NonDefaultAttribute;
 
-fn sample_export() -> Result<MeshExport<2>, MeshExportTestError> {
+fn sample_export() -> Result<VisualizationData<2>, MeshExportTestError> {
     let vertices = vec![
         vertex![0.0, 0.0]?,
         vertex![2.0, 0.0]?,
@@ -50,10 +50,10 @@ fn sample_export() -> Result<MeshExport<2>, MeshExportTestError> {
     ];
     let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
-    Ok(triangulation.to_mesh_export()?)
+    Ok(triangulation.to_visualization_data()?)
 }
 
-fn sample_delaunay_result_export() -> DelaunayResult<MeshExport<2>> {
+fn sample_delaunay_result_export() -> DelaunayResult<VisualizationData<2>> {
     let vertices = vec![
         vertex![0.0, 0.0]?,
         vertex![2.0, 0.0]?,
@@ -62,7 +62,7 @@ fn sample_delaunay_result_export() -> DelaunayResult<MeshExport<2>> {
     ];
     let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
-    Ok(triangulation.to_mesh_export()?)
+    Ok(triangulation.to_visualization_data()?)
 }
 
 /// Builds the minimal affinely spanning fixture used by the dimension sweep.
@@ -80,14 +80,17 @@ fn sample_vertices_for_dimension<const D: usize>() -> Result<Vec<Vertex<(), D>>,
 }
 
 /// Exports one dimension-sweep fixture through the public builder path.
-fn sample_export_for_dimension<const D: usize>() -> Result<MeshExport<D>, MeshExportTestError> {
+fn sample_export_for_dimension<const D: usize>() -> Result<VisualizationData<D>, MeshExportTestError>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let vertices = sample_vertices_for_dimension::<D>()?;
     let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    Ok(triangulation.to_mesh_export()?)
+    Ok(triangulation.to_visualization_data()?)
 }
 
 /// Builds a raw DTO where distinct facets reciprocate a self-neighbor link.
-fn reciprocal_self_neighbor_export() -> MeshExport<2> {
+fn reciprocal_self_neighbor_export() -> VisualizationData<2> {
     let vertex_ids = [
         Uuid::from_u128(0x1000_0000_0000_0000_0000_0000_0000_0001),
         Uuid::from_u128(0x1000_0000_0000_0000_0000_0000_0000_0002),
@@ -95,10 +98,10 @@ fn reciprocal_self_neighbor_export() -> MeshExport<2> {
     ];
     let simplex_id = Uuid::from_u128(0x2000_0000_0000_0000_0000_0000_0000_0001);
 
-    MeshExport {
+    VisualizationData {
         metadata: VisualizationMetadata {
-            schema: MESH_EXPORT_SCHEMA.to_owned(),
-            schema_version: MESH_EXPORT_SCHEMA_VERSION,
+            schema: VISUALIZATION_SCHEMA.to_owned(),
+            schema_version: VISUALIZATION_SCHEMA_VERSION,
             producer: "delaunay-test".to_owned(),
             dimension: 2,
             vertex_count: vertex_ids.len(),
@@ -154,6 +157,8 @@ fn reciprocal_self_neighbor_export() -> MeshExport<2> {
 
 /// Verifies const-generic export invariants and serde round-trip behavior.
 fn assert_mesh_export_round_trip_for_dimension<const D: usize>() -> Result<(), MeshExportTestError>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     let export = sample_export_for_dimension::<D>()?;
     assert_eq!(export.metadata.dimension, D);
@@ -164,13 +169,13 @@ fn assert_mesh_export_round_trip_for_dimension<const D: usize>() -> Result<(), M
     export.validate()?;
 
     let json = serde_json::to_string(&export)?;
-    let decoded: MeshExport<D> = serde_json::from_str(&json)?;
+    let decoded: VisualizationData<D> = serde_json::from_str(&json)?;
     assert_connectivity_ids_exist(&decoded);
     decoded.validate()?;
     Ok(())
 }
 
-fn assert_connectivity_ids_exist<const D: usize>(export: &MeshExport<D>) {
+fn assert_connectivity_ids_exist<const D: usize>(export: &VisualizationData<D>) {
     let vertex_ids: HashSet<_> = export.vertices.iter().map(|vertex| vertex.id).collect();
     let simplex_ids: HashSet<_> = export.simplices.iter().map(|simplex| simplex.id).collect();
 
@@ -205,7 +210,7 @@ fn assert_connectivity_ids_exist<const D: usize>(export: &MeshExport<D>) {
     }
 }
 
-fn assert_neighbor_links_are_symmetric(export: &MeshExport<2>) {
+fn assert_neighbor_links_are_symmetric(export: &VisualizationData<2>) {
     let neighbor_links: HashSet<_> = export
         .adjacency
         .iter()
@@ -230,8 +235,8 @@ const fn assert_send_sync_unpin<T: Send + Sync + Unpin>() {}
 fn mesh_export_json_contains_schema_ids_and_connectivity() -> Result<(), MeshExportTestError> {
     let export = sample_export()?;
 
-    assert_eq!(export.metadata.schema, MESH_EXPORT_SCHEMA);
-    assert_eq!(export.metadata.schema_version, MESH_EXPORT_SCHEMA_VERSION);
+    assert_eq!(export.metadata.schema, VISUALIZATION_SCHEMA);
+    assert_eq!(export.metadata.schema_version, VISUALIZATION_SCHEMA_VERSION);
     assert_eq!(export.metadata.producer, "delaunay");
     assert_eq!(export.metadata.dimension, 2);
     assert_eq!(export.metadata.vertex_count, export.vertices.len());
@@ -245,10 +250,10 @@ fn mesh_export_json_contains_schema_ids_and_connectivity() -> Result<(), MeshExp
     assert_neighbor_links_are_symmetric(&export);
 
     let json = serde_json::to_value(&export)?;
-    assert_eq!(json["metadata"]["schema"], MESH_EXPORT_SCHEMA);
+    assert_eq!(json["metadata"]["schema"], VISUALIZATION_SCHEMA);
     assert_eq!(
         json["metadata"]["schema_version"],
-        MESH_EXPORT_SCHEMA_VERSION
+        VISUALIZATION_SCHEMA_VERSION
     );
     assert_eq!(json["metadata"]["dimension"], 2);
     assert!(
@@ -351,11 +356,11 @@ fn visualization_topology_schema_categories_are_stable() -> Result<(), MeshExpor
 }
 
 fn assert_validation_error(
-    export: &MeshExport<2>,
+    export: &VisualizationData<2>,
     expected: VisualizationDataValidationError,
 ) -> Result<(), MeshExportTestError> {
     let json = serde_json::to_string(&export)?;
-    let decoded: MeshExport<2> = serde_json::from_str(&json)?;
+    let decoded: VisualizationData<2> = serde_json::from_str(&json)?;
 
     assert_eq!(decoded.validate(), Err(expected));
     Ok(())
@@ -368,7 +373,7 @@ fn mesh_export_validation_rejects_bad_metadata() -> Result<(), MeshExportTestErr
     assert_validation_error(
         &export,
         VisualizationDataValidationError::InvalidSchema {
-            expected: MESH_EXPORT_SCHEMA,
+            expected: VISUALIZATION_SCHEMA,
             actual: "not.delaunay".to_owned(),
         },
     )?;
@@ -378,7 +383,7 @@ fn mesh_export_validation_rejects_bad_metadata() -> Result<(), MeshExportTestErr
     assert_validation_error(
         &export,
         VisualizationDataValidationError::InvalidSchemaVersion {
-            expected: MESH_EXPORT_SCHEMA_VERSION,
+            expected: VISUALIZATION_SCHEMA_VERSION,
             actual: 0,
         },
     )?;
@@ -782,7 +787,7 @@ fn delaunay_result_accepts_mesh_export_error_families() -> DelaunayResult<()> {
 
     export.metadata.schema_version = 0;
     let expected_validation_error = VisualizationDataValidationError::InvalidSchemaVersion {
-        expected: MESH_EXPORT_SCHEMA_VERSION,
+        expected: VISUALIZATION_SCHEMA_VERSION,
         actual: 0,
     };
     let validation_error = export.validate().expect_err("schema version should fail");
@@ -816,7 +821,7 @@ fn mesh_export_ids_match_triangulation_uuids() -> Result<(), MeshExportTestError
         vertex![0.0, 0.0, 1.0]?,
     ];
     let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    let export = triangulation.to_mesh_export()?;
+    let export = triangulation.to_visualization_data()?;
 
     let exported_vertices: HashMap<_, _> = export
         .vertices
@@ -910,10 +915,10 @@ fn visualization_validation_does_not_require_attribute_traits() -> Result<(), Me
 #[test]
 fn visualization_data_into_validated_carries_validation_proof() -> Result<(), MeshExportTestError> {
     let export = sample_export()?;
-    let validated: ValidatedMeshExport<2> = export.clone().into_validated()?;
+    let validated: ValidatedVisualizationData<2> = export.clone().into_validated()?;
 
     assert_eq!(validated.as_raw(), &export);
-    assert_eq!(validated.metadata().schema, MESH_EXPORT_SCHEMA);
+    assert_eq!(validated.metadata().schema, VISUALIZATION_SCHEMA);
     assert_eq!(validated.vertices().len(), export.vertices.len());
     assert_eq!(validated.simplices().len(), export.simplices.len());
     assert_eq!(validated.adjacency().len(), export.adjacency.len());
@@ -929,7 +934,7 @@ fn visualization_data_into_validated_carries_validation_proof() -> Result<(), Me
 #[test]
 fn visualization_data_try_from_carries_validation_proof() -> Result<(), MeshExportTestError> {
     let export = sample_export()?;
-    let validated = ValidatedMeshExport::<2>::try_from(export.clone())?;
+    let validated = ValidatedVisualizationData::<2>::try_from(export.clone())?;
 
     assert_eq!(validated.as_raw(), &export);
 
@@ -937,7 +942,7 @@ fn visualization_data_try_from_carries_validation_proof() -> Result<(), MeshExpo
     let actual = invalid.simplices.len();
     invalid.metadata.simplex_count = actual + 1;
     assert_eq!(
-        ValidatedMeshExport::<2>::try_from(invalid),
+        ValidatedVisualizationData::<2>::try_from(invalid),
         Err(VisualizationDataValidationError::SimplexCountMismatch {
             expected: actual + 1,
             actual,
@@ -955,7 +960,7 @@ fn visualization_data_into_validated_rejects_invalid_raw_dto() -> Result<(), Mes
     assert_eq!(
         export.into_validated(),
         Err(VisualizationDataValidationError::InvalidSchemaVersion {
-            expected: MESH_EXPORT_SCHEMA_VERSION,
+            expected: VISUALIZATION_SCHEMA_VERSION,
             actual: 0,
         })
     );

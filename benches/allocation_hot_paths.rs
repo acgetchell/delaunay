@@ -23,13 +23,15 @@ mod allocation_contracts {
     use criterion::{BenchmarkGroup, BenchmarkId, Criterion, measurement::WallTime};
     use delaunay::prelude::algorithms::LocateResult;
     use delaunay::prelude::construction::{
-        ConstructionOptions, DelaunayTriangulation, RetryPolicy, Vertex,
+        ConstructionOptions, DelaunayIncrementalBuilder, DelaunayTriangulation, RetryPolicy, Vertex,
     };
     use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-    use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point, simplex_volume};
+    use delaunay::prelude::geometry::{
+        AdaptiveKernel, CoordinateRange, ExactPredicates, Point, simplex_volume,
+    };
     use delaunay::prelude::query::measure_with_result;
     use delaunay::prelude::tds::{SimplexKey, TdsError, VertexKey, facet_key_from_vertices};
-    use delaunay::try_vertices_from_points;
+    use delaunay::{try_vertices_from_points, vertex};
     use std::assert_matches;
     use std::{hint::black_box, num::NonZeroUsize, time::Duration};
     use thiserror::Error;
@@ -167,7 +169,10 @@ mod allocation_contracts {
         Ok(facet_vertices)
     }
 
-    fn prepare_fixture<const D: usize>(count: usize, seed: u64) -> DimensionFixture<D> {
+    fn prepare_fixture<const D: usize>(count: usize, seed: u64) -> DimensionFixture<D>
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         let vertices = canary_vertices::<D>(count, seed);
         let attempts = retry_attempts(6);
         let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
@@ -228,6 +233,75 @@ mod allocation_contracts {
         );
     }
 
+    /// Keeps first-simplex publication bounded and verifies all temporary heap
+    /// ownership is released with the published owner.
+    fn assert_bootstrap_allocation_budget<const D: usize>(info: &AllocationInfo) {
+        const MAX_BOOTSTRAP_ALLOCATIONS: u64 = 2_000;
+        const MAX_BOOTSTRAP_BYTES: u64 = 8 * 1024 * 1024;
+        assert!(
+            info.count_total <= MAX_BOOTSTRAP_ALLOCATIONS,
+            "{D}D bootstrap publication exceeded {MAX_BOOTSTRAP_ALLOCATIONS} allocations; allocation info: {info:?}"
+        );
+        assert!(
+            info.bytes_total <= MAX_BOOTSTRAP_BYTES,
+            "{D}D bootstrap publication exceeded {MAX_BOOTSTRAP_BYTES} allocated bytes; allocation info: {info:?}"
+        );
+        assert_eq!(
+            info.count_current, 0,
+            "{D}D bootstrap publication should retain no allocations after its owner is dropped; allocation info: {info:?}"
+        );
+        assert_eq!(
+            info.bytes_current, 0,
+            "{D}D bootstrap publication should retain no bytes after its owner is dropped; allocation info: {info:?}"
+        );
+    }
+
+    /// Calibrates insertion against one owner clone while leaving headroom for
+    /// dimension-dependent exact-predicate fallback allocations.
+    fn assert_post_bootstrap_insertion_budget<const D: usize>(
+        info: &AllocationInfo,
+        single_owner_clone: &AllocationInfo,
+    ) {
+        let allocation_headroom = match D {
+            2 | 3 => 10_000,
+            4 => 100_000,
+            5 => 5_000_000,
+            _ => 10_000_000,
+        };
+        let byte_headroom = match D {
+            2 | 3 => 2 * 1024 * 1024,
+            4 => 8 * 1024 * 1024,
+            5 => 128 * 1024 * 1024,
+            _ => 256 * 1024 * 1024,
+        };
+        let max_allocations = single_owner_clone
+            .count_total
+            .saturating_mul(4)
+            .saturating_add(allocation_headroom);
+        let max_bytes = single_owner_clone
+            .bytes_total
+            .saturating_mul(2)
+            .saturating_add(byte_headroom);
+        assert!(
+            info.count_total <= max_allocations,
+            "{D}D post-bootstrap insertion exceeded the single-owner-clone calibrated allocation budget {max_allocations}; insertion={info:?}, clone={single_owner_clone:?}"
+        );
+        assert!(
+            info.bytes_total <= max_bytes,
+            "{D}D post-bootstrap insertion exceeded the single-owner-clone calibrated byte budget {max_bytes}; insertion={info:?}, clone={single_owner_clone:?}"
+        );
+        let current_allocations = u64::try_from(info.count_current).or_abort();
+        let current_bytes = u64::try_from(info.bytes_current).or_abort();
+        assert!(
+            current_allocations <= info.count_total,
+            "{D}D post-bootstrap insertion retained more allocations than it made; allocation info: {info:?}"
+        );
+        assert!(
+            current_bytes <= info.bytes_total,
+            "{D}D post-bootstrap insertion retained more bytes than it allocated; allocation info: {info:?}"
+        );
+    }
+
     const fn locate_fast_path_allocation_budget<const D: usize>() -> u64 {
         match D {
             2 | 3 => 1,
@@ -235,6 +309,82 @@ mod allocation_contracts {
             5 => 4_000,
             _ => 10_000,
         }
+    }
+
+    /// Builds the canonical positively oriented axis simplex used at bootstrap.
+    fn bootstrap_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
+        let mut vertices = Vec::with_capacity(D + 1);
+        vertices.push(vertex!([0.0; D]).or_abort());
+        for axis in 0..D {
+            let mut coords = [0.0; D];
+            coords[axis] = 1.0;
+            vertices.push(vertex!(coords).or_abort());
+        }
+        vertices
+    }
+
+    /// Measures the complete public D+1 bootstrap and Levels 1–5 publication path.
+    fn bench_bootstrap_publication<const D: usize>(group: &mut BenchmarkGroup<'_, WallTime>)
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
+        let vertices = bootstrap_vertices::<D>();
+
+        group.bench_function(
+            BenchmarkId::new(format!("bounded_alloc/bootstrap_publication_{D}d"), D + 1),
+            |b| {
+                b.iter(|| {
+                    let (counts, info) = measure_with_result(|| {
+                        let mut builder: DelaunayIncrementalBuilder<_, (), (), D> =
+                            DelaunayIncrementalBuilder::new();
+                        for vertex in vertices.iter().copied() {
+                            builder.insert_vertex(vertex).or_abort();
+                        }
+                        let dt = builder.finish().or_abort();
+                        let counts = (dt.number_of_vertices(), dt.number_of_simplices());
+                        black_box(&dt);
+                        drop(dt);
+                        counts
+                    });
+
+                    assert_eq!(counts, (D + 1, 1));
+                    assert_bootstrap_allocation_budget::<D>(&info);
+                });
+            },
+        );
+    }
+
+    /// Measures one public insertion into an existing calibrated owner without
+    /// counting the Criterion fixture clone.
+    fn bench_post_bootstrap_insertion<const D: usize>(
+        group: &mut BenchmarkGroup<'_, WallTime>,
+        fixture: &DimensionFixture<D>,
+    ) {
+        let candidate = vertex!(*fixture.query.coords()).or_abort();
+        let ((), single_owner_clone) = measure_with_result(|| drop(fixture.dt.clone()));
+        let vertex_count = fixture.vertex_count;
+
+        group.bench_function(
+            BenchmarkId::new(
+                format!("bounded_alloc/post_bootstrap_insert_{D}d"),
+                vertex_count,
+            ),
+            |b| {
+                b.iter_batched(
+                    || fixture.dt.clone(),
+                    |mut dt| {
+                        let (inserted, info) =
+                            measure_with_result(|| dt.insert_vertex(candidate).map_err(Box::new));
+                        let vertex_key = inserted.or_abort();
+                        assert_eq!(dt.number_of_vertices(), vertex_count + 1);
+                        assert!(dt.vertex(vertex_key).is_some());
+                        assert_post_bootstrap_insertion_budget::<D>(&info, &single_owner_clone);
+                        black_box(dt);
+                    },
+                    criterion::BatchSize::LargeInput,
+                );
+            },
+        );
     }
 
     fn bench_public_iterators<const D: usize>(
@@ -412,9 +562,13 @@ mod allocation_contracts {
         group: &mut BenchmarkGroup<'_, WallTime>,
         count: usize,
         seed: u64,
-    ) {
+    ) where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         let fixture = prepare_fixture::<D>(count, seed);
 
+        bench_bootstrap_publication::<D>(group);
+        bench_post_bootstrap_insertion(group, &fixture);
         bench_public_iterators(group, &fixture);
         bench_simplex_vertices(group, &fixture);
         bench_simplex_barycenter(group, &fixture);

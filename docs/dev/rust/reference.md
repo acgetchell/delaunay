@@ -219,9 +219,11 @@ views must borrow the canonical owner, or return values lifetime-bound to that
 owner, so the view cannot outlive the data it observes. Detached, copyable
 runtime references should be named `*Handle` or `*Key` instead, and APIs that
 turn handles back into views must revalidate the handle against a live owner at
-the conversion boundary. For example, `ConvexHull::try_facets(triangulation)`
-returns borrowed `FacetView<'_>` values, while `ConvexHull::facet_handles()`
-exposes the stored `FacetHandle`s explicitly.
+the conversion boundary. For example, `ConflictRegion<'tri>` keeps its source
+triangulation borrowed and publishes owner-bound simplex and cavity-facet views.
+`ConvexHull` is intentionally different: it is a self-contained owned snapshot,
+and `ConvexHull::facets()` borrows copied geometry from the hull rather than the
+source triangulation.
 
 Borrowed slices over canonical topology storage follow the same convention:
 return `&[Key]` when the slice lives in the owner and the caller should not keep
@@ -461,8 +463,10 @@ Current migration targets for API-normalization work:
   Full TDS/topology/Delaunay validation still happens at `build`, where the
   assembled triangulation exists.
 - `ConvexHull::try_from_triangulation` is the fallible hull-snapshot
-  constructor. Reserve `from_*` for infallible conversions from proof-bearing
-  input or passive view/report extraction.
+  constructor. It copies boundary data, rejects malformed or degenerate facets,
+  and verifies that every facet supports every source vertex before publishing
+  the self-contained hull. Reserve `from_*` for infallible conversions from
+  proof-bearing input or passive view/report extraction.
 - Broad public `from_*` helpers should be reviewed case by case. Keep them when
   they consume proof-bearing inputs and cannot fail; rename to `try_from_*` when
   they parse raw invalidable state.

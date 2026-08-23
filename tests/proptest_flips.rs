@@ -251,7 +251,11 @@ fn assert_positive_simplex_orientations<const D: usize>(
 fn check_k1_roundtrip<const D: usize>(
     origin: [f64; D],
     edge_lengths: [f64; D],
-) -> Result<(), TestCaseError> {
+) -> Result<(), TestCaseError>
+where
+    delaunay::prelude::geometry::AdaptiveKernel<f64>:
+        delaunay::prelude::geometry::ExactPredicates<D>,
+{
     let vertices = axis_aligned_simplex_vertices::<D>(origin, edge_lengths);
     let simplex = DelaunayTriangulation::builder(&vertices)
         .topology_guarantee(TopologyGuarantee::PLManifold)

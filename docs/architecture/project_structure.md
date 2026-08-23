@@ -55,7 +55,7 @@ delaunay/
 │   ├── numerical_robustness_guide.md
 │   ├── property_testing_summary.md
 │   ├── topology.md
-│   ├── validation.md
+│   ├── construction_and_validation.md
 │   └── workflows.md
 ├── examples/
 ├── notebooks/
@@ -81,6 +81,18 @@ delaunay/
 │   ├── subprocess_utils.py
 │   └── tag_release.py
 ├── src/
+│   ├── bin/
+│   │   ├── delaunay/
+│   │   │   ├── cli_output.rs
+│   │   │   ├── config.rs
+│   │   │   ├── generate.rs
+│   │   │   ├── main.rs
+│   │   │   ├── spherical_hero.rs
+│   │   │   └── validation_demo.rs
+│   │   ├── pachner_stress/
+│   │   │   └── main.rs
+│   │   └── shared/
+│   │       └── cli_output.rs
 │   ├── core/
 │   ├── delaunay/
 │   ├── geometry/
@@ -124,8 +136,8 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
 
 ## Top-Level Areas
 
-- `src/` is the Rust library implementation. See
-  [`module_map.md`](module_map.md) for ownership and layering.
+- `src/` contains the Rust library plus feature-gated artifact and diagnostic binaries.
+  See [`module_map.md`](module_map.md) for ownership and layering.
 - `tests/` contains integration tests, property tests, regression tests, and
   repository-owned Semgrep fixtures.
 - `benches/` contains Criterion benchmark harnesses, shared benchmark fixtures,

@@ -838,16 +838,11 @@ mod tests {
             [1.0, 1.0, 1.0, -1.0],
         ]
         .map(|coords| vertex!(coords).expect("k=3 fixture vertex should be valid"));
-        let simplices = vec![
-            vec![0, 1, 2, 3, 4],
-            vec![0, 1, 2, 4, 5],
-            vec![0, 1, 2, 5, 3],
-        ];
 
-        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
-            .expect("k=3 fixture connectivity should parse")
-            .build_triangulation()
-            .expect("k=3 roundtrip fixture should build")
+        DelaunayTriangulationBuilder::new(&vertices)
+            .build()
+            .expect("k=3 roundtrip fixture should build from proven construction")
+            .into_triangulation()
     }
 
     /// Finds a facet whose Levels 1–4 k=2 move succeeds on a cloned fixture.

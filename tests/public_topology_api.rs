@@ -10,7 +10,7 @@
 use delaunay::prelude::DelaunayTriangulationConstructionError;
 use delaunay::prelude::TopologyGuarantee;
 use delaunay::prelude::Vertex;
-use delaunay::prelude::geometry::CoordinateConversionError;
+use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateConversionError, ExactPredicates};
 use delaunay::prelude::query::*;
 use delaunay::prelude::tds::{SimplexKey, TdsError, VertexKey};
 use delaunay::prelude::validation::ManifoldError;
@@ -57,6 +57,8 @@ fn standard_simplex_vertices<const D: usize>()
 
 /// Verifies split topology views against the closed-form topology of one simplex.
 fn assert_split_topology_single_simplex<const D: usize>() -> Result<(), PublicTopologyApiTestError>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     let vertices = standard_simplex_vertices::<D>()?;
     let dt: DelaunayTriangulation<_, (), (), D> = DelaunayTriangulation::builder(&vertices)

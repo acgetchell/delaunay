@@ -18,9 +18,82 @@
 use delaunay::vertex;
 use std::assert_matches;
 
-use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
+use delaunay::prelude::construction::{
+    DelaunayIncrementalBuilder, DelaunayIncrementalBuilderError, TopologyGuarantee, Vertex,
+};
 use delaunay::prelude::geometry::CoordinateValues;
 use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
+
+fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
+    let mut vertices = vec![vertex!([0.0; D]).unwrap()];
+    for axis in 0..D {
+        let mut coordinates = [0.0; D];
+        coordinates[axis] = 1.0;
+        vertices.push(vertex!(coordinates).unwrap());
+    }
+    vertices
+}
+
+fn duplicate_coordinates(error: DelaunayIncrementalBuilderError) -> CoordinateValues {
+    match error {
+        DelaunayIncrementalBuilderError::Insertion { source } => match *source {
+            InsertionError::DuplicateCoordinates { coordinates } => coordinates,
+            other => panic!("expected DuplicateCoordinates, got {other:?}"),
+        },
+        other => panic!("expected insertion error, got {other:?}"),
+    }
+}
+
+macro_rules! test_near_duplicate_stage_parity {
+    ($($dim:literal),+ $(,)?) => {
+        pastey::paste! {
+            $(
+                #[test]
+                fn [<near_duplicate_policy_matches_before_and_after_publication_ $dim d>]() {
+                    let simplex = unit_simplex_vertices::<$dim>();
+                    let candidate = [5.0e-11; $dim];
+                    let expected_coordinates = CoordinateValues::from(candidate);
+
+                    let mut bootstrap: DelaunayIncrementalBuilder<_, (), (), $dim> =
+                        DelaunayIncrementalBuilder::new();
+                    for vertex in simplex.iter().take($dim) {
+                        bootstrap.insert_vertex(*vertex).unwrap();
+                    }
+                    assert_eq!(bootstrap.number_of_vertices(), $dim);
+                    assert_eq!(bootstrap.number_of_simplices(), 0);
+
+                    let bootstrap_error = bootstrap
+                        .insert_vertex(vertex!(candidate).unwrap())
+                        .expect_err("unit-scale bootstrap should reject a near-duplicate");
+                    assert_eq!(duplicate_coordinates(bootstrap_error), expected_coordinates);
+                    assert_eq!(bootstrap.number_of_vertices(), $dim);
+                    assert_eq!(bootstrap.number_of_simplices(), 0);
+                    bootstrap.validate_structure().unwrap();
+
+                    let mut published: DelaunayIncrementalBuilder<_, (), (), $dim> =
+                        DelaunayIncrementalBuilder::new();
+                    for vertex in simplex {
+                        published.insert_vertex(vertex).unwrap();
+                    }
+                    let published_vertex_count = published.number_of_vertices();
+                    let published_simplex_count = published.number_of_simplices();
+                    assert_eq!(published_vertex_count, $dim + 1);
+                    assert!(published_simplex_count > 0);
+
+                    let published_error = published
+                        .insert_vertex(vertex!(candidate).unwrap())
+                        .expect_err("published owner should reject the same near-duplicate");
+                    assert_eq!(duplicate_coordinates(published_error), expected_coordinates);
+                    assert_eq!(published.number_of_vertices(), published_vertex_count);
+                    assert_eq!(published.number_of_simplices(), published_simplex_count);
+                    published.finish().unwrap().validate().unwrap();
+                }
+            )+
+        }
+    };
+}
+
+test_near_duplicate_stage_parity!(2, 3, 4, 5);
 
 // =============================================================================
 // DELAUNAY TRIANGULATION TESTS
@@ -28,8 +101,8 @@ use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
 
 #[test]
 fn delaunay_insert_with_statistics_basic_2d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 2> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Insert first vertex
     let (outcome, stats) = dt
@@ -68,8 +141,8 @@ fn delaunay_insert_with_statistics_basic_2d() {
 
 #[test]
 fn delaunay_insert_with_statistics_hint_caching_3d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 3> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Build initial simplex
     dt.insert_with_statistics(vertex!([0.0, 0.0, 0.0]).unwrap())
@@ -99,8 +172,8 @@ fn delaunay_insert_with_statistics_hint_caching_3d() {
 
 #[test]
 fn delaunay_insert_with_statistics_multiple_vertices_4d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 4> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 4> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
@@ -143,8 +216,8 @@ fn delaunay_insert_with_statistics_multiple_vertices_4d() {
 
 #[test]
 fn delaunay_insert_with_statistics_handles_degenerate_k2_flips_4d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 4> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 4> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
@@ -163,12 +236,13 @@ fn delaunay_insert_with_statistics_handles_degenerate_k2_flips_4d() {
 
     assert_eq!(dt.number_of_vertices(), 7);
     assert!(dt.validate_structure().is_ok());
+    assert!(dt.finish().is_ok());
 }
 
 #[test]
 fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 2> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Insert first vertex
     dt.insert_with_statistics(vertex!([1.0, 2.0]).unwrap())
@@ -181,8 +255,12 @@ fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
     assert!(
         matches!(
             result,
-            Err(InsertionError::DuplicateCoordinates { ref coordinates })
-                if coordinates == &duplicate_coordinates
+            Err(DelaunayIncrementalBuilderError::Insertion { ref source })
+                if matches!(
+                    source.as_ref(),
+                    InsertionError::DuplicateCoordinates { coordinates }
+                        if coordinates == &duplicate_coordinates
+                )
         ),
         "expected duplicate coordinate error, got: {result:?}"
     );
@@ -214,8 +292,8 @@ fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
 #[test]
 fn delaunay_insert_with_statistics_bootstrap_happy_path_3d() {
     // Happy path: inserting D+1 well-separated vertices should succeed without retries.
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 3> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Build simplex with well-separated points
     let vertices = vec![
@@ -236,8 +314,8 @@ fn delaunay_insert_with_statistics_bootstrap_happy_path_3d() {
 
 #[test]
 fn delaunay_insert_with_statistics_statistics_fields_3d() {
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 3> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Bootstrap phase
     for i in 0..4 {
@@ -269,8 +347,8 @@ fn delaunay_insert_with_statistics_statistics_fields_3d() {
 
 #[test]
 fn statistics_invariants() {
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 3> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Build simplex
     let vertices = vec![
@@ -328,8 +406,8 @@ fn statistics_invariants() {
 
 #[test]
 fn insert_with_statistics_2d_coverage() {
-    let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 2> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0]).unwrap(),
@@ -348,8 +426,8 @@ fn insert_with_statistics_2d_coverage() {
 
 #[test]
 fn insert_with_statistics_3d_coverage() {
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 3> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]).unwrap(),
@@ -369,8 +447,8 @@ fn insert_with_statistics_3d_coverage() {
 
 #[test]
 fn insert_with_statistics_4d_coverage() {
-    let mut dt: DelaunayTriangulation<_, (), (), 4> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 4> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
@@ -391,8 +469,8 @@ fn insert_with_statistics_4d_coverage() {
 
 #[test]
 fn insert_with_statistics_5d_coverage() {
-    let mut dt: DelaunayTriangulation<_, (), (), 5> =
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    let mut dt: DelaunayIncrementalBuilder<_, (), (), 5> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),

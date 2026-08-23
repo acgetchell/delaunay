@@ -42,7 +42,7 @@ point sets. Euclidean construction is explicitly tested in 2D through 5D, period
 construction is validated on T² and for compact T³ inputs, and bounded spherical S²/S³ construction
 is available as a prototype. Uses [exact predicates] and [Simulation of Simplicity] for robustness and
 degeneracy handling, and [Hilbert curve]s for deterministic insertion ordering and efficient spatial indexing.
-Provides an explicit [5-level validation hierarchy][Validation Guide] on individual elements,
+Provides an explicit [5-level validation hierarchy][Construction and Validation Guide] on individual elements,
 combinatorial consistency, intrinsic PL topology, valid realization in the active
 model, and geometric predicates such as Delaunay. Allows for the complete set of [Pachner moves] up to D=5
 using bistellar flips, vertex insertion and deletion, and the conversion of non-Delaunay
@@ -74,7 +74,7 @@ meshing, or production-scale dynamic remeshing.
   Delaunay repair.
 - [x] Configurable predicate kernels: `AdaptiveKernel` by default for deterministic SoS tie-breaking,
   `RobustKernel` for exact diagnostics and higher-dimensional fallbacks, and `FastKernel` for a lean
-  filtered-exact path that preserves degeneracy signals through D ≤ 5.
+  filtered-exact path that preserves degeneracy signals through D ≤ 6.
 - [x] D-dimensional [Convex hulls] and [Delaunay triangulations].
 - [x] Euclidean construction and periodic `T^2`/`T^3` image-point quotients through
   `DelaunayTriangulationBuilder`.
@@ -124,7 +124,7 @@ cargo add delaunay@0.8.0
 
 Use `cargo add delaunay` instead if you want Cargo to select the newest published release.
 
-- Rust 1.97.1 or newer. The minimum supported version is declared in
+- Rust 1.98.0 or newer. The minimum supported version is declared in
   `Cargo.toml`, while `rust-toolchain.toml` pins the exact repository toolchain.
 - `f64` coordinates for caller-facing construction, predicate, validation, and generator APIs.
 
@@ -229,7 +229,7 @@ for the documented coordinate models and dimensions. It does not replace constra
 packages, prove arbitrary abstract PL-manifolds realizable from coordinates, or certify unsupported
 spherical/hyperbolic workflows.
 
-For the detailed contract, see [`docs/validation.md`](docs/validation.md),
+For the detailed contract, see [`docs/construction_and_validation.md`](docs/construction_and_validation.md),
 [`docs/invariants.md`](docs/invariants.md), [`docs/topology.md`](docs/topology.md),
 [`docs/numerical_robustness_guide.md`](docs/numerical_robustness_guide.md),
 [`docs/limitations.md`](docs/limitations.md), and [`benches/README.md`](benches/README.md).
@@ -283,8 +283,8 @@ exposition, see [`papers/validation.tex`](papers/validation.tex) and the compile
 - [Releasing](docs/RELEASING.md) - Changelog, benchmark, and publish workflow.
 - [Roadmap](docs/roadmap.md) - Current release sequence and deferred feature tracks.
 - [Topology](docs/topology.md) - Level 3 Intrinsic PL Topology validation, orientability, and global topology models.
-- [Validation Guide](docs/validation.md) - Validation hierarchy and policy configuration.
-- [Validation Paper](papers/validation.pdf) - Reviewer-facing PDF for the validation architecture.
+- [Construction and Validation Guide](docs/construction_and_validation.md) - Proof-bearing construction, validation hierarchy, and policy configuration.
+- [Construction and Validation Paper](papers/validation.pdf) - Reviewer-facing architecture paper.
 - [Workflows](docs/workflows.md) - Practical recipes for construction, repair, toroidal domains, payloads, and flips.
 
 ## 🧩 Ecosystem
@@ -334,11 +334,12 @@ and large-scale profiling guidance.
 
 ## 🛣️ Limitations and Roadmap
 
-Current routine coverage targets 2D through 5D. Exact orientation is available through D=6; exact
-in-sphere is available through D=5. For D≥6, the determinant exceeds the current stack-matrix limit,
-so classification first uses a floating-point circumcenter/radius distance predicate and applies
-symbolic perturbation only to boundary or failed distance evaluations. Near-degenerate D≥6 inputs
-therefore do not have exact-sign protection.
+Current routine construction coverage targets 2D through 5D. Exact orientation, relative in-sphere,
+and complete symbolic tie-breaking are available through D=6. The in-sphere fast path bounds the
+determinant with outward-rounded intervals; its cold path forms the relative matrix exactly from the
+original binary64 coordinates before asking `la-stack`-backed rational algebra for the sign. D≥7
+falls back to the floating-point circumcenter/radius predicate and therefore lacks exact-sign
+protection near degeneracy.
 
 `.try_toroidal([..])` builds a periodic quotient through the image-point method. It is validated on
 `T^2` and compact `T^3`, while `T^4`/`T^5` fail fast pending scalable quotient work.
@@ -446,4 +447,4 @@ This project is licensed under the [BSD 3-Clause License](https://github.com/acg
 [readme-hero]: https://raw.githubusercontent.com/acgetchell/delaunay/main/docs/assets/readme/delaunay_spherical_readme.png
 [Secondary maps]: docs/workflows.md#builder-api-auxiliary-vertex-and-simplex-data
 [Simulation of Simplicity]: docs/numerical_robustness_guide.md#simulation-of-simplicity-sos
-[Validation Guide]: docs/validation.md
+[Construction and Validation Guide]: docs/construction_and_validation.md

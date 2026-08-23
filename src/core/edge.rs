@@ -630,7 +630,7 @@ impl<U, V, const D: usize> Eq for EdgeView<'_, U, V, D> {}
 mod tests {
     use super::*;
     use crate::core::simplex::Simplex;
-    use crate::prelude::DelaunayTriangulationBuilder;
+    use crate::core::tds::TdsBuilder;
     use crate::vertex;
     use std::{
         collections::{BTreeSet, HashSet},
@@ -643,13 +643,12 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build()
-            .unwrap();
-        let simplex = dt.simplices().next().unwrap().1;
+        let simplices = [vec![0, 1, 2]];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+        let simplex = tds.simplices().next().unwrap().1;
         let vertices = simplex.vertices();
         let simplex_vertices = [vertices[0], vertices[1], vertices[2]];
-        test(dt.tds(), simplex_vertices);
+        test(&tds, simplex_vertices);
     }
 
     #[test]
@@ -718,14 +717,13 @@ mod tests {
             vertex!([1.0, 1.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build()
-            .unwrap();
-        let keys: Vec<VertexKey> = dt.tds().vertex_keys().collect();
+        let simplices = [vec![0, 1, 2], vec![0, 2, 3]];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+        let keys: Vec<VertexKey> = tds.vertex_keys().collect();
         let missing_edge = keys.iter().enumerate().find_map(|(i, &a)| {
             keys.iter().skip(i + 1).copied().find_map(|b| {
                 matches!(
-                    EdgeKey::try_new(dt.tds(), a, b),
+                    EdgeKey::try_new(&tds, a, b),
                     Err(EdgeKeyError::EdgeNotFound { .. })
                 )
                 .then_some((a, b))
@@ -733,7 +731,7 @@ mod tests {
         });
         let (a, b) = missing_edge.expect("square triangulation should have one missing diagonal");
         assert_eq!(
-            EdgeKey::try_new(dt.tds(), a, b),
+            EdgeKey::try_new(&tds, a, b),
             Err(EdgeKeyError::EdgeNotFound { v0: a, v1: b })
         );
     }

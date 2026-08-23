@@ -4,9 +4,8 @@
 //!
 //! This example stores payloads in vertices and simplices, keeps algorithm-local
 //! state in secondary maps, and reconstructs a Levels 1–4 [`Triangulation`] from
-//! a JSON-serialized TDS snapshot. It then demonstrates the two distinct Level
-//! 5 boundaries: strict no-repair certification and consuming `delaunayize`
-//! conversion.
+//! a JSON-serialized TDS snapshot. It then demonstrates the Level 5 refinement
+//! builder in strict certification and bounded repair modes.
 //!
 //! Run it with:
 //!
@@ -15,22 +14,24 @@
 //! ```
 
 use approx::assert_abs_diff_eq;
-use delaunay::RefinementError;
 use delaunay::prelude::collections::{SimplexSecondaryMap, VertexSecondaryMap};
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-    vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
-use delaunay::prelude::delaunayize::{DelaunayizeConfig, DelaunayizeError, delaunayize};
+use delaunay::prelude::delaunayize::DelaunayizeError;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateConversionError};
 use delaunay::prelude::query::{
     JaccardComputationError, extract_vertex_coordinate_set, jaccard_index,
 };
 use delaunay::prelude::tds::{Tds, TdsMutationError};
-use delaunay::prelude::triangulation::{Triangulation, TriangulationRealizationValidationError};
+use delaunay::prelude::triangulation::{
+    Triangulation, TriangulationBuilder, TriangulationBuilderError,
+    TriangulationRealizationValidationError,
+};
 use delaunay::prelude::validation::{
     DelaunayTriangulationValidationError, DelaunayValidationError,
 };
+use delaunay::{DelaunayRefinementBuilder, RefinementError};
 
 type LabeledTriangulation = Triangulation<AdaptiveKernel<f64>, i32, i32, 2>;
 
@@ -50,6 +51,8 @@ enum DataExampleError {
     Validation(#[from] DelaunayTriangulationValidationError),
     #[error(transparent)]
     RealizationValidation(#[from] TriangulationRealizationValidationError),
+    #[error(transparent)]
+    TriangulationBuild(#[from] TriangulationBuilderError),
     #[error(transparent)]
     DelaunayProperty(#[from] DelaunayValidationError),
     #[error(transparent)]
@@ -97,13 +100,11 @@ fn main() -> Result<(), DataExampleError> {
     let tds = triangulation.into_tds();
     let json = serde_json::to_string_pretty(&tds)?;
     let tds: Tds<i32, i32, 2> = serde_json::from_str(&json)?;
-    let restored = Triangulation::try_from_tds_with_topology_context(
-        tds,
-        AdaptiveKernel::new(),
-        topology_guarantee,
-        global_topology,
-    )
-    .map_err(RefinementError::into_reason)?;
+    let restored = TriangulationBuilder::new(tds, AdaptiveKernel::new())
+        .topology_guarantee(topology_guarantee)
+        .global_topology(global_topology)
+        .build()
+        .map_err(RefinementError::into_reason)?;
     restored.validate_realization()?;
 
     let coordinates_after = extract_vertex_coordinate_set(&restored);
@@ -114,11 +115,13 @@ fn main() -> Result<(), DataExampleError> {
     assert_eq!(labels_after, labels_before);
     assert_eq!(labeled_simplices_after, labeled_simplices_before);
 
-    let (restored, strict_error) = match DelaunayTriangulation::try_from_triangulation(restored) {
+    let (restored, strict_error) = match DelaunayRefinementBuilder::new(restored).build() {
         Ok(_) => return Err(DataExampleError::UnexpectedStrictCertification),
         Err(failure) => failure.into_parts(),
     };
-    let converted = delaunayize(restored, DelaunayizeConfig::default())
+    let converted = DelaunayRefinementBuilder::new(restored)
+        .repair_by_flips()
+        .build()
         .map_err(RefinementError::into_reason)?;
     converted.triangulation.validate()?;
     let repaired_coordinates =

@@ -153,7 +153,7 @@ The expected tracked outputs are:
 
 The canonical generator is
 [`notebooks/01_validation.ipynb`](../notebooks/01_validation.ipynb). The same
-figures are consumed by [`docs/validation.md`](../docs/validation.md) and the
+figures are consumed by [`docs/construction_and_validation.md`](../docs/construction_and_validation.md) and the
 paper snapshot; there is no duplicate artifact implementation here. The
 spherical README image has a separate deliberate refresh path:
 
@@ -196,7 +196,7 @@ environment metadata alongside the results.
 ## Five-level claim map
 
 The canonical definitions and API semantics are in the
-[`Validation Guide`](../docs/validation.md) and
+[`Construction and Validation Guide`](../docs/construction_and_validation.md) and
 [`Invariant Guide`](../docs/invariants.md). This table only maps those
 contracts to concrete artifact evidence.
 
@@ -208,7 +208,7 @@ contracts to concrete artifact evidence.
 - Representative tests: [`proptest_vertex.rs`](../tests/proptest_vertex.rs),
   [`proptest_simplex.rs`](../tests/proptest_simplex.rs), and
   [`proptest_tds.rs`](../tests/proptest_tds.rs)
-- Documentation: [Level 1 contract](../docs/validation.md#level-1-element-validity)
+- Documentation: [Level 1 contract](../docs/construction_and_validation.md#level-1-element-validity)
   and [figure](../docs/assets/validation/validation_level_1_element_validity.png)
 - Performance evidence: `structure` component in
   [`profiling_suite.rs`](../benches/profiling_suite.rs)
@@ -221,7 +221,7 @@ contracts to concrete artifact evidence.
   [`proptest_triangulation.rs`](../tests/proptest_triangulation.rs), and
   [`public_topology_api.rs`](../tests/public_topology_api.rs)
 - Documentation:
-  [Level 2 contract](../docs/validation.md#level-2-combinatorial-consistency)
+  [Level 2 contract](../docs/construction_and_validation.md#level-2-combinatorial-consistency)
   and
   [figure](../docs/assets/validation/validation_level_2_combinatorial_consistency.png)
 - Performance evidence: `structure` component in
@@ -237,7 +237,7 @@ contracts to concrete artifact evidence.
   [`public_topology_api.rs`](../tests/public_topology_api.rs), and
   [`proptest_toroidal.rs`](../tests/proptest_toroidal.rs)
 - Documentation:
-  [Level 3 contract](../docs/validation.md#level-3-intrinsic-pl-topology)
+  [Level 3 contract](../docs/construction_and_validation.md#level-3-intrinsic-pl-topology)
   and
   [figure](../docs/assets/validation/validation_level_3_intrinsic_pl_topology.png)
 - Performance evidence: `triangulation` component in
@@ -253,7 +253,7 @@ contracts to concrete artifact evidence.
   [`triangulation_builder.rs`](../tests/triangulation_builder.rs),
   [`proptest_toroidal.rs`](../tests/proptest_toroidal.rs), and
   [`spherical_delaunay.rs`](../tests/spherical_delaunay.rs)
-- Documentation: [Level 4 contract](../docs/validation.md#level-4-valid-realization)
+- Documentation: [Level 4 contract](../docs/construction_and_validation.md#level-4-valid-realization)
   and [figure](../docs/assets/validation/validation_level_4_valid_realization.png)
 - Performance evidence: `realization` component in
   [`profiling_suite.rs`](../benches/profiling_suite.rs)
@@ -267,7 +267,7 @@ contracts to concrete artifact evidence.
   [`proptest_delaunay_triangulation.rs`](../tests/proptest_delaunay_triangulation.rs),
   [`proptest_toroidal.rs`](../tests/proptest_toroidal.rs), and
   [`spherical_delaunay.rs`](../tests/spherical_delaunay.rs)
-- Documentation: [Level 5 contract](../docs/validation.md#level-5-geometric-predicates)
+- Documentation: [Level 5 contract](../docs/construction_and_validation.md#level-5-geometric-predicates)
   and [figure](../docs/assets/validation/validation_level_5_geometric_predicates.png)
 - Performance evidence: `delaunay` and cumulative `full` components in
   [`profiling_suite.rs`](../benches/profiling_suite.rs)

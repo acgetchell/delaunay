@@ -100,15 +100,14 @@
 //! Level 3 validation additionally checks the canonical **vertex-link** PL-manifoldness condition via
 //! [`crate::topology::manifold::validate_vertex_links`].
 //!
-//! Note: for **D=3**, the current vertex-link validator additionally enforces that each link
+//! For **D=3**, the vertex-link validator additionally enforces that each link
 //! has the Euler characteristic / boundary component counts of a sphere/ball (S²/B²).
-//! For **D≥4**, it currently checks that each vertex link is a connected (D−1)-manifold
-//! with the correct boundary behavior (a necessary condition), but does not attempt to
-//! distinguish spheres/balls from other manifolds (not sufficient in general).
+//! For **D≥4**, local incidence checks are only necessary conditions. Publication
+//! therefore also requires crate-held evidence from an exact, link-preserving
+//! construction workflow; explicit or deserialized connectivity without that
+//! provenance is rejected rather than treated as a PL-manifold proof.
 
-use crate::core::algorithms::incremental_insertion::{
-    InsertionError, InsertionTopologyValidationContext,
-};
+use crate::core::algorithms::insertion::{InsertionError, InsertionTopologyValidationContext};
 use crate::core::collections::{
     FacetToSimplicesMap, FastHashMap, FastHashSet, SimplexKeyBuffer, SimplexKeySet,
     VertexKeyBuffer, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
@@ -121,20 +120,19 @@ use crate::core::tds::{
 use crate::core::traits::data_type::DataType;
 use crate::geometry::kernel::Kernel;
 use crate::topology::characteristics::euler::{
-    FVector, TopologyClassification, classify_triangulation, count_boundary_simplices,
-    count_simplices,
+    FVector, TopologyClassification, count_boundary_simplices, count_simplices,
 };
 use crate::topology::characteristics::validation::{
-    TopologyCheckResult, validate_triangulation_euler,
-    validate_triangulation_euler_from_validated_facet_map,
+    EulerClassificationEvidence, TopologyCheckResult,
+    validate_triangulation_euler_from_validated_facet_map_with_evidence,
+    validate_triangulation_euler_with_evidence,
 };
 use crate::topology::manifold::{
-    ManifoldError, ValidatedFacetDegreeMap, validate_closed_boundary_from_validated_facet_map,
-    validate_local_pseudomanifold_for_simplices,
+    HighDimensionalLinkEvidence, ManifoldError, ValidatedFacetDegreeMap,
+    validate_closed_boundary_from_validated_facet_map, validate_local_pseudomanifold_for_simplices,
     validate_ridge_links as validate_ridge_links_in_tds,
     validate_ridge_links_for_simplices as validate_ridge_links_for_simplices_in_tds,
-    validate_vertex_links as validate_vertex_links_in_index,
-    validate_vertex_links_from_validated_facet_map,
+    validate_vertex_links_from_validated_facet_map_with_evidence,
 };
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, TopologyKind};
 use crate::triangulation::Triangulation;
@@ -314,6 +312,17 @@ pub enum TriangulationValidationError {
         interior_vertex: bool,
     },
 
+    /// A high-dimensional link lacks construction evidence proving its PL type.
+    #[error(
+        "cannot certify the {dimension}-dimensional vertex link at {vertex_key:?} without link-preserving construction provenance"
+    )]
+    HighDimensionalVertexLinkUnproven {
+        /// Vertex whose link could not be certified.
+        vertex_key: VertexKey,
+        /// Dimension of the link.
+        dimension: usize,
+    },
+
     /// The intrinsic simplex-orientation constraints contain a parity obstruction.
     #[error(
         "Intrinsic complex is non-orientable: the shared facet between simplices {simplex1_uuid}[{simplex1_facet_index}] ({simplex1_key:?}) and {simplex2_uuid}[{simplex2_facet_index}] ({simplex2_key:?}) closes with contradictory orientation parity"
@@ -389,12 +398,12 @@ pub enum TriangulationValidationError {
     },
 }
 
-/// A coherent intrinsic orientation of a pure simplicial complex.
+/// A source-bound coherent intrinsic orientation of a pure simplicial complex.
 ///
 /// Each entry records whether the corresponding simplex ordering must be
 /// reversed to obtain one coherent orientation. The representation is opaque
-/// so callers can retain the certificate without depending on the traversal
-/// or storage strategy used to construct it.
+/// and keeps its source triangulation immutably borrowed, so simplex keys cannot
+/// be interpreted after that topology is mutated or dropped.
 ///
 /// # Examples
 ///
@@ -420,12 +429,34 @@ pub enum TriangulationValidationError {
 /// # Ok(())
 /// # }
 /// ```
+///
+/// The witness prevents an exclusive borrow of its source while it remains in use:
+///
+/// ```compile_fail
+/// use delaunay::prelude::construction::{
+///     DelaunayResult, DelaunayTriangulationBuilder, vertex,
+/// };
+///
+/// # fn main() -> DelaunayResult<()> {
+/// let vertices = [
+///     vertex![0.0, 0.0]?,
+///     vertex![1.0, 0.0]?,
+///     vertex![0.0, 1.0]?,
+/// ];
+/// let mut triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
+/// let witness = triangulation.as_triangulation().orientation_witness()?;
+/// let _exclusive = &mut triangulation;
+/// assert!(!witness.is_empty());
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OrientationWitness {
+pub struct OrientationWitness<'tri> {
     assignments: FastHashMap<SimplexKey, bool>,
+    _source_identity: &'tri Uuid,
 }
 
-impl OrientationWitness {
+impl OrientationWitness<'_> {
     /// Returns the number of oriented maximal simplices in the witness.
     #[inline]
     #[must_use]
@@ -535,6 +566,13 @@ impl TryFrom<ManifoldError> for TriangulationValidationError {
                 max_degree,
                 connected,
                 interior_vertex,
+            }),
+            ManifoldError::HighDimensionalVertexLinkUnproven {
+                vertex_key,
+                dimension,
+            } => Ok(Self::HighDimensionalVertexLinkUnproven {
+                vertex_key,
+                dimension,
             }),
         }
     }
@@ -696,6 +734,75 @@ pub enum TopologyGuarantee {
     PLManifold,
 }
 
+/// Crate-internal provenance for topology facts that cannot be recovered from
+/// local incidence or Euler characteristic alone.
+///
+/// The variants are intentionally not public builder options: callers may
+/// provide connectivity, but only construction workflows owned by the crate
+/// can attest that every mutation preserved PL sphere/ball links.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TopologyConstructionProvenance {
+    #[default]
+    Unproven,
+    /// Started from a simplex and evolved through checked Euclidean Delaunay
+    /// cavity replacements that preserve a PL ball and all vertex-link types.
+    EuclideanDelaunayInsertion,
+    /// Formed by the checked periodic image-point quotient workflow.
+    PeriodicImageQuotient,
+}
+
+impl TopologyConstructionProvenance {
+    const fn link_evidence(self) -> HighDimensionalLinkEvidence {
+        match self {
+            Self::Unproven => HighDimensionalLinkEvidence::Unproven,
+            Self::EuclideanDelaunayInsertion | Self::PeriodicImageQuotient => {
+                HighDimensionalLinkEvidence::PreservedByConstruction
+            }
+        }
+    }
+
+    const fn euler_evidence<const D: usize>(
+        self,
+        topology: GlobalTopology<D>,
+    ) -> EulerClassificationEvidence {
+        match (self, topology.kind()) {
+            (Self::EuclideanDelaunayInsertion, TopologyKind::Euclidean) => {
+                EulerClassificationEvidence::EuclideanBall
+            }
+            (Self::PeriodicImageQuotient, TopologyKind::Toroidal) => {
+                EulerClassificationEvidence::PeriodicToroid
+            }
+            _ => EulerClassificationEvidence::Unproven,
+        }
+    }
+}
+
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
+    /// Drops construction evidence before a high-dimensional mutation whose
+    /// local postconditions do not prove that every vertex link remains a PL
+    /// sphere or ball.
+    ///
+    /// A surrounding rollback transaction restores the evidence on failure.
+    /// Pseudomanifold workflows may commit the mutation without this stronger
+    /// proof, but a `PLManifold` validation cannot publish it.
+    pub(crate) const fn invalidate_link_construction_provenance(&mut self) {
+        if D >= 4 {
+            self.topology_construction_provenance = TopologyConstructionProvenance::Unproven;
+        }
+    }
+
+    /// Returns whether a mutation lost evidence required by the selected
+    /// high-dimensional publication contract.
+    const fn requires_link_recertification(&self) -> bool {
+        D >= 4
+            && self.topology_guarantee.requires_vertex_links()
+            && matches!(
+                self.topology_construction_provenance,
+                TopologyConstructionProvenance::Unproven
+            )
+    }
+}
+
 impl Default for TopologyGuarantee {
     #[inline]
     fn default() -> Self {
@@ -776,11 +883,14 @@ impl TopologyGuarantee {
 /// ```rust
 /// use delaunay::prelude::geometry::FastKernel;
 /// use delaunay::prelude::{
-///     TopologyGuarantee, Triangulation, ValidationConfigurationError, ValidationPolicy,
+///     TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
 /// };
+/// use delaunay::prelude::triangulation::TriangulationBuilder;
+/// use delaunay::prelude::tds::Tds;
 ///
-/// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-///     Triangulation::new_empty(FastKernel::new());
+/// let mut tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
+///     .build()
+///     .expect("the empty complex is a valid realization");
 ///
 /// std::assert_matches!(
 ///     tri.try_set_validation_policy(ValidationPolicy::Never),
@@ -919,7 +1029,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         &self,
         global_topology: GlobalTopology<D>,
     ) -> Result<TopologyClassification, TopologyError> {
-        classify_triangulation(&self.tds, global_topology)
+        Ok(self
+            .euler_check_for_topology(global_topology)?
+            .classification)
     }
 
     /// Validates this triangulation's Euler characteristic against its topology metadata.
@@ -942,7 +1054,16 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         &self,
         global_topology: GlobalTopology<D>,
     ) -> Result<TopologyCheckResult, TopologyError> {
-        validate_triangulation_euler(&self.tds, global_topology)
+        let provenance = if global_topology == self.global_topology {
+            self.topology_construction_provenance
+        } else {
+            TopologyConstructionProvenance::Unproven
+        };
+        validate_triangulation_euler_with_evidence(
+            &self.tds,
+            global_topology,
+            provenance.euler_evidence(global_topology),
+        )
     }
 
     /// Validates all ridge links for the Level 3 PL-manifold codimension-2 condition.
@@ -1110,8 +1231,14 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// ```
     pub fn validate_vertex_links(&self) -> Result<(), ManifoldError> {
-        let facet_to_simplices = self.tds.build_facet_to_simplices_index()?;
-        validate_vertex_links_in_index(&facet_to_simplices, self.global_topology)
+        let facet_to_simplices = self.tds.build_facet_to_simplices_map()?;
+        let validated =
+            ValidatedFacetDegreeMap::try_from_facet_map(&self.tds, &facet_to_simplices)?;
+        validate_vertex_links_from_validated_facet_map_with_evidence(
+            validated,
+            self.global_topology,
+            self.topology_construction_provenance.link_evidence(),
+        )
     }
 
     /// Returns the topology guarantee used for Level 3 Intrinsic PL Topology validation.
@@ -1152,14 +1279,15 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::Triangulation;
+    /// use delaunay::prelude::triangulation::TriangulationBuilder;
     /// use delaunay::prelude::geometry::FastKernel;
-    /// use delaunay::prelude::tds::InvariantError;
+    /// use delaunay::prelude::tds::{InvariantError, Tds};
     /// use delaunay::prelude::topology::spaces::GlobalTopology;
     ///
     /// # fn main() -> Result<(), InvariantError> {
-    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-    ///     Triangulation::new_empty(FastKernel::new());
+    /// let mut tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
+    ///     .build()
+    ///     .expect("the empty complex is a valid realization");
     ///
     /// tri.try_set_global_topology(GlobalTopology::Euclidean)?;
     /// assert_eq!(tri.global_topology(), GlobalTopology::Euclidean);
@@ -1203,18 +1331,18 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         //
         // Build the facet map once and reuse it for manifold validation and Euler counting.
         let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
-        let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)?;
+        let facet_to_simplices =
+            ValidatedFacetDegreeMap::try_from_facet_map(&self.tds, &facet_to_simplices)?;
         self.validate_topology_core_from_validated_facet_map(facet_to_simplices)
     }
 
     fn validate_topology_core_from_validated_facet_map(
         &self,
-        facet_to_simplices: ValidatedFacetDegreeMap<'_>,
+        facet_to_simplices: ValidatedFacetDegreeMap<'_, U, V, D>,
     ) -> Result<(), InvariantError> {
         // 2b. Boundary manifoldness in codimension 2: the boundary must be "closed"
         // (i.e., its ridges must have degree 2 within boundary facets).
         validate_closed_boundary_from_validated_facet_map(
-            &self.tds,
             facet_to_simplices,
             self.global_topology,
         )?;
@@ -1234,10 +1362,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         // ValidationPolicy controls when this global audit runs; it does not
         // weaken the mathematical guarantee being certified.
         if self.topology_guarantee.requires_vertex_links() {
-            validate_vertex_links_from_validated_facet_map(
-                &self.tds,
+            validate_vertex_links_from_validated_facet_map_with_evidence(
                 facet_to_simplices,
                 self.global_topology,
+                self.topology_construction_provenance.link_evidence(),
             )?;
         }
 
@@ -1249,10 +1377,11 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         }
 
         // 3. Euler characteristic using the topology module
-        let topology_result = validate_triangulation_euler_from_validated_facet_map(
-            &self.tds,
+        let topology_result = validate_triangulation_euler_from_validated_facet_map_with_evidence(
             facet_to_simplices,
             self.global_topology,
+            self.topology_construction_provenance
+                .euler_evidence(self.global_topology),
         )
         .map_err(invariant_error_from_topology_error)?;
 
@@ -1284,7 +1413,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// parity constraints are contradictory. Structural lookup or adjacency
     /// failures retain their Level 2 [`TdsError`] provenance through
     /// [`InvariantError::Tds`].
-    pub fn orientation_witness(&self) -> Result<OrientationWitness, InvariantError> {
+    pub fn orientation_witness(&self) -> Result<OrientationWitness<'_>, InvariantError> {
         let mut assignments: FastHashMap<SimplexKey, bool> =
             fast_hash_map_with_capacity(self.tds.number_of_simplices());
 
@@ -1361,7 +1490,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             }
         }
 
-        Ok(OrientationWitness { assignments })
+        Ok(OrientationWitness {
+            assignments,
+            _source_identity: self.tds.identity().as_ref(),
+        })
     }
 
     /// Validates that the triangulation's simplex neighbor graph is a single connected component.
@@ -1412,11 +1544,14 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::{Triangulation, ValidationPolicy};
+    /// use delaunay::prelude::ValidationPolicy;
+    /// use delaunay::prelude::triangulation::TriangulationBuilder;
     /// use delaunay::prelude::geometry::FastKernel;
+    /// use delaunay::prelude::tds::Tds;
     ///
-    /// let tri: Triangulation<FastKernel<f64>, (), (), 2> =
-    ///     Triangulation::new_empty(FastKernel::new());
+    /// let tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
+    ///     .build()
+    ///     .expect("the empty complex is a valid realization");
     ///
     /// assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
     /// ```
@@ -1439,12 +1574,15 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::{Triangulation, ValidationPolicy};
+    /// use delaunay::prelude::ValidationPolicy;
+    /// use delaunay::prelude::triangulation::TriangulationBuilder;
     /// use delaunay::prelude::geometry::FastKernel;
+    /// use delaunay::prelude::tds::Tds;
     ///
     /// # fn main() -> Result<(), delaunay::prelude::ValidationConfigurationError> {
-    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-    ///     Triangulation::new_empty(FastKernel::new());
+    /// let mut tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
+    ///     .build()
+    ///     .expect("the empty complex is a valid realization");
     ///
     /// tri.try_set_validation_policy(ValidationPolicy::Always)?;
     /// assert_eq!(tri.validation_policy(), ValidationPolicy::Always);
@@ -1473,12 +1611,15 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::{TopologyGuarantee, Triangulation};
+    /// use delaunay::prelude::TopologyGuarantee;
+    /// use delaunay::prelude::triangulation::TriangulationBuilder;
     /// use delaunay::prelude::geometry::FastKernel;
+    /// use delaunay::prelude::tds::Tds;
     ///
     /// # fn main() -> Result<(), delaunay::prelude::ValidationConfigurationError> {
-    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-    ///     Triangulation::new_empty(FastKernel::new());
+    /// let mut tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
+    ///     .build()
+    ///     .expect("the empty complex is a valid realization");
     /// tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)?;
     /// assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
     /// # Ok(())
@@ -1712,7 +1853,7 @@ where
 
         match self.tds.build_facet_to_simplices_map() {
             Ok(facet_to_simplices) => {
-                match ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices) {
+                match ValidatedFacetDegreeMap::try_from_facet_map(&self.tds, &facet_to_simplices) {
                     Ok(validated_facets) => {
                         if let Err(source) =
                             self.validate_topology_core_from_validated_facet_map(validated_facets)
@@ -1795,7 +1936,8 @@ where
         self.tds.validate()?;
         self.validate_global_connectedness()?;
         let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
-        let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)?;
+        let facet_to_simplices =
+            ValidatedFacetDegreeMap::try_from_facet_map(&self.tds, &facet_to_simplices)?;
         self.validate_topology_core_from_validated_facet_map(facet_to_simplices)
     }
 
@@ -1906,14 +2048,21 @@ where
             return Ok(());
         }
 
+        // Scoped incidence cannot replace a lost D >= 4 PL-link proof. This
+        // deliberately routes only proof-losing cold paths through the full
+        // Level 3 boundary; ordinary proof-preserving mutations stay local.
+        if self.requires_link_recertification() {
+            self.is_valid_topology()?;
+        }
+
         let simplex_keys: SimplexKeyBuffer = self.tds.simplex_keys().collect();
         self.tds
             .validate_coherent_orientation_for_simplices(&simplex_keys)?;
 
         let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
-        let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)?;
+        let facet_to_simplices =
+            ValidatedFacetDegreeMap::try_from_facet_map(&self.tds, &facet_to_simplices)?;
         validate_closed_boundary_from_validated_facet_map(
-            &self.tds,
             facet_to_simplices,
             self.global_topology,
         )?;
@@ -2042,6 +2191,10 @@ where
     ) -> Result<(), InvariantError> {
         if self.tds.number_of_simplices() == 0 {
             return Ok(());
+        }
+
+        if self.requires_link_recertification() {
+            self.is_valid_topology()?;
         }
 
         if simplices.is_empty() {
@@ -2186,8 +2339,8 @@ fn start_insertion_timing(telemetry_mode: InsertionTelemetryMode) -> Option<Inst
 mod tests {
     use super::*;
     use crate::core::algorithms::flips::{DelaunayRepairError, DelaunayRepairPostconditionFailure};
-    use crate::core::algorithms::incremental_insertion::CavityFillingError;
-    use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
+    use crate::core::algorithms::insertion::CavityFillingError;
+    use crate::core::algorithms::insertion::repair_neighbor_pointers;
     use crate::core::collections::{NeighborBuffer, SimplexVertexKeyBuffer};
     use crate::core::facet::FacetError;
     use crate::core::operations::InsertionOutcome;
@@ -2199,6 +2352,7 @@ mod tests {
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
     use crate::geometry::util::generate_random_points_in_range_seeded;
+    use crate::incremental_builder::DelaunayIncrementalBuilder;
     use crate::repair::DelaunayRepairPolicy;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::realization::TriangulationRealizationValidationError;
@@ -3241,6 +3395,33 @@ mod tests {
     }
 
     #[test]
+    fn scoped_postconditions_reject_lost_high_dimensional_link_provenance() {
+        let vertices = [
+            test_vertex([0.0, 0.0, 0.0, 0.0]),
+            test_vertex([1.0, 0.0, 0.0, 0.0]),
+            test_vertex([0.0, 1.0, 0.0, 0.0]),
+            test_vertex([0.0, 0.0, 1.0, 0.0]),
+            test_vertex([0.0, 0.0, 0.0, 1.0]),
+            test_vertex([0.1, 0.1, 0.1, 0.1]),
+        ];
+        let mut tri = DelaunayTriangulation::builder(&vertices)
+            .build()
+            .unwrap()
+            .into_triangulation();
+        assert!(tri.number_of_simplices() > 1);
+        let scope: SimplexKeyBuffer = tri.tds.simplex_keys().collect();
+
+        tri.invalidate_link_construction_provenance();
+
+        assert_matches!(
+            tri.validate_mandatory_mutation_postconditions_for_simplices(&scope),
+            Err(InvariantError::Triangulation {
+                source: TriangulationValidationError::HighDimensionalVertexLinkUnproven { .. }
+            })
+        );
+    }
+
+    #[test]
     fn insertion_error_to_invariant_error_maps_all_arms() {
         let source = TdsError::Geometric {
             source: GeometricError::DegenerateOrientation {
@@ -3867,9 +4048,8 @@ mod tests {
         tri.validate_global_connectedness().unwrap();
         let facet_to_simplices = tri.tds.build_facet_to_simplices_map().unwrap();
         let facet_to_simplices =
-            ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices).unwrap();
+            ValidatedFacetDegreeMap::try_from_facet_map(&tri.tds, &facet_to_simplices).unwrap();
         validate_closed_boundary_from_validated_facet_map(
-            &tri.tds,
             facet_to_simplices,
             GlobalTopology::Euclidean,
         )
@@ -4059,16 +4239,16 @@ mod tests {
         let tri = Triangulation::<FastKernel<f64>, (), (), 1>::new_with_tds(FastKernel::new(), tds);
         let facet_to_simplices = tri.tds.build_facet_to_simplices_map().unwrap();
         let facet_to_simplices =
-            ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices).unwrap();
+            ValidatedFacetDegreeMap::try_from_facet_map(&tri.tds, &facet_to_simplices).unwrap();
 
-        let topology = validate_triangulation_euler_from_validated_facet_map(
-            &tri.tds,
+        let topology = validate_triangulation_euler_from_validated_facet_map_with_evidence(
             facet_to_simplices,
             GlobalTopology::Euclidean,
+            EulerClassificationEvidence::Unproven,
         )
         .unwrap();
-        assert_eq!(topology.classification, TopologyClassification::Ball(1));
-        assert_eq!(topology.expected, Some(1));
+        assert_eq!(topology.classification, TopologyClassification::Unknown);
+        assert_eq!(topology.expected, None);
         assert_eq!(topology.chi, 1);
 
         match tri.is_valid_topology() {
@@ -4390,13 +4570,15 @@ mod tests {
                             .unwrap();
 
                         let detail = tri
-                            .insert_with_statistics_seeded_indexed_detailed(
+                            .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
                                 unit_simplex_interior_vertex::<$dim>(),
                                 None,
                                 None,
                                 0,
                                 None,
                                 None,
+                                InsertionTelemetryMode::CountsOnly,
+                                false,
                             )
                             .unwrap();
 
@@ -4624,15 +4806,23 @@ mod tests {
         let bounds = CoordinateRange::try_new(-100.0_f64, 100.0).unwrap();
         let points = generate_random_points_in_range_seeded::<3>(25, bounds, 123)
             .expect("validated range should generate finite points");
+        let mut points = points.into_iter();
 
-        let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
-
-        dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)
+        let mut builder: DelaunayIncrementalBuilder<_, (), (), 3> =
+            DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
+        builder
+            .try_set_validation_policy(ValidationPolicy::ExplicitOnly)
             .unwrap();
+        for point in points.by_ref().take(4) {
+            builder
+                .insert_vertex(Vertex::from_validated_point(point, None))
+                .expect("the initial maximal simplex should publish");
+        }
+
+        let mut dt = builder.finish().expect("the bootstrap should be complete");
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
 
-        for (i, point) in points.into_iter().enumerate() {
+        for (i, point) in points.enumerate() {
             let vertex = Vertex::from_validated_point(point, None);
             let vertex_count_before = dt.number_of_vertices();
             let simplex_count_before = dt.number_of_simplices();
@@ -4685,13 +4875,15 @@ mod tests {
 
             let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
             let detail = tri
-                .insert_with_statistics_seeded_indexed_detailed(
+                .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
                     test_vertex([0.25, 0.25]),
                     None,
                     hint,
                     0,
                     None,
                     None,
+                    InsertionTelemetryMode::CountsOnly,
+                    false,
                 )
                 .unwrap();
 

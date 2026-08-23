@@ -298,15 +298,23 @@ compile-only pass. `test-unit` runs lib unit
 tests in both debug and release profiles so debug assertions and default
 overflow checks remain covered. The nextest `debug` profile preserves the
 default 10-second watchdog, with 60-second overrides for the two periodic
-builder cases whose debug exact-geometry cost is platform-sensitive and, on
-Windows, two randomized 5D agreement checks at the timeout boundary. The
-optimized 5D intersection agreement check has the same focused override on
-macOS ARM runners.
+builder cases whose debug exact-geometry cost is platform-sensitive and the
+optimized 5D intersection agreement checks, which can reach that boundary on
+hosted runners. The randomized 5D full-report agreement check has the same
+focused override across platforms. The translated 5D and complete 6D exact
+SoS expansion checks, including the D=6 adaptive-kernel checks that repeat the
+complete expansion, also have a focused 60-second override because their
+irreducible cold-path work can cross the default boundary on hosted runners.
 `test-integration` runs a focused release-profile nextest bucket. Selected 4D
 property families retain that default coverage with a Windows-only 60-second
 override because their release runtimes sit at the 10-second boundary on
-Windows runners; non-Windows platforms keep the normal budget. `test-cli` owns
-the feature-gated CLI tests, and `test-rust` composes every Rust test class once.
+Windows runners. The cospherical 3D `OnSuspicion` sequence property has a
+focused cross-platform 60-second override for the same hosted-runner boundary.
+The deterministic 5D SoS in-sphere property has a Windows-only 60-second
+override because its two complete exact expansions per generated case can also
+cross that boundary. Unaffected tests keep the normal budget. `test-cli` owns
+the feature-gated binary unit and CLI integration tests, and `test-rust`
+composes every Rust test class once.
 The LLVM-instrumented coverage profile retains its 300-second default watchdog
 and grants a 1,200-second override only to the three compact `T^3` builder cases
 that exercise periodic-image construction.
@@ -354,16 +362,21 @@ Workspace-wide benchmark recipes (`just bench`, `just bench-smoke`,
 dependencies are compiled.
 
 Use `just pachner-stress [attempts] [validate_every] [mode]` for the manual 3D+4D
-direct Pachner diagnostic run through the opt-in `delaunay` CLI. The
-dimension-specific `just pachner-stress-3d` and `just pachner-stress-4d` recipes
-default to 100 attempted moves with progress every 10 attempts, write progress
-CSV plus summary JSON under `target/pachner_stress/`, and keep parseable stdout
+direct Pachner diagnostic run through the opt-in `pachner-stress` binary. This
+aggregate recipe accepts only those three parameters and fixes the 3D and 4D
+workloads at 9,000 and 1,000 vertices, respectively. To change a vertex count,
+use the dimension-specific `just pachner-stress-3d [attempts] [vertices]
+[validate_every] [output_dir] [mode]` or `just pachner-stress-4d [attempts]
+[vertices] [validate_every] [output_dir] [mode]` recipe; their `vertices`
+parameters default to 9,000 and 1,000, respectively. All three recipes default
+to 100 attempted moves with progress every 10 attempts, write progress CSV plus
+summary JSON under `target/pachner_stress/`, and keep parseable stdout
 stage/report/progress lines so long workloads can be diagnosed without making
 the workflow part of routine CI. These direct stress recipes currently validate
 topology scope only (Levels 1-3); the large Level 4 realization overlap scan is
-deferred to the dedicated realization-validation work. The CLI supports
-`round-trip` and `random-walk` modes; `round-trip` is the default. Pass explicit
-`attempts`, `vertices`, and `validate_every` arguments for soak runs. Use
+deferred to the dedicated realization-validation work. The `pachner-stress`
+binary supports `round-trip` and `random-walk` modes; `round-trip` is the
+default. Use
 `just bench-pachner-stress` when Criterion timing statistics for stable 4D move
 and inverse fixtures are needed.
 
@@ -666,11 +679,14 @@ target-built PDF to `papers/validation.pdf`. `just papers` refreshes the
 canonical figures and reviewer PDF through those named artifact owners.
 
 Tectonic and `tex-fmt` are pinned Cargo-installed tools. `chktex` comes from a
-TeX distribution or system package manager. Installing or upgrading Tectonic
-from Cargo also requires a `pkg-config` implementation and development headers
-for its externally resolved native bridge libraries. macOS requires FreeType,
-Graphite2, ICU, libpng, and zlib, but not fontconfig. Non-Apple platforms
-additionally require fontconfig and OpenSSL. The pinned default build vendors
+TeX distribution or system package manager. Local macOS installations provided
+by MacTeX place commands under `/Library/TeX/texbin`; if a non-interactive shell
+does not load that directory, run paper recipes with
+`PATH=/Library/TeX/texbin:/opt/homebrew/bin:$PATH`. Installing or upgrading
+Tectonic from Cargo also requires a `pkg-config` implementation and development
+headers for its externally resolved native bridge libraries. macOS requires
+FreeType, Graphite2, ICU, libpng, and zlib, but not fontconfig. Non-Apple
+platforms additionally require fontconfig and OpenSSL. The pinned default build vendors
 HarfBuzz. When the pinned Tectonic version is absent, `just setup-tools`
 requires `pkg-config` (commonly installed as `pkgconf`) and checks the
 platform-specific external native dependency set. On macOS it auto-detects
@@ -817,7 +833,7 @@ just action-lint
 | Validate core Rust checks | `just rust-core-check` |
 | Run all default test buckets | `just test` |
 | Run Rust tests only | `just test-rust` |
-| Run CLI-feature integration tests | `just test-cli` |
+| Run CLI-feature binary unit and integration tests | `just test-cli` |
 | Run Rust lib unit tests only | `just test-unit` |
 | Run doctests only | `just test-doc` |
 | Run integration tests | `just test-integration` |
