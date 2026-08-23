@@ -342,7 +342,7 @@ For details on validation helpers such as `validate()`, `is_valid()`,
 `is_valid_topology()`, and `is_valid_delaunay()`, see:
 
 ```text
-docs/construction_and_validation.md
+../construction_and_validation.md
 ```
 
 Tests should prefer calling these validation helpers instead of
@@ -408,7 +408,8 @@ builder contracts and are fast in release builds. The optimized 5D intersection
 agreement check receives a platform-neutral 60-second override because it can
 reach the 10-second boundary on hosted runners. The randomized 5D full-report
 agreement check receives the same focused override across platforms. The
-translated 5D and complete 6D exact SoS expansion checks receive a focused
+translated 5D and complete 6D exact SoS expansion checks, including the D=6
+adaptive-kernel checks that repeat the complete expansion, receive a focused
 60-second override because their irreducible cold-path work can cross the
 default boundary on hosted runners.
 

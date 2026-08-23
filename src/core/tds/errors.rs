@@ -1456,6 +1456,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "exhaustive mapping keeps each validation error adjacent to its expected stable kind"
+    )]
     fn triangulation_validation_error_kind_from_error_preserves_all_variants() {
         let vertex_key = VertexKey::from(KeyData::from_ffi(3));
         let cases = [

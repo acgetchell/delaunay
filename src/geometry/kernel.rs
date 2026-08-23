@@ -1063,7 +1063,7 @@ mod tests {
     }
 
     // =========================================================================
-    // MACRO — AdaptiveKernel PER-DIMENSION TESTS (2D–5D)
+    // MACRO — AdaptiveKernel PER-DIMENSION TESTS (2D–6D)
     // =========================================================================
 
     /// Generate `AdaptiveKernel` tests for a given dimension: agreement with
@@ -1208,9 +1208,10 @@ mod tests {
     gen_adaptive_kernel_tests!(3);
     gen_adaptive_kernel_tests!(4);
     gen_adaptive_kernel_tests!(5);
+    gen_adaptive_kernel_tests!(6);
 
     // =========================================================================
-    // MACRO — Kernel Consistency Across All Three Implementations (2D–5D)
+    // MACRO — Kernel Consistency Across All Three Implementations (2D–6D)
     // =========================================================================
 
     /// Verify that `FastKernel`, `RobustKernel`, and `AdaptiveKernel` agree on
@@ -1252,6 +1253,7 @@ mod tests {
     gen_kernel_consistency_tests!(3);
     gen_kernel_consistency_tests!(4);
     gen_kernel_consistency_tests!(5);
+    gen_kernel_consistency_tests!(6);
 
     #[test]
     fn test_adaptive_kernel_default_trait() {
@@ -1299,6 +1301,7 @@ mod tests {
     gen_sos_identical_points_test!(3);
     gen_sos_identical_points_test!(4);
     gen_sos_identical_points_test!(5);
+    gen_sos_identical_points_test!(6);
 
     // =========================================================================
     // ExactPredicates MARKER TRAIT — COMPILE-TIME ASSERTIONS

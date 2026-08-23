@@ -302,7 +302,8 @@ builder cases whose debug exact-geometry cost is platform-sensitive and the
 optimized 5D intersection agreement checks, which can reach that boundary on
 hosted runners. The randomized 5D full-report agreement check has the same
 focused override across platforms. The translated 5D and complete 6D exact
-SoS expansion checks also have a focused 60-second override because their
+SoS expansion checks, including the D=6 adaptive-kernel checks that repeat the
+complete expansion, also have a focused 60-second override because their
 irreducible cold-path work can cross the default boundary on hosted runners.
 `test-integration` runs a focused release-profile nextest bucket. Selected 4D
 property families retain that default coverage with a Windows-only 60-second
