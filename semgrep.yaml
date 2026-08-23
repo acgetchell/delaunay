@@ -2980,6 +2980,25 @@ rules:
     patterns:
       - pattern-regex: '(?m)^\s*(?:run:\s*)?uv\s+sync\b(?![^\n]*\s--locked\b)[^\n]*$' # yamllint disable-line rule:line-length
 
+  - id: delaunay.github-actions.uv-run-locked-in-workflows
+    languages:
+      - regex
+    severity: WARNING
+    message: "Use uv run --locked in GitHub Actions workflows."
+    metadata:
+      category: reproducibility
+      rationale: >-
+        Workflow commands should fail on lockfile drift instead of silently
+        resolving dependency versions that differ from the reviewed lockfile.
+    paths:
+      include:
+        - "/.github/workflows/**/*.yml"
+        - "/.github/workflows/**/*.yaml"
+        - "/tests/semgrep/.github/workflows/**/*.yml"
+        - "/tests/semgrep/.github/workflows/**/*.yaml"
+    patterns:
+      - pattern-regex: '(?m)^\s*(?:run:\s*)?uv\s+run\b(?![^\n]*\s--locked\b)[^\n]*$' # yamllint disable-line rule:line-length
+
   - id: delaunay.python.no-broad-exception
     languages:
       - python
@@ -3181,6 +3200,33 @@ rules:
         - "/tests/semgrep/**"
     pattern: raise Exception(...)
 
+  - id: delaunay.python.explicit-path-text-encoding-in-tests
+    languages:
+      - python
+    severity: WARNING
+    message: 'Pass encoding="utf-8" to Path.read_text/write_text in Python tests.'
+    metadata:
+      category: portability
+      rationale: >-
+        Test fixtures that omit an explicit encoding can pass on UTF-8 platforms
+        while failing on Windows when benchmark output contains Unicode symbols.
+    paths:
+      include:
+        - "/scripts/tests/**/*.py"
+        - "/tests/semgrep/scripts/tests/**/*.py"
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern: $PATH.read_text(...)
+              - pattern-not: $PATH.read_text(..., encoding="utf-8", ...)
+              - pattern-not: $PATH.read_text(..., encoding='utf-8', ...)
+              - pattern-not: $PATH.read_text(..., encoding=UTF8, ...)
+          - patterns:
+              - pattern: $PATH.write_text(...)
+              - pattern-not: $PATH.write_text(..., encoding="utf-8", ...)
+              - pattern-not: $PATH.write_text(..., encoding='utf-8', ...)
+              - pattern-not: $PATH.write_text(..., encoding=UTF8, ...)
+
   - id: delaunay.python.no-adhoc-completedprocess-mock
     languages:
       - python
@@ -3266,12 +3312,13 @@ rules:
     languages:
       - python
     severity: WARNING
-    message: "Use subprocess_utils command wrappers instead of calling subprocess.run directly."
+    message: "Use subprocess_utils command wrappers instead of spawning a process directly."
     metadata:
       category: security
       rationale: >-
         Support scripts should inherit the repository's subprocess hardening for
-        executable resolution, shell rejection, text output, and timeouts.
+        executable resolution, shell rejection, text output, and timeouts. This
+        applies to every direct process-spawning API, not only subprocess.run.
     paths:
       include:
         - "/scripts/**/*.py"
@@ -3279,7 +3326,96 @@ rules:
       exclude:
         - "/scripts/subprocess_utils.py"
         - "/scripts/tests/**/*.py"
-    pattern: subprocess.run(...)
+    pattern-either:
+      - pattern: subprocess.run(...)
+      - pattern: subprocess.Popen(...)
+      - pattern: subprocess.call(...)
+      - pattern: subprocess.check_call(...)
+      - pattern: subprocess.check_output(...)
+      - pattern: subprocess.getoutput(...)
+      - pattern: subprocess.getstatusoutput(...)
+      - pattern: os.system(...)
+
+  - id: delaunay.python.safe-tar-extraction
+    languages:
+      - python
+    severity: WARNING
+    message: 'Extract tar archives with filter="data".'
+    metadata:
+      category: security
+      rationale: >-
+        Python's data filter rejects dangerous archive member types and unsafe
+        filesystem metadata in addition to repository-owned path traversal
+        checks.
+    paths:
+      include:
+        - "/scripts/**/*.py"
+        - "/tests/semgrep/scripts/tests/python_style.py"
+      exclude:
+        - "/scripts/tests/**/*.py"
+    pattern-either:
+      - patterns:
+          - pattern: $TAR.extractall(...)
+          - pattern-not: $TAR.extractall(..., filter="data", ...)
+      - patterns:
+          - pattern: $TAR.extract(...)
+          - pattern-not: $TAR.extract(..., filter="data", ...)
+
+  - id: delaunay.python.performance-artifact-writes-are-transactional
+    languages:
+      - python
+    severity: WARNING
+    message: "Stage performance artifact payloads before atomically replacing destination files."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/550"
+      rationale: >-
+        Promotion publishes a coupled CSV and JSON bundle. Direct destination
+        writes can leave truncated or partially updated artifacts when a write,
+        validation step, or process fails.
+    paths:
+      include:
+        - "/scripts/performance_artifacts.py"
+        - "/tests/semgrep/scripts/tests/python_style.py"
+    pattern-either:
+      - pattern: $PATH.write_text(...)
+      - pattern: $PATH.write_bytes(...)
+      - patterns:
+          - pattern: $PATH.open($MODE, ...)
+          - metavariable-regex:
+              metavariable: $MODE
+              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+      - patterns:
+          - pattern: open($PATH, $MODE, ...)
+          - metavariable-regex:
+              metavariable: $MODE
+              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+
+  - id: delaunay.python.performance-promotion-is-csv-only
+    languages:
+      - python
+    severity: WARNING
+    message: "Keep performance promotion inputs in the canonical CSV format."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/550"
+      rationale: >-
+        CSV is the reviewed interchange and release-archive format. Notebooks
+        may derive Parquet for analysis, but promotion must validate and publish
+        the canonical CSV rather than accepting a second input contract.
+    paths:
+      include:
+        - "/scripts/performance_artifacts.py"
+        - "/tests/semgrep/scripts/tests/python_style.py"
+    pattern-either:
+      - pattern: $READER.read_parquet(...)
+      - pattern: read_parquet(...)
+      - pattern: $READER.scan_parquet(...)
+      - pattern: scan_parquet(...)
+      - pattern: pyarrow.parquet.read_table(...)
+      - pattern: pq.read_table(...)
+      - pattern: pyarrow.parquet.ParquetFile(...)
+      - pattern: pq.ParquetFile(...)
 
   - id: delaunay.python.no-untyped-defs-in-scripts
     languages:

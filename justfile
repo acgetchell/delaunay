@@ -74,8 +74,8 @@ bench-ci:
 
 # Render a Markdown comparison against a saved Criterion baseline.
 [group('benchmarks and performance')]
-bench-compare baseline="last" suite="release-signal": _ensure-uv
-    uv run --locked benchmark-utils bench-compare "{{ baseline }}" --suite "{{ suite }}"
+bench-compare baseline="last" suite="release-signal" scope="release-signal": _ensure-uv
+    uv run --locked benchmark-utils bench-compare "{{ baseline }}" --suite "{{ suite }}" --scope "{{ scope }}"
 
 # Compile benchmark harnesses without running them.
 [group('benchmarks and performance')]
@@ -350,11 +350,16 @@ help-workflows:
     @echo "  just paper-refresh      # Check, then refresh one tracked reviewer PDF"
     @echo "  just papers             # Refresh figures and the validation reviewer PDF"
     @echo ""
-    @echo "Performance checks (perf-*):"
+    @echo "Canonical performance workflows:"
+    @echo "  just performance-local  # Measure current tree vs latest release; retain bundle"
+    @echo "  just performance-release # Measure, retain, validate, and promote release docs"
+    @echo "  just performance-doc    # Promote docs from retained CSV/JSON; no benchmarks"
+    @echo "  just performance-github-assets # Compare stored release assets; retain bundle"
+    @echo ""
+    @echo "Delaunay-specific performance checks (perf-*):"
     @echo "  just perf-no-regressions # Fast guard against the cached main baseline"
     @echo "  just perf-vs-ref <ref>  # Compare against another cached Git ref"
     @echo "  just perf-large-scale-smoke # Bounded 2D-5D wall-clock guard"
-    @echo "  just perf-local         # Compare the current tree with the latest release"
     @echo "  just perf-help          # Detailed performance and profiling commands"
     @echo ""
     @echo "Larger benchmarks (bench-*):"
@@ -698,20 +703,8 @@ perf-compare file threshold="7.5": _ensure-uv
 
 # Compare stored GitHub Release benchmark assets without local cargo runs.
 [group('benchmarks and performance')]
-perf-github-assets current_tag="" baseline_tag="": _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    current_tag="{{ current_tag }}"
-    baseline_tag="{{ baseline_tag }}"
-    tag_pair_state="$(just --quiet _performance-tag-pair-state "$current_tag" "$baseline_tag")"
-    if [[ "$tag_pair_state" == "invalid" ]]; then
-        exit 2
-    fi
-    if [[ "$tag_pair_state" == "explicit" ]]; then
-        uv run --locked benchmark-utils performance-github-assets "$current_tag" "$baseline_tag"
-    else
-        uv run --locked benchmark-utils performance-github-assets
-    fi
+perf-github-assets current_tag="" baseline_tag="":
+    just performance-github-assets "{{ current_tag }}" "{{ baseline_tag }}"
 
 # Show detailed performance-check, benchmark, and profiling workflows.
 [group('benchmarks and performance')]
@@ -719,12 +712,13 @@ perf-help:
     @echo "Performance Analysis Commands:"
     @echo "  just bench-latest          # Run curated release-signal Criterion benchmarks"
     @echo "  just bench-latest-vs-last  # Run latest and compare against saved 'last'"
-    @echo "  just bench-compare [base]  # Render a Markdown report from saved Criterion baselines"
-    @echo "  just bench-save-baseline <tag> # Save release-signal Criterion baseline"
+    @echo "  just bench-compare [base] [suite] [scope] # Render a report from saved Criterion baselines"
+    @echo "  just bench-save-baseline <tag> [suite] # Save a named Criterion baseline"
     @echo "  just bench-save-baseline last # Save release-signal Criterion baseline as 'last'"
-    @echo "  just perf-local           # Compare current tree against latest release locally"
-    @echo "  just perf-github-assets   # Compare stored GitHub Release benchmark assets"
-    @echo "  just perf-release         # Promote release-to-release performance docs"
+    @echo "  just performance-local    # Compare current tree against latest release locally"
+    @echo "  just performance-github-assets # Compare stored GitHub Release benchmark assets"
+    @echo "  just performance-release  # Measure, retain, and promote release performance docs"
+    @echo "  just performance-doc      # Promote docs from retained CSV/JSON without benchmarks"
     @echo "  just perf-large-scale-smoke # Quick pre-push 2D-5D wall-clock smoke guard"
     @echo "  just perf-no-regressions   # Fast pre-PR guard with a cached same-machine main baseline"
     @echo "  just perf-vs-ref <ref> [threshold] # Compare current tree vs a cached same-machine ref baseline"
@@ -862,8 +856,8 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
 
 # Compare the current tree against the latest published release in temp worktrees.
 [group('benchmarks and performance')]
-perf-local: _ensure-uv
-    uv run --locked benchmark-utils performance-local
+perf-local:
+    just performance-local
 
 # Fast pre-PR performance guard against a cached same-machine main baseline.
 [group('benchmarks and performance')]
@@ -872,7 +866,44 @@ perf-no-regressions threshold="7.5": _ensure-uv
 
 # Generate local release-signal measurements in temp worktrees, then promote/archive docs.
 [group('benchmarks and performance')]
-perf-release current_tag="" baseline_tag="": _ensure-uv
+perf-release current_tag="" baseline_tag="":
+    just performance-release "{{ current_tag }}" "{{ baseline_tag }}"
+
+# Compare the current tree against a cached same-machine ref baseline.
+[group('benchmarks and performance')]
+perf-vs-ref ref threshold="7.5": _ensure-uv
+    uv run --locked benchmark-utils compare-ref --ref "{{ ref }}" --threshold {{ threshold }} --dev
+
+# Promote performance documentation solely from the retained canonical artifacts.
+[group('benchmarks and performance')]
+performance-doc: _ensure-uv
+    uv run --locked benchmark-utils performance-doc
+
+# Compare stored GitHub Release benchmark assets without local Cargo runs.
+[group('benchmarks and performance')]
+performance-github-assets current_tag="" baseline_tag="": _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    current_tag="{{ current_tag }}"
+    baseline_tag="{{ baseline_tag }}"
+    tag_pair_state="$(just --quiet _performance-tag-pair-state "$current_tag" "$baseline_tag")"
+    if [[ "$tag_pair_state" == "invalid" ]]; then
+        exit 2
+    fi
+    if [[ "$tag_pair_state" == "explicit" ]]; then
+        uv run --locked benchmark-utils performance-github-assets "$current_tag" "$baseline_tag"
+    else
+        uv run --locked benchmark-utils performance-github-assets
+    fi
+
+# Compare the current tree against the latest stable release and retain a bundle.
+[group('benchmarks and performance')]
+performance-local: _ensure-uv
+    uv run --locked benchmark-utils performance-local
+
+# Measure, retain, reload-validate, and promote release performance documentation.
+[group('benchmarks and performance')]
+performance-release current_tag="" baseline_tag="": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     current_tag="{{ current_tag }}"
@@ -886,11 +917,6 @@ perf-release current_tag="" baseline_tag="": _ensure-uv
     else
         uv run --locked benchmark-utils performance-release
     fi
-
-# Compare the current tree against a cached same-machine ref baseline.
-[group('benchmarks and performance')]
-perf-vs-ref ref threshold="7.5": _ensure-uv
-    uv run --locked benchmark-utils compare-ref --ref "{{ ref }}" --threshold {{ threshold }} --dev
 
 # Run the selected CI benchmark suite for one compiler/code pair.
 [group('benchmarks and performance')]
@@ -1100,8 +1126,20 @@ rust-core-check: fmt-check clippy doc-check semgrep semgrep-test
 # Repository-owned Semgrep rules for project-specific Rust diagnostics.
 [group('validation')]
 semgrep: _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
     # Serialize repository scans to avoid Semgrep shared-state races across workers.
     uv run --locked semgrep --error --strict --timeout 120 --jobs 1 --config semgrep.yaml .
+
+    # Semgrep's default ignore policy excludes test directories. Pass tracked
+    # Python test files explicitly so test-only repository rules are enforced.
+    python_test_files=()
+    while IFS= read -r -d '' file; do
+        python_test_files+=("$file")
+    done < <(git ls-files -z 'scripts/tests/*.py')
+    if [[ "${#python_test_files[@]}" -gt 0 ]]; then
+        uv run --locked semgrep --error --strict --timeout 120 --jobs 1 --config semgrep.yaml "${python_test_files[@]}"
+    fi
 
 # Test the repository-owned Semgrep rules against their fixtures.
 [group('validation')]

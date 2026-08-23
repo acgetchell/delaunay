@@ -336,11 +336,12 @@ just bench
 just bench-ci
 just bench-latest
 just bench-latest-vs-last
-just bench-compare
+just bench-compare [baseline] [suite] [scope]
 just bench-save-baseline v0.7.8
-just perf-local
-just perf-github-assets
-just perf-release
+just performance-local
+just performance-github-assets
+just performance-release
+just performance-doc
 just perf-baseline
 just perf-compare
 just perf-vs-ref
@@ -411,7 +412,7 @@ available through `just bench-save-baseline <tag> topology` and
 `cargo bench --locked --profile perf --bench topology_guarantee_construction`. Save the previous release
 signal as `last` with `just bench-save-baseline last` from the baseline
 checkout, or save an explicit baseline name with the same recipe. Use
-`just perf-local` when you want the tool to manage isolated
+`just performance-local` when you want the tool to manage isolated
 baseline/current worktrees.
 
 ```bash
@@ -430,17 +431,45 @@ Use lower-level `uv run --locked benchmark-utils bench-compare --scope all-bench
 when you explicitly want an exploratory report over every Criterion result
 already present under `target/criterion/`.
 
-Use `just perf-local` for an isolated temp-worktree comparison of the
-current package version against the latest stable published release. It writes
-`target/bench-reports/performance.md` and runs local benchmarks. Use
-`just perf-github-assets` when you want to compare stored GitHub Release
-benchmark assets without local Cargo benchmark runs. Use `just perf-release`
-in release PRs to promote one curated comparison into
-`docs/PERFORMANCE.md`, archiving the previous curated report under
-`docs/archive/performance/`. The GitHub-asset and release-promotion recipes also
-accept explicit `<current-tag> <baseline-tag>` pairs for repair paths.
-Temp-worktree release commands apply tracked checkout changes by default;
-untracked files must be added to git before they affect the generated report.
+Use `just performance-local` for an isolated temp-worktree comparison of the
+current package version against the latest stable published release. It runs
+local benchmarks and retains adjacent Markdown, versioned CSV, and provenance
+JSON under `target/bench-reports/` without changing tracked docs. Use
+`just performance-github-assets` to retain a provenance-validated bundle from
+stored GitHub Release benchmark assets without local Cargo runs. Supported
+archives carry versioned source, command, toolchain, completed-target,
+measurement-plan, per-run host, sample, and content-digest metadata bound to
+the requested clean tag. Existing legacy archives remain loadable as
+provenance-limited absolute timing evidence. GitHub-asset ratios are always
+suppressed because the archives came from separate measurement sessions. Use
+`just performance-release` in release PRs to measure, retain, reload-validate, and
+promote one curated comparison into `docs/PERFORMANCE.md`, archiving the
+previous report and exact promoted CSV/provenance bytes under
+`docs/archive/performance/`.
+
+Use `just performance-doc` to retry rendering or promotion from an existing
+retained CSV/provenance pair. It runs no Cargo benchmarks or measurement
+worktrees and rejects incomplete, invalid, stale, same-version, or
+scientifically non-comparable pairs. Promotion uses per-file atomic replacement
+with rollback for caught failures; after a hard interruption, inspect the
+destinations and rerun the idempotent command. The GitHub
+asset and release-promotion recipes accept explicit `<current-tag>
+<baseline-tag>` pairs for repair paths, but both tags must be supplied together
+before any fetch or benchmark side effect. Temp-worktree release commands apply
+tracked checkout changes by default; untracked files must be added to git before
+they affect the generated report.
+
+Scratch Markdown identifies the adjacent CSV/provenance pair under
+`target/bench-reports/`. A promoted report instead identifies the exact durable
+pair copied under `docs/archive/performance/data/`. Broad configuration digests
+remain recorded provenance; cross-release comparability uses the normalized
+measurement plan, harness identity, toolchain, completed targets, host, and
+confidence level.
+
+CSV is canonical because the comparison is a small, deterministic, diffable
+audit record. Notebooks may derive disposable Parquet caches from it for larger
+analyses, but `performance-doc` accepts only the validated CSV and provenance
+JSON pair. Raw Criterion data remains in the release `.tar.gz` assets.
 
 Before pushing Rust or benchmark changes, run:
 

@@ -12,6 +12,7 @@ Replaces complex bash parsing logic with maintainable Python code.
 """
 
 import argparse
+import hashlib
 import io
 import json
 import logging
@@ -79,6 +80,22 @@ if TYPE_CHECKING:
         format_benchmark_tables,
     )
     from hardware_utils import HardwareComparator, HardwareInfo
+    from performance_artifacts import (
+        ArtifactContext,
+        ArtifactPaths,
+        HostIdentity,
+        MeasurementArtifact,
+        PerformanceBundle,
+        PerformanceRow,
+        ReleasePair,
+        SourceState,
+        TimingEstimate,
+        ToolchainState,
+        ensure_distinct_paths,
+        load_bundle,
+        publish_bundle,
+        serialize_bundle,
+    )
     from subprocess_utils import (
         ExceptionFamily,
         ExecutableNotFoundError,
@@ -102,6 +119,22 @@ else:
             format_benchmark_tables,
         )
         from hardware_utils import HardwareComparator, HardwareInfo
+        from performance_artifacts import (
+            ArtifactContext,
+            ArtifactPaths,
+            HostIdentity,
+            MeasurementArtifact,
+            PerformanceBundle,
+            PerformanceRow,
+            ReleasePair,
+            SourceState,
+            TimingEstimate,
+            ToolchainState,
+            ensure_distinct_paths,
+            load_bundle,
+            publish_bundle,
+            serialize_bundle,
+        )
         from subprocess_utils import (
             ExceptionFamily,
             ExecutableNotFoundError,
@@ -124,6 +157,22 @@ else:
             format_benchmark_tables,
         )
         from scripts.hardware_utils import HardwareComparator, HardwareInfo
+        from scripts.performance_artifacts import (
+            ArtifactContext,
+            ArtifactPaths,
+            HostIdentity,
+            MeasurementArtifact,
+            PerformanceBundle,
+            PerformanceRow,
+            ReleasePair,
+            SourceState,
+            TimingEstimate,
+            ToolchainState,
+            ensure_distinct_paths,
+            load_bundle,
+            publish_bundle,
+            serialize_bundle,
+        )
         from scripts.subprocess_utils import (
             ExceptionFamily,
             ExecutableNotFoundError,
@@ -158,6 +207,24 @@ _BENCHMARK_TIMEOUT_PARSE_ERRORS: ExceptionFamily = (ValueError, TypeError)
 # Trusted benchmark commands use this Cargo profile so local, CI, and release
 # numbers are generated with the same ThinLTO/codegen-units settings.
 BENCHMARK_BUILD_FLAVOR = "perf"
+
+
+@dataclass(frozen=True, slots=True)
+class BenchmarkTargetMeasurement:
+    """One exact benchmark target invocation in a retained measurement plan."""
+
+    target: str
+    sampling_mode: Literal["full", "reduced"] = "full"
+    criterion_arguments: tuple[str, ...] = ()
+
+    @property
+    def command(self) -> tuple[str, ...]:
+        """Return the exact Cargo argument vector for this measurement."""
+        command = ("cargo", "bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", self.target)
+        if self.criterion_arguments:
+            return (*command, "--", *self.criterion_arguments)
+        return command
+
 
 CI_PERFORMANCE_SUITE_GROUPS = {
     "construction": (
@@ -200,13 +267,14 @@ PERF_NO_REGRESSIONS_RELEVANT_PATHS = (
     "Cargo.lock",
     "scripts/benchmark_utils.py",
 )
-RELEASE_SIGNAL_BENCH_TARGETS = (
-    "ci_performance_suite",
-    "circumsphere_containment",
-    "cold_path_predicates",
-    "locate",
-    "realization_validation",
+RELEASE_SIGNAL_MEASUREMENT_PLAN = (
+    BenchmarkTargetMeasurement("ci_performance_suite"),
+    BenchmarkTargetMeasurement("circumsphere_containment"),
+    BenchmarkTargetMeasurement("cold_path_predicates"),
+    BenchmarkTargetMeasurement("locate"),
+    BenchmarkTargetMeasurement("realization_validation"),
 )
+RELEASE_SIGNAL_BENCH_TARGETS = tuple(measurement.target for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN)
 RELEASE_SIGNAL_GROUP_PREFIXES = (
     "tds_new_",
     "boundary_facets",
@@ -226,6 +294,8 @@ RELEASE_SIGNAL_GROUP_PREFIXES = (
     "locate",
     "realization_",
 )
+RELEASE_ASSET_METADATA_SCHEMA_VERSION = 2
+RELEASE_ASSET_MEASUREMENT_COMMANDS = tuple(measurement.command for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN)
 BENCH_TARGET_SUITES = {
     "release-signal": RELEASE_SIGNAL_BENCH_TARGETS,
     "ci": ("ci_performance_suite",),
@@ -309,8 +379,18 @@ class CriterionComparison:
     """A comparison between current Criterion output and a named saved baseline."""
 
     benchmark_id: str
-    baseline_ns: float
-    current_ns: float
+    baseline: TimingEstimate
+    current: TimingEstimate
+
+    @property
+    def baseline_ns(self) -> float:
+        """Return the baseline point estimate for compatibility with report math."""
+        return self.baseline.median_ns
+
+    @property
+    def current_ns(self) -> float:
+        """Return the current point estimate for compatibility with report math."""
+        return self.current.median_ns
 
     @property
     def percent_change(self) -> float:
@@ -363,6 +443,20 @@ class PerformanceReportId:
 
 
 @dataclass(frozen=True)
+class PerformancePromotionPlan:
+    """Validated file payloads and destinations for one report promotion."""
+
+    report_id: PerformanceReportId
+    source_text: str
+    current_text: str | None
+    archive_path: Path | None
+    durable_artifacts: ArtifactPaths
+    source_csv: bytes
+    source_provenance: bytes
+    mutation_paths: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
 class PublishedRelease:
     """Stable GitHub release metadata used to infer release pairs."""
 
@@ -386,6 +480,79 @@ class ReleaseReportConfig:
     stat: str = "median"
     apply_current_diff: bool = True
     baseline_source: BaselineSource = "local"
+
+    def __post_init__(self) -> None:
+        """Reject unsupported artifact settings before any workflow effects."""
+        if self.suite not in BENCH_COMPARE_SUITE_CHOICES:
+            msg = f"unsupported benchmark suite: {self.suite!r}"
+            raise ValueError(msg)
+        if self.scope not in ("release-signal", "all-benches"):
+            msg = f"unsupported benchmark scope: {self.scope!r}"
+            raise ValueError(msg)
+        if self.stat != "median":
+            msg = f"release artifact workflows require the median statistic, got {self.stat!r}"
+            raise ValueError(msg)
+        if self.baseline_source not in ("local", "github-assets"):
+            msg = f"unsupported release baseline source: {self.baseline_source!r}"
+            raise ValueError(msg)
+
+
+@dataclass(frozen=True)
+class RevisionEvidence:
+    """Source, toolchain, and command evidence for one measured revision."""
+
+    source: SourceState
+    toolchain: ToolchainState
+    commands: tuple[tuple[str, ...], ...]
+    completed_targets: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RevisionMeasurement:
+    """The suite, commands, and shared target plan measured for one revision."""
+
+    suite: str
+    commands: tuple[tuple[str, ...], ...]
+    comparison_targets: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class CriterionSample:
+    """One Criterion sample path with identity recovered from benchmark.json."""
+
+    benchmark_id: str
+    group: str
+    benchmark: str
+    estimates: Path
+
+
+@dataclass(frozen=True)
+class DownloadedReleaseAsset:
+    """A downloaded release archive and the exact acquisition command."""
+
+    archive: Path
+    command: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ReleaseAssetEvidence:
+    """Validated measurement evidence extracted from one release archive."""
+
+    revision: RevisionEvidence
+    measurement_host: HostIdentity
+    artifact: MeasurementArtifact
+    acquisition_commands: tuple[tuple[str, ...], ...]
+
+
+@dataclass(frozen=True)
+class ReleaseAssetLoadRequest:
+    """Trusted local paths and requested identity for one release archive."""
+
+    requested_tag: str
+    expected_commit: str
+    extracted_root: Path
+    archive: Path
+    acquisition_command: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -2456,6 +2623,30 @@ def _write_text_atomic(path: Path, text: str) -> None:
             tmp_path.unlink()
 
 
+def _write_bytes_atomic(path: Path, payload: bytes) -> None:
+    """Write bytes through a durable same-directory temporary file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("wb", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+            tmp.write(payload)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        tmp_path.replace(path)
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+
+def _restore_file_snapshot(path: Path, payload: bytes | None) -> None:
+    """Restore one prior file payload or prior absence."""
+    if payload is None:
+        path.unlink(missing_ok=True)
+    else:
+        _write_bytes_atomic(path, payload)
+
+
 def _read_cargo_package_version(repo_root: Path) -> str:
     """Return the package version from Cargo.toml."""
     cargo_toml = repo_root / "Cargo.toml"
@@ -2554,8 +2745,8 @@ def _criterion_numeric_field(obj: Mapping[str, object], field: str, estimates_js
     return numeric
 
 
-def _read_criterion_point_estimate(estimates_json: Path, stat: str) -> float:
-    """Read a Criterion point estimate in nanoseconds."""
+def _read_criterion_timing_estimate(estimates_json: Path, stat: str) -> TimingEstimate:
+    """Read a Criterion point estimate and confidence interval in nanoseconds."""
     try:
         data = json.loads(_read_text(estimates_json))
     except json.JSONDecodeError as exc:
@@ -2568,32 +2759,74 @@ def _read_criterion_point_estimate(estimates_json: Path, stat: str) -> float:
     if not isinstance(stat_obj, Mapping):
         msg = f"stat {stat!r} not found in {estimates_json}"
         raise KeyError(msg)
-    return _criterion_numeric_field(stat_obj, "point_estimate", estimates_json, stat)
+    confidence_interval = stat_obj.get("confidence_interval")
+    if not isinstance(confidence_interval, Mapping):
+        msg = f"confidence_interval for stat {stat!r} in {estimates_json} is not an object"
+        raise TypeError(msg)
+    return TimingEstimate(
+        median_ns=_criterion_numeric_field(stat_obj, "point_estimate", estimates_json, stat),
+        ci_lower_ns=_criterion_numeric_field(confidence_interval, "lower_bound", estimates_json, stat),
+        ci_upper_ns=_criterion_numeric_field(confidence_interval, "upper_bound", estimates_json, stat),
+        confidence_level=_criterion_numeric_field(confidence_interval, "confidence_level", estimates_json, stat),
+    )
 
 
-def _criterion_benchmark_id(estimates_json: Path, criterion_dir: Path) -> str | None:
-    """Return the Criterion benchmark ID for an estimates file."""
+def _read_criterion_point_estimate(estimates_json: Path, stat: str) -> float:
+    """Read a Criterion point estimate in nanoseconds."""
+    return _read_criterion_timing_estimate(estimates_json, stat).median_ns
+
+
+def _criterion_sample(estimates_json: Path, criterion_dir: Path) -> CriterionSample | None:
+    """Recover a Criterion benchmark identity from its sample metadata."""
     if estimates_json.name != "estimates.json":
         return None
     sample_dir = estimates_json.parent
     benchmark_dir = sample_dir.parent
     try:
-        return benchmark_dir.relative_to(criterion_dir).as_posix()
+        benchmark_dir.relative_to(criterion_dir)
     except ValueError:
         return None
+    metadata_path = sample_dir / "benchmark.json"
+    try:
+        metadata = json.loads(_read_text(metadata_path))
+    except (OSError, json.JSONDecodeError) as exc:
+        msg = f"could not load Criterion benchmark metadata {metadata_path}: {exc}"
+        raise ValueError(msg) from exc
+    if not isinstance(metadata, Mapping):
+        msg = f"Criterion benchmark metadata must be an object: {metadata_path}"
+        raise TypeError(msg)
+    full_id = metadata.get("full_id")
+    group_id = metadata.get("group_id")
+    if not isinstance(full_id, str) or not full_id.strip() or not isinstance(group_id, str) or not group_id.strip():
+        msg = f"Criterion benchmark metadata requires non-empty full_id and group_id: {metadata_path}"
+        raise ValueError(msg)
+    prefix = f"{group_id}/"
+    if full_id.startswith(prefix):
+        group = group_id
+        benchmark = full_id.removeprefix(prefix)
+    elif "/" in full_id:
+        group, benchmark = full_id.split("/", maxsplit=1)
+    else:
+        msg = f"Criterion full_id must contain a group and benchmark: {full_id!r} in {metadata_path}"
+        raise ValueError(msg)
+    return CriterionSample(benchmark_id=full_id, group=group, benchmark=benchmark, estimates=estimates_json)
 
 
-def _criterion_estimates_by_id(criterion_dir: Path, sample: str) -> dict[str, Path]:
+def _criterion_estimates_by_id(criterion_dir: Path, sample: str) -> dict[str, CriterionSample]:
     """Map Criterion benchmark IDs to estimates files for one sample name."""
-    results: dict[str, Path] = {}
+    results: dict[str, CriterionSample] = {}
     if not criterion_dir.is_dir():
         return results
     for estimates_json in sorted(criterion_dir.rglob("estimates.json")):
         if estimates_json.parent.name != sample:
             continue
-        benchmark_id = _criterion_benchmark_id(estimates_json, criterion_dir)
-        if benchmark_id is not None:
-            results[benchmark_id] = estimates_json
+        criterion_sample = _criterion_sample(estimates_json, criterion_dir)
+        if criterion_sample is not None:
+            prior = results.get(criterion_sample.benchmark_id)
+            if prior is not None and prior.estimates != criterion_sample.estimates:
+                msg = f"duplicate Criterion full_id {criterion_sample.benchmark_id!r} under {criterion_dir}"
+                raise ValueError(msg)
+            results[criterion_sample.benchmark_id] = criterion_sample
     return results
 
 
@@ -2630,17 +2863,70 @@ def collect_criterion_comparisons(
         baseline_path = baseline.get(benchmark_id)
         if baseline_path is None:
             continue
-        current_ns = _read_criterion_point_estimate(current_path, stat)
-        baseline_ns = _read_criterion_point_estimate(baseline_path, stat)
         comparisons.append(
             CriterionComparison(
                 benchmark_id=benchmark_id,
-                baseline_ns=baseline_ns,
-                current_ns=current_ns,
+                baseline=_read_criterion_timing_estimate(baseline_path.estimates, stat),
+                current=_read_criterion_timing_estimate(current_path.estimates, stat),
             )
         )
 
     return comparisons
+
+
+def collect_performance_rows(
+    criterion_dir: Path,
+    baseline_name: str,
+    *,
+    suite: str = "release-signal",
+    scope: str = "release-signal",
+    comparison_note: str = "",
+) -> tuple[PerformanceRow, ...]:
+    """Collect comparable and one-sided Criterion rows for retained artifacts."""
+    current = _criterion_estimates_by_id(criterion_dir, "new")
+    baseline = _criterion_estimates_by_id(criterion_dir, baseline_name)
+    rows: list[PerformanceRow] = []
+    for benchmark_id in sorted(set(current) | set(baseline)):
+        if not _benchmark_in_compare_scope(benchmark_id, suite, scope):
+            continue
+        identity = current.get(benchmark_id) or baseline[benchmark_id]
+        group = identity.group
+        benchmark = identity.benchmark
+        current_estimate = _read_criterion_timing_estimate(current[benchmark_id].estimates, "median") if benchmark_id in current else None
+        baseline_estimate = _read_criterion_timing_estimate(baseline[benchmark_id].estimates, "median") if benchmark_id in baseline else None
+        if current_estimate is not None and baseline_estimate is not None:
+            if comparison_note:
+                coverage_status = "not-comparable"
+                coverage_note = comparison_note
+            elif current_estimate.confidence_level != baseline_estimate.confidence_level:
+                coverage_status = "not-comparable"
+                coverage_note = "Criterion confidence levels differ between revisions."
+            else:
+                coverage_status = "comparable"
+                coverage_note = ""
+        elif current_estimate is not None:
+            coverage_status = "current-only"
+            coverage_note = "No matching baseline sample was present."
+        else:
+            coverage_status = "baseline-only"
+            coverage_note = "No matching current sample was present."
+        rows.append(
+            PerformanceRow(
+                suite=suite,
+                scope=scope,
+                benchmark_id=benchmark_id,
+                group=group,
+                benchmark=benchmark,
+                coverage_status=coverage_status,
+                coverage_note=coverage_note,
+                baseline=baseline_estimate,
+                current=current_estimate,
+            )
+        )
+    if not rows:
+        msg = f"no Criterion rows found for suite {suite!r}, scope {scope!r}, and baseline {baseline_name!r}"
+        raise ValueError(msg)
+    return tuple(rows)
 
 
 def _criterion_comparison_table(comparisons: list[CriterionComparison], baseline_name: str) -> str:
@@ -2685,23 +2971,43 @@ Local performance reports are generated in isolated temporary worktrees:
 
 ```bash
 # Local development: compare the current tree with the latest release
-just perf-local
+just performance-local
 
-# Release PR: update docs/PERFORMANCE.md and archive the previous report
-just perf-release
+# Release PR: measure, retain, validate, and promote documentation
+just performance-release
+
+# Rebuild and promote documentation from retained CSV/JSON only
+just performance-doc
 
 # GitHub Release benchmark assets
-just perf-github-assets
+just performance-github-assets
 
 # Explicit repair
-just perf-release <current-tag> <previous-tag>
+just performance-release <current-tag> <previous-tag>
 ```
 
-`just perf-local` writes `target/bench-reports/performance.md`.
-`just perf-github-assets` writes `target/bench-reports/github-assets-performance.md`.
+`just performance-local` writes `performance.md` plus retained `performance.csv` and
+`performance.provenance.json` under `target/bench-reports/` without promoting documentation.
+`just performance-github-assets` writes a `github-assets-performance.*` bundle without local
+Cargo benchmark runs. New release archives must contain the supported versioned measurement
+metadata. Existing legacy archives remain loadable as provenance-limited absolute timing
+evidence, but they cannot be promoted. GitHub-asset ratios are always suppressed because the
+archives were measured in separate sessions. Local-worktree ratios require compatible hosts,
+toolchains, harnesses, normalized measurement plans, completed targets, and confidence levels.
+`just performance-doc` consumes the retained canonical CSV/JSON pair without Cargo or
+measurement worktrees and rejects incomplete, invalid, stale, same-version, or scientifically
+non-comparable inputs. `just performance-release` retains and reload-validates the same bundle,
+copies the exact CSV/provenance bytes to `docs/archive/performance/data/`, and promotes the
+documentation with per-file atomic replacement plus rollback for caught failures. After a hard
+interruption, inspect the destinations and rerun the command.
+
+CSV is the canonical tabular artifact because these small audit records are diffable and usable
+without a dataframe runtime. Notebooks may derive Parquet caches for analysis, but Parquet is not
+an accepted promotion input and must be regenerated from the validated CSV.
 
 Release-comparison commands are release evidence, not routine pre-`just ci` checks.
-Older curated release-to-release reports are archived in `docs/archive/performance/`.
+Older curated reports and the exact evidence for new promotions are archived in
+`docs/archive/performance/`.
 
 See `benches/README.md` for the full Delaunay benchmark workflow.
 """
@@ -2797,6 +3103,218 @@ def write_criterion_comparison_report(repo_root: Path, request: CriterionReportR
     return True
 
 
+def _format_artifact_estimate(estimate: TimingEstimate | None) -> str:
+    """Format one retained timing estimate and confidence interval."""
+    if estimate is None:
+        return "—"
+    confidence = estimate.confidence_level * 100.0
+    return f"{_format_ns(estimate.median_ns)} [{_format_ns(estimate.ci_lower_ns)}, {_format_ns(estimate.ci_upper_ns)}] ({confidence:g}% CI)"
+
+
+def _artifact_comparison_table(bundle: PerformanceBundle) -> str:
+    """Render retained rows as grouped Markdown tables."""
+    sections: list[str] = []
+    by_group: dict[str, list[PerformanceRow]] = {}
+    for row in bundle.sorted_rows:
+        by_group.setdefault(row.group, []).append(row)
+
+    baseline_name = bundle.context.release.baseline
+    for group in sorted(by_group):
+        lines = [
+            f"### {group}",
+            "",
+            f"| Benchmark | {baseline_name} (median + CI) | Current (median + CI) | Change | Speedup | Coverage |",
+            "|-----------|----------------------------:|-----------------------:|-------:|--------:|----------|",
+        ]
+        for row in by_group[group]:
+            if row.coverage_status == "comparable" and row.baseline is not None and row.current is not None:
+                percent_change = ((row.current.median_ns - row.baseline.median_ns) / row.baseline.median_ns) * 100.0
+                change = _format_pct_change(percent_change)
+                speedup = f"{row.baseline.median_ns / row.current.median_ns:.2f}x"
+                coverage = "Comparable"
+            else:
+                change = "—"
+                speedup = "—"
+                coverage = row.coverage_note
+            lines.append(
+                "| "
+                + " | ".join(
+                    (
+                        row.benchmark,
+                        _format_artifact_estimate(row.baseline),
+                        _format_artifact_estimate(row.current),
+                        change,
+                        speedup,
+                        coverage,
+                    )
+                )
+                + " |"
+            )
+        sections.append("\n".join(lines))
+    return "\n\n".join(sections)
+
+
+def _artifact_host_lines(bundle: PerformanceBundle) -> list[str]:
+    """Render measurement and publication host provenance."""
+    context = bundle.context
+    publication = context.publication_host
+    measurement_lines: list[str] = []
+    for label, measurement in (
+        ("Current measurement", context.current_measurement_host),
+        ("Baseline measurement", context.baseline_measurement_host),
+    ):
+        if measurement.status == "recorded":
+            measurement_lines.extend(
+                (
+                    f"- **{label} CPU**: {measurement.cpu}",
+                    f"- **{label} OS**: {measurement.operating_system}",
+                    f"- **{label} architecture**: {measurement.architecture}",
+                )
+            )
+        else:
+            measurement_lines.append(f"- **{label} host**: unavailable — {measurement.reason}")
+            if measurement.operating_system:
+                measurement_lines.append(f"- **{label} recorded OS**: {measurement.operating_system}")
+            if measurement.architecture:
+                measurement_lines.append(f"- **{label} recorded architecture**: {measurement.architecture}")
+    return [
+        *measurement_lines,
+        f"- **Publication CPU**: {publication.cpu}",
+        f"- **Publication OS**: {publication.operating_system}",
+        f"- **Publication architecture**: {publication.architecture}",
+    ]
+
+
+def _artifact_revision_lines(label: str, context: ArtifactContext, side: Literal["current", "baseline"]) -> list[str]:
+    """Render one revision's source, command, and toolchain provenance."""
+    evidence = context.current_source if side == "current" else context.baseline_source
+    toolchain = context.current_toolchain if side == "current" else context.baseline_toolchain
+    commands = context.current_commands if side == "current" else context.baseline_commands
+    completed_targets = context.current_completed_targets if side == "current" else context.baseline_completed_targets
+    acquisition_commands = context.current_acquisition_commands if side == "current" else context.baseline_acquisition_commands
+    artifact = context.current_artifact if side == "current" else context.baseline_artifact
+    lines = [
+        f"**{label} revision**:",
+        "",
+        f"- Version/ref: `{evidence.version}` / `{evidence.ref}`",
+        f"- Commit: `{evidence.commit}`",
+        f"- Revision timestamp: `{evidence.revision_timestamp}`",
+        f"- Cargo profile: `{toolchain.cargo_profile}`",
+        f"- Criterion artifact origin: `{artifact.origin}`",
+        f"- Criterion content SHA-256: `{artifact.content_sha256}`",
+        f"- Criterion sample: `{artifact.sample_name}`",
+    ]
+    if evidence.limitation:
+        lines.append(f"- Source evidence limitation: {evidence.limitation}")
+    else:
+        lines.extend(
+            (
+                f"- Git clean: `{str(evidence.git_clean).lower()}`",
+                f"- Source-state SHA-256: `{evidence.source_state_sha256}`",
+            )
+        )
+    if toolchain.limitation:
+        lines.append(f"- Toolchain evidence limitation: {toolchain.limitation}")
+    else:
+        lines.extend(
+            (
+                f"- rustc: `{toolchain.rustc}`",
+                f"- Criterion: `{toolchain.criterion_version}`",
+                f"- Cargo.lock SHA-256: `{toolchain.cargo_lock_sha256}`",
+                f"- Harness SHA-256: `{toolchain.harness_sha256}`",
+                f"- Configuration SHA-256: `{toolchain.configuration_sha256}`",
+                f"- Measurement-plan SHA-256: `{toolchain.measurement_plan_sha256}`",
+            )
+        )
+    if artifact.archive_sha256 is not None:
+        lines.append(f"- Release archive SHA-256: `{artifact.archive_sha256}`")
+    if completed_targets:
+        lines.append(f"- Completed benchmark targets: `{', '.join(completed_targets)}`")
+    else:
+        lines.append("- Completed benchmark targets: unavailable")
+    if commands:
+        lines.extend(f"- Measurement command: `{' '.join(command)}`" for command in commands)
+    else:
+        lines.append("- Measurement commands: unavailable")
+    lines.extend(f"- Acquisition command: `{' '.join(command)}`" for command in acquisition_commands)
+    return lines
+
+
+def _artifact_evidence_path(path: Path) -> str:
+    """Return a Markdown-safe artifact path for a report notice."""
+    rendered = path.as_posix()
+    if not rendered or "|" in rendered or "`" in rendered or any(ord(char) < 32 or ord(char) == 127 for char in rendered):
+        msg = f"artifact evidence path must be single-line Markdown-safe text: {path}"
+        raise ValueError(msg)
+    return rendered
+
+
+def render_performance_bundle(
+    bundle: PerformanceBundle,
+    *,
+    evidence_paths: ArtifactPaths,
+    evidence_state: Literal["scratch", "promoted"],
+) -> str:
+    """Render a report exclusively from one validated retained bundle."""
+    context = bundle.context
+    current = context.current_source
+    csv_payload, _ = serialize_bundle(bundle)
+    if evidence_state not in ("scratch", "promoted"):
+        msg = f"unsupported evidence state: {evidence_state!r}"
+        raise ValueError(msg)
+    evidence_label = "Retained scratch evidence" if evidence_state == "scratch" else "Promoted evidence"
+    evidence_csv = _artifact_evidence_path(evidence_paths.csv)
+    evidence_provenance = _artifact_evidence_path(evidence_paths.provenance)
+    has_comparisons = any(row.coverage_status == "comparable" for row in bundle.rows)
+    lines = [
+        "# Benchmark Performance",
+        "",
+        "> [!IMPORTANT]",
+        "> Generated by `benchmark-utils` from a validated CSV/provenance pair; do not edit this report directly.",
+        f"> {evidence_label}: `{evidence_csv}` and `{evidence_provenance}` (CSV SHA-256 `{hashlib.sha256(csv_payload).hexdigest()}`).",
+        "> Edit workflow guidance in `benches/README.md` or `docs/dev/commands.md`, then rerun the named performance workflow.",
+        "",
+        f"**delaunay** v{context.release.current.removeprefix('v')} · `{current.commit}` ({current.ref}) · {current.revision_timestamp}",
+        f"**Statistic**: {context.statistic}",
+        f"**Suite**: {context.suite}",
+        f"**Scope**: {context.scope}",
+        "",
+        "## Environment and Provenance",
+        "",
+        f"- **Measurement mode**: `{context.measurement_mode}`",
+        *_artifact_host_lines(bundle),
+        "",
+        *_artifact_revision_lines("Current", context, "current"),
+        "",
+        *_artifact_revision_lines("Baseline", context, "baseline"),
+        "",
+        "## Benchmark Results",
+        "",
+        (
+            f"Comparison against baseline **{context.release.baseline}**:"
+            if has_comparisons
+            else f"Measurements for current and baseline **{context.release.baseline}**:"
+        ),
+        "",
+        (
+            "Negative change = faster. Speedup > 1.00x = improvement. Each confidence interval includes its retained Criterion confidence level."
+            if has_comparisons
+            else "Ratios are suppressed because the retained provenance does not establish scientifically comparable measurements."
+        ),
+        "",
+        _artifact_comparison_table(bundle),
+        "",
+        _how_to_update_section().rstrip(),
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def render_performance_artifacts(paths: ArtifactPaths) -> str:
+    """Reload, validate, and render a retained artifact pair."""
+    return render_performance_bundle(load_bundle(paths), evidence_paths=paths, evidence_state="scratch")
+
+
 def parse_performance_report_id(text: str) -> PerformanceReportId:
     """Parse current and baseline release tags from a benchmark report."""
     version_match = DELAUNAY_REPORT_VERSION_RE.search(text)
@@ -2835,40 +3353,183 @@ def update_performance_archive_index(archive_dir: Path) -> None:
     _write_text_atomic(archive_dir / "README.md", _archive_index_text(archive_dir))
 
 
-def promote_performance_report(
-    *,
+def _durable_performance_artifact_paths(archive_dir: Path, report_id: PerformanceReportId) -> ArtifactPaths:
+    """Return tracked evidence paths for one promoted release pair."""
+    stem = f"{report_id.current_tag}-vs-{report_id.baseline_tag}"
+    data_dir = archive_dir / "data"
+    return ArtifactPaths(csv=data_dir / f"{stem}.csv", provenance=data_dir / f"{stem}.provenance.json")
+
+
+def _validated_promotion_source(
     source: Path,
-    current: Path,
-    archive_dir: Path,
-    expected_current_tag: str,
-    expected_baseline_tag: str,
-) -> PerformanceReportId:
-    """Archive the old committed report and promote ``source`` as current."""
+    artifacts: ArtifactPaths,
+    expected: PerformanceReportId,
+    durable_artifacts: ArtifactPaths,
+) -> tuple[PerformanceBundle, str, PerformanceReportId]:
+    """Validate one canonical report and its independently expected identity."""
+    bundle = load_bundle(artifacts)
+    bundle.require_promotable()
     source_text = _normalize_how_to_update(_read_text(source))
+    rendered_text = _normalize_how_to_update(render_performance_bundle(bundle, evidence_paths=durable_artifacts, evidence_state="promoted"))
+    if source_text != rendered_text:
+        msg = "benchmark report is not the canonical rendering of its retained artifact pair"
+        raise ValueError(msg)
     source_id = parse_performance_report_id(source_text)
-    expected = PerformanceReportId(
-        current_tag=normalize_release_tag(expected_current_tag),
-        baseline_tag=normalize_release_tag(expected_baseline_tag),
+    normalized_expected = PerformanceReportId(
+        current_tag=normalize_release_tag(expected.current_tag),
+        baseline_tag=normalize_release_tag(expected.baseline_tag),
     )
-    if source_id != expected:
+    if source_id != normalized_expected:
         msg = (
             "benchmark report does not match requested release pair: "
             f"found {source_id.current_tag} vs {source_id.baseline_tag}, "
-            f"expected {expected.current_tag} vs {expected.baseline_tag}"
+            f"expected {normalized_expected.current_tag} vs {normalized_expected.baseline_tag}"
         )
         raise ValueError(msg)
+    if source_id.current_tag == source_id.baseline_tag:
+        msg = "cannot promote a same-version local performance comparison"
+        raise ValueError(msg)
+    bundle_id = PerformanceReportId(
+        current_tag=bundle.context.release.current,
+        baseline_tag=bundle.context.release.baseline,
+    )
+    if bundle_id != source_id:
+        msg = f"benchmark report identity {source_id} does not match retained artifact identity {bundle_id}"
+        raise ValueError(msg)
+    return bundle, source_text, source_id
 
-    if current.exists():
-        current_text = _normalize_how_to_update(_read_text(current))
-        current_id = parse_performance_report_id(current_text)
-        if current_id != source_id:
-            archive_path = archive_dir / current_id.archive_name
-            if not archive_path.exists():
-                _write_text_atomic(archive_path, current_text)
 
-    _write_text_atomic(current, source_text)
-    update_performance_archive_index(archive_dir)
-    return source_id
+def _promotion_archive_destination(
+    current: Path,
+    archive_dir: Path,
+    source_id: PerformanceReportId,
+) -> tuple[str | None, Path | None]:
+    """Return the current report payload and any required archive destination."""
+    if not current.exists():
+        return None, None
+    current_text = _normalize_how_to_update(_read_text(current))
+    current_id = parse_performance_report_id(current_text)
+    archive_path = archive_dir / current_id.archive_name if current_id != source_id else None
+    return current_text, archive_path
+
+
+def _reject_conflicting_payload(path: Path, payload: bytes, *, description: str) -> None:
+    """Reject a pre-existing destination whose exact bytes differ."""
+    if path.exists() and path.read_bytes() != payload:
+        msg = f"existing {description} conflicts with retained evidence: {path}"
+        raise ValueError(msg)
+
+
+def _plan_performance_promotion(
+    *,
+    source: Path,
+    artifacts: ArtifactPaths,
+    current: Path,
+    archive_dir: Path,
+    expected: PerformanceReportId,
+) -> PerformancePromotionPlan:
+    """Validate all promotion inputs and conflicts before the first mutation."""
+    normalized_expected = PerformanceReportId(
+        current_tag=normalize_release_tag(expected.current_tag),
+        baseline_tag=normalize_release_tag(expected.baseline_tag),
+    )
+    durable_artifacts = _durable_performance_artifact_paths(archive_dir, normalized_expected)
+    _, source_text, source_id = _validated_promotion_source(source, artifacts, expected, durable_artifacts)
+    current_text, archive_path = _promotion_archive_destination(current, archive_dir, source_id)
+
+    index_path = archive_dir / "README.md"
+    if source_id != normalized_expected:
+        msg = "validated report identity changed while planning promotion"
+        raise ValueError(msg)
+    paths = {
+        "source report": source,
+        "source CSV": artifacts.csv,
+        "source provenance": artifacts.provenance,
+        "current report": current,
+        "archive index": index_path,
+        "durable CSV": durable_artifacts.csv,
+        "durable provenance": durable_artifacts.provenance,
+    }
+    if archive_path is not None:
+        paths["archive report"] = archive_path
+    ensure_distinct_paths(paths)
+
+    if archive_path is not None and archive_path.exists() and current_text is not None:
+        existing_archive = _normalize_how_to_update(_read_text(archive_path))
+        if existing_archive != current_text:
+            msg = f"existing performance archive conflicts with the current report: {archive_path}"
+            raise ValueError(msg)
+    source_csv = artifacts.csv.read_bytes()
+    source_provenance = artifacts.provenance.read_bytes()
+    _reject_conflicting_payload(durable_artifacts.csv, source_csv, description="durable performance CSV")
+    _reject_conflicting_payload(
+        durable_artifacts.provenance,
+        source_provenance,
+        description="durable performance provenance",
+    )
+
+    mutation_paths = (
+        current,
+        index_path,
+        durable_artifacts.csv,
+        durable_artifacts.provenance,
+        *(() if archive_path is None else (archive_path,)),
+    )
+    return PerformancePromotionPlan(
+        report_id=source_id,
+        source_text=source_text,
+        current_text=current_text,
+        archive_path=archive_path,
+        durable_artifacts=durable_artifacts,
+        source_csv=source_csv,
+        source_provenance=source_provenance,
+        mutation_paths=mutation_paths,
+    )
+
+
+def _apply_performance_promotion(plan: PerformancePromotionPlan, *, current: Path, archive_dir: Path) -> None:
+    """Apply one validated plan and roll back caught failures."""
+    snapshots = tuple((path, path.read_bytes() if path.exists() else None) for path in plan.mutation_paths)
+    try:
+        if plan.archive_path is not None and not plan.archive_path.exists() and plan.current_text is not None:
+            _write_text_atomic(plan.archive_path, plan.current_text)
+        if not plan.durable_artifacts.csv.exists():
+            _write_bytes_atomic(plan.durable_artifacts.csv, plan.source_csv)
+        if not plan.durable_artifacts.provenance.exists():
+            _write_bytes_atomic(plan.durable_artifacts.provenance, plan.source_provenance)
+        _write_text_atomic(current, plan.source_text)
+        update_performance_archive_index(archive_dir)
+    except BaseException as exc:
+        restore_errors: list[BaseException] = []
+        for path, payload in reversed(snapshots):
+            try:
+                _restore_file_snapshot(path, payload)
+            except OSError as restore_exc:
+                restore_errors.append(restore_exc)
+        if restore_errors:
+            msg = "performance report promotion and rollback both failed"
+            raise BaseExceptionGroup(msg, [exc, *restore_errors]) from exc
+        raise
+
+
+def promote_performance_report(
+    *,
+    source: Path,
+    artifacts: ArtifactPaths,
+    current: Path,
+    archive_dir: Path,
+    expected: PerformanceReportId,
+) -> PerformanceReportId:
+    """Archive the old report and durably promote its exact evidence pair."""
+    plan = _plan_performance_promotion(
+        source=source,
+        artifacts=artifacts,
+        current=current,
+        archive_dir=archive_dir,
+        expected=expected,
+    )
+    _apply_performance_promotion(plan, current=current, archive_dir=archive_dir)
+    return plan.report_id
 
 
 def _format_command_failure(command: list[str], exc: subprocess.CalledProcessError) -> str:
@@ -3081,15 +3742,306 @@ def _benchmark_env(checkout: Path) -> dict[str, str] | None:
     return env
 
 
+def _run_tool_output(
+    command: str,
+    args: list[str],
+    *,
+    cwd: Path,
+    timeout: int = RELEASE_COMMAND_TIMEOUT_SECONDS,
+    env: dict[str, str] | None = None,
+) -> str:
+    """Run a support command and return non-empty stripped stdout."""
+    try:
+        result = run_safe_command(command, args, cwd=cwd, timeout=timeout, env=env)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(_format_command_failure([command, *args], exc)) from exc
+    output = result.stdout.strip()
+    if not output:
+        msg = f"command produced empty stdout: {command} {' '.join(args)}"
+        raise RuntimeError(msg)
+    return output
+
+
+def _sha256_file(path: Path) -> str:
+    """Return the SHA-256 digest of one required file."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as exc:
+        msg = f"could not hash required performance input {path}: {exc}"
+        raise OSError(msg) from exc
+
+
+def _directory_digest(directory: Path) -> str:
+    """Hash every relative file path and payload below a required directory."""
+    if not directory.is_dir():
+        msg = f"could not hash required performance directory {directory}"
+        raise FileNotFoundError(msg)
+    digest = hashlib.sha256()
+    files = tuple(path for path in sorted(directory.rglob("*")) if path.is_file())
+    if not files:
+        msg = f"performance directory contains no files: {directory}"
+        raise ValueError(msg)
+    for path in files:
+        digest.update(path.relative_to(directory).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _criterion_sample_digest(criterion_dir: Path, sample_name: str) -> str:
+    """Hash one named sample across a Criterion tree."""
+    digest = hashlib.sha256()
+    files: list[Path] = []
+    for sample_dir in sorted(path for path in criterion_dir.rglob(sample_name) if path.is_dir() and path.name == sample_name):
+        files.extend(path for path in sorted(sample_dir.rglob("*")) if path.is_file())
+    if not files:
+        msg = f"Criterion sample {sample_name!r} contains no files under {criterion_dir}"
+        raise FileNotFoundError(msg)
+    for path in files:
+        digest.update(path.relative_to(criterion_dir).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _criterion_dependency_version(checkout: Path) -> str:
+    """Return the Criterion version selected in Cargo.lock."""
+    cargo_lock = checkout / "Cargo.lock"
+    data = tomllib.loads(_read_text(cargo_lock))
+    packages = data.get("package")
+    if not isinstance(packages, list):
+        msg = f"could not find package entries in {cargo_lock}"
+        raise TypeError(msg)
+    versions = {
+        package.get("version")
+        for package in packages
+        if isinstance(package, dict) and package.get("name") == "criterion" and isinstance(package.get("version"), str)
+    }
+    if len(versions) != 1:
+        msg = f"expected exactly one Criterion version in {cargo_lock}, found {sorted(versions)}"
+        raise ValueError(msg)
+    return cast("str", versions.pop())
+
+
+def _comparison_targets_for_suite(suite: str, targets: tuple[str, ...] | None) -> tuple[str, ...]:
+    """Validate and return an ordered target plan for provenance comparison."""
+    requested = BENCH_TARGET_SUITES.get(suite)
+    if requested is None:
+        msg = f"unsupported benchmark suite: {suite}"
+        raise ValueError(msg)
+    if targets is None:
+        return requested
+    ordered = tuple(target for target in requested if target in set(targets))
+    if not ordered or targets != ordered:
+        msg = f"comparison targets must be a non-empty canonical subset of suite {suite!r}: {targets!r}"
+        raise ValueError(msg)
+    return targets
+
+
+def _benchmark_harness_files(
+    checkout: Path,
+    suite: str,
+    comparison_targets: tuple[str, ...] | None = None,
+) -> tuple[Path, ...]:
+    """Return deterministic benchmark harness inputs for one suite."""
+    targets = _comparison_targets_for_suite(suite, comparison_targets)
+    relative_paths = [Path("benches") / f"{target}.rs" for target in targets]
+    common_dir = checkout / "benches" / "common"
+    if common_dir.is_dir():
+        relative_paths.extend(path.relative_to(checkout) for path in sorted(common_dir.rglob("*.rs")))
+    files = tuple(checkout / relative for relative in relative_paths if (checkout / relative).is_file())
+    if not files:
+        msg = f"no benchmark harness files found in {checkout}"
+        raise FileNotFoundError(msg)
+    return files
+
+
+def _path_content_digest(checkout: Path, paths: tuple[Path, ...]) -> bytes:
+    """Hash relative paths and contents into a deterministic identity."""
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(path.relative_to(checkout).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.digest()
+
+
+def _benchmark_harness_digest(
+    checkout: Path,
+    suite: str,
+    comparison_targets: tuple[str, ...] | None = None,
+) -> str:
+    """Hash benchmark paths and contents into a deterministic harness identity."""
+    return _path_content_digest(checkout, _benchmark_harness_files(checkout, suite, comparison_targets)).hex()
+
+
+def _benchmark_configuration_digest(checkout: Path) -> str:
+    """Hash orchestration files and benchmark-affecting environment settings."""
+    relative_paths = (
+        Path(".cargo") / "config.toml",
+        Path("justfile"),
+        Path("rust-toolchain.toml"),
+        Path("scripts") / "benchmark_utils.py",
+    )
+    paths = tuple(checkout / relative for relative in relative_paths if (checkout / relative).is_file())
+    digest = hashlib.sha256(_path_content_digest(checkout, paths))
+    cargo_manifest = tomllib.loads(_read_text(checkout / "Cargo.toml"))
+    package = cargo_manifest.get("package")
+    if isinstance(package, dict):
+        package = dict(package)
+        package.pop("version", None)
+        cargo_manifest = {**cargo_manifest, "package": package}
+    digest.update(json.dumps(cargo_manifest, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    digest.update(b"\0")
+    cargo_lock = tomllib.loads(_read_text(checkout / "Cargo.lock"))
+    packages = cargo_lock.get("package")
+    if isinstance(packages, list):
+        normalized_packages = []
+        for package_entry in packages:
+            if isinstance(package_entry, dict) and package_entry.get("name") == "delaunay":
+                package_entry = dict(package_entry)
+                package_entry.pop("version", None)
+            normalized_packages.append(package_entry)
+        cargo_lock = {**cargo_lock, "package": normalized_packages}
+    digest.update(json.dumps(cargo_lock, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    digest.update(b"\0")
+    relevant_environment = sorted(
+        (key, value)
+        for key, value in os.environ.items()
+        if key in {"CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS", "RUSTUP_TOOLCHAIN"} or key.startswith(("BENCH_", "CRIT_", "DELAUNAY_BENCH_"))
+    )
+    for key, value in relevant_environment:
+        digest.update(f"env:{key}".encode())
+        digest.update(b"\0")
+        digest.update(value.encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _measurement_plan_digest(
+    checkout: Path,
+    suite: str,
+    comparison_targets: tuple[str, ...] | None = None,
+) -> str:
+    """Hash the normalized benchmark method independently of measured source."""
+    targets = _comparison_targets_for_suite(suite, comparison_targets)
+    if suite == "release-signal":
+        target_set = set(targets)
+        measurements = tuple(measurement for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN if measurement.target in target_set)
+    else:
+        present = set(_bench_targets_for_suite(checkout, suite))
+        measurements = tuple(BenchmarkTargetMeasurement(target) for target in targets if target in present)
+    payload: dict[str, object] = {
+        "cargo_features": [],
+        "cargo_profile": BENCHMARK_BUILD_FLAVOR,
+        "statistic": "median",
+        "suite": suite,
+        "targets": [
+            {
+                "command": list(measurement.command),
+                "criterion_arguments": list(measurement.criterion_arguments),
+                "sampling_mode": measurement.sampling_mode,
+                "target": measurement.target,
+            }
+            for measurement in measurements
+        ],
+    }
+    relevant_environment = sorted(
+        (key, value)
+        for key, value in os.environ.items()
+        if key in {"CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS", "RUSTUP_TOOLCHAIN"} or key.startswith(("BENCH_", "CRIT_", "DELAUNAY_BENCH_"))
+    )
+    payload["environment"] = relevant_environment
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _source_state(checkout: Path, *, version: str, ref: str) -> SourceState:
+    """Capture one checkout's commit and tracked working-tree state."""
+    commit = run_git_command(["rev-parse", "HEAD"], cwd=checkout, timeout=RELEASE_COMMAND_TIMEOUT_SECONDS).stdout.strip()
+    revision_timestamp = run_git_command(
+        ["show", "-s", "--format=%cI", "HEAD"],
+        cwd=checkout,
+        timeout=RELEASE_COMMAND_TIMEOUT_SECONDS,
+    ).stdout.strip()
+    diff = run_git_command(["diff", "--binary", "HEAD"], cwd=checkout, timeout=RELEASE_COMMAND_TIMEOUT_SECONDS).stdout
+    status = run_git_command(
+        ["status", "--short", "--untracked-files=no"],
+        cwd=checkout,
+        timeout=RELEASE_COMMAND_TIMEOUT_SECONDS,
+    ).stdout
+    state_digest = hashlib.sha256(f"commit {commit}\n".encode() + diff.encode("utf-8")).hexdigest()
+    return SourceState(
+        version=normalize_release_tag(version),
+        commit=commit,
+        ref=ref,
+        revision_timestamp=revision_timestamp,
+        git_clean=not status.strip(),
+        source_state_sha256=state_digest,
+    )
+
+
+def _toolchain_state(
+    checkout: Path,
+    suite: str,
+    comparison_targets: tuple[str, ...] | None = None,
+) -> ToolchainState:
+    """Capture the Rust, Criterion, lockfile, and harness configuration."""
+    return ToolchainState(
+        rustc=_run_tool_output("rustc", ["--version"], cwd=checkout, env=_benchmark_env(checkout)),
+        criterion_version=_criterion_dependency_version(checkout),
+        cargo_profile=BENCHMARK_BUILD_FLAVOR,
+        cargo_lock_sha256=_sha256_file(checkout / "Cargo.lock"),
+        harness_sha256=_benchmark_harness_digest(checkout, suite, comparison_targets),
+        configuration_sha256=_benchmark_configuration_digest(checkout),
+        measurement_plan_sha256=_measurement_plan_digest(checkout, suite, comparison_targets),
+    )
+
+
+def _revision_evidence(
+    checkout: Path,
+    *,
+    version: str,
+    ref: str,
+    measurement: RevisionMeasurement,
+) -> RevisionEvidence:
+    """Capture complete evidence for one measured revision."""
+    expected_version = normalize_release_tag(version)
+    observed_version = _current_package_tag(checkout)
+    if observed_version != expected_version:
+        msg = f"measured checkout package version {observed_version} does not match requested release {expected_version}: {checkout}"
+        raise ValueError(msg)
+    return RevisionEvidence(
+        source=_source_state(checkout, version=observed_version, ref=ref),
+        toolchain=_toolchain_state(checkout, measurement.suite, measurement.comparison_targets),
+        commands=measurement.commands,
+        completed_targets=_bench_targets_for_suite(checkout, measurement.suite),
+    )
+
+
+def _recorded_host_identity(repo_root: Path) -> HostIdentity:
+    """Capture the current host for local measurement or publication."""
+    hardware = HardwareInfo().get_hardware_info(cwd=repo_root)
+    return HostIdentity(
+        status="recorded",
+        cpu=hardware["CPU"],
+        operating_system=hardware["OS"],
+        architecture=platform.machine() or hardware["TARGET"],
+    )
+
+
 def _apply_current_diff_to_worktree(*, repo_root: Path, worktree: Path) -> None:
     """Apply the current tracked diff to a temporary worktree."""
     diff = run_git_command(["diff", "--binary", "HEAD"], cwd=repo_root, timeout=RELEASE_COMMAND_TIMEOUT_SECONDS).stdout
     if not diff.strip():
         return
     try:
-        run_git_command_with_input(["apply", "--binary"], diff, cwd=worktree, timeout=RELEASE_COMMAND_TIMEOUT_SECONDS)
+        run_git_command_with_input(["apply", "--index", "--binary"], diff, cwd=worktree, timeout=RELEASE_COMMAND_TIMEOUT_SECONDS)
     except subprocess.CalledProcessError as exc:
-        raise RuntimeError(_format_command_failure(["git", "apply", "--binary"], exc)) from exc
+        raise RuntimeError(_format_command_failure(["git", "apply", "--index", "--binary"], exc)) from exc
 
 
 def _cargo_manifest_bench_targets(worktree: Path) -> set[str]:
@@ -3122,75 +4074,88 @@ def _bench_targets_for_suite(worktree: Path, suite: str) -> tuple[str, ...]:
     return tuple(target for target in requested if target in present)
 
 
-def _run_saved_baseline_for_suite(*, worktree: Path, baseline_tag: str, suite: str, env: dict[str, str] | None) -> None:
+def _shared_bench_targets(current_worktree: Path, baseline_worktree: Path, suite: str) -> tuple[str, ...]:
+    """Return the canonical target plan supported by both measured revisions."""
+    current = set(_bench_targets_for_suite(current_worktree, suite))
+    baseline = set(_bench_targets_for_suite(baseline_worktree, suite))
+    shared = tuple(target for target in BENCH_TARGET_SUITES[suite] if target in current and target in baseline)
+    if not shared:
+        msg = f"current and baseline revisions share no benchmark targets for suite {suite!r}"
+        raise RuntimeError(msg)
+    return shared
+
+
+def _run_saved_baseline_for_suite(
+    *,
+    worktree: Path,
+    baseline_tag: str,
+    suite: str,
+    env: dict[str, str] | None,
+) -> tuple[tuple[str, ...], ...]:
     """Run present release-signal benchmarks and save a named Criterion baseline."""
     targets = _bench_targets_for_suite(worktree, suite)
     if not targets:
         msg = f"no benchmark targets found for suite {suite!r} in {worktree}"
         raise RuntimeError(msg)
+    commands: list[tuple[str, ...]] = []
     for target in targets:
-        _run_tool(
+        command = (
             "cargo",
-            [
-                "bench",
-                "--profile",
-                BENCHMARK_BUILD_FLAVOR,
-                "--bench",
-                target,
-                "--",
-                "--save-baseline",
-                baseline_tag,
-            ],
+            "bench",
+            "--profile",
+            BENCHMARK_BUILD_FLAVOR,
+            "--bench",
+            target,
+            "--",
+            "--save-baseline",
+            baseline_tag,
+        )
+        _run_tool(
+            command[0],
+            list(command[1:]),
             cwd=worktree,
             timeout=RELEASE_BENCH_TIMEOUT_SECONDS,
             env=env,
         )
+        commands.append(command)
+    return tuple(commands)
 
 
-def _run_latest_for_suite(*, worktree: Path, suite: str, env: dict[str, str] | None) -> None:
+def _run_latest_for_suite(*, worktree: Path, suite: str, env: dict[str, str] | None) -> tuple[tuple[str, ...], ...]:
     """Run current benchmarks for a suite."""
     if suite == "release-signal" and (worktree / "justfile").exists():
         _run_tool("just", ["bench-latest"], cwd=worktree, timeout=RELEASE_BENCH_TIMEOUT_SECONDS, env=env)
-        return
+        return (("just", "bench-latest"),)
+    commands: list[tuple[str, ...]] = []
     for target in _bench_targets_for_suite(worktree, suite):
+        command = ("cargo", "bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", target)
         _run_tool(
-            "cargo",
-            ["bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", target],
+            command[0],
+            list(command[1:]),
             cwd=worktree,
             timeout=RELEASE_BENCH_TIMEOUT_SECONDS,
             env=env,
         )
+        commands.append(command)
+    return tuple(commands)
 
 
-def _render_report_in_worktree(*, worktree: Path, report: Path, config: ReleaseReportConfig) -> None:
-    """Render a Criterion saved-baseline report inside a temporary worktree."""
-    _run_tool(
-        "uv",
-        [
-            "run",
-            "benchmark-utils",
-            "bench-compare",
-            config.baseline_tag,
-            "--suite",
-            config.suite,
-            "--scope",
-            config.scope,
-            "--stat",
-            config.stat,
-            "--output",
-            str(report),
-        ],
-        cwd=worktree,
-        timeout=RELEASE_COMMAND_TIMEOUT_SECONDS,
-    )
-
-
-def _generate_local_baseline_into_worktree(*, config: ReleaseReportConfig, target_worktree: Path, tmp_dir: Path) -> None:
-    """Generate a local saved Criterion baseline in a detached baseline worktree."""
+def _generate_local_baseline_into_worktree(
+    *,
+    config: ReleaseReportConfig,
+    target_worktree: Path,
+    tmp_dir: Path,
+) -> RevisionEvidence:
+    """Generate a local baseline and return its complete revision evidence."""
     baseline_worktree = tmp_dir / "baseline-worktree"
     _run_git(["worktree", "add", "--detach", str(baseline_worktree), config.baseline_tag], cwd=config.repo_root)
     try:
-        _run_saved_baseline_for_suite(
+        observed_baseline_tag = _current_package_tag(baseline_worktree)
+        if observed_baseline_tag != config.baseline_tag:
+            msg = f"prepared baseline checkout version {observed_baseline_tag} does not match requested release {config.baseline_tag}"
+            raise ValueError(msg)
+        comparison_targets = _shared_bench_targets(target_worktree, baseline_worktree, config.suite)
+        commands = _run_saved_baseline_for_suite(
             worktree=baseline_worktree,
             baseline_tag=config.baseline_tag,
             suite=config.suite,
@@ -3202,7 +4167,25 @@ def _generate_local_baseline_into_worktree(*, config: ReleaseReportConfig, targe
             raise FileNotFoundError(msg)
         target_criterion = target_worktree / "target" / "criterion"
         target_criterion.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(baseline_criterion, target_criterion, dirs_exist_ok=True)
+        copied = _copy_criterion_sample(
+            source_criterion=baseline_criterion,
+            target_criterion=target_criterion,
+            source_sample=config.baseline_tag,
+            target_sample=config.baseline_tag,
+        )
+        if copied == 0:
+            msg = f"generated baseline contains no saved sample named {config.baseline_tag!r}"
+            raise FileNotFoundError(msg)
+        return _revision_evidence(
+            baseline_worktree,
+            version=config.baseline_tag,
+            ref=config.baseline_tag,
+            measurement=RevisionMeasurement(
+                suite=config.suite,
+                commands=commands,
+                comparison_targets=comparison_targets,
+            ),
+        )
     finally:
         try:
             _run_git(["worktree", "remove", "--force", str(baseline_worktree)], cwd=config.repo_root)
@@ -3223,26 +4206,435 @@ def _safe_extract_tar(archive: Path, target_dir: Path) -> None:
         tar.extractall(target_dir, filter="data")
 
 
-def _download_release_baseline(*, tag: str, download_dir: Path, repo_root: Path) -> Path:
+def _source_state_payload(source: SourceState) -> dict[str, object]:
+    """Return the release-archive JSON shape for source evidence."""
+    return {
+        "version": source.version,
+        "commit": source.commit,
+        "ref": source.ref,
+        "revision_timestamp": source.revision_timestamp,
+        "git_clean": source.git_clean,
+        "source_state_sha256": source.source_state_sha256,
+        "limitation": source.limitation,
+    }
+
+
+def _toolchain_state_payload(toolchain: ToolchainState) -> dict[str, str | None]:
+    """Return the release-archive JSON shape for toolchain evidence."""
+    return {
+        "rustc": toolchain.rustc,
+        "criterion_version": toolchain.criterion_version,
+        "cargo_profile": toolchain.cargo_profile,
+        "cargo_lock_sha256": toolchain.cargo_lock_sha256,
+        "harness_sha256": toolchain.harness_sha256,
+        "configuration_sha256": toolchain.configuration_sha256,
+        "measurement_plan_sha256": toolchain.measurement_plan_sha256,
+        "limitation": toolchain.limitation,
+    }
+
+
+def _host_identity_payload(host: HostIdentity) -> dict[str, str]:
+    """Return the release-archive JSON shape for host evidence."""
+    return {
+        "status": host.status,
+        "cpu": host.cpu,
+        "operating_system": host.operating_system,
+        "architecture": host.architecture,
+        "reason": host.reason,
+    }
+
+
+def write_release_benchmark_metadata(*, repo_root: Path, tag: str, criterion_dir: Path, output: Path) -> None:
+    """Write versioned measurement provenance inside a release benchmark archive."""
+    resolved_criterion = criterion_dir.resolve(strict=False)
+    resolved_output = output.resolve(strict=False)
+    if resolved_output == resolved_criterion or resolved_output.is_relative_to(resolved_criterion):
+        msg = "release metadata output must be outside the Criterion directory it binds"
+        raise ValueError(msg)
+    normalized_tag = normalize_release_tag(tag)
+    observed_tag = _current_package_tag(repo_root)
+    if normalized_tag != observed_tag:
+        msg = f"release tag {normalized_tag} does not match package version {observed_tag}"
+        raise ValueError(msg)
+    source = _source_state(repo_root, version=observed_tag, ref=normalized_tag)
+    expected_commit = _expected_tag_commit(repo_root, normalized_tag)
+    if source.commit != expected_commit:
+        msg = f"release benchmark checkout commit {source.commit} does not match tag {normalized_tag} commit {expected_commit}"
+        raise ValueError(msg)
+    if source.git_clean is not True:
+        msg = f"release benchmark checkout for {normalized_tag} must be clean before metadata is written"
+        raise ValueError(msg)
+    clean_source_digest = hashlib.sha256(f"commit {expected_commit}\n".encode()).hexdigest()
+    if source.source_state_sha256 != clean_source_digest:
+        msg = f"release benchmark checkout source-state digest is inconsistent with clean tag {normalized_tag}"
+        raise ValueError(msg)
+    toolchain = _toolchain_state(repo_root, "release-signal")
+    host = _recorded_host_identity(repo_root)
+    _criterion_sample_digest(criterion_dir, "new")
+    payload = {
+        "schema_version": RELEASE_ASSET_METADATA_SCHEMA_VERSION,
+        "source": _source_state_payload(source),
+        "measurement_commands": [list(command) for command in RELEASE_ASSET_MEASUREMENT_COMMANDS],
+        "completed_targets": list(RELEASE_SIGNAL_BENCH_TARGETS),
+        "toolchain": _toolchain_state_payload(toolchain),
+        "measurement_host": _host_identity_payload(host),
+        "criterion": {"content_sha256": _directory_digest(criterion_dir), "sample_name": "new"},
+    }
+    _write_text_atomic(output, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def _metadata_object(data: Mapping[str, object], field: str, *, source: Path) -> Mapping[str, object]:
+    """Return one required object from release metadata."""
+    value = data.get(field)
+    if not isinstance(value, Mapping):
+        msg = f"{source}: {field} must be an object"
+        raise TypeError(msg)
+    return cast("Mapping[str, object]", value)
+
+
+def _metadata_string(data: Mapping[str, object], field: str, *, source: Path) -> str:
+    """Return one required non-empty string from release metadata."""
+    value = data.get(field)
+    if not isinstance(value, str) or not value.strip():
+        msg = f"{source}: {field} must be a non-empty string"
+        raise ValueError(msg)
+    return value
+
+
+def _require_metadata_keys(data: Mapping[str, object], expected: set[str], *, source: Path) -> None:
+    """Reject missing or unknown release metadata fields."""
+    if set(data) != expected:
+        msg = f"{source}: fields do not match release benchmark metadata schema"
+        raise ValueError(msg)
+
+
+def _release_metadata_commands(value: object, *, source: Path) -> tuple[tuple[str, ...], ...]:
+    """Parse measurement command argument vectors from release metadata."""
+    if not isinstance(value, list) or not value:
+        msg = f"{source}: measurement_commands must be a non-empty array"
+        raise ValueError(msg)
+    commands: list[tuple[str, ...]] = []
+    for command in value:
+        if not isinstance(command, list) or not command or not all(isinstance(part, str) and part for part in command):
+            msg = f"{source}: measurement_commands must contain non-empty string arrays"
+            raise ValueError(msg)
+        commands.append(tuple(cast("list[str]", command)))
+    return tuple(commands)
+
+
+def _expected_tag_commit(repo_root: Path, tag: str) -> str:
+    """Resolve one requested release tag to its peeled commit object."""
+    normalized_tag = normalize_release_tag(tag)
+    commit = run_git_command(
+        ["rev-parse", f"{normalized_tag}^{{commit}}"],
+        cwd=repo_root,
+        timeout=RELEASE_COMMAND_TIMEOUT_SECONDS,
+    ).stdout.strip()
+    if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit) is None:
+        msg = f"could not resolve release tag {normalized_tag} to a full commit ID"
+        raise ValueError(msg)
+    return commit
+
+
+def _legacy_release_asset_evidence(
+    *,
+    data: Mapping[str, object],
+    request: ReleaseAssetLoadRequest,
+) -> ReleaseAssetEvidence:
+    """Load an existing unversioned archive without inventing missing facts."""
+    metadata_path = request.extracted_root / "metadata.json"
+    criterion_dir = request.extracted_root / "criterion"
+    _require_metadata_keys(
+        data,
+        {
+            "tag",
+            "commit",
+            "run_id",
+            "generated_at",
+            "cargo_profile",
+            "sampling_mode",
+            "runner_os",
+            "runner_arch",
+            "summary",
+            "criterion_dir",
+        },
+        source=metadata_path,
+    )
+    normalized_tag = normalize_release_tag(request.requested_tag)
+    metadata_tag = normalize_release_tag(_metadata_string(data, "tag", source=metadata_path))
+    if metadata_tag != normalized_tag:
+        msg = f"release benchmark metadata identifies {metadata_tag}, expected {normalized_tag}"
+        raise ValueError(msg)
+    commit = _metadata_string(data, "commit", source=metadata_path)
+    if commit != request.expected_commit:
+        msg = f"release benchmark metadata commit {commit!r} does not match tag {normalized_tag} commit {request.expected_commit}"
+        raise ValueError(msg)
+    if _metadata_string(data, "cargo_profile", source=metadata_path) != BENCHMARK_BUILD_FLAVOR:
+        msg = f"{metadata_path}: legacy release benchmark cargo_profile must be {BENCHMARK_BUILD_FLAVOR!r}"
+        raise ValueError(msg)
+    if _metadata_string(data, "sampling_mode", source=metadata_path) != "full":
+        msg = f"{metadata_path}: legacy release benchmark sampling_mode must be 'full'"
+        raise ValueError(msg)
+    if _metadata_string(data, "summary", source=metadata_path) != "PERFORMANCE_RESULTS.md":
+        msg = f"{metadata_path}: legacy release benchmark summary path is unsupported"
+        raise ValueError(msg)
+    if _metadata_string(data, "criterion_dir", source=metadata_path) != "criterion":
+        msg = f"{metadata_path}: legacy release benchmark Criterion path is unsupported"
+        raise ValueError(msg)
+    run_id = _metadata_string(data, "run_id", source=metadata_path)
+    runner_os = _metadata_string(data, "runner_os", source=metadata_path)
+    runner_arch = _metadata_string(data, "runner_arch", source=metadata_path)
+    generated_at = _metadata_string(data, "generated_at", source=metadata_path)
+    observed_content_sha256 = _directory_digest(criterion_dir)
+    _criterion_sample_digest(criterion_dir, "new")
+    return ReleaseAssetEvidence(
+        revision=RevisionEvidence(
+            source=SourceState(
+                version=normalized_tag,
+                commit=commit,
+                ref=normalized_tag,
+                revision_timestamp=generated_at,
+                git_clean=None,
+                source_state_sha256=None,
+                limitation="Legacy archive did not record clean source state or its digest.",
+            ),
+            toolchain=ToolchainState(
+                rustc=None,
+                criterion_version=None,
+                cargo_profile=BENCHMARK_BUILD_FLAVOR,
+                cargo_lock_sha256=None,
+                harness_sha256=None,
+                configuration_sha256=None,
+                measurement_plan_sha256=None,
+                limitation=("Legacy archive did not record Rust, Criterion, lock, harness, configuration, or measurement-plan identity."),
+            ),
+            commands=(),
+            completed_targets=(),
+        ),
+        measurement_host=HostIdentity(
+            status="unavailable",
+            cpu="",
+            operating_system=runner_os,
+            architecture=runner_arch,
+            reason=f"Legacy archive run {run_id} did not record CPU identity or a controlled paired measurement host.",
+        ),
+        artifact=MeasurementArtifact(
+            origin="release-archive",
+            content_sha256=observed_content_sha256,
+            sample_name="new",
+            archive_sha256=_sha256_file(request.archive),
+        ),
+        acquisition_commands=(request.acquisition_command,),
+    )
+
+
+def _versioned_release_source(
+    data: Mapping[str, object],
+    *,
+    metadata_path: Path,
+    normalized_tag: str,
+    expected_commit: str,
+) -> SourceState:
+    """Parse and bind complete source evidence to the requested clean tag."""
+    source_data = _metadata_object(data, "source", source=metadata_path)
+    _require_metadata_keys(
+        source_data,
+        {"version", "commit", "ref", "revision_timestamp", "git_clean", "source_state_sha256", "limitation"},
+        source=metadata_path,
+    )
+    if source_data.get("limitation") != "":
+        msg = f"{metadata_path}: versioned release source evidence must be complete"
+        raise ValueError(msg)
+    git_clean = source_data.get("git_clean")
+    if not isinstance(git_clean, bool):
+        msg = f"{metadata_path}: source.git_clean must be a boolean"
+        raise TypeError(msg)
+    source = SourceState(
+        version=_metadata_string(source_data, "version", source=metadata_path),
+        commit=_metadata_string(source_data, "commit", source=metadata_path),
+        ref=_metadata_string(source_data, "ref", source=metadata_path),
+        revision_timestamp=_metadata_string(source_data, "revision_timestamp", source=metadata_path),
+        git_clean=git_clean,
+        source_state_sha256=_metadata_string(source_data, "source_state_sha256", source=metadata_path),
+    )
+    if source.version != normalized_tag or normalize_release_tag(source.ref) != normalized_tag:
+        msg = f"release benchmark metadata identifies {source.version}/{source.ref}, expected {normalized_tag}"
+        raise ValueError(msg)
+    if source.commit != expected_commit:
+        msg = f"release benchmark metadata commit {source.commit} does not match tag {normalized_tag} commit {expected_commit}"
+        raise ValueError(msg)
+    if not source.git_clean:
+        msg = f"release benchmark metadata for {normalized_tag} does not identify a clean checkout"
+        raise ValueError(msg)
+    clean_source_digest = hashlib.sha256(f"commit {expected_commit}\n".encode()).hexdigest()
+    if source.source_state_sha256 != clean_source_digest:
+        msg = f"release benchmark source-state digest is inconsistent with clean tag {normalized_tag}"
+        raise ValueError(msg)
+    return source
+
+
+def _versioned_release_toolchain(data: Mapping[str, object], *, metadata_path: Path) -> ToolchainState:
+    """Parse complete versioned release toolchain evidence."""
+    toolchain_data = _metadata_object(data, "toolchain", source=metadata_path)
+    _require_metadata_keys(
+        toolchain_data,
+        {
+            "rustc",
+            "criterion_version",
+            "cargo_profile",
+            "cargo_lock_sha256",
+            "harness_sha256",
+            "configuration_sha256",
+            "measurement_plan_sha256",
+            "limitation",
+        },
+        source=metadata_path,
+    )
+    if toolchain_data.get("limitation") != "":
+        msg = f"{metadata_path}: versioned release toolchain evidence must be complete"
+        raise ValueError(msg)
+    return ToolchainState(
+        rustc=_metadata_string(toolchain_data, "rustc", source=metadata_path),
+        criterion_version=_metadata_string(toolchain_data, "criterion_version", source=metadata_path),
+        cargo_profile=_metadata_string(toolchain_data, "cargo_profile", source=metadata_path),
+        cargo_lock_sha256=_metadata_string(toolchain_data, "cargo_lock_sha256", source=metadata_path),
+        harness_sha256=_metadata_string(toolchain_data, "harness_sha256", source=metadata_path),
+        configuration_sha256=_metadata_string(toolchain_data, "configuration_sha256", source=metadata_path),
+        measurement_plan_sha256=_metadata_string(toolchain_data, "measurement_plan_sha256", source=metadata_path),
+    )
+
+
+def _versioned_release_commands_and_targets(data: Mapping[str, object], *, metadata_path: Path) -> tuple[tuple[tuple[str, ...], ...], tuple[str, ...]]:
+    """Validate the exact versioned release producer command and target contract."""
+    commands = _release_metadata_commands(data.get("measurement_commands"), source=metadata_path)
+    if commands != RELEASE_ASSET_MEASUREMENT_COMMANDS:
+        msg = f"{metadata_path}: release benchmark measurement commands do not match the producer contract"
+        raise ValueError(msg)
+    completed_targets = data.get("completed_targets")
+    if not isinstance(completed_targets, list) or not all(isinstance(target, str) for target in completed_targets):
+        msg = f"{metadata_path}: completed_targets must be a string array"
+        raise TypeError(msg)
+    parsed_targets = tuple(cast("list[str]", completed_targets))
+    if parsed_targets != RELEASE_SIGNAL_BENCH_TARGETS:
+        msg = f"{metadata_path}: completed_targets do not match the release-signal producer contract"
+        raise ValueError(msg)
+    return commands, parsed_targets
+
+
+def _versioned_release_host(data: Mapping[str, object], *, metadata_path: Path) -> HostIdentity:
+    """Parse a non-placeholder recorded host from versioned metadata."""
+    host_data = _metadata_object(data, "measurement_host", source=metadata_path)
+    _require_metadata_keys(host_data, {"status", "cpu", "operating_system", "architecture", "reason"}, source=metadata_path)
+    for field in ("cpu", "operating_system", "architecture", "reason"):
+        if not isinstance(host_data.get(field), str):
+            msg = f"{metadata_path}: measurement_host.{field} must be a string"
+            raise TypeError(msg)
+    status = _metadata_string(host_data, "status", source=metadata_path)
+    if status != "recorded":
+        msg = f"{metadata_path}: versioned release metadata requires a recorded measurement host"
+        raise ValueError(msg)
+    return HostIdentity(
+        status="recorded",
+        cpu=cast("str", host_data["cpu"]),
+        operating_system=cast("str", host_data["operating_system"]),
+        architecture=cast("str", host_data["architecture"]),
+        reason=cast("str", host_data["reason"]),
+    )
+
+
+def _load_release_asset_evidence(
+    *,
+    requested_tag: str,
+    expected_commit: str,
+    extracted_root: Path,
+    archive: Path,
+    acquisition_command: tuple[str, ...],
+) -> ReleaseAssetEvidence:
+    """Load and verify measurement provenance from one extracted release archive."""
+    metadata_path = extracted_root / "metadata.json"
+    try:
+        raw = json.loads(_read_text(metadata_path))
+    except (OSError, json.JSONDecodeError) as exc:
+        msg = f"release benchmark asset lacks valid versioned metadata: {metadata_path}: {exc}"
+        raise ValueError(msg) from exc
+    if not isinstance(raw, Mapping):
+        msg = f"release benchmark metadata must be an object: {metadata_path}"
+        raise TypeError(msg)
+    data = cast("Mapping[str, object]", raw)
+    request = ReleaseAssetLoadRequest(
+        requested_tag=requested_tag,
+        expected_commit=expected_commit,
+        extracted_root=extracted_root,
+        archive=archive,
+        acquisition_command=acquisition_command,
+    )
+    criterion_dir = extracted_root / "criterion"
+    if "schema_version" not in data:
+        return _legacy_release_asset_evidence(data=data, request=request)
+    _require_metadata_keys(
+        data,
+        {
+            "schema_version",
+            "source",
+            "measurement_commands",
+            "completed_targets",
+            "toolchain",
+            "measurement_host",
+            "criterion",
+        },
+        source=metadata_path,
+    )
+    schema_version = data.get("schema_version")
+    if isinstance(schema_version, bool) or schema_version != RELEASE_ASSET_METADATA_SCHEMA_VERSION:
+        msg = f"unsupported release benchmark metadata schema: {schema_version!r}"
+        raise ValueError(msg)
+
+    normalized_tag = normalize_release_tag(requested_tag)
+    source = _versioned_release_source(
+        data,
+        metadata_path=metadata_path,
+        normalized_tag=normalized_tag,
+        expected_commit=expected_commit,
+    )
+    toolchain = _versioned_release_toolchain(data, metadata_path=metadata_path)
+    commands, parsed_targets = _versioned_release_commands_and_targets(data, metadata_path=metadata_path)
+    host = _versioned_release_host(data, metadata_path=metadata_path)
+    criterion_data = _metadata_object(data, "criterion", source=metadata_path)
+    _require_metadata_keys(criterion_data, {"content_sha256", "sample_name"}, source=metadata_path)
+    expected_content_sha256 = _metadata_string(criterion_data, "content_sha256", source=metadata_path)
+    observed_content_sha256 = _directory_digest(criterion_dir)
+    if observed_content_sha256 != expected_content_sha256:
+        msg = f"release benchmark Criterion digest mismatch for {normalized_tag}"
+        raise ValueError(msg)
+    sample_name = _metadata_string(criterion_data, "sample_name", source=metadata_path)
+    _criterion_sample_digest(criterion_dir, sample_name)
+    return ReleaseAssetEvidence(
+        revision=RevisionEvidence(
+            source=source,
+            toolchain=toolchain,
+            commands=commands,
+            completed_targets=parsed_targets,
+        ),
+        measurement_host=host,
+        artifact=MeasurementArtifact(
+            origin="release-archive",
+            content_sha256=observed_content_sha256,
+            sample_name=sample_name,
+            archive_sha256=_sha256_file(archive),
+        ),
+        acquisition_commands=(acquisition_command,),
+    )
+
+
+def _download_release_baseline(*, tag: str, download_dir: Path, repo_root: Path) -> DownloadedReleaseAsset:
     """Download a Delaunay release benchmark asset."""
     artifact = download_dir / f"delaunay-{tag}-criterion-baseline.tar.gz"
-    _run_tool(
-        "gh",
-        [
-            "release",
-            "download",
-            tag,
-            "--pattern",
-            artifact.name,
-            "--dir",
-            str(download_dir),
-        ],
-        cwd=repo_root,
-    )
+    command = ("gh", "release", "download", tag, "--pattern", artifact.name, "--dir", str(download_dir))
+    _run_tool(command[0], list(command[1:]), cwd=repo_root)
     if not artifact.exists():
         msg = f"release baseline asset was not downloaded: {artifact}"
         raise FileNotFoundError(msg)
-    return artifact
+    return DownloadedReleaseAsset(archive=artifact, command=command)
 
 
 def _copy_criterion_sample(*, source_criterion: Path, target_criterion: Path, source_sample: str, target_sample: str) -> int:
@@ -3251,11 +4643,12 @@ def _copy_criterion_sample(*, source_criterion: Path, target_criterion: Path, so
     for estimates_json in sorted(source_criterion.rglob("estimates.json")):
         if estimates_json.parent.name != source_sample:
             continue
-        benchmark_id = _criterion_benchmark_id(estimates_json, source_criterion)
-        if benchmark_id is None:
+        criterion_sample = _criterion_sample(estimates_json, source_criterion)
+        if criterion_sample is None:
             continue
         source_dir = estimates_json.parent
-        target_dir = target_criterion / benchmark_id / target_sample
+        relative_benchmark_dir = source_dir.parent.relative_to(source_criterion)
+        target_dir = target_criterion / relative_benchmark_dir / target_sample
         if target_dir.exists():
             shutil.rmtree(target_dir)
         shutil.copytree(source_dir, target_dir)
@@ -3272,14 +4665,36 @@ def _copy_first_available_sample(*, source_criterion: Path, target_criterion: Pa
     raise FileNotFoundError(msg)
 
 
-def _prepare_github_release_assets(*, config: ReleaseReportConfig, target_worktree: Path, tmp_dir: Path) -> None:
-    """Prepare current and baseline Criterion samples from GitHub Release assets."""
-    baseline_archive = _download_release_baseline(tag=config.baseline_tag, download_dir=tmp_dir, repo_root=config.repo_root)
-    current_archive = _download_release_baseline(tag=config.current_tag, download_dir=tmp_dir, repo_root=config.repo_root)
+def _prepare_github_release_assets(
+    *,
+    config: ReleaseReportConfig,
+    target_worktree: Path,
+    tmp_dir: Path,
+) -> tuple[ReleaseAssetEvidence, ReleaseAssetEvidence]:
+    """Prepare release-asset samples and return current/baseline measurement evidence."""
+    baseline_download = _download_release_baseline(tag=config.baseline_tag, download_dir=tmp_dir, repo_root=config.repo_root)
+    current_download = _download_release_baseline(tag=config.current_tag, download_dir=tmp_dir, repo_root=config.repo_root)
     baseline_extract = tmp_dir / "baseline-asset"
     current_extract = tmp_dir / "current-asset"
-    _safe_extract_tar(baseline_archive, baseline_extract)
-    _safe_extract_tar(current_archive, current_extract)
+    _safe_extract_tar(baseline_download.archive, baseline_extract)
+    _safe_extract_tar(current_download.archive, current_extract)
+    baseline_commit = _expected_tag_commit(config.repo_root, config.baseline_tag)
+    current_commit = _expected_tag_commit(config.repo_root, config.current_tag)
+
+    baseline_evidence = _load_release_asset_evidence(
+        requested_tag=config.baseline_tag,
+        expected_commit=baseline_commit,
+        extracted_root=baseline_extract,
+        archive=baseline_download.archive,
+        acquisition_command=baseline_download.command,
+    )
+    current_evidence = _load_release_asset_evidence(
+        requested_tag=config.current_tag,
+        expected_commit=current_commit,
+        extracted_root=current_extract,
+        archive=current_download.archive,
+        acquisition_command=current_download.command,
+    )
 
     baseline_criterion = baseline_extract / "criterion"
     current_criterion = current_extract / "criterion"
@@ -3292,35 +4707,108 @@ def _prepare_github_release_assets(*, config: ReleaseReportConfig, target_worktr
     _copy_first_available_sample(
         source_criterion=current_criterion,
         target_criterion=target_criterion,
-        candidate_samples=(config.current_tag, "new", "base"),
+        candidate_samples=(current_evidence.artifact.sample_name,),
         target_sample="new",
     )
     _copy_first_available_sample(
         source_criterion=baseline_criterion,
         target_criterion=target_criterion,
-        candidate_samples=(config.baseline_tag, "new", "base"),
+        candidate_samples=(baseline_evidence.artifact.sample_name,),
         target_sample=config.baseline_tag,
     )
+    return current_evidence, baseline_evidence
 
 
-def _generate_report_in_temp_worktree(*, config: ReleaseReportConfig) -> str:
-    """Generate a release comparison report in a temporary detached worktree."""
+def _build_performance_bundle_in_temp_worktree(*, config: ReleaseReportConfig) -> PerformanceBundle:
+    """Measure or load a comparison in temporary worktrees and return trusted data."""
     with tempfile.TemporaryDirectory(prefix="delaunay-performance-") as tmp:
         tmp_dir = Path(tmp)
         worktree = tmp_dir / "worktree"
-        report = tmp_dir / f"{config.current_tag}-vs-{config.baseline_tag}.md"
 
         _run_git(["worktree", "add", "--detach", str(worktree), config.worktree_ref], cwd=config.repo_root)
         try:
             if config.apply_current_diff:
                 _apply_current_diff_to_worktree(repo_root=config.repo_root, worktree=worktree)
+            observed_current_tag = _current_package_tag(worktree)
+            if observed_current_tag != config.current_tag:
+                msg = f"prepared current checkout version {observed_current_tag} does not match requested release {config.current_tag}"
+                raise ValueError(msg)
             if config.baseline_source == "github-assets":
-                _prepare_github_release_assets(config=config, target_worktree=worktree, tmp_dir=tmp_dir)
+                current_asset_evidence, baseline_asset_evidence = _prepare_github_release_assets(
+                    config=config,
+                    target_worktree=worktree,
+                    tmp_dir=tmp_dir,
+                )
+                current_evidence = current_asset_evidence.revision
+                baseline_evidence = baseline_asset_evidence.revision
+                current_host = current_asset_evidence.measurement_host
+                baseline_host = baseline_asset_evidence.measurement_host
+                current_artifact = current_asset_evidence.artifact
+                baseline_artifact = baseline_asset_evidence.artifact
+                current_acquisition_commands = current_asset_evidence.acquisition_commands
+                baseline_acquisition_commands = baseline_asset_evidence.acquisition_commands
             else:
-                _generate_local_baseline_into_worktree(config=config, target_worktree=worktree, tmp_dir=tmp_dir)
-                _run_latest_for_suite(worktree=worktree, suite=config.suite, env=_benchmark_env(worktree))
-            _render_report_in_worktree(worktree=worktree, report=report, config=config)
-            return _read_text(report)
+                baseline_evidence = _generate_local_baseline_into_worktree(config=config, target_worktree=worktree, tmp_dir=tmp_dir)
+                current_commands = _run_latest_for_suite(worktree=worktree, suite=config.suite, env=_benchmark_env(worktree))
+                current_targets = _bench_targets_for_suite(worktree, config.suite)
+                baseline_targets = set(baseline_evidence.completed_targets)
+                comparison_targets = tuple(target for target in current_targets if target in baseline_targets)
+                current_evidence = _revision_evidence(
+                    worktree,
+                    version=config.current_tag,
+                    ref=config.worktree_ref,
+                    measurement=RevisionMeasurement(
+                        suite=config.suite,
+                        commands=current_commands,
+                        comparison_targets=comparison_targets,
+                    ),
+                )
+                current_host = _recorded_host_identity(config.repo_root)
+                baseline_host = current_host
+                criterion_dir = worktree / "target" / "criterion"
+                current_artifact = MeasurementArtifact(
+                    origin="local-run",
+                    content_sha256=_criterion_sample_digest(criterion_dir, "new"),
+                    sample_name="new",
+                )
+                baseline_artifact = MeasurementArtifact(
+                    origin="local-run",
+                    content_sha256=_criterion_sample_digest(criterion_dir, config.baseline_tag),
+                    sample_name=config.baseline_tag,
+                )
+                current_acquisition_commands = ()
+                baseline_acquisition_commands = ()
+            context = ArtifactContext(
+                release=ReleasePair(current=config.current_tag, baseline=config.baseline_tag),
+                statistic="median",
+                suite=config.suite,
+                scope=config.scope,
+                measurement_mode="github-assets" if config.baseline_source == "github-assets" else "local-worktrees",
+                current_source=current_evidence.source,
+                baseline_source=baseline_evidence.source,
+                current_commands=current_evidence.commands,
+                baseline_commands=baseline_evidence.commands,
+                current_completed_targets=current_evidence.completed_targets,
+                baseline_completed_targets=baseline_evidence.completed_targets,
+                current_acquisition_commands=current_acquisition_commands,
+                baseline_acquisition_commands=baseline_acquisition_commands,
+                current_toolchain=current_evidence.toolchain,
+                baseline_toolchain=baseline_evidence.toolchain,
+                current_measurement_host=current_host,
+                baseline_measurement_host=baseline_host,
+                current_artifact=current_artifact,
+                baseline_artifact=baseline_artifact,
+                publication_host=_recorded_host_identity(config.repo_root),
+            )
+            comparison_note = "; ".join(context.comparison_blockers)
+            rows = collect_performance_rows(
+                worktree / "target" / "criterion",
+                config.baseline_tag,
+                suite=config.suite,
+                scope=config.scope,
+                comparison_note=comparison_note,
+            )
+            return PerformanceBundle(context=context, rows=rows)
         finally:
             try:
                 _run_git(["worktree", "remove", "--force", str(worktree)], cwd=config.repo_root)
@@ -3328,8 +4816,94 @@ def _generate_report_in_temp_worktree(*, config: ReleaseReportConfig) -> str:
                 print(f"benchmark-utils: failed to remove temporary worktree: {exc}", file=sys.stderr)
 
 
+def _artifact_paths_for_output(output: Path) -> ArtifactPaths:
+    """Return the adjacent canonical artifact paths for one Markdown output."""
+    return ArtifactPaths(csv=output.with_suffix(".csv"), provenance=output.with_suffix(".provenance.json"))
+
+
+def _preflight_performance_destinations(
+    *,
+    output: Path,
+    report_id: PerformanceReportId,
+    current: Path | None = None,
+    archive_dir: Path | None = None,
+) -> None:
+    """Reject deterministic output aliases before fetches or measurements."""
+    artifacts = _artifact_paths_for_output(output)
+    paths = {"Markdown output": output, "artifact CSV": artifacts.csv, "artifact provenance": artifacts.provenance}
+    if current is not None:
+        if archive_dir is None:
+            msg = "archive_dir is required when preflighting a promotion"
+            raise ValueError(msg)
+        paths.update(
+            {
+                "current documentation": current,
+                "archive index": archive_dir / "README.md",
+                "promoted report archive": archive_dir / report_id.archive_name,
+            }
+        )
+        durable = _durable_performance_artifact_paths(archive_dir, report_id)
+        paths["durable CSV"] = durable.csv
+        paths["durable provenance"] = durable.provenance
+        if current.exists():
+            current_id = parse_performance_report_id(_normalize_how_to_update(_read_text(current)))
+            if current_id != report_id:
+                paths["prior report archive"] = archive_dir / current_id.archive_name
+    ensure_distinct_paths(paths)
+
+
+def _publish_performance_bundle(
+    *,
+    bundle: PerformanceBundle,
+    output: Path,
+    current: Path | None = None,
+    archive_dir: Path | None = None,
+) -> PerformanceReportId:
+    """Publish artifacts, reload-render Markdown, and optionally promote docs."""
+    artifacts = _artifact_paths_for_output(output)
+    paths = {"Markdown output": output, "artifact CSV": artifacts.csv, "artifact provenance": artifacts.provenance}
+    if current is not None:
+        paths["current documentation"] = current
+    ensure_distinct_paths(paths)
+    prior_output = output.read_bytes() if output.exists() else None
+    try:
+        with publish_bundle(artifacts, bundle):
+            report_id = PerformanceReportId(
+                current_tag=bundle.context.release.current,
+                baseline_tag=bundle.context.release.baseline,
+            )
+            if current is None:
+                rendered = render_performance_artifacts(artifacts)
+            else:
+                if archive_dir is None:
+                    msg = "archive_dir is required when promoting performance documentation"
+                    raise ValueError(msg)
+                durable_artifacts = _durable_performance_artifact_paths(archive_dir, report_id)
+                rendered = render_performance_bundle(
+                    load_bundle(artifacts),
+                    evidence_paths=durable_artifacts,
+                    evidence_state="promoted",
+                )
+            _write_text_atomic(output, rendered)
+            if current is not None:
+                if archive_dir is None:
+                    msg = "archive_dir is required when promoting performance documentation"
+                    raise ValueError(msg)
+                report_id = promote_performance_report(
+                    source=output,
+                    artifacts=artifacts,
+                    current=current,
+                    archive_dir=archive_dir,
+                    expected=report_id,
+                )
+            return report_id
+    except BaseException:
+        _restore_file_snapshot(output, prior_output)
+        raise
+
+
 def generate_performance_worktree_report(*, output: Path, config: ReleaseReportConfig) -> PerformanceReportId:
-    """Generate a release comparison report and write it to ``output``."""
+    """Generate and retain a validated non-promoting comparison bundle."""
     current_tag = normalize_release_tag(config.current_tag)
     baseline_tag = normalize_release_tag(config.baseline_tag)
     normalized = ReleaseReportConfig(
@@ -3343,25 +4917,34 @@ def generate_performance_worktree_report(*, output: Path, config: ReleaseReportC
         apply_current_diff=config.apply_current_diff,
         baseline_source=config.baseline_source,
     )
-    report_text = _normalize_how_to_update(_generate_report_in_temp_worktree(config=normalized))
-    report_id = parse_performance_report_id(report_text)
-    expected = PerformanceReportId(current_tag=current_tag, baseline_tag=baseline_tag)
-    if report_id != expected:
-        msg = (
-            "benchmark report does not match requested release pair: "
-            f"found {report_id.current_tag} vs {report_id.baseline_tag}, "
-            f"expected {expected.current_tag} vs {expected.baseline_tag}"
-        )
-        raise ValueError(msg)
-    _write_text_atomic(output, report_text)
-    return report_id
+    _preflight_performance_destinations(
+        output=output,
+        report_id=PerformanceReportId(current_tag=current_tag, baseline_tag=baseline_tag),
+    )
+    bundle = _build_performance_bundle_in_temp_worktree(config=normalized)
+    return _publish_performance_bundle(bundle=bundle, output=output)
 
 
-def generate_and_promote_performance_report(*, current: Path, archive_dir: Path, config: ReleaseReportConfig) -> PerformanceReportId:
-    """Generate a release comparison report and promote it into docs."""
+def generate_and_promote_performance_report(
+    *,
+    output: Path,
+    current: Path,
+    archive_dir: Path,
+    config: ReleaseReportConfig,
+) -> PerformanceReportId:
+    """Generate, retain, reload-render, and promote one comparison bundle."""
     current_tag = normalize_release_tag(config.current_tag)
     baseline_tag = normalize_release_tag(config.baseline_tag)
-    report_text = _generate_report_in_temp_worktree(
+    if current_tag == baseline_tag:
+        msg = "performance-release requires distinct current and baseline tags"
+        raise ValueError(msg)
+    _preflight_performance_destinations(
+        output=output,
+        report_id=PerformanceReportId(current_tag=current_tag, baseline_tag=baseline_tag),
+        current=current,
+        archive_dir=archive_dir,
+    )
+    bundle = _build_performance_bundle_in_temp_worktree(
         config=ReleaseReportConfig(
             repo_root=config.repo_root,
             current_tag=current_tag,
@@ -3374,20 +4957,65 @@ def generate_and_promote_performance_report(*, current: Path, archive_dir: Path,
             baseline_source=config.baseline_source,
         )
     )
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as tmp:
-        source = Path(tmp.name)
-        tmp.write(report_text)
+    return _publish_performance_bundle(bundle=bundle, output=output, current=current, archive_dir=archive_dir)
+
+
+def render_and_promote_performance_artifacts(
+    *,
+    output: Path,
+    artifacts: ArtifactPaths,
+    current: Path,
+    archive_dir: Path,
+    expected_current_tag: str,
+) -> PerformanceReportId:
+    """Render and promote retained artifacts without Cargo or worktrees."""
+    ensure_distinct_paths(
+        {
+            "Markdown output": output,
+            "artifact CSV": artifacts.csv,
+            "artifact provenance": artifacts.provenance,
+            "current documentation": current,
+        }
+    )
+    bundle = load_bundle(artifacts)
+    normalized_expected_current = normalize_release_tag(expected_current_tag)
+    if bundle.context.release.current != normalized_expected_current:
+        msg = f"retained current release {bundle.context.release.current} does not match independently expected release {normalized_expected_current}"
+        raise ValueError(msg)
+    if bundle.context.release.current == bundle.context.release.baseline:
+        msg = "performance-doc cannot promote a same-version local performance comparison"
+        raise ValueError(msg)
+    bundle.require_promotable()
+    _preflight_performance_destinations(
+        output=output,
+        report_id=PerformanceReportId(
+            current_tag=bundle.context.release.current,
+            baseline_tag=bundle.context.release.baseline,
+        ),
+        current=current,
+        archive_dir=archive_dir,
+    )
+    prior_output = output.read_bytes() if output.exists() else None
     try:
+        report_id = PerformanceReportId(
+            current_tag=bundle.context.release.current,
+            baseline_tag=bundle.context.release.baseline,
+        )
+        durable_artifacts = _durable_performance_artifact_paths(archive_dir, report_id)
+        _write_text_atomic(
+            output,
+            render_performance_bundle(bundle, evidence_paths=durable_artifacts, evidence_state="promoted"),
+        )
         return promote_performance_report(
-            source=source,
+            source=output,
+            artifacts=artifacts,
             current=current,
             archive_dir=archive_dir,
-            expected_current_tag=current_tag,
-            expected_baseline_tag=baseline_tag,
+            expected=report_id,
         )
-    finally:
-        if source.exists():
-            source.unlink()
+    except BaseException:
+        _restore_file_snapshot(output, prior_output)
+        raise
 
 
 DISALLOWED_BASELINE_REF_PREFIXES = (
@@ -5903,6 +7531,15 @@ def _add_performance_summary_subcommands(subparsers: argparse._SubParsersAction[
 
 def _add_release_performance_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Add release performance report subcommands."""
+    metadata_parser = subparsers.add_parser(
+        "create-release-benchmark-metadata",
+        help="Write versioned measurement provenance for a release Criterion archive",
+    )
+    metadata_parser.add_argument("--tag", required=True, help="Release tag measured by the archive")
+    metadata_parser.add_argument("--criterion-dir", type=Path, required=True, help="Criterion directory copied into the archive")
+    metadata_parser.add_argument("--output", type=Path, required=True, help="Metadata JSON path inside the archive staging directory")
+    _add_project_root_arg(metadata_parser)
+
     local_parser = subparsers.add_parser("performance-local", help="Compare the current tree against the latest stable release locally")
     local_parser.add_argument("--output", type=Path, default=PERFORMANCE_REPORT_SOURCE, help="Output Markdown report path")
     local_parser.add_argument("--worktree-ref", default="HEAD", help="Git ref for the current temp worktree (default: HEAD)")
@@ -5919,11 +7556,25 @@ def _add_release_performance_subcommands(subparsers: argparse._SubParsersAction[
     release_parser = subparsers.add_parser("performance-release", help="Promote a curated release-to-release performance report")
     release_parser.add_argument("current_tag", nargs="?", help="Current release tag")
     release_parser.add_argument("baseline_tag", nargs="?", help="Baseline release tag")
+    release_parser.add_argument("--output", type=Path, default=PERFORMANCE_REPORT_SOURCE, help="Retained scratch Markdown report path")
     release_parser.add_argument("--current", type=Path, default=DOCS_PERFORMANCE_REPORT, help="Committed performance report path")
     release_parser.add_argument("--archive-dir", type=Path, default=PERFORMANCE_ARCHIVE_DIR, help="Archive directory for older reports")
     release_parser.add_argument("--worktree-ref", default="HEAD", help="Git ref for the current temp worktree (default: HEAD)")
     release_parser.add_argument("--no-apply-current-diff", action="store_true", help="Do not apply the current checkout diff to the temp worktree")
     _add_project_root_arg(release_parser)
+
+    doc_parser = subparsers.add_parser("performance-doc", help="Promote performance docs from retained CSV and provenance inputs")
+    doc_parser.add_argument("--output", type=Path, default=PERFORMANCE_REPORT_SOURCE, help="Scratch Markdown report path")
+    doc_parser.add_argument("--artifact-csv", type=Path, default=PERFORMANCE_REPORT_SOURCE.with_suffix(".csv"), help="Retained performance CSV path")
+    doc_parser.add_argument(
+        "--artifact-provenance",
+        type=Path,
+        default=PERFORMANCE_REPORT_SOURCE.with_suffix(".provenance.json"),
+        help="Retained performance provenance JSON path",
+    )
+    doc_parser.add_argument("--current", type=Path, default=DOCS_PERFORMANCE_REPORT, help="Committed performance report path")
+    doc_parser.add_argument("--archive-dir", type=Path, default=PERFORMANCE_ARCHIVE_DIR, help="Archive directory for older reports")
+    _add_project_root_arg(doc_parser)
 
 
 def create_argument_parser() -> argparse.ArgumentParser:
@@ -6399,9 +8050,29 @@ def _fetch_for_performance_request(*, project_root: Path, request: ResolvedPerfo
     _fetch_release_tags(repo_root=project_root, tags=request.tags_to_fetch, include_current=current)
 
 
+def _cmd_create_release_benchmark_metadata(args: argparse.Namespace, project_root: Path) -> None:
+    """Write the measurement sidecar consumed by GitHub-asset comparisons."""
+    try:
+        write_release_benchmark_metadata(
+            repo_root=project_root,
+            tag=args.tag,
+            criterion_dir=_path_from_root(project_root, args.criterion_dir),
+            output=_path_from_root(project_root, args.output),
+        )
+    except _RECOVERABLE_CLI_ERRORS as exc:
+        print(f"create-release-benchmark-metadata: {exc}", file=sys.stderr)
+        sys.exit(1)
+    sys.exit(0)
+
+
 def _cmd_performance_local(args: argparse.Namespace, project_root: Path) -> None:
     try:
         request = resolve_performance_request(_performance_request_options(args=args, project_root=project_root, current_vs_latest=True))
+        output = _path_from_root(project_root, args.output)
+        _preflight_performance_destinations(
+            output=output,
+            report_id=PerformanceReportId(current_tag=request.current_tag, baseline_tag=request.baseline_tag),
+        )
         _fetch_for_performance_request(project_root=project_root, request=request, include_current=False)
         config = _release_config_from_args(
             args,
@@ -6410,13 +8081,13 @@ def _cmd_performance_local(args: argparse.Namespace, project_root: Path) -> None
             baseline_source="local",
             apply_current_diff=not args.no_apply_current_diff,
         )
-        output = _path_from_root(project_root, args.output)
         report_id = generate_performance_worktree_report(output=output, config=config)
     except _RECOVERABLE_CLI_ERRORS as exc:
         print(f"performance-local: {exc}", file=sys.stderr)
         sys.exit(1)
 
     print(f"Generated benchmark report in a temporary worktree and wrote it to {output}")
+    print(f"Retained artifact bundle: {_artifact_paths_for_output(output).csv} and {_artifact_paths_for_output(output).provenance}")
     print(f"Current performance report: {report_id.current_tag} vs {report_id.baseline_tag}")
     sys.exit(0)
 
@@ -6425,6 +8096,14 @@ def _cmd_performance_github_assets(args: argparse.Namespace, project_root: Path)
     explicit_pair = args.current_tag is not None or args.baseline_tag is not None
     try:
         request = resolve_performance_request(_performance_request_options(args=args, project_root=project_root, published_latest=not explicit_pair))
+        if request.current_tag == request.baseline_tag:
+            msg = "performance-github-assets requires distinct current and baseline tags"
+            raise ValueError(msg)
+        output = _path_from_root(project_root, args.output)
+        _preflight_performance_destinations(
+            output=output,
+            report_id=PerformanceReportId(current_tag=request.current_tag, baseline_tag=request.baseline_tag),
+        )
         _fetch_for_performance_request(project_root=project_root, request=request, include_current=True)
         config = _release_config_from_args(
             args,
@@ -6433,13 +8112,13 @@ def _cmd_performance_github_assets(args: argparse.Namespace, project_root: Path)
             baseline_source="github-assets",
             apply_current_diff=False,
         )
-        output = _path_from_root(project_root, args.output)
         report_id = generate_performance_worktree_report(output=output, config=config)
     except _RECOVERABLE_CLI_ERRORS as exc:
         print(f"performance-github-assets: {exc}", file=sys.stderr)
         sys.exit(1)
 
     print(f"Generated benchmark report from GitHub Release assets and wrote it to {output}")
+    print(f"Retained artifact bundle: {_artifact_paths_for_output(output).csv} and {_artifact_paths_for_output(output).provenance}")
     print(f"Current performance report: {report_id.current_tag} vs {report_id.baseline_tag}")
     sys.exit(0)
 
@@ -6448,6 +8127,21 @@ def _cmd_performance_release(args: argparse.Namespace, project_root: Path) -> No
     explicit_pair = args.current_tag is not None or args.baseline_tag is not None
     try:
         request = resolve_performance_request(_performance_request_options(args=args, project_root=project_root, infer_release=not explicit_pair))
+        if request.current_tag == request.baseline_tag:
+            msg = "performance-release requires distinct current and baseline tags"
+            raise ValueError(msg)
+        if explicit_pair and request.worktree_ref == "HEAD" and request.current_tag != _current_package_tag(project_root):
+            msg = f"explicit current tag {request.current_tag} does not match the HEAD package version {_current_package_tag(project_root)}"
+            raise ValueError(msg)
+        current = _path_from_root(project_root, args.current)
+        archive_dir = _path_from_root(project_root, args.archive_dir)
+        output = _path_from_root(project_root, args.output)
+        _preflight_performance_destinations(
+            output=output,
+            report_id=PerformanceReportId(current_tag=request.current_tag, baseline_tag=request.baseline_tag),
+            current=current,
+            archive_dir=archive_dir,
+        )
         _fetch_for_performance_request(project_root=project_root, request=request, include_current=False)
         config = _release_config_from_args(
             args,
@@ -6456,14 +8150,40 @@ def _cmd_performance_release(args: argparse.Namespace, project_root: Path) -> No
             baseline_source="local",
             apply_current_diff=not args.no_apply_current_diff,
         )
-        current = _path_from_root(project_root, args.current)
-        archive_dir = _path_from_root(project_root, args.archive_dir)
-        report_id = generate_and_promote_performance_report(current=current, archive_dir=archive_dir, config=config)
+        report_id = generate_and_promote_performance_report(output=output, current=current, archive_dir=archive_dir, config=config)
     except _RECOVERABLE_CLI_ERRORS as exc:
         print(f"performance-release: {exc}", file=sys.stderr)
         sys.exit(1)
 
     print(f"Generated benchmark report in a temporary worktree and promoted it to {current}")
+    print(f"Retained artifact bundle: {_artifact_paths_for_output(output).csv} and {_artifact_paths_for_output(output).provenance}")
+    print(f"Current performance report: {report_id.current_tag} vs {report_id.baseline_tag}")
+    print(f"Archive directory: {archive_dir}")
+    sys.exit(0)
+
+
+def _cmd_performance_doc(args: argparse.Namespace, project_root: Path) -> None:
+    """Render and promote docs from retained artifacts only."""
+    try:
+        output = _path_from_root(project_root, args.output)
+        artifacts = ArtifactPaths(
+            csv=_path_from_root(project_root, args.artifact_csv),
+            provenance=_path_from_root(project_root, args.artifact_provenance),
+        )
+        current = _path_from_root(project_root, args.current)
+        archive_dir = _path_from_root(project_root, args.archive_dir)
+        report_id = render_and_promote_performance_artifacts(
+            output=output,
+            artifacts=artifacts,
+            current=current,
+            archive_dir=archive_dir,
+            expected_current_tag=_current_package_tag(project_root),
+        )
+    except _RECOVERABLE_CLI_ERRORS as exc:
+        print(f"performance-doc: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Rendered retained artifacts and promoted the report to {current}")
     print(f"Current performance report: {report_id.current_tag} vs {report_id.baseline_tag}")
     print(f"Archive directory: {archive_dir}")
     sys.exit(0)
@@ -6472,9 +8192,11 @@ def _cmd_performance_release(args: argparse.Namespace, project_root: Path) -> No
 def execute_release_performance_commands(args: argparse.Namespace, project_root: Path) -> None:
     """Execute release performance report commands."""
     handlers = {
+        "create-release-benchmark-metadata": _cmd_create_release_benchmark_metadata,
         "performance-local": _cmd_performance_local,
         "performance-github-assets": _cmd_performance_github_assets,
         "performance-release": _cmd_performance_release,
+        "performance-doc": _cmd_performance_doc,
     }
     handler = handlers.get(args.command)
     if handler is None:
@@ -6521,6 +8243,7 @@ def execute_command(args: argparse.Namespace, project_root: Path) -> None:
         "display-summary": _execute_workflow_commands_with_root,
         "sanitize-artifact-name": _execute_workflow_commands_with_root,
         "generate-summary": execute_performance_summary_commands,
+        "create-release-benchmark-metadata": execute_release_performance_commands,
         "prepare-baseline": _execute_regression_commands_with_root,
         "set-no-baseline": _execute_regression_commands_with_root,
         "extract-baseline-commit": _execute_regression_commands_with_root,
@@ -6533,6 +8256,7 @@ def execute_command(args: argparse.Namespace, project_root: Path) -> None:
         "performance-local": execute_release_performance_commands,
         "performance-github-assets": execute_release_performance_commands,
         "performance-release": execute_release_performance_commands,
+        "performance-doc": execute_release_performance_commands,
     }
     handler = handlers.get(args.command)
     if handler is None:
