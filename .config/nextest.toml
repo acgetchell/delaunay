@@ -129,12 +129,14 @@ slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.debug.overrides]]
 # Complete exact SoS expansion in translated 5D and full 6D can cross the
-# 10-second boundary on hosted runners. The two D=6 AdaptiveKernel checks below
+# 10-second boundary on hosted runners. The four D=6 AdaptiveKernel checks below
 # deliberately repeat that expansion. Keep the exception limited to those
 # irreducible cold-path checks.
 filter = '''
 test(=geometry::sos::tests::complete_insphere_expansion_supports_6d)
 | test(=geometry::sos::tests::test_sos_insphere_5d_translation_invariant)
+| test(=geometry::kernel::tests::test_adaptive_insphere_6d_both_degenerate)
+| test(=geometry::kernel::tests::test_adaptive_insphere_6d_cospherical_nonzero)
 | test(=geometry::kernel::tests::test_adaptive_insphere_6d_cospherical_deterministic)
 | test(=geometry::kernel::tests::test_adaptive_positive_oriented_insphere_6d_agrees)
 '''

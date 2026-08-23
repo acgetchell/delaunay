@@ -362,17 +362,21 @@ Workspace-wide benchmark recipes (`just bench`, `just bench-smoke`,
 dependencies are compiled.
 
 Use `just pachner-stress [attempts] [validate_every] [mode]` for the manual 3D+4D
-direct Pachner diagnostic run through the opt-in `pachner-stress` binary. The
-dimension-specific `just pachner-stress-3d` and `just pachner-stress-4d` recipes
-default to 100 attempted moves with progress every 10 attempts, write progress
-CSV plus summary JSON under `target/pachner_stress/`, and keep parseable stdout
+direct Pachner diagnostic run through the opt-in `pachner-stress` binary. This
+aggregate recipe accepts only those three parameters and fixes the 3D and 4D
+workloads at 9,000 and 1,000 vertices, respectively. To change a vertex count,
+use the dimension-specific `just pachner-stress-3d [attempts] [vertices]
+[validate_every] [output_dir] [mode]` or `just pachner-stress-4d [attempts]
+[vertices] [validate_every] [output_dir] [mode]` recipe; their `vertices`
+parameters default to 9,000 and 1,000, respectively. All three recipes default
+to 100 attempted moves with progress every 10 attempts, write progress CSV plus
+summary JSON under `target/pachner_stress/`, and keep parseable stdout
 stage/report/progress lines so long workloads can be diagnosed without making
 the workflow part of routine CI. These direct stress recipes currently validate
 topology scope only (Levels 1-3); the large Level 4 realization overlap scan is
 deferred to the dedicated realization-validation work. The `pachner-stress`
-binary supports `round-trip` and `random-walk` modes;
-`round-trip` is the default. Pass explicit
-`attempts`, `vertices`, and `validate_every` arguments for soak runs. Use
+binary supports `round-trip` and `random-walk` modes; `round-trip` is the
+default. Use
 `just bench-pachner-stress` when Criterion timing statistics for stable 4D move
 and inverse fixtures are needed.
 
