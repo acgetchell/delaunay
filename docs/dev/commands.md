@@ -310,11 +310,11 @@ property families retain that default coverage with a Windows-only 60-second
 override because their release runtimes sit at the 10-second boundary on
 Windows runners. The cospherical 3D `OnSuspicion` sequence property has a
 focused cross-platform 60-second override for the same hosted-runner boundary.
-The deterministic 5D SoS in-sphere property has a Windows-only 60-second
+The deterministic 5D SoS in-sphere property has a cross-platform 60-second
 override because its two complete exact expansions per generated case can also
-cross that boundary. Unaffected tests keep the normal budget. `test-cli` owns
-the feature-gated binary unit and CLI integration tests, and `test-rust`
-composes every Rust test class once.
+cross that boundary on hosted runners. Unaffected tests keep the normal budget.
+`test-cli` owns the feature-gated binary unit and CLI integration tests, and
+`test-rust` composes every Rust test class once.
 The LLVM-instrumented coverage profile retains its 300-second default watchdog
 and grants a 1,200-second override only to the three compact `T^3` builder cases
 that exercise periodic-image construction.

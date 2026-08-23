@@ -1008,9 +1008,11 @@ repo_proptest! {
                     }
                     let dt = dt.prop_assume_ok()?;
 
-                    // Verify the triangulation satisfies the Delaunay property (Level 5)
-                    // Use fast O(N) flip-based verification instead of O(N×V) brute-force
-                    let delaunay_result = dt.verify_via_flip_predicates();
+                    // Verify the triangulation satisfies the Delaunay property (Level 5).
+                    // The validator uses the fast local flip certificate when conclusive and
+                    // falls back to the exact global empty-circumsphere check for degenerate
+                    // Euclidean inputs that can have multiple valid local normal forms.
+                    let delaunay_result = dt.is_valid_delaunay();
                     prop_assert!(
                         delaunay_result.is_ok(),
                         "{}D triangulation should satisfy Delaunay property: {:?}",

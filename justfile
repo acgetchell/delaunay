@@ -1461,7 +1461,7 @@ test-doc:
     cargo test --doc --release --verbose
 
 # Run default integration tests in release mode under the normal 10-second budget.
-# Narrow platform-specific overrides grant headroom to boundary-running cases.
+# Narrow test-specific overrides grant headroom to boundary-running cases.
 [group('tests and coverage')]
 test-integration: _ensure-nextest
     cargo nextest run --release --profile ci --test '*'
