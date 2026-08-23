@@ -666,6 +666,28 @@ mod tests {
     }
 
     #[test]
+    fn build_reports_the_input_index_for_a_duplicate_vertex_uuid() {
+        let repeated = vertex![0.0, 0.0].unwrap();
+        let repeated_uuid = repeated.uuid();
+        let vertices = [repeated, repeated, vertex![0.0, 1.0].unwrap()];
+        let simplices = [vec![0, 1, 2]];
+
+        assert_matches!(
+            TdsBuilder::new(&vertices, &simplices).build(),
+            Err(TdsBuilderError::VertexInsertion {
+                vertex_index: 1,
+                source,
+            }) if matches!(
+                source.as_ref(),
+                TdsConstructionError::DuplicateUuid {
+                    entity: crate::core::tds::EntityKind::Vertex,
+                    uuid,
+                } if *uuid == repeated_uuid
+            )
+        );
+    }
+
+    #[test]
     fn build_accepts_the_vacuously_valid_empty_complex() {
         let vertices: [Vertex<(), 2>; 0] = [];
         let simplices: [Vec<usize>; 0] = [];

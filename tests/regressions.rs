@@ -7,8 +7,7 @@
 use delaunay::flips::{BistellarFlips, FlipError, SimplexKey};
 use delaunay::prelude::construction::{
     ConstructionOptions, ConstructionStatistics, DelaunayIncrementalBuilder, DelaunayTriangulation,
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-    ExplicitConstructionError, InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex,
+    DelaunayTriangulationBuilder, InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeError};
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
@@ -386,8 +385,8 @@ fn sorted_vertex_signatures(vertices: &[Vertex<u32, 2>]) -> Vec<(u64, u64, u32)>
     signatures
 }
 
-fn sorted_triangulation_vertex_signatures(
-    dt: &Triangulation<RobustKernel<f64>, u32, i32, 2>,
+fn sorted_triangulation_vertex_signatures<K>(
+    dt: &Triangulation<K, u32, i32, 2>,
 ) -> Vec<(u64, u64, u32)> {
     let mut signatures: Vec<_> = dt
         .vertices()
@@ -416,9 +415,7 @@ fn assert_strip_vertices_use_exact_time_labels(vertices: &[Vertex<u32, 2>]) {
     }
 }
 
-fn assert_triangulation_vertices_use_exact_time_labels(
-    dt: &Triangulation<RobustKernel<f64>, u32, i32, 2>,
-) {
+fn assert_triangulation_vertices_use_exact_time_labels<K>(dt: &Triangulation<K, u32, i32, 2>) {
     for (_, vertex) in dt.vertices() {
         let coords = vertex.point().coords();
         let label = *vertex.data().expect("strip vertices are labeled");
@@ -523,30 +520,25 @@ fn regression_issue_447_exact_layered_strip_preserves_collinear_boundary_vertice
 }
 
 #[test]
-fn regression_issue_447_explicit_exact_strip_attempts_repair_before_failing() {
+fn regression_issue_447_explicit_exact_strip_repairs_to_valid_delaunay() {
     let vertices = exact_open_cdt_strip_vertices(5, 3);
     let simplices = exact_open_cdt_strip_simplices(5, 3);
+    let input_signatures = sorted_vertex_signatures(&vertices);
 
-    let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+    let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .expect("exact CDT strip explicit simplex specs should validate")
         .simplex_data_type::<i32>()
         .build()
-        .expect_err("bounded repair should report non-convergence for the constrained CDT strip");
+        .expect("strict explicit construction should repair the exact strip");
 
-    let DelaunayTriangulationConstructionError::ExplicitConstruction {
-        source: ExplicitConstructionError::DelaunayRepair { source },
-    } = err
-    else {
-        panic!("strict explicit construction should preserve the repair failure, got: {err:?}");
-    };
-    assert!(
-        matches!(
-            source.as_ref(),
-            DelaunayRepairError::NonConvergent { diagnostics, .. }
-                if diagnostics.flips_performed > 0
-        ),
-        "strict construction must attempt at least one flip before reporting non-convergence: {source:?}",
+    assert_eq!(dt.number_of_vertices(), vertices.len());
+    assert_eq!(
+        sorted_triangulation_vertex_signatures(dt.as_triangulation()),
+        input_signatures,
+        "strict repair should preserve exact strip coordinate bits and labels",
     );
+    dt.validate()
+        .expect("strict explicit construction must publish a Levels 1-5 owner");
 }
 
 #[test]

@@ -78,11 +78,12 @@ Level 3 always checks:
   every (D−1)-facet is incident to exactly 1 or 2 D-simplices. Public facet
   incidence APIs parse this into the owner-bound `FacetToSimplicesIndex` via
   `Tds::build_facet_to_simplices_index`; Level 3 validation builds one raw
-  `FacetToSimplicesMap`, parses it into `ValidatedFacetDegreeMap`, and reuses
-  that proof-bearing map so boundary, ridge-link, vertex-link, and Euler checks do not
-  rebuild or revalidate the same facet-degree evidence. Boundary classification
-  additionally excludes admissible periodic self-identifications, which are
-  closed quotient topology rather than boundary.
+  `FacetToSimplicesMap`, binds it to its source TDS as a
+  `ValidatedFacetDegreeMap`, and reuses that owner-bound proof so boundary,
+  ridge-link, vertex-link, and Euler checks cannot pair it with another topology
+  owner or rebuild the same facet-degree evidence. Boundary classification also
+  excludes admissible periodic self-identifications, which are closed quotient
+  topology rather than boundary.
 - **Codimension-2 boundary manifoldness**: if a boundary exists, it is closed
   ("no boundary of boundary"). (`topology::manifold::validate_closed_boundary`)
 - **Connectedness**: a single connected component in the simplex neighbor graph.
@@ -99,8 +100,35 @@ Level 3 always checks:
   in 2D/3D, intrinsic orientability. Every full Level 3 audit checks this same
   mathematical contract; `ValidationPolicy` independently selects audit cadence.
 
+For D ≥ 4, the implemented local incidence tests are necessary but are not a
+general decision procedure for whether a vertex link is a PL sphere or ball.
+Accordingly, a nontrivial `PLManifold` owner in those dimensions also requires
+crate-held construction provenance: Euclidean construction starts with a
+simplex and preserves link type through checked cavity replacements, while the
+periodic builder uses its checked image-point quotient. Explicit connectivity,
+raw TDS promotion, and deserialization do not acquire that proof merely by
+requesting `PLManifold`; they are rejected with
+`HighDimensionalVertexLinkUnproven` unless the complex is the directly
+recognizable single-simplex case. Callers that need only the incidence contract
+can request `Pseudomanifold`.
+
+The provenance is not public metadata and cannot be selected through a fluent
+builder option. It belongs to the verified owner, survives only checked
+link-preserving mutations, and is deliberately lost by `Triangulation::into_tds`
+and serialization. That prevents an arbitrary simplex list from laundering
+local link checks into a PL-manifold certificate.
+
+Point-driven builders require an `ExactPredicates<D>` kernel. The built-in
+kernels implement that contract through D=6, so an approximate conflict region
+cannot mint the private cavity provenance used for high-dimensional publication.
+In D >= 4, heuristic cavity reshaping, fan-based vertex-star retriangulation, or
+arbitrary simplex-removal repair drops the evidence; a PL-manifold postcondition
+then rejects and rolls back the mutation.
+
 `Triangulation::orientation_witness()` returns the opaque coherent assignment
-used by the 2D/3D Level 3 check. This is independent of Level 2 stored-ordering
+used by the 2D/3D Level 3 check. The witness immutably borrows its topology
+owner, so its simplex-key assignments cannot survive owner mutation or be paired
+with another triangulation. This is independent of Level 2 stored-ordering
 coherence and Level 4 positive geometric orientation. Periodic quotient facets
 contribute parity constraints through translation-normalized lifted vertex
 identities, including explicit self-identifications.
@@ -120,7 +148,8 @@ Implementation pointers:
 - Storage-level manifold validators: `src/topology/manifold.rs`
   (`validate_closed_boundary`, `validate_vertex_links`, `validate_ridge_links`)
 - Internal raw-map reuse helpers: `src/topology/manifold.rs`
-  (`ValidatedFacetDegreeMap::try_from_facet_map`,
+  (`ValidatedFacetDegreeMap::try_from_facet_map`, which binds and verifies both
+  the source TDS and raw map,
   `validate_closed_boundary_from_validated_facet_map`,
   `validate_vertex_links_from_validated_facet_map`)
 - Euler characteristic helpers: `src/topology/characteristics/{euler.rs,validation.rs}`
@@ -163,8 +192,10 @@ Level 3 uses Euler characteristic (χ) as a global combinatorial consistency che
 ### What is computed?
 
 `topology::characteristics::euler::count_simplices` computes the f-vector
-(f₀…f_D) for the **full** simplicial complex induced by all D-simplices in the TDS.
-The Euler characteristic is:
+(f₀…f_D) for the **full** simplicial complex represented by the TDS. At the
+Levels 1–2 boundary, f₀ includes every stored vertex, including an isolated
+vertex not yet admitted by Level 3; a published `Triangulation` has no such
+vertices. The Euler characteristic is:
 
 ```text
 χ = Σ(k=0..D) (-1)^k · f_k
@@ -176,8 +207,14 @@ The Euler characteristic is:
 `TopologyCheckResult` containing χ, an expected value (when known), a coarse
 classification, the full f-vector, and diagnostic notes.
 
-The expected χ is determined from declared topology metadata plus the
-topology-aware boundary classification described above:
+The f-vector is an exact descriptor of the current subdivision, not a
+PL-homeomorphism invariant. Bistellar moves generally change its entries while
+preserving χ. Level 3 therefore recomputes the f-vector from canonical topology
+at its validation boundary and derives χ from that evidence; it does not trust
+an independently mutable cached count.
+
+The expected χ is determined only when the topology is directly recognizable
+or the owner carries matching construction provenance:
 
 - `Empty` (no simplices): expected χ = 0
 - `SingleSimplex(D)`: expected χ = 1
@@ -186,8 +223,13 @@ topology-aware boundary classification described above:
 - `ClosedToroid(D)` (periodic quotient): expected χ = 0
 - `Unknown`: no expected χ (treated as "can't decide")
 
-For most finite Delaunay triangulations in Euclidean space, the complex has a
-boundary (convex hull), so the expected classification is `Ball(D)` and χ = 1.
+Finite triangulations produced by the checked Euclidean Delaunay insertion
+workflow carry the proof that their complex is a ball; when they have a
+boundary, their expected classification is therefore `Ball(D)` and χ = 1.
+An arbitrary complex with a boundary remains `Unknown`: annuli and many other
+non-ball spaces also have boundary, so `has_boundary` does not imply χ = 1.
+Likewise, toroidal metadata alone does not prove a torus; `ClosedToroid(D)` is
+reserved for the checked periodic quotient construction.
 
 Euler characteristic is not a topology detector by itself. It is an invariant
 used after the manifold and boundary checks above. Many non-homeomorphic
@@ -226,8 +268,9 @@ for manifold and PL-manifold invariants (no geometric predicates):
 - `validate_ridge_links`
 - `validate_vertex_links`
 
-The module docs explain which conditions are necessary vs sufficient, especially
-for D ≥ 3.
+The module docs explain which conditions are necessary versus sufficient,
+especially for D ≥ 4, where nontrivial PL sphere/ball link recognition requires
+the owner-held construction proof described above.
 
 ## Topological spaces
 
@@ -332,7 +375,9 @@ work.
 (`BistellarFlips`) built on `core::algorithms::flips`. These operations:
 
 - change the combinatorial triangulation while preserving the certified
-  PL-homeomorphism class when their admissibility checks succeed, and
+  PL-homeomorphism class when their admissibility checks succeed,
+- may change the f-vector while preserving its alternating sum, the Euler
+  characteristic, and
 - do not automatically restore the Delaunay property.
 
 They operate on `Triangulation`, not `DelaunayTriangulation`, because an edit

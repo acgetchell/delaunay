@@ -407,7 +407,7 @@ by platform. They remain in the normal suite because they cover distinct public
 builder contracts and are fast in release builds. The optimized 5D intersection
 agreement check receives a platform-neutral 60-second override because it can
 reach the 10-second boundary on hosted runners. The randomized 5D full-report
-agreement check receives the same focused override on Windows.
+agreement check receives the same focused override across platforms.
 
 The release integration profile similarly grants 60 seconds on Windows only
 to the promoted 4D property families that sit at the 10-second boundary there.

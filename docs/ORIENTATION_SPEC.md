@@ -19,8 +19,8 @@ The crate maintains three related but distinct orientation properties.
 Level 3 intrinsic orientability asks whether shared-facet parity
 constraints admit any coherent assignment, independently of the orderings
 currently stored in the TDS. For pure 2D and 3D complexes,
-`Triangulation::orientation_witness()` returns an opaque `OrientationWitness`
-when such an assignment exists and reports
+`Triangulation::orientation_witness()` returns an opaque, source-bound
+`OrientationWitness` when such an assignment exists and reports
 `TriangulationValidationError::NonOrientable` for a parity obstruction.
 PL-manifold Level 3 validation includes this check in those dimensions.
 Periodic quotient facets contribute the same parity constraints after lifted

@@ -74,7 +74,7 @@ meshing, or production-scale dynamic remeshing.
   Delaunay repair.
 - [x] Configurable predicate kernels: `AdaptiveKernel` by default for deterministic SoS tie-breaking,
   `RobustKernel` for exact diagnostics and higher-dimensional fallbacks, and `FastKernel` for a lean
-  filtered-exact path that preserves degeneracy signals through D ≤ 5.
+  filtered-exact path that preserves degeneracy signals through D ≤ 6.
 - [x] D-dimensional [Convex hulls] and [Delaunay triangulations].
 - [x] Euclidean construction and periodic `T^2`/`T^3` image-point quotients through
   `DelaunayTriangulationBuilder`.
@@ -124,7 +124,7 @@ cargo add delaunay@0.8.0
 
 Use `cargo add delaunay` instead if you want Cargo to select the newest published release.
 
-- Rust 1.97.1 or newer. The minimum supported version is declared in
+- Rust 1.98.0 or newer. The minimum supported version is declared in
   `Cargo.toml`, while `rust-toolchain.toml` pins the exact repository toolchain.
 - `f64` coordinates for caller-facing construction, predicate, validation, and generator APIs.
 
@@ -334,11 +334,12 @@ and large-scale profiling guidance.
 
 ## 🛣️ Limitations and Roadmap
 
-Current routine coverage targets 2D through 5D. Exact orientation is available through D=6; exact
-in-sphere is available through D=5. For D≥6, the determinant exceeds the current stack-matrix limit,
-so classification first uses a floating-point circumcenter/radius distance predicate and applies
-symbolic perturbation only to boundary or failed distance evaluations. Near-degenerate D≥6 inputs
-therefore do not have exact-sign protection.
+Current routine construction coverage targets 2D through 5D. Exact orientation, relative in-sphere,
+and complete symbolic tie-breaking are available through D=6. The in-sphere fast path bounds the
+determinant with outward-rounded intervals; its cold path forms the relative matrix exactly from the
+original binary64 coordinates before asking `la-stack`-backed rational algebra for the sign. D≥7
+falls back to the floating-point circumcenter/radius predicate and therefore lacks exact-sign
+protection near degeneracy.
 
 `.try_toroidal([..])` builds a periodic quotient through the image-point method. It is validated on
 `T^2` and compact `T^3`, while `T^4`/`T^5` fail fast pending scalable quotient work.

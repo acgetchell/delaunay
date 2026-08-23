@@ -8,8 +8,11 @@ use crate::core::adjacency::{
     EdgeIndex, IncidenceView, SimplexNeighborIndex, TopologyIndexBuildError, TriangulationAdjacency,
 };
 use crate::core::algorithms::flips::{FlipError, RidgeHandle};
+#[cfg(feature = "diagnostics")]
+use crate::core::algorithms::locate::verify_conflict_region_completeness;
 use crate::core::algorithms::locate::{
     ConflictError, LocateError, LocateResult, LocateStats,
+    extract_cavity_boundary as extract_cavity_boundary_from_tds,
     find_conflict_region as find_conflict_region_in_tds, locate as locate_in_tds,
     locate_with_stats as locate_with_stats_in_tds,
 };
@@ -31,14 +34,176 @@ use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateValidationError};
 use crate::geometry::util::safe_usize_to_scalar;
 use crate::topology::manifold::{ManifoldError, boundary_facet_handles_from_index};
-use crate::topology::ridge::{
-    RidgeCandidate, RidgeCandidateError, RidgeQuery, RidgeView,
-    ridge_star_simplices as ridge_star_simplices_in_tds,
-};
+use crate::topology::ridge::{RidgeCandidate, RidgeCandidateError, RidgeQuery, RidgeView};
 use crate::topology::traits::{
     GlobalTopologyModelError, global_topology_model::GlobalTopologyModel,
 };
 use crate::triangulation::Triangulation;
+
+/// One simplex in an owner-bound [`ConflictRegion`].
+#[derive(Debug)]
+pub struct ConflictSimplexView<'tri, V, const D: usize> {
+    key: SimplexKey,
+    simplex: &'tri Simplex<V, D>,
+}
+
+impl<V, const D: usize> Copy for ConflictSimplexView<'_, V, D> {}
+
+impl<V, const D: usize> Clone for ConflictSimplexView<'_, V, D> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<V, const D: usize> ConflictSimplexView<'_, V, D> {
+    /// Returns the runtime-local key under the region's borrowed owner.
+    #[must_use]
+    pub const fn key(&self) -> SimplexKey {
+        self.key
+    }
+
+    /// Returns the borrowed simplex.
+    #[must_use]
+    pub const fn simplex(&self) -> &Simplex<V, D> {
+        self.simplex
+    }
+}
+
+/// Borrowed, already-parsed facets on a conflict-region cavity boundary.
+#[derive(Debug)]
+pub struct CavityBoundary<'tri, U, V, const D: usize> {
+    facets: Vec<FacetView<'tri, U, V, D>>,
+}
+
+impl<'tri, U, V, const D: usize> CavityBoundary<'tri, U, V, D> {
+    /// Returns the number of boundary facets.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.facets.len()
+    }
+
+    /// Returns whether the boundary has no facets.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.facets.is_empty()
+    }
+
+    /// Returns the boundary facet at `index`.
+    #[must_use]
+    pub fn facet(&self, index: usize) -> Option<&FacetView<'tri, U, V, D>> {
+        self.facets.get(index)
+    }
+
+    /// Iterates over parsed boundary facets.
+    pub fn facets(&self) -> std::slice::Iter<'_, FacetView<'tri, U, V, D>> {
+        self.facets.iter()
+    }
+}
+
+/// An owner-bound conflict region produced by a triangulation query.
+///
+/// The view retains an immutable borrow of its topology owner, its query point,
+/// and parsed simplex references. This prevents intervening mutation and avoids
+/// asking callers to pair a detached key buffer with a TDS manually.
+#[must_use]
+pub struct ConflictRegion<'tri, K, U, V, const D: usize> {
+    triangulation: &'tri Triangulation<K, U, V, D>,
+    #[cfg(feature = "diagnostics")]
+    point: Point<D>,
+    simplices: Vec<ConflictSimplexView<'tri, V, D>>,
+}
+
+impl<'tri, K, U, V, const D: usize> ConflictRegion<'tri, K, U, V, D> {
+    fn try_new(
+        triangulation: &'tri Triangulation<K, U, V, D>,
+        point: Point<D>,
+        simplex_keys: SimplexKeyBuffer,
+    ) -> Result<Self, ConflictError> {
+        let simplices = simplex_keys
+            .into_iter()
+            .map(|key| {
+                let simplex = triangulation.tds.simplex(key).ok_or_else(|| {
+                    ConflictError::SimplexDataAccessFailed {
+                        simplex_key: key,
+                        message: "conflict simplex disappeared before view publication".to_string(),
+                    }
+                })?;
+                Ok::<_, ConflictError>(ConflictSimplexView { key, simplex })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        #[cfg(not(feature = "diagnostics"))]
+        let _ = point;
+        Ok(Self {
+            triangulation,
+            #[cfg(feature = "diagnostics")]
+            point,
+            simplices,
+        })
+    }
+
+    /// Returns the number of conflict simplices.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.simplices.len()
+    }
+
+    /// Returns whether no simplices conflict with the query point.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.simplices.is_empty()
+    }
+
+    /// Iterates over owner-bound conflict simplices.
+    #[must_use]
+    pub fn simplices(&self) -> impl ExactSizeIterator<Item = ConflictSimplexView<'tri, V, D>> + '_ {
+        self.simplices.iter().copied()
+    }
+
+    /// Parses the cavity boundary into owner-bound facet views.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConflictError`] if cavity topology is invalid or a computed
+    /// facet cannot be promoted against this region's owner.
+    pub fn boundary(&self) -> Result<CavityBoundary<'tri, U, V, D>, ConflictError> {
+        let simplex_keys: SimplexKeyBuffer = self
+            .simplices
+            .iter()
+            .map(ConflictSimplexView::key)
+            .collect();
+        let handles = extract_cavity_boundary_from_tds(&self.triangulation.tds, &simplex_keys)?;
+        let facets = handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .view(&self.triangulation.tds)
+                    .map_err(|source| ConflictError::InvalidBoundaryFacet { source })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(CavityBoundary { facets })
+    }
+
+    /// Brute-force checks how many conflicting simplices the region missed.
+    #[cfg(feature = "diagnostics")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
+    #[must_use]
+    pub fn number_of_missed_simplices(&self) -> usize
+    where
+        K: Kernel<D, Scalar = f64>,
+    {
+        let simplex_keys: SimplexKeyBuffer = self
+            .simplices
+            .iter()
+            .map(ConflictSimplexView::key)
+            .collect();
+        verify_conflict_region_completeness(
+            &self.triangulation.tds,
+            &self.triangulation.kernel,
+            &self.point,
+            &simplex_keys,
+        )
+    }
+}
 
 /// Errors returned by read-only triangulation queries.
 ///
@@ -1295,44 +1460,6 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         RidgeHandle::try_new(&self.tds, simplex_key, omit_a, omit_b)
     }
 
-    /// Returns the simplex star incident to a ridge candidate.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ManifoldError`] if any ridge vertex is stale or incidence
-    /// bookkeeping cannot be traversed.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::*;
-    /// use delaunay::prelude::query::RidgeCandidate;
-    ///
-    /// # fn main() -> DelaunayResult<()> {
-    /// let vertices = [
-    ///     delaunay::vertex![0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0]?,
-    /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let tri = dt.as_triangulation();
-    /// let Ok(ridge) = RidgeCandidate::<2>::try_from_vertices(
-    ///     tri.vertices().map(|(key, _)| key).take(1),
-    /// ) else {
-    ///     return Ok(());
-    /// };
-    ///
-    /// assert!(!tri.ridge_star_simplices(&ridge)?.is_empty());
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn ridge_star_simplices(
-        &self,
-        ridge_candidate: &RidgeCandidate<D>,
-    ) -> Result<SmallBuffer<SimplexKey, 8>, ManifoldError> {
-        ridge_star_simplices_in_tds(&self.tds, ridge_candidate)
-    }
-
     /// Revalidates a ridge candidate and returns a borrowed ridge query.
     ///
     /// Unlike [`Triangulation::ridge_view`], the query permits an empty
@@ -1760,9 +1887,8 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 
     /// Finds the conflict region for inserting `point` from a known start simplex.
     ///
-    /// This is the owner-bound counterpart to the low-level
-    /// [`find_conflict_region_in_tds`](crate::prelude::algorithms::find_conflict_region)
-    /// function.
+    /// The returned [`ConflictRegion`] retains this triangulation borrow and can
+    /// parse its cavity boundary without a separate TDS argument.
     ///
     /// # Errors
     ///
@@ -1807,11 +1933,13 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         &self,
         point: &Point<D>,
         start_simplex: SimplexKey,
-    ) -> Result<SimplexKeyBuffer, ConflictError>
+    ) -> Result<ConflictRegion<'_, K, U, V, D>, ConflictError>
     where
         K: Kernel<D, Scalar = f64>,
     {
-        find_conflict_region_in_tds(&self.tds, &self.kernel, point, start_simplex)
+        let simplex_keys =
+            find_conflict_region_in_tds(&self.tds, &self.kernel, point, start_simplex)?;
+        ConflictRegion::try_new(self, *point, simplex_keys)
     }
 
     /// Returns an iterator over all unique edges incident to a vertex.

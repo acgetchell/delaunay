@@ -13,7 +13,7 @@ use crate::core::adjacency::{
 };
 use crate::core::algorithms::flips::{FlipError, RidgeHandle};
 use crate::core::algorithms::locate::{ConflictError, LocateError, LocateResult, LocateStats};
-use crate::core::collections::{SimplexKeyBuffer, SimplexSecondaryMap, SmallBuffer, Uuid};
+use crate::core::collections::{SimplexSecondaryMap, Uuid};
 use crate::core::edge::{EdgeKey, EdgeKeyError, EdgeView};
 use crate::core::facet::{
     AllFacetsIter, BoundaryFacetsIter, FacetError, FacetHandle, FacetToSimplicesIndex, FacetView,
@@ -38,7 +38,7 @@ use crate::topology::manifold::ManifoldError;
 use crate::topology::ridge::{RidgeCandidate, RidgeQuery, RidgeView};
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, TopologyKind};
 use crate::triangulation::Triangulation;
-use crate::triangulation::query::{QueryError, SimplexBarycenterError};
+use crate::triangulation::query::{ConflictRegion, QueryError, SimplexBarycenterError};
 use crate::triangulation::validation::{
     TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
 };
@@ -1786,50 +1786,6 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         self.tri.ridge_handle(simplex_key, omit_a, omit_b)
     }
 
-    /// Returns the simplex star incident to a ridge candidate.
-    ///
-    /// This is a convenience wrapper around
-    /// [`Triangulation::ridge_star_simplices`](crate::Triangulation::ridge_star_simplices).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ManifoldError`] if any ridge vertex is stale or incidence
-    /// bookkeeping cannot be traversed.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayResult, DelaunayTriangulationBuilder,
-    /// };
-    /// use delaunay::prelude::query::RidgeCandidate;
-    ///
-    /// # fn main() -> DelaunayResult<()> {
-    /// let vertices = [
-    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
-    /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let Ok(ridge) = RidgeCandidate::<3>::try_from_vertices(
-    ///     dt.vertices().map(|(key, _)| key).take(2),
-    /// ) else {
-    ///     return Ok(());
-    /// };
-    ///
-    /// let star = dt.ridge_star_simplices(&ridge)?;
-    /// assert!(!star.is_empty());
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn ridge_star_simplices(
-        &self,
-        ridge_candidate: &RidgeCandidate<D>,
-    ) -> Result<SmallBuffer<SimplexKey, 8>, ManifoldError> {
-        self.tri.ridge_star_simplices(ridge_candidate)
-    }
-
     /// Revalidates a ridge candidate and returns a borrowed ridge query.
     ///
     /// Unlike [`DelaunayTriangulation::ridge_view`], the query permits an empty
@@ -2365,7 +2321,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         &self,
         point: &Point<D>,
         start_simplex: SimplexKey,
-    ) -> Result<SimplexKeyBuffer, ConflictError>
+    ) -> Result<ConflictRegion<'_, K, U, V, D>, ConflictError>
     where
         K: Kernel<D, Scalar = f64>,
     {
@@ -2622,7 +2578,10 @@ mod tests {
     }
 
     /// Asserts that the simplex barycenter of the standard fixture is `1 / (D + 1)`.
-    fn assert_standard_simplex_barycenter<const D: usize>() {
+    fn assert_standard_simplex_barycenter<const D: usize>()
+    where
+        crate::geometry::kernel::AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+    {
         let vertices = standard_simplex_vertices::<D>();
         let dt: DelaunayTriangulation<_, (), (), D> = DelaunayTriangulationBuilder::new(&vertices)
             .build()

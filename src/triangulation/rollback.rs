@@ -4,6 +4,7 @@
 
 use crate::core::tds::{Tds, TdsOwnerRollbackTransaction, TdsRollbackOwner, TdsRollbackWindow};
 use crate::triangulation::Triangulation;
+use crate::triangulation::validation::TopologyConstructionProvenance;
 
 impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for Triangulation<K, U, V, D> {
     fn rollback_tds(&self) -> &Tds<U, V, D> {
@@ -22,7 +23,13 @@ impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for Triangulation<K, U, 
 /// the higher owner's rollback snapshot instead of nesting another full TDS
 /// snapshot. The higher owner remains responsible for commit versus rollback
 /// and for restoring any state coupled to the TDS.
-pub trait TriangulationRollbackWindow<K, U, V, const D: usize>: TdsRollbackWindow<U, V, D> {
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "explicit crate visibility documents sharing with higher owner layers"
+)]
+pub(crate) trait TriangulationRollbackWindow<K, U, V, const D: usize>:
+    TdsRollbackWindow<U, V, D>
+{
     /// Borrows the Levels 3–4 owner for one mutation or validation step.
     fn triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D>;
 }
@@ -36,6 +43,7 @@ where
     V: Clone,
 {
     inner: TdsOwnerRollbackTransaction<'tri, Triangulation<K, U, V, D>, U, V, D>,
+    topology_construction_provenance_snapshot: TopologyConstructionProvenance,
 }
 
 impl<'tri, K, U, V, const D: usize> TriangulationRollbackTransaction<'tri, K, U, V, D>
@@ -45,8 +53,10 @@ where
 {
     /// Begins a rollback window by snapshotting the canonical TDS owner.
     pub(crate) fn begin(owner: &'tri mut Triangulation<K, U, V, D>) -> Self {
+        let topology_construction_provenance_snapshot = owner.topology_construction_provenance;
         Self {
             inner: TdsOwnerRollbackTransaction::begin(owner),
+            topology_construction_provenance_snapshot,
         }
     }
 
@@ -59,6 +69,8 @@ where
     /// open for another attempt.
     pub(crate) fn restore(&mut self) {
         self.inner.restore();
+        self.inner.owner_mut().topology_construction_provenance =
+            self.topology_construction_provenance_snapshot;
     }
 
     /// Commits the mutation, preventing the drop guard from restoring the snapshot.

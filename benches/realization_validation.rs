@@ -14,7 +14,7 @@ use criterion::{
 use delaunay::prelude::construction::{DelaunayTriangulation, DelaunayTriangulationBuilder};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{
-    AdaptiveKernel, CoordinateRange, LabeledSimplexRealization,
+    AdaptiveKernel, CoordinateRange, ExactPredicates, LabeledSimplexRealization,
     validate_simplex_realizations_intersect_only_in_shared_faces,
 };
 use delaunay::try_vertices_from_points;
@@ -108,7 +108,10 @@ fn bench_realization_narrow_phase(c: &mut Criterion) {
 /// Builds one deterministic triangulation that passes Level 4 validation.
 fn realistic_triangulation<const D: usize>(
     vertex_count: usize,
-) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
+) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let bounds = CoordinateRange::try_new(-100.0, 100.0).or_abort();
     for offset in 0..SEED_SEARCH_LIMIT {
         let seed = REALISTIC_SEED.wrapping_add(offset);
@@ -134,7 +137,9 @@ fn realistic_triangulation<const D: usize>(
 fn register_realistic_validation<const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     vertex_count: usize,
-) {
+) where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let triangulation = realistic_triangulation::<D>(vertex_count);
     let simplex_count = triangulation.number_of_simplices();
     group.throughput(Throughput::Elements(

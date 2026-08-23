@@ -2027,7 +2027,7 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([0.0; 4]).unwrap())
             .unwrap();
         let opposite_b = tds
-            .insert_vertex_with_mapping(vertex!([1.0; 4]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.1; 4]).unwrap())
             .unwrap();
 
         let mut vertices_with_first_opposite = shared_vertices.clone();

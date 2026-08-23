@@ -1591,7 +1591,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// ```
     #[inline]
     pub fn topology_owner_id(&self) -> TopologyOwnerId {
-        TopologyOwnerId::from_identity(&self.identity)
+        TopologyOwnerId::from_identity(self.identity())
     }
 
     /// Returns the runtime identity used by cache owners to reject handles from another TDS.
@@ -2406,6 +2406,11 @@ mod test_support {
         /// Bypasses the checked construction-completion transition for negative tests.
         pub(crate) fn force_construction_complete_for_test(&mut self) {
             self.construction_state = TriangulationConstructionState::Constructed;
+        }
+
+        /// Marks otherwise accessible storage incomplete for publication-boundary tests.
+        pub(crate) fn force_construction_incomplete_for_test(&mut self, vertex_count: usize) {
+            self.construction_state = TriangulationConstructionState::Incomplete(vertex_count);
         }
 
         /// Removes a vertex UUID mapping without changing canonical vertex storage.

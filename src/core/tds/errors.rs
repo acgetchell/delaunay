@@ -1078,6 +1078,8 @@ pub enum TriangulationValidationErrorKind {
     RidgeLinkNotManifold,
     /// A vertex link failed PL-manifold validation.
     VertexLinkNotManifold,
+    /// A high-dimensional link lacked construction evidence for its PL type.
+    HighDimensionalVertexLinkUnproven,
     /// The intrinsic simplex-orientation constraints are contradictory.
     NonOrientable,
     /// Euler characteristic did not match the expected classification.
@@ -1109,6 +1111,9 @@ impl From<&TriangulationValidationError> for TriangulationValidationErrorKind {
             TriangulationValidationError::RidgeLinkNotManifold { .. } => Self::RidgeLinkNotManifold,
             TriangulationValidationError::VertexLinkNotManifold { .. } => {
                 Self::VertexLinkNotManifold
+            }
+            TriangulationValidationError::HighDimensionalVertexLinkUnproven { .. } => {
+                Self::HighDimensionalVertexLinkUnproven
             }
             TriangulationValidationError::NonOrientable { .. } => Self::NonOrientable,
             TriangulationValidationError::EulerCharacteristicMismatch { .. } => {

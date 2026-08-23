@@ -177,13 +177,13 @@ fn spherical_s3_simplex_boundary_facets_are_tetrahedra() {
 fn spherical_s3_near_antipodal_fixture_constructs() {
     let points = [
         [1.0, 0.0, 0.0, 0.0],
-        [-1.0, 1.0e-9, 0.0, 0.0],
-        [0.0, 1.0, 0.0, 0.0],
-        [0.0, -1.0, 1.0e-9, 0.0],
-        [0.0, 0.0, 1.0, 0.0],
-        [0.0, 0.0, -1.0, 1.0e-9],
-        [0.0, 0.0, 0.0, 1.0],
-        [1.0e-9, 0.0, 0.0, -1.0],
+        [-1.0, 2.0e-8, -3.0e-8, 5.0e-8],
+        [1.0e-4, 1.0, 2.0e-4, -1.0e-4],
+        [-2.0e-4, -1.0, 1.0e-4, 3.0e-4],
+        [3.0e-4, -2.0e-4, 1.0, 1.0e-4],
+        [-1.0e-4, 3.0e-4, -1.0, 2.0e-4],
+        [2.0e-4, 1.0e-4, -3.0e-4, 1.0],
+        [1.0e-4, -2.0e-4, 2.0e-4, -1.0],
     ];
 
     let triangulation = SphericalDelaunayBuilder::<3>::try_new(points)

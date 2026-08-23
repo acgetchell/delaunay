@@ -76,8 +76,8 @@ mod invalid_delaunay_draft_fixture {
     use super::*;
 
     // ruleid: delaunay.rust.delaunay-draft-must-store-triangulation
-    struct DelaunayTriangulationDraft<K, U, V, const D: usize> {
-        draft: DelaunayTriangulation<K, U, V, D>,
+    struct DelaunayTriangulationDraft<K, U, V, State, const D: usize> {
+        published_owner: DelaunayTriangulation<K, U, V, State, D>,
     }
 }
 
@@ -94,8 +94,8 @@ mod invalid_delaunay_batch_workspace_fixture {
     use super::*;
 
     // ruleid: delaunay.rust.delaunay-batch-workspace-must-store-triangulation
-    struct DelaunayBatchWorkspace<K, U, V, const D: usize> {
-        workspace: DelaunayTriangulation<K, U, V, D>,
+    struct DelaunayBatchWorkspace<K, U, V, Cache, const D: usize> {
+        candidate_owner: DelaunayTriangulation<K, U, V, Cache, D>,
     }
 }
 
@@ -188,8 +188,8 @@ mod invalid_delaunay_bootstrap_fixture {
     use super::*;
 
     // ruleid: delaunay.rust.delaunay-bootstrap-workspace-must-use-tds-draft
-    struct DelaunayBootstrapWorkspace<K, U, V, const D: usize> {
-        triangulation: TriangulationDraft<K, U, V, D>,
+    struct DelaunayBootstrapWorkspace<K, U, V, Proof, const D: usize> {
+        lower_proof: TriangulationDraft<K, U, V, Proof, D>,
     }
 }
 
@@ -706,14 +706,11 @@ type CurrentTds = Tds<(), (), 3>;
 // ruleid: delaunay.rust.no-legacy-coordinate-generic-api
 type LegacyConvexHull = ConvexHull<AdaptiveKernel<f64>, (), (), 3>;
 
-// ok: delaunay.rust.no-legacy-coordinate-generic-api
-type CurrentConvexHull = ConvexHull<(), (), 3>;
-
 // ruleid: delaunay.rust.no-legacy-coordinate-generic-api
-type LegacyConvexHull3D = ConvexHull3D<AdaptiveKernel<f64>, (), ()>;
+type LegacySimplexPayloadConvexHull = ConvexHull<(), (), 3>;
 
 // ok: delaunay.rust.no-legacy-coordinate-generic-api
-type CurrentConvexHull3D = ConvexHull3D<(), ()>;
+type CurrentConvexHull = ConvexHull<(), 3>;
 
 // ruleid: delaunay.rust.no-legacy-coordinate-generic-api
 type LegacyBuilder<'v> = DelaunayTriangulationBuilder<'v, f64, (), 3>;
@@ -1050,7 +1047,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
 }
 
 // ruleid: delaunay.rust.no-infallible-fallible-constructor-definitions
-impl<U, V, const D: usize> ConvexHull<U, V, D> {
+impl<U, const D: usize> ConvexHull<U, D> {
     // ruleid: delaunay.rust.no-fallible-new-or-from-constructor-definitions
     pub fn from_triangulation<T>(
         _triangulation: &T,
@@ -1060,7 +1057,7 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
 }
 
 // ok: delaunay.rust.no-infallible-fallible-constructor-definitions
-impl<U, V, const D: usize> ConvexHull<U, V, D> {
+impl<U, const D: usize> ConvexHull<U, D> {
     // ok: delaunay.rust.no-fallible-new-or-from-constructor-definitions
     pub fn try_from_triangulation_for_fixture<T>(
         _triangulation: &T,
@@ -1681,10 +1678,8 @@ pub fn topology_boundary_classification_ok(
     global_topology: GlobalTopology<2>,
 ) -> bool {
     // ok: delaunay.rust.no-raw-facet-incidence-boundary-classification
-    ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)
-        .and_then(|validated| {
-            has_boundary_facets_in_validated_facet_map(tds, validated, global_topology)
-        })
+    ValidatedFacetDegreeMap::try_from_facet_map(tds, &facet_to_simplices)
+        .and_then(|validated| has_boundary_facets_in_validated_facet_map(validated, global_topology))
         .unwrap_or(false)
 }
 

@@ -80,7 +80,7 @@ use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder, RetryPolicy, Vertex,
 };
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point};
+use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, ExactPredicates, Point};
 use delaunay::prelude::query::*;
 use delaunay::try_vertices_from_points;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, get_current_pid};
@@ -295,7 +295,10 @@ fn construction_options(seed: u64) -> ConstructionOptions {
 fn construct_triangulation<const D: usize>(
     vertices: &[Vertex<(), D>],
     seed: u64,
-) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
+) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     DelaunayTriangulation::builder(vertices)
         .construction_options(construction_options(seed))
         .build()
@@ -319,7 +322,10 @@ fn generated_points_in_range<const D: usize>(
 }
 
 /// Measure memory delta during triangulation construction.
-fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) -> MemoryInfo {
+fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) -> MemoryInfo
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let mem_before = memory_usage_kib();
     let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
     let vertices = benchmark_vertices_from_generated_points(&points);
@@ -405,7 +411,10 @@ fn gen_points<const D: usize>(
 // ============================================================================
 
 /// Benchmark triangulation construction time for one dimension/count pair.
-fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
+fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let bench_name = format!("construction/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
     group.throughput(Throughput::Elements(n_points as u64));
@@ -436,11 +445,10 @@ fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n
 }
 
 /// Benchmark process RSS deltas during construction.
-fn bench_rss_memory_usage<const D: usize>(
-    c: &mut Criterion,
-    dimension_name: &str,
-    n_points: usize,
-) {
+fn bench_rss_memory_usage<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let bench_name = format!("memory/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
     group.sample_size(10);
@@ -473,7 +481,10 @@ fn bench_rss_memory_usage<const D: usize>(
 }
 
 /// Benchmark topology validation over a prebuilt triangulation.
-fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
+fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let bench_name = format!("validation/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
     group.measurement_time(bench_time(5));
@@ -505,11 +516,10 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
 }
 
 /// Benchmark neighbor lookup over all simplices.
-fn bench_neighbor_queries<const D: usize>(
-    c: &mut Criterion,
-    dimension_name: &str,
-    n_points: usize,
-) {
+fn bench_neighbor_queries<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let bench_name = format!("queries/neighbors/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
     group.measurement_time(bench_time(5));
@@ -541,11 +551,10 @@ fn bench_neighbor_queries<const D: usize>(
 }
 
 /// Benchmark vertex iteration over a prebuilt triangulation.
-fn bench_vertex_iteration<const D: usize>(
-    c: &mut Criterion,
-    dimension_name: &str,
-    n_points: usize,
-) {
+fn bench_vertex_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let bench_name = format!("queries/vertices/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
     group.throughput(Throughput::Elements(n_points as u64));
@@ -576,11 +585,10 @@ fn bench_vertex_iteration<const D: usize>(
 }
 
 /// Benchmark simplex-key iteration over a prebuilt triangulation.
-fn bench_simplex_iteration<const D: usize>(
-    c: &mut Criterion,
-    dimension_name: &str,
-    n_points: usize,
-) {
+fn bench_simplex_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize)
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let bench_name = format!("queries/simplices/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
     group.measurement_time(bench_time(5));
@@ -811,7 +819,9 @@ fn bench_memory_usage<const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     bench_id_prefix: &str,
     count: usize,
-) {
+) where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
     let mut allocation_infos: SmallBuffer<AllocationInfo, BENCHMARK_ITERATION_BUFFER_SIZE> =
         SmallBuffer::new();

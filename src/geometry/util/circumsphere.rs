@@ -9,13 +9,14 @@ use super::conversions::{ValueConversionError, safe_coords_to_f64};
 use super::norms::{hypot, squared_norm};
 use crate::geometry::matrix::{
     DEFAULT_SINGULAR_TOL, LaError, LaVector, Matrix, MatrixError, SingularityReason,
-    StackMatrixDispatchError, matrix_set,
+    StackMatrixDispatchError, matrix_set, rational_from_f64, solve_rational_system,
 };
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
 };
 use core::{fmt, hint::cold_path};
+use num_traits::ToPrimitive;
 
 /// Geometric measure involved in a degenerate simplex or facet calculation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -296,7 +297,7 @@ impl From<LaError> for CircumcenterError {
 /// The circumcenter C of a simplex with points `x_0`, `x_1`, ..., `x_n` is the
 /// solution to the system:
 ///
-/// C = 1/2 (A^-1*B)
+/// C = x₀ + 1/2 (A^-1*B)
 ///
 /// Where:
 ///
@@ -310,8 +311,8 @@ impl From<LaError> for CircumcenterError {
 /// And:
 ///
 /// B is a vector of the form:
-///     (x_1^2-x0^2) for all coordinates in x1, x0
-///     (x_2^2-x0^2) for all coordinates in x2, x0
+///     ||x₁-x₀||²
+///     ||x₂-x₀||²
 ///     ... for all `x_n` in the simplex
 ///
 /// The resulting vector gives the coordinates of the circumcenter.
@@ -381,6 +382,7 @@ pub fn circumcenter<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, Cir
 
     let mut a = Matrix::<D>::zero();
     let mut b_arr = [0.0f64; D];
+    let mut fast_system_is_finite = true;
 
     for i in 0..D {
         let coords_point = points[i + 1].coords();
@@ -390,7 +392,12 @@ pub fn circumcenter<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, Cir
 
         // Fill matrix row
         for j in 0..D {
-            matrix_set(&mut a, i, j, coords_point_f64[j] - coords_0_f64[j])?;
+            let difference = coords_point_f64[j] - coords_0_f64[j];
+            if difference.is_finite() {
+                matrix_set(&mut a, i, j, difference)?;
+            } else {
+                fast_system_is_finite = false;
+            }
         }
 
         // Calculate squared distance using squared_norm for consistency
@@ -399,6 +406,7 @@ pub fn circumcenter<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, Cir
             diff_coords[j] = coords_point_f64[j] - coords_0_f64[j];
         }
         b_arr[i] = squared_norm(&diff_coords);
+        fast_system_is_finite &= b_arr[i].is_finite();
     }
 
     // Solve for x, then C = x0 + 1/2 * x.
@@ -408,44 +416,48 @@ pub fn circumcenter<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, Cir
     // `solve_exact_rounded_f64` (BigRational Gaussian elimination, then explicit
     // finite f64 rounding) for a robust result. This replaces the old `lu(0.0)`
     // zero-tolerance fallback, which could silently accept truly singular matrices.
-    let b_vec = LaVector::<D>::try_new(b_arr)?;
-    let x = match a.lu(DEFAULT_SINGULAR_TOL) {
-        Ok(lu) => lu
-            .solve(b_vec)
-            .map_err(CircumcenterError::from)?
-            .into_array(),
-        Err(LaError::Singular {
-            reason: SingularityReason::Numerical { .. },
-            ..
-        }) => {
-            // Exact-arithmetic fallback: LU rejected the system as
-            // near-singular, so we pay for BigRational Gaussian elimination.
-            // This path is cold — well-conditioned simplices return above.
-            cold_path();
-            // LCOV_EXCL_START
-            #[cfg(debug_assertions)]
-            if std::env::var_os("DELAUNAY_DEBUG_LU_FALLBACK").is_some() {
-                tracing::debug!(
-                    "circumcenter<{D}>: LU near-singular, using solve_exact_rounded_f64"
-                );
+    let circumcenter_coords = if fast_system_is_finite {
+        let b_vec = LaVector::<D>::try_new(b_arr)?;
+        match a.lu(DEFAULT_SINGULAR_TOL) {
+            Ok(lu) => {
+                let solution = lu
+                    .solve(b_vec)
+                    .map_err(CircumcenterError::from)?
+                    .into_array();
+                std::array::from_fn(|index| 0.5_f64.mul_add(solution[index], coords_0_f64[index]))
             }
-            // LCOV_EXCL_STOP
-
-            a.solve_exact_rounded_f64(b_vec)
-                .map_err(CircumcenterError::from)?
-                .into_array()
+            Err(LaError::Singular {
+                reason: SingularityReason::Numerical { .. },
+                ..
+            }) => {
+                // Exact-arithmetic fallback: LU rejected the system as
+                // near-singular, so we pay for BigRational Gaussian elimination.
+                // This path is cold — well-conditioned simplices return above.
+                cold_path();
+                // LCOV_EXCL_START
+                #[cfg(debug_assertions)]
+                if std::env::var_os("DELAUNAY_DEBUG_LU_FALLBACK").is_some() {
+                    tracing::debug!(
+                        "circumcenter<{D}>: LU near-singular, forming and solving the system rationally"
+                    );
+                }
+                // LCOV_EXCL_STOP
+                exact_circumcenter_from_points(points)?
+            }
+            Err(e) => {
+                cold_path();
+                return Err(e.into());
+            }
         }
-        Err(e) => {
-            cold_path();
-            return Err(e.into());
-        }
+    } else {
+        // Finite source coordinates can still overflow while subtracting or
+        // squaring in binary64. Build the cold-path system from the source
+        // coordinates instead of publishing an error from a rounded
+        // intermediate.
+        cold_path();
+        exact_circumcenter_from_points(points)?
     };
 
-    // Use safe coordinate conversion for solution and add back the first point
-    let mut circumcenter_coords = [0.0; D];
-    for i in 0..D {
-        circumcenter_coords[i] = 0.5_f64.mul_add(x[i], coords_0_f64[i]);
-    }
     for value in circumcenter_coords {
         if !value.is_finite() {
             return Err(CircumcenterError::MatrixInversionFailed {
@@ -458,6 +470,72 @@ pub fn circumcenter<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, Cir
     }
 
     Ok(Point::try_new(circumcenter_coords)?)
+}
+
+/// Forms and solves the circumcenter system entirely in exact rational arithmetic.
+fn exact_circumcenter_from_points<const D: usize>(
+    points: &[Point<D>],
+) -> Result<[f64; D], CircumcenterError> {
+    let reference: Vec<_> = points[0]
+        .coords()
+        .iter()
+        .copied()
+        .map(rational_from_f64)
+        .collect::<Option<_>>()
+        .ok_or_else(|| CircumcenterError::MatrixInversionFailed {
+            reason: CircumcenterFailureReason::NonFiniteMeasure {
+                measure: DegenerateMeasure::Volume,
+                value: CoordinateConversionValue::from_numeric_debug(&points[0].coords()[0]),
+            },
+        })?;
+    let zero = rational_from_f64(0.0).expect("zero is finite");
+    let half = rational_from_f64(0.5).expect("one half is finite");
+    let mut matrix = vec![vec![zero.clone(); D]; D];
+    let mut rhs = vec![zero; D];
+
+    for row in 0..D {
+        for column in 0..D {
+            let coordinate =
+                rational_from_f64(points[row + 1].coords()[column]).ok_or_else(|| {
+                    CircumcenterError::MatrixInversionFailed {
+                        reason: CircumcenterFailureReason::NonFiniteMeasure {
+                            measure: DegenerateMeasure::Volume,
+                            value: CoordinateConversionValue::from_numeric_debug(
+                                &points[row + 1].coords()[column],
+                            ),
+                        },
+                    }
+                })?;
+            let relative = coordinate - reference[column].clone();
+            rhs[row] += relative.clone() * relative.clone();
+            matrix[row][column] = relative;
+        }
+    }
+
+    let solution = solve_rational_system(matrix, rhs)
+        .ok_or_else(|| CircumcenterError::from(LaError::singular_exact(D)))?;
+    let values = solution
+        .into_iter()
+        .zip(reference)
+        .map(|(value, origin)| {
+            (origin + half.clone() * value)
+                .to_f64()
+                .filter(|candidate| candidate.is_finite())
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| CircumcenterError::MatrixInversionFailed {
+            reason: CircumcenterFailureReason::NonFiniteMeasure {
+                measure: DegenerateMeasure::Volume,
+                value: CoordinateConversionValue::from_numeric_debug(&f64::NAN),
+            },
+        })?;
+    values
+        .try_into()
+        .map_err(|_| CircumcenterError::InvalidSimplex {
+            actual: points.len(),
+            expected: D + 1,
+            dimension: D,
+        })
 }
 
 /// Calculate the circumradius of a set of points forming a simplex.
@@ -1226,7 +1304,7 @@ mod tests {
         // Near-degenerate tetrahedron: three vertices nearly coplanar with a
         // tiny perturbation off the plane.  The resulting linear system is
         // ill-conditioned enough to trip DEFAULT_SINGULAR_TOL, exercising the
-        // solve_exact_rounded_f64 fallback path.
+        // rationally formed fallback path.
         let eps = 1e-14; // Perturbation small enough to make LU reject
         let points: Vec<Point<3>> = vec![
             Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
@@ -1299,5 +1377,19 @@ mod tests {
 
         // x-coordinate should be near 0.5 (midpoint of base edge)
         assert_relative_eq!(center_coords[0], 0.5, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn test_circumcenter_rational_system_handles_finite_difference_overflow() {
+        let points = [
+            Point::try_new([-1.0e308, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0e308, 0.0]).expect("finite point coordinates"),
+            Point::try_new([-1.0e308, 2.0]).expect("finite point coordinates"),
+        ];
+
+        let center = circumcenter(&points)
+            .expect("finite source coordinates should bypass overflowing f64 differences");
+        assert_relative_eq!(center.coords()[0], 0.0);
+        assert_relative_eq!(center.coords()[1], 1.0);
     }
 }

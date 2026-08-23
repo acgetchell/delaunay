@@ -40,8 +40,13 @@ Orientation and insphere predicates use staged evaluation:
    rigorous Shewchuk-style error bound from the f64 determinant. If the bound certifies
    the sign, no allocation is needed. For D ≥ 5 (where `det_errbound` is not available),
    the predicate falls through directly to exact arithmetic.
-2. **Exact sign** — via `la_stack::Matrix::det_sign_exact`. Uses exact `BigRational`
-   Bareiss elimination. Provably correct for finite matrix entries.
+2. **Exact sign** — ordinary finite matrices use
+   `la_stack::Matrix::det_sign_exact`. Relative in-sphere construction instead
+   converts the original binary64 coordinates to `la-stack`'s re-exported
+   `BigRational` before subtracting or squaring, then eliminates that exact
+   derived matrix. This distinction matters: sending already-rounded `f64`
+   differences or squared norms to an exact determinant would only compute the
+   exact sign of the wrong matrix.
 3. **Indeterminate or symbolic fallback** — if exact arithmetic cannot run
    (for example due to non-finite entries or unsupported insphere matrix size),
    robust predicates return `BOUNDARY` / `DEGENERATE` where appropriate, while
@@ -56,12 +61,13 @@ and `robust_insphere`.
 
 - f64 fast filter: D ≤ 4 (`det_errbound()` is unavailable above 4D)
 - Exact orientation: D ≤ 6 (matrix is (D+1)×(D+1))
-- Public exact-insphere / `ExactPredicates` support: D ≤ 5
+- Public exact-insphere / `ExactPredicates` support: D ≤ 6 (the relative lifted
+  matrix is `(D+1)×(D+1)`)
 
-For D ≥ 6, `robust_insphere` falls back to a distance-based classification when
-possible and then to symbolic perturbation/tie-breaking for unresolved boundary
-cases. Treat D ≥ 6 triangulation as experimental; explicit repair APIs are not
-available through the `ExactPredicates` gate there.
+For D ≥ 7, `robust_insphere` falls back to a distance-based classification and
+preserves unresolved `BOUNDARY` results. Complete symbolic expansion shares the
+D ≤ 6 exact support boundary. Treat D ≥ 7 triangulation as experimental;
+explicit repair APIs are not available through the `ExactPredicates` gate there.
 
 ### Robust predicates (`geometry::robust_predicates`)
 
@@ -82,38 +88,37 @@ Kernels control which predicate implementations are used by the triangulation al
   in the supported exact dimensions. Uses exact arithmetic (fast filter + Bareiss)
   for orientation and insphere, and adds Simulation of Simplicity (`SoS`) so
   degenerate ties are broken deterministically. Orientation and insphere queries
-  return ±1 rather than 0 for distinct finite inputs. The exception is truly
-  identical points (same f64 coordinates), where all SoS cofactors vanish and
-  orientation returns 0. Best choice for Delaunay triangulation. Implements
-  `ExactPredicates` through D ≤ 5.
+  return ±1 rather than 0 for finite ordered inputs, including repeated
+  coordinate values. Best choice for Delaunay triangulation. Implements
+  `ExactPredicates` through D ≤ 6.
 - `RobustKernel<T>`: exact-arithmetic predicates that preserve explicit
   `BOUNDARY`/`DEGENERATE` signals and can run opt-in diagnostic consistency checks.
   Prefer this when your application needs to detect cospherical/coplanar/collinear
   configurations directly (SoS would mask these). Implements `ExactPredicates`
-  through D ≤ 5.
+  through D ≤ 6.
 - `FastKernel<T>`: lean filtered-exact predicates that preserve explicit
   `BOUNDARY`/`DEGENERATE` signals without `RobustKernel`'s opt-in diagnostic
   consistency check or higher-dimensional fallback. Implements
-  `ExactPredicates` through D ≤ 5.
+  `ExactPredicates` through D ≤ 6.
 
 ### `ExactPredicates` marker trait (v0.7.3+)
 
 The `ExactPredicates` marker trait identifies kernels whose `orientation` and
 `in_sphere` predicates return the mathematically correct sign in the supported
 dimension, including near-degenerate configurations. `AdaptiveKernel`,
-`RobustKernel`, and `FastKernel` implement this trait through D ≤ 5.
+`RobustKernel`, and `FastKernel` implement this trait through D ≤ 6.
 
-The public `delaunayize` conversion requires `K: ExactPredicates`. This is
-enforced at compile time, preventing kernels without the supported exact
-predicate contract from entering flip repair. Construction and insertion do
-**not** require the bound; the internal repair path uses the caller's kernel
-first and falls back to `RobustKernel` automatically when its policy requires
-that recovery.
+The public `delaunayize` conversion and point-driven Delaunay builders require
+`K: ExactPredicates`. This is enforced at compile time, preventing kernels
+without the supported exact-predicate contract from entering construction or
+flip repair. Incremental insertion through the builder retains that bound while
+it crosses the Levels 1–5 publication boundary. Insertion into an already
+published owner can use its stored `Kernel`; exact flip repair remains a
+separate, explicitly bounded operation.
 
-Dimension-bound exactness is intentional: orientation has exact determinant
-support through D ≤ 6, but the public exact repair contract is tied to exact
-insphere support and the currently tested triangulation envelope, so
-`ExactPredicates` stops at D ≤ 5.
+Dimension-bound exactness is intentional: orientation and relative-coordinate
+insphere have exact determinant support through D ≤ 6, which is also the
+current `ExactPredicates` boundary.
 
 `DelaunayTriangulationBuilder::new(&vertices).build()` and
 `DelaunayIncrementalBuilder::new()` use `AdaptiveKernel`. To opt into a
@@ -142,9 +147,10 @@ assert!(dt.is_valid_delaunay().is_ok());
 
 ### Identity-based SoS perturbation via canonical vertex ordering
 
-The `SoS` (Simulation of Simplicity) implementation assigns perturbation priority
-by slice position: the first point in the array gets the lowest-order perturbation
-term, the second gets the next, and so on. If different call sites present the
+The `SoS` (Simulation of Simplicity) implementation assigns a distinct symbolic
+coordinate perturbation ordered by slice position and coordinate index, then
+computes the complete sparse determinant polynomial exactly. The first point in
+the array gets the lowest-order perturbation terms. If different call sites present the
 same vertex set in different orders, SoS tie-breaking can produce inconsistent
 signs for the same geometric query — leading to flip cycles, invalid conflict
 regions, or non-deterministic triangulations.
@@ -237,7 +243,7 @@ override.
 
 Since v0.7.3, the exact flip-repair boundary requires `K: ExactPredicates` at
 compile time. `AdaptiveKernel`, `RobustKernel`, and `FastKernel` satisfy that
-contract through D ≤ 5, so public conversion is available for each policy in
+contract through D ≤ 6, so public conversion is available for each policy in
 those dimensions.
 
 To convert a Levels 1–4 triangulation explicitly, use the consuming workflow:
@@ -254,11 +260,14 @@ see `docs/construction_and_validation.md`.
 
 ### Exact circumcenter computation (v0.7.3+)
 
-Circumcenter computation falls back to exact arithmetic when the simplex is
-near-singular (ill-conditioned linear system). This uses
-`la_stack::Matrix::solve_exact_rounded_f64()` — BigRational Gaussian elimination
-with explicit finite `f64` rounding. This replaces the previous zero-tolerance
-LU fallback which could fail on degenerate simplices.
+Circumcenter computation keeps ordinary well-conditioned systems on the
+allocation-free `f64` LU path. When that solve is near singular, the cold path
+converts the original point coordinates to `la-stack`'s re-exported
+`BigRational`, forms every difference and squared-norm term rationally, solves
+the exact derived system, and only then rounds the center to finite `f64`.
+Forming the system first in `f64` and passing it to an exact solver is
+insufficient because cancellation may already have erased the affine offset the
+solver is meant to recover.
 
 ## Duplicate vertex handling
 
@@ -344,10 +353,9 @@ For explicit preprocessing, the crate provides public deduplication functions in
 `delaunay::prelude`:
 
 - `dedup_vertices_exact(&[Vertex])` — removes exact coordinate duplicates (O(n²))
-- `dedup_vertices_epsilon(&[Vertex], epsilon)` — removes near-duplicates within
-  Euclidean distance `epsilon` (O(n²))
 - `try_dedup_vertices_epsilon(&[Vertex], epsilon)` — fallible epsilon dedup
-  that rejects negative, NaN, or infinite tolerances with a typed error
+  that removes near-duplicates within Euclidean distance `epsilon` (O(n²)) and
+  rejects negative, NaN, or infinite tolerances with a typed error
 - `filter_vertices_excluding(&[Vertex], &[Vertex])` — excludes vertices matching
   reference coordinates (e.g. an initial simplex)
 
@@ -365,8 +373,8 @@ active regardless of this setting.
 - `DedupPolicy::Exact`: additionally apply `dedup_vertices_exact` before
   construction. This is a performance optimisation for inputs with many exact
   duplicates — it avoids paying per-vertex insertion overhead for each one.
-- `DedupPolicy::try_epsilon(value)`: additionally apply
-  `dedup_vertices_epsilon` with the parsed tolerance before construction.
+- `DedupPolicy::try_epsilon(value)`: additionally apply epsilon deduplication
+  with the parsed tolerance before construction.
 
 The default (`Off`) is recommended because Hilbert dedup is free (zero extra cost)
 and per-insertion checks handle any remaining cases.
@@ -389,7 +397,7 @@ and per-insertion checks handle any remaining cases.
   through `ConstructionOptions::with_batch_repair_policy(...)` and still
   performs final repair/validation. This reduces the frequency of the automatic
   robust-fallback repair pass while still maintaining the Delaunay property
-  periodically. Consuming `delaunayize` is available through D ≤ 5 because
+  periodically. Consuming `delaunayize` is available through D ≤ 6 because
   `FastKernel` carries the dimension-bounded exact predicate proof.
 - If you see retryable insertion errors, frequent perturbation retries, or skipped vertices,
   preprocess your input (dedup / rescale if appropriate).
@@ -403,8 +411,8 @@ and per-insertion checks handle any remaining cases.
   available, so predicates fall through directly to exact Bareiss arithmetic on
   more calls. This is correct but slower than the fast-filter path used for
   D ≤ 4.
-- **D ≥ 6 exact repair:** exact orientation is available through D ≤ 6, but
-  the public exact-insphere / `ExactPredicates` repair contract stops at D ≤ 5.
+- **D ≥ 7 exact repair:** the public exact-insphere / `ExactPredicates` repair
+  contract stops at D ≤ 6.
   See [`limitations.md`](limitations.md) for the current dimension envelope.
 - **Non-finite input:** robust predicates return typed errors or
   `BOUNDARY`/`DEGENERATE` when exact arithmetic cannot run. Clean or reject

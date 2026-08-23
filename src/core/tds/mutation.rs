@@ -6,7 +6,7 @@ use super::errors::{
 };
 use super::incidence::SimplexIncidenceRemoval;
 use super::model::{SimplexUuidSortKey, Tds, UnverifiedTds};
-use super::{SimplexKey, VertexKey};
+use super::{SimplexKey, TdsRollbackTransaction, VertexKey};
 use crate::core::collections::{
     CLEANUP_OPERATION_BUFFER_SIZE, Entry, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeySet,
     SimplexRemovalBuffer, SmallBuffer, VertexKeySet, fast_hash_map_with_capacity,
@@ -2403,19 +2403,17 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             return Ok(0);
         }
 
-        let rollback = self.clone_for_rollback();
-        let removed = self.remove_simplices_by_keys(&simplices_to_remove)?;
-        let rebuild_result = (|| -> Result<(), TdsMutationError> {
-            self.assign_neighbors().map_err(TdsMutationError::from)?;
-            self.assign_incident_simplices()?;
-            self.is_valid().map_err(TdsMutationError::from)
-        })();
-
-        if let Err(error) = rebuild_result {
-            self.clone_from_for_rollback(&rollback);
-            return Err(error);
+        let mut transaction = TdsRollbackTransaction::begin(self);
+        let removed = transaction
+            .tds_mut()
+            .remove_simplices_by_keys(&simplices_to_remove)?;
+        {
+            let tds = transaction.tds_mut();
+            tds.assign_neighbors().map_err(TdsMutationError::from)?;
+            tds.assign_incident_simplices()?;
+            tds.is_valid().map_err(TdsMutationError::from)?;
         }
-
+        transaction.commit();
         Ok(removed)
     }
 }
@@ -4219,7 +4217,6 @@ mod tests {
                 Simplex::try_new_with_data(vec![v0, v2, v3], None).unwrap(),
             )
             .unwrap();
-        tds.construction_state = TriangulationConstructionState::Constructed;
         tds.assign_neighbors().unwrap();
         tds.assign_incident_simplices().unwrap();
 

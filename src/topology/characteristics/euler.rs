@@ -196,7 +196,7 @@ pub enum TopologyClassification {
 ///
 /// - `f₀` (vertices): Direct count from Tds - O(1)
 /// - `f_D` (simplices): Direct count from Tds - O(1)
-/// - `f_{D-1}` (facets): Use the internal facet-incidence map - O(N·D²)
+/// - `f_{D-1}` (facets, for D ≥ 2): Use the internal facet-incidence map - O(N·D²)
 /// - Intermediate `k`: Enumerate combinations from simplices - O(N · C(D+1, k+1))
 ///
 /// For practical dimensions (D ≤ 5), this is efficient.
@@ -238,8 +238,18 @@ pub fn count_simplices<U, V, const D: usize>(tds: &Tds<U, V, D>) -> Result<FVect
     // Handle empty triangulation without building any facet map.
     let mut by_dim = vec![0usize; D + 1];
     by_dim[0] = tds.number_of_vertices();
+
+    // In D=0 the stored vertices are the maximal simplices. Keep their canonical
+    // count instead of overwriting f₀ with the number of explicit simplex records.
+    if D == 0 {
+        return Ok(FVector { by_dim });
+    }
+
     by_dim[D] = tds.number_of_simplices();
-    if by_dim[D] == 0 {
+    // In D=1, f₀ is the total stored vertex count, including isolated vertices
+    // admitted by Levels 1–2. The facet map contains only incident endpoints and
+    // therefore cannot replace that canonical count.
+    if D == 1 || by_dim[D] == 0 {
         return Ok(FVector { by_dim });
     }
 
@@ -263,11 +273,16 @@ pub(crate) fn count_simplices_with_facet_to_simplices_map<U, V, const D: usize>(
     // f₀: vertices (O(1))
     by_dim[0] = tds.number_of_vertices();
 
+    if D == 0 {
+        return FVector { by_dim };
+    }
+
     // f_D: D-simplices (O(1))
     by_dim[D] = tds.number_of_simplices();
 
-    // Handle empty triangulation
-    if by_dim[D] == 0 {
+    // Preserve the canonical vertex count in D=1; the facet map excludes
+    // isolated vertices that remain valid at the TDS layer.
+    if D == 1 || by_dim[D] == 0 {
         return FVector { by_dim };
     }
 
@@ -735,13 +750,17 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 /// structure is interpreted through the supplied [`GlobalTopology`] so raw
 /// one-sided incidence in a periodic quotient is not mistaken for boundary.
 ///
+/// Raw TDS classification deliberately recognizes only cases whose topology is
+/// directly visible without a construction theorem. Nontrivial ball and torus
+/// classifications are added by the proof-bearing `Triangulation` owner when
+/// its crate-controlled construction provenance matches the requested global
+/// topology.
+///
 /// # Classification Logic
 ///
 /// - No simplices → `Empty`
 /// - One simplex with true boundary → `SingleSimplex(D)`
-/// - True boundary → `Ball(D)`
-/// - No boundary with toroidal metadata → `ClosedToroid(D)`
-/// - No boundary otherwise → `ClosedSphere(D)` (rare)
+/// - Every other complex → `Unknown`
 ///
 /// # Examples
 ///
@@ -802,13 +821,11 @@ pub fn classify_triangulation<U, V, const D: usize>(
 
     if num_simplices == 1 && has_boundary {
         Ok(TopologyClassification::SingleSimplex(D))
-    } else if has_boundary {
-        Ok(TopologyClassification::Ball(D))
-    } else if global_topology.is_toroidal() {
-        Ok(TopologyClassification::ClosedToroid(D))
     } else {
-        // No boundary → closed manifold (assume sphere for now)
-        Ok(TopologyClassification::ClosedSphere(D))
+        // Incidence alone does not prove a ball, sphere, or torus. The
+        // proof-bearing triangulation owner applies construction provenance
+        // when a value-level Euler law is justified.
+        Ok(TopologyClassification::Unknown)
     }
 }
 
@@ -853,6 +870,8 @@ pub fn expected_chi_for(classification: &TopologyClassification) -> Option<isize
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::tds::TdsBuilder;
+    use crate::core::test_support::single_simplex_tds;
     use crate::vertex;
 
     use crate::core::simplex::Simplex;
@@ -870,6 +889,83 @@ mod tests {
         assert_eq!(counts.count(3), 0); // out of range
         assert_eq!(counts.dimension(), 2);
     }
+
+    #[test]
+    fn count_simplices_1d_includes_isolated_tds_vertices() {
+        let vertices = [
+            vertex!([0.0]).unwrap(),
+            vertex!([1.0]).unwrap(),
+            vertex!([2.0]).unwrap(),
+        ];
+        let simplices = [vec![0, 1]];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+
+        let counts = count_simplices(&tds).unwrap();
+
+        assert_eq!(counts.by_dim, vec![3, 1]);
+        assert_eq!(euler_characteristic(&counts), 2);
+    }
+
+    macro_rules! single_simplex_f_vector_test {
+        ($name:ident, $vertices:expr, $expected:expr) => {
+            #[test]
+            fn $name() {
+                let tds = single_simplex_tds(&$vertices);
+                let counts = count_simplices(&tds).unwrap();
+
+                assert_eq!(counts.by_dim, $expected);
+                assert_eq!(euler_characteristic(&counts), 1);
+            }
+        };
+    }
+
+    single_simplex_f_vector_test!(
+        count_single_simplex_1d,
+        [vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()],
+        vec![2, 1]
+    );
+    single_simplex_f_vector_test!(
+        count_single_simplex_2d,
+        [
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+        ],
+        vec![3, 3, 1]
+    );
+    single_simplex_f_vector_test!(
+        count_single_simplex_3d,
+        [
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+        ],
+        vec![4, 6, 4, 1]
+    );
+    single_simplex_f_vector_test!(
+        count_single_simplex_4d,
+        [
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
+        ],
+        vec![5, 10, 10, 5, 1]
+    );
+    single_simplex_f_vector_test!(
+        count_single_simplex_5d,
+        [
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+        ],
+        vec![6, 15, 20, 15, 6, 1]
+    );
 
     #[test]
     fn test_insert_simplices_of_size() {
@@ -1136,11 +1232,11 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_triangulation_closed_s2_surface() {
+    fn raw_closed_s2_incidence_remains_unclassified_without_provenance() {
         let tds = build_closed_2d_surface_tds();
 
         let classification = classify_triangulation(&tds, GlobalTopology::Euclidean).unwrap();
-        assert_eq!(classification, TopologyClassification::ClosedSphere(2));
+        assert_eq!(classification, TopologyClassification::Unknown);
 
         let counts = count_simplices(&tds).unwrap();
         assert_eq!(counts.by_dim, vec![4, 6, 4]);

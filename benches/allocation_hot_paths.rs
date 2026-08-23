@@ -26,7 +26,9 @@ mod allocation_contracts {
         ConstructionOptions, DelaunayIncrementalBuilder, DelaunayTriangulation, RetryPolicy, Vertex,
     };
     use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-    use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point, simplex_volume};
+    use delaunay::prelude::geometry::{
+        AdaptiveKernel, CoordinateRange, ExactPredicates, Point, simplex_volume,
+    };
     use delaunay::prelude::query::measure_with_result;
     use delaunay::prelude::tds::{SimplexKey, TdsError, VertexKey, facet_key_from_vertices};
     use delaunay::{try_vertices_from_points, vertex};
@@ -167,7 +169,10 @@ mod allocation_contracts {
         Ok(facet_vertices)
     }
 
-    fn prepare_fixture<const D: usize>(count: usize, seed: u64) -> DimensionFixture<D> {
+    fn prepare_fixture<const D: usize>(count: usize, seed: u64) -> DimensionFixture<D>
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         let vertices = canary_vertices::<D>(count, seed);
         let attempts = retry_attempts(6);
         let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
@@ -319,7 +324,10 @@ mod allocation_contracts {
     }
 
     /// Measures the complete public D+1 bootstrap and Levels 1–5 publication path.
-    fn bench_bootstrap_publication<const D: usize>(group: &mut BenchmarkGroup<'_, WallTime>) {
+    fn bench_bootstrap_publication<const D: usize>(group: &mut BenchmarkGroup<'_, WallTime>)
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         let vertices = bootstrap_vertices::<D>();
 
         group.bench_function(
@@ -554,7 +562,9 @@ mod allocation_contracts {
         group: &mut BenchmarkGroup<'_, WallTime>,
         count: usize,
         seed: u64,
-    ) {
+    ) where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         let fixture = prepare_fixture::<D>(count, seed);
 
         bench_bootstrap_publication::<D>(group);

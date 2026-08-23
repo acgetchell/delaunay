@@ -131,13 +131,6 @@ macro_rules! test_convex_hull_properties {
                     );
                     let hull = hull_result.expect("checked random hull construction");
 
-                    // Hull should be valid for the TDS it was created from
-                    prop_assert!(
-                        hull.is_valid_for_triangulation(dt.as_triangulation()),
-                        "{}D convex hull should be valid for its source triangulation",
-                        $dim
-                    );
-
                     // Facet count should be positive
                     prop_assert!(
                         hull.number_of_facets() > 0,
@@ -196,10 +189,10 @@ macro_rules! test_convex_hull_properties {
                     );
                 }
 
-                /// Property: Hull becomes invalid after TDS modification
+                /// Property: An owned hull remains unchanged after source mutation
                 $(#[$attr])*
                 #[test]
-                fn [<prop_hull_staleness_detection_ $dim d>](
+                fn [<prop_hull_snapshot_independence_ $dim d>](
                     initial_vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
@@ -218,12 +211,7 @@ macro_rules! test_convex_hull_properties {
                     prop_assume!(hull_result.is_ok());
                     let hull = hull_result.expect("assumed initial hull construction");
 
-                    // Hull should be valid initially
-                    prop_assert!(
-                        hull.is_valid_for_triangulation(dt.as_triangulation()),
-                        "{}D hull should be valid for its triangulation before modification",
-                        $dim
-                    );
+                    let original_facets = extract_hull_facet_set(&hull);
 
                     // Modify the triangulation by inserting a new vertex
                     let new_vertex =
@@ -234,10 +222,10 @@ macro_rules! test_convex_hull_properties {
                     let modified_boundary_count = count_boundary_facets(&dt);
                     prop_assume!(modified_boundary_count > 0);
 
-                    // Hull should now be invalid (stale)
-                    prop_assert!(
-                        !hull.is_valid_for_triangulation(dt.as_triangulation()),
-                        "{}D hull should be invalid after triangulation modification",
+                    prop_assert_eq!(
+                        extract_hull_facet_set(&hull),
+                        original_facets,
+                        "{}D owned hull should not change with its source triangulation",
                         $dim
                     );
 
@@ -250,11 +238,7 @@ macro_rules! test_convex_hull_properties {
                     );
                     let new_hull = new_hull_result.expect("checked modified hull construction");
 
-                    prop_assert!(
-                        new_hull.is_valid_for_triangulation(dt.as_triangulation()),
-                        "{}D new hull should be valid for modified triangulation",
-                        $dim
-                    );
+                    prop_assert!(new_hull.number_of_facets() > 0);
                 }
 
                 /// Property: Hull vertices are a subset of triangulation vertices
@@ -326,22 +310,10 @@ macro_rules! test_convex_hull_properties {
                         $dim
                     );
 
-                    // Both should be valid for the same triangulation
-                    prop_assert!(
-                        hull1.is_valid_for_triangulation(dt.as_triangulation())
-                            && hull2.is_valid_for_triangulation(dt.as_triangulation()),
-                        "{}D both reconstructed hulls should be valid for the same triangulation",
-                        $dim
-                    );
-
                     // Extract facet sets and compare via Jaccard similarity
                     // Should be exactly identical (Jaccard = 1.0) since same triangulation
-                    let facets1 =
-                        extract_hull_facet_set(&hull1, dt.as_triangulation())
-                        .expect("facet extraction should not fail");
-                    let facets2 =
-                        extract_hull_facet_set(&hull2, dt.as_triangulation())
-                        .expect("facet extraction should not fail");
+                    let facets1 = extract_hull_facet_set(&hull1);
+                    let facets2 = extract_hull_facet_set(&hull2);
                     assert_jaccard_gte!(
                         &facets1,
                         &facets2,

@@ -8,15 +8,15 @@
 
 use crate::core::simplex::SimplexValidationError;
 use crate::geometry::matrix::{
-    Matrix, StackMatrixDispatchError, matrix_fast_filter, matrix_get, matrix_set, matrix_zero_like,
+    BigRational, Matrix, StackMatrixDispatchError, matrix_fast_filter, matrix_set,
+    rational_determinant_sign, rational_from_f64,
 };
 use crate::geometry::point::Point;
-use crate::geometry::sos::exact_det_sign;
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, DEFAULT_TOLERANCE_F64, DegenerateSimplexReason,
     InvalidCoordinateValue,
 };
-use crate::geometry::util::{circumcenter, circumradius_with_center, hypot, squared_norm};
+use crate::geometry::util::{circumcenter, circumradius_with_center, hypot};
 use crate::prelude::CircumcenterError;
 use core::hint::cold_path;
 
@@ -27,24 +27,6 @@ const fn sign_to_orientation(sign: i8) -> Orientation {
         1 => Orientation::POSITIVE,
         -1 => Orientation::NEGATIVE,
         _ => Orientation::DEGENERATE,
-    }
-}
-
-/// Convert an exact determinant sign to an [`InSphere`] result given an
-/// orientation sign multiplier.
-///
-/// `orient_sign` encodes how to interpret a positive determinant:
-/// - `1`: positive det → INSIDE (standard insphere with POSITIVE simplex orientation)
-/// - `-1`: positive det → OUTSIDE
-#[inline]
-const fn sign_to_insphere(det_sign: i8, orient_sign: i8) -> InSphere {
-    let effective = det_sign as i16 * orient_sign as i16;
-    if effective > 0 {
-        InSphere::INSIDE
-    } else if effective < 0 {
-        InSphere::OUTSIDE
-    } else {
-        InSphere::BOUNDARY
     }
 }
 
@@ -94,73 +76,198 @@ pub(crate) const fn relative_insphere_classification(signs: RelativeInsphereSign
     }
 }
 
-/// Fill the lifted relative-coordinate insphere matrix for exact determinant evaluation.
-#[inline]
-fn fill_relative_insphere_matrix<const D: usize, const K: usize>(
-    matrix: &mut Matrix<K>,
+/// Closed interval with outward-rounded arithmetic for the filtered predicate.
+#[derive(Clone, Copy, Debug)]
+struct F64Interval {
+    lower: f64,
+    upper: f64,
+}
+
+impl F64Interval {
+    const ZERO: Self = Self {
+        lower: 0.0,
+        upper: 0.0,
+    };
+    const ONE: Self = Self {
+        lower: 1.0,
+        upper: 1.0,
+    };
+
+    #[inline]
+    fn subtract_exact(left: f64, right: f64) -> Option<Self> {
+        let rounded = left - right;
+        rounded.is_finite().then_some(Self {
+            lower: rounded.next_down(),
+            upper: rounded.next_up(),
+        })
+    }
+
+    #[inline]
+    fn add(self, other: Self) -> Option<Self> {
+        let lower = self.lower + other.lower;
+        let upper = self.upper + other.upper;
+        (lower.is_finite() && upper.is_finite()).then_some(Self {
+            lower: lower.next_down(),
+            upper: upper.next_up(),
+        })
+    }
+
+    #[inline]
+    fn multiply(self, other: Self) -> Option<Self> {
+        let products = [
+            self.lower * other.lower,
+            self.lower * other.upper,
+            self.upper * other.lower,
+            self.upper * other.upper,
+        ];
+        products.iter().all(|value| value.is_finite()).then(|| {
+            let lower = products.iter().copied().fold(f64::INFINITY, f64::min);
+            let upper = products.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            Self {
+                lower: lower.next_down(),
+                upper: upper.next_up(),
+            }
+        })
+    }
+
+    #[inline]
+    const fn negate(self) -> Self {
+        Self {
+            lower: -self.upper,
+            upper: -self.lower,
+        }
+    }
+
+    #[inline]
+    fn square(self) -> Option<Self> {
+        let lower = if self.lower <= 0.0 && self.upper >= 0.0 {
+            0.0
+        } else {
+            (self.lower * self.lower).min(self.upper * self.upper)
+        };
+        let upper = (self.lower * self.lower).max(self.upper * self.upper);
+        (lower.is_finite() && upper.is_finite()).then_some(Self {
+            lower: if lower == 0.0 { 0.0 } else { lower.next_down() },
+            upper: upper.next_up(),
+        })
+    }
+}
+
+/// Builds the relative lifted matrix as intervals enclosing the exact-real result.
+fn relative_insphere_interval_matrix<const D: usize>(
     simplex_points: &[Point<D>],
     test_point: &Point<D>,
-) -> Result<(), CoordinateConversionError> {
-    if K != D + 1 {
-        return Err(
-            StackMatrixDispatchError::ActiveBlockDimensionMismatch { k: D + 1, dim: K }.into(),
-        );
+) -> Option<[[F64Interval; 7]; 7]> {
+    if D + 1 > 7 {
+        return None;
     }
     if simplex_points.len() != D + 1 {
-        return Err(CoordinateConversionError::InvalidSimplexPointCount {
-            actual: simplex_points.len(),
-            expected: D + 1,
-            dimension: D,
-        });
+        return None;
     }
 
+    let mut matrix = [[F64Interval::ZERO; 7]; 7];
     let reference_coords = simplex_points[0].coords();
-
-    for (row, point) in simplex_points.iter().skip(1).enumerate() {
-        let mut relative_coords = [0.0; D];
-        for (dst, (point_coord, reference_coord)) in relative_coords
-            .iter_mut()
-            .zip(point.coords().iter().zip(reference_coords.iter()))
-        {
-            *dst = *point_coord - *reference_coord;
+    for (row, point) in simplex_points
+        .iter()
+        .skip(1)
+        .chain(core::iter::once(test_point))
+        .enumerate()
+    {
+        let mut lifted = F64Interval::ZERO;
+        for column in 0..D {
+            let relative =
+                F64Interval::subtract_exact(point.coords()[column], reference_coords[column])?;
+            matrix[row][column] = relative;
+            lifted = lifted.add(relative.square()?)?;
         }
+        matrix[row][D] = lifted;
+    }
+    Some(matrix)
+}
 
-        for (column, &value) in relative_coords.iter().enumerate() {
-            matrix_set(matrix, row, column, value)?;
+/// Returns a certified determinant sign when interval elimination separates zero.
+fn relative_insphere_interval_sign<const D: usize>(
+    simplex_points: &[Point<D>],
+    test_point: &Point<D>,
+) -> Option<i32> {
+    let matrix = relative_insphere_interval_matrix(simplex_points, test_point)?;
+    let dimension = D + 1;
+    let mut partials = [None; 128];
+    partials[0] = Some(F64Interval::ONE);
+
+    for mask in 0usize..(1usize << dimension) {
+        let row = mask.count_ones() as usize;
+        if row >= dimension {
+            continue;
         }
-
-        let lifted = squared_norm(&relative_coords);
-        if !lifted.is_finite() {
-            return Err(CoordinateConversionError::NonFiniteValue {
-                coordinate_index: D,
-                coordinate_value: InvalidCoordinateValue::from_debug(&lifted),
+        let Some(partial) = partials[mask] else {
+            continue;
+        };
+        for (column, &entry) in matrix[row][..dimension].iter().enumerate() {
+            if mask & (1 << column) != 0 {
+                continue;
+            }
+            let mut term = partial.multiply(entry)?;
+            if (mask >> (column + 1)).count_ones() % 2 == 1 {
+                term = term.negate();
+            }
+            let next = mask | (1 << column);
+            partials[next] = Some(match partials[next] {
+                Some(existing) => existing.add(term)?,
+                None => term,
             });
         }
-        matrix_set(matrix, row, D, lifted)?;
     }
 
-    let mut test_relative_coords = [0.0; D];
-    for (dst, (point_coord, reference_coord)) in test_relative_coords
-        .iter_mut()
-        .zip(test_point.coords().iter().zip(reference_coords.iter()))
+    let determinant = partials[(1 << dimension) - 1]?;
+    if determinant.lower > 0.0 {
+        Some(1)
+    } else if determinant.upper < 0.0 {
+        Some(-1)
+    } else {
+        None
+    }
+}
+
+/// Builds the relative lifted matrix directly from exact IEEE-754 rationals.
+fn exact_relative_insphere_matrix<const D: usize>(
+    simplex_points: &[Point<D>],
+    test_point: &Point<D>,
+) -> Result<Vec<Vec<BigRational>>, CoordinateConversionError> {
+    let reference: Vec<_> = simplex_points[0]
+        .coords()
+        .iter()
+        .copied()
+        .map(rational_from_f64)
+        .collect::<Option<_>>()
+        .ok_or_else(|| CoordinateConversionError::NonFiniteValue {
+            coordinate_index: 0,
+            coordinate_value: InvalidCoordinateValue::from_debug(&simplex_points[0].coords()[0]),
+        })?;
+    let zero = rational_from_f64(0.0).expect("zero is a finite IEEE-754 value");
+    let mut matrix = Vec::with_capacity(D + 1);
+    for point in simplex_points
+        .iter()
+        .skip(1)
+        .chain(core::iter::once(test_point))
     {
-        *dst = *point_coord - *reference_coord;
+        let mut row = Vec::with_capacity(D + 1);
+        let mut lifted = zero.clone();
+        for (coordinate, reference_coordinate) in point.coords().iter().zip(&reference) {
+            let exact_coordinate = rational_from_f64(*coordinate).ok_or_else(|| {
+                CoordinateConversionError::NonFiniteValue {
+                    coordinate_index: row.len(),
+                    coordinate_value: InvalidCoordinateValue::from_debug(coordinate),
+                }
+            })?;
+            let relative = exact_coordinate - reference_coordinate.clone();
+            lifted += relative.clone() * relative.clone();
+            row.push(relative);
+        }
+        row.push(lifted);
+        matrix.push(row);
     }
-
-    for (column, &value) in test_relative_coords.iter().enumerate() {
-        matrix_set(matrix, D, column, value)?;
-    }
-
-    let lifted = squared_norm(&test_relative_coords);
-    if !lifted.is_finite() {
-        return Err(CoordinateConversionError::NonFiniteValue {
-            coordinate_index: D,
-            coordinate_value: InvalidCoordinateValue::from_debug(&lifted),
-        });
-    }
-    matrix_set(matrix, D, D, lifted)?;
-
-    Ok(())
+    Ok(matrix)
 }
 
 /// Compute exact signs for the relative-coordinate lifted insphere formulation.
@@ -177,23 +284,28 @@ pub(crate) fn relative_insphere_signs<const D: usize>(
         });
     }
 
-    let k = D + 1;
+    if D + 1 > 7 {
+        return Err(CoordinateConversionError::UnsupportedMatrixDimension {
+            requested: D + 1,
+            max: 7,
+        });
+    }
 
-    try_with_la_stack_matrix!(k, |matrix| {
-        fill_relative_insphere_matrix(&mut matrix, simplex_points, test_point)?;
+    let absolute_orientation = match simplex_orientation(simplex_points)? {
+        Orientation::NEGATIVE => -1,
+        Orientation::DEGENERATE => 0,
+        Orientation::POSITIVE => 1,
+    };
+    let relative_orientation = if D.is_multiple_of(2) {
+        absolute_orientation
+    } else {
+        -absolute_orientation
+    };
+    let insphere_determinant = relative_insphere_determinant_sign(simplex_points, test_point)?;
 
-        let mut orientation_matrix = matrix_zero_like(&matrix);
-        for i in 0..D {
-            for j in 0..D {
-                matrix_set(&mut orientation_matrix, i, j, matrix_get(&matrix, i, j)?)?;
-            }
-        }
-        matrix_set(&mut orientation_matrix, D, D, 1.0)?;
-
-        Ok(RelativeInsphereSigns {
-            relative_orientation: exact_det_sign(&orientation_matrix),
-            insphere_determinant: exact_det_sign(&matrix),
-        })
+    Ok(RelativeInsphereSigns {
+        relative_orientation,
+        insphere_determinant,
     })
 }
 
@@ -214,73 +326,23 @@ pub(crate) fn relative_insphere_determinant_sign<const D: usize>(
         });
     }
 
-    let k = D + 1;
-
-    try_with_la_stack_matrix!(k, |matrix| {
-        fill_relative_insphere_matrix(&mut matrix, simplex_points, test_point)?;
-        if let Some((det, errbound)) = matrix_fast_filter(&matrix)? {
-            if det > errbound {
-                return Ok(1);
-            }
-            if det < -errbound {
-                return Ok(-1);
-            }
-        }
-
-        cold_path();
-        Ok(exact_det_sign(&matrix))
-    })
-}
-
-/// Compute insphere classification from a pre-populated insphere matrix.
-///
-/// Uses [`la_stack::Matrix::det_sign_exact`] for provably correct results when
-/// the matrix entries are finite. `la-stack` matrices are finite by
-/// construction, so an inconclusive or overflowed fast filter always proceeds
-/// to an exact sign.
-///
-/// `orient_sign` encodes how to interpret a positive determinant:
-/// - `1`: positive det → INSIDE (e.g. standard insphere with POSITIVE simplex orientation)
-/// - `-1`: positive det → OUTSIDE (e.g. standard insphere with NEGATIVE orientation,
-///   or lifted insphere with POSITIVE relative orientation)
-#[inline]
-pub(crate) fn try_insphere_from_matrix<const N: usize>(
-    matrix: &Matrix<N>,
-    k: usize,
-    orient_sign: i8,
-) -> Result<InSphere, StackMatrixDispatchError> {
-    // `det_sign_exact()` and `det_direct()` operate on the full N×N matrix,
-    // so callers must ensure k == N.  All production call sites satisfy this
-    // because `try_with_la_stack_matrix!(k, ...)` creates a Matrix<K> where
-    // K == k at compile time.
-    validate_active_matrix_dimension::<N>(k)?;
-
-    // Stage 1: provable f64 fast filter for D ≤ 4.
-    // `det_direct_with_errbound()` returns a paired determinant and
-    // Shewchuk-style error bound derived from the matrix permanent:
-    // |det_direct() − det_exact| ≤ errbound. If the f64
-    // determinant clearly exceeds the bound, the sign is guaranteed correct
-    // without allocating.  For D ≥ 5, `det_errbound()` returns `None` and
-    // we skip directly to exact arithmetic.
-    if let Some((det, errbound)) = matrix_fast_filter(matrix)? {
-        let det_norm = det * f64::from(orient_sign);
-        if det_norm > errbound {
-            return Ok(InSphere::INSIDE);
-        }
-        if det_norm < -errbound {
-            return Ok(InSphere::OUTSIDE);
-        }
+    if D + 1 > 7 {
+        return Err(CoordinateConversionError::UnsupportedMatrixDimension {
+            requested: D + 1,
+            max: 7,
+        });
+    }
+    if let Some(sign) = relative_insphere_interval_sign(simplex_points, test_point) {
+        return Ok(sign);
     }
 
-    // Stage 2: exact sign via Bareiss — reached for ambiguous f64 results
-    // (D ≤ 4) or always for D ≥ 5.  `cold_path()` nudges the optimizer to
-    // keep Stage 1 lean; for D ≤ 4 with well-separated inputs, the vast
-    // majority of calls return before reaching this point.
     cold_path();
-    Ok(sign_to_insphere(
-        matrix.det_sign_exact().as_i8(),
-        orient_sign,
-    ))
+    rational_determinant_sign(exact_relative_insphere_matrix(simplex_points, test_point)?).ok_or(
+        CoordinateConversionError::UnsupportedMatrixDimension {
+            requested: D + 1,
+            max: 7,
+        },
+    )
 }
 
 /// Compute orientation from a pre-populated orientation matrix.
@@ -461,45 +523,6 @@ pub fn simplex_orientation<const D: usize>(
         }
 
         Ok(try_orientation_from_matrix(&matrix, k)?)
-    })
-}
-
-/// Return a provably determined f64 orientation sign without exact fallback.
-///
-/// `None` means the fast filter cannot prove the sign, not that the simplex is
-/// degenerate. Callers that require a definitive answer must fall back to the
-/// exact orientation path.
-#[inline]
-pub(crate) fn simplex_orientation_fast_filter_sign<const D: usize>(
-    simplex_points: &[Point<D>],
-) -> Result<Option<i32>, CoordinateConversionError> {
-    if simplex_points.len() != D + 1 {
-        return Err(CoordinateConversionError::InvalidSimplexPointCount {
-            actual: simplex_points.len(),
-            expected: D + 1,
-            dimension: D,
-        });
-    }
-
-    let k = D + 1;
-    try_with_la_stack_matrix!(k, |matrix| {
-        for (i, p) in simplex_points.iter().enumerate() {
-            for (j, &v) in p.coords().iter().enumerate() {
-                matrix_set(&mut matrix, i, j, v)?;
-            }
-            matrix_set(&mut matrix, i, D, 1.0)?;
-        }
-
-        if let Some((det, errbound)) = matrix_fast_filter(&matrix)? {
-            if det > errbound {
-                return Ok(Some(1));
-            }
-            if det < -errbound {
-                return Ok(Some(-1));
-            }
-        }
-
-        Ok(None)
     })
 }
 
@@ -739,57 +762,15 @@ pub fn insphere<const D: usize>(
         return Ok(InSphere::BOUNDARY);
     }
 
-    let k = D + 2;
-
-    try_with_la_stack_matrix!(k, |matrix| {
-        for (i, p) in simplex_points.iter().enumerate() {
-            let point_coords = p.coords();
-
-            for (j, &v) in point_coords.iter().enumerate() {
-                matrix_set(&mut matrix, i, j, v)?;
-            }
-
-            matrix_set(&mut matrix, i, D, squared_norm(point_coords))?;
-            matrix_set(&mut matrix, i, D + 1, 1.0)?;
-        }
-
-        let test_point_coords = test_point.coords();
-        for (j, &v) in test_point_coords.iter().enumerate() {
-            matrix_set(&mut matrix, D + 1, j, v)?;
-        }
-
-        matrix_set(&mut matrix, D + 1, D, squared_norm(test_point_coords))?;
-        matrix_set(&mut matrix, D + 1, D + 1, 1.0)?;
-
-        // Extract simplex orientation from the insphere matrix, avoiding a
-        // redundant simplex_orientation() call that rebuilds the coordinate
-        // matrix from scratch.
-        //
-        // The insphere matrix columns are [x, y, ..., ||p||², 1].
-        // The orientation matrix needs [x, y, ..., 1] for the first D+1 rows.
-        // We embed this (D+1)×(D+1) block into a (D+2)×(D+2) matrix by
-        // placing 1.0 at (D+1, D+1); cofactor expansion along row D+1 gives
-        // det(full) = det(orientation subblock).
-        let mut orient_matrix = matrix_zero_like(&matrix);
-        for i in 0..=D {
-            for j in 0..D {
-                matrix_set(&mut orient_matrix, i, j, matrix_get(&matrix, i, j)?)?;
-            }
-            matrix_set(&mut orient_matrix, i, D, 1.0)?;
-        }
-        matrix_set(&mut orient_matrix, D + 1, D + 1, 1.0)?;
-
-        let orientation = try_orientation_from_matrix(&orient_matrix, k)?;
-
-        match orientation {
-            Orientation::DEGENERATE => Err(CoordinateConversionError::DegenerateSimplex {
-                dimension: D,
-                reason: DegenerateSimplexReason::ZeroOrientation,
-            }),
-            Orientation::POSITIVE => Ok(try_insphere_from_matrix(&matrix, k, 1)?),
-            Orientation::NEGATIVE => Ok(try_insphere_from_matrix(&matrix, k, -1)?),
-        }
-    })
+    let signs = relative_insphere_signs(simplex_points, &test_point)?;
+    if signs.relative_orientation == 0 {
+        Err(CoordinateConversionError::DegenerateSimplex {
+            dimension: D,
+            reason: DegenerateSimplexReason::ZeroOrientation,
+        })
+    } else {
+        Ok(relative_insphere_classification(signs))
+    }
 }
 
 /// Check if a point is contained within the circumsphere of a simplex using the lifted paraboloid determinant method.
@@ -815,17 +796,15 @@ pub fn insphere<const D: usize>(
 /// # Robustness
 ///
 /// Both the orientation sub-predicate and the lifted insphere determinant use a
-/// filtered-exact evaluation (via internal helpers
-/// `try_insphere_from_matrix` and `try_orientation_from_matrix`):
-/// 1. **f64 fast filter** with adaptive tolerance — resolves well-conditioned cases
-///    without allocating.
-/// 2. **Exact Bareiss** via [`la_stack::Matrix::det_sign_exact`] — provably correct
-///    sign for finite matrix entries.
+/// filtered-exact evaluation:
+/// 1. **Outward-rounded interval filter** — resolves well-conditioned cases
+///    without allocation and encloses subtraction and lift-construction error.
+/// 2. **Exact rational cold path** — constructs relative coordinates and
+///    squared norms directly from the exact IEEE-754 inputs before elimination.
 ///
-/// Relative-coordinate or lifted-norm overflow is returned as a typed
-/// coordinate-conversion error before determinant evaluation. Therefore a
-/// returned classification has a provably correct sign, while finite inputs
-/// whose lifted intermediates are not representable fail explicitly. For
+/// Thus even a finite coordinate whose squared norm would overflow `f64`
+/// remains classifiable on the exact path. A returned classification has the
+/// mathematically correct sign for the stored finite IEEE-754 coordinates. For
 /// additional robustness strategies (symbolic perturbation, consistency
 /// checking), use [`crate::geometry::kernel::RobustKernel`].
 ///
@@ -2281,50 +2260,6 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_relative_insphere_matrix_rejects_dimension_mismatch() {
-        let simplex_points = [
-            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
-        ];
-        let test_point = Point::try_new([0.25, 0.25]).expect("finite point coordinates");
-        let mut matrix = Matrix::<4>::zero();
-
-        let err = fill_relative_insphere_matrix::<2, 4>(&mut matrix, &simplex_points, &test_point)
-            .unwrap_err();
-
-        assert_matches!(
-            err,
-            CoordinateConversionError::MatrixDimensionMismatch {
-                active: 3,
-                matrix_dimension: 4
-            }
-        );
-    }
-
-    #[test]
-    fn test_fill_relative_insphere_matrix_rejects_simplex_point_count_mismatch() {
-        let simplex_points = [
-            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
-        ];
-        let test_point = Point::try_new([0.25, 0.25]).expect("finite point coordinates");
-        let mut matrix = Matrix::<3>::zero();
-
-        let err = fill_relative_insphere_matrix::<2, 3>(&mut matrix, &simplex_points, &test_point)
-            .unwrap_err();
-
-        assert_matches!(
-            err,
-            CoordinateConversionError::InvalidSimplexPointCount {
-                actual: 2,
-                expected: 3,
-                dimension: 2
-            }
-        );
-    }
-
-    #[test]
     fn test_exact_orientation_near_degenerate_2d() {
         // Near-degenerate 2D triangle: third point is almost collinear.
         // The perturbation 2^-50 ≈ 8.9e-16 is below typical adaptive tolerance
@@ -2367,78 +2302,6 @@ mod tests {
     // =======================================================================
 
     #[test]
-    fn test_insphere_from_matrix_stage2_exact_via_overflow() {
-        // Stage 2: the paired fast filter reports non-finite arithmetic, but
-        // the matrix itself is finite by construction. Exact Bareiss resolves
-        // the sign without rescanning its entries.
-        let k = 4;
-        let big = 1e100;
-        with_la_stack_matrix!(k, |m| {
-            // Diagonal matrix: det = big^4, which overflows f64.
-            set_test_matrix_entry(&mut m, 0, 0, big);
-            set_test_matrix_entry(&mut m, 1, 1, big);
-            set_test_matrix_entry(&mut m, 2, 2, big);
-            set_test_matrix_entry(&mut m, 3, 3, big);
-
-            // Positive exact sign + orient_sign = 1 → INSIDE
-            assert_eq!(
-                try_insphere_from_matrix(&m, k, 1).unwrap(),
-                InSphere::INSIDE
-            );
-            // Positive exact sign + orient_sign = -1 → OUTSIDE
-            assert_eq!(
-                try_insphere_from_matrix(&m, k, -1).unwrap(),
-                InSphere::OUTSIDE
-            );
-        });
-    }
-
-    #[test]
-    fn test_insphere_from_matrix_stage2_near_singular() {
-        // Stage 2: near-singular matrix whose f64 determinant falls within
-        // the provable `det_errbound()` band.  Exact Bareiss resolves the
-        // positive sign.
-        let k = 3;
-        let eps = f64::EPSILON;
-        with_la_stack_matrix!(k, |m| {
-            // Near-singular: det = eps, permanent ≈ 2 → errbound ≫ eps.
-            set_test_matrix_entry(&mut m, 0, 0, 1.0);
-            set_test_matrix_entry(&mut m, 0, 1, 1.0);
-            set_test_matrix_entry(&mut m, 1, 0, 1.0);
-            set_test_matrix_entry(&mut m, 1, 1, 1.0 + eps);
-            set_test_matrix_entry(&mut m, 2, 2, 1.0);
-
-            assert_eq!(
-                try_insphere_from_matrix(&m, k, 1).unwrap(),
-                InSphere::INSIDE
-            );
-        });
-    }
-
-    #[test]
-    fn test_insphere_from_matrix_stage2_boundary() {
-        // Stage 2: singular matrix (exactly zero determinant) → BOUNDARY.
-        let k = 3;
-        with_la_stack_matrix!(k, |m| {
-            // Two identical rows → det = 0.
-            set_test_matrix_entry(&mut m, 0, 0, 1.0);
-            set_test_matrix_entry(&mut m, 0, 1, 2.0);
-            set_test_matrix_entry(&mut m, 0, 2, 3.0);
-            set_test_matrix_entry(&mut m, 1, 0, 1.0);
-            set_test_matrix_entry(&mut m, 1, 1, 2.0);
-            set_test_matrix_entry(&mut m, 1, 2, 3.0);
-            set_test_matrix_entry(&mut m, 2, 0, 4.0);
-            set_test_matrix_entry(&mut m, 2, 1, 5.0);
-            set_test_matrix_entry(&mut m, 2, 2, 6.0);
-
-            assert_eq!(
-                try_insphere_from_matrix(&m, k, 1).unwrap(),
-                InSphere::BOUNDARY
-            );
-        });
-    }
-
-    #[test]
     fn test_insphere_matrix_rejects_nonfinite_entry_at_set_boundary() {
         let k = 3;
         with_la_stack_matrix!(k, |m| {
@@ -2450,17 +2313,6 @@ mod tests {
                 }
             );
         });
-    }
-
-    #[test]
-    fn test_try_insphere_from_matrix_rejects_dimension_mismatch() {
-        let matrix = Matrix::<3>::zero();
-        let err = try_insphere_from_matrix(&matrix, 2, 1).unwrap_err();
-
-        assert_matches!(
-            err,
-            StackMatrixDispatchError::ActiveBlockDimensionMismatch { k: 2, dim: 3 }
-        );
     }
 
     // =======================================================================
@@ -2485,9 +2337,9 @@ mod tests {
     // =======================================================================
 
     #[test]
-    fn test_insphere_lifted_overflow_test_point_squared_norm() {
-        // Test point very far from the simplex: relative squared norm overflows
-        // f64, triggering the map_err conversion on the test-point path.
+    fn test_insphere_lifted_exact_path_handles_f64_squared_norm_overflow() {
+        // The exact cold path forms the squared norm rationally, so a finite
+        // coordinate remains classifiable even when its f64 square overflows.
         let simplex = vec![
             Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
@@ -2496,10 +2348,28 @@ mod tests {
         ];
         // 1e155² = 1e310 overflows f64::MAX ≈ 1.8e308.
         let far_point = Point::try_new([1e155, 0.0, 0.0]).expect("finite point coordinates");
-        let result = insphere_lifted(&simplex, far_point);
-        assert!(
-            result.is_err(),
-            "insphere_lifted should error when test point squared norm overflows"
+        assert_eq!(
+            insphere_lifted(&simplex, far_point).unwrap(),
+            InSphere::OUTSIDE
+        );
+    }
+
+    #[test]
+    fn exact_relative_lift_preserves_cospherical_unit_lost_by_f64_squaring() {
+        let simplex = [
+            Point::try_new([0.0, 0.0]).unwrap(),
+            Point::try_new([1.0, 0.0]).unwrap(),
+            Point::try_new([0.0, 1.0e8]).unwrap(),
+        ];
+        let opposite_corner = Point::try_new([1.0, 1.0e8]).unwrap();
+
+        assert_eq!(
+            insphere_lifted(&simplex, opposite_corner).unwrap(),
+            InSphere::BOUNDARY
+        );
+        assert_eq!(
+            insphere(&simplex, opposite_corner).unwrap(),
+            InSphere::BOUNDARY
         );
     }
 

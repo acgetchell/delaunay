@@ -15,7 +15,9 @@ use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     InsertionOrderStrategy, TopologyGuarantee, Vertex, vertex,
 };
-use delaunay::prelude::geometry::{CoordinateConversionError, Point, RobustKernel, simplex_volume};
+use delaunay::prelude::geometry::{
+    CoordinateConversionError, ExactPredicates, Point, RobustKernel, simplex_volume,
+};
 use delaunay::prelude::query::{JaccardComputationError, QueryError, format_jaccard_report};
 use delaunay::prelude::tds::{EdgeKeyError, FacetError, VertexKey};
 use delaunay::prelude::topology::validation::{ManifoldError, RidgeCandidate, RidgeCandidateError};
@@ -533,7 +535,10 @@ pub struct TopologySnapshot {
 /// or the requested [`TopologyGuarantee::PLManifold`] cannot be satisfied.
 pub fn build_flip_dt<const D: usize>(
     points: &[[f64; D]],
-) -> FlipWorkflowResult<FlipTriangulation<D>> {
+) -> FlipWorkflowResult<FlipTriangulation<D>>
+where
+    RobustKernel<f64>: ExactPredicates<D>,
+{
     let vertices = points
         .iter()
         .map(|coords| vertex!(*coords))

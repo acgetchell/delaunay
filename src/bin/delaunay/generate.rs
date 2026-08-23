@@ -12,7 +12,7 @@ use delaunay::{
         generators::{
             generate_random_points_in_ball_seeded, generate_random_points_in_range_seeded,
         },
-        geometry::{CoordinateRange, RobustKernel},
+        geometry::{CoordinateRange, ExactPredicates, RobustKernel},
         query::ConvexHull,
     },
     try_vertices_from_points,
@@ -161,7 +161,10 @@ pub fn run(command: &GenerateCommand) -> Result<(), CliError> {
 }
 
 /// Generate and emit one artifact for a concrete dimension.
-fn run_dimension<const D: usize>(config: &GenerateConfig<D>) -> Result<(), CliError> {
+fn run_dimension<const D: usize>(config: &GenerateConfig<D>) -> Result<(), CliError>
+where
+    RobustKernel<f64>: ExactPredicates<D>,
+{
     let triangulation = build_delaunay::<D>(config.vertices, config.seed, config.distribution)?;
     match config.kind {
         GenerateKind::Triangulation => {
@@ -184,7 +187,10 @@ fn build_delaunay<const D: usize>(
     vertex_count: NonZeroUsize,
     seed: u64,
     distribution: GenerateDistribution,
-) -> Result<DelaunayTriangulation<RobustKernel<f64>, (), (), D>, CliError> {
+) -> Result<DelaunayTriangulation<RobustKernel<f64>, (), (), D>, CliError>
+where
+    RobustKernel<f64>: ExactPredicates<D>,
+{
     let points = match distribution {
         GenerateDistribution::Cube => generate_random_points_in_range_seeded::<D>(
             vertex_count.get(),
@@ -207,10 +213,9 @@ fn build_convex_hull_export<const D: usize>(
 ) -> Result<ConvexHullExport<D>, CliError> {
     let hull = ConvexHull::try_from_triangulation(triangulation.as_triangulation())?;
     let facets = hull
-        .try_facets(triangulation.as_triangulation())?
+        .facets()
         .enumerate()
         .map(|(index, facet)| {
-            let facet = facet?;
             let (vertex_ids, coordinates) = facet
                 .vertices()
                 .map(|vertex| (vertex.uuid(), vertex.point().coords().to_vec()))

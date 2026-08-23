@@ -114,22 +114,34 @@ where
 /// Level 5 evidence bound to one exact topology state.
 ///
 /// Only the validation functions in this module can create a certificate.
-/// Publication checks its owner, generation, and topology provenance before
-/// using it, so validation evidence cannot outlive a topology mutation.
+/// Publication checks its owner, generation, topology provenance, and evidence
+/// source before using it, so validation evidence cannot outlive a topology
+/// mutation or certify a stronger predicate than the one actually checked.
 #[derive(Clone, Debug)]
 pub(crate) struct DelaunayLevelFiveCertificate<const D: usize> {
     owner_id: TopologyOwnerId,
     generation: u64,
     global_topology: GlobalTopology<D>,
+    evidence: DelaunayLevelFiveEvidence,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DelaunayLevelFiveEvidence {
+    EuclideanEmptyCircumsphere,
+    FlipPredicates,
 }
 
 impl<const D: usize> DelaunayLevelFiveCertificate<D> {
     /// Captures the exact topology state whose Level 5 predicate just passed.
-    fn for_triangulation<K, U, V>(triangulation: &Triangulation<K, U, V, D>) -> Self {
+    fn for_triangulation<K, U, V>(
+        triangulation: &Triangulation<K, U, V, D>,
+        evidence: DelaunayLevelFiveEvidence,
+    ) -> Self {
         Self {
             owner_id: triangulation.tds.topology_owner_id(),
             generation: triangulation.tds.generation(),
             global_topology: triangulation.global_topology,
+            evidence,
         }
     }
 
@@ -138,6 +150,14 @@ impl<const D: usize> DelaunayLevelFiveCertificate<D> {
         self.owner_id == triangulation.tds.topology_owner_id()
             && self.generation == triangulation.tds.generation()
             && self.global_topology == triangulation.global_topology
+            && match self.evidence {
+                DelaunayLevelFiveEvidence::EuclideanEmptyCircumsphere => {
+                    triangulation.global_topology.is_euclidean()
+                }
+                DelaunayLevelFiveEvidence::FlipPredicates => {
+                    !triangulation.global_topology.is_euclidean()
+                }
+            }
     }
 }
 
@@ -173,16 +193,23 @@ where
         )?;
     }
 
+    let evidence = if triangulation.global_topology().is_euclidean() {
+        DelaunayLevelFiveEvidence::EuclideanEmptyCircumsphere
+    } else {
+        DelaunayLevelFiveEvidence::FlipPredicates
+    };
     Ok(DelaunayLevelFiveCertificate::for_triangulation(
         triangulation,
+        evidence,
     ))
 }
 
 /// Certifies Level 5 through flip predicates and returns state-bound evidence.
 ///
 /// Batch retry selection uses this variant because the successful predicate
-/// pass is already part of its repair decision. Returning the same proof type
-/// lets final publication reuse that work without weakening the boundary.
+/// pass is already part of its repair decision. Non-Euclidean publication can
+/// reuse this evidence. Euclidean publication deliberately rejects it and runs
+/// the global empty-circumsphere check required by that proof boundary.
 pub(crate) fn certify_level_five_via_flip_predicates<K, U, V, const D: usize>(
     triangulation: &Triangulation<K, U, V, D>,
 ) -> Result<DelaunayLevelFiveCertificate<D>, DelaunayRepairError>
@@ -198,6 +225,7 @@ where
     )?;
     Ok(DelaunayLevelFiveCertificate::for_triangulation(
         triangulation,
+        DelaunayLevelFiveEvidence::FlipPredicates,
     ))
 }
 
@@ -1017,43 +1045,9 @@ where
     /// the cumulative Levels 1–5 guarantee without rechecking an unchanged lower
     /// proof between boundaries.
     ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayResult, DelaunayTriangulationBuilder, GlobalTopology,
-    ///     TopologyGuarantee,
-    /// };
-    /// use delaunay::prelude::geometry::FastKernel;
-    /// use delaunay::prelude::triangulation::TriangulationBuilder;
-    /// use delaunay::DelaunayRefinementBuilder;
-    ///
-    /// # fn main() -> DelaunayResult<()> {
-    /// let vertices = [
-    ///     delaunay::vertex![0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0]?,
-    /// ];
-    /// let tds = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .build_triangulation()?
-    ///     .into_tds();
-    /// let triangulation = TriangulationBuilder::new(tds, FastKernel::new())
-    ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .global_topology(GlobalTopology::Euclidean)
-    ///     .build()
-    ///     .expect("Levels 1-2 storage should satisfy Levels 3-4");
-    /// let reconstructed = DelaunayRefinementBuilder::new(triangulation)
-    ///     .build()
-    ///     .expect("fixture should satisfy Level 5");
-    ///
-    /// assert_eq!(
-    ///     reconstructed.topology_guarantee(),
-    ///     TopologyGuarantee::PLManifold
-    /// );
-    /// assert_eq!(reconstructed.global_topology(), GlobalTopology::Euclidean);
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// The public [`DelaunayRefinementBuilder`](crate::DelaunayRefinementBuilder)
+    /// documentation demonstrates the equivalent staged restoration workflow
+    /// through the supported API.
     ///
     /// # Errors
     ///
@@ -1175,7 +1169,10 @@ mod tests {
 
     fn randomized_delaunay<const D: usize>(
         base_seed: u64,
-    ) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
+    ) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>
+    where
+        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+    {
         let bounds = CoordinateRange::try_new(-10.0, 10.0).unwrap();
         for offset in 0..32 {
             let points = generate_random_points_in_range_seeded::<D>(
@@ -1197,6 +1194,8 @@ mod tests {
     }
 
     fn shared_facet_flip_adversary<const D: usize>() -> Triangulation<AdaptiveKernel<f64>, (), (), D>
+    where
+        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
     {
         let dim = u32::try_from(D).unwrap();
         let high_apex_coordinate = 1.1 / f64::from(dim);
@@ -1216,11 +1215,15 @@ mod tests {
 
         DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
             .unwrap()
+            .topology_guarantee(TopologyGuarantee::Pseudomanifold)
             .build_triangulation()
             .unwrap()
     }
 
-    fn assert_randomized_full_report_matches_brute_force<const D: usize>() {
+    fn assert_randomized_full_report_matches_brute_force<const D: usize>()
+    where
+        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+    {
         for seed in [0x483, 0x483_0001, 0x483_0002] {
             let triangulation = randomized_delaunay::<D>(seed);
             assert!(triangulation.verify_via_flip_predicates().is_ok());
@@ -1232,7 +1235,10 @@ mod tests {
         }
     }
 
-    fn assert_adversarial_full_report_matches_brute_force<const D: usize>() {
+    fn assert_adversarial_full_report_matches_brute_force<const D: usize>()
+    where
+        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+    {
         let triangulation = shared_facet_flip_adversary::<D>();
         assert!(
             triangulation
@@ -1331,6 +1337,24 @@ mod tests {
         let brute_force = tds_delaunay_violation_report(&tds, None).unwrap();
         assert!(!report.is_valid());
         assert_eq!(report, brute_force);
+    }
+
+    #[test]
+    fn flip_predicate_certificate_cannot_publish_euclidean_topology() {
+        let vertices = [
+            test_vertex([0.0, 0.0]),
+            test_vertex([1.0, 0.0]),
+            test_vertex([0.0, 1.0]),
+        ];
+        let triangulation = DelaunayTriangulationBuilder::new(&vertices)
+            .build_triangulation()
+            .unwrap();
+
+        let flip_certificate = certify_level_five_via_flip_predicates(&triangulation).unwrap();
+        assert!(!flip_certificate.applies_to(&triangulation));
+
+        let publication_certificate = certify_level_five_for_refinement(&triangulation).unwrap();
+        assert!(publication_certificate.applies_to(&triangulation));
     }
 
     #[test]

@@ -2,9 +2,12 @@
 
 #![forbid(unsafe_code)]
 
+use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::facet::FacetError;
 use crate::core::traits::data_type::DataType;
-use crate::geometry::algorithms::convex_hull::{ConvexHull, ConvexHullConstructionError};
+use crate::core::util::stable_facet_identifier_from_vertex_uuids;
+use crate::core::vertex::Vertex;
+use crate::geometry::algorithms::convex_hull::ConvexHull;
 use crate::geometry::point::Point;
 use crate::triangulation::Triangulation;
 use std::collections::HashSet;
@@ -12,6 +15,7 @@ use std::fmt::Debug;
 use std::hash::{BuildHasher, Hash};
 use std::sync::Arc;
 use thiserror::Error;
+use uuid::Uuid;
 
 /// Errors that can occur during Jaccard similarity computation.
 ///
@@ -328,7 +332,8 @@ where
 /// Extract canonical facet identifier set from a triangulation.
 ///
 /// This function creates a set of deterministic 64-bit identifiers for all boundary facets
-/// in the triangulation using the existing `FacetView::key()` method.
+/// from their sorted stable vertex UUIDs. The result is independent of the source
+/// TDS slot layout and can therefore be compared across topology owners.
 ///
 /// # Arguments
 ///
@@ -389,7 +394,15 @@ where
         .iter()
         .filter(|incidence| incidence.is_one_sided())
     {
-        facet_ids.insert(incidence.facet_key());
+        let Some(handle) = incidence.one_sided_handle() else {
+            continue;
+        };
+        let facet = handle.view(incidence.tds())?;
+        let vertex_uuids: SmallBuffer<Uuid, MAX_PRACTICAL_DIMENSION_SIZE> =
+            facet.vertices().map(Vertex::uuid).collect();
+        facet_ids.insert(stable_facet_identifier_from_vertex_uuids(
+            vertex_uuids.as_slice(),
+        ));
     }
 
     Ok(facet_ids)
@@ -397,22 +410,15 @@ where
 
 /// Extract hull facet identifier set from a convex hull.
 ///
-/// This function creates a set of deterministic 64-bit identifiers for all facets
-/// in a convex hull using the existing `FacetView::key()` method.
+/// This function returns the stable UUID-derived identifiers stored by the
+/// self-contained hull. They are independent of the source TDS slot layout.
 ///
 /// # Arguments
 ///
 /// * `hull` - The convex hull to extract facet identifiers from
-/// * `tri` - The triangulation used to create the hull
-///
 /// # Returns
 ///
-/// A `Result` containing a `HashSet` of facet identifiers.
-///
-/// # Errors
-///
-/// Returns [`ConvexHullConstructionError`] if the hull is stale for `tri`, belongs to a
-/// different triangulation identity, or if borrowed facet views cannot be created or keyed.
+/// A `HashSet` of facet identifiers copied from the certified hull.
 ///
 /// # Examples
 ///
@@ -425,9 +431,7 @@ where
 /// #     #[error(transparent)]
 /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
-/// #     ConvexHull(#[from] delaunay::geometry::ConvexHullConstructionError),
-/// #     #[error(transparent)]
-/// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+/// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
 /// #     #[error(transparent)]
 /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
@@ -442,25 +446,14 @@ where
 ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
 ///
-/// let facet_set = extract_hull_facet_set(&hull, dt.as_triangulation())?;
+/// let facet_set = extract_hull_facet_set(&hull);
 /// assert_eq!(facet_set.len(), 4);
 /// # Ok(())
 /// # }
 /// ```
-pub fn extract_hull_facet_set<K, U, V, const D: usize>(
-    hull: &ConvexHull<U, V, D>,
-    tri: &Triangulation<K, U, V, D>,
-) -> Result<HashSet<u64>, ConvexHullConstructionError> {
-    let mut facet_ids = HashSet::new();
-
-    for facet_view in hull.try_facets(tri)? {
-        let facet_id = facet_view
-            .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?
-            .key();
-        facet_ids.insert(facet_id);
-    }
-
-    Ok(facet_ids)
+#[must_use]
+pub fn extract_hull_facet_set<U, const D: usize>(hull: &ConvexHull<U, D>) -> HashSet<u64> {
+    hull.facets().map(|facet| facet.key()).collect()
 }
 
 // =============================================================================
@@ -637,12 +630,14 @@ macro_rules! assert_jaccard_gte {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::tds::TdsBuilder;
     use crate::vertex;
     use std::assert_matches;
 
     use crate::core::tds::VertexKey;
     use crate::delaunay_model::DelaunayTriangulation;
-    use crate::geometry::kernel::FastKernel;
+    use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
+    use crate::triangulation::builder::TriangulationBuilder;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
 
@@ -734,7 +729,7 @@ mod tests {
         let dt_hull = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt_hull.as_triangulation();
         let hull = ConvexHull::try_from_triangulation(tri).unwrap();
-        let hull_facet_set = extract_hull_facet_set(&hull, tri).unwrap();
+        let hull_facet_set = extract_hull_facet_set(&hull);
         assert_eq!(hull_facet_set.len(), 4, "Hull should have 4 facets");
     }
 
@@ -814,10 +809,66 @@ mod tests {
         let tri = dt.as_triangulation();
         let hull = ConvexHull::try_from_triangulation(tri).unwrap();
 
-        let hull_facet_set = extract_hull_facet_set(&hull, tri).unwrap();
+        let hull_facet_set = extract_hull_facet_set(&hull);
         let boundary_set = extract_facet_identifier_set(tri).unwrap();
 
         assert_eq!(hull_facet_set, boundary_set);
+    }
+
+    #[test]
+    fn facet_identifiers_are_stable_across_tds_key_layouts() {
+        fn build_square(
+            order: [usize; 4],
+            simplices: &[Vec<usize>],
+        ) -> Triangulation<AdaptiveKernel<f64>, (), (), 2> {
+            let points = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+            let uuids = [
+                Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_0001),
+                Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_0002),
+                Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_0003),
+                Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_0004),
+            ];
+            let vertices: Vec<_> = order
+                .into_iter()
+                .map(|index| {
+                    Vertex::try_new_with_uuid(
+                        Point::try_new(points[index]).unwrap(),
+                        uuids[index],
+                        None,
+                    )
+                    .unwrap()
+                })
+                .collect();
+            let tds = TdsBuilder::new(&vertices, simplices).build().unwrap();
+            TriangulationBuilder::new(tds, AdaptiveKernel::new())
+                .canonicalizing()
+                .build()
+                .unwrap()
+        }
+
+        let first = build_square([0, 1, 2, 3], &[vec![0, 1, 2], vec![0, 2, 3]]);
+        let second = build_square([0, 2, 1, 3], &[vec![0, 2, 1], vec![0, 1, 3]]);
+
+        let first_runtime_keys: HashSet<_> = first
+            .boundary_facets()
+            .unwrap()
+            .map(|facet| facet.unwrap().key())
+            .collect();
+        let second_runtime_keys: HashSet<_> = second
+            .boundary_facets()
+            .unwrap()
+            .map(|facet| facet.unwrap().key())
+            .collect();
+        assert_ne!(first_runtime_keys, second_runtime_keys);
+
+        let first_ids = extract_facet_identifier_set(&first).unwrap();
+        let second_ids = extract_facet_identifier_set(&second).unwrap();
+        assert_eq!(first_ids, second_ids);
+
+        let first_hull = ConvexHull::try_from_triangulation(&first).unwrap();
+        let second_hull = ConvexHull::try_from_triangulation(&second).unwrap();
+        assert_eq!(extract_hull_facet_set(&first_hull), first_ids);
+        assert_eq!(extract_hull_facet_set(&second_hull), second_ids);
     }
 
     #[test]

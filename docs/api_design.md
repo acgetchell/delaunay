@@ -562,10 +562,16 @@ Topology APIs use names to make ownership visible:
   bare `VertexKey`s is an explicit quotient-space operation.
 - Owned snapshots are allowed only when the data must cross a persistence,
   detached-analysis, or cache boundary. `TdsSnapshot`/`RawTdsSnapshot` are the
-  durable UUID persistence boundary. `ConvexHull` is a logically immutable hull
-  snapshot that stores `FacetHandle`s, while `ConvexHull::try_facets(triangulation)`
-  returns borrowed `FacetView` values and `ConvexHull::facet_handles()` exposes
-  the detached handles explicitly.
+  durable UUID persistence boundary. `ConvexHull` is an immutable geometric
+  snapshot: construction copies hull vertices and payloads, omits runtime-local
+  TDS handles, and certifies nondegenerate supporting facets before publication.
+  `ConvexHull::facets()` then returns views borrowed from that owned snapshot,
+  so hull queries remain valid after the source triangulation changes or drops.
+- Derived mutation inputs retain their owner borrow. `ConflictRegion<'tri>`
+  binds conflict simplices and cavity facets to one immutable triangulation,
+  while `LocalFacetRepairGuard<'tri>` holds the mutable triangulation borrow
+  from issue detection through transactional repair. Raw conflict buffers and
+  facet-issue maps stay implementation details.
 - Transactional rollback state may own cloned topology or exact mutation
   records while an operation is in flight. `Tds::clone_for_rollback`,
   `Tds::clone_from_for_rollback`, `SimplexIncidenceRemoval`, and flip trial

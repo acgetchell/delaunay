@@ -23,7 +23,7 @@ use crate::core::collections::{
     CavityBoundaryBuffer, FacetToSimplicesMap, FastHashMap, FastHashSet, FastHasher,
     MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SimplexSecondaryMap, SmallBuffer,
 };
-use crate::core::facet::FacetHandle;
+use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::tds::{SimplexKey, Tds, VertexKey};
 use crate::core::util::canonical_points::{
     CanonicalFacetPointError, CanonicalSimplexPointError, sorted_facet_points_with_extra,
@@ -184,6 +184,14 @@ pub enum ConflictError {
         simplex_key: SimplexKey,
     },
 
+    /// A computed cavity-boundary handle could not be promoted to a borrowed facet view.
+    #[error("computed cavity boundary contains an invalid facet: {source}")]
+    InvalidBoundaryFacet {
+        /// Underlying facet parsing error.
+        #[source]
+        source: FacetError,
+    },
+
     /// Geometric predicate failed
     #[error("Predicate error: {source}")]
     PredicateError {
@@ -271,9 +279,10 @@ pub enum ConflictError {
     /// Ridge fan detected (many facets sharing same (D-2)-simplex).
     ///
     /// When a single conflict region contains multiple ridge fans,
-    /// [`extract_cavity_boundary`] accumulates the removal candidates from every
-    /// fan into `extra_simplices` before returning, so a single cavity-reduction step
-    /// can shrink all of them at once. In that case:
+    /// [`ConflictRegion::boundary`](crate::query::ConflictRegion::boundary) and
+    /// the insertion path accumulate the removal candidates from every fan into
+    /// `extra_simplices` before returning, so a single cavity-reduction step can
+    /// shrink all of them at once. In that case:
     ///
     /// - `facet_count` and `ridge_vertex_count` describe the **first** fan that
     ///   the boundary walk observed (a representative example, not an aggregate).
@@ -1207,9 +1216,8 @@ const fn conflict_simplex_points_error(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::algorithms::{locate, find_conflict_region, LocateResult};
+/// use delaunay::prelude::algorithms::LocateResult;
 /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
-/// use delaunay::prelude::geometry::FastKernel;
 /// use delaunay::prelude::geometry::Point;
 /// use delaunay::prelude::geometry::Coordinate;
 ///
@@ -1235,7 +1243,6 @@ const fn conflict_simplex_points_error(
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
-/// let kernel = FastKernel::<f64>::new();
 /// // Point inside the 4-simplex
 /// let query_point = Point::try_from([0.2, 0.2, 0.2, 0.2])?;
 ///
@@ -1253,7 +1260,7 @@ const fn conflict_simplex_points_error(
     clippy::too_many_lines,
     reason = "function is long due to complex locate logic and should be split when refactoring"
 )]
-pub fn find_conflict_region<K, U, V, const D: usize>(
+pub(crate) fn find_conflict_region<K, U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     kernel: &K,
     point: &Point<D>,
@@ -1436,33 +1443,12 @@ where
 ///
 /// Returns the number of missed simplices (0 means the BFS result is complete).
 ///
-/// # Examples
-///
-/// ```rust
-/// # #[cfg(feature = "diagnostics")]
-/// # {
-/// use delaunay::prelude::collections::SimplexKeyBuffer;
-/// use delaunay::prelude::diagnostics::verify_conflict_region_completeness;
-/// use delaunay::prelude::geometry::{AdaptiveKernel, Point};
-/// use delaunay::prelude::tds::Tds;
-///
-/// let tds: Tds<(), (), 2> = Tds::empty();
-/// let kernel = AdaptiveKernel::<f64>::new();
-/// let point = Point::<2>::default();
-/// let bfs_conflicts = SimplexKeyBuffer::new();
-///
-/// let missed = verify_conflict_region_completeness(
-///     &tds,
-///     &kernel,
-///     &point,
-///     &bfs_conflicts,
-/// );
-/// assert_eq!(missed, 0);
-/// # }
-/// ```
+/// Public diagnostic callers use
+/// [`ConflictRegion::number_of_missed_simplices`](crate::query::ConflictRegion::number_of_missed_simplices);
+/// insertion uses this raw helper internally.
 #[cfg(feature = "diagnostics")]
 #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
-pub fn verify_conflict_region_completeness<K, U, V, const D: usize>(
+pub(crate) fn verify_conflict_region_completeness<K, U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     kernel: &K,
     point: &Point<D>,
@@ -1605,75 +1591,13 @@ where
 ///    - If neighbor is NOT in conflict (or is None/hull), it's a boundary facet
 /// 3. Return all boundary facets as `FacetHandle`s
 ///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::algorithms::extract_cavity_boundary;
-/// use delaunay::prelude::collections::SimplexKeyBuffer;
-/// use delaunay::prelude::tds::Tds;
-///
-/// # fn main() -> Result<(), delaunay::prelude::algorithms::ConflictError> {
-/// let tds: Tds<(), (), 3> = Tds::empty();
-/// let boundary = extract_cavity_boundary(&tds, &SimplexKeyBuffer::new())?;
-/// assert!(boundary.is_empty());
-/// # Ok(())
-/// # }
-/// ```
-///
-///
-/// ```rust
-/// use delaunay::prelude::algorithms::LocateResult;
-/// use delaunay::prelude::DelaunayTriangulationBuilder;
-/// use delaunay::prelude::geometry::FastKernel;
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
-///
-/// # #[derive(Debug, thiserror::Error)]
-/// # enum ExampleError {
-/// #     #[error(transparent)]
-/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-/// #     #[error(transparent)]
-/// #     Locate(#[from] delaunay::prelude::algorithms::LocateError),
-/// #     #[error(transparent)]
-/// #     Conflict(#[from] delaunay::prelude::algorithms::ConflictError),
-/// #     #[error(transparent)]
-/// #     Facet(#[from] delaunay::prelude::tds::FacetError),
-/// #     #[error(transparent)]
-/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-/// # }
-/// # fn main() -> Result<(), ExampleError> {
-/// // Create a 4D simplex
-/// let vertices = vec![
-///     delaunay::vertex![0.0, 0.0, 0.0, 0.0]?,
-///     delaunay::vertex![1.0, 0.0, 0.0, 0.0]?,
-///     delaunay::vertex![0.0, 1.0, 0.0, 0.0]?,
-///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
-///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
-/// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-///
-/// let kernel = FastKernel::<f64>::new();
-/// let query_point = Point::try_from([0.2, 0.2, 0.2, 0.2])?;
-///
-/// // Locate and find conflict region
-/// let location = dt.locate(&query_point, None)?;
-/// if let LocateResult::InsideSimplex(simplex_key) = location {
-///     let conflict_simplices = dt.find_conflict_region(&query_point, simplex_key)?;
-///
-///     // Extract cavity boundary
-///     let boundary_facets = dt.simplex_facets(simplex_key)?.collect::<Result<Vec<_>, _>>()?;
-///
-///     // For a single 4-simplex, all 5 facets are on the boundary (convex hull)
-///     assert_eq!(boundary_facets.len(), 5);
-/// }
-/// # Ok(())
-/// # }
-/// ```
+/// Public callers obtain the parsed, owner-bound cavity through
+/// [`ConflictRegion::boundary`](crate::query::ConflictRegion::boundary).
 #[expect(
     clippy::too_many_lines,
     reason = "Long function; keep boundary extraction logic in one place for clarity"
 )]
-pub fn extract_cavity_boundary<U, V, const D: usize>(
+pub(crate) fn extract_cavity_boundary<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     conflict_simplices: &SimplexKeyBuffer,
 ) -> Result<CavityBoundaryBuffer, ConflictError> {
@@ -2096,23 +2020,13 @@ mod tests {
     use super::*;
     use crate::core::collections::NeighborBuffer;
     use crate::core::simplex::Simplex;
-    use crate::core::tds::TdsBuilder;
-    use crate::core::vertex::Vertex;
+    use crate::core::test_support::single_simplex_tds;
+    #[cfg(feature = "diagnostics")]
+    use crate::core::test_support::tds_from_specs;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
-
-    fn tds_from_specs<const D: usize>(
-        vertices: &[Vertex<(), D>],
-        simplices: &[Vec<usize>],
-    ) -> Tds<(), (), D> {
-        TdsBuilder::new(vertices, simplices).build().unwrap()
-    }
-
-    fn single_simplex_tds<const D: usize>(vertices: &[Vertex<(), D>]) -> Tds<(), (), D> {
-        tds_from_specs(vertices, &[(0..vertices.len()).collect()])
-    }
 
     #[test]
     fn test_internal_inconsistency_site_display_variants() {

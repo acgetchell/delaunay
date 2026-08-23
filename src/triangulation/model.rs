@@ -19,7 +19,9 @@ use crate::core::tds::{
 };
 use crate::geometry::kernel::Kernel;
 use crate::topology::traits::topological_space::GlobalTopology;
-use crate::triangulation::validation::{TopologyGuarantee, ValidationPolicy};
+use crate::triangulation::validation::{
+    TopologyConstructionProvenance, TopologyGuarantee, ValidationPolicy,
+};
 
 /// Proof-bearing Levels 1–4 triangulation.
 ///
@@ -58,6 +60,8 @@ pub struct Triangulation<K, U, V, const D: usize> {
     pub(crate) global_topology: GlobalTopology<D>,
     pub(crate) validation_policy: ValidationPolicy,
     pub(crate) topology_guarantee: TopologyGuarantee,
+    /// Unforgeable internal evidence for topology facts not implied by raw incidence.
+    pub(crate) topology_construction_provenance: TopologyConstructionProvenance,
 }
 
 impl<K, U, V, const D: usize> TopologyOwner for Triangulation<K, U, V, D> {
@@ -92,9 +96,12 @@ where
     ///
     /// This explicit demotion is the inverse boundary of strict
     /// [`TriangulationBuilder`](crate::TriangulationBuilder) publication.
-    /// `Tds` does not retain the runtime [`TopologyGuarantee`] or
-    /// [`GlobalTopology`] context, so callers must persist those values
-    /// separately when they intend to restore the same domain contract.
+    /// `Tds` does not retain the runtime [`TopologyGuarantee`],
+    /// [`GlobalTopology`], or crate-held link-preserving construction
+    /// provenance. Persisting metadata is therefore not enough to restore a
+    /// nontrivial high-dimensional PL-manifold proof after this demotion; a
+    /// later public builder must prove the requested contract again or reject
+    /// it.
     ///
     /// # Examples
     ///
@@ -256,6 +263,7 @@ impl<K, U, V, const D: usize> UnverifiedTriangulation<K, U, V, D> {
         kernel: K,
         topology_guarantee: TopologyGuarantee,
         global_topology: GlobalTopology<D>,
+        topology_construction_provenance: TopologyConstructionProvenance,
     ) -> Self {
         Self {
             storage: Triangulation {
@@ -264,6 +272,7 @@ impl<K, U, V, const D: usize> UnverifiedTriangulation<K, U, V, D> {
                 global_topology,
                 validation_policy: topology_guarantee.default_validation_policy(),
                 topology_guarantee,
+                topology_construction_provenance,
             },
         }
     }
@@ -311,6 +320,7 @@ pub mod test_support {
                 global_topology: GlobalTopology::DEFAULT,
                 validation_policy: TopologyGuarantee::DEFAULT.default_validation_policy(),
                 topology_guarantee: TopologyGuarantee::DEFAULT,
+                topology_construction_provenance: TopologyConstructionProvenance::Unproven,
             }
         }
     }
@@ -336,6 +346,7 @@ mod tests {
                 global_topology: GlobalTopology::DEFAULT,
                 validation_policy: TopologyGuarantee::DEFAULT.default_validation_policy(),
                 topology_guarantee: TopologyGuarantee::DEFAULT,
+                topology_construction_provenance: TopologyConstructionProvenance::Unproven,
             }
         }
     }
@@ -363,6 +374,7 @@ mod tests {
             global_topology: GlobalTopology::Spherical,
             validation_policy: TopologyGuarantee::Pseudomanifold.default_validation_policy(),
             topology_guarantee: TopologyGuarantee::Pseudomanifold,
+            topology_construction_provenance: TopologyConstructionProvenance::Unproven,
         };
 
         assert_eq!(tri.global_topology, GlobalTopology::Spherical);

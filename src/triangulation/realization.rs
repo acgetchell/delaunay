@@ -2096,6 +2096,22 @@ mod tests {
         vertex!(coords).unwrap()
     }
 
+    #[test]
+    fn certification_rejects_incomplete_construction_before_topology_checks() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        tds.insert_vertex_with_mapping(test_vertex([0.0, 0.0]))
+            .unwrap();
+        tds.force_construction_incomplete_for_test(1);
+        let triangulation = tri_from_tds(tds);
+
+        let Err(TriangulationCertificationError::IncompleteConstruction { vertex_count }) =
+            triangulation.certify_levels_three_four()
+        else {
+            panic!("incomplete storage should fail before topology checks");
+        };
+        assert_eq!(vertex_count, 1);
+    }
+
     fn tds_from_vertices_and_simplices<const D: usize>(
         coords: &[[f64; D]],
         simplices: &[Vec<usize>],

@@ -973,6 +973,13 @@ pub enum FlipMutationError {
         #[source]
         source: TdsConstructionFailure,
     },
+    /// Vertex removal failed after an inverse k=1 flip.
+    #[error("vertex removal failed: {source}")]
+    VertexRemoval {
+        /// Underlying TDS mutation error.
+        #[source]
+        source: TdsMutationError,
+    },
     /// Replacement-simplex insertion failed.
     #[error("simplex insertion failed: {source}")]
     SimplexInsertion {

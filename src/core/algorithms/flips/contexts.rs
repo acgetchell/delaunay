@@ -17,9 +17,8 @@ use super::{
     k1_inserted_vertex_periodic_offset, lift_vertex_point, matching_source_simplex,
     missing_opposite_for_simplex, once, periodic_offsets_or_zero_frame,
     predicate_key_from_vertices, prepare_bistellar_flip, ridge_vertices_from_simplex,
-    robust_orientation, simplex_extras_for_ridge, simplex_orientation_fast_filter_sign,
-    vertex_point, vertex_point_lifted_into_simplex, vertices_to_points,
-    vertices_to_points_with_optional_lift,
+    robust_orientation, simplex_extras_for_ridge, vertex_point, vertex_point_lifted_into_simplex,
+    vertices_to_points, vertices_to_points_with_optional_lift,
 };
 
 /// Check whether a k=3 ridge violates the local Delaunay condition.
@@ -599,34 +598,9 @@ where
     })
 }
 
-/// Return whether source-simplex points are safe for the positive-oriented insphere path.
-///
-/// This helper exists so flip predicates only use
-/// [`Kernel::in_sphere_positive_oriented`] when the actual point ordering is
-/// provably positive-oriented. It returns `false` for synthetic/non-source simplices
-/// and for geometries whose orientation cannot be certified by the f64 fast
-/// filter, causing callers to use the full orientation-aware predicate instead.
-#[inline]
-pub(super) fn source_simplex_is_certified_positive<const D: usize>(
-    source_simplex: Option<SimplexKey>,
-    points: &[Point<D>],
-) -> bool {
-    if source_simplex.is_none() {
-        return false;
-    }
-
-    let known_positive =
-        matches!(simplex_orientation_fast_filter_sign(points), Ok(Some(sign)) if sign > 0);
-    known_positive
-}
-
 #[expect(
     clippy::too_many_arguments,
     reason = "local predicate evaluation threads topology, source simplices, and diagnostics explicitly"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "local predicate evaluation keeps frame alignment, diagnostics, and exact predicate calls together"
 )]
 /// Evaluate the k=2 facet flip predicate for a local Delaunay violation.
 pub(super) fn delaunay_violation_k2_for_facet<K, U, V, const D: usize>(
@@ -674,140 +648,71 @@ where
     simplex_vertices[0].sort_unstable_by_key(|v| v.data().as_ffi());
     simplex_vertices[1].sort_unstable_by_key(|v| v.data().as_ffi());
 
-    let (
-        points_a,
-        points_b,
-        opposite_point_a,
-        opposite_point_b,
-        positive_oriented_a,
-        positive_oriented_b,
-    ) = if matches!(topology_model, GlobalTopologyModelAdapter::Euclidean(_)) {
-        let mut point_cache = EuclideanPointCache::new();
-        let source_a = matching_source_simplex(tds, &simplex_vertices[0], source_simplices);
-        let source_b = matching_source_simplex(tds, &simplex_vertices[1], source_simplices);
-        let points_a = if let Some(source_simplex) = source_a {
-            let simplex = tds
-                .simplex(source_simplex)
-                .ok_or(FlipError::MissingSimplex {
-                    simplex_key: source_simplex,
-                })?;
-            point_cache.points_for_vertices(tds, simplex.vertices())?
+    // The two reciprocal in-sphere queries are algebraically equivalent before
+    // perturbation, but evaluating both would give the positional SoS fallback
+    // two different row assignments. Choose one query from the complete local
+    // circuit by stable vertex identity so forward and inverse checks make the
+    // same decision for cospherical input.
+    let (simplex_index, test_vertex, operation) =
+        if opposite_a.data().as_ffi() < opposite_b.data().as_ffi() {
+            (0, opposite_b, FlipPredicateOperation::K2SimplexAInSphere)
         } else {
-            point_cache.points_for_vertices(tds, &simplex_vertices[0])?
+            (1, opposite_a, FlipPredicateOperation::K2SimplexBInSphere)
         };
-        let points_b = if let Some(source_simplex) = source_b {
-            let simplex = tds
-                .simplex(source_simplex)
-                .ok_or(FlipError::MissingSimplex {
-                    simplex_key: source_simplex,
-                })?;
-            point_cache.points_for_vertices(tds, simplex.vertices())?
-        } else {
-            point_cache.points_for_vertices(tds, &simplex_vertices[1])?
-        };
-        let positive_oriented_a = source_simplex_is_certified_positive(source_a, &points_a);
-        let positive_oriented_b = source_simplex_is_certified_positive(source_b, &points_b);
-        (
-            points_a,
-            points_b,
-            point_cache.point(tds, opposite_a)?,
-            point_cache.point(tds, opposite_b)?,
-            positive_oriented_a,
-            positive_oriented_b,
-        )
-    } else {
-        let source_a =
-            matching_source_simplex(tds, &simplex_vertices[0], source_simplices).or(frame_simplex);
-        let source_b =
-            matching_source_simplex(tds, &simplex_vertices[1], source_simplices).or(frame_simplex);
-        (
-            vertices_to_points_with_optional_lift(
-                tds,
-                topology_model,
-                &simplex_vertices[0],
-                source_a,
-                source_simplices,
-            )?,
-            vertices_to_points_with_optional_lift(
-                tds,
-                topology_model,
-                &simplex_vertices[1],
-                source_b,
-                source_simplices,
-            )?,
-            vertex_point_lifted_into_simplex(
-                tds,
-                topology_model,
-                opposite_a,
-                source_b,
-                source_simplices,
-            )?,
-            vertex_point_lifted_into_simplex(
-                tds,
-                topology_model,
-                opposite_b,
-                source_a,
-                source_simplices,
-            )?,
-            false,
-            false,
-        )
-    };
-    let sphere_a = if positive_oriented_a {
-        kernel.in_sphere_positive_oriented(&points_a, &opposite_point_b)
-    } else {
-        kernel.in_sphere(&points_a, &opposite_point_b)
-    };
-    let in_a = match sphere_a {
-        Ok(value) => value,
-        Err(e) => {
-            diagnostics.record_predicate_failure();
-            return Err(FlipPredicateError::coordinate_conversion(
-                FlipPredicateOperation::K2SimplexAInSphere,
-                e,
-            )
-            .into());
-        }
-    };
+    let predicate_vertices = &simplex_vertices[simplex_index];
 
-    let sphere_b = if positive_oriented_b {
-        kernel.in_sphere_positive_oriented(&points_b, &opposite_point_a)
+    let (points, test_point) = if matches!(topology_model, GlobalTopologyModelAdapter::Euclidean(_))
+    {
+        let mut point_cache = EuclideanPointCache::new();
+        (
+            point_cache.points_for_vertices(tds, predicate_vertices)?,
+            point_cache.point(tds, test_vertex)?,
+        )
     } else {
-        kernel.in_sphere(&points_b, &opposite_point_a)
+        let source =
+            matching_source_simplex(tds, predicate_vertices, source_simplices).or(frame_simplex);
+        (
+            vertices_to_points_with_optional_lift(
+                tds,
+                topology_model,
+                predicate_vertices,
+                source,
+                source_simplices,
+            )?,
+            vertex_point_lifted_into_simplex(
+                tds,
+                topology_model,
+                test_vertex,
+                source,
+                source_simplices,
+            )?,
+        )
     };
-    let in_b = match sphere_b {
+    let classification = match kernel.in_sphere(&points, &test_point) {
         Ok(value) => value,
-        Err(e) => {
+        Err(error) => {
             diagnostics.record_predicate_failure();
-            return Err(FlipPredicateError::coordinate_conversion(
-                FlipPredicateOperation::K2SimplexBInSphere,
-                e,
-            )
-            .into());
+            return Err(FlipPredicateError::coordinate_conversion(operation, error).into());
         }
     };
 
     // Record ambiguous sites when the predicate returns boundary/uncertain.
-    if in_a == 0 {
-        let key = predicate_key_from_vertices(&simplex_vertices[0], opposite_b);
+    if classification == 0 {
+        let key = predicate_key_from_vertices(predicate_vertices, test_vertex);
         diagnostics.record_ambiguous(key);
     }
 
-    if in_b == 0 {
-        let key = predicate_key_from_vertices(&simplex_vertices[1], opposite_a);
-        diagnostics.record_ambiguous(key);
-    }
-
-    let violates = in_a > 0 || in_b > 0;
+    let violates = classification > 0;
     if env::var_os("DELAUNAY_REPAIR_DEBUG_PREDICATES").is_some()
-        && (violates || in_a == 0 || in_b == 0)
+        && (violates || classification == 0)
     {
         tracing::debug!(
             facet_vertices = ?facet_vertices,
             opposite_a = ?opposite_a,
             opposite_b = ?opposite_b,
-            in_a,
-            in_b,
+            predicate_simplex = ?predicate_vertices,
+            test_vertex = ?test_vertex,
+            classification,
             violates,
             attempt = config.attempt,
             "delaunay_violation_k2_for_facet: insphere classification"
@@ -1223,23 +1128,10 @@ where
         // Sort by VertexKey for canonical SoS perturbation ordering
         simplex_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
 
-        let (points, missing_point, positive_oriented) = if is_euclidean_topology {
-            let source_simplex = matching_source_simplex(tds, &simplex_vertices, source_simplices);
-            let points = if let Some(source_simplex) = source_simplex {
-                let simplex = tds
-                    .simplex(source_simplex)
-                    .ok_or(FlipError::MissingSimplex {
-                        simplex_key: source_simplex,
-                    })?;
-                euclidean_point_cache.points_for_vertices(tds, simplex.vertices())?
-            } else {
-                euclidean_point_cache.points_for_vertices(tds, &simplex_vertices)?
-            };
-            let positive_oriented = source_simplex_is_certified_positive(source_simplex, &points);
+        let (points, missing_point) = if is_euclidean_topology {
             (
-                points,
+                euclidean_point_cache.points_for_vertices(tds, &simplex_vertices)?,
                 euclidean_point_cache.point(tds, missing)?,
-                positive_oriented,
             )
         } else {
             let source_simplex =
@@ -1259,15 +1151,10 @@ where
                     source_simplex,
                     source_simplices,
                 )?,
-                false,
             )
         };
 
-        let in_sphere_result = if positive_oriented {
-            kernel.in_sphere_positive_oriented(&points, &missing_point)
-        } else {
-            kernel.in_sphere(&points, &missing_point)
-        };
+        let in_sphere_result = kernel.in_sphere(&points, &missing_point);
         let in_sphere = match in_sphere_result {
             Ok(value) => value,
             Err(e) => {
@@ -1534,9 +1421,19 @@ where
 
     let context = build_k1_inverse_context(tds, vertex_key)?;
     let info = apply_bistellar_flip_dynamic_raw(tds, D + 1, &context)?;
-    let _ = tds.remove_vertex(vertex_key);
+    remove_k1_inverse_vertex(tds, vertex_key)?;
 
     Ok(info)
+}
+
+/// Removes the vertex collapsed by a successful inverse k=1 simplex rewrite.
+fn remove_k1_inverse_vertex<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
+    vertex_key: VertexKey,
+) -> Result<(), FlipError> {
+    tds.remove_vertex(vertex_key)
+        .map(|_| ())
+        .map_err(|source| FlipMutationError::VertexRemoval { source }.into())
 }
 
 /// Validate an inverse k=1 move (vertex collapse) without mutating the TDS.
@@ -1567,34 +1464,40 @@ mod tests {
     use super::super::*;
     use super::*;
     use crate::core::algorithms::insertion::repair_neighbor_pointers;
-    use crate::core::collections::Uuid;
+    use crate::core::tds::TdsError;
+    use crate::core::test_support::{assert_same_vertex_simplex_topology, snapshot_topology};
     use crate::vertex;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
     use slotmap::KeyData;
     use std::assert_matches;
     use std::iter::once;
 
-    /// Verifies source-simplex orientation gating only accepts certified positive orderings.
     #[test]
-    fn test_source_simplex_is_certified_positive_requires_source_and_positive_order() {
-        let source_simplex = SimplexKey::from(KeyData::from_ffi(42));
-        let positive = [
-            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
-        ];
-        let negative = [positive[1], positive[0], positive[2]];
+    fn inverse_k1_vertex_cleanup_propagates_tds_failure() {
+        let mut tds = Tds::<(), (), 2>::empty();
+        let vertex_key = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+            .unwrap();
+        let generation_before = tds.generation();
+        let dangling_simplex = SimplexKey::from(KeyData::from_ffi(42));
+        tds.add_simplex_to_vertex_incidence_for_test(vertex_key, dangling_simplex);
 
-        assert!(source_simplex_is_certified_positive(
-            Some(source_simplex),
-            &positive
-        ));
-        assert!(!source_simplex_is_certified_positive(None, &positive));
-        assert!(!source_simplex_is_certified_positive(
-            Some(source_simplex),
-            &negative,
-        ));
+        let error = remove_k1_inverse_vertex(&mut tds, vertex_key).unwrap_err();
+
+        let FlipError::TdsMutation { reason } = error else {
+            panic!("expected typed TDS mutation error");
+        };
+        let FlipMutationError::VertexRemoval { source } = reason.as_ref() else {
+            panic!("expected inverse-k1 vertex-removal error");
+        };
+        assert_matches!(
+            source.as_tds_error(),
+            TdsError::InconsistentDataStructure { .. }
+        );
+        assert!(tds.contains_vertex_key(vertex_key));
+        assert_eq!(tds.generation(), generation_before);
     }
+
     /// Builds a simplex-basis vertex coordinate for dimension-generic flip tests.
     fn unit_vector<const D: usize>(index: usize) -> [f64; D] {
         let mut coords = [0.0; D];
@@ -1620,69 +1523,6 @@ mod tests {
                 other => panic!("robust_orientation must resolve to ±1, got {other:?}"),
             }
         }
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    struct TopologySnapshot {
-        vertices: Vec<Uuid>,
-        simplex_vertices: Vec<Vec<Uuid>>,
-        simplex_neighbors: Vec<Vec<Option<Uuid>>>,
-    }
-
-    fn snapshot_topology<const D: usize>(tds: &Tds<(), (), D>) -> TopologySnapshot {
-        let mut vertices: Vec<Uuid> = tds.vertices().map(|(_, vertex)| vertex.uuid()).collect();
-        vertices.sort();
-
-        let mut simplex_vertices: Vec<Vec<Uuid>> = tds
-            .simplices()
-            .map(|(_, simplex)| {
-                let mut uuids: Vec<Uuid> = simplex
-                    .vertices()
-                    .iter()
-                    .map(|&vkey| tds.vertex(vkey).expect("vertex key missing in TDS").uuid())
-                    .collect();
-                uuids.sort();
-                uuids
-            })
-            .collect();
-        simplex_vertices.sort();
-
-        let simplex_neighbors = snapshot_neighbors(tds);
-
-        TopologySnapshot {
-            vertices,
-            simplex_vertices,
-            simplex_neighbors,
-        }
-    }
-
-    fn snapshot_neighbors<const D: usize>(tds: &Tds<(), (), D>) -> Vec<Vec<Option<Uuid>>> {
-        let mut simplex_neighbors: Vec<Vec<Option<Uuid>>> = tds
-            .simplices()
-            .map(|(_, simplex)| {
-                let mut neighbors: Vec<Option<Uuid>> = simplex
-                    .neighbors()
-                    .map(|neighbor_keys| {
-                        neighbor_keys
-                            .map(|neighbor| {
-                                neighbor.and_then(|neighbor_key| {
-                                    tds.simplex(neighbor_key).map(Simplex::uuid)
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                neighbors.sort();
-                neighbors
-            })
-            .collect();
-        simplex_neighbors.sort();
-        simplex_neighbors
-    }
-
-    fn assert_same_vertex_simplex_topology(actual: &TopologySnapshot, expected: &TopologySnapshot) {
-        assert_eq!(actual.vertices, expected.vertices);
-        assert_eq!(actual.simplex_vertices, expected.simplex_vertices);
     }
 
     fn synthetic_vertex_key(index: u64) -> VertexKey {

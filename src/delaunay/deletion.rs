@@ -235,6 +235,8 @@ where
             delaunay.invalidate_locate_hint_cache();
             let global_topology = delaunay.tri.global_topology();
             let (tds, kernel) = (&mut delaunay.tri.tds, &delaunay.tri.kernel);
+            // The outer Delaunay transaction restores the pre-deletion owner.
+            // Repair needs its own post-deletion savepoint for FIFO/LIFO retry.
             repair_delaunay_with_flips_k2_k3(
                 tds,
                 kernel,
@@ -481,7 +483,10 @@ mod tests {
         assert!(dt.as_triangulation().validate().is_ok());
     }
 
-    fn assert_delete_vertex_rollback<const D: usize>() {
+    fn assert_delete_vertex_rollback<const D: usize>()
+    where
+        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+    {
         init_tracing();
         let vertices = simplex_vertices::<D>();
 
@@ -504,7 +509,10 @@ mod tests {
         assert_forced_delete_vertex_rolls_back(&mut dt, vertex_key, inserted_uuid);
     }
 
-    fn assert_delete_vertex_fallback_rollback<const D: usize>() {
+    fn assert_delete_vertex_fallback_rollback<const D: usize>()
+    where
+        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+    {
         init_tracing();
         let vertices = simplex_vertices::<D>();
 

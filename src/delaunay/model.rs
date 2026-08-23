@@ -62,16 +62,13 @@ impl EuclideanDelaunayReportDomain {
 ///
 /// Uses efficient incremental cavity-based insertion algorithm:
 /// - ✅ Point location (facet walking) - [`locate`]
-/// - ✅ Conflict region computation (local BFS) - [`find_conflict_region`]
-/// - ✅ Cavity extraction and filling - [`extract_cavity_boundary`] plus internal cavity replacement
+/// - ✅ Conflict region computation (local BFS) - [`Self::find_conflict_region`]
+/// - ✅ Owner-bound cavity extraction - [`ConflictRegion::boundary`](crate::query::ConflictRegion::boundary)
 /// - ✅ Local neighbor wiring after cavity replacement
 /// - ✅ Hull extension for outside points
 /// - ✅ Flip-based Delaunay repair (k=2/k=3 bistellar flips)
 ///
 /// [`locate`]: crate::algorithms::locate
-/// [`find_conflict_region`]: crate::algorithms::find_conflict_region
-/// [`extract_cavity_boundary`]: crate::algorithms::extract_cavity_boundary
-///
 /// # Examples
 ///
 /// ```rust

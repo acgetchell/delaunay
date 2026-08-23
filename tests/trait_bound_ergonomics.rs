@@ -4,12 +4,10 @@ use std::{assert_matches, hash::Hasher};
 
 use delaunay::DelaunayTriangulation;
 use delaunay::prelude::Triangulation;
-use delaunay::prelude::algorithms::{
-    ConflictError, LocateError, extract_cavity_boundary, find_conflict_region, locate,
-    locate_with_stats,
+use delaunay::prelude::algorithms::{LocateError, locate, locate_with_stats};
+use delaunay::prelude::construction::{
+    DelaunayIncrementalBuilder, GlobalTopology, TopologyGuarantee,
 };
-use delaunay::prelude::collections::SimplexKeyBuffer;
-use delaunay::prelude::construction::{GlobalTopology, TopologyGuarantee};
 use delaunay::prelude::geometry::{
     Coordinate, CoordinateValidationError, FastKernel, Point, surface_measure,
 };
@@ -164,7 +162,6 @@ fn locate_and_conflict_apis_accept_non_datatype_payloads() {
     let point = Point::try_new([0.25, 0.25]).unwrap();
     let kernel = FastKernel::new();
     let tds: Tds<Payload, Payload, 2> = Tds::empty();
-    let empty_conflict_region = SimplexKeyBuffer::default();
 
     assert_matches!(
         locate(&tds, &kernel, &point, None),
@@ -173,14 +170,6 @@ fn locate_and_conflict_apis_accept_non_datatype_payloads() {
     assert_matches!(
         locate_with_stats(&tds, &kernel, &point, None),
         Err(LocateError::EmptyTriangulation)
-    );
-    assert_matches!(
-        find_conflict_region(&tds, &kernel, &point, SimplexKey::default()),
-        Err(ConflictError::InvalidStartSimplex { .. })
-    );
-    assert_matches!(
-        extract_cavity_boundary(&tds, &empty_conflict_region),
-        Ok(boundary) if boundary.is_empty()
     );
 }
 
@@ -194,6 +183,7 @@ fn tds_equality_accepts_non_datatype_payloads() {
 
 #[test]
 fn delaunay_query_wrappers_accept_non_datatype_payloads() {
+    // Compile-only contract: `Payload` deliberately does not implement `DataType`.
     fn queries_compile(
         dt: &mut DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2>,
     ) -> Result<(), TraitBoundErgonomicsError> {
@@ -220,6 +210,15 @@ fn delaunay_query_wrappers_accept_non_datatype_payloads() {
     ) -> Result<(), TraitBoundErgonomicsError>;
     let compile_contract: QueriesCompileFn = queries_compile;
     std::hint::black_box(compile_contract);
+
+    let empty: DelaunayTriangulation<_, (), (), 2> =
+        DelaunayIncrementalBuilder::new().finish().unwrap();
+    let point = Point::try_new([0.25, 0.25]).unwrap();
+    assert_eq!(empty.number_of_vertices(), 0);
+    assert_matches!(
+        empty.locate(&point, None),
+        Err(LocateError::EmptyTriangulation)
+    );
 }
 
 #[test]

@@ -96,54 +96,7 @@ where
 /// * `vertices` - Slice of vertices to deduplicate
 /// * `epsilon` - Distance threshold below which vertices are considered duplicates
 ///
-/// # Returns
-///
-/// A new vector containing vertices that are at least `epsilon` apart from each
-/// other (distance >= epsilon). The first occurrence of each cluster is kept.
-///
-/// If `epsilon` is negative, NaN, or infinite, the input is returned unchanged
-/// and a warning is emitted. Use [`try_dedup_vertices_epsilon`] when callers
-/// should receive a typed error for invalid epsilon values.
-///
-/// # Examples
-///
-/// ```
-/// use delaunay::prelude::dedup_vertices_epsilon;
-/// use delaunay::prelude::{Vertex};
-///
-/// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
-/// let v1: Vertex<(), 2> = delaunay::vertex![0.0, 0.0]?;
-/// let v2: Vertex<(), 2> = delaunay::vertex![1e-11, 1e-11]?; // Near duplicate
-/// let v3: Vertex<(), 2> = delaunay::vertex![1.0, 1.0]?;
-///
-/// let vertices = vec![v1, v2, v3];
-/// let unique = dedup_vertices_epsilon(&vertices, 1e-10);
-/// assert_eq!(unique.len(), 2); // v2 filtered as near-duplicate of v1
-/// # Ok(())
-/// # }
-/// ```
-pub fn dedup_vertices_epsilon<U, const D: usize>(
-    vertices: &[Vertex<U, D>],
-    epsilon: f64,
-) -> Vec<Vertex<U, D>>
-where
-    U: DataType,
-{
-    if !epsilon.is_finite() || epsilon < 0.0 {
-        tracing::warn!(
-            epsilon = ?epsilon,
-            "dedup_vertices_epsilon received non-finite or negative epsilon; returning input unchanged"
-        );
-        return vertices.to_vec();
-    }
-
-    dedup_vertices_epsilon_nonnegative(vertices, epsilon)
-}
-
-/// Fallible variant of [`dedup_vertices_epsilon`].
-///
-/// This function rejects negative, NaN, and infinite epsilon values with a
-/// typed error instead of falling back to returning the input unchanged.
+/// Rejects negative, NaN, and infinite epsilon values with a typed error.
 ///
 /// # Errors
 ///
@@ -310,7 +263,7 @@ pub(crate) fn coords_within_epsilon<const D: usize>(
     #[cfg(debug_assertions)]
     if dist_sq.to_bits() == epsilon_sq.to_bits() {
         tracing::debug!(
-            "[dedup_vertices_epsilon] distance equals epsilon; keeping point (strict < epsilon)"
+            "[try_dedup_vertices_epsilon] distance equals epsilon; keeping point (strict < epsilon)"
         );
     }
 
@@ -363,7 +316,7 @@ mod tests {
         let v3 = vertex([1.0, 1.0]);
 
         let vertices = vec![v1, v2, v3];
-        let unique = dedup_vertices_epsilon(&vertices, 1e-10);
+        let unique = try_dedup_vertices_epsilon(&vertices, 1e-10).unwrap();
         assert_eq!(
             unique.len(),
             2,
@@ -381,7 +334,7 @@ mod tests {
         let v3 = vertex([0.99e-10, 0.0]);
 
         let vertices = vec![v1, v2, v3];
-        let unique = dedup_vertices_epsilon(&vertices, 1e-10);
+        let unique = try_dedup_vertices_epsilon(&vertices, 1e-10).unwrap();
         // v1 kept, v3 filtered (< epsilon), v2 kept (= epsilon, not < epsilon)
         assert_eq!(
             unique.len(),
@@ -399,30 +352,6 @@ mod tests {
     }
 
     #[test]
-    fn test_dedup_vertices_epsilon_negative_epsilon_returns_input_unchanged() {
-        let vertices: Vec<Vertex<(), 2>> = try_vertices_from_points(&[
-            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
-        ])
-        .expect("finite point coordinates");
-
-        let unique = dedup_vertices_epsilon(&vertices, -1.0);
-
-        assert_eq!(unique.len(), vertices.len());
-        assert_eq!(
-            unique
-                .iter()
-                .map(<&Vertex<_, _> as Into<[f64; 2]>>::into)
-                .collect::<Vec<_>>(),
-            vertices
-                .iter()
-                .map(<&Vertex<_, _> as Into<[f64; 2]>>::into)
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
     fn test_try_dedup_vertices_epsilon_negative_epsilon_returns_error() {
         let vertices: Vec<Vertex<(), 2>> = try_vertices_from_points(&[
             Point::try_new([0.0, 0.0]).expect("finite point coordinates")
@@ -432,32 +361,6 @@ mod tests {
         let err = try_dedup_vertices_epsilon(&vertices, -1.0).unwrap_err();
 
         assert_eq!(err, DeduplicationError::NegativeEpsilon);
-    }
-
-    #[test]
-    fn test_dedup_vertices_epsilon_non_finite_epsilon_returns_input_unchanged() {
-        let vertices: Vec<Vertex<(), 2>> = try_vertices_from_points(&[
-            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
-        ])
-        .expect("finite point coordinates");
-
-        for epsilon in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            let unique = dedup_vertices_epsilon(&vertices, epsilon);
-
-            assert_eq!(unique.len(), vertices.len());
-            assert_eq!(
-                unique
-                    .iter()
-                    .map(<&Vertex<_, _> as Into<[f64; 2]>>::into)
-                    .collect::<Vec<_>>(),
-                vertices
-                    .iter()
-                    .map(<&Vertex<_, _> as Into<[f64; 2]>>::into)
-                    .collect::<Vec<_>>()
-            );
-        }
     }
 
     #[test]
@@ -486,7 +389,7 @@ mod tests {
         let vertices: Vec<Vertex<(), 2>> =
             try_vertices_from_points(&points).expect("finite point coordinates");
 
-        let unique = dedup_vertices_epsilon(&vertices, 1e-10);
+        let unique = try_dedup_vertices_epsilon(&vertices, 1e-10).unwrap();
         assert_eq!(unique.len(), 2, "Should keep first of each cluster");
 
         // Verify first occurrences are kept

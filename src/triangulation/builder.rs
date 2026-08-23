@@ -12,7 +12,8 @@ use crate::triangulation::Triangulation;
 use crate::triangulation::draft::TriangulationDraft;
 use crate::triangulation::realization::TriangulationRealizationValidationError;
 use crate::triangulation::validation::{
-    TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
+    TopologyConstructionProvenance, TopologyGuarantee, ValidationConfigurationError,
+    ValidationPolicy,
 };
 use thiserror::Error;
 
@@ -151,6 +152,7 @@ pub struct TriangulationBuilder<K, U, V, const D: usize> {
     global_topology: GlobalTopology<D>,
     validation_policy: Option<ValidationPolicy>,
     build_mode: TriangulationBuildMode,
+    construction_provenance: TopologyConstructionProvenance,
 }
 
 impl<K, U, V, const D: usize> TriangulationBuilder<K, U, V, D> {
@@ -182,6 +184,7 @@ impl<K, U, V, const D: usize> TriangulationBuilder<K, U, V, D> {
             global_topology: GlobalTopology::DEFAULT,
             validation_policy: None,
             build_mode: TriangulationBuildMode::Strict,
+            construction_provenance: TopologyConstructionProvenance::Unproven,
         }
     }
 
@@ -213,6 +216,16 @@ impl<K, U, V, const D: usize> TriangulationBuilder<K, U, V, D> {
     #[must_use]
     pub const fn canonicalizing(mut self) -> Self {
         self.build_mode = TriangulationBuildMode::Canonicalizing;
+        self
+    }
+
+    /// Attaches proof evidence from a crate-owned topology construction.
+    #[must_use]
+    pub(crate) const fn construction_provenance(
+        mut self,
+        provenance: TopologyConstructionProvenance,
+    ) -> Self {
+        self.construction_provenance = provenance;
         self
     }
 
@@ -250,6 +263,7 @@ where
             self.topology_guarantee,
             self.global_topology,
         )
+        .construction_provenance(self.construction_provenance)
         .validation_policy(validation_policy)
         .finish(self.build_mode)
     }
@@ -363,6 +377,36 @@ mod tests {
         assert_matches!(
             result.as_ref().map_err(RefinementError::reason),
             Err(TriangulationBuilderError::ValidationConfiguration { .. })
+        );
+    }
+
+    #[test]
+    fn explicit_high_dimensional_connectivity_cannot_forge_pl_link_proof() {
+        let vertices = [
+            vertex![0.0, 0.0, 0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0, 0.0, 0.0].unwrap(),
+            vertex![0.0, 1.0, 0.0, 0.0].unwrap(),
+            vertex![0.0, 0.0, 1.0, 0.0].unwrap(),
+            vertex![0.0, 0.0, 0.0, 1.0].unwrap(),
+            vertex![1.0, 1.0, 1.0, 1.0].unwrap(),
+        ];
+        let simplices = [vec![0, 1, 2, 3, 4], vec![1, 2, 3, 4, 5]];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+
+        let failure = TriangulationBuilder::new(tds, AdaptiveKernel::new())
+            .canonicalizing()
+            .build()
+            .expect_err("raw connectivity cannot attest high-dimensional PL links");
+
+        assert_matches!(
+            failure.reason(),
+            TriangulationBuilderError::TopologyValidation { source }
+                if matches!(
+                    source.as_ref(),
+                    InvariantError::Triangulation {
+                        source: crate::triangulation::validation::TriangulationValidationError::HighDimensionalVertexLinkUnproven { .. }
+                    }
+                )
         );
     }
 

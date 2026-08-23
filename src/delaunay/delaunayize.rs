@@ -111,6 +111,45 @@ pub struct FlipRepairDelaunayRefinement {
 /// 5, performs no mutation, and allocates no rollback snapshot.
 /// [`repair_by_flips`](Self::repair_by_flips) explicitly selects bounded
 /// transactional repair and enables its repair-only options.
+///
+/// Deserialized Levels 1–2 storage can be restored incrementally through the
+/// same public proof boundaries:
+///
+/// ```rust
+/// use delaunay::prelude::construction::{
+///     DelaunayResult, DelaunayTriangulationBuilder, GlobalTopology,
+///     TopologyGuarantee,
+/// };
+/// use delaunay::prelude::geometry::FastKernel;
+/// use delaunay::prelude::triangulation::TriangulationBuilder;
+/// use delaunay::DelaunayRefinementBuilder;
+///
+/// fn main() -> DelaunayResult<()> {
+///     let vertices = [
+///         delaunay::vertex![0.0, 0.0]?,
+///         delaunay::vertex![1.0, 0.0]?,
+///         delaunay::vertex![0.0, 1.0]?,
+///     ];
+///     let tds = DelaunayTriangulationBuilder::new(&vertices)
+///         .build_triangulation()?
+///         .into_tds();
+///     let triangulation = TriangulationBuilder::new(tds, FastKernel::new())
+///         .topology_guarantee(TopologyGuarantee::PLManifold)
+///         .global_topology(GlobalTopology::Euclidean)
+///         .build()
+///         .expect("Levels 1-2 storage should satisfy Levels 3-4");
+///     let reconstructed = DelaunayRefinementBuilder::new(triangulation)
+///         .build()
+///         .expect("fixture should satisfy Level 5");
+///
+///     assert_eq!(
+///         reconstructed.topology_guarantee(),
+///         TopologyGuarantee::PLManifold
+///     );
+///     assert_eq!(reconstructed.global_topology(), GlobalTopology::Euclidean);
+///     Ok(())
+/// }
+/// ```
 #[derive(Clone, Debug)]
 pub struct DelaunayRefinementBuilder<K, U, V, const D: usize, M = StrictDelaunayRefinement> {
     triangulation: Triangulation<K, U, V, D>,
@@ -153,10 +192,7 @@ impl<K, U, V, const D: usize> DelaunayRefinementBuilder<K, U, V, D, StrictDelaun
         DelaunayRefinementBuilder {
             triangulation: self.triangulation,
             mode: FlipRepairDelaunayRefinement {
-                config: DelaunayizeConfig {
-                    fallback_rebuild: false,
-                    delaunay_max_flips: None,
-                },
+                config: DelaunayizeConfig::default(),
             },
         }
     }

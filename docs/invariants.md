@@ -26,6 +26,7 @@ the guarantees stated in the public API documentation.
     - [Simplicial complex model](#simplicial-complex-model)
   - [Validation layering](#validation-layering)
     - [Builder publication contracts](#builder-publication-contracts)
+    - [Derived proof-bearing values](#derived-proof-bearing-values)
   - [Orientation contracts](#orientation-contracts)
   - [Geometric invariants](#geometric-invariants)
     - [Valid realization](#valid-realization)
@@ -183,6 +184,27 @@ diagnostics; proof-consuming constructors do not.
 Every construction mutation enforces changed-scope Levels 1–4 postconditions. `ValidationPolicy`
 independently controls when construction repeats a full global Levels 1–4 audit. Level 5
 geometric-predicate validation remains a separate certification step.
+
+Level 3 also distinguishes recomputable evidence from construction proofs. A
+facet-incidence map can prove local multiplicities, but in D ≥ 4 those checks do
+not decide whether every nontrivial vertex link is a PL sphere or ball. Nor do
+boundary presence and Euler characteristic prove that a complex is a ball.
+Only crate-controlled construction paths may attach provenance for the theorem
+they actually realize: simplex-seeded Euclidean Delaunay cavity replacement or
+the checked periodic image-point quotient. The provenance is neither public
+metadata nor a builder option, and it is discarded when a `Triangulation` is
+demoted to raw `Tds` storage or serialized. Explicit connectivity without such
+evidence can still request `Pseudomanifold`, but publication as a nontrivial
+high-dimensional `PLManifold` must fail rather than infer a proof from local
+incidence.
+
+Point-driven construction terminals require `ExactPredicates<D>`; the built-in
+kernels satisfy that bound through D=6. Provenance is retained only across exact
+Delaunay cavity replacement, stellar subdivision, and checked PL-homeomorphism
+moves. A D >= 4 fallback that heuristically reshapes a cavity, fan-retriangulates
+a vertex star, or removes arbitrary simplices invalidates the evidence before
+validation, so transactional PL-manifold mutation fails rather than publishing
+an unproved link type.
 
 ### Builder publication contracts
 
@@ -358,6 +380,36 @@ needing rollback. Strict refinement and canonicalizing builder publication must
 share one Levels 3-4 certification implementation so their proof criteria
 cannot drift.
 
+### Derived proof-bearing values
+
+Not every certified value adds a level to the main owner hierarchy. Derived
+values still follow parse-don't-validate: raw storage is private, construction
+checks the complete contract once, and public methods cannot expose a state that
+needs a later validity test.
+
+`ConvexHull::try_from_triangulation` is such a boundary. A boundary facet of a
+valid `Triangulation` is not automatically a convex-hull facet: arbitrary valid
+triangulations may have non-convex boundaries. Hull construction therefore:
+
+1. extracts topology-approved boundary facets;
+2. copies each unique hull vertex's point, UUID, and payload while discarding
+   runtime-local incident-simplex keys;
+3. rejects wrong facet arity, repeated vertices, duplicate facets, and
+   degenerate inside witnesses; and
+4. checks every source vertex against every proposed supporting hyperplane.
+
+Only after all four checks does construction publish an immutable `ConvexHull`.
+Its facets index only vertices owned by the same hull, so queries need no source
+triangulation and remain valid after that source is mutated or dropped.
+
+Short-lived derived topology uses borrows instead of copied snapshots.
+`ConflictRegion<'tri>` holds an immutable triangulation borrow and promotes its
+cavity handles to owner-bound facet views before exposing them.
+`LocalFacetRepairGuard<'tri>` holds a mutable triangulation borrow from issue
+detection through the transactional repair terminal. These lifetimes rule out
+cross-owner pairing and intervening mutation; raw simplex buffers and facet
+issue maps remain internal workspaces.
+
 ---
 
 ## Orientation contracts
@@ -367,7 +419,8 @@ Orientation has three related but independently validated meanings in this crate
 - **Intrinsic PL orientability (Level 3)**: the shared-facet parity constraints
   must admit a coherent simplex-orientation assignment independently of the
   orderings currently stored in the TDS. `Triangulation::orientation_witness()`
-  returns the opaque assignment for supported pure 2D/3D complexes.
+  returns an opaque assignment that borrows its source owner for supported pure
+  2D/3D complexes, preventing stale simplex keys across topology mutation.
 - **Stored TDS coherence (Level 2)**: adjacent simplices must induce opposite orientations on their shared facet. In
   practice this is checked by comparing the facet index in one simplex with the reciprocal mirror index
   in its neighbor.
@@ -487,9 +540,18 @@ The default kernel is designed around a staged predicate model:
 - and deterministic symbolic perturbation for exact degeneracies.
 
 The current release envelope is intentionally finite. The fast `f64` predicate filters are available
-through `D <= 4`; exact orientation is available through `D <= 6`; exact in-sphere support, and the
-`ExactPredicates` contract used by flip repair, is available through `D <= 5`. Higher-dimensional
+through `D <= 4`; exact orientation and exact relative-coordinate in-sphere support, including the
+`ExactPredicates` contract used by flip repair, are available through `D <= 6`. Higher-dimensional
 experiments may still be useful, but they are outside the strongest predicate and repair contract.
+
+"Exact" applies to construction as well as elimination. The relative in-sphere
+cold path converts each original finite binary64 coordinate to the
+`BigRational` type re-exported by `la-stack`, then performs subtraction,
+squaring, and determinant elimination without an intermediate `f64` rounding.
+The near-singular circumcenter cold path applies the same rule to its linear
+system and rounds only the final solution. The fast paths remain
+allocation-free: outward-rounded interval bounds certify ordinary in-sphere
+signs, while ordinary circumcenters use `f64` LU.
 
 For practical coordinate hygiene, kernel selection, and dimensional limits, see
 [`docs/numerical_robustness_guide.md`](numerical_robustness_guide.md) and
@@ -725,7 +787,9 @@ Important caveats:
   inputs, which can lead to non-progressing local operations.
 
 Since v0.7.3, the default `AdaptiveKernel` applies **Simulation of Simplicity (SoS)** to both
-orientation and insphere predicates, breaking exact-degeneracy ties deterministically and eliminating
+orientation and insphere predicates. The implementation expands the complete
+exact symbolic determinant through D=6 rather than stopping after first-order
+cofactors, breaking exact-degeneracy ties deterministically and eliminating
 the most common source of non-progressing flip cycles. The `ExactPredicates` marker trait ensures
 that flip repair entry points only accept kernels with provably correct in-sphere sign decisions in
 the supported dimensions. Exact orientation extends farther than exact in-sphere support, but repair
@@ -753,7 +817,7 @@ Some limitations are inherent to incremental high-dimensional computational geom
 - **Degenerate geometry in higher dimensions**: highly degenerate point configurations (many
   nearly coplanar / collinear subsets) can cause insertion to fail or require perturbation.
 - **Predicate support envelope**: the strongest exact Delaunay-predicate and flip-repair contract is
-  currently `D <= 5`; dimensions above that should be treated as experimental unless a workflow
+  currently `D <= 6`; dimensions above that should be treated as experimental unless a workflow
   performs its own validation.
 - **Topological-domain scope**: Euclidean and toroidal workflows are the active ordinary
   triangulation domains. The bounded spherical prototype supports `S^2`/`S^3` construction and

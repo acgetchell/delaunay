@@ -90,6 +90,32 @@ avoids rollback storage; an explicitly selected mutating mode uses a workspace
 and rollback. Level 5 fast-path evidence is accepted only when validation binds
 it to the exact owner identity, generation, and topology being promoted.
 
+Some Level 3 facts are not recoverable by recomputing local incidence. In D ≥ 4,
+the current vertex-link checks cannot in general prove that a nontrivial link is
+a PL sphere or ball; similarly, the presence of boundary and a particular Euler
+value do not prove that a complex is a ball. Checked Euclidean Delaunay
+construction therefore attaches crate-private provenance for its simplex seed
+and link-preserving cavity replacements, and checked periodic construction
+attaches provenance for its image-point quotient. This evidence is not a public
+builder option. Explicit simplex lists, deserialized TDS storage, and values
+demoted with `Triangulation::into_tds` must re-establish the proof or select the
+weaker `Pseudomanifold` contract; copying topology metadata cannot forge it.
+Point-driven construction is consequently gated by `ExactPredicates<D>`, which
+the built-in kernels implement through D=6. In D >= 4, heuristic cavity
+reshaping, fan-based vertex-star retriangulation, and arbitrary simplex-removal
+repair invalidate provenance and cannot commit under the `PLManifold` contract.
+
+Derived proof-bearing values follow the same rule without joining the five-level
+owner hierarchy. `ConvexHull::try_from_triangulation` builds private draft
+storage, copies only stable vertex data, certifies facet arity, uniqueness,
+nondegeneracy, and global supporting-hyperplane convexity, and only then returns
+`ConvexHull`. The published hull contains no TDS keys or handles and needs no
+later `validate(source)` call; its facet identifiers are derived from sorted
+vertex UUIDs rather than source-local slot keys. By contrast, derived topology used immediately by
+another operation remains borrowed: `ConflictRegion<'tri>` binds read-only
+conflict and cavity views to one triangulation, and `LocalFacetRepairGuard<'tri>`
+retains a mutable owner borrow from detection through transactional repair.
+
 ## Notebook-generated validation gallery
 
 The deterministic [validation notebook](../notebooks/01_validation.ipynb)
@@ -694,17 +720,27 @@ certification.
    Use `dt.validate_vertex_links()` for an explicit owner-level check.
 5. **Intrinsic orientability** (for the 2D/3D PL-manifold guarantees):
    Ordinary and periodic shared-facet parity constraints must admit a coherent assignment.
-   Use `Triangulation::orientation_witness()` to obtain the opaque
-   simplex-reversal certificate directly. A parity obstruction is reported as
-   the typed Level 3 `TriangulationValidationError::NonOrientable` diagnostic.
+   Use `Triangulation::orientation_witness()` to obtain the opaque,
+   owner-borrowing simplex-reversal certificate directly. Its simplex keys
+   cannot outlive or span mutation of their source topology. A parity obstruction
+   is reported as the typed Level 3
+   `TriangulationValidationError::NonOrientable` diagnostic.
 6. **Connectedness**: All simplices form a single connected component in the simplex neighbor graph
    - Detected via a graph traversal over neighbor pointers (O(N·D))
 7. **No isolated vertices**: Every vertex must be incident to at least one simplex
-8. **Euler Characteristic**: χ matches expected topology (when an expectation is defined)
+8. **f-vector and Euler characteristic**: Level 3 recomputes the full f-vector
+   from canonical topology, derives χ as its alternating sum, and compares χ with
+   the expected topology when an expectation is defined
    - Empty: χ = 0
    - Single simplex / Ball(D): χ = 1
    - Closed sphere S^D: χ = 1 + (-1)^D
    - Unknown: χ is computed but not enforced
+
+The f-vector describes the exact current triangulation rather than its
+PL-homeomorphism class. A successful bistellar move may change individual
+`f_k` counts while preserving their alternating sum χ. It is therefore
+recomputed at validation boundaries instead of maintained as authoritative
+mutable state.
 
 Intrinsic orientability is distinct from Level 2 stored-ordering coherence:
 reversing one stored simplex can violate `Tds::is_valid()` without changing
@@ -1174,7 +1210,7 @@ or missing higher-dimensional flip coverage
 **Fix**: Keep flip repair enabled, handle insertion errors, check for near-coplanar/collinear points,
 and select the kernel whose tie-handling and diagnostic policy matches the
 workflow. Flip-repair refinement requires `K: ExactPredicates`; `AdaptiveKernel`,
-`RobustKernel`, and `FastKernel` satisfy that bound through D ≤ 5. If conversion
+`RobustKernel`, and `FastKernel` satisfy that bound through D ≤ 6. If conversion
 fails to converge, enable the opt-in rebuild through
 `.repair_by_flips().fallback_rebuild(true)` (requires
 PL-manifold + `ExactPredicates`).

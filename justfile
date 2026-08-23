@@ -18,11 +18,11 @@ cargo_edit_version := "0.13.13"
 cargo_llvm_cov_version := "0.9.0"
 cargo_machete_version := "0.9.2"
 clippy_sarif_version := "0.8.0"
-dprint_version := "0.56.0"
+dprint_version := "0.56.1"
 git_cliff_version := "2.13.1"
 just_version := "1.58.0"
 nextest_version := "0.9.143"
-rumdl_version := "0.2.58"
+rumdl_version := "0.2.60"
 samply_version := "0.13.1"
 sarif_fmt_version := "0.8.0"
 taplo_version := "0.10.0"
@@ -776,8 +776,8 @@ perf-help:
     @echo "                              # 4D random-walk Pachner diagnostics with CSV/JSON artifacts"
     @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
     @echo "  just profile v0.7.5        # v0.7.5 code on its declared Rust toolchain"
-    @echo "  just profile 1.97.1        # Current tree on Rust 1.97.1"
-    @echo "  just profile 1.97.1 v0.7.5 # v0.7.5 code on Rust 1.97.1"
+    @echo "  just profile 1.98.0        # Current tree on Rust 1.98.0"
+    @echo "  just profile 1.98.0 v0.7.5 # v0.7.5 code on Rust 1.98.0"
 
 # Quick pre-push 2D-5D large-scale wall-clock smoke guard.
 [group('benchmarks and performance')]
@@ -1100,6 +1100,7 @@ rust-core-check: fmt-check clippy doc-check semgrep semgrep-test
 # Repository-owned Semgrep rules for project-specific Rust diagnostics.
 [group('validation')]
 semgrep: _ensure-uv
+    # Serialize repository scans to avoid Semgrep shared-state races across workers.
     uv run --locked semgrep --error --strict --timeout 120 --jobs 1 --config semgrep.yaml .
 
 # Test the repository-owned Semgrep rules against their fixtures.

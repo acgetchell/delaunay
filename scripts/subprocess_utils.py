@@ -279,8 +279,23 @@ def run_git_command_with_input(
             raise ValueError(msg)
     git_path = get_safe_executable("git")
     run_kwargs = _build_run_kwargs("run_git_command_with_input", **kwargs)
-    encoding: str = run_kwargs.get("encoding") or "utf-8"
-    errors: str = run_kwargs.get("errors") or "strict"
+    encoding_value = run_kwargs.get("encoding")
+    if encoding_value is None or encoding_value == "":
+        encoding = "utf-8"
+    elif isinstance(encoding_value, str):
+        encoding = encoding_value
+    else:
+        msg = "encoding must be a string"
+        raise TypeError(msg)
+
+    errors_value = run_kwargs.get("errors")
+    if errors_value is None or errors_value == "":
+        errors = "strict"
+    elif isinstance(errors_value, str):
+        errors = errors_value
+    else:
+        msg = "errors must be a string"
+        raise TypeError(msg)
     payload = input_data if isinstance(input_data, bytes) else input_data.encode(encoding, errors)
     with tempfile.TemporaryFile() as stdin:
         stdin.write(payload)

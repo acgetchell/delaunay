@@ -45,11 +45,12 @@ use crate::triangulation::realization::TriangulationRealizationValidationError;
 use crate::triangulation::rollback::{
     TriangulationRollbackTransaction, TriangulationRollbackWindow,
 };
+use core::fmt::NumBuffer;
 use std::borrow::Cow;
 use std::env;
 use std::sync::{
-    OnceLock,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    Mutex, MutexGuard, OnceLock,
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -122,10 +123,7 @@ fn scale_aware_duplicate_coordinate_tolerance(feature_scale: f64, magnitude_scal
     tolerance
 }
 
-static DUPLICATE_DETECTION_TOTAL: AtomicU64 = AtomicU64::new(0);
-static DUPLICATE_DETECTION_GRID_USED: AtomicU64 = AtomicU64::new(0);
-static DUPLICATE_DETECTION_GRID_FALLBACKS: AtomicU64 = AtomicU64::new(0);
-static DUPLICATE_DETECTION_GRID_CANDIDATES: AtomicU64 = AtomicU64::new(0);
+static DUPLICATE_DETECTION_METRICS: OnceLock<DuplicateDetectionMetricsState> = OnceLock::new();
 static DUPLICATE_DETECTION_ENABLED: OnceLock<bool> = OnceLock::new();
 static RETRYABLE_SKIP_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
 static CAVITY_REDUCTION_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
@@ -235,6 +233,9 @@ fn cavity_conflict_error_summary(error: &ConflictError) -> String {
         ConflictError::InvalidStartSimplex { simplex_key } => {
             format!("invalid_start_simplex simplex_key={simplex_key:?}")
         }
+        ConflictError::InvalidBoundaryFacet { source } => {
+            format!("invalid_boundary_facet source={source}")
+        }
         ConflictError::PredicateError { source } => {
             format!("predicate_error source={source}")
         }
@@ -323,7 +324,9 @@ fn log_retryable_conflict_skip(
         return;
     }
 
-    let bulk_index_display = bulk_index.map_or_else(|| String::from("n/a"), |idx| idx.to_string());
+    let mut bulk_index_buffer = NumBuffer::new();
+    let bulk_index_display =
+        bulk_index.map_or("n/a", |index| index.format_into(&mut bulk_index_buffer));
     tracing::debug!(
         target: "delaunay::retryable_skip",
         bulk_index = %bulk_index_display,
@@ -345,7 +348,7 @@ fn log_retryable_conflict_skip(
 
 /// Telemetry counters for duplicate-coordinate detection.
 #[must_use]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DuplicateDetectionMetrics {
     /// Total number of duplicate-coordinate checks executed.
     pub total_checks: u64,
@@ -355,6 +358,49 @@ pub struct DuplicateDetectionMetrics {
     pub grid_fallbacks: u64,
     /// Total candidate vertices inspected during grid-based checks.
     pub grid_candidates: u64,
+}
+
+/// Synchronized process-wide storage for the opt-in duplicate telemetry.
+///
+/// The four counters describe one logical observation, so writers update them
+/// under one lock and readers copy them under that same lock. The state is
+/// initialized lazily because ordinary construction leaves metrics disabled.
+#[derive(Debug, Default)]
+struct DuplicateDetectionMetricsState {
+    metrics: Mutex<DuplicateDetectionMetrics>,
+}
+
+impl DuplicateDetectionMetricsState {
+    fn lock(&self) -> MutexGuard<'_, DuplicateDetectionMetrics> {
+        match self.metrics.lock() {
+            Ok(metrics) => metrics,
+            // No user code runs while this lock is held, but retain the last
+            // coherent counter state if an internal panic ever poisons it.
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    fn record(&self, used_grid: bool, candidate_count: usize, fell_back: bool) {
+        let mut metrics = self.lock();
+        let mut next = *metrics;
+        next.total_checks = next.total_checks.saturating_add(1);
+        if used_grid {
+            next.grid_used = next.grid_used.saturating_add(1);
+            next.grid_candidates = next.grid_candidates.saturating_add(candidate_count as u64);
+        }
+        if fell_back {
+            next.grid_fallbacks = next.grid_fallbacks.saturating_add(1);
+        }
+        *metrics = next;
+    }
+
+    fn snapshot(&self) -> DuplicateDetectionMetrics {
+        *self.lock()
+    }
+}
+
+fn duplicate_detection_metrics_state() -> &'static DuplicateDetectionMetricsState {
+    DUPLICATE_DETECTION_METRICS.get_or_init(DuplicateDetectionMetricsState::default)
 }
 
 pub fn record_duplicate_detection_metrics(
@@ -379,14 +425,7 @@ fn record_duplicate_detection_metrics_if_enabled(
     if !enabled {
         return;
     }
-    DUPLICATE_DETECTION_TOTAL.fetch_add(1, Ordering::Relaxed);
-    if used_grid {
-        DUPLICATE_DETECTION_GRID_USED.fetch_add(1, Ordering::Relaxed);
-        DUPLICATE_DETECTION_GRID_CANDIDATES.fetch_add(candidate_count as u64, Ordering::Relaxed);
-    }
-    if fell_back {
-        DUPLICATE_DETECTION_GRID_FALLBACKS.fetch_add(1, Ordering::Relaxed);
-    }
+    duplicate_detection_metrics_state().record(used_grid, candidate_count, fell_back);
 }
 
 struct TryInsertImplOk {
@@ -455,7 +494,11 @@ pub struct DetailedInsertionResult {
 
 /// Input and derived geometry reused by every perturbation attempt inside one
 /// rollback window.
-struct PreparedInsertion<U, const D: usize> {
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "explicit crate visibility documents sharing with the Delaunay owner layer"
+)]
+pub(crate) struct PreparedInsertion<U, const D: usize> {
     stats: InsertionStatistics,
     telemetry: InsertionTelemetry,
     original_coords: [f64; D],
@@ -480,7 +523,9 @@ where
     ///
     /// This is a process-wide counter (across all triangulation instances). It reports how often
     /// duplicate checks used the hash grid versus falling back to linear scans, along with the
-    /// total candidate count inspected during grid queries.
+    /// total candidate count inspected during grid queries. Concurrent updates are synchronized,
+    /// so all fields in the returned value come from one coherent snapshot. Another thread may
+    /// begin updating the process-wide counters immediately after this method returns.
     ///
     /// # Examples
     ///
@@ -501,12 +546,7 @@ where
         if !enabled {
             return None;
         }
-        Some(DuplicateDetectionMetrics {
-            total_checks: DUPLICATE_DETECTION_TOTAL.load(Ordering::Relaxed),
-            grid_used: DUPLICATE_DETECTION_GRID_USED.load(Ordering::Relaxed),
-            grid_fallbacks: DUPLICATE_DETECTION_GRID_FALLBACKS.load(Ordering::Relaxed),
-            grid_candidates: DUPLICATE_DETECTION_GRID_CANDIDATES.load(Ordering::Relaxed),
-        })
+        Some(duplicate_detection_metrics_state().snapshot())
     }
 
     /// Runs detailed insertion with a scaffolding-specific degeneracy policy.
@@ -545,29 +585,17 @@ where
     ///
     /// Higher proof owners use this entry point to keep insertion, perturbation
     /// retries, repair, and postcondition checks inside one owner-level snapshot.
-    pub(crate) fn insert_with_statistics_seeded_indexed_detailed_in_rollback_window<W>(
+    pub(crate) fn insert_prepared_with_statistics_seeded_indexed_detailed_in_rollback_window<W>(
         transaction: &mut W,
-        vertex: Vertex<U, D>,
+        prepared: PreparedInsertion<U, D>,
         conflict_simplices: Option<&SimplexKeyBuffer>,
-        hint: Option<SimplexKey>,
         perturbation_seed: u64,
-        mut index: Option<&mut HashGridIndex<D>>,
+        index: Option<&mut HashGridIndex<D>>,
         bulk_index: Option<usize>,
     ) -> Result<DetailedInsertionResult, InsertionError>
     where
         W: TriangulationRollbackWindow<K, U, V, D>,
     {
-        let mut prepared =
-            transaction
-                .triangulation_mut()
-                .prepare_insertion(vertex, hint, index.as_deref_mut());
-        if let Some(skipped) = transaction
-            .triangulation_mut()
-            .duplicate_skip(&mut prepared, index.as_deref())
-        {
-            return Ok(skipped);
-        }
-
         Self::insert_prepared_in_rollback_window(
             transaction,
             prepared,
@@ -630,7 +658,7 @@ where
 
     /// Derives retry geometry once before a rollback window starts so duplicate
     /// rejection remains snapshot-free for ordinary triangulation callers.
-    fn prepare_insertion(
+    pub(crate) fn prepare_insertion(
         &self,
         vertex: Vertex<U, D>,
         hint: Option<SimplexKey>,
@@ -668,7 +696,7 @@ where
 
     /// Converts a duplicate-coordinate observation into the standard unchanged
     /// insertion result without opening or mutating a rollback window.
-    fn duplicate_skip(
+    pub(crate) fn duplicate_skip(
         &self,
         prepared: &mut PreparedInsertion<U, D>,
         index: Option<&HashGridIndex<D>>,
@@ -1450,6 +1478,18 @@ where
         const MAX_CAVITY_ITERATIONS: usize = 32;
 
         let mut extraction_result = extract_cavity_boundary(&self.tds, conflict_simplices);
+
+        // In D >= 4, connected manifold boundary incidence does not prove
+        // that an arbitrary reshaped cavity is a PL ball. The exact Delaunay
+        // conflict region and a one-simplex stellar split carry construction
+        // proofs; the heuristic expand/shrink rules below do not.
+        if D >= 4
+            && self.topology_construction_provenance
+                != crate::triangulation::validation::TopologyConstructionProvenance::Unproven
+            && extraction_result.is_err()
+        {
+            return extraction_result;
+        }
         let mut iterations: usize = 0;
         let trace_enabled = cavity_reduction_trace_enabled();
         let mut trace_cavity_reduction = false;
@@ -1886,6 +1926,9 @@ where
                 .collect();
 
             if let Some(issues) = self.detect_local_facet_issues(&simplices_to_check)? {
+                // Removing an arbitrary subset can restore facet degree but
+                // does not prove high-dimensional vertex links.
+                self.invalidate_link_construction_provenance();
                 // Only mark this as "suspicious" if we *actually* detected local facet issues
                 // and entered the repair path.
                 suspicion.repair_loop_entered = true;
@@ -2217,6 +2260,19 @@ where
                 },
             })?;
 
+        // A single maximal simplex is a directly recognizable PL ball. Once
+        // insertion evolves that base exclusively through checked stellar or
+        // Delaunay cavity replacements, the existing construction-provenance
+        // contract applies in high dimensions. Arbitrary multi-simplex input
+        // remains unproven and is never promoted here.
+        if D >= 4
+            && self.tds.number_of_simplices() == 1
+            && self.topology_construction_provenance
+                == crate::triangulation::validation::TopologyConstructionProvenance::Unproven
+        {
+            self.topology_construction_provenance = crate::triangulation::validation::TopologyConstructionProvenance::EuclideanDelaunayInsertion;
+        }
+
         // 1. Insert vertex into Tds
         let mut v_key = self
             .tds
@@ -2247,6 +2303,7 @@ where
 
             // Replace empty TDS with simplex TDS (preserve kernel)
             self.tds = new_tds;
+            self.topology_construction_provenance = crate::triangulation::validation::TopologyConstructionProvenance::EuclideanDelaunayInsertion;
 
             // Re-map vertex key to the rebuilt TDS
             v_key = self.vertex_key_from_uuid(&inserted_uuid).ok_or(
@@ -2743,6 +2800,9 @@ where
                         .collect();
 
                     if let Some(issues) = self.detect_local_facet_issues(&simplices_to_check)? {
+                        // As above, facet-degree repair is not a PL-link proof
+                        // in high dimensions.
+                        self.invalidate_link_construction_provenance();
                         // Only mark this as "suspicious" if we *actually* detected local facet issues
                         // and entered the repair path.
                         suspicion.repair_loop_entered = true;
@@ -2928,7 +2988,7 @@ mod tests {
         vertex,
     };
     use slotmap::KeyData;
-    use std::assert_matches;
+    use std::{assert_matches, sync::Barrier, thread};
 
     fn insert<K, U, V, const D: usize>(
         tri: &mut Triangulation<K, U, V, D>,
@@ -3192,6 +3252,58 @@ mod tests {
         assert!(after.grid_used > before.grid_used);
         assert!(after.grid_fallbacks > before.grid_fallbacks);
         assert!(after.grid_candidates >= before.grid_candidates + 3);
+    }
+
+    #[test]
+    fn duplicate_detection_metrics_state_is_coherent_under_concurrent_updates() {
+        const WORKER_COUNT: usize = 4;
+        const RECORDS_PER_WORKER: usize = 200;
+
+        let state = DuplicateDetectionMetricsState::default();
+        let start = Barrier::new(WORKER_COUNT + 1);
+
+        thread::scope(|scope| {
+            for worker_id in 0..WORKER_COUNT {
+                let state = &state;
+                let start = &start;
+                scope.spawn(move || {
+                    start.wait();
+                    for record_id in 0..RECORDS_PER_WORKER {
+                        let used_grid = (worker_id + record_id) % 2 == 0;
+                        state.record(used_grid, if used_grid { 3 } else { 0 }, !used_grid);
+                        thread::yield_now();
+                    }
+                });
+            }
+
+            // Release every ready worker together, then sample while updates run.
+            start.wait();
+            for _ in 0..WORKER_COUNT * RECORDS_PER_WORKER {
+                let snapshot = state.snapshot();
+                assert_eq!(
+                    snapshot.total_checks,
+                    snapshot.grid_used + snapshot.grid_fallbacks
+                );
+                assert_eq!(
+                    snapshot.grid_candidates,
+                    snapshot.grid_used.saturating_mul(3)
+                );
+                thread::yield_now();
+            }
+        });
+
+        let snapshot = state.snapshot();
+        let expected_total = u64::try_from(WORKER_COUNT * RECORDS_PER_WORKER)
+            .expect("small test workload fits in u64");
+        assert_eq!(snapshot.total_checks, expected_total);
+        assert_eq!(
+            snapshot.total_checks,
+            snapshot.grid_used + snapshot.grid_fallbacks
+        );
+        assert_eq!(
+            snapshot.grid_candidates,
+            snapshot.grid_used.saturating_mul(3)
+        );
     }
 
     fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
@@ -4469,10 +4581,10 @@ mod tests {
                 [1.0, 0.0, 0.0],
                 [0.0, 1.0, 0.0],
                 [0.0, 0.0, 1.0],
-                [1.0, 1.0, 0.0],
-                [1.0, 0.0, 1.0],
-                [0.0, 1.0, 1.0],
-                [0.5, 0.5, 0.5],
+                [1.0, 1.0, 0.07],
+                [1.0, 0.11, 1.0],
+                [0.13, 1.0, 1.0],
+                [0.47, 0.53, 0.61],
             ];
             let vertices: Vec<Vertex<(), 3>> = base_coords
                 .iter()

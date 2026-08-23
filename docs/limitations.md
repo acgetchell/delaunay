@@ -32,22 +32,21 @@ GPU/parallel meshing, or production-scale dynamic remeshing.
 | 3D | Supported and covered; current large-scale acceptance uses thousands of vertices. |
 | 4D | Supported and covered; large batch runs are exact-predicate-heavy and should use release mode. |
 | 5D | Supported, but high cost; exact insphere still fits the stack matrix limit, but most predicate calls take the exact path. |
-| 6D+ | Experimental. Exact orientation remains available through D=6, but exact insphere does not; routine construction coverage stops below this range. |
+| 6D | Experimental construction envelope, but exact orientation and relative-coordinate insphere predicates are available. |
+| 7D+ | Experimental. The strongest exact-predicate and repair contract stops below this range. |
 
 The stack-allocated exact determinant path supports matrices up to 7×7:
 
 - f64 fast filter: D ≤ 4, because `det_errbound()` is unavailable above 4D.
 - Exact orientation: D ≤ 6, because orientation uses a `(D + 1) × (D + 1)`
   determinant.
-- Exact insphere: D ≤ 5, because insphere uses a `(D + 2) × (D + 2)`
-  determinant.
+- Exact insphere: D ≤ 6, because the translation-invariant relative formulation
+  uses a `(D + 1) × (D + 1)` determinant. Its cold path forms differences and
+  squared norms directly as exact rationals from the IEEE-754 inputs.
 
 For D ≥ 5, predicate evaluation falls through to exact arithmetic more often.
-For D ≥ 6, exact insphere determinants are unavailable: classification first
-uses the floating-point circumcenter/radius distance predicate, then applies
-symbolic perturbation only when that predicate reports a boundary or fails.
-This fallback is deterministic but does not provide exact-sign protection for
-near-degenerate D ≥ 6 inputs.
+For D ≥ 7, exact insphere determinants are unavailable. Higher-dimensional
+fallbacks remain deterministic but do not carry the `ExactPredicates` proof.
 
 ## Numerical Robustness
 
@@ -59,7 +58,7 @@ tie-breaking. Use `RobustKernel` when you need explicit
 `FastKernel` is the lean filtered-exact policy: it preserves explicit
 `BOUNDARY`/`DEGENERATE` results without `RobustKernel`'s opt-in diagnostic
 cross-check or higher-dimensional fallback. It implements `ExactPredicates`
-through D ≤ 5 and can use the explicit public repair APIs in those dimensions.
+through D ≤ 6 and can use the explicit public repair APIs in those dimensions.
 
 See [`numerical_robustness_guide.md`](numerical_robustness_guide.md) for kernel
 selection, duplicate handling, exact predicate details, and retry semantics.

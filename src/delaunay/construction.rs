@@ -83,7 +83,7 @@ use crate::deletion::DeleteVertexError;
 use crate::diagnostics::{BatchLocalRepairTrigger, ConstructionTelemetry, LocalRepairSample};
 use crate::draft::DelaunayTriangulationDraft;
 use crate::geometry::coordinate_range::CoordinateRange;
-use crate::geometry::kernel::{AdaptiveKernel, Kernel};
+use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateValidationError, CoordinateValues,
@@ -112,7 +112,8 @@ use crate::triangulation::locality::{
 };
 use crate::triangulation::realization::TriangulationRealizationValidationError;
 use crate::triangulation::validation::{
-    TopologyGuarantee, TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
+    TopologyConstructionProvenance, TopologyGuarantee, TriangulationValidationError,
+    ValidationConfigurationError, ValidationPolicy,
 };
 use crate::validation::{
     DelaunayLevelFiveCertificate, DelaunayTriangulationValidationError, DelaunayVerificationError,
@@ -3381,7 +3382,7 @@ struct DelaunayBatchWorkspace<K, U, V, const D: usize> {
 
 impl<K, U, V, const D: usize> DelaunayBatchWorkspace<K, U, V, D>
 where
-    K: Kernel<D, Scalar = f64>,
+    K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -3396,6 +3397,7 @@ where
         // private transactional mutations on that proof-bearing owner.
         let tri = TriangulationBuilder::new(tds, kernel)
             .topology_guarantee(topology_guarantee)
+            .construction_provenance(TopologyConstructionProvenance::EuclideanDelaunayInsertion)
             .build()
             .map_err(|failure| Self::map_triangulation_builder_error(failure.into_reason()))?;
 
@@ -3503,10 +3505,14 @@ where
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
+    use crate::geometry::kernel::Kernel;
     use crate::incremental_builder::DelaunayIncrementalBuilder;
     use crate::topology::traits::GlobalTopology;
 
-    impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
+    impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         /// Creates empty default-kernel storage for bootstrap tests.
         #[must_use]
         pub(crate) fn empty() -> Self {
@@ -3516,7 +3522,7 @@ pub(crate) mod test_support {
 
     impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
     where
-        K: Kernel<D, Scalar = f64>,
+        K: ExactPredicates<D, Scalar = f64>,
         U: DataType,
         V: DataType,
     {
@@ -3571,6 +3577,7 @@ pub(crate) mod test_support {
                     global_topology,
                     validation_policy: topology_guarantee.default_validation_policy(),
                     topology_guarantee,
+                    topology_construction_provenance: TopologyConstructionProvenance::Unproven,
                 },
                 insertion_state: DelaunayInsertionState::new(),
                 spatial_index: HashGridIndex::try_new(duplicate_tolerance).ok(),
@@ -3586,7 +3593,7 @@ pub(crate) mod test_support {
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
-    K: Kernel<D, Scalar = f64>,
+    K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -4413,7 +4420,7 @@ where
 
 impl<K, U, V, const D: usize> DelaunayBatchWorkspace<K, U, V, D>
 where
-    K: Kernel<D, Scalar = f64>,
+    K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -5238,7 +5245,7 @@ where
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
-    K: Kernel<D, Scalar = f64>,
+    K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -6187,7 +6194,7 @@ mod tests {
     }
 
     #[test]
-    fn construction_certificate_is_bound_to_the_exact_topology_state() {
+    fn construction_certificate_requires_publishable_evidence_for_the_exact_topology_state() {
         let vertices = [
             vertex!([0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0]).unwrap(),
@@ -6198,6 +6205,9 @@ mod tests {
 
         assert!(workspace.requires_delaunay_certification());
         workspace.certify_via_flip_predicates().unwrap();
+        assert!(workspace.requires_delaunay_certification());
+        workspace.delaunay_certificate =
+            Some(crate::validation::certify_level_five_for_refinement(&workspace.tri).unwrap());
         assert!(!workspace.requires_delaunay_certification());
 
         let detached_clone = workspace.clone();
@@ -7775,7 +7785,10 @@ mod tests {
         assert!(dt.validate().is_ok());
     }
 
-    fn assert_initial_simplex_statistics<const D: usize>() {
+    fn assert_initial_simplex_statistics<const D: usize>()
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         init_tracing();
         let vertices = simplex_vertices::<D>();
 
@@ -7791,7 +7804,10 @@ mod tests {
         assert_eq!(stats.attempts_histogram.get(1).copied().unwrap_or(0), D + 1);
     }
 
-    fn assert_exact_minimum_vertices<const D: usize>() {
+    fn assert_exact_minimum_vertices<const D: usize>()
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         init_tracing();
         let vertices = simplex_vertices::<D>();
 
@@ -7802,7 +7818,10 @@ mod tests {
         assert_eq!(dt.number_of_simplices(), 1);
     }
 
-    fn assert_constructed_tds_state<const D: usize>() {
+    fn assert_constructed_tds_state<const D: usize>()
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         init_tracing();
         let vertices = simplex_vertices::<D>();
 
@@ -7815,7 +7834,10 @@ mod tests {
         );
     }
 
-    fn assert_empty_partial_stats_error<const D: usize>() {
+    fn assert_empty_partial_stats_error<const D: usize>()
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         init_tracing();
         let mut vertices = simplex_vertices::<D>();
         let _removed_vertex = vertices.pop().expect("simplex has at least one vertex");
@@ -7844,7 +7866,10 @@ mod tests {
         assert!(err.statistics.skip_samples.is_empty());
     }
 
-    fn assert_duplicate_skip_statistics<const D: usize>() {
+    fn assert_duplicate_skip_statistics<const D: usize>()
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         init_tracing();
         let mut vertices = simplex_vertices::<D>();
         vertices.push(vertex!([0.0; D]).unwrap());
@@ -8436,6 +8461,19 @@ mod tests {
                 }
             ),
             "CavityFilling should preserve its typed construction source, got: {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn test_map_insertion_error_published_owner_bootstrap_is_internal() {
+        let mapped = TestDelaunay::<3>::map_insertion_error(
+            InsertionError::PublishedOwnerBootstrapRequiresBuilder { dimension: 3 },
+        );
+
+        assert_matches!(
+            mapped,
+            TriangulationConstructionError::InternalInconsistency { message }
+                if message == "published 3D owner entered the unpublished construction path"
         );
     }
 

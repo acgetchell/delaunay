@@ -23,12 +23,15 @@ use crate::core::collections::{SimplexVertexKeyBuffer, spatial_hash_grid::HashGr
 use crate::core::operations::{
     DelaunayInsertionState, InsertionOutcome, InsertionResult, InsertionStatistics,
 };
-use crate::core::tds::{TdsDraft, TdsDraftError, TdsDraftInsertionError, TdsError, VertexKey};
+use crate::core::tds::{
+    TdsDraft, TdsDraftError, TdsDraftInsertionError, TdsError, TriangulationValidationReport,
+    VertexKey,
+};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::delaunay_model::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
 use crate::draft::DelaunayTriangulationDraft;
-use crate::geometry::kernel::{AdaptiveKernel, Kernel};
+use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates};
 use crate::geometry::traits::coordinate::CoordinateValues;
 use crate::repair::DelaunayCheckPolicy;
 use crate::topology::traits::{GlobalTopology, TopologyKind};
@@ -36,7 +39,8 @@ use crate::triangulation::builder::TriangulationBuilderError;
 use crate::triangulation::draft::TriangulationDraft;
 use crate::triangulation::insertion::duplicate_coordinate_tolerance_from_references;
 use crate::triangulation::validation::{
-    TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
+    TopologyConstructionProvenance, TopologyGuarantee, ValidationConfigurationError,
+    ValidationPolicy,
 };
 use crate::validation::DelaunayTriangulationValidationError;
 
@@ -287,7 +291,7 @@ where
 
 impl<K, U, V, const D: usize> DelaunayBootstrapWorkspace<K, U, V, D>
 where
-    K: Kernel<D, Scalar = f64>,
+    K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -305,6 +309,7 @@ where
             self.topology_guarantee,
             self.global_topology,
         )
+        .construction_provenance(TopologyConstructionProvenance::EuclideanDelaunayInsertion)
         .validation_policy(self.validation_policy)
         .finish_canonicalizing()
         .map_err(
@@ -382,7 +387,10 @@ pub struct DelaunayIncrementalBuilder<K, U, V, const D: usize> {
     state: DelaunayIncrementalBuilderState<K, U, V, D>,
 }
 
-impl<const D: usize> DelaunayIncrementalBuilder<AdaptiveKernel<f64>, (), (), D> {
+impl<const D: usize> DelaunayIncrementalBuilder<AdaptiveKernel<f64>, (), (), D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     /// Starts an empty incremental builder using the default adaptive kernel and topology.
     #[must_use]
     pub fn new() -> Self {
@@ -396,7 +404,10 @@ impl<const D: usize> DelaunayIncrementalBuilder<AdaptiveKernel<f64>, (), (), D> 
     }
 }
 
-impl<const D: usize> Default for DelaunayIncrementalBuilder<AdaptiveKernel<f64>, (), (), D> {
+impl<const D: usize> Default for DelaunayIncrementalBuilder<AdaptiveKernel<f64>, (), (), D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     fn default() -> Self {
         Self::new()
     }
@@ -404,7 +415,7 @@ impl<const D: usize> Default for DelaunayIncrementalBuilder<AdaptiveKernel<f64>,
 
 impl<K, U, V, const D: usize> DelaunayIncrementalBuilder<K, U, V, D>
 where
-    K: Kernel<D, Scalar = f64>,
+    K: ExactPredicates<D, Scalar = f64>,
 {
     /// Starts an empty incremental builder with a caller-selected kernel.
     #[must_use]
@@ -599,6 +610,27 @@ impl<K, U, V, const D: usize> DelaunayIncrementalBuilder<K, U, V, D> {
         }
     }
 
+    /// Returns the cumulative Levels 1–3 report for the published owner state.
+    ///
+    /// Before the first maximal simplex is published, the builder contains only
+    /// a bootstrap workspace and therefore has no owner-level topology to audit.
+    /// Call [`validate_structure`](Self::validate_structure) independently when
+    /// checking that partial state.
+    #[must_use]
+    pub fn owner_topology_report(&self) -> Option<Result<(), TriangulationValidationReport>>
+    where
+        K: ExactPredicates<D, Scalar = f64>,
+        U: DataType,
+        V: DataType,
+    {
+        match &self.state {
+            DelaunayIncrementalBuilderState::Bootstrap(_) => None,
+            DelaunayIncrementalBuilderState::Owner(triangulation) => {
+                Some(triangulation.as_triangulation().validation_report())
+            }
+        }
+    }
+
     /// Returns a staged vertex by key without exposing the unpublished owner.
     #[must_use]
     pub fn vertex(&self, key: VertexKey) -> Option<&Vertex<U, D>> {
@@ -611,7 +643,7 @@ impl<K, U, V, const D: usize> DelaunayIncrementalBuilder<K, U, V, D> {
 
 impl<K, U, V, const D: usize> DelaunayIncrementalBuilder<K, U, V, D>
 where
-    K: Kernel<D, Scalar = f64>,
+    K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -943,6 +975,49 @@ mod tests {
         let vertex_key = builder.insert_vertex(vertex![0.0, 0.0].unwrap()).unwrap();
         assert!(builder.vertex(vertex_key).is_some());
         assert_eq!(builder.number_of_vertices(), 1);
+    }
+
+    #[test]
+    fn bootstrap_rejects_an_incompatible_validation_policy_without_mutation() {
+        let mut builder: DelaunayIncrementalBuilder<_, (), (), 2> =
+            DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
+        let policy_before = builder.validation_policy();
+
+        let error = builder
+            .try_set_validation_policy(ValidationPolicy::Never)
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                topology_guarantee: TopologyGuarantee::PLManifold,
+                validation_policy: ValidationPolicy::Never,
+            }
+        );
+        assert_eq!(builder.validation_policy(), policy_before);
+    }
+
+    #[test]
+    fn bootstrap_duplicate_check_handles_an_overflowing_squared_tolerance() {
+        let mut builder: DelaunayIncrementalBuilder<_, (), (), 2> =
+            DelaunayIncrementalBuilder::new();
+        builder
+            .insert_vertex(vertex![1.0e308, -1.0e308].unwrap())
+            .unwrap();
+
+        let (outcome, statistics) = builder
+            .insert_best_effort_with_statistics(vertex![1.0e308, -1.0e308].unwrap())
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            InsertionOutcome::Skipped {
+                error: InsertionError::DuplicateCoordinates { .. }
+            }
+        ));
+        assert_eq!(statistics.result, InsertionResult::SkippedDuplicate);
+        assert_eq!(builder.number_of_vertices(), 1);
+        assert_eq!(builder.number_of_simplices(), 0);
     }
 
     #[test]

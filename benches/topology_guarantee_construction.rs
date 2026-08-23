@@ -16,7 +16,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::construction::{
-    DelaunayIncrementalBuilder, DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
+    DelaunayIncrementalBuilder, TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange};
@@ -38,7 +38,10 @@ fn benchmark_bounds() -> CoordinateRange<f64> {
 fn construct_with_policy<const D: usize>(
     vertices: &[Vertex<(), D>],
     validation_policy: ValidationPolicy,
-) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
+) -> DelaunayIncrementalBuilder<AdaptiveKernel<f64>, (), (), D>
+where
+    AdaptiveKernel<f64>: delaunay::prelude::geometry::ExactPredicates<D>,
+{
     let mut dt = DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
     dt.try_set_validation_policy(validation_policy).or_abort();
     for (vertex_index, vertex) in vertices.iter().enumerate() {
@@ -49,14 +52,18 @@ fn construct_with_policy<const D: usize>(
             ));
         }
     }
-    dt.finish().or_abort()
+    dt
 }
 
 fn validate_preflight<const D: usize>(
     vertices: &[Vertex<(), D>],
     validation_policy: ValidationPolicy,
-) {
+) where
+    AdaptiveKernel<f64>: delaunay::prelude::geometry::ExactPredicates<D>,
+{
     construct_with_policy(vertices, validation_policy)
+        .finish()
+        .or_abort()
         .as_triangulation()
         .validate()
         .or_abort();
@@ -69,7 +76,9 @@ fn bench_dimension<const D: usize>(
     seed_base: u64,
     sample_size: usize,
     measurement_time: Duration,
-) {
+) where
+    AdaptiveKernel<f64>: delaunay::prelude::geometry::ExactPredicates<D>,
+{
     let mut group = c.benchmark_group(format!("topology_guarantee_construction/{dim_label}"));
     group.sample_size(sample_size);
     group.measurement_time(measurement_time);

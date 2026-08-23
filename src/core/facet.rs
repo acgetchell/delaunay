@@ -1183,6 +1183,18 @@ pub(crate) fn try_incident_facet_view_for_facet_key<U, V, const D: usize>(
     })
 }
 
+/// Verifies that one raw incidence entry resolves under the TDS paired with it.
+///
+/// This keeps lightweight topology proofs owner-bound without allocating the
+/// parsed public [`FacetToSimplicesIndex`].
+pub(crate) fn validate_facet_incidence_entry<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    facet_key: u64,
+    handles: &SmallBuffer<FacetHandle, 2>,
+) -> Result<(), FacetError> {
+    FacetIncidence::try_from_index_entry(tds, facet_key, handles).map(drop)
+}
+
 /// Borrowed view over one parsed facet-incidence entry.
 ///
 /// The view borrows the [`FacetToSimplicesIndex`] entry and carries the [`Tds`]
@@ -2220,7 +2232,8 @@ pub fn facet_key_from_vertices(vertices: &[VertexKey]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tds::{Tds, TdsBuilder, VertexKey};
+    use crate::core::tds::{Tds, VertexKey};
+    use crate::core::test_support::single_simplex_tds;
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::triangulation::Triangulation;
@@ -2228,11 +2241,6 @@ mod tests {
     use slotmap::{KeyData, SlotMap};
     use std::assert_matches;
     use std::{collections::HashSet, mem};
-
-    fn single_simplex_tds<U: Copy, const D: usize>(vertices: &[Vertex<U, D>]) -> Tds<U, (), D> {
-        let simplices = [(0..vertices.len()).collect()];
-        TdsBuilder::new(vertices, &simplices).build().unwrap()
-    }
 
     // =============================================================================
     // UNIT TESTS FOR HELPER FUNCTIONS

@@ -7,7 +7,6 @@
 mod cli_output;
 
 use std::{
-    ffi::OsString,
     fmt::{self, Display},
     fs::{self, File},
     io::{self, BufWriter, Write},
@@ -27,7 +26,8 @@ use delaunay::{
         },
         generators::{RandomPointGenerationError, generate_random_points_in_range_seeded},
         geometry::{
-            CoordinateConversionError, CoordinateRange, CoordinateRangeError, RobustKernel,
+            CoordinateConversionError, CoordinateRange, CoordinateRangeError, ExactPredicates,
+            RobustKernel,
         },
         pachner::{
             EdgeKey, FacetHandle, FlipError, PachnerMove, PachnerMoveResult, PachnerMoves,
@@ -461,65 +461,56 @@ fn artifact_path_identity(path: &Path) -> Result<PathBuf, PachnerStressError> {
             .map_err(|source| PachnerStressError::ArtifactWorkingDirectory { source })?;
         working_directory.join(path)
     };
-    let normalized = normalize_absolute_path(&absolute);
-    canonicalize_existing_prefix(&normalized).map(platform_identity)
+    canonicalize_existing_prefix(&absolute).map(platform_identity)
 }
 
-fn normalize_absolute_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
+fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, PachnerStressError> {
+    let mut identity = PathBuf::new();
+    let mut missing_suffix = PathBuf::new();
+
     for component in path.components() {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                normalized.pop();
+                if missing_suffix.as_os_str().is_empty() {
+                    identity.pop();
+                } else {
+                    missing_suffix.pop();
+                }
             }
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
+            Component::Prefix(_) | Component::RootDir => {
+                identity.push(component.as_os_str());
             }
-        }
-    }
-    normalized
-}
-
-fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, PachnerStressError> {
-    let mut existing_prefix = path;
-    let mut missing_suffix = Vec::<OsString>::new();
-
-    loop {
-        match existing_prefix.try_exists() {
-            Ok(true) => break,
-            Ok(false) => {
-                let Some(name) = existing_prefix.file_name() else {
-                    return Err(PachnerStressError::ArtifactUnresolvablePath {
-                        path: path.to_owned(),
-                    });
-                };
-                missing_suffix.push(name.to_owned());
-                let Some(parent) = existing_prefix.parent() else {
-                    return Err(PachnerStressError::ArtifactUnresolvablePath {
-                        path: path.to_owned(),
-                    });
-                };
-                existing_prefix = parent;
+            Component::Normal(name) if missing_suffix.as_os_str().is_empty() => {
+                let candidate = identity.join(name);
+                match candidate.try_exists() {
+                    Ok(true) => {
+                        identity = fs::canonicalize(&candidate).map_err(|source| {
+                            PachnerStressError::ArtifactResolveIdentity {
+                                path: candidate,
+                                source,
+                            }
+                        })?;
+                    }
+                    Ok(false) => missing_suffix.push(name),
+                    Err(source) => {
+                        return Err(PachnerStressError::ArtifactInspect {
+                            path: candidate,
+                            source,
+                        });
+                    }
+                }
             }
-            Err(source) => {
-                return Err(PachnerStressError::ArtifactInspect {
-                    path: existing_prefix.to_owned(),
-                    source,
-                });
-            }
+            Component::Normal(name) => missing_suffix.push(name),
         }
     }
 
-    let mut identity = fs::canonicalize(existing_prefix).map_err(|source| {
-        PachnerStressError::ArtifactResolveIdentity {
-            path: existing_prefix.to_owned(),
-            source,
-        }
-    })?;
-    for component in missing_suffix.into_iter().rev() {
-        identity.push(component);
+    if identity.as_os_str().is_empty() {
+        return Err(PachnerStressError::ArtifactUnresolvablePath {
+            path: path.to_owned(),
+        });
     }
+    identity.push(missing_suffix);
     Ok(identity)
 }
 
@@ -923,7 +914,10 @@ fn run_pachner_stress(
 fn run_pachner_stress_dimension<const D: usize>(
     config: PachnerStressConfig,
     artifacts: &PachnerStressArtifacts,
-) -> Result<PachnerStressSummary, PachnerStressError> {
+) -> Result<PachnerStressSummary, PachnerStressError>
+where
+    RobustKernel<f64>: ExactPredicates<D>,
+{
     let mut reporter = PachnerStressReporter::try_new(artifacts)?;
     let mut tri = build_pachner_stress_dt::<D>(config, &reporter)?;
     let source = PachnerStressSource {
@@ -993,7 +987,10 @@ fn run_pachner_stress_dimension<const D: usize>(
 fn build_pachner_stress_dt<const D: usize>(
     config: PachnerStressConfig,
     reporter: &PachnerStressReporter,
-) -> Result<PachnerStressTriangulation<D>, PachnerStressError> {
+) -> Result<PachnerStressTriangulation<D>, PachnerStressError>
+where
+    RobustKernel<f64>: ExactPredicates<D>,
+{
     reporter.emit_stage(
         config,
         "generate_points_start",
@@ -1861,6 +1858,29 @@ mod tests {
         assert!(
             artifact_paths_conflict(&direct, &alias)
                 .expect("symlinked diagnostic artifact identities should compare")
+        );
+
+        fs::remove_dir_all(directory).expect("scratch symlink fixture should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parent_traversal_resolves_existing_symlink_components_first() {
+        let directory = target_artifact_path("symlink-parent-alias", "dir");
+        let real_directory = directory.join("real");
+        let nested_directory = real_directory.join("nested");
+        let alias_directory = directory.join("alias");
+        fs::create_dir_all(&nested_directory).expect("nested scratch directory should be created");
+        symlink(Path::new("real/nested"), &alias_directory)
+            .expect("scratch directory symlink should be created");
+
+        let direct = ArtifactPath::try_new(real_directory.join("summary.json"))
+            .expect("direct missing-file path should validate");
+        let alias = ArtifactPath::try_new(alias_directory.join("../summary.json"))
+            .expect("symlink-parent missing-file path should validate");
+        assert!(
+            artifact_paths_conflict(&direct, &alias)
+                .expect("symlink-parent diagnostic artifact identities should compare")
         );
 
         fs::remove_dir_all(directory).expect("scratch symlink fixture should be removed");

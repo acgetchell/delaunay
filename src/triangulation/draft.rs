@@ -15,7 +15,9 @@ use crate::triangulation::model::UnverifiedTriangulation;
 use crate::triangulation::realization::{
     TriangulationCertificationError, TriangulationRealizationValidationError,
 };
-use crate::triangulation::validation::{TopologyGuarantee, ValidationPolicy};
+use crate::triangulation::validation::{
+    TopologyConstructionProvenance, TopologyGuarantee, ValidationPolicy,
+};
 
 /// Crate-internal unpublished Levels 3–4 candidate for a [Triangulation].
 ///
@@ -48,6 +50,7 @@ impl<K, U, V, const D: usize> TriangulationDraft<K, U, V, D> {
                 kernel,
                 topology_guarantee,
                 global_topology,
+                TopologyConstructionProvenance::Unproven,
             ),
             selected_validation_policy: None,
         }
@@ -60,6 +63,16 @@ impl<K, U, V, const D: usize> TriangulationDraft<K, U, V, D> {
     #[must_use]
     pub(crate) const fn validation_policy(mut self, validation_policy: ValidationPolicy) -> Self {
         self.selected_validation_policy = Some(validation_policy);
+        self
+    }
+
+    /// Attaches construction evidence available only to crate-owned workflows.
+    #[must_use]
+    pub(crate) const fn construction_provenance(
+        mut self,
+        provenance: TopologyConstructionProvenance,
+    ) -> Self {
+        self.triangulation.storage.topology_construction_provenance = provenance;
         self
     }
 }

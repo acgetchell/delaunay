@@ -107,7 +107,7 @@ use crate::core::vertex::Vertex;
 use crate::delaunay_model::DelaunayTriangulation;
 use crate::delaunay_property_validation::is_delaunay_property_only;
 use crate::delaunayize::DelaunayRefinementBuilder;
-use crate::geometry::kernel::{AdaptiveKernel, Kernel};
+use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates};
 use crate::geometry::point::Point;
 use crate::geometry::util::circumcenter;
 use crate::topology::traits::global_topology_model::GlobalTopologyModel;
@@ -121,7 +121,8 @@ use crate::triangulation::construction::{
 };
 use crate::triangulation::realization::TriangulationRealizationValidationError;
 use crate::triangulation::validation::{
-    TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
+    TopologyConstructionProvenance, TopologyGuarantee, ValidationConfigurationError,
+    ValidationPolicy,
 };
 use crate::validation::DelaunayTriangulationValidationError;
 use num_traits::ToPrimitive;
@@ -855,6 +856,13 @@ pub enum ExplicitConstructionError {
         /// Underlying insertion/orientation error.
         #[source]
         source: Box<InsertionError>,
+    },
+    /// TDS orientation normalization failed while assembling explicit connectivity.
+    #[error("TDS orientation normalization failed during explicit construction: {source}")]
+    TdsOrientationNormalization {
+        /// Underlying TDS orientation or structural validation error.
+        #[source]
+        source: Box<TdsError>,
     },
     /// Level 1–2 TDS structural validation failed after assembly.
     #[error("Structural validation failed during explicit construction: {source}")]
@@ -1697,7 +1705,10 @@ where
     ) -> Result<
         DelaunayTriangulation<AdaptiveKernel<f64>, U, V, D>,
         DelaunayTriangulationConstructionError,
-    > {
+    >
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         self.build_with_kernel(&AdaptiveKernel::new())
     }
 
@@ -1749,6 +1760,8 @@ where
     pub fn build_triangulation(
         self,
     ) -> Result<Triangulation<AdaptiveKernel<f64>, U, V, D>, DelaunayTriangulationConstructionError>
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         self.build_triangulation_with_kernel(&AdaptiveKernel::new())
     }
@@ -1803,7 +1816,10 @@ where
             ConstructionStatistics,
         ),
         DelaunayTriangulationConstructionErrorWithStatistics,
-    > {
+    >
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         self.build_triangulation_with_kernel_and_statistics(&AdaptiveKernel::new())
     }
 
@@ -1844,7 +1860,7 @@ where
         kernel: &K,
     ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: Kernel<D, Scalar = f64>,
+        K: ExactPredicates<D, Scalar = f64>,
     {
         let validation_policy = self.resolved_validation_policy()?;
         let construction_options = self
@@ -1952,7 +1968,10 @@ where
             ConstructionStatistics,
         ),
         DelaunayTriangulationConstructionErrorWithStatistics,
-    > {
+    >
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         self.build_with_kernel_and_statistics(&AdaptiveKernel::new())
     }
 
@@ -1964,8 +1983,8 @@ where
     /// degeneracy-preserving filtered-exact policy, or a custom implementation).
     ///
     /// **Note:** [`DelaunayRefinementBuilder::repair_by_flips`] requires
-    /// [`ExactPredicates`](crate::geometry::kernel::ExactPredicates). `FastKernel`
-    /// satisfies that dimension-bounded contract through D ≤ 5.
+    /// [`ExactPredicates`]. `FastKernel`
+    /// satisfies that dimension-bounded contract through D ≤ 6.
     ///
     /// # Errors
     ///
@@ -2006,7 +2025,7 @@ where
         kernel: &K,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: Kernel<D, Scalar = f64>,
+        K: ExactPredicates<D, Scalar = f64>,
     {
         let validation_policy = self.resolved_validation_policy()?;
         if !self.construction_options.enforces_final_delaunay() {
@@ -2154,7 +2173,7 @@ where
         DelaunayTriangulationConstructionErrorWithStatistics,
     >
     where
-        K: Kernel<D, Scalar = f64>,
+        K: ExactPredicates<D, Scalar = f64>,
     {
         let construction_started = Instant::now();
         let validation_policy = match self.resolved_validation_policy() {
@@ -2253,7 +2272,7 @@ where
         DelaunayTriangulationConstructionErrorWithStatistics,
     >
     where
-        K: Kernel<D, Scalar = f64>,
+        K: ExactPredicates<D, Scalar = f64>,
     {
         let construction_started = Instant::now();
         let validation_policy = match self.resolved_validation_policy() {
@@ -2372,7 +2391,7 @@ where
         validation_policy: ValidationPolicy,
     ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: Kernel<D, Scalar = f64>,
+        K: ExactPredicates<D, Scalar = f64>,
     {
         triangulation.try_set_validation_policy(validation_policy)?;
         Ok(triangulation)
@@ -2387,7 +2406,7 @@ where
         validation_policy: ValidationPolicy,
     ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: Kernel<D, Scalar = f64>,
+        K: ExactPredicates<D, Scalar = f64>,
     {
         let topology = Self::periodic_image_global_topology(domain);
         Self::reject_periodic_conflicting_global_topology(
@@ -2459,7 +2478,7 @@ where
         global_topology: GlobalTopology<D>,
     ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: Kernel<D, Scalar = f64>,
+        K: ExactPredicates<D, Scalar = f64>,
     {
         Self::reject_explicit_non_euclidean_topology(global_topology)?;
 
@@ -2532,8 +2551,10 @@ where
                     }),
                 }
             }
-            TdsBuilderError::OrientationNormalization { source }
-            | TdsBuilderError::Validation { source } => {
+            TdsBuilderError::OrientationNormalization { source } => {
+                ExplicitConstructionError::TdsOrientationNormalization { source }
+            }
+            TdsBuilderError::Validation { source } => {
                 ExplicitConstructionError::StructuralValidation { source }
             }
         }
@@ -2700,7 +2721,7 @@ where
         construction_options: ConstructionOptions,
     ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: Kernel<D, Scalar = f64>,
+        K: ExactPredicates<D, Scalar = f64>,
         M: GlobalTopologyModel<D>,
     {
         // Keep `build_periodic` self-protecting even if future call paths bypass outer validation.
@@ -2885,7 +2906,7 @@ where
                     base_seed,
                 }),
         };
-        let image_kernel = AdaptiveKernel::<f64>::new();
+        let image_kernel = kernel.clone();
         let relaxed_full_dt = (|| {
             let mut full_triangulation = DelaunayTriangulationBuilder::new(&expanded)
                 .simplex_data_type::<V>()
@@ -2918,15 +2939,11 @@ where
                         source: Box::new(source),
                     }
                 })?;
-            DelaunayRefinementBuilder::new(full_triangulation)
-                .build()
-                .map_err(|failure| {
-                    TriangulationConstructionError::FinalDelaunayValidation {
-                        context: FinalDelaunayValidationContext::PeriodicQuotientDelaunay,
-                        source: failure.into_reason(),
-                    }
-                    .into()
-                })
+            // The lifted image triangulation is an internal Levels 1–4 workspace,
+            // not a publishable Euclidean owner. Successful flip repair above is
+            // sufficient for selecting periodic quotient representatives; the
+            // quotient receives its own topology-aware Level 5 certification.
+            Ok(full_triangulation)
         })();
         let full_dt = match relaxed_full_dt {
             Ok(full_dt) => full_dt,
@@ -2934,7 +2951,7 @@ where
                 source:
                     DelaunayConstructionFailure::DelaunayRepair { .. }
                     | DelaunayConstructionFailure::FinalDelaunayValidation { .. },
-            }) => DelaunayTriangulation::build_with_kernel_options(
+            }) => DelaunayTriangulation::build_triangulation_with_kernel_options(
                 &image_kernel,
                 &expanded,
                 TopologyGuarantee::PLManifold,
@@ -3427,7 +3444,7 @@ where
         }
 
         // Rebuild the simplex complex from quotient representatives.
-        let mut tds_mut = full_dt.into_triangulation().into_tds();
+        let mut tds_mut = full_dt.into_tds();
 
         // Remove all simplices first.
         let all_simplices: Vec<SimplexKey> = tds_mut.simplex_keys().collect();
@@ -3597,6 +3614,8 @@ where
         TriangulationBuilder::new(tds_mut, kernel.clone())
             .topology_guarantee(topology_guarantee)
             .global_topology(global_topology)
+            .construction_provenance(TopologyConstructionProvenance::PeriodicImageQuotient)
+            .canonicalizing()
             .build()
             .map_err(|failure| {
                 let source = failure.into_reason();

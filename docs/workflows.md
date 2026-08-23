@@ -52,14 +52,19 @@ return a typed error for incoherent combinations such as
 See [`construction_and_validation.md`](construction_and_validation.md) for details.
 
 ```rust
-use delaunay::prelude::construction::{DelaunayIncrementalBuilder, TopologyGuarantee};
+use delaunay::prelude::construction::{
+    DelaunayIncrementalBuilder, DelaunayResult, TopologyGuarantee,
+};
 use delaunay::prelude::validation::ValidationPolicy;
 
-let mut builder: DelaunayIncrementalBuilder<_, (), (), 3> =
-    DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
+fn main() -> DelaunayResult<()> {
+    let mut builder: DelaunayIncrementalBuilder<_, (), (), 3> =
+        DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
 
-// In tests/debugging, validate global Levels 1–4 after every insertion.
-builder.try_set_validation_policy(ValidationPolicy::Always)?;
+    // In tests/debugging, validate global Levels 1–4 after every insertion.
+    builder.try_set_validation_policy(ValidationPolicy::Always)?;
+    Ok(())
+}
 ```
 
 ### What the topology guarantees mean (quick summary)
@@ -105,7 +110,7 @@ every local schedule and supported geometry. See
 
 The consuming `delaunayize` conversion requires `K: ExactPredicates` at
 compile time. `AdaptiveKernel`, `RobustKernel`, and `FastKernel` implement this
-trait through D ≤ 5. See
+trait through D ≤ 6. See
 [`numerical_robustness_guide.md`](numerical_robustness_guide.md) for kernel selection guidance.
 
 ```rust
@@ -175,7 +180,7 @@ input triangulation.
 
 Additionally, flip-repair refinement requires `K: ExactPredicates` (compile-time bound).
 The default `AdaptiveKernel`, `RobustKernel`, and `FastKernel` satisfy this
-through D ≤ 5. Their policies differ in tie handling, diagnostics, and
+through D ≤ 6. Their policies differ in tie handling, diagnostics, and
 higher-dimensional fallback rather than in the exactness of a returned sign
 inside that supported envelope.
 

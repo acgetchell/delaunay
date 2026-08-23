@@ -362,8 +362,8 @@ CSV plus summary JSON under `target/pachner_stress/`, and keep parseable stdout
 stage/report/progress lines so long workloads can be diagnosed without making
 the workflow part of routine CI. These direct stress recipes currently validate
 topology scope only (Levels 1-3); the large Level 4 realization overlap scan is
-deferred to the dedicated realization-validation work. The CLI supports
-The `pachner-stress` binary supports `round-trip` and `random-walk` modes;
+deferred to the dedicated realization-validation work. The `pachner-stress`
+binary supports `round-trip` and `random-walk` modes;
 `round-trip` is the default. Pass explicit
 `attempts`, `vertices`, and `validate_every` arguments for soak runs. Use
 `just bench-pachner-stress` when Criterion timing statistics for stable 4D move
@@ -668,11 +668,14 @@ target-built PDF to `papers/validation.pdf`. `just papers` refreshes the
 canonical figures and reviewer PDF through those named artifact owners.
 
 Tectonic and `tex-fmt` are pinned Cargo-installed tools. `chktex` comes from a
-TeX distribution or system package manager. Installing or upgrading Tectonic
-from Cargo also requires a `pkg-config` implementation and development headers
-for its externally resolved native bridge libraries. macOS requires FreeType,
-Graphite2, ICU, libpng, and zlib, but not fontconfig. Non-Apple platforms
-additionally require fontconfig and OpenSSL. The pinned default build vendors
+TeX distribution or system package manager. Local macOS installations provided
+by MacTeX place commands under `/Library/TeX/texbin`; if a non-interactive shell
+does not load that directory, run paper recipes with
+`PATH=/Library/TeX/texbin:/opt/homebrew/bin:$PATH`. Installing or upgrading
+Tectonic from Cargo also requires a `pkg-config` implementation and development
+headers for its externally resolved native bridge libraries. macOS requires
+FreeType, Graphite2, ICU, libpng, and zlib, but not fontconfig. Non-Apple
+platforms additionally require fontconfig and OpenSSL. The pinned default build vendors
 HarfBuzz. When the pinned Tectonic version is absent, `just setup-tools`
 requires `pkg-config` (commonly installed as `pkgconf`) and checks the
 platform-specific external native dependency set. On macOS it auto-detects

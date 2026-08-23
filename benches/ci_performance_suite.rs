@@ -52,14 +52,14 @@ use delaunay::prelude::construction::{
     RetryPolicy, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point};
+use delaunay::prelude::geometry::{
+    AdaptiveKernel, CoordinateRange, ExactPredicates, Point, RobustKernel,
+};
 use delaunay::prelude::query::ConvexHull;
 use delaunay::prelude::tds::Tds;
 use delaunay::prelude::triangulation::{Triangulation, TriangulationBuilder};
 use delaunay::try_vertices_from_points;
 use std::{env, hint::black_box, num::NonZeroUsize, sync::Once};
-#[cfg(feature = "bench-logging")]
-use tracing::warn;
 
 /// Shared benchmark setup error helpers.
 #[path = "common/bench_utils.rs"]
@@ -69,8 +69,9 @@ use bench_utils::{OrAbort, OrAbortWithContext, abort_benchmark};
 #[path = "common/flip_fixtures.rs"]
 mod flip_fixtures;
 use flip_fixtures::{
-    ADVERSARIAL_POINTS_2D, ADVERSARIAL_POINTS_3D, ADVERSARIAL_POINTS_4D, ADVERSARIAL_POINTS_5D,
-    STABLE_POINTS_2D, STABLE_POINTS_3D, STABLE_POINTS_4D, STABLE_POINTS_5D,
+    ADVERSARIAL_K2_POINTS_5D, ADVERSARIAL_POINTS_2D, ADVERSARIAL_POINTS_3D, ADVERSARIAL_POINTS_4D,
+    ADVERSARIAL_POINTS_5D, STABLE_K2_POINTS_5D, STABLE_POINTS_2D, STABLE_POINTS_3D,
+    STABLE_POINTS_4D, STABLE_POINTS_5D,
 };
 
 #[path = "common/flip_workflows.rs"]
@@ -387,24 +388,38 @@ fn print_manifest_once() {
     });
 }
 
-/// Prepare benchmark inputs by looking up a pre-computed seed, falling back
-/// to a runtime search only if the known seed is missing or invalid.
+/// Prepare benchmark inputs from the committed fixture seed.
+///
+/// Runtime search is deliberately restricted to the explicit discovery mode;
+/// silently changing data during a benchmark run would invalidate longitudinal
+/// comparisons.
 fn prepare_data<const D: usize>(
     dim_seed: u64,
     count: usize,
     bounds: CoordinateRange<f64>,
     attempts: NonZeroUsize,
-) -> (u64, Vec<Point<D>>, Vec<Vertex<(), D>>) {
+) -> (u64, Vec<Point<D>>, Vec<Vertex<(), D>>)
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     // Fast path: use the pre-computed seed (single verification construction)
     if let Some(seed) = known_seed(D, count) {
         if let Some(result) = find_seed_vertices::<D>(seed, count, bounds, 1, attempts) {
             return result;
         }
 
-        warn_known_seed_failed::<D>(seed, count, Dataset::WellConditioned);
+        if !discover_seeds_enabled() {
+            abort_benchmark(format_args!(
+                "committed well-conditioned benchmark fixture failed for {D}D/{count} at seed {seed}; rerun with DELAUNAY_BENCH_DISCOVER_SEEDS=1 to discover and review a replacement"
+            ));
+        }
+    } else if !discover_seeds_enabled() {
+        abort_benchmark(format_args!(
+            "no committed well-conditioned benchmark fixture exists for {D}D/{count}; discovery must be requested explicitly"
+        ));
     }
 
-    // Slow fallback: runtime search from the base seed
+    // Explicit discovery path only.
     let base_seed = dim_seed.wrapping_add(count as u64);
     let search_limit = seed_search_limit();
     find_seed_vertices::<D>(base_seed, count, bounds, search_limit, attempts).or_abort(
@@ -415,27 +430,10 @@ fn prepare_data<const D: usize>(
     )
 }
 
-fn warn_known_seed_failed<const D: usize>(seed: u64, count: usize, dataset: Dataset) {
-    let dataset_label = match dataset {
-        Dataset::WellConditioned => "well_conditioned",
-        Dataset::Adversarial => "adversarial",
-    };
-
-    #[cfg(not(feature = "bench-logging"))]
-    let _ = (seed, count, dataset_label);
-    #[cfg(feature = "bench-logging")]
-    {
-        warn!(
-            known_seed = seed,
-            dim = D,
-            count,
-            dataset = dataset_label,
-            "known seed failed, falling back to runtime search"
-        );
-    }
-}
-
-fn prepare_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation<D> {
+fn prepare_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation<D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let bounds = CoordinateRange::try_new(-100.0_f64, 100.0).or_abort();
     let attempts = retry_attempts(6);
     let (seed, _, vertices) = prepare_data::<D>(dim_seed, count, bounds, attempts);
@@ -450,7 +448,10 @@ fn prepare_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation
         .or_abort()
 }
 
-fn prepare_adv_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation<D> {
+fn prepare_adv_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation<D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let attempts = retry_attempts(8);
     let (seed, _, vertices) = prepare_adv_data::<D>(dim_seed, count, attempts);
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
@@ -468,7 +469,10 @@ fn prepare_adv_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangula
 fn prepare_explicit_import_fixture<const D: usize>(
     dim_seed: u64,
     count: usize,
-) -> ExplicitImportFixture<D> {
+) -> ExplicitImportFixture<D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let seed = dim_seed.wrapping_add(count as u64);
     let points = generate_random_points_in_range_seeded::<D>(
         count,
@@ -518,7 +522,10 @@ fn prepare_explicit_import_fixture<const D: usize>(
 fn prepare_proof_boundary_fixture<const D: usize>(
     dim_seed: u64,
     count: usize,
-) -> ProofBoundaryFixture<D> {
+) -> ProofBoundaryFixture<D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let import = prepare_explicit_import_fixture::<D>(dim_seed, count);
     let triangulation: BenchGenericTriangulation<D> =
         DelaunayTriangulationBuilder::try_from_vertices_and_simplices(
@@ -538,6 +545,12 @@ fn prepare_proof_boundary_fixture<const D: usize>(
     TriangulationBuilder::new(tds.clone(), AdaptiveKernel::new())
         .topology_guarantee(topology_guarantee)
         .global_topology(global_topology)
+        .build()
+        .or_abort();
+    TriangulationBuilder::new(tds.clone(), AdaptiveKernel::new())
+        .topology_guarantee(topology_guarantee)
+        .global_topology(global_topology)
+        .canonicalizing()
         .build()
         .or_abort();
     DelaunayRefinementBuilder::new(triangulation.clone())
@@ -580,7 +593,10 @@ fn find_seed_vertices<const D: usize>(
     bounds: CoordinateRange<f64>,
     limit: usize,
     attempts: NonZeroUsize,
-) -> SeedSearchResult<D> {
+) -> SeedSearchResult<D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     for offset in 0..limit {
         let candidate_seed = start_seed.wrapping_add(offset as u64);
         let points =
@@ -608,7 +624,10 @@ fn stable_adv_points<const D: usize>(
     seed: u64,
     count: usize,
     attempts: NonZeroUsize,
-) -> SeedSearchResult<D> {
+) -> SeedSearchResult<D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let points = generate_adv_points::<D>(count, seed);
     let vertices = try_vertices_from_points(&points).or_abort();
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
@@ -627,7 +646,10 @@ fn prepare_adv_data<const D: usize>(
     dim_seed: u64,
     count: usize,
     attempts: NonZeroUsize,
-) -> (u64, Vec<Point<D>>, Vec<Vertex<(), D>>) {
+) -> (u64, Vec<Point<D>>, Vec<Vertex<(), D>>)
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     if !discover_seeds_enabled()
         && let Some(seed) = known_adv_seed(D, count)
     {
@@ -635,7 +657,13 @@ fn prepare_adv_data<const D: usize>(
             return result;
         }
 
-        warn_known_seed_failed::<D>(seed, count, Dataset::Adversarial);
+        abort_benchmark(format_args!(
+            "committed adversarial benchmark fixture failed for {D}D/{count} at seed {seed}; rerun with DELAUNAY_BENCH_DISCOVER_SEEDS=1 to discover and review a replacement"
+        ));
+    } else if !discover_seeds_enabled() {
+        abort_benchmark(format_args!(
+            "no committed adversarial benchmark fixture exists for {D}D/{count}; discovery must be requested explicitly"
+        ));
     }
 
     let start_seed = dim_seed
@@ -692,7 +720,10 @@ fn generate_adv_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>>
 /// The benchmark uses input ordering so preselected public flip candidates from
 /// both stable and adversarial fixtures stay deterministic across runs and
 /// Criterion measures only the public flip operation.
-fn build_flip_dt<const D: usize>(points: &[[f64; D]]) -> FlipTriangulation<D> {
+fn build_flip_dt<const D: usize>(points: &[[f64; D]]) -> FlipTriangulation<D>
+where
+    RobustKernel<f64>: ExactPredicates<D>,
+{
     flip_workflows::build_flip_dt(points).or_abort()
 }
 
@@ -980,7 +1011,9 @@ fn emit_construction_metric<const D: usize>(
     benchmark_id: &str,
     vertices: &[Vertex<(), D>],
     options: ConstructionOptions,
-) {
+) where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let dt: BenchTriangulation<D> = DelaunayTriangulation::builder(vertices)
         .construction_options(options)
         .build()
@@ -1290,7 +1323,7 @@ fn bench_hull_query_case<const D: usize>(
         )),
     };
     let outside_point = exterior_hull_query_point(dt);
-    match hull.is_point_outside(&outside_point, dt.as_triangulation()) {
+    match hull.is_point_outside(&outside_point) {
         Ok(true) => {}
         Ok(false) => abort_benchmark(
             "computed exterior hull query point should be outside the benchmark hull",
@@ -1307,16 +1340,14 @@ fn bench_hull_query_case<const D: usize>(
             count,
         ),
         |b| {
-            b.iter(
-                || match hull.is_point_outside(&outside_point, dt.as_triangulation()) {
-                    Ok(value) => {
-                        let _ = black_box(value);
-                    }
-                    Err(error) => abort_benchmark(format_args!(
-                        "ConvexHull::is_point_outside should succeed: {error}"
-                    )),
-                },
-            );
+            b.iter(|| match hull.is_point_outside(&outside_point) {
+                Ok(value) => {
+                    let _ = black_box(value);
+                }
+                Err(error) => abort_benchmark(format_args!(
+                    "ConvexHull::is_point_outside should succeed: {error}"
+                )),
+            });
         },
     );
 
@@ -1326,16 +1357,14 @@ fn bench_hull_query_case<const D: usize>(
             count,
         ),
         |b| {
-            b.iter(
-                || match hull.find_visible_facets(&outside_point, dt.as_triangulation()) {
-                    Ok(value) => {
-                        let _ = black_box(value);
-                    }
-                    Err(error) => abort_benchmark(format_args!(
-                        "ConvexHull::find_visible_facets should succeed: {error}"
-                    )),
-                },
-            );
+            b.iter(|| match hull.find_visible_facets(&outside_point) {
+                Ok(value) => {
+                    let _ = black_box(value);
+                }
+                Err(error) => abort_benchmark(format_args!(
+                    "ConvexHull::find_visible_facets should succeed: {error}"
+                )),
+            });
         },
     );
 
@@ -1348,15 +1377,13 @@ fn bench_hull_query_case<const D: usize>(
             count,
         ),
         |b| {
-            b.iter(|| {
-                match hull.find_nearest_visible_facet(&outside_point, dt.as_triangulation()) {
-                    Ok(value) => {
-                        let _ = black_box(value);
-                    }
-                    Err(error) => abort_benchmark(format_args!(
-                        "ConvexHull::find_nearest_visible_facet should succeed: {error}"
-                    )),
+            b.iter(|| match hull.find_nearest_visible_facet(&outside_point) {
+                Ok(value) => {
+                    let _ = black_box(value);
                 }
+                Err(error) => abort_benchmark(format_args!(
+                    "ConvexHull::find_nearest_visible_facet should succeed: {error}"
+                )),
             });
         },
     );
@@ -1463,7 +1490,9 @@ fn bench_insert_case<const D: usize>(
 fn bench_explicit_import_case<const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     fixture: &ExplicitImportFixture<D>,
-) {
+) where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     group.throughput(Throughput::Elements(fixture.simplices.len() as u64));
     group.bench_function(
         BenchmarkId::new(
@@ -1739,7 +1768,9 @@ fn bench_validation_dimension<const D: usize>(
     seed: u64,
     count: usize,
     include_cumulative_validation: bool,
-) {
+) where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let triangulation = prepare_dt::<D>(seed, count);
     if include_cumulative_validation {
         bench_validate_case(
@@ -2075,12 +2106,14 @@ fn bench_bistellar_flips_4d(c: &mut Criterion) {
 fn bench_bistellar_flips_5d(c: &mut Criterion) {
     let base_dt_5d = build_flip_dt(STABLE_POINTS_5D);
     let k1_simplex_5d = largest_volume_simplex(&base_dt_5d);
-    let k2_facet_5d = flippable_k2_facet(&base_dt_5d, true);
     let k3_ridge_5d = flippable_k3_ridge(&base_dt_5d, true);
+    let k2_dt_5d = build_flip_dt(STABLE_K2_POINTS_5D);
+    let k2_facet_5d = flippable_k2_facet(&k2_dt_5d, true);
     let adv_dt_5d = build_flip_dt(ADVERSARIAL_POINTS_5D);
     let adv_k1_simplex_5d = adversarial_largest_volume_simplex(&adv_dt_5d);
-    let adv_k2_facet_5d = adversarial_flippable_k2_facet(&adv_dt_5d, true);
     let adv_k3_ridge_5d = adversarial_flippable_k3_ridge(&adv_dt_5d, true);
+    let adv_k2_dt_5d = build_flip_dt(ADVERSARIAL_K2_POINTS_5D);
+    let adv_k2_facet_5d = adversarial_flippable_k2_facet(&adv_k2_dt_5d, true);
 
     let mut group_5d = c.benchmark_group("bistellar_flips_5d");
     group_5d.sample_size(10);
@@ -2092,11 +2125,11 @@ fn bench_bistellar_flips_5d(c: &mut Criterion) {
         &adv_dt_5d,
         adv_k1_simplex_5d,
     );
-    bench_k2_roundtrip_case(&mut group_5d, "k2_roundtrip", &base_dt_5d, k2_facet_5d);
+    bench_k2_roundtrip_case(&mut group_5d, "k2_roundtrip", &k2_dt_5d, k2_facet_5d);
     bench_k2_roundtrip_case(
         &mut group_5d,
         "k2_roundtrip_adversarial",
-        &adv_dt_5d,
+        &adv_k2_dt_5d,
         adv_k2_facet_5d,
     );
     bench_k3_roundtrip_case(&mut group_5d, "k3_roundtrip", &base_dt_5d, k3_ridge_5d);

@@ -42,8 +42,6 @@ use delaunay::incremental_builder::{
 use delaunay::pachner::PachnerMoves as DirectPachnerMoves;
 use delaunay::prelude::DelaunayValidationError;
 use delaunay::prelude::algorithms::LocateResult;
-#[cfg(feature = "diagnostics")]
-use delaunay::prelude::collections::SimplexKeyBuffer;
 use delaunay::prelude::collections::{
     SecureHashMap as ScopedSecureHashMap, SecureHashSet as ScopedSecureHashSet,
     SimplexSecondaryMap as ScopedSimplexSecondaryMap, Uuid,
@@ -87,16 +85,14 @@ use delaunay::prelude::diagnostics::ConstructionTelemetry;
 use delaunay::prelude::diagnostics::{
     DelaunayViolationDetail, DelaunayViolationReport, NeighborSlot as DiagnosticNeighborSlot,
     debug_print_first_delaunay_violation, delaunay_violation_report,
-    verify_conflict_region_completeness,
 };
 use delaunay::prelude::export::{
     InvalidCoordinateValue as ExportPreludeInvalidCoordinateValue,
-    MESH_EXPORT_SCHEMA as ExportPreludeMeshExportSchema, MeshExport as ExportPreludeMeshExport,
-    MeshExportError as ExportPreludeMeshExportError,
-    MeshExportValidationError as ExportPreludeMeshExportValidationError,
-    ValidatedMeshExport as ExportPreludeValidatedMeshExport,
+    VISUALIZATION_SCHEMA as ExportPreludeVisualizationSchema,
     ValidatedVisualizationData as ExportPreludeValidatedVisualizationData,
     VisualizationData as ExportPreludeVisualizationData,
+    VisualizationDataValidationError as ExportPreludeVisualizationDataValidationError,
+    VisualizationExportError as ExportPreludeVisualizationExportError,
     VisualizationTopologyGuarantee as ExportPreludeVisualizationTopologyGuarantee,
     VisualizationTopologyKind as ExportPreludeVisualizationTopologyKind,
 };
@@ -106,18 +102,17 @@ use delaunay::prelude::generators::{
     RandomTriangulationBuilder, RandomTriangulationBuilderError, generate_grid_points,
     generate_random_points_in_range_seeded, try_generate_random_points_seeded,
 };
-#[cfg(feature = "diagnostics")]
-use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::geometry::{
-    ArrayConversionFailureReason, CircumcenterError, CircumcenterFailureReason,
+    AdaptiveKernel, ArrayConversionFailureReason, CircumcenterError, CircumcenterFailureReason,
     CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
     CoordinateValues, DegenerateGeometry, DegenerateMeasure, DegenerateSimplexReason,
-    FiniteCoordinateValue, InvalidCoordinateValue, LaError, LabeledSimplexRealization,
-    LabeledSimplexRealizationError, MatrixError, PeriodicSimplexSpan, PeriodicSimplexSpanError,
-    Point, QualitySimplexVerticesError, SimplexIntersectionFailure, SimplexIntersectionWitness,
-    SimplexRealizationBuffer, SurfaceMeasureError, ValueConversionError,
-    ValueConversionFailureReason, axis_aligned_bounding_boxes_overlap, coordinate_range_for_axis,
-    try_periodic_simplex_span, validate_simplex_realizations_intersect_only_in_shared_faces,
+    ExactPredicates, FiniteCoordinateValue, InvalidCoordinateValue, LaError,
+    LabeledSimplexRealization, LabeledSimplexRealizationError, MatrixError, PeriodicSimplexSpan,
+    PeriodicSimplexSpanError, Point, QualitySimplexVerticesError, SimplexIntersectionFailure,
+    SimplexIntersectionWitness, SimplexRealizationBuffer, SurfaceMeasureError,
+    ValueConversionError, ValueConversionFailureReason, axis_aligned_bounding_boxes_overlap,
+    coordinate_range_for_axis, try_periodic_simplex_span,
+    validate_simplex_realizations_intersect_only_in_shared_faces,
 };
 use delaunay::prelude::insertion::{
     InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage, InsertionError,
@@ -146,8 +141,9 @@ use delaunay::prelude::query::{
     AllFacetsIter as QueryAllFacetsIter, BoundaryFacetsIter as QueryBoundaryFacetsIter, ConvexHull,
     ConvexHullConstructionError,
     ConvexHullInsufficientDataReason as QueryConvexHullInsufficientDataReason,
-    EdgeIndex as QueryEdgeIndex, EdgeKey as QueryEdgeKey, EdgeView as QueryEdgeView,
-    FacetHandle as QueryFacetHandle, FacetIncidenceAnalysis as QueryFacetIncidenceAnalysis,
+    ConvexHullQueryError, EdgeIndex as QueryEdgeIndex, EdgeKey as QueryEdgeKey,
+    EdgeView as QueryEdgeView, FacetHandle as QueryFacetHandle,
+    FacetIncidenceAnalysis as QueryFacetIncidenceAnalysis,
     FacetIncidenceView as QueryFacetIncidenceView, IncidenceView as QueryIncidenceView,
     OneSidedFacetsIter as QueryOneSidedFacetsIter, QueryError,
     RidgeCandidate as QueryRidgeCandidate, RidgeCandidateError as QueryRidgeCandidateError,
@@ -191,9 +187,8 @@ use delaunay::prelude::topology::validation::{
 use delaunay::prelude::triangulation::{
     AllFacetsIter as TriangulationAllFacetsIter,
     BoundaryFacetsIter as TriangulationBoundaryFacetsIter, EdgeIndex as GenericEdgeIndex,
-    FacetIssuesMap as TriangulationFacetIssuesMap, FastKernel as TriangulationFastKernel,
-    IncidenceView as GenericIncidenceView, InsertionError as TriangulationInsertionError,
-    ManifoldError as TriangulationManifoldError,
+    FastKernel as TriangulationFastKernel, IncidenceView as GenericIncidenceView,
+    InsertionError as TriangulationInsertionError, ManifoldError as TriangulationManifoldError,
     OneSidedFacetsIter as TriangulationOneSidedFacetsIter, QueryError as TriangulationQueryError,
     RidgeCandidate as TriangulationRidgeCandidate,
     RidgeCandidateError as TriangulationRidgeCandidateError,
@@ -289,14 +284,14 @@ use delaunay::{
     DelaunayConstructionRetryFailure as RootConstructionRetryFailure,
     DelaunayTriangulationConstructionError as RootDelaunayTriangulationConstructionError,
     DelaunayTriangulationValidationError as RootDelaunayTriangulationValidationError,
-    MESH_EXPORT_SCHEMA as RootMeshExportSchema, MeshExport as RootMeshExport,
-    MeshExportError as RootMeshExportError,
-    MeshExportValidationError as RootMeshExportValidationError,
     PlManifoldRepairStage as RootPlManifoldRepairStage,
     SimplexBarycenterError as RootSimplexBarycenterError,
     SimplexDataFillError as RootSimplexDataFillError,
-    ValidatedMeshExport as RootValidatedMeshExport,
+    VISUALIZATION_SCHEMA as RootVisualizationSchema,
     ValidatedVisualizationData as RootValidatedVisualizationData,
+    VisualizationData as RootVisualizationData,
+    VisualizationDataValidationError as RootVisualizationDataValidationError,
+    VisualizationExportError as RootVisualizationExportError,
     VisualizationTopologyGuarantee as RootVisualizationTopologyGuarantee,
     VisualizationTopologyKind as RootVisualizationTopologyKind,
 };
@@ -317,9 +312,9 @@ enum RootApiExportTestError {
     #[error(transparent)]
     Delaunayize(#[from] DelaunayizeModuleError),
     #[error(transparent)]
-    MeshExport(#[from] RootMeshExportError),
+    VisualizationExport(#[from] RootVisualizationExportError),
     #[error(transparent)]
-    MeshExportValidation(#[from] RootMeshExportValidationError),
+    VisualizationValidation(#[from] RootVisualizationDataValidationError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -351,9 +346,9 @@ enum PreludeExportTestError {
     #[error(transparent)]
     Delaunayize(#[from] DelaunayizeError),
     #[error(transparent)]
-    MeshExport(#[from] ExportPreludeMeshExportError),
+    VisualizationExport(#[from] ExportPreludeVisualizationExportError),
     #[error(transparent)]
-    MeshExportValidation(#[from] ExportPreludeMeshExportValidationError),
+    VisualizationValidation(#[from] ExportPreludeVisualizationDataValidationError),
     #[error(transparent)]
     Insertion(#[from] InsertionError),
     #[error(transparent)]
@@ -362,6 +357,8 @@ enum PreludeExportTestError {
     Query(#[from] QueryError),
     #[error(transparent)]
     ConvexHull(#[from] ConvexHullConstructionError),
+    #[error(transparent)]
+    ConvexHullQuery(#[from] ConvexHullQueryError),
     #[error(transparent)]
     TopologyIndex(#[from] TopologyIndexBuildError),
     #[error(transparent)]
@@ -1148,24 +1145,25 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
     let validation_result: Result<(), ValidationModuleDelaunayTriangulationValidationError> =
         dt.validate();
     validation_result?;
-    let root_mesh_export: RootMeshExport<3> = dt.to_mesh_export()?;
-    assert_eq!(root_mesh_export.metadata.schema, RootMeshExportSchema);
+    let root_visualization_data: RootVisualizationData<3> = dt.to_visualization_data()?;
     assert_eq!(
-        root_mesh_export.metadata.topology_kind,
+        root_visualization_data.metadata.schema,
+        RootVisualizationSchema
+    );
+    assert_eq!(
+        root_visualization_data.metadata.topology_kind,
         RootVisualizationTopologyKind::Euclidean
     );
     assert_eq!(
-        root_mesh_export.metadata.topology_guarantee,
+        root_visualization_data.metadata.topology_guarantee,
         RootVisualizationTopologyGuarantee::PLManifold
     );
-    let root_validated_export: RootValidatedMeshExport<3> = root_mesh_export.into_validated()?;
-    assert_eq!(
-        root_validated_export.metadata().schema,
-        RootMeshExportSchema
-    );
     let root_validated_data: RootValidatedVisualizationData<3> =
-        dt.to_visualization_data()?.into_validated()?;
-    assert_eq!(root_validated_data.metadata().schema, RootMeshExportSchema);
+        root_visualization_data.into_validated()?;
+    assert_eq!(
+        root_validated_data.metadata().schema,
+        RootVisualizationSchema
+    );
     assert_bistellar_flips(dt.as_triangulation());
     assert_root_bistellar_flips(dt.as_triangulation());
 
@@ -1312,16 +1310,11 @@ fn assert_ridge_handle_exports<K>(
 fn assert_export_prelude_exports<K, U, V, const D: usize>(
     dt: &DelaunayTriangulation<K, U, V, D>,
 ) -> Result<(), PreludeExportTestError> {
-    let focused_mesh_export: ExportPreludeMeshExport<D> = dt.to_mesh_export()?;
     let focused_visualization_data: ExportPreludeVisualizationData<D> =
         dt.to_visualization_data()?;
     assert_eq!(
-        focused_mesh_export.metadata.schema,
-        ExportPreludeMeshExportSchema
-    );
-    assert_eq!(
         focused_visualization_data.metadata.schema,
-        ExportPreludeMeshExportSchema
+        ExportPreludeVisualizationSchema
     );
     assert_eq!(
         focused_visualization_data.metadata.topology_kind,
@@ -1331,17 +1324,11 @@ fn assert_export_prelude_exports<K, U, V, const D: usize>(
         focused_visualization_data.metadata.topology_guarantee,
         ExportPreludeVisualizationTopologyGuarantee::PLManifold
     );
-    let focused_validated_mesh_export: ExportPreludeValidatedMeshExport<D> =
-        focused_mesh_export.into_validated()?;
     let focused_validated_visualization_data: ExportPreludeValidatedVisualizationData<D> =
         focused_visualization_data.into_validated()?;
     assert_eq!(
-        focused_validated_mesh_export.metadata().schema,
-        ExportPreludeMeshExportSchema
-    );
-    assert_eq!(
         focused_validated_visualization_data.metadata().schema,
-        ExportPreludeMeshExportSchema
+        ExportPreludeVisualizationSchema
     );
     assert_eq!(ExportPreludeInvalidCoordinateValue::Nan.to_string(), "NaN");
     Ok(())
@@ -1474,11 +1461,7 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     })?;
     assert!(boundary_facet_count > 0);
     let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
-    assert_eq!(hull.facet_handles().count(), boundary_facet_count);
-    let hull_facet_view_count = hull
-        .try_facets(dt.as_triangulation())?
-        .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
-    assert_eq!(hull_facet_view_count, boundary_facet_count);
+    assert_eq!(hull.facets().count(), boundary_facet_count);
     let generic_ridge_link_result: Result<(), TriangulationManifoldError> =
         dt.as_triangulation().validate_ridge_links();
     generic_ridge_link_result?;
@@ -2111,23 +2094,20 @@ fn simplex_prelude_vertices<const D: usize>(
     Ok(vertices)
 }
 
-fn cospherical_prelude_vertices<const D: usize>()
+fn ridge_star_prelude_vertices<const D: usize>()
 -> Result<Vec<Vertex<(), D>>, PreludeExportTestError> {
     let mut vertices = Vec::with_capacity(D + 2);
+    vertices.push(vertex!([-1.0; D])?);
 
     for axis in 0..D {
-        let mut coords = [0.0; D];
+        let mut coords = [-1.0; D];
         coords[axis] = 1.0;
         vertices.push(vertex!(coords)?);
     }
 
-    let mut negative_first_axis = [0.0; D];
-    negative_first_axis[0] = -1.0;
-    vertices.push(vertex!(negative_first_axis)?);
-
-    let mut negative_second_axis = [0.0; D];
-    negative_second_axis[1] = -1.0;
-    vertices.push(vertex!(negative_second_axis)?);
+    let mut outer = [1.0; D];
+    outer[0] = 1.125;
+    vertices.push(vertex!(outer)?);
 
     Ok(vertices)
 }
@@ -2170,12 +2150,14 @@ fn assert_ridge_query_type_exports<const D: usize>() {
 
 fn assert_single_simplex_ridge_star<const D: usize>(
     vertices: &[Vertex<(), D>],
-) -> Result<(), PreludeExportTestError> {
+) -> Result<(), PreludeExportTestError>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     assert_ridge_query_type_exports::<D>();
     let dt = DelaunayTriangulation::builder(vertices).build()?;
     let ridge: QueryRidgeCandidate<D> =
         RidgeCandidate::<D>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(D - 1))?;
-    let star = dt.ridge_star_simplices(&ridge)?;
     let ridge_query: RidgeQuery<'_, (), (), D> = dt.ridge_query(&ridge)?;
     let query_ridge_query: QueryRidgeQuery<'_, (), (), D> = dt.ridge_query(&ridge)?;
     let query_facade_ridge_query: QueryFacadeRidgeQuery<'_, (), (), D> = dt.ridge_query(&ridge)?;
@@ -2183,6 +2165,7 @@ fn assert_single_simplex_ridge_star<const D: usize>(
     let triangulation_ridge_query: TriangulationRidgeQuery<'_, (), (), D> =
         dt.as_triangulation().ridge_query(&ridge)?;
     let query_star = ridge_query.incident_simplices();
+    let star = query_star;
     let ridge_view: RidgeView<'_, (), (), D> = dt.ridge_view(&ridge)?;
     let query_ridge_view: QueryRidgeView<'_, (), (), D> = dt.ridge_view(&ridge)?;
     let query_facade_ridge_view: QueryFacadeRidgeView<'_, (), (), D> = dt.ridge_view(&ridge)?;
@@ -2247,12 +2230,20 @@ fn assert_single_simplex_ridge_star<const D: usize>(
     Ok(())
 }
 
-fn assert_cospherical_ridge_star<const D: usize>() -> Result<(), PreludeExportTestError> {
-    let vertices = cospherical_prelude_vertices::<D>()?;
+fn assert_multi_simplex_ridge_star<const D: usize>() -> Result<(), PreludeExportTestError>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
+    let vertices = ridge_star_prelude_vertices::<D>()?;
     let dt = DelaunayTriangulation::builder(&vertices).build()?;
+    let (_, simplex) = dt
+        .simplices()
+        .next()
+        .expect("multi-simplex fixture should contain a simplex");
     let ridge =
-        RidgeCandidate::<D>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(D - 1))?;
-    let star = dt.ridge_star_simplices(&ridge)?;
+        RidgeCandidate::<D>::try_from_vertices(simplex.vertices().iter().copied().take(D - 1))?;
+    let ridge_query = dt.ridge_query(&ridge)?;
+    let star = ridge_query.incident_simplices();
 
     assert!(!star.is_empty());
     Ok(())
@@ -2276,7 +2267,10 @@ fn assert_ridge_candidate_reject_adversarial_keys<const D: usize>(keys: &[Vertex
     }
 }
 
-fn assert_topology_prelude_dimension<const D: usize>() -> Result<(), PreludeExportTestError> {
+fn assert_topology_prelude_dimension<const D: usize>() -> Result<(), PreludeExportTestError>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
     let simplex_vertices = simplex_prelude_vertices::<D>(0.0, 1.0)?;
     assert_single_simplex_ridge_star(&simplex_vertices)?;
 
@@ -2287,7 +2281,7 @@ fn assert_topology_prelude_dimension<const D: usize>() -> Result<(), PreludeExpo
     let keys = dt.vertices().map(|(key, _)| key).collect::<Vec<_>>();
     assert_ridge_candidate_reject_adversarial_keys::<D>(&keys);
 
-    assert_cospherical_ridge_star::<D>()?;
+    assert_multi_simplex_ridge_star::<D>()?;
     assert_matches!(
         DelaunayTriangulation::builder(&degenerate_prelude_vertices::<D>()?).build(),
         Err(DelaunayTriangulationConstructionError::Triangulation {
@@ -2399,11 +2393,8 @@ fn triangulation_prelude_covers_generic_layer() -> Result<(), PreludeExportTestE
     let _triangulation_boundary_facets: TriangulationBoundaryFacetsIter<'_, (), (), 2> =
         tri.boundary_facets().unwrap();
 
-    let empty_issues = TriangulationFacetIssuesMap::default();
-    let removed = tri
-        .repair_local_facet_issues(&empty_issues, 0)
-        .expect("empty issue set should not fail generic local repair");
-    assert_eq!(removed, 0);
+    let simplex_keys: Vec<_> = tri.simplices().map(|(key, _)| key).collect();
+    assert!(tri.local_facet_repair(&simplex_keys).unwrap().is_none());
     assert_eq!(
         tri.boundary_facets()
             .unwrap()
@@ -2643,13 +2634,6 @@ fn diagnostics_prelude_covers_opt_in_helpers() -> Result<(), PreludeExportTestEr
     let _typed_detail: Option<DelaunayViolationDetail> = None;
     assert!(DiagnosticNeighborSlot::Boundary.is_boundary());
 
-    let kernel = AdaptiveKernel::new();
-    let point = Point::try_new([0.0, 0.0])?;
-    let conflict_simplices = SimplexKeyBuffer::new();
-    assert_eq!(
-        verify_conflict_region_completeness(&tds, &kernel, &point, &conflict_simplices),
-        0
-    );
     Ok(())
 }
 

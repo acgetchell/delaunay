@@ -21,7 +21,11 @@ use crate::validation::{
 /// consuming transition keeps the Level 5 check adjacent to construction of
 /// the final [`DelaunayTriangulation`].
 #[derive(Clone, Debug)]
-pub struct DelaunayTriangulationDraft<K, U, V, const D: usize> {
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "explicit crate visibility distinguishes unpublished state from the public owner"
+)]
+pub(crate) struct DelaunayTriangulationDraft<K, U, V, const D: usize> {
     triangulation: Triangulation<K, U, V, D>,
     insertion_state: DelaunayInsertionState,
     spatial_index: Option<HashGridIndex<D>>,
@@ -142,7 +146,7 @@ mod test_support {
     use super::*;
     use crate::core::tds::Tds;
     use crate::topology::traits::topological_space::GlobalTopology;
-    use crate::triangulation::validation::TopologyGuarantee;
+    use crate::triangulation::validation::{TopologyConstructionProvenance, TopologyGuarantee};
 
     impl<K, U, V, const D: usize> DelaunayTriangulationDraft<K, U, V, D> {
         /// Builds an intentionally unproven test draft from raw parts.
@@ -159,6 +163,7 @@ mod test_support {
                     global_topology,
                     validation_policy: topology_guarantee.default_validation_policy(),
                     topology_guarantee,
+                    topology_construction_provenance: TopologyConstructionProvenance::Unproven,
                 },
                 insertion_state: DelaunayInsertionState::new(),
                 spatial_index: None,
@@ -191,6 +196,7 @@ mod test_support {
 mod tests {
     use super::*;
     use crate::builder::DelaunayTriangulationBuilder;
+    use crate::core::simplex::Simplex;
     use crate::validation::DelaunayTriangulationValidationError;
     use crate::vertex;
 
@@ -226,6 +232,61 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(failure.owner().number_of_vertices(), invalid_vertices.len());
+        assert!(matches!(
+            failure.reason(),
+            DelaunayTriangulationValidationError::VerificationFailed { .. }
+        ));
+    }
+
+    #[test]
+    fn stale_level_five_certificate_falls_back_to_full_certification() {
+        let vertices = [
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([4.0, 0.0]).unwrap(),
+            vertex!([4.0, 2.0]).unwrap(),
+            vertex!([1.0, 2.0]).unwrap(),
+        ];
+        let mut triangulation = DelaunayTriangulationBuilder::new(&vertices)
+            .build_triangulation()
+            .unwrap();
+        let certificate = certify_level_five_for_refinement(&triangulation).unwrap();
+        let owner_id = triangulation.tds.topology_owner_id();
+        let generation = triangulation.tds.generation();
+
+        let vertex_keys: Vec<_> = vertices
+            .iter()
+            .map(|vertex| {
+                triangulation
+                    .tds
+                    .vertex_key_from_uuid(&vertex.uuid())
+                    .unwrap()
+            })
+            .collect();
+        let simplex_keys: Vec<_> = triangulation.tds.simplex_keys().collect();
+        triangulation
+            .tds
+            .remove_simplices_by_keys(&simplex_keys)
+            .unwrap();
+        for indices in [[0, 1, 2], [0, 2, 3]] {
+            triangulation
+                .tds
+                .insert_simplex_with_mapping(
+                    Simplex::try_new_with_data(
+                        indices.map(|index| vertex_keys[index]).to_vec(),
+                        None,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        triangulation.tds.assign_neighbors().unwrap();
+        triangulation.tds.assign_incident_simplices().unwrap();
+
+        assert_eq!(triangulation.tds.topology_owner_id(), owner_id);
+        assert_ne!(triangulation.tds.generation(), generation);
+        let failure = DelaunayTriangulationDraft::from_triangulation(triangulation)
+            .try_into_delaunay_with_certificate(Some(&certificate))
+            .unwrap_err();
         assert!(matches!(
             failure.reason(),
             DelaunayTriangulationValidationError::VerificationFailed { .. }

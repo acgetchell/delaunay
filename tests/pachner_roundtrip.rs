@@ -583,7 +583,10 @@ fn build_dt_4d(points: &[[f64; 4]], fixture_name: &str) -> Tri4 {
 }
 
 /// Builds a minimal Euclidean D-simplex fixture for dimension smoke tests.
-fn build_minimal_simplex_dt<const D: usize>() -> Tri<D> {
+fn build_minimal_simplex_dt<const D: usize>() -> Tri<D>
+where
+    RobustKernel<f64>: delaunay::prelude::geometry::ExactPredicates<D>,
+{
     let vertices = minimal_simplex_vertices::<D>();
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
@@ -764,7 +767,10 @@ fn assert_duplicate_vertex_uuid_error<T>(result: Result<T, FlipError>, duplicate
 }
 
 /// Exercises public `PachnerMove::K1Insert` feasibility and mutation in one dimension.
-fn assert_public_k1_insert_feasibility_smoke<const D: usize>() {
+fn assert_public_k1_insert_feasibility_smoke<const D: usize>()
+where
+    RobustKernel<f64>: delaunay::prelude::geometry::ExactPredicates<D>,
+{
     let tri = build_minimal_simplex_dt::<D>();
     let simplex_key = first_simplex_generic(&tri);
     let vertex: Vertex<(), D> = vertex!(simplex_centroid_generic(&tri, simplex_key))

@@ -239,8 +239,8 @@ that a valid SoS implementation must satisfy.
 **Test Coverage:**
 
 - **Orientation Non-Degeneracy**: SoS orientation returns ±1 for
-  first-order-resolvable exactly degenerate (co-hyperplanar) inputs and a typed
-  `VanishingSosCofactors` error when every first-order cofactor vanishes
+  exactly degenerate (co-hyperplanar) inputs, including lower-rank cases whose
+  leading nonzero symbolic term occurs beyond first order
 - **Orientation Determinism**: same degenerate input always produces the same sign
 - **Orientation Translation Invariance**: shifting all points by a constant integer offset preserves the sign
 - **Insphere Non-Degeneracy**: SoS insphere always returns ±1 for exactly co-spherical (hyper-rectangle vertex) inputs
@@ -614,14 +614,14 @@ use delaunay::prelude::query::{
     extract_vertex_coordinate_set,    // HashSet<Point<D>>
     extract_edge_set,                  // Result<HashSet<(u128, u128)>, FacetError>
     extract_facet_identifier_set,      // Result<HashSet<u64>, FacetError>
-    extract_hull_facet_set,            // Result<HashSet<u64>, ConvexHullConstructionError>
+    extract_hull_facet_set,            // HashSet<u64> from a certified hull snapshot
 };
 ```
 
 **Features:**
 
 - Deterministic canonicalization (sorted edges/facets)
-- Uses existing `FacetView::key()` API for facet identification
+- Derives facet identifiers from sorted stable vertex UUIDs so comparisons remain valid across topology owners
 - Safe f64 conversions with overflow detection (2^53 limit)
 - No external hashing dependencies
 
@@ -718,8 +718,8 @@ use delaunay::prelude::query::{ConvexHull, extract_hull_facet_set};
 let hull1 = ConvexHull::try_from_triangulation(tri)?;
 let hull2 = ConvexHull::try_from_triangulation(tri)?;
 
-let facets1 = extract_hull_facet_set(&hull1, tri)?;
-let facets2 = extract_hull_facet_set(&hull2, tri)?;
+let facets1 = extract_hull_facet_set(&hull1);
+let facets2 = extract_hull_facet_set(&hull2);
 
 assert_jaccard_gte!(
     &facets1,

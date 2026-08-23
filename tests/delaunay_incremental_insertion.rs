@@ -119,9 +119,17 @@ fn assert_locate_and_conflict_traversal<const D: usize>(
         .find_conflict_region(&query, start_simplex)
         .expect("conflict traversal failed");
     assert!(!conflict_simplices.is_empty());
-    for &simplex_key in &conflict_simplices {
-        assert!(dt.contains_simplex(simplex_key));
+    for simplex in conflict_simplices.simplices() {
+        assert!(dt.contains_simplex(simplex.key()));
     }
+    let boundary = conflict_simplices
+        .boundary()
+        .expect("owner-bound cavity boundary parsing failed");
+    assert!(!boundary.is_empty());
+    assert!(boundary.facets().all(|facet| facet.vertices().len() == D));
+
+    #[cfg(feature = "diagnostics")]
+    assert_eq!(conflict_simplices.number_of_missed_simplices(), 0);
 }
 
 // =========================================================================
@@ -262,11 +270,11 @@ test_insert_5_points!(
         [0.0, 0.0, 0.0, 1.0]
     ],
     [
-        [0.1, 0.1, 0.1, 0.1],
-        [0.15, 0.1, 0.1, 0.1],
-        [0.1, 0.15, 0.1, 0.1],
-        [0.1, 0.1, 0.15, 0.1],
-        [0.12, 0.12, 0.12, 0.12]
+        [0.11, 0.09, 0.13, 0.10],
+        [0.17, 0.08, 0.12, 0.09],
+        [0.08, 0.18, 0.11, 0.07],
+        [0.09, 0.12, 0.19, 0.08],
+        [0.14, 0.11, 0.07, 0.16]
     ]
 );
 
@@ -281,11 +289,11 @@ test_insert_5_points!(
         [0.0, 0.0, 0.0, 0.0, 1.0]
     ],
     [
-        [0.1, 0.1, 0.1, 0.1, 0.1],
-        [0.15, 0.1, 0.1, 0.1, 0.1],
-        [0.1, 0.15, 0.1, 0.1, 0.1],
-        [0.1, 0.1, 0.15, 0.1, 0.1],
-        [0.12, 0.12, 0.12, 0.12, 0.12]
+        [0.08, 0.09, 0.10, 0.11, 0.07],
+        [0.14, 0.07, 0.08, 0.09, 0.06],
+        [0.06, 0.15, 0.09, 0.07, 0.08],
+        [0.07, 0.08, 0.16, 0.06, 0.09],
+        [0.10, 0.06, 0.07, 0.15, 0.08]
     ]
 );
 

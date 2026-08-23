@@ -1977,8 +1977,8 @@ mod tests {
     use super::super::*;
     use super::*;
     use crate::core::algorithms::insertion::repair_neighbor_pointers;
-    use crate::core::collections::Uuid;
     use crate::core::tds::TdsBuilder;
+    use crate::core::test_support::snapshot_topology;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::triangulation::validation::TopologyGuarantee;
     use crate::vertex;
@@ -2012,63 +2012,6 @@ mod tests {
         TdsBuilder::new(&vertices, &simplices).build().unwrap()
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    struct TopologySnapshot {
-        vertices: Vec<Uuid>,
-        simplex_vertices: Vec<Vec<Uuid>>,
-        simplex_neighbors: Vec<Vec<Option<Uuid>>>,
-    }
-
-    fn snapshot_topology<const D: usize>(tds: &Tds<(), (), D>) -> TopologySnapshot {
-        let mut vertices: Vec<Uuid> = tds.vertices().map(|(_, vertex)| vertex.uuid()).collect();
-        vertices.sort();
-
-        let mut simplex_vertices: Vec<Vec<Uuid>> = tds
-            .simplices()
-            .map(|(_, simplex)| {
-                let mut uuids: Vec<Uuid> = simplex
-                    .vertices()
-                    .iter()
-                    .map(|&vkey| tds.vertex(vkey).expect("vertex key missing in TDS").uuid())
-                    .collect();
-                uuids.sort();
-                uuids
-            })
-            .collect();
-        simplex_vertices.sort();
-
-        let simplex_neighbors = snapshot_neighbors(tds);
-
-        TopologySnapshot {
-            vertices,
-            simplex_vertices,
-            simplex_neighbors,
-        }
-    }
-
-    fn snapshot_neighbors<const D: usize>(tds: &Tds<(), (), D>) -> Vec<Vec<Option<Uuid>>> {
-        let mut simplex_neighbors: Vec<Vec<Option<Uuid>>> = tds
-            .simplices()
-            .map(|(_, simplex)| {
-                let mut neighbors: Vec<Option<Uuid>> = simplex
-                    .neighbors()
-                    .map(|neighbor_keys| {
-                        neighbor_keys
-                            .map(|neighbor| {
-                                neighbor.and_then(|neighbor_key| {
-                                    tds.simplex(neighbor_key).map(Simplex::uuid)
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                neighbors.sort();
-                neighbors
-            })
-            .collect();
-        simplex_neighbors.sort();
-        simplex_neighbors
-    }
     fn synthetic_simplex_key(index: u64) -> SimplexKey {
         SimplexKey::from(KeyData::from_ffi(index))
     }

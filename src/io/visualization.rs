@@ -34,12 +34,6 @@ pub const VISUALIZATION_SCHEMA: &str = "delaunay.simplicial_complex";
 /// Current [`VisualizationData`] schema version.
 pub const VISUALIZATION_SCHEMA_VERSION: u32 = 1;
 
-/// Compatibility schema name used by the mesh-export alias.
-pub const MESH_EXPORT_SCHEMA: &str = VISUALIZATION_SCHEMA;
-
-/// Compatibility schema version used by the mesh-export alias.
-pub const MESH_EXPORT_SCHEMA_VERSION: u32 = VISUALIZATION_SCHEMA_VERSION;
-
 /// Stable topology-kind schema category used by [`VisualizationMetadata`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -317,7 +311,7 @@ impl<const D: usize, VertexAttributes, SimplexAttributes, AdjacencyAttributes, G
     ///     vertex![0.0, 1.0]?,
     /// ];
     /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let export = triangulation.to_mesh_export()?;
+    /// let export = triangulation.to_visualization_data()?;
     ///
     /// export.validate()?;
     /// # Ok(())
@@ -610,30 +604,6 @@ pub struct AdjacencyRecord<Attributes = ()> {
     #[serde(default = "no_attributes", skip_serializing_if = "Option::is_none")]
     pub attributes: Option<Attributes>,
 }
-
-/// Default mesh-export alias for callers that do not need extra attributes.
-///
-/// This is an owned, detached interchange snapshot, not a live borrowed view
-/// over the source triangulation.
-pub type MeshExport<const D: usize> = VisualizationData<D>;
-
-/// Validated mesh-export alias for callers that do not need extra attributes.
-pub type ValidatedMeshExport<const D: usize> = ValidatedVisualizationData<D>;
-
-/// Default vertex-record alias for callers that do not need extra attributes.
-pub type MeshVertexRecord<const D: usize> = VertexRecord<D>;
-
-/// Default simplex-record alias for callers that do not need extra attributes.
-pub type MeshSimplexRecord = SimplexRecord;
-
-/// Default adjacency-record alias for callers that do not need extra attributes.
-pub type MeshAdjacencyRecord = AdjacencyRecord;
-
-/// Compatibility error alias for mesh export callers.
-pub type MeshExportError = VisualizationExportError;
-
-/// Compatibility validation-error alias for mesh export callers.
-pub type MeshExportValidationError = VisualizationDataValidationError;
 
 /// Errors that can occur while exporting visualization data.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -993,48 +963,6 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
             simplices,
             adjacency,
         })
-    }
-
-    /// Exports this triangulation as the default stable mesh interchange value.
-    ///
-    /// This is an ergonomic alias for [`to_visualization_data`](Self::to_visualization_data)
-    /// when callers want the v1 generic simplicial-complex schema without extra
-    /// downstream attributes.
-    ///
-    /// Like [`to_visualization_data`](Self::to_visualization_data), this returns
-    /// an owned, detached snapshot. Mutating the source triangulation after
-    /// export does not update the mesh export.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MeshExportError`] under the same conditions as
-    /// [`to_visualization_data`](Self::to_visualization_data).
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayResult, DelaunayTriangulationBuilder, vertex,
-    /// };
-    /// use delaunay::prelude::export::MESH_EXPORT_SCHEMA;
-    ///
-    /// # fn main() -> DelaunayResult<()> {
-    /// let vertices = vec![
-    ///     vertex![0.0, 0.0, 0.0]?,
-    ///     vertex![1.0, 0.0, 0.0]?,
-    ///     vertex![0.0, 1.0, 0.0]?,
-    ///     vertex![0.0, 0.0, 1.0]?,
-    /// ];
-    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    ///
-    /// let export = triangulation.to_mesh_export()?;
-    ///
-    /// assert_eq!(export.metadata.schema, MESH_EXPORT_SCHEMA);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn to_mesh_export(&self) -> Result<MeshExport<D>, MeshExportError> {
-        self.to_visualization_data()
     }
 }
 

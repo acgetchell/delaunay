@@ -298,6 +298,7 @@ mod tests {
     use crate::core::facet::{FacetError, FacetHandle, FacetToSimplicesIndex, FacetView};
     use crate::core::simplex::Simplex;
     use crate::core::tds::{SimplexKey, Tds, TdsBuilder, TdsError};
+    use crate::core::test_support::single_simplex_tds;
     use crate::core::vertex::Vertex;
     use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::point::Point;
@@ -332,11 +333,6 @@ mod tests {
         ($($arg:tt)*) => {{
             tracing::debug!($($arg)*);
         }};
-    }
-
-    fn single_simplex_tds<const D: usize>(vertices: &[Vertex<(), D>]) -> Tds<(), (), D> {
-        let simplices = [(0..vertices.len()).collect()];
-        TdsBuilder::new(vertices, &simplices).build().unwrap()
     }
 
     fn two_tetrahedra_tds_3d(vertices: &[Vertex<(), 3>]) -> Tds<(), (), 3> {

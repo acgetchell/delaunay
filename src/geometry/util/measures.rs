@@ -590,8 +590,9 @@ pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumc
                     dimension: 1,
                 });
             }
-            // A 0-dimensional point has measure 0
-            Ok(0.0)
+            // The intrinsic measure of a 0-simplex is one: its empty Gram
+            // determinant and 0! normalization are both one.
+            Ok(1.0)
         }
         2 => {
             // 2D: Length of line segment (1D facet in 2D space)
@@ -1123,10 +1124,10 @@ mod tests {
 
     #[test]
     fn test_facet_measure_1d_point() {
-        // 1D facet is a single point (0-dimensional) - measure should be 0
+        // A 1D facet is a 0-simplex, whose intrinsic measure is one.
         let points = vec![Point::try_new([5.0]).expect("finite point coordinates")];
         let measure = facet_measure(&points).unwrap();
-        assert_relative_eq!(measure, 0.0, epsilon = 1e-10);
+        assert_relative_eq!(measure, 1.0, epsilon = 1e-10);
     }
 
     #[test]

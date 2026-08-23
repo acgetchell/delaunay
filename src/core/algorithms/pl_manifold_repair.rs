@@ -453,7 +453,7 @@ where
 
     // Fast path: if the facet-degree invariant already holds, nothing to do.
     let facet_map = tds.build_facet_to_simplices_map()?;
-    if ValidatedFacetDegreeMap::try_from_facet_map(&facet_map).is_ok() {
+    if ValidatedFacetDegreeMap::try_from_facet_map(tds, &facet_map).is_ok() {
         stats.succeeded = true;
         return Ok(stats);
     }
@@ -537,7 +537,7 @@ where
 
         // Check if the invariant now holds.
         let facet_map = tds.build_facet_to_simplices_map()?;
-        if ValidatedFacetDegreeMap::try_from_facet_map(&facet_map).is_ok() {
+        if ValidatedFacetDegreeMap::try_from_facet_map(tds, &facet_map).is_ok() {
             stats.succeeded = true;
             // Rebuild full neighbor/incidence pointers before returning.
             rebuild_success_topology(tds)?;
@@ -918,8 +918,8 @@ fn validate_boundary_ridge_multiplicity<U, V, const D: usize>(
     global_topology: GlobalTopology<D>,
 ) -> Result<(), ManifoldError> {
     let facet_to_simplices = tds.build_facet_to_simplices_map()?;
-    let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)?;
-    validate_closed_boundary_from_validated_facet_map(tds, facet_to_simplices, global_topology)
+    let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(tds, &facet_to_simplices)?;
+    validate_closed_boundary_from_validated_facet_map(facet_to_simplices, global_topology)
 }
 
 /// Validates vertex-link manifoldness against a fresh facet map.
@@ -928,8 +928,8 @@ fn validate_vertex_link_manifoldness<U, V, const D: usize>(
     global_topology: GlobalTopology<D>,
 ) -> Result<(), ManifoldError> {
     let facet_to_simplices = tds.build_facet_to_simplices_map()?;
-    let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)?;
-    validate_vertex_links_from_validated_facet_map(tds, facet_to_simplices, global_topology)
+    let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(tds, &facet_to_simplices)?;
+    validate_vertex_links_from_validated_facet_map(facet_to_simplices, global_topology)
 }
 
 /// Returns the local simplex candidates responsible for a targeted violation.
@@ -1334,8 +1334,7 @@ mod tests {
     use std::assert_matches;
 
     use super::*;
-    use crate::core::tds::TdsBuilder;
-    use crate::core::vertex::Vertex;
+    use crate::core::test_support::{single_simplex_tds, tds_from_specs};
     use crate::vertex;
     use slotmap::KeyData;
 
@@ -1345,17 +1344,6 @@ mod tests {
 
     fn init_tracing() {
         let _ = tracing_subscriber::fmt::try_init();
-    }
-
-    fn tds_from_specs<const D: usize>(
-        vertices: &[Vertex<(), D>],
-        simplices: &[Vec<usize>],
-    ) -> Tds<(), (), D> {
-        TdsBuilder::new(vertices, simplices).build().unwrap()
-    }
-
-    fn single_simplex_tds<const D: usize>(vertices: &[Vertex<(), D>]) -> Tds<(), (), D> {
-        tds_from_specs(vertices, &[(0..vertices.len()).collect()])
     }
 
     // =============================================================================
@@ -1510,7 +1498,7 @@ mod tests {
         // Sanity: at least one facet should now be over-shared.
         let facet_map = tds.build_facet_to_simplices_map().unwrap();
         assert!(
-            ValidatedFacetDegreeMap::try_from_facet_map(&facet_map).is_err(),
+            ValidatedFacetDegreeMap::try_from_facet_map(&tds, &facet_map).is_err(),
             "Expected over-shared facets after duplicating a simplex"
         );
 
@@ -2132,7 +2120,7 @@ mod tests {
         assert_eq!(stats.removed_simplices.len(), stats.simplices_removed);
 
         let facet_map = tds.build_facet_to_simplices_map().unwrap();
-        assert!(ValidatedFacetDegreeMap::try_from_facet_map(&facet_map).is_ok());
+        assert!(ValidatedFacetDegreeMap::try_from_facet_map(&tds, &facet_map).is_ok());
     }
 
     /// Verify that a tight simplex-removal budget triggers `BudgetExhausted`.
@@ -2262,28 +2250,5 @@ mod tests {
         let stats2 = repair_facet_oversharing(&mut tds2, &config).unwrap();
 
         assert_eq!(stats1, stats2, "Repair should be deterministic");
-    }
-
-    #[test]
-    fn test_deterministic_repeated_runs() {
-        init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-            vertex!([0.5, 0.5, 0.5]).unwrap(),
-        ];
-        let tds = tds_from_specs(&vertices, &[vec![0, 1, 2, 3], vec![4, 1, 2, 3]]);
-
-        let config = PlManifoldRepairConfig::default();
-
-        let mut tds1 = tds.clone();
-        let stats1 = repair_facet_oversharing(&mut tds1, &config).unwrap();
-
-        let mut tds2 = tds;
-        let stats2 = repair_facet_oversharing(&mut tds2, &config).unwrap();
-
-        assert_eq!(stats1, stats2);
     }
 }

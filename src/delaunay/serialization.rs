@@ -242,7 +242,7 @@ where
 /// #     #[error(transparent)]
 /// #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
 /// #     #[error(transparent)]
-/// #     TriangulationBuild(#[from] delaunay::TriangulationBuilderError),
+/// #     TriangulationBuild(#[from] delaunay::TriangulationBuildFailure<(), (), 3>),
 /// #     #[error(transparent)]
 /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
@@ -262,8 +262,7 @@ where
 /// let triangulation = TriangulationBuilder::new(tds, AdaptiveKernel::new())
 ///     .topology_guarantee(topology_guarantee)
 ///     .global_topology(global_topology)
-///     .build()
-///     .map_err(RefinementError::into_reason)?;
+///     .build()?;
 /// let dt_adaptive = DelaunayRefinementBuilder::new(triangulation)
 ///     .build()
 ///     .map_err(RefinementError::into_reason)?;
@@ -507,6 +506,8 @@ mod tests {
                     global_topology: GlobalTopology::DEFAULT,
                     validation_policy: ValidationPolicy::default(),
                     topology_guarantee: TopologyGuarantee::DEFAULT,
+                    topology_construction_provenance:
+                        crate::triangulation::validation::TopologyConstructionProvenance::Unproven,
                 },
                 insertion_state: DelaunayInsertionState::new(),
                 spatial_index: None,

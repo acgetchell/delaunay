@@ -33,7 +33,7 @@ use crate::geometry::kernel::Kernel;
 use crate::topology::manifold::ManifoldError;
 use crate::triangulation::{
     Triangulation,
-    insertion::DetailedInsertionResult,
+    insertion::{DetailedInsertionResult, PreparedInsertion},
     validation::{TopologyGuarantee, TriangulationValidationError},
 };
 use std::env;
@@ -110,26 +110,40 @@ where
         }
     }
 
-    /// Runs Levels 3–4 insertion against the Delaunay owner's existing rollback
-    /// snapshot while keeping its detached spatial index synchronized.
-    fn insert_detailed_in_rollback_window(
-        transaction: &mut DelaunayRollbackTransaction<'_, K, U, V, D>,
+    /// Prepares derived geometry and rejects unchanged duplicates before any
+    /// owner-level rollback snapshot is allocated.
+    fn prepare_insertion(
+        &mut self,
         vertex: Vertex<U, D>,
+    ) -> (PreparedInsertion<U, D>, Option<DetailedInsertionResult>) {
+        let hint = self.insertion_state.last_inserted_simplex;
+        let prepared = self
+            .tri
+            .prepare_insertion(vertex, hint, self.spatial_index.as_mut());
+        let mut prepared = prepared;
+        let skipped = self
+            .tri
+            .duplicate_skip(&mut prepared, self.spatial_index.as_ref());
+        (prepared, skipped)
+    }
+
+    /// Runs a prepared Levels 3–4 insertion against the Delaunay owner's
+    /// existing rollback snapshot while keeping its detached spatial index
+    /// synchronized.
+    fn insert_prepared_in_rollback_window(
+        transaction: &mut DelaunayRollbackTransaction<'_, K, U, V, D>,
+        prepared: PreparedInsertion<U, D>,
     ) -> Result<DetailedInsertionResult, InsertionError> {
-        let (hint, mut spatial_index) = {
+        let mut spatial_index = {
             let delaunay = transaction.delaunay_mut();
-            (
-                delaunay.insertion_state.last_inserted_simplex,
-                delaunay.spatial_index.take(),
-            )
+            delaunay.spatial_index.take()
         };
 
         let result = Triangulation::<K, U, V, D>::
-            insert_with_statistics_seeded_indexed_detailed_in_rollback_window(
+            insert_prepared_with_statistics_seeded_indexed_detailed_in_rollback_window(
                 transaction,
-                vertex,
+                prepared,
                 None,
-                hint,
                 0,
                 spatial_index.as_mut(),
                 None,
@@ -231,6 +245,14 @@ where
     pub fn insert_vertex(&mut self, vertex: Vertex<U, D>) -> Result<VertexKey, InsertionError> {
         self.ensure_insertion_preserves_owner()?;
         self.ensure_spatial_index_seeded()?;
+        let (prepared, skipped) = self.prepare_insertion(vertex);
+        if let Some(DetailedInsertionResult {
+            outcome: InsertionOutcome::Skipped { error },
+            ..
+        }) = skipped
+        {
+            return Err(error);
+        }
 
         // Fully delegate to Triangulation layer
         // Triangulation handles:
@@ -246,7 +268,7 @@ where
         // Transactional guard: post-steps (flip repair and/or global Delaunay checks) can fail.
         // If they do, rollback to leave the triangulation unchanged.
         self.with_post_insertion_rollback(|transaction| {
-            let insert_detail = Self::insert_detailed_in_rollback_window(transaction, vertex)?;
+            let insert_detail = Self::insert_prepared_in_rollback_window(transaction, prepared)?;
             let repair_seed_simplices = insert_detail.repair_seed_simplices;
             let delaunay_repair_required = insert_detail.delaunay_repair_required;
 
@@ -383,11 +405,15 @@ where
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
         self.ensure_insertion_preserves_owner()?;
         self.ensure_spatial_index_seeded()?;
+        let (prepared, skipped) = self.prepare_insertion(vertex);
+        if let Some(skipped) = skipped {
+            return Ok((skipped.outcome, skipped.stats));
+        }
 
         // Transactional guard: post-steps (flip repair and/or global Delaunay checks) can fail.
         // If they do, rollback to leave the triangulation unchanged.
         self.with_post_insertion_rollback(|transaction| {
-            let insert_detail = Self::insert_detailed_in_rollback_window(transaction, vertex)?;
+            let insert_detail = Self::insert_prepared_in_rollback_window(transaction, prepared)?;
             let stats = insert_detail.stats;
             let repair_seed_simplices = insert_detail.repair_seed_simplices;
             let delaunay_repair_required = insert_detail.delaunay_repair_required;
@@ -487,6 +513,9 @@ where
             Some(seed_simplices.as_slice())
         };
 
+        // This repair-local transaction is a deliberate savepoint distinct from
+        // the outer Delaunay transaction. The outer snapshot is pre-insertion;
+        // FIFO/LIFO repair retries must restore this post-insertion state.
         let repair_result = {
             self.invalidate_locate_hint_cache();
             let global_topology = self.tri.global_topology();

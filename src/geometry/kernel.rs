@@ -117,10 +117,9 @@ pub trait Kernel<const D: usize>: Clone {
     /// - `0`: Degenerate (points are coplanar/collinear)
     /// - `+1`: Positive orientation
     ///
-    /// **Note:** [`AdaptiveKernel`] resolves degenerate cases via Simulation
-    /// of Simplicity and returns `0` only when points are identical in `f64`
-    /// representation (a case `SoS` cannot resolve). For all distinct-point
-    /// inputs, `AdaptiveKernel` returns ±1. Other kernels (`FastKernel`,
+    /// **Note:** [`AdaptiveKernel`] resolves finite degenerate cases via a
+    /// complete Simulation-of-Simplicity expansion and returns ±1 even when
+    /// coordinate values repeat. Other kernels (`FastKernel`,
     /// `RobustKernel`) can return `0` for any degenerate input. Generic
     /// code should handle all three values.
     ///
@@ -283,7 +282,7 @@ pub trait Kernel<const D: usize>: Clone {
 /// [`Kernel::in_sphere`] return the mathematically correct sign for all
 /// inputs in the supported dimension `D`, including near-degenerate configurations.
 ///
-/// The exact stack-matrix path currently supports insphere predicates through `D <= 5`.
+/// The exact relative-coordinate path currently supports insphere predicates through `D <= 6`.
 /// Higher dimensions can still use deterministic robust fallbacks, but they do not implement this
 /// marker because flip repair uses it as a compile-time exactness gate.
 ///
@@ -300,8 +299,9 @@ pub trait Kernel<const D: usize>: Clone {
 ///
 /// This marker inherits [`Kernel`] so exactness and kernel usability remain one
 /// contract. Functions that require predicate correctness for safety — such as
-/// flip-based Delaunay repair — should bound their kernel parameter with this
-/// trait:
+/// flip-based Delaunay repair and point-driven construction that carries
+/// high-dimensional PL-link provenance — should bound their kernel parameter
+/// with this trait:
 ///
 /// ```rust
 /// use delaunay::prelude::geometry::ExactPredicates;
@@ -322,12 +322,12 @@ pub trait Kernel<const D: usize>: Clone {
 ///
 /// Dimension-bound exactness is also enforced:
 ///
-/// ```compile_fail
+/// ```
 /// use delaunay::prelude::geometry::{AdaptiveKernel, ExactPredicates};
 /// fn requires_exact<T: ExactPredicates<6>>() {}
-/// requires_exact::<AdaptiveKernel<f64>>(); // ERROR: exact insphere is not available for D=6
+/// requires_exact::<AdaptiveKernel<f64>>();
 /// ```
-pub trait ExactPredicates<const D: usize>: Kernel<D> {}
+pub trait ExactPredicates<const D: usize>: Kernel<D, Scalar = f64> {}
 
 macro_rules! impl_exact_predicates_for_supported_dims {
     ($($dim:literal),* $(,)?) => {
@@ -339,14 +339,14 @@ macro_rules! impl_exact_predicates_for_supported_dims {
     };
 }
 
-impl_exact_predicates_for_supported_dims!(0, 1, 2, 3, 4, 5);
+impl_exact_predicates_for_supported_dims!(0, 1, 2, 3, 4, 5, 6);
 
 /// Lean filtered-exact kernel.
 ///
 /// `FastKernel` uses provable f64 filters and falls back to exact Bareiss
 /// determinant signs when a filter is inconclusive. It therefore preserves
 /// explicit `BOUNDARY`/`DEGENERATE` results and implements [`ExactPredicates`]
-/// through D ≤ 5.
+/// through D ≤ 6.
 ///
 /// Use [`AdaptiveKernel`] (the default) when cospherical and coplanar ties should
 /// be resolved deterministically with Simulation of Simplicity. Use
@@ -580,9 +580,8 @@ impl<const D: usize> Kernel<D> for RobustKernel<f64> {
 /// Use this kernel (the default) for Delaunay triangulation. It provides:
 /// - **Zero configuration** — no tolerance to tune or get wrong
 /// - **Provable error bounds** on the fast filter (no heuristic tolerance)
-/// - **`SoS` orientation** — degenerate ties are broken deterministically;
-///   returns ±1 for all distinct-point inputs (returns 0 only when points
-///   are identical in `f64` representation)
+/// - **`SoS` orientation** — finite degenerate ties are broken deterministically
+///   and return ±1, including repeated coordinate values
 /// - **`SoS` insphere** — cospherical ties are broken deterministically,
 ///   so every insphere query returns ±1 (never 0/BOUNDARY)
 ///
@@ -659,7 +658,7 @@ impl<const D: usize> Kernel<D> for AdaptiveKernel<f64> {
 
         // Layer 1+2: exact sign via fast filter + Bareiss in BigRational.
         // Delegates to robust_orientation to avoid duplicating the homogeneous
-        // matrix build + exact_det_sign pipeline.
+        // matrix construction and exact determinant pipeline.
         let exact = robust_orientation(points)?;
         match exact {
             Orientation::POSITIVE => return Ok(1),
@@ -675,12 +674,7 @@ impl<const D: usize> Kernel<D> for AdaptiveKernel<f64> {
             f64_points.push(point_from_f64_coords(safe_coords_to_f64(point.coords())?)?);
         }
 
-        // SoS guarantees a non-zero sign for distinct points.  If SoS
-        // fails (all cofactors vanish) the points are identical in f64
-        // representation — a true degeneracy that cannot be resolved
-        // symbolically.  Return 0 so callers' existing degenerate-
-        // orientation handling applies.
-        sos_orientation_sign(&f64_points).map_or(Ok(0), Ok)
+        sos_orientation_sign(&f64_points)
     }
 
     fn in_sphere(
@@ -838,7 +832,7 @@ mod tests {
     }
 
     // =========================================================================
-    // MACRO — FastKernel + RobustKernel PER-DIMENSION TESTS (2D–5D)
+    // MACRO — FastKernel + RobustKernel PER-DIMENSION TESTS (2D–6D)
     // =========================================================================
 
     /// Generate orientation + insphere tests for a standard (non-`SoS`) kernel.
@@ -889,11 +883,13 @@ mod tests {
     gen_standard_kernel_tests!(3, fast, FastKernel::<f64>::new());
     gen_standard_kernel_tests!(4, fast, FastKernel::<f64>::new());
     gen_standard_kernel_tests!(5, fast, FastKernel::<f64>::new());
+    gen_standard_kernel_tests!(6, fast, FastKernel::<f64>::new());
 
     gen_standard_kernel_tests!(2, robust, RobustKernel::<f64>::new());
     gen_standard_kernel_tests!(3, robust, RobustKernel::<f64>::new());
     gen_standard_kernel_tests!(4, robust, RobustKernel::<f64>::new());
     gen_standard_kernel_tests!(5, robust, RobustKernel::<f64>::new());
+    gen_standard_kernel_tests!(6, robust, RobustKernel::<f64>::new());
 
     // =========================================================================
     // NON-MACRO — EDGE CASES AND SPECIAL CONFIGURATIONS
@@ -1285,10 +1281,7 @@ mod tests {
     // SoS IDENTICAL-POINTS REGRESSION
     // =========================================================================
 
-    /// When all D+1 input points are identical in f64, every `SoS` cofactor
-    /// vanishes and `sos_orientation_sign` returns `Err`.  `AdaptiveKernel`
-    /// must map that to `Ok(0)` so callers' degenerate-orientation handling
-    /// applies.  This is a regression guard for the fallback at kernel.rs:518.
+    /// Repeated coordinates remain ordered by their symbolic row identities.
     macro_rules! gen_sos_identical_points_test {
         ($dim:literal) => {
             pastey::paste! {
@@ -1298,11 +1291,7 @@ mod tests {
                     let points: Vec<Point<$dim>> =
                         vec![Point::try_new([0.42; $dim]).expect("finite point coordinates"); $dim + 1];
                     let result = kernel.orientation(&points).unwrap();
-                    assert_eq!(
-                        result, 0,
-                        "{}D: identical points must yield orientation 0, got {result}",
-                        $dim
-                    );
+                    assert_ne!(result, 0, "{}D: SoS must totalize the ordering", $dim);
                 }
             }
         };
@@ -1329,12 +1318,14 @@ mod tests {
     fn test_adaptive_kernel_implements_exact_predicates() {
         assert_exact_predicates::<AdaptiveKernel<f64>, 2>();
         assert_exact_predicates::<AdaptiveKernel<f64>, 5>();
+        assert_exact_predicates::<AdaptiveKernel<f64>, 6>();
     }
 
     #[test]
     fn test_robust_kernel_implements_exact_predicates() {
         assert_exact_predicates::<RobustKernel<f64>, 2>();
         assert_exact_predicates::<RobustKernel<f64>, 5>();
+        assert_exact_predicates::<RobustKernel<f64>, 6>();
     }
 
     #[test]
@@ -1345,5 +1336,6 @@ mod tests {
         assert_exact_predicates::<FastKernel<f64>, 3>();
         assert_exact_predicates::<FastKernel<f64>, 4>();
         assert_exact_predicates::<FastKernel<f64>, 5>();
+        assert_exact_predicates::<FastKernel<f64>, 6>();
     }
 }

@@ -26,7 +26,7 @@ Feature-gated with `diagnostics`:
 - `delaunay::prelude::diagnostics::delaunay_violation_report`.
 - `DelaunayViolationReport` and `DelaunayViolationDetail`.
 - `debug_print_first_delaunay_violation`.
-- `verify_conflict_region_completeness`.
+- `ConflictRegion::number_of_missed_simplices`.
 - Extra test/debug tracing in selected integration tests and debug harnesses.
 
 The `diagnostics` feature does not change triangulation construction,
@@ -187,10 +187,11 @@ Install a `tracing` subscriber in tests or applications to see output. In tests,
 
 ## Conflict Region Cross-Checks
 
-`verify_conflict_region_completeness` is a deliberately expensive brute-force
-check. It compares the conflict region discovered by local traversal against a
-full scan of all simplices. The insertion path can invoke this check when both are
-true:
+`ConflictRegion::number_of_missed_simplices` is a deliberately expensive
+brute-force check available with the `diagnostics` feature. It compares an
+owner-bound conflict region discovered by local traversal against a full scan
+of the same triangulation. The insertion path can invoke the same internal
+check when both are true:
 
 - the crate was compiled with `diagnostics`
 - `DELAUNAY_DEBUG_CONFLICT_VERIFY=1` is set

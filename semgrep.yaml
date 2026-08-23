@@ -536,7 +536,7 @@ rules:
     languages:
       - generic
     severity: WARNING
-    message: "Use the current f64-coordinate API: Point<D>, Vertex<U, D>, Tds<U, V, D>, ConvexHull<U, V, D>, and Point::try_new/try_from."
+    message: "Use the current f64-coordinate API: Point<D>, Vertex<U, D>, Tds<U, V, D>, ConvexHull<U, D>, and Point::try_new/try_from."
     metadata:
       category: maintainability
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
@@ -556,7 +556,7 @@ rules:
       exclude:
         - "/docs/archive/**"
     pattern-regex: >-
-      \b(?:Point\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Vertex\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,[^>\n,]+,\s*[^>\n]+>|VertexBuilder\s*::\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Tds\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Simplex\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|DelaunayTriangulationBuilder\s*<\s*(?:'[^,]+,\s*)?(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|ConvexHull\s*<\s*(?:_|T|f64|K|K::Scalar|FastKernel\s*<[^>\n]+>|AdaptiveKernel\s*<[^>\n]+>|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,[^>\n,]+,\s*[^>\n,]+,\s*[^>\n]+>|ConvexHull(?:2D|3D|4D)\s*<\s*(?:_|T|f64|K|K::Scalar|FastKernel\s*<[^>\n]+>|AdaptiveKernel\s*<[^>\n]+>|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Point::new\s*\()
+      \b(?:Point\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Vertex\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,[^>\n,]+,\s*[^>\n]+>|VertexBuilder\s*::\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Tds\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Simplex\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|DelaunayTriangulationBuilder\s*<\s*(?:'[^,]+,\s*)?(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|ConvexHull\s*<\s*(?:[^,\n]+|FastKernel\s*<[^>\n]+>|AdaptiveKernel\s*<[^>\n]+>)\s*,[^>\n,]+,\s*[^>\n]+>|Point::new\s*\()
 
   - id: delaunay.rust.no-raw-point-coordinate-storage
     languages:
@@ -2160,7 +2160,7 @@ rules:
 
   - id: delaunay.rust.delaunay-draft-must-store-triangulation
     languages:
-      - generic
+      - rust
     severity: ERROR
     message: "A DelaunayTriangulationDraft must store Triangulation, not DelaunayTriangulation."
     metadata:
@@ -2174,11 +2174,23 @@ rules:
       include:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/rust_style.rs"
-    pattern-regex: '(?s)\bstruct\s+DelaunayTriangulationDraft(?:\s*<[^{}]*>)?\s*\{[^}]*:\s*DelaunayTriangulation(?:\s*<[^{}]*>)?'
+    patterns:
+      - pattern: |
+          struct $STRUCT {
+            ...,
+            $FIELD: $TYPE,
+            ...
+          }
+      - metavariable-regex:
+          metavariable: $STRUCT
+          regex: "^DelaunayTriangulationDraft$"
+      - metavariable-regex:
+          metavariable: $TYPE
+          regex: '^(?:[A-Za-z_][A-Za-z0-9_]*::)*DelaunayTriangulation(?:\s*<[\s\S]*>)?$'
 
   - id: delaunay.rust.delaunay-batch-workspace-must-store-triangulation
     languages:
-      - generic
+      - rust
     severity: ERROR
     message: "A DelaunayBatchWorkspace must store Triangulation, not DelaunayTriangulation."
     metadata:
@@ -2192,7 +2204,19 @@ rules:
       include:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/rust_style.rs"
-    pattern-regex: '(?s)\bstruct\s+DelaunayBatchWorkspace(?:\s*<[^{}]*>)?\s*\{[^}]*:\s*DelaunayTriangulation(?:\s*<[^{}]*>)?'
+    patterns:
+      - pattern: |
+          struct $STRUCT {
+            ...,
+            $FIELD: $TYPE,
+            ...
+          }
+      - metavariable-regex:
+          metavariable: $STRUCT
+          regex: "^DelaunayBatchWorkspace$"
+      - metavariable-regex:
+          metavariable: $TYPE
+          regex: '^(?:[A-Za-z_][A-Za-z0-9_]*::)*DelaunayTriangulation(?:\s*<[\s\S]*>)?$'
 
   - id: delaunay.rust.no-cumulative-revalidation-delaunay-promotion
     languages:
@@ -2480,7 +2504,7 @@ rules:
 
   - id: delaunay.rust.delaunay-bootstrap-workspace-must-use-tds-draft
     languages:
-      - generic
+      - rust
     severity: ERROR
     message: "Delaunay bootstrap must stage partial connectivity in TdsDraft."
     metadata:
@@ -2493,7 +2517,19 @@ rules:
       include:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/rust_style.rs"
-    pattern-regex: '(?s)\bstruct\s+DelaunayBootstrapWorkspace(?:\s*<[^{}]*>)?\s*\{[^}]*:\s*TriangulationDraft(?:\s*<[^{}]*>)?'
+    patterns:
+      - pattern: |
+          struct $STRUCT {
+            ...,
+            $FIELD: $TYPE,
+            ...
+          }
+      - metavariable-regex:
+          metavariable: $STRUCT
+          regex: "^DelaunayBootstrapWorkspace$"
+      - metavariable-regex:
+          metavariable: $TYPE
+          regex: '^(?:[A-Za-z_][A-Za-z0-9_]*::)*TriangulationDraft(?:\s*<[\s\S]*>)?$'
 
   - id: delaunay.rust.tds-defined-only-in-canonical-model
     languages:

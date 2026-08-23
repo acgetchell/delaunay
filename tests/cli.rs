@@ -399,6 +399,44 @@ mod cli_tests {
     }
 
     #[test]
+    fn generate_triangulation_supports_dimension_four() {
+        let path = target_json_path("generate-triangulation-4d");
+        let output = run_cli(&[
+            "generate",
+            "triangulation",
+            "--dimension",
+            "4",
+            "--vertices",
+            "5",
+            "--seed",
+            "4",
+            "--output",
+            path.to_str().expect("target path should be UTF-8"),
+        ]);
+        assert_success(&output);
+        assert_generated_triangulation_json(&file_json(&path), 5);
+    }
+
+    #[test]
+    fn generate_triangulation_supports_dimension_five() {
+        let path = target_json_path("generate-triangulation-5d");
+        let output = run_cli(&[
+            "generate",
+            "triangulation",
+            "--dimension",
+            "5",
+            "--vertices",
+            "6",
+            "--seed",
+            "5",
+            "--output",
+            path.to_str().expect("target path should be UTF-8"),
+        ]);
+        assert_success(&output);
+        assert_generated_triangulation_json(&file_json(&path), 6);
+    }
+
+    #[test]
     fn validation_demo_writes_requested_json_artifact() {
         let path = target_json_path("validation-demo");
         let output = run_cli(&[

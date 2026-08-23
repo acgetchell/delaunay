@@ -66,6 +66,7 @@ use crate::triangulation::construction::{
 use crate::triangulation::realization::TriangulationRealizationValidationError;
 use crate::triangulation::validation::TriangulationValidationError;
 use crate::validation::DelaunayTriangulationValidationError;
+use slotmap::Key;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -1875,7 +1876,7 @@ pub enum InsertionError {
     /// Local facet repair would remove more simplices than the caller allowed.
     ///
     /// This is emitted by
-    /// [`Triangulation::repair_local_facet_issues`](crate::Triangulation::repair_local_facet_issues)
+    /// [`Triangulation::local_facet_repair`](crate::Triangulation::local_facet_repair)
     /// before neighbor repair or validation runs, so callers can retry with a
     /// larger budget without committing a partial topology edit.
     #[error(
@@ -2237,6 +2238,7 @@ impl InsertionError {
                 ..
             }
             | TriangulationValidationError::RidgeNotFound { .. }
+            | TriangulationValidationError::HighDimensionalVertexLinkUnproven { .. }
             | TriangulationValidationError::NonOrientable { .. }
             | TriangulationValidationError::EulerCharacteristicMismatch { .. }
             | TriangulationValidationError::Disconnected { .. } => false,
@@ -2288,7 +2290,7 @@ impl InsertionError {
 /// **Note (Debug Builds)**: In debug builds, this function checks for duplicate
 /// boundary facets and logs warnings if found. Duplicate facets will create
 /// overlapping simplices, which will be detected and repaired by subsequent topology
-/// validation passes (see `detect_local_facet_issues` / `repair_local_facet_issues`).
+/// validation passes through the owner-bound local-facet repair workflow.
 pub(crate) fn fill_cavity_replacing_simplices<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     new_vertex_key: VertexKey,
@@ -4235,8 +4237,9 @@ where
             missing_boundary_simplex(simplex_key, "visible boundary facet lookup")
         })?;
 
-        // Collect points for the simplex in canonical order: facet vertices + opposite vertex.
-        let mut simplex_points = SmallBuffer::<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+        // Collect facet identities first so SoS priority follows canonical
+        // VertexKey order rather than the simplex's stored orientation order.
+        let mut facet_vertex_keys = VertexKeyBuffer::with_capacity(D);
         let mut opposite_point: Option<Point<D>> = None;
 
         for (i, &vkey) in simplex.vertices().iter().enumerate() {
@@ -4246,14 +4249,24 @@ where
             if i == usize::from(facet_index) {
                 opposite_point = Some(*vertex.point());
             } else {
-                simplex_points.push(*vertex.point());
+                facet_vertex_keys.push(vkey);
             }
         }
 
         let opposite_point = opposite_point
             .ok_or_else(|| invalid_boundary_facet_index(facet_index, simplex.vertices().len()))?;
 
-        // Append opposite vertex in canonical order.
+        facet_vertex_keys.sort_unstable_by_key(|key| key.data().as_ffi());
+        let mut simplex_points =
+            SmallBuffer::<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>::with_capacity(D + 1);
+        for vertex_key in facet_vertex_keys {
+            let vertex = tds.vertex(vertex_key).ok_or_else(|| {
+                missing_boundary_vertex(vertex_key, simplex_key, "visible boundary facet")
+            })?;
+            simplex_points.push(*vertex.point());
+        }
+        // The comparison vertex occupies the final perturbation position in
+        // both orientation calls.
         simplex_points.push(opposite_point);
 
         // Test orientation: if point is on same side as inside of hull, facet is visible.
@@ -4732,7 +4745,8 @@ mod tests {
     };
     use crate::core::algorithms::locate::InternalInconsistencySite;
     use crate::core::collections::SimplexKeyBuffer;
-    use crate::core::tds::{GeometricError, TdsBuilder};
+    use crate::core::tds::GeometricError;
+    use crate::core::test_support::{single_simplex_tds, tds_from_specs};
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{
@@ -4745,17 +4759,6 @@ mod tests {
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
-
-    fn tds_from_specs<const D: usize>(
-        vertices: &[Vertex<(), D>],
-        simplices: &[Vec<usize>],
-    ) -> Tds<(), (), D> {
-        TdsBuilder::new(vertices, simplices).build().unwrap()
-    }
-
-    fn single_simplex_tds<const D: usize>(vertices: &[Vertex<(), D>]) -> Tds<(), (), D> {
-        tds_from_specs(vertices, &[(0..vertices.len()).collect()])
-    }
 
     fn subdivided_simplex_tds<const D: usize>(vertices: &[Vertex<(), D>]) -> Tds<(), (), D> {
         assert_eq!(vertices.len(), D + 2);

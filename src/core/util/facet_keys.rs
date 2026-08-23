@@ -8,6 +8,31 @@ use crate::core::tds::{SimplexKey, Tds, VertexKey};
 use crate::core::util::hashing::stable_hash_u64_slice;
 use slotmap::Key;
 use thiserror::Error;
+use uuid::Uuid;
+
+/// Derives a stable facet identifier from owner-independent vertex identities.
+///
+/// Hull snapshots and cross-owner comparisons cannot retain TDS-local
+/// [`VertexKey`] values. Sorting the UUIDs before hashing makes the identifier
+/// independent of both facet ordering and the source owner's slot layout.
+pub(crate) fn stable_facet_identifier_from_vertex_uuids(vertex_uuids: &[Uuid]) -> u64 {
+    let mut sorted_uuids: SmallBuffer<u128, MAX_PRACTICAL_DIMENSION_SIZE> =
+        vertex_uuids.iter().map(Uuid::as_u128).collect();
+    sorted_uuids.sort_unstable();
+
+    let mut packed_uuids: SmallBuffer<u64, { MAX_PRACTICAL_DIMENSION_SIZE * 2 }> =
+        SmallBuffer::with_capacity(sorted_uuids.len().saturating_mul(2));
+    for uuid in sorted_uuids {
+        packed_uuids
+            .push(u64::try_from(uuid >> 64).expect("the upper half of a UUID always fits in u64"));
+        packed_uuids.push(
+            u64::try_from(uuid & u128::from(u64::MAX))
+                .expect("the lower half of a UUID always fits in u64"),
+        );
+    }
+
+    stable_hash_u64_slice(packed_uuids.as_slice())
+}
 
 /// Derives a facet key directly from vertex keys.
 ///
@@ -366,10 +391,6 @@ mod tests {
 
     use crate::core::simplex::Simplex;
     use crate::core::tds::TdsBuilder;
-    use crate::core::util::measure_with_result;
-
-    use std::thread;
-    use std::time::Instant;
 
     /// Verifies that every axis rejects the full `i8` relative-offset span.
     fn assert_periodic_facet_key_extreme_delta_rejected<const D: usize>() {
@@ -827,60 +848,6 @@ mod tests {
             assert_eq!(facet_count, 7);
         } else {
             panic!("Expected InvalidFacetIndexOverflow error");
-        }
-    }
-
-    #[test]
-    fn test_usize_to_u8_performance_and_threading() {
-        // Sub-test: Performance characteristics (informational only)
-        let start = Instant::now();
-        for i in 0..1000 {
-            let _ = usize_to_u8(i % 256, 300);
-        }
-        let duration = start.elapsed();
-        tracing::debug!("usize_to_u8 valid conversions: 1000 iters in {duration:?}");
-
-        let start = Instant::now();
-        for i in 256..1256 {
-            let _ = usize_to_u8(i, 100);
-        }
-        let duration = start.elapsed();
-        tracing::debug!("usize_to_u8 error conversions: 1000 iters in {duration:?}");
-
-        // Sub-test: Memory efficiency (stack allocation only)
-        let (result, _alloc_info) = measure_with_result(|| {
-            let mut results = Vec::new();
-            for i in 0..100 {
-                results.push(usize_to_u8(i, 200));
-            }
-            results
-        });
-        for (i, result) in result.iter().enumerate() {
-            assert_eq!(
-                *result,
-                Ok(u8::try_from(i).unwrap()),
-                "Result should be correct for {i}"
-            );
-        }
-
-        // Sub-test: Thread safety
-        let handles: Vec<_> = (0..4)
-            .map(|thread_id| {
-                thread::spawn(move || {
-                    let mut results = Vec::new();
-                    for i in 0..100 {
-                        let val = (thread_id * 50 + i) % 256;
-                        results.push(usize_to_u8(val, 300));
-                    }
-                    results
-                })
-            })
-            .collect();
-        for handle in handles {
-            let results = handle.join().expect("Thread should complete successfully");
-            for result in results {
-                assert!(result.is_ok(), "All results should be successful");
-            }
         }
     }
 }
