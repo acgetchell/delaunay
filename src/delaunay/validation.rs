@@ -1327,6 +1327,19 @@ mod tests {
             EuclideanDelaunayReportDomain::Unproven
         );
 
+        assert_matches!(
+            triangulation.is_valid_delaunay(),
+            Err(DelaunayTriangulationValidationError::VerificationFailed { source })
+                if matches!(
+                    source.as_ref(),
+                    DelaunayVerificationError::EmptyCircumsphere { source }
+                        if matches!(
+                            source.as_ref(),
+                            DelaunayValidationError::DelaunayViolation { .. }
+                        )
+                )
+        );
+
         let report = triangulation.delaunay_violation_report(None).unwrap();
         let tds = triangulation.into_triangulation().into_tds();
         let brute_force = tds_delaunay_violation_report(&tds, None).unwrap();

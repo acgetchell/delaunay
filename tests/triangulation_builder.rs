@@ -1482,6 +1482,44 @@ fn test_explicit_error_variant_non_manifold_facet() {
     );
 }
 
+/// Non-orientable explicit connectivity must fail at the Levels 1–2 proof boundary.
+#[test]
+fn test_explicit_error_variant_tds_orientation_normalization() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([2.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0]).unwrap(),
+        vertex!([2.0, 1.0]).unwrap(),
+    ];
+    let simplices = vec![
+        vec![0, 2, 1],
+        vec![2, 3, 1],
+        vec![2, 4, 3],
+        vec![4, 5, 3],
+        vec![4, 1, 5],
+        vec![1, 0, 5],
+    ];
+
+    let error =
+        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+            .unwrap()
+            .build_triangulation()
+            .expect_err("a Möbius strip cannot be coherently oriented");
+
+    assert_matches!(
+        error,
+        DelaunayTriangulationConstructionError::ExplicitConstruction {
+            source: ExplicitConstructionError::TdsOrientationNormalization { source },
+        } if matches!(
+            source.as_ref(),
+            TdsError::InconsistentDataStructure { message }
+                if message.contains("Contradictory orientation constraints")
+        )
+    );
+}
+
 /// Error variant: duplicate vertex returns ExplicitConstruction(DuplicateVertexInSimplex { .. }).
 #[test]
 fn test_explicit_error_variant_duplicate_vertex_in_simplex() {

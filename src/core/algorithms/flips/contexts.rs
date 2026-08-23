@@ -1466,11 +1466,102 @@ mod tests {
     use crate::core::algorithms::insertion::repair_neighbor_pointers;
     use crate::core::tds::TdsError;
     use crate::core::test_support::{assert_same_vertex_simplex_topology, snapshot_topology};
+    use crate::geometry::traits::coordinate::CoordinateConversionError;
+    use crate::topology::traits::GlobalTopology;
     use crate::vertex;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
     use slotmap::KeyData;
     use std::assert_matches;
     use std::iter::once;
+
+    #[derive(Clone)]
+    struct FailingInSphereKernel;
+
+    impl<const D: usize> Kernel<D> for FailingInSphereKernel {
+        type Scalar = f64;
+
+        fn orientation(&self, _points: &[Point<D>]) -> Result<i32, CoordinateConversionError> {
+            Ok(1)
+        }
+
+        fn in_sphere(
+            &self,
+            _simplex_points: &[Point<D>],
+            _test_point: &Point<D>,
+        ) -> Result<i32, CoordinateConversionError> {
+            Err(CoordinateConversionError::UnsupportedMatrixDimension {
+                requested: D + 2,
+                max: D + 1,
+            })
+        }
+    }
+
+    #[test]
+    fn k2_predicate_failure_preserves_operation_and_diagnostics() {
+        let mut tds = Tds::<(), (), 2>::empty();
+        let facet = [
+            tds.insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+                .unwrap(),
+            tds.insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
+                .unwrap(),
+        ];
+        let opposite_a = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
+            .unwrap();
+        let opposite_b = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
+            .unwrap();
+        let topology_model = GlobalTopology::Euclidean.model();
+        let config = RepairAttemptConfig {
+            attempt: 1,
+            queue_order: RepairQueueOrder::Fifo,
+            max_flips_override: None,
+        };
+
+        for (first, second, expected_operation) in [
+            (
+                opposite_a,
+                opposite_b,
+                FlipPredicateOperation::K2SimplexAInSphere,
+            ),
+            (
+                opposite_b,
+                opposite_a,
+                FlipPredicateOperation::K2SimplexBInSphere,
+            ),
+        ] {
+            let mut diagnostics = RepairDiagnostics::default();
+            let error = delaunay_violation_k2_for_facet(
+                &tds,
+                &FailingInSphereKernel,
+                &topology_model,
+                &facet,
+                first,
+                second,
+                &[],
+                None,
+                &config,
+                &mut diagnostics,
+            )
+            .unwrap_err();
+
+            assert_matches!(
+                error,
+                FlipError::PredicateFailure { reason }
+                    if matches!(
+                        reason.as_ref(),
+                        FlipPredicateError::CoordinateConversion {
+                            operation,
+                            source: CoordinateConversionError::UnsupportedMatrixDimension {
+                                requested: 4,
+                                max: 3,
+                            },
+                        } if *operation == expected_operation
+                    )
+            );
+            assert_eq!(diagnostics.predicate_failures, 1);
+        }
+    }
 
     #[test]
     fn inverse_k1_vertex_cleanup_propagates_tds_failure() {

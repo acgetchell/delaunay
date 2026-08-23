@@ -1523,6 +1523,13 @@ mod tests {
                 TriangulationValidationErrorKind::VertexLinkNotManifold,
             ),
             (
+                TriangulationValidationError::HighDimensionalVertexLinkUnproven {
+                    vertex_key,
+                    dimension: 3,
+                },
+                TriangulationValidationErrorKind::HighDimensionalVertexLinkUnproven,
+            ),
+            (
                 TriangulationValidationError::EulerCharacteristicMismatch {
                     computed: 0,
                     expected: 1,
