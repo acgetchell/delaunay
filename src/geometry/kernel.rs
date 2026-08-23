@@ -117,11 +117,13 @@ pub trait Kernel<const D: usize>: Clone {
     /// - `0`: Degenerate (points are coplanar/collinear)
     /// - `+1`: Positive orientation
     ///
-    /// **Note:** [`AdaptiveKernel`] resolves finite degenerate cases via a
-    /// complete Simulation-of-Simplicity expansion and returns ±1 even when
-    /// coordinate values repeat. Other kernels (`FastKernel`,
-    /// `RobustKernel`) can return `0` for any degenerate input. Generic
-    /// code should handle all three values.
+    /// **Note:** For D ≤ 6, [`AdaptiveKernel`] resolves finite degenerate cases
+    /// via a complete Simulation-of-Simplicity expansion and returns ±1 even
+    /// when coordinate values repeat. For larger dimensions, its orientation
+    /// fallback can return
+    /// [`CoordinateConversionError::UnsupportedMatrixDimension`]. Other
+    /// kernels (`FastKernel`, `RobustKernel`) can return `0` for any degenerate
+    /// input. Generic code should handle all three values.
     ///
     /// # Arguments
     ///

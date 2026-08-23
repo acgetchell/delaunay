@@ -211,6 +211,15 @@ mod invalid_published_delaunay_bootstrap_fixture {
     }
 }
 
+mod invalid_delaunay_draft_bootstrap_fixture {
+    use super::*;
+
+    // ruleid: delaunay.rust.delaunay-bootstrap-workspace-must-use-tds-draft
+    struct DelaunayBootstrapWorkspace<K, U, V, const D: usize> {
+        candidate: proof_state::DelaunayTriangulationDraft<K, U, V, D>,
+    }
+}
+
 mod valid_delaunay_bootstrap_fixture {
     use super::*;
 

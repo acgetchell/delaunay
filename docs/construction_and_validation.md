@@ -940,9 +940,10 @@ enough for future regular, weighted, Gabriel, alpha, constrained, or related pre
 
 ### What It Checks
 
-- **Delaunay property**: verified via local flip predicates (k=2/k=3 and
-  inverses), equivalent to the empty-circumsphere condition for properly
-  constructed triangulations
+- **Delaunay property**: Euclidean owners are verified against the global
+  empty-circumsphere condition, with local flip predicates (k=2/k=3 and
+  inverses) serving as a fast sufficient certificate when they reach their
+  stronger normal form; non-Euclidean owners use topology-aware local predicates
 - Uses geometric predicates from the kernel (`insphere` test)
 - **Spherical prototype**: `SphericalDelaunayTriangulation` keeps Level 5 Geometric Predicates
   backend-specific. Its `S^2`/`S^3` path checks the spherical empty-cap
@@ -965,8 +966,9 @@ enough for future regular, weighted, Gabriel, alpha, constrained, or related pre
 ### Complexity
 
 - **Time**:
-  - `DelaunayTriangulation::is_valid_delaunay()` (Level 5 only): O(simplices) local flip-predicate verification.
-  - `DelaunayTriangulation::validate()` (Levels 1–5): Levels 1-4 plus O(simplices) local flip-predicate verification.
+  - `DelaunayTriangulation::is_valid_delaunay()` (Level 5 only): O(simplices) when the local
+    certificate succeeds; O(simplices × vertices) for the exact Euclidean fallback.
+  - `DelaunayTriangulation::validate()` (Levels 1–5): Levels 1-4 plus the same certified Level 5 path.
   - `DelaunayTriangulation::delaunay_report()` (Level 5 only): O(simplices) when complete Euclidean
     point-set provenance and robust local predicates certify a valid report; O(simplices × vertices)
     for the exact fallback when Euclidean connectivity is unproven or the local certificate fails or
@@ -987,8 +989,8 @@ fallback rebuild additionally snapshots vertices and simplex payload identity.
 - **Critical Applications**: When Delaunay guarantees are essential (interpolation, mesh quality)
 - **Tests**: After construction to verify correctness
 - **Debug**: Investigating geometric issues or suspected violations
-- **Avoid**: Report generation in hot loops, especially when connectivity is unproven and may require the
-  O(simplices × vertices) fallback. The boolean `is_valid_delaunay()` check remains O(simplices).
+- **Avoid**: Repeated Level 5 validation in hot loops, especially when connectivity
+  is unproven or degenerate and may require the O(simplices × vertices) fallback.
 
 ### Example
 
@@ -1052,11 +1054,13 @@ Start: Do you need to validate?
   combinatorial bookkeeping (roughly O(simplices × D²)).
 - Level 4 Valid Realization checks simplex degeneracy and pairwise realized-simplex
   intersections, using bounding boxes before exact rational witness construction.
-- Level 5 `DelaunayTriangulation::is_valid_delaunay()` verifies the implemented Delaunay predicate
-  family via local flip predicates after Level 4 realization validation.
-- The O(simplices × vertices) brute-force empty-circumsphere check is not used by
-  `is_valid_delaunay()`, but report APIs use it when connectivity lacks complete-point-set provenance or
-  the local certificate fails or is inconclusive.
+- Level 5 `DelaunayTriangulation::is_valid_delaunay()` verifies the implemented
+  Delaunay predicate family after Level 4 realization validation. For complete
+  Euclidean point sets it accepts a successful local certificate and otherwise
+  uses the exact global empty-circumsphere check.
+- The O(simplices × vertices) empty-circumsphere path is the Euclidean fallback
+  when connectivity lacks complete-point-set provenance or the stronger local
+  flip-normal-form check fails or is inconclusive.
 
 In practice, `DelaunayTriangulation::validate()` is usually dominated by Level 3 Intrinsic PL Topology work or
 Level 4 pairwise realization checks, depending on mesh size and overlap candidates.
@@ -1229,8 +1233,8 @@ PL-manifold + `ExactPredicates`).
 | 3 | `Triangulation::validate()` | `triangulation` | O(N×D²) |
 | 4 | `Triangulation::is_valid_realization()` | `triangulation` | O(simplices² × f(D)) |
 | 4 | `Triangulation::validate_realization()` | `triangulation` | O(simplices × D²) + O(simplices² × f(D)) |
-| 5 | `DelaunayTriangulation::is_valid_delaunay()` | `delaunay` | O(simplices) |
-| 5 | `DelaunayTriangulation::validate()` | `delaunay` | Levels 1-4 + O(simplices) |
+| 5 | `DelaunayTriangulation::is_valid_delaunay()` | `delaunay` | O(simplices) certified fast path; O(simplices × vertices) fallback |
+| 5 | `DelaunayTriangulation::validate()` | `delaunay` | Levels 1-4 + certified fast path or exact fallback |
 | — | `DelaunayTriangulation::validation_report()` | `delaunay` | Levels 1-4 + O(simplices) certified fast path; O(simplices × vertices) fallback |
 
 ---

@@ -16,8 +16,8 @@
 //! - **Incremental insertion validity** - Triangulation remains valid after each insertion
 //! - **Duplicate coordinate rejection** - Geometric duplicate detection at insertion time
 //!
-//! ### Delaunay Property (Fast O(N) via Flip Predicates)
-//! - **Empty circumsphere condition** - No vertex lies strictly inside any simplex's circumsphere (2D-5D; verified via flip predicates)
+//! ### Delaunay Property
+//! - **Empty circumsphere condition** - No vertex lies strictly inside any simplex's circumsphere (2D-5D)
 //! - **Insertion-order robustness** - Levels 1–3 validity across insertion orders (2D-5D; Delaunay property not asserted; see Issue #120)
 //! - **Duplicate cloud integration** - Full pipeline with messy real-world inputs (2D-5D: duplicates + near-duplicates)
 //!
@@ -27,9 +27,9 @@
 //!
 //! ## Performance Note
 //!
-//! Delaunay property validation now uses `DelaunayTriangulation::verify_via_flip_predicates()` which checks
-//! local flip configurations (O(simplices)) instead of the naive O(simplices × vertices) brute-force.
-//! This provides ~40-100x speedup for property-based testing while remaining equally correct.
+//! Delaunay property validation uses a fast local certificate for the common
+//! case and the exact global empty-circumsphere check when the stronger local
+//! flip-normal-form check is inconclusive.
 
 #[macro_use]
 #[path = "common/proptest_config.rs"]
@@ -2062,3 +2062,53 @@ gen_duplicate_cloud_test!(2, 2);
 gen_duplicate_cloud_test!(3, 3);
 gen_duplicate_cloud_test!(4, 4);
 gen_duplicate_cloud_test!(5, 5, #[cfg(feature = "slow-tests")]);
+
+#[test]
+fn duplicate_cloud_4d_accepts_global_delaunay_when_inverse_flip_remains() {
+    let points = [
+        [1e-6, -93.508_455_015_806_32, -78.945_537_198_317_24, 1e-6],
+        [1e-6, -1e-6, 32.624_409_067_227_11, -91.061_618_050_876_49],
+        [1e-6, -1e-6, 1e-6, 63.126_514_742_920_96],
+        [
+            -1e-6,
+            66.319_734_204_548_9,
+            -51.253_018_808_818_474,
+            -85.511_003_761_007_96,
+        ],
+        [
+            -92.095_497_651_501_38,
+            -61.369_257_763_013_76,
+            -33.243_436_198_884_43,
+            1e-6,
+        ],
+        [
+            -41.192_702_672_956_16,
+            -3.020_677_560_415_026,
+            -38.161_731_404_340_33,
+            -18.561_637_984_897_34,
+        ],
+        [
+            -89.670_231_108_311_33,
+            -41.645_135_709_705_634,
+            -79.897_625_724_736_46,
+            92.874_569_322_774_19,
+        ],
+        [1e-6, -93.508_455_015_806_32, -78.945_537_198_317_24, 1e-6],
+        [1.1e-6, -9e-7, 32.624_409_167_227_114, -91.061_617_950_876_5],
+    ]
+    .map(|coords| Point::try_new(coords).expect("finite point coordinates"));
+    let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
+    let options =
+        ConstructionOptions::default().with_dedup_policy(DedupPolicy::try_epsilon(1e-6).unwrap());
+
+    let dt = DelaunayTriangulation::builder(&vertices)
+        .construction_options(options)
+        .build()
+        .expect("the globally Delaunay duplicate cloud should publish");
+
+    assert!(
+        dt.verify_via_flip_predicates().is_err(),
+        "the fixture must retain the stronger inverse-flip normal-form mismatch"
+    );
+    assert!(dt.is_valid_delaunay().is_ok());
+}

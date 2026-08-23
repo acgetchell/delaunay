@@ -153,7 +153,7 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 - **Structural Invariants (Fast)**:
   - Incremental insertion maintains validity after each insertion
   - Duplicate coordinate rejection (geometric duplicate detection at insertion time)
-- **Delaunay Property (Fast O(N) via Flip Predicates)**:
+- **Delaunay Property**:
   - Empty circumsphere condition - No vertex lies strictly inside any simplex's circumsphere
   - Insertion-order robustness - Levels 1–3 validity across insertion orders
   - Duplicate cloud integration - Full pipeline with messy real-world inputs
@@ -162,7 +162,8 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 
 **Implementation:** Bistellar flips (k=2 facets, k=3 ridges) with automatic Delaunay repair:
 
-- Fast O(N) flip-based validation provides 40-100x speedup over brute-force
+- Fast O(N) flip predicates certify the common case; exact global validation
+  handles degenerate cases outside the stronger flip normal form
 - Automatic repair runs after insertion/deletion via `DelaunayRepairPolicy`
 - Inverse edge/triangle queues for 4D/5D repair
 - See `src/core/algorithms/flips/` for implementation

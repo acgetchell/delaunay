@@ -72,11 +72,21 @@ slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.ci.overrides]]
 # This cospherical 3D OnSuspicion property can cross the integration-suite
-# watchdog on hosted macOS runners while remaining fast on Linux and Windows.
-platform = 'cfg(target_os = "macos")'
+# watchdog on hosted runners.
 filter = '''
 binary(=proptest_delaunay_triangulation)
 & test(=prop_on_suspicion_validates_cospherical_3d_sequences)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
+# Complete 5D exact SoS expansion sits below the default budget on Linux but
+# can cross it on Windows. Keep the exception limited to the deterministic
+# co-spherical property that exercises two expansions per generated case.
+platform = 'cfg(windows)'
+filter = '''
+binary(=proptest_sos)
+& test(=prop_sos_insphere_deterministic_5d)
 '''
 slow-timeout = { period = "60s", terminate-after = 1 }
 

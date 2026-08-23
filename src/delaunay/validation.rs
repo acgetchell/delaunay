@@ -209,9 +209,11 @@ where
 /// Passive validation has two implementation paths:
 /// - flip-predicate verification via
 ///   [`DelaunayTriangulation::verify_via_flip_predicates`](crate::DelaunayTriangulation::verify_via_flip_predicates),
-///   used by [`DelaunayTriangulation::is_valid_delaunay`](crate::DelaunayTriangulation::is_valid_delaunay)
-/// - empty-circumsphere validation via `is_delaunay_property_only`, used when
-///   reconstructing Euclidean triangulations from raw [`Tds`]
+///   used as a fast certificate for complete Euclidean point-set triangulations
+///   and as the topology-aware validator for non-Euclidean triangulations
+/// - empty-circumsphere validation via `is_delaunay_property_only`, used for
+///   Euclidean publication and whenever the stronger flip-normal-form check is
+///   inconclusive
 ///
 /// This wrapper preserves which path failed and carries the original typed
 /// error so callers can inspect predicate, topology, and simplex-key context
@@ -373,13 +375,13 @@ pub enum DelaunayTriangulationValidationError {
         source: Box<TriangulationRealizationValidationError>,
     },
 
-    /// Flip-based Delaunay verification detected a violation.
+    /// Delaunay verification detected a violation.
     ///
-    /// This is returned by [`DelaunayTriangulation::is_valid_delaunay`](crate::DelaunayTriangulation::is_valid_delaunay) when the fast
-    /// O(simplices) flip-predicate scan finds a Delaunay violation.  The error is
-    /// a Level 5 (Delaunay property) issue, not a Level 1–2 structural problem.
-    /// The [`DelaunayVerificationError`] source distinguishes flip-predicate
-    /// validation from empty-circumsphere reconstruction validation.
+    /// This is returned by [`DelaunayTriangulation::is_valid_delaunay`](crate::DelaunayTriangulation::is_valid_delaunay) when Level 5
+    /// validation fails. The error is a Level 5 (Delaunay property) issue, not
+    /// a Level 1–2 structural problem. The [`DelaunayVerificationError`] source
+    /// distinguishes flip-predicate validation from Euclidean
+    /// empty-circumsphere validation.
     #[error("Delaunay verification failed: {source}")]
     VerificationFailed {
         /// Typed verification failure source.
@@ -575,9 +577,11 @@ where
     /// This is the Delaunay layer's `is_valid`: it checks **only** the Delaunay property
     /// and intentionally does **not** run lower-layer validation.
     ///
-    /// **Performance**: Uses fast O(simplices) flip-based verification instead of the naive
-    /// O(simplices × vertices) brute-force check, providing ~40-100x speedup. This method is
-    /// correct for all properly-constructed triangulations (which is the standard case).
+    /// **Performance**: Complete Euclidean point-set triangulations first use
+    /// O(simplices) robust flip predicates. Because that check also enforces a
+    /// stronger flip normal form, a negative result falls back to the exact
+    /// O(simplices × vertices) empty-circumsphere check. Non-Euclidean
+    /// triangulations use the topology-aware flip verifier.
     ///
     /// For cumulative validation across the whole hierarchy, use [`validate`](Self::validate).
     ///
@@ -611,7 +615,20 @@ where
     /// # }
     /// ```
     pub fn is_valid_delaunay(&self) -> Result<(), DelaunayTriangulationValidationError> {
-        // Use fast flip-based verification (O(simplices) instead of O(simplices × vertices))
+        if self.global_topology().is_euclidean() {
+            if self.euclidean_report_domain.supports_local_certificate()
+                && verify_complete_euclidean_tds_via_robust_flip_predicates(&self.tri.tds).is_ok()
+            {
+                return Ok(());
+            }
+
+            return is_delaunay_property_only(&self.tri.tds).map_err(|source| {
+                DelaunayTriangulationValidationError::VerificationFailed {
+                    source: Box::new(DelaunayVerificationError::from(source)),
+                }
+            });
+        }
+
         self.verify_via_flip_predicates().map_err(|source| {
             DelaunayTriangulationValidationError::VerificationFailed {
                 source: Box::new(DelaunayVerificationError::from(source)),
@@ -814,11 +831,14 @@ where
         debug_print_first_tds_delaunay_violation(&self.tri.tds, simplices_subset);
     }
 
-    /// Verify the Delaunay property via fast O(simplices) flip predicates.
+    /// Verify the local Delaunay flip normal form in O(simplices).
     ///
-    /// This checks the Delaunay property by testing all possible flip configurations
-    /// (k=2 facets, k=3 ridges, and their inverses) instead of the naive O(simplices × vertices)
-    /// brute-force check. This is ~40-100x faster while being equally correct.
+    /// This tests k=2 facets, k=3 ridges, and their inverse configurations.
+    /// For Euclidean degenerate inputs, more than one triangulation can satisfy
+    /// the empty-circumsphere property while only one is in this stronger local
+    /// normal form. Consequently, an error is not by itself proof of a Euclidean
+    /// Level 5 violation; use [`is_valid_delaunay`](Self::is_valid_delaunay),
+    /// which falls back to the global empty-circumsphere check.
     ///
     /// Ideal for property-based testing with many iterations.
     ///

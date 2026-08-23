@@ -1308,7 +1308,7 @@ where
     }
 }
 
-/// Crate-internal TDS verifier for the Delaunay property via local flip predicates.
+/// Crate-internal TDS verifier for the local Delaunay flip normal form.
 ///
 /// Public Delaunay owners expose this as
 /// [`DelaunayTriangulation::verify_via_flip_predicates`](crate::DelaunayTriangulation::verify_via_flip_predicates).
@@ -1319,9 +1319,11 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`DelaunayRepairError::PostconditionFailed`] if any flip predicate detects
-/// a Delaunay violation, or [`DelaunayRepairError::VerificationFailed`] if
-/// verification cannot evaluate the local predicates.
+/// Returns [`DelaunayRepairError::PostconditionFailed`] if any repair-driving
+/// flip remains applicable, or [`DelaunayRepairError::VerificationFailed`] if
+/// verification cannot evaluate the local predicates. For degenerate Euclidean
+/// point sets, failure of this stronger normal-form check does not by itself
+/// disprove the empty-circumsphere property.
 pub(crate) fn verify_tds_via_flip_predicates_assuming_connected<K, U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     kernel: &K,
@@ -1370,7 +1372,7 @@ where
     verify_delaunay_with_topology(tds, &RobustKernel::new(), GlobalTopology::Euclidean)
 }
 
-/// Verify the Delaunay property via local flip predicates under a global topology model.
+/// Verify the local Delaunay flip normal form under a global topology model.
 ///
 /// For periodic topologies this evaluates predicates in lifted coordinates using the
 /// per-simplex periodic vertex offsets stored on quotient simplices.

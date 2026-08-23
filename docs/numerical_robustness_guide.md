@@ -252,8 +252,10 @@ To convert a Levels 1–4 triangulation explicitly, use the consuming workflow:
 - enable bounded rebuild recovery with
   `.repair_by_flips().fallback_rebuild(true).build()`
 
-After construction or conversion, verify the Delaunay property via `dt.is_valid_delaunay()`
-(which uses local flip predicates).
+After construction or conversion, verify the Delaunay property via
+`dt.is_valid_delaunay()`. Complete Euclidean point-set triangulations use a
+fast local certificate when possible and otherwise fall back to the exact
+global empty-circumsphere check.
 
 For full-stack diagnostics (Levels 1-5), use `dt.validate()` or `dt.validation_report()`;
 see `docs/construction_and_validation.md`.
