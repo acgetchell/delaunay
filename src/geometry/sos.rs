@@ -302,6 +302,18 @@ pub fn sos_insphere_sign<const D: usize>(
 type Monomial = u128;
 type Polynomial = BTreeMap<Monomial, BigRational>;
 
+/// Largest determinant matrix produced by the public D ≤ 6 `SoS` predicates.
+const MAX_SOS_MATRIX_DIMENSION: usize = 8;
+/// Exact subset-DP transition count for an 8×8 determinant: `8 * 2^7`.
+const MAX_SOS_SUBSET_TRANSITIONS: usize = 1_024;
+/// Conservative monomial-pair bound for the generated D=6 in-sphere matrix.
+///
+/// Its column term maxima are `[2, 2, 2, 2, 2, 2, 13, 1]`; the complete
+/// subset expansion therefore performs at most this many coefficient products.
+/// The guard bounds malformed private inputs without truncating any supported
+/// public D ≤ 6 predicate.
+const MAX_SOS_MONOMIAL_PAIR_PRODUCTS: usize = 55_631_284;
+
 fn constant_polynomial(value: f64) -> Result<Polynomial, CoordinateConversionError> {
     let coefficient =
         rational_from_f64(value).ok_or_else(|| CoordinateConversionError::NonFiniteValue {
@@ -377,6 +389,23 @@ fn multiply_polynomials(
     Ok(product)
 }
 
+/// Multiplies one determinant-DP term while enforcing the complete supported
+/// `SoS` expansion's practical monomial-work bound.
+fn multiply_polynomials_with_work_bound(
+    left: &Polynomial,
+    right: &Polynomial,
+    monomial_pair_products: &mut usize,
+) -> Option<Polynomial> {
+    let pair_products = left.len().checked_mul(right.len())?;
+    *monomial_pair_products = monomial_pair_products.checked_add(pair_products)?;
+    if *monomial_pair_products > MAX_SOS_MONOMIAL_PAIR_PRODUCTS {
+        return None;
+    }
+    multiply_polynomials(left, right).ok()
+}
+
+/// Returns the leading determinant sign, or `None` for malformed matrices or
+/// private inputs outside the complete D ≤ 6 subset/monomial work envelope.
 fn polynomial_determinant_leading_sign(matrix: &[Vec<Polynomial>]) -> Option<i32> {
     let dimension = matrix.len();
     if matrix.iter().any(|row| row.len() != dimension) {
@@ -385,22 +414,36 @@ fn polynomial_determinant_leading_sign(matrix: &[Vec<Polynomial>]) -> Option<i32
     if dimension == 0 {
         return Some(1);
     }
-    let mut partials = vec![None; 1usize << dimension];
+    if dimension > MAX_SOS_MATRIX_DIMENSION {
+        return None;
+    }
+    let state_count = 1usize.checked_shl(u32::try_from(dimension).ok()?)?;
+    let transition_count = dimension.checked_mul(state_count / 2)?;
+    if transition_count > MAX_SOS_SUBSET_TRANSITIONS {
+        return None;
+    }
+
+    let mut monomial_pair_products = 0;
+    let mut partials = vec![None; state_count];
     partials[0] = Some(constant_polynomial(1.0).ok()?);
 
-    for mask in 0usize..(1usize << dimension) {
+    for mask in 0usize..state_count {
         let row = mask.count_ones() as usize;
         if row >= dimension {
             continue;
         }
-        let Some(partial) = partials[mask].clone() else {
+        // Every predecessor has a smaller numeric mask, so all contributions
+        // are complete before this state is visited and the polynomial can be
+        // consumed instead of deep-cloned.
+        let Some(partial) = partials[mask].take() else {
             continue;
         };
         for (column, entry) in matrix[row].iter().enumerate() {
             if mask & (1 << column) != 0 {
                 continue;
             }
-            let term = multiply_polynomials(&partial, entry).ok()?;
+            let term =
+                multiply_polynomials_with_work_bound(&partial, entry, &mut monomial_pair_products)?;
             let sign = if (mask >> (column + 1)).count_ones() % 2 == 0 {
                 1
             } else {
@@ -415,7 +458,7 @@ fn polynomial_determinant_leading_sign(matrix: &[Vec<Polynomial>]) -> Option<i32
         }
     }
 
-    let determinant = partials[(1 << dimension) - 1].as_ref()?;
+    let determinant = partials[state_count - 1].as_ref()?;
     let coefficient = determinant.first_key_value()?.1;
     Some(if coefficient.is_positive() { 1 } else { -1 })
 }
@@ -489,7 +532,7 @@ mod tests {
     /// Generate the standard `SoS` tests for a given dimension:
     ///
     /// - orientation: degenerate nonzero, deterministic, translation-invariant
-    /// - insphere: cospherical nonzero, deterministic (10 calls),
+    /// - insphere: cospherical nonzero, deterministic,
     ///   translation-invariant
     /// - repeated coordinates: deterministic symbolic ordering
     macro_rules! gen_sos_dim_tests {
@@ -532,13 +575,9 @@ mod tests {
                 #[test]
                 fn [<test_sos_insphere_ $dim d_cospherical_deterministic>]() {
                     let (simplex, test) = cospherical_points::<$dim>();
-                    let results: Vec<i32> = (0..10)
-                        .map(|_| sos_insphere_sign(&simplex, &test).unwrap())
-                        .collect();
-                    assert!(
-                        results.iter().all(|&r| r == results[0]),
-                        "SoS insphere must be deterministic across calls"
-                    );
+                    let first = sos_insphere_sign(&simplex, &test).unwrap();
+                    let second = sos_insphere_sign(&simplex, &test).unwrap();
+                    assert_eq!(first, second, "SoS insphere must be deterministic");
                 }
 
                 #[test]

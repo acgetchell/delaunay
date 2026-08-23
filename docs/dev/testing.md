@@ -407,12 +407,17 @@ by platform. They remain in the normal suite because they cover distinct public
 builder contracts and are fast in release builds. The optimized 5D intersection
 agreement check receives a platform-neutral 60-second override because it can
 reach the 10-second boundary on hosted runners. The randomized 5D full-report
-agreement check receives the same focused override across platforms.
+agreement check receives the same focused override across platforms. The
+translated 5D and complete 6D exact SoS expansion checks receive a focused
+60-second override because their irreducible cold-path work can cross the
+default boundary on hosted runners.
 
 The release integration profile similarly grants 60 seconds on Windows only
 to the promoted 4D property families that sit at the 10-second boundary there.
-The overrides combine platform, integration-binary, and test-name filters so
-unrelated tests and non-Windows platforms retain the normal budget.
+The cospherical 3D `OnSuspicion` sequence property receives the same focused
+headroom on macOS, where hosted runners can cross the default integration-test
+watchdog. The overrides combine platform, integration-binary, and test-name
+filters so unrelated tests and unaffected platforms retain the normal budget.
 
 For test-only changes, run only the matching focused recipe. If multiple test
 target classes changed, compose those focused recipes once each. Use

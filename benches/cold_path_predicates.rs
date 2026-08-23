@@ -39,9 +39,15 @@
 //! cargo bench --profile perf --bench cold_path_predicates -- --baseline pre
 //! ```
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+#[cfg(feature = "count-allocations")]
+use allocation_counter::measure;
+use criterion::{
+    BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main,
+};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-use delaunay::prelude::geometry::{CoordinateRange, InSphere};
+use delaunay::prelude::geometry::{
+    CoordinateRange, InSphere, sos_insphere_sign, sos_orientation_sign,
+};
 use delaunay::prelude::query::*;
 use std::hint::black_box;
 
@@ -78,6 +84,24 @@ fn standard_simplex<const D: usize>() -> Vec<Point<D>> {
         pts.push(finite_point(coords));
     }
     pts
+}
+
+/// D+1 co-hyperplanar points that require symbolic orientation resolution.
+fn degenerate_orientation_points<const D: usize>() -> Vec<Point<D>> {
+    let mut points = Vec::with_capacity(D + 1);
+    points.push(finite_point([0.0; D]));
+    for axis in 0..D.saturating_sub(1) {
+        let mut coordinates = [0.0; D];
+        coordinates[axis] = 1.0;
+        points.push(finite_point(coordinates));
+    }
+    let mut barycenter = [0.0; D];
+    barycenter
+        .iter_mut()
+        .take(D.saturating_sub(1))
+        .for_each(|coordinate| *coordinate = 0.5);
+    points.push(finite_point(barycenter));
+    points
 }
 
 /// Generate well-separated hot-path query points for dimension `D`.
@@ -162,6 +186,63 @@ fn bench_exact_fallback(c: &mut Criterion) {
     bench_exact_fallback_case::<2>(&mut group);
     bench_exact_fallback_case::<3>(&mut group);
     bench_exact_fallback_case::<4>(&mut group);
+    group.finish();
+}
+
+/// Benchmark complete degenerate `SoS` expansion and preflight every fixture.
+fn bench_sos_degenerate_case<const D: usize>(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+) {
+    let orientation_points = degenerate_orientation_points::<D>();
+    let simplex = standard_simplex::<D>();
+    let cospherical = finite_point([1.0; D]);
+
+    let orientation_sign = sos_orientation_sign(&orientation_points).or_abort();
+    let insphere_sign = sos_insphere_sign(&simplex, &cospherical).or_abort();
+    if !matches!(orientation_sign, -1 | 1) || !matches!(insphere_sign, -1 | 1) {
+        abort_benchmark(format_args!(
+            "{D}D SoS fixtures must resolve to nonzero signs: orientation={orientation_sign}, insphere={insphere_sign}"
+        ));
+    }
+
+    #[cfg(feature = "count-allocations")]
+    {
+        let orientation_allocations = measure(|| {
+            black_box(sos_orientation_sign(black_box(&orientation_points)).or_abort());
+        });
+        let insphere_allocations = measure(|| {
+            black_box(sos_insphere_sign(black_box(&simplex), black_box(&cospherical)).or_abort());
+        });
+        println!(
+            "predicates/sos_degenerate/orientation_{D}d: allocations={}, bytes={}",
+            orientation_allocations.count_total, orientation_allocations.bytes_total
+        );
+        println!(
+            "predicates/sos_degenerate/insphere_{D}d: allocations={}, bytes={}",
+            insphere_allocations.count_total, insphere_allocations.bytes_total
+        );
+    }
+
+    group.bench_function(format!("orientation_{D}d"), |b| {
+        b.iter(|| black_box(sos_orientation_sign(black_box(&orientation_points)).or_abort()));
+    });
+    group.bench_function(format!("insphere_{D}d"), |b| {
+        b.iter(|| {
+            black_box(sos_insphere_sign(black_box(&simplex), black_box(&cospherical)).or_abort())
+        });
+    });
+}
+
+/// Benchmark exact `SoS` degeneracy handling through the supported D=6 boundary.
+fn bench_sos_degenerate(c: &mut Criterion) {
+    let mut group = c.benchmark_group("predicates/sos_degenerate");
+    group.sample_size(10);
+    group.sampling_mode(SamplingMode::Flat);
+    bench_sos_degenerate_case::<2>(&mut group);
+    bench_sos_degenerate_case::<3>(&mut group);
+    bench_sos_degenerate_case::<4>(&mut group);
+    bench_sos_degenerate_case::<5>(&mut group);
+    bench_sos_degenerate_case::<6>(&mut group);
     group.finish();
 }
 
@@ -324,6 +405,7 @@ criterion_group!(
     benches,
     bench_hot_path,
     bench_centered_queries,
-    bench_exact_fallback
+    bench_exact_fallback,
+    bench_sos_degenerate
 );
 criterion_main!(benches);

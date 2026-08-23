@@ -638,6 +638,7 @@ mod tests {
     use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::triangulation::builder::TriangulationBuilder;
+    use crate::triangulation::validation::TopologyGuarantee;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
 
@@ -815,39 +816,60 @@ mod tests {
         assert_eq!(hull_facet_set, boundary_set);
     }
 
-    #[test]
-    fn facet_identifiers_are_stable_across_tds_key_layouts() {
-        fn build_square(
-            order: [usize; 4],
-            simplices: &[Vec<usize>],
-        ) -> Triangulation<AdaptiveKernel<f64>, (), (), 2> {
-            let points = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
-            let uuids = [
-                Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_0001),
-                Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_0002),
-                Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_0003),
-                Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_0004),
-            ];
-            let vertices: Vec<_> = order
-                .into_iter()
-                .map(|index| {
-                    Vertex::try_new_with_uuid(
-                        Point::try_new(points[index]).unwrap(),
-                        uuids[index],
-                        None,
-                    )
-                    .unwrap()
-                })
-                .collect();
-            let tds = TdsBuilder::new(&vertices, simplices).build().unwrap();
-            TriangulationBuilder::new(tds, AdaptiveKernel::new())
-                .canonicalizing()
-                .build()
+    fn build_two_simplex_ball<const D: usize>(
+        order: &[usize],
+    ) -> Triangulation<AdaptiveKernel<f64>, (), (), D> {
+        assert_eq!(order.len(), D + 2);
+        let vertices: Vec<_> = order
+            .iter()
+            .map(|&original_index| {
+                let mut coordinates = [0.0; D];
+                if (1..=D).contains(&original_index) {
+                    coordinates[original_index - 1] = 1.0;
+                } else if original_index == D + 1 {
+                    coordinates.fill(1.0);
+                }
+                Vertex::try_new_with_uuid(
+                    Point::try_new(coordinates).unwrap(),
+                    Uuid::from_u128(
+                        0x0000_0000_0000_4000_8000_0000_0000_0001
+                            + u128::try_from(original_index).unwrap(),
+                    ),
+                    None,
+                )
                 .unwrap()
-        }
+            })
+            .collect();
+        let slot_for_original: Vec<_> = (0..D + 2)
+            .map(|original_index| {
+                order
+                    .iter()
+                    .position(|&candidate| candidate == original_index)
+                    .unwrap()
+            })
+            .collect();
+        let simplices = vec![
+            (0..=D)
+                .map(|original_index| slot_for_original[original_index])
+                .collect(),
+            (1..=D + 1)
+                .map(|original_index| slot_for_original[original_index])
+                .collect(),
+        ];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+        TriangulationBuilder::new(tds, AdaptiveKernel::new())
+            .topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .canonicalizing()
+            .build()
+            .unwrap()
+    }
 
-        let first = build_square([0, 1, 2, 3], &[vec![0, 1, 2], vec![0, 2, 3]]);
-        let second = build_square([0, 2, 1, 3], &[vec![0, 2, 1], vec![0, 1, 3]]);
+    fn assert_facet_identifiers_stable_across_tds_key_layouts<const D: usize>() {
+        let first_order: Vec<_> = (0..D + 2).collect();
+        let mut second_order = first_order.clone();
+        second_order.swap(0, 1);
+        let first = build_two_simplex_ball::<D>(&first_order);
+        let second = build_two_simplex_ball::<D>(&second_order);
 
         let first_runtime_keys: HashSet<_> = first
             .boundary_facets()
@@ -870,6 +892,20 @@ mod tests {
         assert_eq!(extract_hull_facet_set(&first_hull), first_ids);
         assert_eq!(extract_hull_facet_set(&second_hull), second_ids);
     }
+
+    macro_rules! gen_facet_identifier_stability_test {
+        ($name:ident, $dim:literal) => {
+            #[test]
+            fn $name() {
+                assert_facet_identifiers_stable_across_tds_key_layouts::<$dim>();
+            }
+        };
+    }
+
+    gen_facet_identifier_stability_test!(facet_identifiers_are_stable_2d, 2);
+    gen_facet_identifier_stability_test!(facet_identifiers_are_stable_3d, 3);
+    gen_facet_identifier_stability_test!(facet_identifiers_are_stable_4d, 4);
+    gen_facet_identifier_stability_test!(facet_identifiers_are_stable_5d, 5);
 
     #[test]
     fn test_extract_edge_set_empty_tds_is_empty() {

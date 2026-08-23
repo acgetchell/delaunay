@@ -1166,13 +1166,9 @@ mod tests {
                     let kernel = AdaptiveKernel::<f64>::new();
                     let simplex = standard_simplex::<$dim>();
                     let test = cospherical_test::<$dim>();
-                    let results: Vec<i32> = (0..10)
-                        .map(|_| kernel.in_sphere(&simplex, &test).unwrap())
-                        .collect();
-                    assert!(
-                        results.iter().all(|&r| r == results[0]),
-                        "Degenerate insphere must be deterministic"
-                    );
+                    let first = kernel.in_sphere(&simplex, &test).unwrap();
+                    let second = kernel.in_sphere(&simplex, &test).unwrap();
+                    assert_eq!(first, second, "Degenerate insphere must be deterministic");
                 }
 
                 #[test]

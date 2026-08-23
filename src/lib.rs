@@ -2033,6 +2033,7 @@ pub mod prelude {
             robust_predicates::{
                 ConsistencyResult, InsphereConsistencyError, robust_insphere, robust_orientation,
             },
+            sos::{sos_insphere_sign, sos_orientation_sign},
             traits::coordinate::{
                 Coordinate, CoordinateConversionError, CoordinateConversionValue,
                 CoordinateIdentity, CoordinateRepresentation, CoordinateValidationError,

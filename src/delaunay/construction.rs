@@ -117,7 +117,7 @@ use crate::triangulation::validation::{
 };
 use crate::validation::{
     DelaunayLevelFiveCertificate, DelaunayTriangulationValidationError, DelaunayVerificationError,
-    certify_level_five_via_flip_predicates,
+    certify_level_five_for_refinement,
 };
 use core::{cmp::Ordering, fmt};
 use num_traits::ToPrimitive;
@@ -750,12 +750,12 @@ pub enum DelaunayConstructionRetryFailure {
         source: Box<DelaunayTriangulationConstructionError>,
     },
 
-    /// Construction produced a triangulation that failed flip-based Delaunay validation.
+    /// Construction produced a triangulation that failed Level 5 certification.
     #[error("Delaunay property violated after construction: {source}")]
     DelaunayValidation {
-        /// Final flip-based Delaunay validation failure.
+        /// Final Level 5 certification failure.
         #[source]
-        source: Box<DelaunayRepairError>,
+        source: Box<DelaunayTriangulationValidationError>,
     },
 }
 
@@ -1524,6 +1524,33 @@ fn is_geometric_repair_error(repair_err: &DelaunayRepairError) -> bool {
 /// Returns true when a repair error is deterministic structural failure.
 fn is_non_retryable_repair_error(repair_err: &DelaunayRepairError) -> bool {
     !is_geometric_repair_error(repair_err)
+}
+
+/// Returns true when a Level 5 certification failure cannot be changed by
+/// retrying construction with a different insertion order.
+fn is_non_retryable_delaunay_certification_error(
+    error: &DelaunayTriangulationValidationError,
+) -> bool {
+    match error {
+        DelaunayTriangulationValidationError::Tds { .. }
+        | DelaunayTriangulationValidationError::Triangulation { .. }
+        | DelaunayTriangulationValidationError::Realization { .. } => true,
+        DelaunayTriangulationValidationError::VerificationFailed { source } => {
+            match source.as_ref() {
+                DelaunayVerificationError::FlipPredicates { source } => {
+                    is_non_retryable_repair_error(source)
+                }
+                DelaunayVerificationError::EmptyCircumsphere { source } => matches!(
+                    source.as_ref(),
+                    DelaunayValidationError::TriangulationState { .. }
+                        | DelaunayValidationError::InvalidSimplex { .. }
+                ),
+            }
+        }
+        DelaunayTriangulationValidationError::RepairOperationFailed { source, .. } => {
+            is_non_retryable_repair_error(source)
+        }
+    }
 }
 
 /// Returns true for flip errors caused by geometric predicates or degenerate
@@ -3410,9 +3437,9 @@ where
         })
     }
 
-    /// Proves Level 5 for retry selection and retains that evidence for publication.
-    fn certify_via_flip_predicates(&mut self) -> Result<(), DelaunayRepairError> {
-        self.delaunay_certificate = Some(certify_level_five_via_flip_predicates(&self.tri)?);
+    /// Proves Level 5 for retry selection and retains publication-compatible evidence.
+    fn certify_for_publication(&mut self) -> Result<(), DelaunayTriangulationValidationError> {
+        self.delaunay_certificate = Some(certify_level_five_for_refinement(&self.tri)?);
         Ok(())
     }
 
@@ -3649,13 +3676,13 @@ where
                     log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
                     return Ok(workspace);
                 }
-                match workspace.certify_via_flip_predicates() {
+                match workspace.certify_for_publication() {
                     Ok(()) => {
                         log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
                         return Ok(workspace);
                     }
-                    Err(source) if is_non_retryable_repair_error(&source) => {
-                        let err = Self::map_final_delaunay_repair_error(source);
+                    Err(source) if is_non_retryable_delaunay_certification_error(&source) => {
+                        let err = Self::map_final_delaunay_validation_error(source);
                         let err_string = err.to_string();
                         log_construction_retry_result(
                             0,
@@ -3750,7 +3777,7 @@ where
                         );
                         return Ok(workspace);
                     }
-                    match workspace.certify_via_flip_predicates() {
+                    match workspace.certify_for_publication() {
                         Ok(()) => {
                             log_construction_retry_result(
                                 attempt,
@@ -3763,8 +3790,8 @@ where
                             return Ok(workspace);
                         }
                         Err(source) => {
-                            if is_non_retryable_repair_error(&source) {
-                                let err = Self::map_final_delaunay_repair_error(source);
+                            if is_non_retryable_delaunay_certification_error(&source) {
+                                let err = Self::map_final_delaunay_validation_error(source);
                                 let err_string = err.to_string();
                                 log_construction_retry_result(
                                     attempt,
@@ -3905,7 +3932,7 @@ where
                         return Ok((workspace, aggregate_stats));
                     }
                     let delaunay_started = Instant::now();
-                    let delaunay_result = workspace.certify_via_flip_predicates();
+                    let delaunay_result = workspace.certify_for_publication();
                     stats
                         .telemetry
                         .record_construction_final_delaunay_validation_timing(
@@ -3927,8 +3954,8 @@ where
                         Err(err) => {
                             aggregate_stats.merge_from(&stats);
                             last_stats.replace(stats);
-                            if is_non_retryable_repair_error(&err) {
-                                let error = Self::map_final_delaunay_repair_error(err);
+                            if is_non_retryable_delaunay_certification_error(&err) {
+                                let error = Self::map_final_delaunay_validation_error(err);
                                 let last_error = error.to_string();
                                 log_construction_retry_result(
                                     0,
@@ -4043,7 +4070,7 @@ where
                         return Ok((workspace, aggregate_stats));
                     }
                     let delaunay_started = Instant::now();
-                    let delaunay_result = workspace.certify_via_flip_predicates();
+                    let delaunay_result = workspace.certify_for_publication();
                     stats
                         .telemetry
                         .record_construction_final_delaunay_validation_timing(
@@ -4065,8 +4092,8 @@ where
                         Err(err) => {
                             aggregate_stats.merge_from(&stats);
                             last_stats.replace(stats);
-                            if is_non_retryable_repair_error(&err) {
-                                let error = Self::map_final_delaunay_repair_error(err);
+                            if is_non_retryable_delaunay_certification_error(&err) {
+                                let error = Self::map_final_delaunay_validation_error(err);
                                 let last_error = error.to_string();
                                 log_construction_retry_result(
                                     attempt,
@@ -5774,15 +5801,13 @@ where
         }
     }
 
-    pub(crate) fn map_final_delaunay_repair_error(
-        repair_error: DelaunayRepairError,
+    pub(crate) const fn map_final_delaunay_validation_error(
+        validation_error: DelaunayTriangulationValidationError,
     ) -> DelaunayTriangulationConstructionError {
         DelaunayTriangulationConstructionError::Triangulation {
             source: DelaunayConstructionFailure::FinalDelaunayValidation {
                 context: FinalDelaunayValidationContext::ConstructionFinalize,
-                source: DelaunayTriangulationValidationError::VerificationFailed {
-                    source: Box::new(DelaunayVerificationError::from(repair_error)),
-                },
+                source: validation_error,
             },
         }
     }
@@ -6204,10 +6229,7 @@ mod tests {
         let mut workspace = into_batch_workspace(dt);
 
         assert!(workspace.requires_delaunay_certification());
-        workspace.certify_via_flip_predicates().unwrap();
-        assert!(workspace.requires_delaunay_certification());
-        workspace.delaunay_certificate =
-            Some(crate::validation::certify_level_five_for_refinement(&workspace.tri).unwrap());
+        workspace.certify_for_publication().unwrap();
         assert!(!workspace.requires_delaunay_certification());
 
         let detached_clone = workspace.clone();
@@ -8179,10 +8201,13 @@ mod tests {
     }
 
     #[test]
-    fn test_map_final_delaunay_repair_error_preserves_typed_source() {
-        let mapped = TestDelaunay::<3>::map_final_delaunay_repair_error(DelaunayRepairError::from(
-            FlipError::UnsupportedDimension { dimension: 1 },
-        ));
+    fn test_map_final_delaunay_validation_error_preserves_typed_source() {
+        let validation_error = DelaunayTriangulationValidationError::VerificationFailed {
+            source: Box::new(DelaunayVerificationError::from(DelaunayRepairError::from(
+                FlipError::UnsupportedDimension { dimension: 1 },
+            ))),
+        };
+        let mapped = TestDelaunay::<3>::map_final_delaunay_validation_error(validation_error);
 
         assert!(
             TestDelaunay::<3>::is_non_retryable_construction_error(&mapped),

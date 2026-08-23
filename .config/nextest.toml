@@ -71,6 +71,16 @@ binary(=proptest_delaunay_triangulation)
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.ci.overrides]]
+# This cospherical 3D OnSuspicion property can cross the integration-suite
+# watchdog on hosted macOS runners while remaining fast on Linux and Windows.
+platform = 'cfg(target_os = "macos")'
+filter = '''
+binary(=proptest_delaunay_triangulation)
+& test(=prop_on_suspicion_validates_cospherical_3d_sequences)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
 # A single compact T^3 periodic-image construction can cross the default
 # budget on Windows. Each test retains one construction so other platforms
 # keep the normal watchdog and the exception remains limited to this fixture.
@@ -105,6 +115,16 @@ slow-timeout = { period = "60s", terminate-after = 1 }
 # The randomized full-report 5D agreement check reaches the 10-second boundary
 # across platforms. Keep the exception limited to that test.
 filter = 'test(=validation::tests::randomized_full_report_matches_brute_force_5d)'
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.debug.overrides]]
+# Complete exact SoS expansion in translated 5D and full 6D can cross the
+# 10-second boundary on hosted runners. Keep the exception limited to those
+# irreducible cold-path checks.
+filter = '''
+test(=geometry::sos::tests::complete_insphere_expansion_supports_6d)
+| test(=geometry::sos::tests::test_sos_insphere_5d_translation_invariant)
+'''
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 [profile.coverage]

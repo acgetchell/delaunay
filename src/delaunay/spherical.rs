@@ -45,8 +45,8 @@ use crate::geometry::predicates::{Orientation, simplex_orientation};
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateValidationError};
 use crate::geometry::util::safe_usize_to_scalar;
 use crate::tds::{
-    FacetError, InvariantError, Simplex, SimplexValidationError, Tds, TdsConstructionError,
-    TdsError, TdsMutationError, Vertex,
+    InvariantError, Simplex, SimplexValidationError, Tds, TdsConstructionError, TdsError,
+    TdsMutationError, Vertex,
 };
 use crate::topology::characteristics::validation::{
     EulerClassificationEvidence,
@@ -1659,14 +1659,6 @@ pub enum SphericalDelaunayConstructionError {
         source: Box<ConvexHullQueryError>,
     },
 
-    /// A hull facet view failed to resolve.
-    #[error("ambient hull facet failed to resolve: {source}")]
-    Facet {
-        /// Underlying facet error.
-        #[source]
-        source: FacetError,
-    },
-
     /// Normalized points did not surround the sphere center.
     #[error("normalized spherical points do not enclose the origin in ambient space")]
     OriginOutsideConvexHull,
@@ -1986,6 +1978,7 @@ mod tests {
     use std::assert_matches;
 
     use super::*;
+    use crate::tds::FacetError;
 
     fn spherical_triangle(vertices: [usize; 3], vertex_count: usize) -> SphericalSimplex<2> {
         SphericalSimplex::<2>::try_new(vertices.to_vec(), vertex_count)

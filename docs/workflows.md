@@ -108,9 +108,9 @@ non-convergence because the cited result is not an unconditional bound for
 every local schedule and supported geometry. See
 [Bistellar (Pachner) Moves and Delaunay Repair](../REFERENCES.md#bistellar-pachner-moves-and-delaunay-repair).
 
-The consuming `delaunayize` conversion requires `K: ExactPredicates` at
-compile time. `AdaptiveKernel`, `RobustKernel`, and `FastKernel` implement this
-trait through D ≤ 6. See
+The consuming `DelaunayRefinementBuilder` flip-repair workflow requires
+`K: ExactPredicates` at compile time. `AdaptiveKernel`, `RobustKernel`, and
+`FastKernel` implement this trait through D ≤ 6. See
 [`numerical_robustness_guide.md`](numerical_robustness_guide.md) for kernel selection guidance.
 
 ```rust

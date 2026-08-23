@@ -193,6 +193,33 @@ mod invalid_delaunay_bootstrap_fixture {
     }
 }
 
+mod invalid_raw_tds_bootstrap_fixture {
+    use super::*;
+
+    // ruleid: delaunay.rust.delaunay-bootstrap-workspace-must-use-tds-draft
+    struct DelaunayBootstrapWorkspace<U, V, const D: usize> {
+        partial_connectivity: crate::core::tds::Tds<U, V, D>,
+    }
+}
+
+mod invalid_published_delaunay_bootstrap_fixture {
+    use super::*;
+
+    // ruleid: delaunay.rust.delaunay-bootstrap-workspace-must-use-tds-draft
+    struct DelaunayBootstrapWorkspace<K, U, V, const D: usize> {
+        candidate: proof_state::DelaunayTriangulation<K, U, V, D>,
+    }
+}
+
+mod valid_delaunay_bootstrap_fixture {
+    use super::*;
+
+    // ok: delaunay.rust.delaunay-bootstrap-workspace-must-use-tds-draft
+    struct DelaunayBootstrapWorkspace<U, V, const D: usize> {
+        partial_connectivity: crate::core::tds::TdsDraft<U, V, D>,
+    }
+}
+
 struct MutableTdsOwnerFixture<U, V, const D: usize> {
     tds: Tds<U, V, D>,
 }

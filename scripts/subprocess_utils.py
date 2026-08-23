@@ -296,6 +296,8 @@ def run_git_command_with_input(
     else:
         msg = "errors must be a string"
         raise TypeError(msg)
+    run_kwargs["encoding"] = encoding
+    run_kwargs["errors"] = errors
     payload = input_data if isinstance(input_data, bytes) else input_data.encode(encoding, errors)
     with tempfile.TemporaryFile() as stdin:
         stdin.write(payload)

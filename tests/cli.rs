@@ -5,6 +5,7 @@
 #[cfg(feature = "cli")]
 mod cli_tests {
     use std::{
+        collections::HashSet,
         fs,
         path::{Path, PathBuf},
         process::{Command, Output},
@@ -76,14 +77,52 @@ mod cli_tests {
             .expect("triangulation JSON should include the proof owner's TDS")
     }
 
-    fn assert_generated_triangulation_json(json: &Value, vertex_count: usize) {
+    fn assert_generated_triangulation_json(json: &Value, dimension: usize, vertex_count: usize) {
         let tds = generated_triangulation_tds(json);
-        assert_eq!(tds["vertices"].as_array().map(Vec::len), Some(vertex_count));
-        assert!(
-            tds["simplex_vertices"]
-                .as_object()
-                .is_some_and(|simplex_vertices| !simplex_vertices.is_empty())
-        );
+        let vertices = tds["vertices"]
+            .as_array()
+            .expect("triangulation JSON should include vertices");
+        assert_eq!(vertices.len(), vertex_count);
+
+        let vertex_ids: HashSet<_> = vertices
+            .iter()
+            .map(|vertex| {
+                let coordinates = vertex["point"]
+                    .as_array()
+                    .expect("vertex JSON should include coordinates");
+                assert_eq!(coordinates.len(), dimension);
+                assert!(
+                    coordinates
+                        .iter()
+                        .all(|coordinate| coordinate.as_f64().is_some_and(f64::is_finite))
+                );
+                vertex["uuid"]
+                    .as_str()
+                    .expect("vertex JSON should include a UUID string")
+            })
+            .collect();
+        assert_eq!(vertex_ids.len(), vertex_count);
+
+        let simplex_vertices = tds["simplex_vertices"]
+            .as_object()
+            .expect("triangulation JSON should include simplex vertex references");
+        assert!(!simplex_vertices.is_empty());
+        for references in simplex_vertices.values() {
+            let references = references
+                .as_array()
+                .expect("simplex vertex references should be an array");
+            assert_eq!(references.len(), dimension + 1);
+            let referenced_ids: HashSet<_> = references
+                .iter()
+                .map(|reference| {
+                    reference
+                        .as_str()
+                        .expect("simplex vertex reference should be a UUID string")
+                })
+                .collect();
+            assert_eq!(referenced_ids.len(), dimension + 1);
+            assert!(referenced_ids.is_subset(&vertex_ids));
+        }
     }
 
     fn target_artifact_path(label: &str, extension: &str) -> PathBuf {
@@ -146,7 +185,7 @@ mod cli_tests {
         assert_success(&output);
 
         let json = stdout_json(&output);
-        assert_generated_triangulation_json(&json, 4);
+        assert_generated_triangulation_json(&json, 2, 4);
     }
 
     #[test]
@@ -395,7 +434,7 @@ mod cli_tests {
         );
 
         let json = file_json(&path);
-        assert_generated_triangulation_json(&json, 4);
+        assert_generated_triangulation_json(&json, 2, 4);
     }
 
     #[test]
@@ -414,7 +453,7 @@ mod cli_tests {
             path.to_str().expect("target path should be UTF-8"),
         ]);
         assert_success(&output);
-        assert_generated_triangulation_json(&file_json(&path), 5);
+        assert_generated_triangulation_json(&file_json(&path), 4, 5);
     }
 
     #[test]
@@ -433,7 +472,7 @@ mod cli_tests {
             path.to_str().expect("target path should be UTF-8"),
         ]);
         assert_success(&output);
-        assert_generated_triangulation_json(&file_json(&path), 6);
+        assert_generated_triangulation_json(&file_json(&path), 5, 6);
     }
 
     #[test]

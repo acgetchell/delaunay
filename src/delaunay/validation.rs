@@ -204,31 +204,6 @@ where
     ))
 }
 
-/// Certifies Level 5 through flip predicates and returns state-bound evidence.
-///
-/// Batch retry selection uses this variant because the successful predicate
-/// pass is already part of its repair decision. Non-Euclidean publication can
-/// reuse this evidence. Euclidean publication deliberately rejects it and runs
-/// the global empty-circumsphere check required by that proof boundary.
-pub(crate) fn certify_level_five_via_flip_predicates<K, U, V, const D: usize>(
-    triangulation: &Triangulation<K, U, V, D>,
-) -> Result<DelaunayLevelFiveCertificate<D>, DelaunayRepairError>
-where
-    K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
-{
-    verify_tds_via_flip_predicates_assuming_connected(
-        &triangulation.tds,
-        &triangulation.kernel,
-        triangulation.global_topology,
-    )?;
-    Ok(DelaunayLevelFiveCertificate::for_triangulation(
-        triangulation,
-        DelaunayLevelFiveEvidence::FlipPredicates,
-    ))
-}
-
 /// Typed source for Level 5 Delaunay verification failures.
 ///
 /// Passive validation has two implementation paths:
@@ -1350,7 +1325,16 @@ mod tests {
             .build_triangulation()
             .unwrap();
 
-        let flip_certificate = certify_level_five_via_flip_predicates(&triangulation).unwrap();
+        verify_tds_via_flip_predicates_assuming_connected(
+            &triangulation.tds,
+            &triangulation.kernel,
+            triangulation.global_topology,
+        )
+        .unwrap();
+        let flip_certificate = DelaunayLevelFiveCertificate::for_triangulation(
+            &triangulation,
+            DelaunayLevelFiveEvidence::FlipPredicates,
+        );
         assert!(!flip_certificate.applies_to(&triangulation));
 
         let publication_certificate = certify_level_five_for_refinement(&triangulation).unwrap();

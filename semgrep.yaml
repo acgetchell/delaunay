@@ -2506,13 +2506,13 @@ rules:
     languages:
       - rust
     severity: ERROR
-    message: "Delaunay bootstrap must stage partial connectivity in TdsDraft."
+    message: "Delaunay bootstrap must stage partial connectivity only in TdsDraft."
     metadata:
       category: correctness
       rationale: >-
-        Before the first maximal simplex exists, neither Triangulation nor its
-        draft layer owns a complete connectivity proof. Delaunay bootstrap must
-        retain the lower TdsDraft until Levels 1-2 publication succeeds.
+        Before the first maximal simplex exists, neither raw Tds storage nor a
+        higher proof owner carries the required connectivity proof. Delaunay
+        bootstrap must retain TdsDraft until Levels 1-2 publication succeeds.
     paths:
       include:
         - "/src/**/*.rs"
@@ -2529,7 +2529,9 @@ rules:
           regex: "^DelaunayBootstrapWorkspace$"
       - metavariable-regex:
           metavariable: $TYPE
-          regex: '^(?:[A-Za-z_][A-Za-z0-9_]*::)*TriangulationDraft(?:\s*<[\s\S]*>)?$'
+          regex: >-
+            ^(?:[A-Za-z_][A-Za-z0-9_]*::)*(?:Tds|TriangulationDraft|Triangulation|
+            DelaunayTriangulationDraft|DelaunayTriangulation)(?:\s*<[\s\S]*>)?$
 
   - id: delaunay.rust.tds-defined-only-in-canonical-model
     languages:

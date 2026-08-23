@@ -301,13 +301,16 @@ default 10-second watchdog, with 60-second overrides for the two periodic
 builder cases whose debug exact-geometry cost is platform-sensitive and the
 optimized 5D intersection agreement checks, which can reach that boundary on
 hosted runners. The randomized 5D full-report agreement check has the same
-focused override across platforms.
+focused override across platforms. The translated 5D and complete 6D exact
+SoS expansion checks also have a focused 60-second override because their
+irreducible cold-path work can cross the default boundary on hosted runners.
 `test-integration` runs a focused release-profile nextest bucket. Selected 4D
 property families retain that default coverage with a Windows-only 60-second
 override because their release runtimes sit at the 10-second boundary on
-Windows runners; non-Windows platforms keep the normal budget. `test-cli` owns
-the feature-gated binary unit and CLI integration tests, and `test-rust`
-composes every Rust test class once.
+Windows runners. The cospherical 3D `OnSuspicion` sequence property has a
+macOS-only 60-second override for the same hosted-runner boundary. Unaffected
+platforms keep the normal budget. `test-cli` owns the feature-gated binary unit
+and CLI integration tests, and `test-rust` composes every Rust test class once.
 The LLVM-instrumented coverage profile retains its 300-second default watchdog
 and grants a 1,200-second override only to the three compact `T^3` builder cases
 that exercise periodic-image construction.

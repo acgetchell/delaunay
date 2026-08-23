@@ -108,13 +108,13 @@ The `ExactPredicates` marker trait identifies kernels whose `orientation` and
 dimension, including near-degenerate configurations. `AdaptiveKernel`,
 `RobustKernel`, and `FastKernel` implement this trait through D ≤ 6.
 
-The public `delaunayize` conversion and point-driven Delaunay builders require
-`K: ExactPredicates`. This is enforced at compile time, preventing kernels
-without the supported exact-predicate contract from entering construction or
-flip repair. Incremental insertion through the builder retains that bound while
-it crosses the Levels 1–5 publication boundary. Insertion into an already
-published owner can use its stored `Kernel`; exact flip repair remains a
-separate, explicitly bounded operation.
+The public `DelaunayRefinementBuilder` flip-repair workflow and point-driven
+Delaunay builders require `K: ExactPredicates`. This is enforced at compile
+time, preventing kernels without the supported exact-predicate contract from
+entering construction or flip repair. Incremental insertion through the builder
+retains that bound while it crosses the Levels 1–5 publication boundary.
+Insertion into an already published owner can use its stored `Kernel`; exact
+flip repair remains a separate, explicitly bounded operation.
 
 Dimension-bound exactness is intentional: orientation and relative-coordinate
 insphere have exact determinant support through D ≤ 6, which is also the
@@ -397,8 +397,9 @@ and per-insertion checks handle any remaining cases.
   through `ConstructionOptions::with_batch_repair_policy(...)` and still
   performs final repair/validation. This reduces the frequency of the automatic
   robust-fallback repair pass while still maintaining the Delaunay property
-  periodically. Consuming `delaunayize` is available through D ≤ 6 because
-  `FastKernel` carries the dimension-bounded exact predicate proof.
+  periodically. The consuming `DelaunayRefinementBuilder` flip-repair workflow
+  is available through D ≤ 6 because `FastKernel` carries the
+  dimension-bounded exact predicate proof.
 - If you see retryable insertion errors, frequent perturbation retries, or skipped vertices,
   preprocess your input (dedup / rescale if appropriate).
 - Treat `InsertionOutcome::Skipped { .. }` from the best-effort API as an expected outcome on
