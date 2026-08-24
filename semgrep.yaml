@@ -3400,6 +3400,11 @@ rules:
           - metavariable-regex:
               metavariable: $MODE
               regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+      - patterns:
+          - pattern: open(file=$PATH, mode=$MODE, ...)
+          - metavariable-regex:
+              metavariable: $MODE
+              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
 
   - id: delaunay.python.performance-promotion-is-csv-only
     languages:

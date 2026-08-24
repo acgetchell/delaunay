@@ -64,6 +64,8 @@ def performance_artifact_writes(path: Path) -> None:
     path.open(mode="a", encoding="utf-8")
     # ruleid: delaunay.python.performance-artifact-writes-are-transactional
     open(path, mode="x+b")
+    # ruleid: delaunay.python.performance-artifact-writes-are-transactional
+    open(file=path, mode="w", encoding="utf-8")
     # ok: delaunay.python.performance-artifact-writes-are-transactional
     path.open(mode="rb")
     # ok: delaunay.python.performance-artifact-writes-are-transactional
