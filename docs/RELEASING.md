@@ -150,17 +150,30 @@ When the release PR needs a curated release-to-release comparison in active
 docs, run the temp-worktree promotion workflow after the version bump:
 
 ```bash
-just perf-release
+just performance-release
 ```
 
 This compares the current package version against the previous stable published
-release, writes the curated report to `docs/PERFORMANCE.md`, and archives the
-previous curated report under `docs/archive/performance/`. To repair a specific
-pair, pass both tags explicitly:
+release, retains Markdown, versioned CSV, and provenance JSON under
+`target/bench-reports/`, reload-validates the retained pair, writes the curated
+report to `docs/PERFORMANCE.md`, and archives the previous curated report under
+`docs/archive/performance/`. It also copies the exact promoted CSV/provenance
+bytes into `docs/archive/performance/data/`. Review the scratch artifacts and
+all tracked documentation/evidence changes. Each destination uses atomic file
+replacement and caught failures roll back; a hard interruption can stop between
+files, so inspect the destinations and rerun the idempotent command. To repair a
+specific pair, pass both tags explicitly:
 
 ```bash
-just perf-release "$TAG" "$PREVIOUS_TAG"
+just performance-release "$TAG" "$PREVIOUS_TAG"
 ```
+
+Supplying only one tag fails before fetch or benchmark side effects. If the
+measurements are already retained and only report formatting or promotion must
+be retried, run `just performance-doc`. It reads the canonical CSV and
+provenance JSON, runs no Cargo benchmarks or measurement worktrees, and rejects
+incomplete, invalid, stale, same-version, or scientifically non-comparable
+inputs.
 
 For manual investigation only, `DELAUNAY_BENCH_EXPORT_METRICS=1` can print the
 construction vertex/simplex metric lines without Criterion sampling. Prefer
@@ -309,8 +322,17 @@ metadata, then attaches
 `delaunay-$TAG-criterion-baseline.tar.gz` to the GitHub Release. That release
 asset is for GitHub Actions CI comparisons; keep local same-machine timing
 baselines under the ignored `baseline-artifact/` or `baseline-artifacts/` paths.
-Use `just perf-github-assets "$TAG" "vX.Y.Z"` to compare two stored
-release assets without local benchmark runs.
+Use `just performance-github-assets "$TAG" "vX.Y.Z"` to compare two stored
+release assets without local benchmark runs. New archives carry a versioned
+measurement sidecar binding source revision, measurement commands, toolchain,
+host, completed targets, normalized measurement plan, Criterion sample, and
+content digest to the requested clean release tag; acquisition commands and
+archive digests are retained separately. Because the two GitHub-hosted release
+runs are separate measurement sessions, their report retains absolute intervals
+but never emits before/after ratios. Existing legacy archives remain usable as
+provenance-limited absolute timing evidence, with unavailable facts explicit
+and promotion disabled. Raw Criterion evidence remains in the `.tar.gz` release
+assets.
 
 7. Confirm release benchmark assets
 

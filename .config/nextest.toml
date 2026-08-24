@@ -80,10 +80,9 @@ binary(=proptest_delaunay_triangulation)
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.ci.overrides]]
-# Complete 5D exact SoS expansion sits below the default budget on Linux but
-# can cross it on Windows. Keep the exception limited to the deterministic
-# co-spherical property that exercises two expansions per generated case.
-platform = 'cfg(windows)'
+# Complete 5D exact SoS expansion can cross the default budget on hosted
+# runners. Keep the exception limited to the deterministic co-spherical
+# property that exercises two expansions per generated case.
 filter = '''
 binary(=proptest_sos)
 & test(=prop_sos_insphere_deterministic_5d)

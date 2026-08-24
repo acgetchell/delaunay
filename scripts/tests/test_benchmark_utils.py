@@ -9,6 +9,7 @@ Note: This test file accesses private methods (prefixed with _) which is expecte
 and necessary for comprehensive unit testing of internal functionality.
 """
 
+import hashlib
 import json
 import logging
 import math
@@ -19,6 +20,7 @@ import sys
 import tarfile
 import tempfile
 import time
+from dataclasses import replace
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
@@ -27,6 +29,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 import benchmark_utils
+import performance_artifacts
 from benchmark_models import (
     BenchmarkData,
     CircumspherePerformanceData,
@@ -66,6 +69,7 @@ from benchmark_utils import (
     _safe_extract_tar,
     _write_ci_performance_metrics,
     collect_criterion_comparisons,
+    collect_performance_rows,
     compare_with_cached_ref_baseline,
     configure_logging,
     create_argument_parser,
@@ -106,6 +110,79 @@ def completed_process(
     return subprocess.CompletedProcess(args=args or [], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
+def retained_performance_bundle(*, current: str = "v0.8.0", baseline: str = "v0.7.8") -> performance_artifacts.PerformanceBundle:
+    """Return a complete retained performance bundle fixture."""
+    host = performance_artifacts.HostIdentity(status="recorded", cpu="Test CPU", operating_system="Test OS", architecture="test")
+    toolchain = performance_artifacts.ToolchainState(
+        rustc="rustc 1.98.0",
+        criterion_version="0.7.0",
+        cargo_profile="perf",
+        cargo_lock_sha256="a" * 64,
+        harness_sha256="b" * 64,
+        configuration_sha256="c" * 64,
+        measurement_plan_sha256="d" * 64,
+    )
+    return performance_artifacts.PerformanceBundle(
+        context=performance_artifacts.ArtifactContext(
+            release=performance_artifacts.ReleasePair(current=current, baseline=baseline),
+            statistic="median",
+            suite="release-signal",
+            scope="release-signal",
+            measurement_mode="local-worktrees",
+            current_source=performance_artifacts.SourceState(
+                version=current,
+                commit="a" * 40,
+                ref="HEAD",
+                revision_timestamp="2026-08-23T12:00:00-07:00",
+                git_clean=False,
+                source_state_sha256="c" * 64,
+            ),
+            baseline_source=performance_artifacts.SourceState(
+                version=baseline,
+                commit="b" * 40,
+                ref=baseline,
+                revision_timestamp="2026-08-01T12:00:00-07:00",
+                git_clean=True,
+                source_state_sha256="d" * 64,
+            ),
+            current_commands=(("just", "bench-latest"),),
+            baseline_commands=(("cargo", "bench", "--save-baseline", baseline),),
+            current_completed_targets=benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS,
+            baseline_completed_targets=benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS,
+            current_acquisition_commands=(),
+            baseline_acquisition_commands=(),
+            current_toolchain=toolchain,
+            baseline_toolchain=toolchain,
+            current_measurement_host=host,
+            baseline_measurement_host=host,
+            current_artifact=performance_artifacts.MeasurementArtifact(
+                origin="local-run",
+                content_sha256="e" * 64,
+                sample_name="new",
+            ),
+            baseline_artifact=performance_artifacts.MeasurementArtifact(
+                origin="local-run",
+                content_sha256="f" * 64,
+                sample_name=baseline,
+            ),
+            publication_host=host,
+        ),
+        rows=(
+            performance_artifacts.PerformanceRow(
+                suite="release-signal",
+                scope="release-signal",
+                benchmark_id="validation/validate_3d/750",
+                group="validation",
+                benchmark="validate_3d/750",
+                coverage_status="comparable",
+                coverage_note="",
+                baseline=performance_artifacts.TimingEstimate(2_000_000.0, 1_800_000.0, 2_200_000.0, 0.95),
+                current=performance_artifacts.TimingEstimate(1_000_000.0, 900_000.0, 1_100_000.0, 0.95),
+            ),
+        ),
+    )
+
+
 def write_estimate(target_dir: Path, path_parts, mean_ns) -> None:
     """Write a minimal Criterion estimates.json fixture."""
     estimates_dir = target_dir / "criterion" / Path(*path_parts) / "base"
@@ -114,15 +191,31 @@ def write_estimate(target_dir: Path, path_parts, mean_ns) -> None:
         "mean": {
             "point_estimate": mean_ns,
             "confidence_interval": {
+                "confidence_level": 0.95,
                 "lower_bound": mean_ns * 0.9,
                 "upper_bound": mean_ns * 1.1,
             },
         },
     }
     (estimates_dir / "estimates.json").write_text(json.dumps(estimates), encoding="utf-8")
+    full_id = "/".join(path_parts)
+    (estimates_dir / "benchmark.json").write_text(
+        json.dumps({"full_id": full_id, "group_id": path_parts[0]}),
+        encoding="utf-8",
+    )
 
 
-def write_named_estimate(target_dir: Path, path_parts, sample: str, point_ns: float, stat: str = "median") -> None:
+def write_named_estimate(  # noqa: PLR0913
+    target_dir: Path,
+    path_parts,
+    sample: str,
+    point_ns: float,
+    stat: str = "median",
+    *,
+    full_id: str | None = None,
+    group_id: str | None = None,
+    confidence_level: float = 0.95,
+) -> None:
     """Write a minimal named Criterion sample estimates.json fixture."""
     estimates_dir = target_dir / "criterion" / Path(*path_parts) / sample
     estimates_dir.mkdir(parents=True)
@@ -130,12 +223,60 @@ def write_named_estimate(target_dir: Path, path_parts, sample: str, point_ns: fl
         stat: {
             "point_estimate": point_ns,
             "confidence_interval": {
+                "confidence_level": confidence_level,
                 "lower_bound": point_ns * 0.9,
                 "upper_bound": point_ns * 1.1,
             },
         },
     }
     (estimates_dir / "estimates.json").write_text(json.dumps(estimates), encoding="utf-8")
+    benchmark_id = full_id or "/".join(path_parts)
+    (estimates_dir / "benchmark.json").write_text(
+        json.dumps({"full_id": benchmark_id, "group_id": group_id or benchmark_id.split("/", maxsplit=1)[0]}),
+        encoding="utf-8",
+    )
+
+
+def write_versioned_release_asset_metadata(root: Path, *, tag: str, commit: str) -> dict[str, object]:
+    """Write and return complete release-asset metadata for loader tests."""
+    write_named_estimate(root, ("validation", "validate_3d", "750"), "new", 1_000_000.0)
+    metadata: dict[str, object] = {
+        "schema_version": benchmark_utils.RELEASE_ASSET_METADATA_SCHEMA_VERSION,
+        "source": {
+            "version": tag,
+            "commit": commit,
+            "ref": tag,
+            "revision_timestamp": "2026-08-01T00:00:00Z",
+            "git_clean": True,
+            "source_state_sha256": hashlib.sha256(f"commit {commit}\n".encode()).hexdigest(),
+            "limitation": "",
+        },
+        "measurement_commands": [list(command) for command in benchmark_utils.RELEASE_ASSET_MEASUREMENT_COMMANDS],
+        "completed_targets": list(benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS),
+        "toolchain": {
+            "rustc": "rustc 1.98.0",
+            "criterion_version": "0.7.0",
+            "cargo_profile": "perf",
+            "cargo_lock_sha256": "c" * 64,
+            "harness_sha256": "d" * 64,
+            "configuration_sha256": "e" * 64,
+            "measurement_plan_sha256": "f" * 64,
+            "limitation": "",
+        },
+        "measurement_host": {
+            "status": "recorded",
+            "cpu": "GitHub test CPU",
+            "operating_system": "Linux",
+            "architecture": "x86_64",
+            "reason": "",
+        },
+        "criterion": {
+            "content_sha256": benchmark_utils._directory_digest(root / "criterion"),
+            "sample_name": "new",
+        },
+    }
+    (root / "metadata.json").write_text(json.dumps(metadata), encoding=UTF8)
+    return metadata
 
 
 def delaunay_report(version: str, baseline: str) -> str:
@@ -236,6 +377,47 @@ def test_collect_criterion_comparisons_filters_release_signal_scope(tmp_path: Pa
     assert comparison.speedup == pytest.approx(2.0)
 
 
+def test_collect_performance_rows_preserves_all_coverage_and_single_directory_ids(tmp_path: Path) -> None:
+    """Retained rows should use Criterion metadata and keep both one-sided classes."""
+    write_named_estimate(tmp_path, ("validation", "matched", "750"), "new", 1_000_000.0)
+    write_named_estimate(tmp_path, ("validation", "matched", "750"), "last", 2_000_000.0)
+    write_named_estimate(tmp_path, ("validation_current_only",), "new", 3_000_000.0, full_id="validation/current_only")
+    write_named_estimate(tmp_path, ("validation_baseline_only",), "last", 4_000_000.0, full_id="validation/baseline_only")
+    write_named_estimate(tmp_path, ("profiling_manual", "excluded"), "new", 5_000_000.0)
+
+    rows = collect_performance_rows(tmp_path / "criterion", "last")
+
+    assert [row.benchmark_id for row in rows] == ["validation/baseline_only", "validation/current_only", "validation/matched/750"]
+    assert [row.coverage_status for row in rows] == ["baseline-only", "current-only", "comparable"]
+    assert rows[0].baseline is not None
+    assert rows[0].current is None
+    assert rows[1].baseline is None
+    assert rows[1].current is not None
+    assert rows[2].baseline is not None
+    assert rows[2].current is not None
+    assert rows[2].baseline.confidence_level == pytest.approx(0.95)
+
+
+def test_collect_performance_rows_marks_name_matches_unverified_when_provenance_differs(tmp_path: Path) -> None:
+    write_named_estimate(tmp_path, ("validation", "matched", "750"), "new", 1_000_000.0)
+    write_named_estimate(tmp_path, ("validation", "matched", "750"), "last", 2_000_000.0)
+
+    rows = collect_performance_rows(tmp_path / "criterion", "last", comparison_note="measurement hosts differ")
+
+    assert rows[0].coverage_status == "not-comparable"
+    assert rows[0].coverage_note == "measurement hosts differ"
+
+
+def test_collect_performance_rows_marks_confidence_level_mismatch_unverified(tmp_path: Path) -> None:
+    write_named_estimate(tmp_path, ("validation", "matched", "750"), "new", 1_000_000.0, confidence_level=0.99)
+    write_named_estimate(tmp_path, ("validation", "matched", "750"), "last", 2_000_000.0, confidence_level=0.95)
+
+    rows = collect_performance_rows(tmp_path / "criterion", "last")
+
+    assert rows[0].coverage_status == "not-comparable"
+    assert "confidence levels differ" in rows[0].coverage_note
+
+
 def test_release_signal_excludes_manual_topology_benchmark() -> None:
     """Release comparisons should not run the explicitly selected topology suite."""
     assert "topology_guarantee_construction" not in benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
@@ -248,6 +430,77 @@ def test_release_signal_includes_realization_validation_benchmark() -> None:
     """Release comparisons should retain the focused Level 4 regression signal."""
     assert "realization_validation" in benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
     assert "realization_" in benchmark_utils.RELEASE_SIGNAL_GROUP_PREFIXES
+
+
+def test_release_measurement_plan_matches_workflow_and_just_recipe() -> None:
+    """Release metadata should describe the exact full-sampling target sequence."""
+    project_root = Path(__file__).resolve().parents[2]
+    workflow = (project_root / ".github" / "workflows" / "release-benchmarks.yml").read_text(encoding=UTF8)
+    workflow_step = workflow.split("- name: Generate release benchmark summary", maxsplit=1)[1].split(
+        "- name: Package release Criterion baseline",
+        maxsplit=1,
+    )[0]
+    workflow_targets = tuple(re.findall(r"^\s*cargo bench --profile perf --bench ([a-z0-9_]+)$", workflow_step, flags=re.MULTILINE))
+    justfile = (project_root / "justfile").read_text(encoding=UTF8)
+    just_recipe = justfile.split("bench-latest:", maxsplit=1)[1].split("\n# ", maxsplit=1)[0]
+    just_targets = tuple(re.findall(r"^\s*cargo bench --profile perf --bench ([a-z0-9_]+)$", just_recipe, flags=re.MULTILINE))
+
+    assert workflow_targets == benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
+    assert just_targets == benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
+    assert tuple(measurement.command for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN) == benchmark_utils.RELEASE_ASSET_MEASUREMENT_COMMANDS
+    assert all(measurement.sampling_mode == "full" for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN)
+    assert all(not measurement.criterion_arguments for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN)
+    assert "--run-benchmarks" not in workflow_step
+
+
+def test_release_measurement_plan_digest_binds_per_target_sampling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    full_sampling_digest = benchmark_utils._measurement_plan_digest(tmp_path, "release-signal")
+    first, *remaining = benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN
+    monkeypatch.setattr(
+        benchmark_utils,
+        "RELEASE_SIGNAL_MEASUREMENT_PLAN",
+        (
+            replace(
+                first,
+                sampling_mode="reduced",
+                criterion_arguments=("--sample-size", "10"),
+            ),
+            *remaining,
+        ),
+    )
+
+    assert benchmark_utils._measurement_plan_digest(tmp_path, "release-signal") != full_sampling_digest
+
+
+def test_release_transition_digests_only_the_targets_shared_by_both_revisions(tmp_path: Path) -> None:
+    """A newly added harness must not alter provenance for the historical shared plan."""
+    current = tmp_path / "current"
+    baseline = tmp_path / "baseline"
+    for checkout in (current, baseline):
+        benches = checkout / "benches"
+        benches.mkdir(parents=True)
+        (benches / "ci_performance_suite.rs").write_text("fn shared() {}\n", encoding=UTF8)
+    (current / "benches" / "realization_validation.rs").write_text("fn added() {}\n", encoding=UTF8)
+    shared_targets = ("ci_performance_suite",)
+
+    assert benchmark_utils._benchmark_harness_digest(
+        current,
+        "release-signal",
+        shared_targets,
+    ) == benchmark_utils._benchmark_harness_digest(
+        baseline,
+        "release-signal",
+        shared_targets,
+    )
+    assert benchmark_utils._measurement_plan_digest(
+        current,
+        "release-signal",
+        shared_targets,
+    ) == benchmark_utils._measurement_plan_digest(
+        baseline,
+        "release-signal",
+        shared_targets,
+    )
 
 
 def test_realization_validation_stable_ids_survive_saved_baseline_comparison(tmp_path: Path) -> None:
@@ -342,9 +595,16 @@ def test_render_criterion_comparison_report_includes_release_workflow_footer(tmp
     assert "- **Raw Criterion data**: `target/criterion/`" in report
     assert "- **Rust**: rustc test" in report
     assert "| validate_3d/750 | 2.00 ms | 1.00 ms | **-50.0%** | 2.00x |" in report
-    assert "just perf-local" in report
-    assert "just perf-github-assets" in report
-    assert "just perf-release <current-tag> <previous-tag>" in report
+    assert "just performance-local" in report
+    assert "just performance-doc" in report
+    assert "just performance-github-assets" in report
+    assert "just performance-release <current-tag> <previous-tag>" in report
+    assert "Existing legacy archives remain loadable as provenance-limited absolute timing" in report
+    assert "New release archives must contain the supported versioned measurement" in report
+    assert "Each release archive must contain" not in report
+    assert "GitHub-asset ratios are always suppressed" in report
+    assert "legacy archives without it are rejected" not in report
+    assert "Ratios are emitted only when" not in report
 
 
 def test_write_criterion_comparison_report_reports_no_baseline(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -437,18 +697,28 @@ def test_promote_performance_report_archives_previous_and_updates_index(tmp_path
     source.write_text(delaunay_report("0.8.0", "v0.7.8"), encoding=UTF8)
     current.write_text(delaunay_report("0.7.8", "v0.7.7"), encoding=UTF8)
     (archive_dir / "v0.7.6-vs-v0.7.5.md").write_text(delaunay_report("0.7.6", "v0.7.5"), encoding=UTF8)
+    artifacts = performance_artifacts.ArtifactPaths(csv=source.with_suffix(".csv"), provenance=source.with_suffix(".provenance.json"))
+    performance_artifacts.write_bundle(artifacts, retained_performance_bundle())
+    durable = performance_artifacts.ArtifactPaths(
+        csv=archive_dir / "data" / "v0.8.0-vs-v0.7.8.csv",
+        provenance=archive_dir / "data" / "v0.8.0-vs-v0.7.8.provenance.json",
+    )
+    promoted_report = benchmark_utils.render_performance_bundle(performance_artifacts.load_bundle(artifacts), evidence_paths=durable, evidence_state="promoted")
+    source.write_text(promoted_report, encoding=UTF8)
 
     promoted = promote_performance_report(
         source=source,
+        artifacts=artifacts,
         current=current,
         archive_dir=archive_dir,
-        expected_current_tag="v0.8.0",
-        expected_baseline_tag="v0.7.8",
+        expected=benchmark_utils.PerformanceReportId(current_tag="v0.8.0", baseline_tag="v0.7.8"),
     )
 
     assert promoted.archive_name == "v0.8.0-vs-v0.7.8.md"
-    assert current.read_text(encoding=UTF8) == normalized_delaunay_report("0.8.0", "v0.7.8")
+    assert current.read_text(encoding=UTF8) == benchmark_utils._normalize_how_to_update(promoted_report)
     assert (archive_dir / "v0.7.8-vs-v0.7.7.md").read_text(encoding=UTF8) == normalized_delaunay_report("0.7.8", "v0.7.7")
+    assert (archive_dir / "data" / "v0.8.0-vs-v0.7.8.csv").read_bytes() == artifacts.csv.read_bytes()
+    assert (archive_dir / "data" / "v0.8.0-vs-v0.7.8.provenance.json").read_bytes() == artifacts.provenance.read_bytes()
     assert (archive_dir / "README.md").read_text(encoding=UTF8) == (
         "# Archived Performance Reports\n\n"
         "Older release-to-release benchmark comparisons are archived here.\n"
@@ -456,6 +726,290 @@ def test_promote_performance_report_archives_previous_and_updates_index(tmp_path
         "- [v0.7.6-vs-v0.7.5](v0.7.6-vs-v0.7.5.md)\n"
         "- [v0.7.8-vs-v0.7.7](v0.7.8-vs-v0.7.7.md)\n"
     )
+
+
+def test_promote_performance_report_rolls_back_every_destination_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed archive-index update must leave all promoted files unchanged."""
+    source = tmp_path / "performance.md"
+    current = tmp_path / "docs" / "PERFORMANCE.md"
+    archive_dir = tmp_path / "docs" / "archive" / "performance"
+    index = archive_dir / "README.md"
+    archived = archive_dir / "v0.7.8-vs-v0.7.7.md"
+    current.parent.mkdir(parents=True)
+    archive_dir.mkdir(parents=True)
+    source.write_text(delaunay_report("0.8.0", "v0.7.8"), encoding=UTF8)
+    current.write_text(delaunay_report("0.7.8", "v0.7.7"), encoding=UTF8)
+    index.write_text("old index\n", encoding=UTF8)
+    artifacts = performance_artifacts.ArtifactPaths(csv=source.with_suffix(".csv"), provenance=source.with_suffix(".provenance.json"))
+    performance_artifacts.write_bundle(artifacts, retained_performance_bundle())
+    durable = performance_artifacts.ArtifactPaths(
+        csv=archive_dir / "data" / "v0.8.0-vs-v0.7.8.csv",
+        provenance=archive_dir / "data" / "v0.8.0-vs-v0.7.8.provenance.json",
+    )
+    source.write_text(
+        benchmark_utils.render_performance_bundle(performance_artifacts.load_bundle(artifacts), evidence_paths=durable, evidence_state="promoted"),
+        encoding=UTF8,
+    )
+
+    def fail_index_update(_archive_dir: Path) -> None:
+        msg = "index write failed"
+        raise OSError(msg)
+
+    monkeypatch.setattr(benchmark_utils, "update_performance_archive_index", fail_index_update)
+
+    with pytest.raises(OSError, match="index write failed"):
+        promote_performance_report(
+            source=source,
+            artifacts=artifacts,
+            current=current,
+            archive_dir=archive_dir,
+            expected=benchmark_utils.PerformanceReportId(current_tag="v0.8.0", baseline_tag="v0.7.8"),
+        )
+
+    assert current.read_text(encoding=UTF8) == delaunay_report("0.7.8", "v0.7.7")
+    assert index.read_text(encoding=UTF8) == "old index\n"
+    assert not archived.exists()
+
+
+def test_promote_performance_report_rejects_conflicting_existing_archive_before_mutation(tmp_path: Path) -> None:
+    source = tmp_path / "performance.md"
+    current = tmp_path / "docs" / "PERFORMANCE.md"
+    archive_dir = tmp_path / "docs" / "archive" / "performance"
+    current.parent.mkdir(parents=True)
+    archive_dir.mkdir(parents=True)
+    current.write_text(delaunay_report("0.7.8", "v0.7.7"), encoding=UTF8)
+    conflicting = archive_dir / "v0.7.8-vs-v0.7.7.md"
+    conflicting.write_text("conflicting archive\n", encoding=UTF8)
+    artifacts = performance_artifacts.ArtifactPaths(csv=source.with_suffix(".csv"), provenance=source.with_suffix(".provenance.json"))
+    performance_artifacts.write_bundle(artifacts, retained_performance_bundle())
+    durable = performance_artifacts.ArtifactPaths(
+        csv=archive_dir / "data" / "v0.8.0-vs-v0.7.8.csv",
+        provenance=archive_dir / "data" / "v0.8.0-vs-v0.7.8.provenance.json",
+    )
+    source.write_text(
+        benchmark_utils.render_performance_bundle(performance_artifacts.load_bundle(artifacts), evidence_paths=durable, evidence_state="promoted"),
+        encoding=UTF8,
+    )
+    prior_current = current.read_bytes()
+
+    with pytest.raises(ValueError, match="existing performance archive conflicts"):
+        promote_performance_report(
+            source=source,
+            artifacts=artifacts,
+            current=current,
+            archive_dir=archive_dir,
+            expected=benchmark_utils.PerformanceReportId(current_tag="v0.8.0", baseline_tag="v0.7.8"),
+        )
+
+    assert current.read_bytes() == prior_current
+    assert conflicting.read_text(encoding=UTF8) == "conflicting archive\n"
+    assert not (archive_dir / "data").exists()
+
+
+def test_release_generation_preflights_output_aliases_before_measurement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    destination = tmp_path / "docs" / "PERFORMANCE.md"
+
+    def unexpected_measurement(*_args: object, **_kwargs: object) -> None:
+        msg = "measurement must not start"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(benchmark_utils, "_build_performance_bundle_in_temp_worktree", unexpected_measurement)
+
+    with pytest.raises(ValueError, match="must use distinct paths"):
+        benchmark_utils.generate_and_promote_performance_report(
+            output=destination,
+            current=destination,
+            archive_dir=tmp_path / "docs" / "archive" / "performance",
+            config=ReleaseReportConfig(
+                repo_root=tmp_path,
+                current_tag="v0.8.0",
+                baseline_tag="v0.7.8",
+                worktree_ref="HEAD",
+            ),
+        )
+
+
+def test_performance_doc_promotes_retained_bundle_without_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Retained artifacts should be sufficient to rebuild and promote docs."""
+    output = tmp_path / "target" / "bench-reports" / "performance.md"
+    artifacts = performance_artifacts.ArtifactPaths(
+        csv=output.with_suffix(".csv"),
+        provenance=output.with_suffix(".provenance.json"),
+    )
+    current = tmp_path / "docs" / "PERFORMANCE.md"
+    archive_dir = tmp_path / "docs" / "archive" / "performance"
+    current.parent.mkdir(parents=True)
+    current.write_text(delaunay_report("0.7.8", "v0.7.7"), encoding=UTF8)
+    performance_artifacts.write_bundle(artifacts, retained_performance_bundle())
+
+    def unexpected_command(*_args: object, **_kwargs: object) -> None:
+        msg = "performance-doc must not run commands"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(benchmark_utils, "run_safe_command", unexpected_command)
+    monkeypatch.setattr(benchmark_utils, "run_git_command", unexpected_command)
+
+    report_id = benchmark_utils.render_and_promote_performance_artifacts(
+        output=output,
+        artifacts=artifacts,
+        current=current,
+        archive_dir=archive_dir,
+        expected_current_tag="v0.8.0",
+    )
+
+    assert report_id.archive_name == "v0.8.0-vs-v0.7.8.md"
+    assert output.read_text(encoding=UTF8) == current.read_text(encoding=UTF8)
+    assert (archive_dir / "v0.7.8-vs-v0.7.7.md").is_file()
+
+
+def test_performance_doc_rejects_same_version_without_changing_outputs(tmp_path: Path) -> None:
+    """Local same-version evidence is retainable but cannot be promoted."""
+    output = tmp_path / "performance.md"
+    output.write_text("prior output\n", encoding=UTF8)
+    artifacts = performance_artifacts.ArtifactPaths(
+        csv=tmp_path / "performance.csv",
+        provenance=tmp_path / "performance.provenance.json",
+    )
+    performance_artifacts.write_bundle(artifacts, retained_performance_bundle(current="v0.8.0", baseline="v0.8.0"))
+    current = tmp_path / "docs" / "PERFORMANCE.md"
+    current.parent.mkdir()
+    current.write_text("prior docs\n", encoding=UTF8)
+
+    with pytest.raises(ValueError, match="same-version"):
+        benchmark_utils.render_and_promote_performance_artifacts(
+            output=output,
+            artifacts=artifacts,
+            current=current,
+            archive_dir=tmp_path / "docs" / "archive" / "performance",
+            expected_current_tag="v0.8.0",
+        )
+
+    assert output.read_text(encoding=UTF8) == "prior output\n"
+    assert current.read_text(encoding=UTF8) == "prior docs\n"
+
+
+def test_performance_doc_rejects_malformed_pair_without_changing_outputs(tmp_path: Path) -> None:
+    """Malformed retained inputs must fail before scratch or tracked reports change."""
+    output = tmp_path / "performance.md"
+    output.write_text("prior output\n", encoding=UTF8)
+    artifacts = performance_artifacts.ArtifactPaths(
+        csv=tmp_path / "performance.csv",
+        provenance=tmp_path / "performance.provenance.json",
+    )
+    performance_artifacts.write_bundle(artifacts, retained_performance_bundle())
+    artifacts.csv.write_text("not,the,canonical,schema\n", encoding=UTF8)
+    current = tmp_path / "docs" / "PERFORMANCE.md"
+    current.parent.mkdir()
+    current.write_text("prior docs\n", encoding=UTF8)
+
+    with pytest.raises(ValueError, match="SHA-256"):
+        benchmark_utils.render_and_promote_performance_artifacts(
+            output=output,
+            artifacts=artifacts,
+            current=current,
+            archive_dir=tmp_path / "docs" / "archive" / "performance",
+            expected_current_tag="v0.8.0",
+        )
+
+    assert output.read_text(encoding=UTF8) == "prior output\n"
+    assert current.read_text(encoding=UTF8) == "prior docs\n"
+
+
+def test_performance_doc_rejects_stale_current_release_before_writing(tmp_path: Path) -> None:
+    output = tmp_path / "performance.md"
+    artifacts = performance_artifacts.ArtifactPaths(csv=tmp_path / "performance.csv", provenance=tmp_path / "performance.provenance.json")
+    performance_artifacts.write_bundle(artifacts, retained_performance_bundle(current="v0.7.9", baseline="v0.7.8"))
+    current = tmp_path / "docs" / "PERFORMANCE.md"
+    current.parent.mkdir()
+    current.write_text("prior docs\n", encoding=UTF8)
+
+    with pytest.raises(ValueError, match=r"independently expected release v0\.8\.0"):
+        benchmark_utils.render_and_promote_performance_artifacts(
+            output=output,
+            artifacts=artifacts,
+            current=current,
+            archive_dir=tmp_path / "docs" / "archive" / "performance",
+            expected_current_tag="v0.8.0",
+        )
+
+    assert not output.exists()
+    assert current.read_text(encoding=UTF8) == "prior docs\n"
+
+
+def test_performance_doc_rejects_zero_comparable_rows_before_writing(tmp_path: Path) -> None:
+    output = tmp_path / "performance.md"
+    original = retained_performance_bundle()
+    unverified = performance_artifacts.PerformanceBundle(
+        context=original.context,
+        rows=(replace(original.rows[0], coverage_status="not-comparable", coverage_note="measurement hosts differ"),),
+    )
+    artifacts = performance_artifacts.ArtifactPaths(csv=tmp_path / "performance.csv", provenance=tmp_path / "performance.provenance.json")
+    performance_artifacts.write_bundle(artifacts, unverified)
+
+    with pytest.raises(ValueError, match="no scientifically comparable rows"):
+        benchmark_utils.render_and_promote_performance_artifacts(
+            output=output,
+            artifacts=artifacts,
+            current=tmp_path / "docs" / "PERFORMANCE.md",
+            archive_dir=tmp_path / "docs" / "archive" / "performance",
+            expected_current_tag="v0.8.0",
+        )
+
+    assert not output.exists()
+
+
+def test_renderer_suppresses_ratios_for_incompatible_measurement_hosts(tmp_path: Path) -> None:
+    original = retained_performance_bundle()
+    incompatible_context = replace(
+        original.context,
+        baseline_measurement_host=performance_artifacts.HostIdentity(
+            status="recorded",
+            cpu="Different CPU",
+            operating_system="Test OS",
+            architecture="test",
+        ),
+    )
+    unverified = performance_artifacts.PerformanceBundle(
+        context=incompatible_context,
+        rows=(replace(original.rows[0], coverage_status="not-comparable", coverage_note="measurement hosts differ"),),
+    )
+
+    report = benchmark_utils.render_performance_bundle(
+        unverified,
+        evidence_paths=performance_artifacts.ArtifactPaths(
+            csv=tmp_path / "performance.csv",
+            provenance=tmp_path / "performance.provenance.json",
+        ),
+        evidence_state="scratch",
+    )
+
+    assert "Ratios are suppressed" in report
+    assert "2.00x" not in report
+    assert "measurement hosts differ" in report
+
+
+def test_renderer_distinguishes_scratch_and_promoted_evidence_paths(tmp_path: Path) -> None:
+    scratch = performance_artifacts.ArtifactPaths(
+        csv=tmp_path / "scratch" / "performance.csv",
+        provenance=tmp_path / "scratch" / "performance.provenance.json",
+    )
+    performance_artifacts.write_bundle(scratch, retained_performance_bundle())
+    durable = performance_artifacts.ArtifactPaths(
+        csv=tmp_path / "docs" / "archive" / "performance" / "data" / "v0.8.0-vs-v0.7.8.csv",
+        provenance=tmp_path / "docs" / "archive" / "performance" / "data" / "v0.8.0-vs-v0.7.8.provenance.json",
+    )
+
+    scratch_report = benchmark_utils.render_performance_artifacts(scratch)
+    promoted_report = benchmark_utils.render_performance_bundle(performance_artifacts.load_bundle(scratch), evidence_paths=durable, evidence_state="promoted")
+
+    assert "Retained scratch evidence" in scratch_report
+    assert scratch.csv.as_posix() in scratch_report
+    assert "Promoted evidence" in promoted_report
+    assert durable.csv.as_posix() in promoted_report
+    assert scratch.csv.as_posix() not in promoted_report
 
 
 def test_safe_extract_tar_rejects_path_traversal(tmp_path: Path) -> None:
@@ -477,28 +1031,81 @@ def test_prepare_github_release_assets_copies_current_and_baseline_samples(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """GitHub Release asset reports should compare extracted raw Criterion samples."""
-    archives: dict[str, Path] = {}
+    archives: dict[str, benchmark_utils.DownloadedReleaseAsset] = {}
 
     def write_asset(tag: str, point_ns: float) -> None:
         root = tmp_path / f"{tag}-asset-root"
         write_named_estimate(root, ("validation", "validate_3d", "750"), "new", point_ns)
+        commit = ("a" if tag == "v0.8.0" else "b") * 40
+        metadata = {
+            "schema_version": benchmark_utils.RELEASE_ASSET_METADATA_SCHEMA_VERSION,
+            "source": {
+                "version": tag,
+                "commit": commit,
+                "ref": tag,
+                "revision_timestamp": "2026-08-01T00:00:00Z",
+                "git_clean": True,
+                "source_state_sha256": hashlib.sha256(f"commit {commit}\n".encode()).hexdigest(),
+                "limitation": "",
+            },
+            "measurement_commands": [list(command) for command in benchmark_utils.RELEASE_ASSET_MEASUREMENT_COMMANDS],
+            "completed_targets": list(benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS),
+            "toolchain": {
+                "rustc": "rustc 1.98.0",
+                "criterion_version": "0.7.0",
+                "cargo_profile": "perf",
+                "cargo_lock_sha256": "e" * 64,
+                "harness_sha256": "f" * 64,
+                "configuration_sha256": "a" * 64,
+                "measurement_plan_sha256": "b" * 64,
+                "limitation": "",
+            },
+            "measurement_host": {
+                "status": "recorded",
+                "cpu": "GitHub test CPU",
+                "operating_system": "Linux",
+                "architecture": "x86_64",
+                "reason": "",
+            },
+            "criterion": {
+                "content_sha256": benchmark_utils._directory_digest(root / "criterion"),
+                "sample_name": "new",
+            },
+        }
+        (root / "metadata.json").write_text(json.dumps(metadata), encoding=UTF8)
         archive = tmp_path / f"delaunay-{tag}-criterion-baseline.tar.gz"
         with tarfile.open(archive, "w:gz") as tar:
             tar.add(root / "criterion", arcname="criterion")
-        archives[tag] = archive
+            tar.add(root / "metadata.json", arcname="metadata.json")
+        command = (
+            "gh",
+            "release",
+            "download",
+            tag,
+            "--pattern",
+            archive.name,
+            "--dir",
+            str(tmp_path / "scratch"),
+        )
+        archives[tag] = benchmark_utils.DownloadedReleaseAsset(archive=archive, command=command)
 
     write_asset("v0.8.0", 1_000_000.0)
     write_asset("v0.7.8", 2_000_000.0)
 
-    def fake_download_release_baseline(*, tag: str, download_dir: Path, repo_root: Path) -> Path:
+    def fake_download_release_baseline(*, tag: str, download_dir: Path, repo_root: Path) -> benchmark_utils.DownloadedReleaseAsset:
         del download_dir, repo_root
         return archives[tag]
 
     monkeypatch.setattr(benchmark_utils, "_download_release_baseline", fake_download_release_baseline)
+    monkeypatch.setattr(
+        benchmark_utils,
+        "_expected_tag_commit",
+        lambda _repo_root, tag: ("a" if tag == "v0.8.0" else "b") * 40,
+    )
 
     target_worktree = tmp_path / "worktree"
     scratch = tmp_path / "scratch"
-    benchmark_utils._prepare_github_release_assets(
+    current_evidence, baseline_evidence = benchmark_utils._prepare_github_release_assets(
         config=ReleaseReportConfig(
             repo_root=tmp_path,
             current_tag="v0.8.0",
@@ -516,9 +1123,270 @@ def test_prepare_github_release_assets_copies_current_and_baseline_samples(
     assert [comparison.benchmark_id for comparison in comparisons] == ["validation/validate_3d/750"]
     assert comparisons[0].current_ns == pytest.approx(1_000_000.0)
     assert comparisons[0].baseline_ns == pytest.approx(2_000_000.0)
+    assert current_evidence.revision.source.version == "v0.8.0"
+    assert baseline_evidence.revision.source.version == "v0.7.8"
+    assert current_evidence.revision.commands == benchmark_utils.RELEASE_ASSET_MEASUREMENT_COMMANDS
+    assert current_evidence.measurement_host.cpu == "GitHub test CPU"
+    assert current_evidence.artifact.content_sha256 == benchmark_utils._directory_digest(tmp_path / "v0.8.0-asset-root" / "criterion")
+    assert current_evidence.acquisition_commands[0] == archives["v0.8.0"].command
+    assert "--pattern" in current_evidence.acquisition_commands[0]
+    assert "--dir" in current_evidence.acquisition_commands[0]
 
 
-def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_baseline(
+def test_release_asset_evidence_loads_legacy_archive_as_limited_noncomparable_evidence(tmp_path: Path) -> None:
+    extracted = tmp_path / "legacy"
+    write_named_estimate(extracted, ("validation", "validate_3d", "750"), "new", 1_000_000.0)
+    commit = "a" * 40
+    (extracted / "metadata.json").write_text(
+        json.dumps(
+            {
+                "tag": "v0.8.0",
+                "commit": commit,
+                "run_id": "12345",
+                "generated_at": "2026-08-01T00:00:00Z",
+                "cargo_profile": "perf",
+                "sampling_mode": "full",
+                "runner_os": "Linux",
+                "runner_arch": "X64",
+                "summary": "PERFORMANCE_RESULTS.md",
+                "criterion_dir": "criterion",
+            }
+        ),
+        encoding=UTF8,
+    )
+    archive = tmp_path / "legacy.tar.gz"
+    archive.write_bytes(b"legacy archive placeholder")
+
+    evidence = benchmark_utils._load_release_asset_evidence(
+        requested_tag="v0.8.0",
+        expected_commit=commit,
+        extracted_root=extracted,
+        archive=archive,
+        acquisition_command=("gh", "release", "download", "v0.8.0"),
+    )
+
+    assert evidence.revision.source.limitation
+    assert evidence.revision.toolchain.limitation
+    assert evidence.revision.commands == ()
+    assert evidence.revision.completed_targets == ()
+    assert evidence.measurement_host.status == "unavailable"
+    assert evidence.measurement_host.operating_system == "Linux"
+    assert evidence.measurement_host.architecture == "X64"
+    assert "12345" in evidence.measurement_host.reason
+    assert evidence.artifact.content_sha256 == benchmark_utils._directory_digest(extracted / "criterion")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("commit", "b" * 40, "does not match tag"),
+        ("git_clean", False, "does not identify a clean checkout"),
+        ("source_state_sha256", "0" * 64, "digest is inconsistent with clean tag"),
+    ],
+)
+def test_versioned_release_asset_binds_clean_source_to_requested_tag(
+    tmp_path: Path,
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    extracted = tmp_path / "versioned"
+    commit = "a" * 40
+    metadata = write_versioned_release_asset_metadata(extracted, tag="v0.8.0", commit=commit)
+    source = metadata["source"]
+    assert isinstance(source, dict)
+    source[field] = value
+    (extracted / "metadata.json").write_text(json.dumps(metadata), encoding=UTF8)
+    archive = tmp_path / "versioned.tar.gz"
+    archive.write_bytes(b"versioned archive placeholder")
+
+    with pytest.raises(ValueError, match=message):
+        benchmark_utils._load_release_asset_evidence(
+            requested_tag="v0.8.0",
+            expected_commit=commit,
+            extracted_root=extracted,
+            archive=archive,
+            acquisition_command=("gh", "release", "download", "v0.8.0"),
+        )
+
+
+def test_versioned_release_asset_rejects_changed_measurement_commands(tmp_path: Path) -> None:
+    extracted = tmp_path / "versioned"
+    commit = "a" * 40
+    metadata = write_versioned_release_asset_metadata(extracted, tag="v0.8.0", commit=commit)
+    metadata["measurement_commands"] = [["cargo", "bench", "--profile", "perf"]]
+    (extracted / "metadata.json").write_text(json.dumps(metadata), encoding=UTF8)
+    archive = tmp_path / "versioned.tar.gz"
+    archive.write_bytes(b"versioned archive placeholder")
+
+    with pytest.raises(ValueError, match="measurement commands do not match"):
+        benchmark_utils._load_release_asset_evidence(
+            requested_tag="v0.8.0",
+            expected_commit=commit,
+            extracted_root=extracted,
+            archive=archive,
+            acquisition_command=("gh", "release", "download", "v0.8.0"),
+        )
+
+
+def test_versioned_release_asset_rejects_placeholder_recorded_host(tmp_path: Path) -> None:
+    extracted = tmp_path / "versioned"
+    commit = "a" * 40
+    metadata = write_versioned_release_asset_metadata(extracted, tag="v0.8.0", commit=commit)
+    host = metadata["measurement_host"]
+    assert isinstance(host, dict)
+    host["cpu"] = "unknown"
+    (extracted / "metadata.json").write_text(json.dumps(metadata), encoding=UTF8)
+    archive = tmp_path / "versioned.tar.gz"
+    archive.write_bytes(b"versioned archive placeholder")
+
+    with pytest.raises(ValueError, match="placeholder"):
+        benchmark_utils._load_release_asset_evidence(
+            requested_tag="v0.8.0",
+            expected_commit=commit,
+            extracted_root=extracted,
+            archive=archive,
+            acquisition_command=("gh", "release", "download", "v0.8.0"),
+        )
+
+
+@pytest.mark.parametrize("tag", ["v0.8.0", "v0.8.0+build.7"])
+def test_write_release_benchmark_metadata_binds_measurement_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tag: str,
+) -> None:
+    (tmp_path / "Cargo.toml").write_text(f'[package]\nversion = "{tag.removeprefix("v")}"\n', encoding=UTF8)
+    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "new", 1_000_000.0)
+    commit = "a" * 40
+    source = replace(
+        retained_performance_bundle().context.current_source,
+        version=tag,
+        ref=tag,
+        git_clean=True,
+        source_state_sha256=hashlib.sha256(f"commit {commit}\n".encode()).hexdigest(),
+    )
+    toolchain = retained_performance_bundle().context.current_toolchain
+    host = retained_performance_bundle().context.current_measurement_host
+    monkeypatch.setattr(benchmark_utils, "_source_state", lambda *_args, **_kwargs: source)
+    monkeypatch.setattr(benchmark_utils, "_expected_tag_commit", lambda *_args, **_kwargs: commit)
+    monkeypatch.setattr(benchmark_utils, "_toolchain_state", lambda *_args, **_kwargs: toolchain)
+    monkeypatch.setattr(benchmark_utils, "_recorded_host_identity", lambda *_args, **_kwargs: host)
+    output = tmp_path / "metadata.json"
+
+    benchmark_utils.write_release_benchmark_metadata(
+        repo_root=tmp_path,
+        tag=tag,
+        criterion_dir=tmp_path / "criterion",
+        output=output,
+    )
+
+    metadata = json.loads(output.read_text(encoding=UTF8))
+    assert metadata["schema_version"] == benchmark_utils.RELEASE_ASSET_METADATA_SCHEMA_VERSION
+    assert metadata["source"]["version"] == tag
+    assert metadata["source"]["ref"] == tag
+    assert metadata["toolchain"]["cargo_profile"] == "perf"
+    assert metadata["measurement_host"]["cpu"] == "Test CPU"
+    assert metadata["measurement_commands"] == [list(command) for command in benchmark_utils.RELEASE_ASSET_MEASUREMENT_COMMANDS]
+    assert metadata["completed_targets"] == list(benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS)
+    assert metadata["criterion"] == {
+        "content_sha256": benchmark_utils._directory_digest(tmp_path / "criterion"),
+        "sample_name": "new",
+    }
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        (
+            replace(
+                retained_performance_bundle().context.current_source,
+                ref="v0.8.0",
+                commit="b" * 40,
+                git_clean=True,
+                source_state_sha256=hashlib.sha256(("commit " + "b" * 40 + "\n").encode()).hexdigest(),
+            ),
+            "does not match tag",
+        ),
+        (
+            replace(
+                retained_performance_bundle().context.current_source,
+                ref="v0.8.0",
+                git_clean=False,
+                source_state_sha256=hashlib.sha256(("commit " + "a" * 40 + "\n").encode()).hexdigest(),
+            ),
+            "must be clean",
+        ),
+        (
+            replace(
+                retained_performance_bundle().context.current_source,
+                ref="v0.8.0",
+                git_clean=True,
+                source_state_sha256="c" * 64,
+            ),
+            "source-state digest",
+        ),
+    ],
+)
+def test_write_release_benchmark_metadata_rejects_non_tag_source_before_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: performance_artifacts.SourceState,
+    message: str,
+) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.0"\n', encoding=UTF8)
+    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "new", 1_000_000.0)
+    monkeypatch.setattr(benchmark_utils, "_source_state", lambda *_args, **_kwargs: source)
+    monkeypatch.setattr(benchmark_utils, "_expected_tag_commit", lambda *_args, **_kwargs: "a" * 40)
+    output = tmp_path / "metadata.json"
+
+    with pytest.raises(ValueError, match=message):
+        benchmark_utils.write_release_benchmark_metadata(
+            repo_root=tmp_path,
+            tag="v0.8.0",
+            criterion_dir=tmp_path / "criterion",
+            output=output,
+        )
+
+    assert not output.exists()
+
+
+def test_write_release_benchmark_metadata_rejects_output_inside_criterion(tmp_path: Path) -> None:
+    criterion_dir = tmp_path / "criterion"
+    criterion_dir.mkdir()
+
+    with pytest.raises(ValueError, match="outside the Criterion directory"):
+        benchmark_utils.write_release_benchmark_metadata(
+            repo_root=tmp_path,
+            tag="v0.8.0",
+            criterion_dir=criterion_dir,
+            output=criterion_dir / "metadata.json",
+        )
+
+
+def test_apply_current_diff_indexes_added_files_in_temporary_worktree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], str]] = []
+    monkeypatch.setattr(
+        benchmark_utils,
+        "run_git_command",
+        lambda *_args, **_kwargs: completed_process("diff --git a/new.py b/new.py\nnew file mode 100644\n"),
+    )
+
+    def record_apply(args: list[str], input_data: str, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((args, input_data))
+        return completed_process()
+
+    monkeypatch.setattr(benchmark_utils, "run_git_command_with_input", record_apply)
+
+    benchmark_utils._apply_current_diff_to_worktree(repo_root=tmp_path / "repo", worktree=tmp_path / "worktree")
+
+    assert calls == [(["apply", "--index", "--binary"], "diff --git a/new.py b/new.py\nnew file mode 100644\n")]
+
+
+def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_baseline(  # noqa: C901, PLR0915
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -526,17 +1394,18 @@ def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_base
     output = tmp_path / "target" / "bench-reports" / "performance.md"
     calls: list[tuple[str, tuple[str, ...], Path | None]] = []
 
-    def write_manifest(worktree: Path) -> None:
+    def write_manifest(worktree: Path, version: str) -> None:
         worktree.mkdir(parents=True, exist_ok=True)
         (worktree / "Cargo.toml").write_text(
-            '[package]\nversion = "0.8.0"\n\n[[bench]]\nname = "ci_performance_suite"\n',
+            f'[package]\nversion = "{version}"\n\n[[bench]]\nname = "ci_performance_suite"\n',
             encoding=UTF8,
         )
 
     def fake_run_git(args: list[str], cwd: Path | None = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(("git", tuple(args), cwd))
         if args[:3] == ["worktree", "add", "--detach"]:
-            write_manifest(Path(args[3]))
+            version = "0.7.8" if args[4] == "v0.7.8" else "0.8.0"
+            write_manifest(Path(args[3]), version)
         if args == ["diff", "--binary", "HEAD"]:
             return completed_process("")
         return completed_process()
@@ -550,6 +1419,7 @@ def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_base
         if command == "cargo" and "--save-baseline" in args:
             assert cwd is not None
             write_named_estimate(cwd / "target", ("validation", "validate_3d", "750"), "v0.7.8", 2_000_000.0)
+            write_named_estimate(cwd / "target", ("validation", "removed_case", "750"), "v0.7.8", 3_000_000.0)
         if command == "cargo" and "--save-baseline" not in args:
             assert cwd is not None
             write_named_estimate(cwd / "target", ("validation", "validate_3d", "750"), "new", 1_000_000.0)
@@ -561,6 +1431,40 @@ def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_base
     monkeypatch.setattr(benchmark_utils, "run_git_command", fake_run_git)
     monkeypatch.setattr(benchmark_utils, "run_git_command_with_input", fake_run_git_with_input)
     monkeypatch.setattr(benchmark_utils, "run_safe_command", fake_run_safe)
+
+    def fake_revision_evidence(
+        checkout: Path,
+        *,
+        version: str,
+        ref: str,
+        measurement: benchmark_utils.RevisionMeasurement,
+    ) -> benchmark_utils.RevisionEvidence:
+        del checkout
+        return benchmark_utils.RevisionEvidence(
+            source=benchmark_utils.SourceState(
+                version=version,
+                commit=("a" if version == "v0.8.0" else "b") * 40,
+                ref=ref,
+                revision_timestamp="2026-08-01T00:00:00Z",
+                git_clean=version != "v0.8.0",
+                source_state_sha256=("a" if version == "v0.8.0" else "b") * 64,
+            ),
+            toolchain=benchmark_utils.ToolchainState(
+                rustc="rustc 1.98.0",
+                criterion_version="0.7.0",
+                cargo_profile="perf",
+                cargo_lock_sha256="c" * 64,
+                harness_sha256="d" * 64,
+                configuration_sha256="e" * 64,
+                measurement_plan_sha256="f" * 64,
+            ),
+            commands=measurement.commands,
+            completed_targets=("ci_performance_suite",),
+        )
+
+    host = benchmark_utils.HostIdentity(status="recorded", cpu="Test CPU", operating_system="Test OS", architecture="test")
+    monkeypatch.setattr(benchmark_utils, "_revision_evidence", fake_revision_evidence)
+    monkeypatch.setattr(benchmark_utils, "_recorded_host_identity", lambda _root: host)
 
     report_id = generate_performance_worktree_report(
         output=output,
@@ -574,12 +1478,32 @@ def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_base
     )
 
     assert report_id.archive_name == "v0.8.0-vs-v0.7.8.md"
-    assert output.read_text(encoding=UTF8) == normalized_delaunay_report("0.8.0", "v0.7.8")
+    report = output.read_text(encoding=UTF8)
+    assert "**delaunay** v0.8.0" in report
+    assert "Comparison against baseline **v0.7.8**" in report
+    assert "| validate_3d/750 | 2.00 ms" in report
+    assert output.with_suffix(".csv").is_file()
+    assert output.with_suffix(".provenance.json").is_file()
+    retained = performance_artifacts.load_bundle(
+        performance_artifacts.ArtifactPaths(csv=output.with_suffix(".csv"), provenance=output.with_suffix(".provenance.json"))
+    )
+    assert [(row.benchmark_id, row.coverage_status) for row in retained.sorted_rows] == [
+        ("validation/removed_case/750", "baseline-only"),
+        ("validation/validate_3d/750", "comparable"),
+    ]
+    assert retained.context.current_source.commit == "a" * 40
+    assert retained.context.baseline_source.commit == "b" * 40
+    assert retained.context.current_commands == (("cargo", "bench", "--profile", "perf", "--bench", "ci_performance_suite"),)
+    assert retained.context.baseline_commands[0][-2:] == ("--save-baseline", "v0.7.8")
+    assert retained.context.current_measurement_host == host
+    assert retained.context.baseline_measurement_host == host
+    assert retained.context.current_artifact.sample_name == "new"
+    assert retained.context.baseline_artifact.sample_name == "v0.7.8"
     assert any(kind == "git" and args[:3] == ("worktree", "add", "--detach") and args[4] == "HEAD" for kind, args, _ in calls)
     assert any(kind == "git" and args[:3] == ("worktree", "add", "--detach") and args[4] == "v0.7.8" for kind, args, _ in calls)
     assert any(kind == "cargo" and "--save-baseline" in args for kind, args, _ in calls)
     assert any(kind == "cargo" and "--save-baseline" not in args for kind, args, _ in calls)
-    assert any(kind == "uv" and args[:3] == ("run", "benchmark-utils", "bench-compare") for kind, args, _ in calls)
+    assert not any(kind == "uv" for kind, _, _ in calls)
 
 
 @pytest.fixture
@@ -2978,7 +3902,7 @@ Hardware Information:
         """Test successful regression test run."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_file = Path(temp_dir) / "baseline.txt"
-            baseline_file.write_text("mock baseline content")
+            baseline_file.write_text("mock baseline content", encoding=UTF8)
 
             with patch("benchmark_utils.PerformanceComparator") as mock_comparator_class:
                 mock_comparator = Mock()
@@ -2997,7 +3921,7 @@ Hardware Information:
         """Test regression test run with dev mode enabled."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_file = Path(temp_dir) / "baseline.txt"
-            baseline_file.write_text("mock baseline content")
+            baseline_file.write_text("mock baseline content", encoding=UTF8)
 
             with patch("benchmark_utils.PerformanceComparator") as mock_comparator_class:
                 mock_comparator = Mock()
@@ -3016,7 +3940,7 @@ Hardware Information:
         """Test regression test run failure."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_file = Path(temp_dir) / "baseline.txt"
-            baseline_file.write_text("mock baseline content")
+            baseline_file.write_text("mock baseline content", encoding=UTF8)
 
             with patch("benchmark_utils.PerformanceComparator") as mock_comparator_class:
                 mock_comparator = Mock()
@@ -3031,7 +3955,7 @@ Hardware Information:
         """Test regression test run with custom bench_timeout parameter."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_file = Path(temp_dir) / "baseline.txt"
-            baseline_file.write_text("mock baseline content")
+            baseline_file.write_text("mock baseline content", encoding=UTF8)
 
             with patch("benchmark_utils.PerformanceComparator") as mock_comparator_class:
                 mock_comparator = Mock()
@@ -3051,7 +3975,7 @@ Hardware Information:
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "results.txt"
             results_content = "=== Performance Test Results ===\nAll tests passed\n"
-            results_file.write_text(results_content)
+            results_file.write_text(results_content, encoding=UTF8)
 
             BenchmarkRegressionHelper.display_results(results_file)
 
@@ -3073,7 +3997,7 @@ Hardware Information:
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
             results_file.parent.mkdir(parents=True)
-            results_file.write_text("REGRESSION detected in benchmark xyz")
+            results_file.write_text("REGRESSION detected in benchmark xyz", encoding=UTF8)
 
             env_vars = {
                 "BASELINE_SOURCE": "artifact",
@@ -3130,7 +4054,7 @@ Hardware Information:
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
             results_file.parent.mkdir(parents=True)
-            results_file.write_text("REGRESSION detected in benchmark xyz")
+            results_file.write_text("REGRESSION detected in benchmark xyz", encoding=UTF8)
 
             env_vars = {
                 "BASELINE_EXISTS": "true",
@@ -3156,7 +4080,7 @@ Hardware Information:
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
             results_file.parent.mkdir(parents=True)
-            results_file.write_text("REGRESSION detected in benchmark xyz")
+            results_file.write_text("REGRESSION detected in benchmark xyz", encoding=UTF8)
 
             github_env_file = Path(temp_dir) / "github_env"
             env_vars = {
@@ -3170,7 +4094,7 @@ Hardware Information:
 
                 # Check that GITHUB_ENV file was written to
                 assert github_env_file.exists()
-                github_env_content = github_env_file.read_text()
+                github_env_content = github_env_file.read_text(encoding=UTF8)
                 assert "BENCHMARK_REGRESSION_DETECTED=true" in github_env_content
 
     def test_generate_summary_with_error_file(self, temp_chdir, capsys) -> None:
@@ -3223,7 +4147,7 @@ class TestProjectRootHandling:
 
             # Create Cargo.toml in temp directory
             cargo_toml = temp_path / "Cargo.toml"
-            cargo_toml.write_text('[package]\nname = "test"\n')
+            cargo_toml.write_text('[package]\nname = "test"\n', encoding=UTF8)
 
             # Create subdirectory and change to it
             sub_dir = temp_path / "subdir"
@@ -3257,7 +4181,7 @@ class TestTimeoutHandling:
             (
                 "PerformanceComparator",
                 "compare_with_baseline",
-                lambda temp_dir: (Path(temp_dir) / "baseline.txt").write_text("mock baseline"),
+                lambda temp_dir: (Path(temp_dir) / "baseline.txt").write_text("mock baseline", encoding=UTF8),
             ),
         ],
     )
@@ -3347,7 +4271,7 @@ class TestTimeoutHandling:
         # Create a temporary project with Cargo.toml to satisfy find_project_root
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            (temp_path / "Cargo.toml").write_text('[package]\nname = "test"\n')
+            (temp_path / "Cargo.toml").write_text('[package]\nname = "test"\n', encoding=UTF8)
 
             with temp_chdir(temp_path):
                 # Test with zero timeout
@@ -3358,7 +4282,7 @@ class TestTimeoutHandling:
 
                 # Test with negative timeout
                 baseline_file = temp_path / "baseline.txt"
-                baseline_file.write_text("mock baseline")
+                baseline_file.write_text("mock baseline", encoding=UTF8)
                 monkeypatch.setattr(sys, "argv", ["benchmark_utils.py", "compare", "--baseline", str(baseline_file), "--bench-timeout", "-100"])
                 with pytest.raises(SystemExit) as exc_info:
                     main()
@@ -3487,6 +4411,17 @@ class TestTimeoutHandling:
                 "--no-apply-current-diff",
             ],
         )
+        doc_args = parser.parse_args(
+            [
+                "performance-doc",
+                "--output",
+                "target/bench-reports/performance.md",
+                "--artifact-csv",
+                "target/bench-reports/performance.csv",
+                "--artifact-provenance",
+                "target/bench-reports/performance.provenance.json",
+            ],
+        )
 
         assert bench_args.command == "bench-compare"
         assert bench_args.baseline == "v0.7.8"
@@ -3509,6 +4444,47 @@ class TestTimeoutHandling:
         assert release_args.current == Path("docs/PERFORMANCE.md")
         assert release_args.archive_dir == Path("docs/archive/performance")
         assert release_args.no_apply_current_diff
+        assert doc_args.command == "performance-doc"
+        assert doc_args.output == Path("target/bench-reports/performance.md")
+        assert doc_args.artifact_csv == Path("target/bench-reports/performance.csv")
+        assert doc_args.artifact_provenance == Path("target/bench-reports/performance.provenance.json")
+
+    def test_execute_command_dispatches_performance_doc_without_measurement_commands(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The public dispatcher should pass exact retained paths to performance-doc."""
+        parser = create_argument_parser()
+        args = parser.parse_args(
+            [
+                "performance-doc",
+                "--output",
+                "target/bench-reports/performance.md",
+                "--artifact-csv",
+                "target/bench-reports/performance.csv",
+                "--artifact-provenance",
+                "target/bench-reports/performance.provenance.json",
+                "--current",
+                "docs/PERFORMANCE.md",
+                "--archive-dir",
+                "docs/archive/performance",
+            ]
+        )
+        renderer = Mock(return_value=benchmark_utils.PerformanceReportId(current_tag="v0.8.0", baseline_tag="v0.7.8"))
+        monkeypatch.setattr(benchmark_utils, "render_and_promote_performance_artifacts", renderer)
+        monkeypatch.setattr(benchmark_utils, "_current_package_tag", lambda _root: "v0.8.0")
+
+        with pytest.raises(SystemExit) as exit_info:
+            execute_command(args, tmp_path)
+
+        assert exit_info.value.code == 0
+        renderer.assert_called_once_with(
+            output=tmp_path / "target" / "bench-reports" / "performance.md",
+            artifacts=performance_artifacts.ArtifactPaths(
+                csv=tmp_path / "target" / "bench-reports" / "performance.csv",
+                provenance=tmp_path / "target" / "bench-reports" / "performance.provenance.json",
+            ),
+            current=tmp_path / "docs" / "PERFORMANCE.md",
+            archive_dir=tmp_path / "docs" / "archive" / "performance",
+            expected_current_tag="v0.8.0",
+        )
 
     @patch("benchmark_utils.PerformanceSummaryGenerator")
     def test_execute_command_passes_strict_summary_generation(self, mock_generator_class) -> None:
@@ -3923,7 +4899,7 @@ IMPROVEMENT: Time decreased by 8.5% (faster performance)
             benches_dir = project_root / "benches"
             benches_dir.mkdir(parents=True)
             comparison_file = benches_dir / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
-            comparison_file.write_text(comparison_content)
+            comparison_file.write_text(comparison_content, encoding=UTF8)
 
             generator = PerformanceSummaryGenerator(project_root)
             lines = generator._parse_comparison_results()
@@ -3946,7 +4922,7 @@ OK: Time change -1.8% within acceptable range
             benches_dir = project_root / "benches"
             benches_dir.mkdir(parents=True)
             comparison_file = benches_dir / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
-            comparison_file.write_text(comparison_content)
+            comparison_file.write_text(comparison_content, encoding=UTF8)
 
             generator = PerformanceSummaryGenerator(project_root)
             lines = generator._parse_comparison_results()
@@ -4503,6 +5479,46 @@ Benchmark completed.""",
             captured = capsys.readouterr()
             assert "detected fallback benchmark data" in captured.err
 
+    def test_generate_summary_strict_accepts_existing_release_workflow_results(self) -> None:
+        """Five prior Cargo runs are sufficient; numerical-accuracy output is not required."""
+        ci_result = CiPerformanceResult(
+            group_key="construction",
+            benchmark_id="tds_new_2d/tds_new/10",
+            dimension="2D",
+            input_size="10",
+            mean_ns=1_000.0,
+            low_ns=900.0,
+            high_ns=1_100.0,
+        )
+        circumsphere_result = CircumsphereTestCase(
+            "random_2d",
+            "2D",
+            {
+                "insphere": CircumspherePerformanceData("insphere", 1_000.0),
+                "insphere_distance": CircumspherePerformanceData("insphere_distance", 1_100.0),
+                "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 1_200.0),
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            generator = PerformanceSummaryGenerator(Path(temp_dir))
+            output_file = Path(temp_dir) / "test_summary.md"
+            with (
+                patch.object(generator, "_get_triangulation_data_structure_results", return_value=[]),
+                patch.object(generator, "_parse_ci_performance_suite_results", return_value=[ci_result]),
+                patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=[circumsphere_result]),
+            ):
+                success = generator.generate_summary(
+                    output_path=output_file,
+                    run_benchmarks=False,
+                    strict=True,
+                )
+
+            assert success is True
+            content = output_file.read_text(encoding=UTF8)
+            assert "reference data" not in content
+            assert "To get current numerical accuracy data" not in content
+
     def test_generate_summary_strict_rejects_missing_circumsphere_results(self, capsys) -> None:
         """Test that strict summary generation fails when circumsphere results are absent."""
         ci_result = CiPerformanceResult(
@@ -4591,7 +5607,7 @@ Benchmark completed.""",
             criterion_dir.mkdir(parents=True)
 
             estimates_file = criterion_dir / "estimates.json"
-            estimates_file.write_text("{ invalid json")
+            estimates_file.write_text("{ invalid json", encoding=UTF8)
 
             generator = PerformanceSummaryGenerator(project_root)
 
@@ -4797,7 +5813,7 @@ Hardware Information:
   OS: macOS
   CPU: Apple M4 Max
 """
-            baseline_file.write_text(baseline_content_short)
+            baseline_file.write_text(baseline_content_short, encoding=UTF8)
 
             lines = generator._parse_baseline_results()
             content = "\n".join(lines)
@@ -4947,8 +5963,8 @@ Time: [95.0, 100.0, 105.0] µs
             standard_content = "Standard file content"
             tag_content = "Tag-specific file content"
 
-            standard_file.write_text(standard_content)
-            tag_file.write_text(tag_content)
+            standard_file.write_text(standard_content, encoding=UTF8)
+            tag_file.write_text(tag_content, encoding=UTF8)
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
                 env_path = env_file.name
@@ -4983,9 +5999,9 @@ Time: [95.0, 100.0, 105.0] µs
             baseline_dir = Path(temp_dir)
 
             # Create some non-matching files
-            (baseline_dir / "metadata.json").write_text("{}")
-            (baseline_dir / "random.txt").write_text("Not a baseline")
-            (baseline_dir / "results.log").write_text("Log data")
+            (baseline_dir / "metadata.json").write_text("{}", encoding=UTF8)
+            (baseline_dir / "random.txt").write_text("Not a baseline", encoding=UTF8)
+            (baseline_dir / "results.log").write_text("Log data", encoding=UTF8)
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
                 env_path = env_file.name
@@ -5098,8 +6114,8 @@ Git commit: def456abc789
 Tag: v0.4.3
 """
 
-            tag_file_1.write_text(tag_content_1)
-            tag_file_2.write_text(tag_content_2)
+            tag_file_1.write_text(tag_content_1, encoding=UTF8)
+            tag_file_2.write_text(tag_content_2, encoding=UTF8)
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
                 env_path = env_file.name
@@ -5124,9 +6140,9 @@ Tag: v0.4.3
             prerelease_file = baseline_dir / "baseline-v1.2.3-beta.1.txt"
             older_stable = baseline_dir / "baseline-v1.2.2.txt"
 
-            stable_file.write_text("Stable v1.2.3")
-            prerelease_file.write_text("Pre-release v1.2.3-beta.1")
-            older_stable.write_text("Older stable v1.2.2")
+            stable_file.write_text("Stable v1.2.3", encoding=UTF8)
+            prerelease_file.write_text("Pre-release v1.2.3-beta.1", encoding=UTF8)
+            older_stable.write_text("Older stable v1.2.2", encoding=UTF8)
 
             # Should select the stable v1.2.3 over both the pre-release and older stable
             selected = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
@@ -5142,8 +6158,8 @@ Tag: v0.4.3
             stable_file = baseline_dir / "baseline-v0.4.3.txt"
             prerelease_file = baseline_dir / "baseline-v0.4.3-beta.1.txt"
 
-            stable_file.write_text("Date: 2023-12-15\nGit commit: stable043\nTag: v0.4.3\n")
-            prerelease_file.write_text("Date: 2023-12-15\nGit commit: beta043\nTag: v0.4.3-beta.1\n")
+            stable_file.write_text("Date: 2023-12-15\nGit commit: stable043\nTag: v0.4.3\n", encoding=UTF8)
+            prerelease_file.write_text("Date: 2023-12-15\nGit commit: beta043\nTag: v0.4.3-beta.1\n", encoding=UTF8)
 
             # The stable version should be selected
             selected = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
@@ -5151,7 +6167,7 @@ Tag: v0.4.3
             assert selected.name == "baseline-v0.4.3.txt"
 
             # Verify the content to ensure we got the right file
-            content = selected.read_text()
+            content = selected.read_text(encoding=UTF8)
             assert "stable043" in content
             assert "Tag: v0.4.3" in content
 
@@ -5165,9 +6181,9 @@ Tag: v0.4.3
             beta2_file = baseline_dir / "baseline-v1.2.3-beta.2.txt"
             alpha_file = baseline_dir / "baseline-v1.2.3-alpha.1.txt"
 
-            beta1_file.write_text("Beta 1")
-            beta2_file.write_text("Beta 2")
-            alpha_file.write_text("Alpha 1")
+            beta1_file.write_text("Beta 1", encoding=UTF8)
+            beta2_file.write_text("Beta 2", encoding=UTF8)
+            alpha_file.write_text("Alpha 1", encoding=UTF8)
 
             # Should select the highest version (beta.2 > beta.1 > alpha.1 lexicographically)
             selected = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
@@ -5211,7 +6227,7 @@ Hardware Information:
 
             # Create baseline file without commit info
             baseline_file = baseline_dir / "baseline_results.txt"
-            baseline_file.write_text("Date: 2023-12-15\nHardware: Test\n")
+            baseline_file.write_text("Date: 2023-12-15\nHardware: Test\n", encoding=UTF8)
 
             # Create metadata file with commit info
             metadata_file = baseline_dir / "metadata.json"
@@ -5240,7 +6256,7 @@ Hardware Information:
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
             baseline_file = baseline_dir / "baseline_results.txt"
-            baseline_file.write_text("Date: 2023-12-15\n")
+            baseline_file.write_text("Date: 2023-12-15\n", encoding=UTF8)
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
                 env_path = env_file.name
@@ -5479,7 +6495,7 @@ Hardware Information:
             # Create files in reverse order to test sorting
             for filename in reversed(files_and_expected_order):
                 file = baseline_dir / filename
-                file.write_text(f"Content of {filename}")
+                file.write_text(f"Content of {filename}", encoding=UTF8)
 
             # Should select the highest version (v2.0.0 stable)
             selected = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
@@ -5497,16 +6513,16 @@ Hardware Information:
             invalid_file1 = baseline_dir / "baseline-vInvalid.txt"
             generic_file = baseline_dir / "baseline-generic.txt"
 
-            valid_file1.write_text("Valid 1.0.0 content")
-            valid_file2.write_text("Valid 1.2.0 content")
-            invalid_file1.write_text("Invalid version content")
-            generic_file.write_text("Generic content")
+            valid_file1.write_text("Valid 1.0.0 content", encoding=UTF8)
+            valid_file2.write_text("Valid 1.2.0 content", encoding=UTF8)
+            invalid_file1.write_text("Invalid version content", encoding=UTF8)
+            generic_file.write_text("Generic content", encoding=UTF8)
 
             # Should select the highest valid version (1.2.0 > 1.0.0)
             selected = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
             assert selected is not None
             assert selected.name == "baseline-v1.2.txt"
-            assert "Valid 1.2.0 content" in selected.read_text()
+            assert "Valid 1.2.0 content" in selected.read_text(encoding=UTF8)
 
     def test_packaging_version_truly_invalid_versions(self) -> None:
         """Test that truly invalid version formats fall back to generic baseline selection."""
@@ -5519,16 +6535,16 @@ Hardware Information:
             invalid_file3 = baseline_dir / "baseline-vNot-A-Version.txt"
             generic_file = baseline_dir / "baseline_results.txt"  # Standard fallback
 
-            invalid_file1.write_text("Invalid content 1")
-            invalid_file2.write_text("Invalid content 2")
-            invalid_file3.write_text("Invalid content 3")
-            generic_file.write_text("Generic baseline content")
+            invalid_file1.write_text("Invalid content 1", encoding=UTF8)
+            invalid_file2.write_text("Invalid content 2", encoding=UTF8)
+            invalid_file3.write_text("Invalid content 3", encoding=UTF8)
+            generic_file.write_text("Generic baseline content", encoding=UTF8)
 
             # Should fall back to standard baseline file
             selected = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
             assert selected is not None
             assert selected.name == "baseline_results.txt"
-            assert "Generic baseline content" in selected.read_text()
+            assert "Generic baseline content" in selected.read_text(encoding=UTF8)
 
     def test_generic_baseline_prefers_newest_mtime(self) -> None:
         """Test that generic baseline files are selected by most recent mtime."""
@@ -5540,12 +6556,12 @@ Hardware Information:
             newer_file = baseline_dir / "baseline-newer.txt"
 
             # Create older file first
-            older_file.write_text("Older baseline content")
+            older_file.write_text("Older baseline content", encoding=UTF8)
             older_mtime = time.time() - 100  # 100 seconds ago
             os.utime(older_file, (older_mtime, older_mtime))
 
             # Create newer file
-            newer_file.write_text("Newer baseline content")
+            newer_file.write_text("Newer baseline content", encoding=UTF8)
             newer_mtime = time.time() - 50  # 50 seconds ago
             os.utime(newer_file, (newer_mtime, newer_mtime))
 
@@ -5553,7 +6569,7 @@ Hardware Information:
             selected = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
             assert selected is not None
             assert selected.name == "baseline-newer.txt"
-            assert "Newer baseline content" in selected.read_text()
+            assert "Newer baseline content" in selected.read_text(encoding=UTF8)
 
     def test_prerelease_detection_fix_validation(self) -> None:
         """Test that prerelease detection correctly identifies stable vs prerelease versions."""
@@ -5564,14 +6580,14 @@ Hardware Information:
             stable_file = baseline_dir / "baseline-v1.0.0.txt"
             prerelease_file = baseline_dir / "baseline-v1.0.0-rc.1.txt"
 
-            stable_file.write_text("Stable content")
-            prerelease_file.write_text("Prerelease content")
+            stable_file.write_text("Stable content", encoding=UTF8)
+            prerelease_file.write_text("Prerelease content", encoding=UTF8)
 
             # The stable version should be selected over the prerelease
             selected = BenchmarkRegressionHelper._find_baseline_file(baseline_dir)
             assert selected is not None
             assert selected.name == "baseline-v1.0.0.txt"
-            assert "Stable content" in selected.read_text()
+            assert "Stable content" in selected.read_text(encoding=UTF8)
 
     def test_prepare_baseline_and_extract_commit_integration(self) -> None:
         """Test the integration between prepare_baseline and extract_baseline_commit."""

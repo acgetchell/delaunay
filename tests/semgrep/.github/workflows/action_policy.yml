@@ -68,3 +68,21 @@ jobs:
       - name: Locked uv sync
         # ok: delaunay.github-actions.uv-sync-locked-in-workflows
         run: uv sync --locked
+
+      - name: Unlocked uv run
+        # ruleid: delaunay.github-actions.uv-run-locked-in-workflows
+        run: uv run benchmark-utils compare
+
+      - name: Unlocked uv run in a block
+        run: |
+          # ruleid: delaunay.github-actions.uv-run-locked-in-workflows
+          uv run benchmark-utils compare
+
+      - name: Locked uv run
+        # ok: delaunay.github-actions.uv-run-locked-in-workflows
+        run: uv run --locked benchmark-utils compare
+
+      - name: Locked uv run in a block
+        run: |
+          # ok: delaunay.github-actions.uv-run-locked-in-workflows
+          uv run --locked benchmark-utils compare

@@ -1,5 +1,8 @@
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, Mock
+
+UTF8 = "utf-8"
 
 
 def catches_broad_exception() -> None:
@@ -34,6 +37,31 @@ def raises_raw_exception() -> None:
 def raises_specific_exception() -> None:
     # ok: delaunay.python.no-raw-exception-in-tests
     raise RuntimeError("specific failure")
+
+
+def implicit_path_read_text_encoding(path: Path) -> None:
+    # ruleid: delaunay.python.explicit-path-text-encoding-in-tests
+    path.read_text()
+
+
+def implicit_path_write_text_encoding(path: Path) -> None:
+    # ruleid: delaunay.python.explicit-path-text-encoding-in-tests
+    path.write_text("Time: [1.0, 1.0, 1.0] µs\n")
+
+
+def explicit_path_text_encoding(path: Path) -> None:
+    # ok: delaunay.python.explicit-path-text-encoding-in-tests
+    path.read_text(encoding="utf-8")
+    # ok: delaunay.python.explicit-path-text-encoding-in-tests
+    path.write_text("Time: [1.0, 1.0, 1.0] µs\n", encoding="utf-8")
+    # ok: delaunay.python.explicit-path-text-encoding-in-tests
+    path.read_text(encoding='utf-8')
+    # ok: delaunay.python.explicit-path-text-encoding-in-tests
+    path.write_text("Time: [1.0, 1.0, 1.0] µs\n", encoding='utf-8')
+    # ok: delaunay.python.explicit-path-text-encoding-in-tests
+    path.read_text(encoding=UTF8)
+    # ok: delaunay.python.explicit-path-text-encoding-in-tests
+    path.write_text("Time: [1.0, 1.0, 1.0] µs\n", encoding=UTF8)
 
 
 def adhoc_mock_stdout() -> None:

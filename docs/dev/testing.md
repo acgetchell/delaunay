@@ -420,8 +420,8 @@ headroom across platforms because hosted runners can cross the default
 integration-test watchdog. The overrides combine the narrowest applicable
 platform, integration-binary, and test-name filters so unrelated tests retain
 the normal budget. The deterministic 5D SoS in-sphere property also receives a
-Windows-only 60-second override because each generated case performs two
-complete exact expansions and can cross the hosted Windows boundary.
+cross-platform 60-second override because each generated case performs two
+complete exact expansions and can cross the hosted-runner boundary.
 
 For test-only changes, run only the matching focused recipe. If multiple test
 target classes changed, compose those focused recipes once each. Use

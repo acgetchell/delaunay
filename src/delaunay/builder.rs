@@ -3736,6 +3736,24 @@ mod tests {
         )
     }
 
+    fn incomplete_tds_error() -> TdsError {
+        TdsError::IncompleteConstruction {
+            dimension: 2,
+            vertex_count: 1,
+            simplex_count: 0,
+        }
+    }
+
+    fn map_tds_builder_error(source: TdsBuilderError) -> DelaunayTriangulationConstructionError {
+        DelaunayTriangulationBuilder::<(), 2>::explicit_error_from_tds_builder(source)
+    }
+
+    fn map_triangulation_builder_error(
+        source: TriangulationBuilderError,
+    ) -> DelaunayTriangulationConstructionError {
+        DelaunayTriangulationBuilder::<(), 2>::explicit_error_from_triangulation_builder(source)
+    }
+
     #[derive(Clone, Copy, Debug)]
     struct ValidationFailureModel;
 
@@ -3795,6 +3813,162 @@ mod tests {
         assert_eq!(*source, SimplexValidationError::DuplicateVertices);
         assert!(err.to_string().contains("Simplex 7"));
         assert!(err.to_string().contains("Duplicate vertices"));
+    }
+
+    #[test]
+    fn tds_builder_parse_errors_preserve_explicit_diagnostics() {
+        let cases = [
+            (
+                TdsBuilderError::EmptySimplices,
+                ExplicitConstructionError::EmptySimplices,
+            ),
+            (
+                TdsBuilderError::InvalidSimplexArity {
+                    simplex_index: 3,
+                    actual: 2,
+                    expected: 4,
+                },
+                ExplicitConstructionError::InvalidSimplexArity {
+                    simplex_index: 3,
+                    actual: 2,
+                    expected: 4,
+                },
+            ),
+            (
+                TdsBuilderError::IndexOutOfBounds {
+                    simplex_index: 5,
+                    vertex_index: 8,
+                    bound: 7,
+                },
+                ExplicitConstructionError::IndexOutOfBounds {
+                    simplex_index: 5,
+                    vertex_index: 8,
+                    bound: 7,
+                },
+            ),
+            (
+                TdsBuilderError::DuplicateVertexInSimplex {
+                    simplex_index: 11,
+                    vertex_index: 2,
+                },
+                ExplicitConstructionError::DuplicateVertexInSimplex {
+                    simplex_index: 11,
+                    vertex_index: 2,
+                },
+            ),
+        ];
+
+        for (source, expected) in cases {
+            assert_eq!(
+                map_tds_builder_error(source),
+                DelaunayTriangulationConstructionError::ExplicitConstruction { source: expected }
+            );
+        }
+    }
+
+    #[test]
+    fn tds_builder_assembly_errors_preserve_typed_sources() {
+        let construction_source = TdsConstructionError::ValidationError {
+            source: incomplete_tds_error(),
+        };
+        let assembly_sources = [
+            TdsBuilderError::VertexInsertion {
+                vertex_index: 4,
+                source: Box::new(construction_source.clone()),
+            },
+            TdsBuilderError::TopologyValidation {
+                source: Box::new(construction_source.clone()),
+            },
+            TdsBuilderError::SimplexInsertion {
+                simplex_index: 6,
+                source: Box::new(construction_source.clone()),
+            },
+        ];
+        for source in assembly_sources {
+            assert_matches!(
+                map_tds_builder_error(source),
+                DelaunayTriangulationConstructionError::ExplicitConstruction {
+                    source: ExplicitConstructionError::TdsAssembly { source },
+                } if *source == construction_source
+            );
+        }
+
+        assert_matches!(
+            map_tds_builder_error(TdsBuilderError::SimplexCreation {
+                simplex_index: 7,
+                source: SimplexValidationError::DuplicateVertices,
+            }),
+            DelaunayTriangulationConstructionError::ExplicitConstruction {
+                source: ExplicitConstructionError::SimplexCreation {
+                    simplex_index: 7,
+                    source: SimplexValidationError::DuplicateVertices,
+                },
+            }
+        );
+
+        let tds_source = incomplete_tds_error();
+        assert_matches!(
+            map_tds_builder_error(TdsBuilderError::NeighborAssignment {
+                source: Box::new(tds_source.clone()),
+            }),
+            DelaunayTriangulationConstructionError::ExplicitConstruction {
+                source: ExplicitConstructionError::NeighborAssignment { source },
+            } if *source == tds_source
+        );
+        assert_matches!(
+            map_tds_builder_error(TdsBuilderError::IncidentAssignment {
+                source: Box::new(tds_source.clone().into()),
+            }),
+            DelaunayTriangulationConstructionError::ExplicitConstruction {
+                source: ExplicitConstructionError::TdsAssembly { source },
+            } if matches!(
+                source.as_ref(),
+                TdsConstructionError::ValidationError { source } if source == &tds_source
+            )
+        );
+        assert_matches!(
+            map_tds_builder_error(TdsBuilderError::OrientationNormalization {
+                source: Box::new(tds_source.clone()),
+            }),
+            DelaunayTriangulationConstructionError::ExplicitConstruction {
+                source: ExplicitConstructionError::TdsOrientationNormalization { source },
+            } if *source == tds_source
+        );
+        assert_matches!(
+            map_tds_builder_error(TdsBuilderError::Validation {
+                source: Box::new(tds_source.clone()),
+            }),
+            DelaunayTriangulationConstructionError::ExplicitConstruction {
+                source: ExplicitConstructionError::StructuralValidation { source },
+            } if *source == tds_source
+        );
+    }
+
+    #[test]
+    fn triangulation_builder_errors_preserve_public_construction_variants() {
+        let configuration_source =
+            ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                topology_guarantee: TopologyGuarantee::PLManifold,
+                validation_policy: ValidationPolicy::Never,
+            };
+        assert_eq!(
+            map_triangulation_builder_error(TriangulationBuilderError::ValidationConfiguration {
+                source: configuration_source.clone(),
+            }),
+            DelaunayTriangulationConstructionError::ValidationConfiguration {
+                source: configuration_source,
+            }
+        );
+
+        let structural_source = incomplete_tds_error();
+        assert_matches!(
+            map_triangulation_builder_error(TriangulationBuilderError::StructuralValidation {
+                source: Box::new(structural_source.clone()),
+            }),
+            DelaunayTriangulationConstructionError::ExplicitConstruction {
+                source: ExplicitConstructionError::StructuralValidation { source },
+            } if *source == structural_source
+        );
     }
 
     #[derive(Clone, Copy, Debug)]

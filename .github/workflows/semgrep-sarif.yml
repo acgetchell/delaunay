@@ -67,6 +67,12 @@ jobs:
       - name: Run repository Semgrep rules
         id: semgrep
         run: |
+          set -euo pipefail
+          semgrep_targets=(.)
+          while IFS= read -r -d '' file; do
+            semgrep_targets+=("$file")
+          done < <(git ls-files -z 'scripts/tests/*.py')
+
           set +e
           uv run --locked semgrep \
             --error \
@@ -75,7 +81,7 @@ jobs:
             --config semgrep.yaml \
             --sarif \
             --output semgrep-results.sarif \
-            .
+            "${semgrep_targets[@]}"
           status=$?
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
           exit 0

@@ -44,6 +44,8 @@ delaunay/
 │   │   ├── prelude_reference.md
 │   │   └── project_structure.md
 │   ├── archive/
+│   │   └── performance/
+│   │       └── data/
 │   ├── dev/
 │   ├── templates/
 │   ├── api_design.md
@@ -77,6 +79,7 @@ delaunay/
 │   ├── hardware_utils.py
 │   ├── notebook_check.py
 │   ├── paper_check.py
+│   ├── performance_artifacts.py
 │   ├── postprocess_changelog.py
 │   ├── subprocess_utils.py
 │   └── tag_release.py

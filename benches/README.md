@@ -48,11 +48,11 @@ Common maintainer flows:
 - Before pushing performance-sensitive Rust or benchmark changes: run
   `just perf-large-scale-smoke`, then `just perf-no-regressions` when the work
   is PR-ready.
-- During release PR preparation: run `just perf-release` to update
+- During release PR preparation: run `just performance-release` to update
   `docs/PERFORMANCE.md` and archive the previous curated report.
 - After a GitHub Release publishes: confirm the release benchmark workflow
   attached `delaunay-vX.Y.Z-criterion-baseline.tar.gz`; use
-  `just perf-github-assets <current-tag> <baseline-tag>` when you need a
+  `just performance-github-assets 'current-tag' 'baseline-tag'` when you need a
   report from stored release assets.
 
 Criterion saved-baseline reports use Cargo's Criterion output under
@@ -61,33 +61,92 @@ the baseline checkout, then run fresh
 release-signal measurements from the current checkout with `just bench-latest`
 and render a Markdown comparison with `just bench-compare <baseline>`.
 `just bench-latest-vs-last` combines the fresh measurement and report rendering
-for the common local saved-baseline case. Use `just perf-local` when you
+for the common local saved-baseline case. Use `just performance-local` when you
 want the tool to manage isolated baseline/current worktrees for you.
 
-The `perf-*` release recipes consume local worktrees or published release
-assets:
+The canonical `performance-*` release recipes consume local worktrees,
+published release assets, or retained inputs:
 
-- `just perf-local` runs local release-signal benchmarks in isolated
-  temporary worktrees and writes `target/bench-reports/performance.md`.
-- `just perf-github-assets` compares stored GitHub Release assets
-  without local Cargo benchmark runs and writes
-  `target/bench-reports/github-assets-performance.md`.
-- `just perf-release` generates the curated local comparison, promotes
-  it into `docs/PERFORMANCE.md`, and archives the previous committed report
-  under `docs/archive/performance/`.
+- `just performance-local` runs local release-signal benchmarks in isolated
+  temporary worktrees and retains a Markdown/CSV/provenance bundle under
+  `target/bench-reports/performance.*` without promoting documentation.
+- `just performance-github-assets` compares stored GitHub Release assets
+  without local Cargo benchmark runs and retains
+  `target/bench-reports/github-assets-performance.*`. New archives must carry
+  complete versioned measurement metadata bound to the requested clean tag.
+  Existing legacy archives remain loadable as provenance-limited absolute
+  timing evidence. Ratios are always suppressed because two independently
+  hosted release runs are separate measurement sessions.
+- `just performance-release` performs the local measurement and retention
+  workflow, reload-validates the pair, promotes `docs/PERFORMANCE.md`, and
+  archives both the prior report and the exact promoted CSV/provenance pair.
+- `just performance-doc` reloads a retained CSV/provenance pair and performs
+  only the documentation promotion. It runs no Cargo benchmarks or measurement
+  worktrees and rejects incomplete, invalid, stale, same-version, or
+  scientifically non-comparable inputs.
 
-Use explicit tag pairs only for release repair or regeneration:
+Promotion uses per-file atomic replacement and rolls back caught failures. A
+hard process or machine interruption can stop between replacements; inspect
+`docs/PERFORMANCE.md`, `docs/archive/performance/`, and its `data/` directory,
+then rerun the idempotent command.
+
+The `perf-local`, `perf-github-assets`, and `perf-release` names remain thin
+compatibility aliases; new documentation and automation use the canonical
+names.
+
+Use explicit tag pairs only for release repair or regeneration. Both tags are
+required together; a partial pair fails before fetching or benchmarking:
 
 ```bash
 TAG=vX.Y.Z
 PREVIOUS_TAG=vX.Y.W
-just perf-release "$TAG" "$PREVIOUS_TAG"
+just performance-release "$TAG" "$PREVIOUS_TAG"
 ```
 
 Do not use release-comparison commands as a routine pre-`just ci` step.
 Temp-worktree commands apply tracked changes from the current checkout by
 default; untracked benchmark or script files must be added to git before they
 can affect the generated report.
+
+## Release Comparison Artifacts
+
+Artifact ownership is deliberately narrow:
+
+| Path | Tracked | Producer | Role |
+|------|---------|----------|------|
+| `target/bench-reports/performance.md` | No | `performance-local`, `performance-release`, `performance-doc` | Rendered local or release comparison |
+| `target/bench-reports/performance.csv` | No | `performance-local`, `performance-release` | Scratch copy of canonical versioned timing and coverage data |
+| `target/bench-reports/performance.provenance.json` | No | `performance-local`, `performance-release` | Scratch provenance and CSV binding evidence |
+| `target/bench-reports/github-assets-performance.*` | No | `performance-github-assets` | Provenance-validated bundle sourced from release archives |
+| `docs/PERFORMANCE.md` | Yes | `performance-release`, `performance-doc` | Latest curated distinct-release report |
+| `docs/archive/performance/` | Yes | `performance-release`, `performance-doc` | Older curated distinct-release reports |
+| `docs/archive/performance/data/` | Yes | `performance-release`, `performance-doc` | Exact CSV/provenance evidence for each new promoted report |
+| `delaunay-vX.Y.Z-criterion-baseline.tar.gz` | Release asset | release benchmark workflow | Raw Criterion data and versioned measurement metadata |
+
+CSV, not Parquet, is canonical for the retained comparison because this dataset
+is a small audit record that should remain reviewable in diffs and readable
+without Polars or PyArrow. Jupyter notebooks may derive Parquet caches when that
+materially helps larger analyses, but those caches are disposable and must be
+reproducible from the validated CSV; `performance-doc` does not accept them.
+
+The CSV schema is versioned and deterministic. The provenance JSON binds its
+exact digest and row count to the release pair, suite/scope selection, commands,
+source states, toolchains, separate per-revision host identities, confidence
+levels, Criterion content digests, sample names, and any acquisition commands.
+One-sided and environmentally non-comparable coverage is retained explicitly
+rather than silently dropped. Ratios require compatible hosts, toolchains,
+harnesses, normalized measurement plans, completed-target manifests, and
+confidence levels. Broad configuration digests remain provenance but do not
+block ordinary cross-release comparisons. When a release adds or removes a
+benchmark target, the harness and measurement-plan comparison is restricted to
+the canonical targets completed by both revisions; the union must still cover
+the current release-signal plan. Promotion requires complete coverage for an
+unchanged target plan, or an explicitly valid target transition with one-sided
+rows retained, plus at least one comparable row. Scratch reports identify their
+adjacent retained pair; promoted reports identify the exact durable pair under
+`docs/archive/performance/data/`. The Markdown report is always rendered from a
+successfully reloaded pair, so it does not become an independent source of
+timing data.
 
 The default release-signal suite is deliberately curated. It favors stable,
 release-relevant public behavior over every exploratory benchmark in this
@@ -125,12 +184,13 @@ allocation checks, or targeted diagnostics.
 | Full CI benchmark suite only | `just bench-ci` |
 | Run curated release-signal Criterion measurements | `just bench-latest` |
 | Compare latest measurements against saved `last` Criterion baseline | `just bench-latest-vs-last` |
-| Render a Markdown report from existing Criterion results | `just bench-compare [baseline]` |
-| Save a named release-signal Criterion baseline | `just bench-save-baseline <tag>` |
+| Render a Markdown report from existing Criterion results | `just bench-compare [baseline] [suite] [scope]` |
+| Save a named Criterion baseline | `just bench-save-baseline <tag> [suite]` |
 | Save the previous-release Criterion baseline as `last` | `just bench-save-baseline last` |
-| Compare current tree against latest published release locally | `just perf-local` |
-| Compare stored GitHub Release benchmark assets | `just perf-github-assets [current-tag baseline-tag]` |
-| Promote curated release-to-release performance docs | `just perf-release [current-tag baseline-tag]` |
+| Compare current tree against latest published release locally | `just performance-local` |
+| Compare stored GitHub Release benchmark assets | `just performance-github-assets [current-tag baseline-tag]` |
+| Measure, retain, validate, and promote release docs | `just performance-release [current-tag baseline-tag]` |
+| Promote docs from a retained CSV/provenance pair | `just performance-doc` |
 | Allocation-contract microbenchmarks | `just bench-allocations` |
 | Persist/update the default local baseline artifact | `just perf-baseline` |
 | Generate a scratch baseline without replacing the default | `just perf-baseline-to <out> [ref]` |
@@ -260,30 +320,28 @@ without pulling in broad profiling, allocation-only runs, or the manual
 topology policy suite. Use `just bench-compare <baseline>` to render
 `target/bench-reports/performance.md` from existing Criterion `new` output and a
 saved baseline such as `last` or `v0.7.8`. If the baseline and current
-checkouts are easy to confuse, prefer `just perf-local`. Use
+checkouts are easy to confuse, prefer `just performance-local`. Use
 `uv run --locked benchmark-utils bench-compare --scope all-benches` only when you
 explicitly want an exploratory report over every Criterion result already
 present under `target/criterion/`.
 
-Use the `perf-*` family for release-to-release reports generated in
-isolated temporary worktrees:
+Use the `performance-*` family for retained release-to-release reports:
 
 ```bash
-just perf-local
-just perf-github-assets
-just perf-release
-just perf-release "$TAG" "$PREVIOUS_TAG"
+just performance-local
+just performance-github-assets
+just performance-release
+just performance-doc
+just performance-release "$TAG" "$PREVIOUS_TAG"
 ```
 
-`perf-local` compares the current package version against the latest
-stable published release using local benchmark runs and writes
-`target/bench-reports/performance.md`. `perf-github-assets` compares
-stored GitHub Release benchmark assets without local Cargo benchmark runs and
-writes `target/bench-reports/github-assets-performance.md`. `perf-release`
-promotes one curated local comparison into `docs/PERFORMANCE.md` and archives
-the previous curated report under `docs/archive/performance/`. Explicit
-`<current-tag> <baseline-tag>` arguments repair or regenerate a specific release
-pair.
+`performance-local` and `performance-github-assets` retain Markdown, CSV, and
+provenance JSON bundles without changing tracked documentation.
+`performance-release` measures locally, retains and reload-validates the bundle,
+then promotes tracked docs. `performance-doc` performs only the reload,
+rendering, and promotion from retained inputs. Explicit `<current-tag>
+<baseline-tag>` arguments repair or regenerate a specific distinct release
+pair; neither tag may be supplied alone.
 
 ## CI Performance Suite
 
@@ -596,6 +654,7 @@ uv run --locked benchmark-utils bench-compare last
 uv run --locked benchmark-utils performance-local
 uv run --locked benchmark-utils performance-github-assets
 uv run --locked benchmark-utils performance-release
+uv run --locked benchmark-utils performance-doc
 uv run --locked benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt
 uv run --locked benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 uv run --locked benchmark-utils compare-tags --old-tag vX.Y.Z --new-tag vA.B.C
@@ -610,10 +669,12 @@ a short pass/regression/error status and the report path before exiting. The
 local PR/ref guard fails on total matched-time regressions, while individual
 regressions and improvements are surfaced in the report.
 
-Curated Markdown comparison reports include the Git revision, Cargo profile,
-raw Criterion data path, OS, CPU, memory, Rust version, and target triple. Keep
-those fields intact when adapting the workflow to sibling scientific crates so
-performance claims remain tied to the environment that produced them.
+Direct `bench-compare` reports describe the local raw Criterion path and live
+host memory/target information. Retained artifact-backed reports instead carry
+the fields serialized for both measurements: source revisions, exact commands,
+Cargo profile, OS, CPU, architecture, rustc and Criterion versions, harness and
+configuration digests, Criterion sample/content identity, confidence levels,
+and release-archive digests when applicable.
 
 The generated `Triangulation Data Structure Performance` section is intentionally
 first: it is built from the current `target/criterion` construction results,

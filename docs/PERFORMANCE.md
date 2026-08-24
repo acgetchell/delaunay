@@ -1,5 +1,12 @@
 # Benchmark Performance
 
+> [!WARNING]
+> Legacy performance evidence: this report predates the artifact-backed
+> promotion contract, and its exact CSV/provenance source pair is unavailable.
+> Treat the historical timings and environment fields below as provenance-limited.
+> The next curated promotion will replace this page with a generated report and
+> retain its exact evidence under `docs/archive/performance/data/`.
+
 **delaunay** v0.8.0 · `1f15b9352` (HEAD) · 2026-07-27 23:33:25 UTC
 **Statistic**: median
 **Suite**: release-signal
@@ -454,22 +461,41 @@ Local performance reports are generated in isolated temporary worktrees:
 
 ```bash
 # Local development: compare the current tree with the latest release
-just perf-local
+just performance-local
 
-# Release PR: update docs/PERFORMANCE.md and archive the previous report
-just perf-release
+# Release PR: measure, retain, validate, and promote documentation
+just performance-release
+
+# Rebuild and promote documentation from retained CSV/JSON only
+just performance-doc
 
 # GitHub Release benchmark assets
-just perf-github-assets
+just performance-github-assets
 
 # Explicit repair
-just perf-release <current-tag> <previous-tag>
+just performance-release 'current-tag' 'previous-tag'
 ```
 
-`just perf-local` writes `target/bench-reports/performance.md`.
-`just perf-github-assets` writes `target/bench-reports/github-assets-performance.md`.
+`just performance-local` writes `performance.md` plus retained `performance.csv` and
+`performance.provenance.json` under `target/bench-reports/` without promoting documentation.
+`just performance-github-assets` writes a provenance-validated
+`github-assets-performance.*` bundle without local Cargo benchmark runs. New archives must
+bind their complete metadata to the requested clean tag; existing legacy archives remain
+loadable as provenance-limited absolute timing evidence. GitHub-asset ratios are always
+suppressed because separately hosted release runs are distinct measurement sessions. `just
+performance-doc` consumes the retained canonical CSV/JSON pair without Cargo or measurement
+worktrees and rejects incomplete, invalid, stale, same-version, or scientifically
+non-comparable inputs. `just performance-release` retains and reload-validates the same bundle,
+copies the exact pair to `docs/archive/performance/data/`, and promotes documentation with
+per-file atomic replacement plus caught-failure rollback. Scratch reports identify their
+adjacent evidence pair; promoted reports identify the durable archived pair.
+
+CSV is the canonical tabular artifact because these small audit records are diffable and usable
+without a dataframe runtime. Notebooks may derive Parquet caches for analysis, but Parquet is not
+an accepted promotion input and must be regenerated from the validated CSV.
 
 Release-comparison commands are release evidence, not routine pre-`just ci` checks.
-Older curated release-to-release reports are archived in `docs/archive/performance/`.
+Older curated reports and exact evidence for new promotions are archived in
+`docs/archive/performance/`.
 
 See `benches/README.md` for the full Delaunay benchmark workflow.

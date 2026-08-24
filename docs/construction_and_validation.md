@@ -931,6 +931,9 @@ enough for future regular, weighted, Gabriel, alpha, constrained, or related pre
 
 - `DelaunayTriangulation::is_valid_delaunay()` - Level 5 Delaunay predicate only; cumulative
   `validate()` runs Level 4 realization validation first.
+- `DelaunayTriangulation::verify_via_flip_predicates()` - Fast local
+  flip-normal-form diagnostic. This is useful for testing repair algorithms,
+  but an error is not by itself proof of a Euclidean Level 5 violation.
 - `DelaunayTriangulation::delaunay_diagnostic()` - First actionable Level 5 diagnostic, including the
   violating simplex, its vertices, neighbor slots, and an offending vertex when available.
 - `DelaunayTriangulation::delaunay_report()` - All checkable Level 5 Delaunay failures with the same
@@ -962,6 +965,29 @@ enough for future regular, weighted, Gabriel, alpha, constrained, or related pre
   `DelaunayRefinementBuilder::new(tri).repair_by_flips().fallback_rebuild(true).build()`.
   This requires `TopologyGuarantee::PLManifold` and `K: ExactPredicates`.
   See [Numerical Robustness Guide](numerical_robustness_guide.md).
+
+### Local Flip Normal Form vs. Level 5 Validity
+
+`verify_via_flip_predicates()` checks that no repair-driving local bistellar
+move remains applicable. It examines forward k=2 facet and k=3 ridge
+configurations together with inverse k=2 edge and inverse k=3 triangle
+configurations. Passing this O(simplices) check is a sufficient fast certificate
+for a complete Euclidean point-set triangulation.
+
+The converse does not hold for degenerate Euclidean inputs. Exact cospherical
+or otherwise tie-bound configurations can admit multiple triangulations that
+all satisfy the unperturbed empty-circumsphere condition, while symbolic
+perturbation selects only one stronger local normal form. Consequently, an
+error such as `LocalInverseK2Violation` means that a locally preferred move
+remains under the tie-breaking policy; it does not necessarily mean that a
+vertex lies strictly inside a simplex's circumsphere.
+
+Use `is_valid_delaunay()` when deciding whether a Euclidean triangulation
+satisfies Level 5. It accepts a successful local certificate and, when the
+flip-normal-form check fails or is inconclusive, falls back to the exact global
+empty-circumsphere check. Use `verify_via_flip_predicates()` directly only when
+the stronger local normal form is itself the contract, such as repair-algorithm
+tests and diagnostics.
 
 ### Complexity
 

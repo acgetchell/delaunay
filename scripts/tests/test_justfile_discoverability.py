@@ -108,6 +108,50 @@ def test_release_signal_benchmark_recipes_match_python_runner() -> None:
     assert latest_targets == expected
 
 
+def test_canonical_performance_recipes_share_the_cross_repository_contract() -> None:
+    """Canonical release workflows should expose stable names and positional arguments."""
+    recipes = just_recipes()
+    assert {"performance-local", "performance-release", "performance-doc", "performance-github-assets"} <= recipes.keys()
+
+    bench_parameters = recipes["bench-compare"]["parameters"]
+    assert [parameter["name"] for parameter in bench_parameters] == ["baseline", "suite", "scope"]
+    assert [parameter["default"] for parameter in bench_parameters] == ["last", "release-signal", "release-signal"]
+
+    command = run_just("--dry-run", "bench-compare", "v0.7.8", "query", "all-benches")
+    rendered = command.stdout + command.stderr
+    assert 'bench-compare "v0.7.8" --suite "query" --scope "all-benches"' in rendered
+
+    for name in ("performance-github-assets", "performance-release"):
+        parameters = recipes[name]["parameters"]
+        assert [parameter["name"] for parameter in parameters] == ["current_tag", "baseline_tag"]
+        assert [parameter["default"] for parameter in parameters] == ["", ""]
+
+        command = run_just("--dry-run", name, "v0.8.0", "v0.7.8")
+        rendered = command.stdout + command.stderr
+        assert f'benchmark-utils {name} "$current_tag" "$baseline_tag"' in rendered
+        assert 'current_tag="v0.8.0"' in rendered
+        assert 'baseline_tag="v0.7.8"' in rendered
+
+
+def test_canonical_performance_recipes_reject_partial_tag_pairs_before_dispatch() -> None:
+    """A lone explicit tag must not reach the Python workflow command."""
+    executable = shutil.which("just")
+    assert executable is not None
+
+    for recipe in ("performance-github-assets", "performance-release"):
+        result = subprocess.run(  # noqa: S603 - executable is resolved and arguments are repository constants.
+            [executable, recipe, "v0.8.0"],
+            cwd=REPO_ROOT,
+            check=False,
+            capture_output=True,
+            encoding="utf-8",
+        )
+
+        assert result.returncode == 2
+        assert "current_tag and baseline_tag must be provided together" in result.stderr
+        assert "benchmark-utils" not in result.stdout + result.stderr
+
+
 def test_cargo_tool_guards_reuse_pinned_helper() -> None:
     """Named Cargo-tool guards should share one exact-version implementation."""
     recipes = just_recipes()
@@ -196,6 +240,7 @@ def test_performance_workflow_tracks_every_harness_input() -> None:
         "pyproject.toml",
         "rust-toolchain.toml",
         "scripts/benchmark_models.py",
+        "scripts/performance_artifacts.py",
         "scripts/benchmark_utils.py",
         "scripts/hardware_utils.py",
         "scripts/subprocess_utils.py",

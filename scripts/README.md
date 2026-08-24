@@ -72,6 +72,7 @@ uv run --locked benchmark-utils generate-summary --run-benchmarks --profile perf
 uv run --locked benchmark-utils performance-local
 uv run --locked benchmark-utils performance-github-assets
 uv run --locked benchmark-utils performance-release
+uv run --locked benchmark-utils performance-doc
 ```
 
 `benchmark-utils` handles Criterion baseline generation and packaging,
@@ -85,14 +86,33 @@ should stay in the ignored `baseline-artifact/` or `baseline-artifacts/`
 directories. `bench-compare` renders `target/bench-reports/performance.md` from
 existing Criterion `new` data and a saved baseline such as `last`.
 `performance-local` and `performance-github-assets` generate isolated
-release-to-release reports under `target/bench-reports/`, while
-`performance-release` promotes the curated report into `docs/PERFORMANCE.md`
-and archives the previous one. These release reports are evidence, not routine
-pre-`just ci` checks; temp-worktree generation applies tracked checkout changes
-but ignores untracked files. The default comparison report for release
+release-to-release Markdown reports plus adjacent CSV and provenance JSON under
+`target/bench-reports/`. New GitHub-asset reports require versioned measurement
+metadata bound to the requested clean tag; existing legacy assets remain
+loadable as provenance-limited absolute timing evidence. Acquisition is retained
+separately from measurement provenance, and ratios are suppressed for these
+separate hosted measurement sessions.
+`performance-release` retains and reload-validates the local bundle before
+promoting the curated report into `docs/PERFORMANCE.md`, archiving the previous
+report, and copying the exact CSV/provenance bytes into
+`docs/archive/performance/data/`. `performance-doc` consumes an existing
+validated CSV/JSON pair and performs the same promotion without Cargo or
+measurement worktrees; incomplete, invalid, stale, same-version, and
+scientifically non-comparable pairs are rejected before documentation changes.
+Promotion uses per-file atomic replacement with caught-failure rollback, so a
+hard interruption requires inspection and an idempotent rerun. These release reports are evidence, not
+routine pre-`just ci` checks; temp-worktree generation applies tracked checkout
+changes but ignores untracked files. The default comparison report for release
 baselines is `benches/main_vs_release_compare_results.txt`; the ref-comparison
 guard writes `benches/worktree_vs_<ref>_compare_results.txt` and fails only on
 total matched-time regressions or execution errors.
+
+The versioned CSV is the canonical tabular release artifact: the datasets are
+small, human-diffable audit records and remain usable without a dataframe
+runtime. Jupyter notebooks may materialize derived Parquet caches for larger
+analyses, but those caches are not promotion inputs and must be reproducible
+from the validated CSV. Raw Criterion data remains in the release
+`delaunay-vX.Y.Z-criterion-baseline.tar.gz` assets.
 
 ### Hardware utilities
 

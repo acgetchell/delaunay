@@ -78,16 +78,16 @@ jobs:
           fi
 
           mkdir -p release-benchmark-artifacts
+          cargo bench --profile perf --bench ci_performance_suite
+          cargo bench --profile perf --bench circumsphere_containment
+          cargo bench --profile perf --bench cold_path_predicates
+          cargo bench --profile perf --bench locate
+          cargo bench --profile perf --bench realization_validation
           uv run --locked benchmark-utils generate-summary \
-            --run-benchmarks \
             --strict \
             --profile perf \
             --bench-timeout 3600 \
             --output release-benchmark-artifacts/PERFORMANCE_RESULTS.md
-          cargo bench --profile perf --bench cold_path_predicates
-          cargo bench --profile perf --bench topology_guarantee_construction
-          cargo bench --profile perf --bench locate
-          cargo bench --profile perf --bench realization_validation
           uv run --locked benchmark-utils write-baseline \
             --ref "$RELEASE_TAG" \
             --output release-benchmark-artifacts/baseline_results.txt
@@ -96,7 +96,6 @@ jobs:
         id: package-baseline
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-          RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
 
@@ -106,31 +105,10 @@ jobs:
           fi
 
           cp -r target/criterion release-benchmark-artifacts/criterion
-          release_commit="$(git rev-parse HEAD)"
-          export RELEASE_SHA="$release_commit"
-          uv run --locked python - <<'PY'
-          import json
-          import os
-          from datetime import UTC, datetime
-          from pathlib import Path
-
-          metadata = {
-              "tag": os.environ["RELEASE_TAG"],
-              "commit": os.environ["RELEASE_SHA"],
-              "run_id": os.environ["RUN_ID"],
-              "generated_at": datetime.now(UTC).isoformat(),
-              "cargo_profile": "perf",
-              "sampling_mode": "full",
-              "runner_os": os.environ.get("RUNNER_OS", "unknown"),
-              "runner_arch": os.environ.get("RUNNER_ARCH", "unknown"),
-              "summary": "PERFORMANCE_RESULTS.md",
-              "criterion_dir": "criterion",
-          }
-          Path("release-benchmark-artifacts/metadata.json").write_text(
-              json.dumps(metadata, indent=2) + "\n",
-              encoding="utf-8",
-          )
-          PY
+          uv run --locked benchmark-utils create-release-benchmark-metadata \
+            --tag "$RELEASE_TAG" \
+            --criterion-dir release-benchmark-artifacts/criterion \
+            --output release-benchmark-artifacts/metadata.json
 
           asset="delaunay-${RELEASE_TAG}-criterion-baseline.tar.gz"
           tar -czf "$asset" -C release-benchmark-artifacts .
