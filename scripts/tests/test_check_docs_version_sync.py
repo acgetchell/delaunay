@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 _CARGO_TOML = '[package]\nname = "delaunay"\nversion = "1.2.3"'
 _VERSION = "1.2.3"
+_ZENODO_CONCEPT_DOI = "10.5281/zenodo.16931097"
 
 
 def _write_project(
@@ -35,7 +36,7 @@ def _write_project(
         "Cargo.lock": f'version = 4\n\n[[package]]\nname = "delaunay"\nversion = "{metadata_version}"\n',
         "pyproject.toml": f'[project]\nname = "delaunay-scripts"\nversion = "{metadata_version}"\n',
         "uv.lock": f'version = 1\n\n[[package]]\nname = "delaunay-scripts"\nversion = "{metadata_version}"\nsource = {{ editable = "." }}\n',
-        "CITATION.cff": f"cff-version: 1.2.0\nversion: {metadata_version}\n",
+        "CITATION.cff": (f"cff-version: 1.2.0\nversion: {metadata_version}\ndoi: {_ZENODO_CONCEPT_DOI}\ndate-released: 2026-01-02\n"),
         "README.md": readme_text,
     }
     for filename, content in files.items():
@@ -235,13 +236,139 @@ def test_find_version_mismatches_rejects_missing_editable_uv_package(tmp_path: P
         check_docs_version_sync.find_version_mismatches(tmp_path)
 
 
-def test_find_version_mismatches_rejects_malformed_citation_version(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "version_line",
+    ['version: "\n', f"version: {_VERSION}#not-a-comment\n", f'version: "{_VERSION}"#not-a-comment\n'],
+)
+def test_find_version_mismatches_rejects_malformed_citation_version(tmp_path: Path, version_line: str) -> None:
     """Malformed CITATION.cff versions fail before a release can continue."""
     _write_project(tmp_path)
-    (tmp_path / "CITATION.cff").write_text('cff-version: 1.2.0\nversion: "\n', encoding="utf-8")
+    (tmp_path / "CITATION.cff").write_text(
+        f"cff-version: 1.2.0\n{version_line}doi: {_ZENODO_CONCEPT_DOI}\ndate-released: 2026-01-02\n",
+        encoding="utf-8",
+    )
 
     with pytest.raises(TypeError, match=r"CITATION\.cff:2: top-level version"):
         check_docs_version_sync.find_version_mismatches(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("date_line", "message"),
+    [
+        ("", "missing top-level date-released"),
+        ("date-released: 2026-7-28\n", "must use YYYY-MM-DD"),
+        ("date-released: 2026-02-30\n", "not a valid ISO date"),
+        ("date-released: 2026-01-02#not-a-comment\n", "must use YYYY-MM-DD"),
+        ('date-released: "2026-01-02"#not-a-comment\n', "must use YYYY-MM-DD"),
+    ],
+)
+def test_release_date_rejects_missing_or_malformed_citation_value(tmp_path: Path, date_line: str, message: str) -> None:
+    """Citation release dates are required and calendar-valid."""
+    _write_project(tmp_path)
+    citation = tmp_path / "CITATION.cff"
+    citation.write_text(f"cff-version: 1.2.0\nversion: {_VERSION}\n{date_line}", encoding="utf-8")
+
+    with pytest.raises(TypeError, match=message) as exc_info:
+        check_docs_version_sync.find_version_mismatches(tmp_path)
+
+    assert "CITATION.cff" in str(exc_info.value)
+
+
+def test_release_date_rejects_duplicate_citation_values_with_lines(tmp_path: Path) -> None:
+    """Duplicate top-level citation dates report every conflicting line."""
+    _write_project(tmp_path)
+    citation = tmp_path / "CITATION.cff"
+    citation.write_text(
+        f"cff-version: 1.2.0\nversion: {_VERSION}\ndate-released: 2026-01-02\ndate-released: 2026-01-03\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TypeError, match="duplicate top-level date-released") as exc_info:
+        check_docs_version_sync.find_version_mismatches(tmp_path)
+
+    message = str(exc_info.value)
+    assert "CITATION.cff:3" in message
+    assert "CITATION.cff:4" in message
+
+
+@pytest.mark.parametrize(
+    ("doi_lines", "message"),
+    [
+        ("", "missing top-level doi"),
+        ("doi: 10.5281/zenodo.99999999\n", "must remain the Zenodo concept DOI"),
+        (
+            f"doi: {_ZENODO_CONCEPT_DOI}\ndoi: {_ZENODO_CONCEPT_DOI}\n",
+            "duplicate top-level doi values",
+        ),
+    ],
+)
+def test_citation_requires_exactly_one_zenodo_concept_doi(tmp_path: Path, doi_lines: str, message: str) -> None:
+    """Release metadata keeps the stable concept DOI across versions."""
+    _write_project(tmp_path)
+    (tmp_path / "CITATION.cff").write_text(
+        f"cff-version: 1.2.0\nversion: {_VERSION}\n{doi_lines}date-released: 2026-01-02\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TypeError, match=message):
+        check_docs_version_sync.find_version_mismatches(tmp_path)
+
+
+def test_release_date_must_match_generated_changelog_heading(tmp_path: Path) -> None:
+    """The CFF date and current-version changelog heading use one UTC date."""
+    _write_project(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [1.2.3] - 2026-01-03\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TypeError, match="release date mismatch") as exc_info:
+        check_docs_version_sync.find_version_mismatches(tmp_path)
+
+    message = str(exc_info.value)
+    assert "CITATION.cff:4" in message
+    assert "CHANGELOG.md:3" in message
+
+
+def test_release_date_rejects_malformed_current_changelog_heading(tmp_path: Path) -> None:
+    """A current-version heading reports its malformed date with line context."""
+    _write_project(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [1.2.3] - 2026-1-02\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TypeError, match="must end with YYYY-MM-DD") as exc_info:
+        check_docs_version_sync.find_version_mismatches(tmp_path)
+
+    assert "CHANGELOG.md:3" in str(exc_info.value)
+
+
+def test_release_date_rejects_duplicate_current_changelog_headings(tmp_path: Path) -> None:
+    """Duplicate current-version headings report every conflicting line."""
+    _write_project(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [1.2.3] - 2026-01-02\n\n## [1.2.3] - 2026-01-02\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TypeError, match="duplicate release headings") as exc_info:
+        check_docs_version_sync.find_version_mismatches(tmp_path)
+
+    message = str(exc_info.value)
+    assert "CHANGELOG.md:3" in message
+    assert "CHANGELOG.md:5" in message
+
+
+def test_release_date_accepts_matching_generated_changelog_heading(tmp_path: Path) -> None:
+    """A matching generated release heading passes the date gate."""
+    _write_project(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [1.2.3] - 2026-01-02\n",
+        encoding="utf-8",
+    )
+
+    assert check_docs_version_sync.find_version_mismatches(tmp_path) == []
 
 
 def test_main_prints_mismatches(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

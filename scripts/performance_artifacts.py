@@ -119,7 +119,7 @@ class TimingEstimate:
     confidence_level: float
 
     def __post_init__(self) -> None:
-        """Reject non-finite, non-positive, or inconsistent timings."""
+        """Reject non-finite, non-positive, or reversed timings."""
         for field, value in (
             ("median_ns", self.median_ns),
             ("ci_lower_ns", self.ci_lower_ns),
@@ -128,8 +128,8 @@ class TimingEstimate:
             if not math.isfinite(value) or value <= 0:
                 msg = f"{field} must be finite and positive: {value!r}"
                 raise ValueError(msg)
-        if not self.ci_lower_ns <= self.median_ns <= self.ci_upper_ns:
-            msg = f"confidence interval must contain the median: {self.ci_lower_ns} <= {self.median_ns} <= {self.ci_upper_ns}"
+        if self.ci_lower_ns > self.ci_upper_ns:
+            msg = f"confidence interval must be ordered: {self.ci_lower_ns} <= {self.ci_upper_ns}"
             raise ValueError(msg)
         if not math.isfinite(self.confidence_level) or not 0.0 < self.confidence_level < 1.0:
             msg = f"confidence_level must be finite and strictly between zero and one: {self.confidence_level!r}"

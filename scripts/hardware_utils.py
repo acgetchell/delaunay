@@ -12,6 +12,7 @@ import argparse
 import contextlib
 import json
 import logging
+import os
 import platform
 import re
 import shutil
@@ -21,14 +22,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from subprocess_utils import ExceptionFamily, run_safe_command
+    from subprocess_utils import ExceptionFamily, ExecutableNotFoundError, run_safe_command
 else:
     try:
         # When executed as a script from scripts/
-        from subprocess_utils import ExceptionFamily, run_safe_command
+        from subprocess_utils import ExceptionFamily, ExecutableNotFoundError, run_safe_command
     except ModuleNotFoundError:
         # When imported as a module (e.g., scripts.hardware_utils)
-        from scripts.subprocess_utils import ExceptionFamily, run_safe_command
+        from scripts.subprocess_utils import ExceptionFamily, ExecutableNotFoundError, run_safe_command
 
 # Configure a module-level logger
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ _LINUX_CPU_CORE_DISCOVERY_ERRORS: ExceptionFamily = (
 )
 _LINUX_MEMINFO_ERRORS: ExceptionFamily = (FileNotFoundError, PermissionError, ValueError)
 _MEMORY_VALUE_PARSE_ERRORS: ExceptionFamily = (ValueError, AttributeError)
+_GENERIC_CPU_NAMES = frozenset({"amd64", "arm", "arm64", "aarch64", "i386", "i686", "unknown", "unavailable", "x86_64"})
 
 
 class HardwareInfo:
@@ -64,14 +66,15 @@ class HardwareInfo:
         Returns:
             Tuple of (cpu_model, cpu_cores, cpu_threads)
         """
+        cpu_info = ("Unknown", "Unknown", "Unknown")
         try:
             if self.os_type == "Darwin":
-                return self._get_cpu_info_darwin()
-            if self.os_type == "Linux":
-                return self._get_cpu_info_linux()
-            if self.os_type == "Windows":
-                return self._get_cpu_info_windows()
-        except (subprocess.CalledProcessError, OSError, ValueError) as e:
+                cpu_info = self._get_cpu_info_darwin()
+            elif self.os_type == "Linux":
+                cpu_info = self._get_cpu_info_linux()
+            elif self.os_type == "Windows":
+                cpu_info = self._get_cpu_info_windows()
+        except (ExecutableNotFoundError, subprocess.CalledProcessError, OSError, ValueError) as e:
             logger.debug(
                 "Failed to get CPU info for OS %s: %s (%s)",
                 self.os_type,
@@ -79,7 +82,27 @@ class HardwareInfo:
                 type(e).__name__,
             )
 
-        return "Unknown", "Unknown", "Unknown"
+        cpu_model, cpu_cores, cpu_threads = cpu_info
+        if not self._is_concrete_cpu_model(cpu_model):
+            cpu_model = self._fallback_cpu_model()
+        return cpu_model, cpu_cores, cpu_threads
+
+    def _is_concrete_cpu_model(self, value: str) -> bool:
+        """Return whether a CPU identifier is more specific than an architecture."""
+        stripped = value.strip()
+        folded = stripped.casefold()
+        return bool(stripped) and folded not in _GENERIC_CPU_NAMES and folded != self.machine.strip().casefold()
+
+    def _fallback_cpu_model(self) -> str:
+        """Return a concrete environment/platform CPU model when available."""
+        candidates: list[str] = []
+        if self.os_type == "Windows":
+            candidates.append(os.environ.get("PROCESSOR_IDENTIFIER", ""))
+        candidates.append(platform.processor())
+        for candidate in candidates:
+            if self._is_concrete_cpu_model(candidate):
+                return candidate.strip()
+        return "Unknown"
 
     def _get_cpu_info_darwin(self) -> tuple[str, str, str]:
         """

@@ -14,6 +14,7 @@ from unittest.mock import mock_open, patch
 import pytest
 
 from hardware_utils import HardwareComparator, HardwareInfo, main
+from subprocess_utils import ExecutableNotFoundError
 
 
 @pytest.fixture
@@ -172,8 +173,9 @@ Thread(s) per core:  2"""
         assert cpu_cores == "8"
         assert cpu_threads == "16"
 
+    @patch("hardware_utils.platform.processor", return_value="")
     @patch("hardware_utils.platform.system")
-    def test_get_cpu_info_unknown_os(self, mock_system) -> None:
+    def test_get_cpu_info_unknown_os(self, mock_system, mock_processor) -> None:
         """Test CPU info detection on unknown OS."""
         mock_system.return_value = "UnknownOS"
 
@@ -183,10 +185,61 @@ Thread(s) per core:  2"""
         assert cpu_model == "Unknown"
         assert cpu_cores == "Unknown"
         assert cpu_threads == "Unknown"
+        mock_processor.assert_called_once_with()
 
+    @patch("hardware_utils.platform.processor", return_value="AMD64")
+    @patch("hardware_utils.platform.system", return_value="Windows")
+    @patch("hardware_utils.shutil.which", return_value=None)
+    def test_get_cpu_info_windows_uses_processor_identifier(
+        self,
+        mock_which,
+        mock_system,
+        mock_processor,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Windows provenance uses the concrete environment CPU identifier."""
+        monkeypatch.setenv("PROCESSOR_IDENTIFIER", "Intel64 Family 6 Model 186 Stepping 3, GenuineIntel")
+
+        cpu_model, cpu_cores, cpu_threads = HardwareInfo().get_cpu_info()
+
+        assert cpu_model == "Intel64 Family 6 Model 186 Stepping 3, GenuineIntel"
+        assert cpu_cores == "Unknown"
+        assert cpu_threads == "Unknown"
+        assert mock_which.call_count == 2
+        mock_which.assert_called_with("powershell")
+        mock_system.assert_called_once_with()
+        mock_processor.assert_called_once_with()
+
+    @patch("hardware_utils.platform.processor", return_value="Apple M4 Pro")
+    @patch("hardware_utils.platform.system", return_value="UnknownOS")
+    def test_get_cpu_info_uses_concrete_platform_fallback(self, mock_system, mock_processor) -> None:
+        """Unknown platforms retain a concrete processor model when exposed."""
+        cpu_model, cpu_cores, cpu_threads = HardwareInfo().get_cpu_info()
+
+        assert cpu_model == "Apple M4 Pro"
+        assert cpu_cores == "Unknown"
+        assert cpu_threads == "Unknown"
+        mock_system.assert_called_once_with()
+        mock_processor.assert_called_once_with()
+
+    @patch("hardware_utils.platform.processor", return_value="ppc64le")
+    @patch("hardware_utils.platform.machine", return_value="PPC64LE")
+    @patch("hardware_utils.platform.system", return_value="UnknownOS")
+    def test_get_cpu_info_rejects_processor_equal_to_machine(self, mock_system, mock_machine, mock_processor) -> None:
+        """Architecture strings are not retained as concrete processor models."""
+        cpu_model, cpu_cores, cpu_threads = HardwareInfo().get_cpu_info()
+
+        assert cpu_model == "Unknown"
+        assert cpu_cores == "Unknown"
+        assert cpu_threads == "Unknown"
+        mock_system.assert_called_once_with()
+        mock_machine.assert_called_once_with()
+        mock_processor.assert_called_once_with()
+
+    @patch("hardware_utils.platform.processor", return_value="")
     @patch("hardware_utils.platform.system")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_cpu_info_command_failure(self, mock_run_command, mock_system) -> None:
+    def test_get_cpu_info_command_failure(self, mock_run_command, mock_system, mock_processor) -> None:
         """Test CPU info detection when commands fail."""
         mock_system.return_value = "Darwin"
         mock_run_command.side_effect = subprocess.CalledProcessError(1, "cmd")
@@ -197,6 +250,21 @@ Thread(s) per core:  2"""
         assert cpu_model == "Unknown"
         assert cpu_cores == "Unknown"
         assert cpu_threads == "Unknown"
+        mock_processor.assert_called_once_with()
+
+    @patch("hardware_utils.platform.processor", return_value="Apple M4 Max")
+    @patch("hardware_utils.platform.system", return_value="Darwin")
+    @patch.object(HardwareInfo, "_run_command", side_effect=ExecutableNotFoundError("sysctl missing"))
+    def test_get_cpu_info_missing_command_uses_platform_fallback(self, mock_run_command, mock_system, mock_processor) -> None:
+        """A missing primary probe still reaches the concrete processor fallback."""
+        cpu_model, cpu_cores, cpu_threads = HardwareInfo().get_cpu_info()
+
+        assert cpu_model == "Apple M4 Max"
+        assert cpu_cores == "Unknown"
+        assert cpu_threads == "Unknown"
+        mock_run_command.assert_called_once_with(["sysctl", "-n", "machdep.cpu.brand_string"])
+        mock_system.assert_called_once_with()
+        mock_processor.assert_called_once_with()
 
     @patch("hardware_utils.platform.system")
     @patch.object(HardwareInfo, "_run_command")

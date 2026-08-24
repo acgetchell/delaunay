@@ -179,9 +179,15 @@ def test_timing_estimate_rejects_non_positive_or_non_finite_values(value: float)
         TimingEstimate(median_ns=value, ci_lower_ns=1.0, ci_upper_ns=2.0, confidence_level=0.95)
 
 
-def test_timing_estimate_rejects_interval_that_excludes_median() -> None:
-    with pytest.raises(ValueError, match="must contain the median"):
-        TimingEstimate(median_ns=3.0, ci_lower_ns=1.0, ci_upper_ns=2.0, confidence_level=0.95)
+def test_timing_estimate_accepts_ordered_interval_that_excludes_point_estimate() -> None:
+    estimate = TimingEstimate(median_ns=3.0, ci_lower_ns=1.0, ci_upper_ns=2.0, confidence_level=0.95)
+
+    assert estimate.median_ns == 3.0
+
+
+def test_timing_estimate_rejects_reversed_interval() -> None:
+    with pytest.raises(ValueError, match="confidence interval must be ordered"):
+        TimingEstimate(median_ns=2.0, ci_lower_ns=3.0, ci_upper_ns=1.0, confidence_level=0.95)
 
 
 def test_performance_row_rejects_coverage_presence_mismatch() -> None:

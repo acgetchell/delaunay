@@ -6,6 +6,7 @@ import re
 import sys
 import tomllib
 from dataclasses import dataclass
+from datetime import date
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeGuard
@@ -228,7 +229,10 @@ def _uv_lock_reference(path: Path, project: PythonProjectInfo) -> VersionReferen
     return _single_package_reference(path, entries, candidate_indices, project.name, ReferenceKind.UV_LOCK)
 
 
-_CITATION_VERSION_RE = re.compile(r"^version:\s*(?P<quote>['\"]?)(?P<version>[0-9A-Za-z][0-9A-Za-z.+-]*)(?P=quote)\s*(?:#.*)?$")
+_ZENODO_CONCEPT_DOI = "10.5281/zenodo.16931097"
+_CITATION_VERSION_RE = re.compile(r"^version:[ \t]*(?P<quote>['\"]?)(?P<version>[0-9A-Za-z][0-9A-Za-z.+-]*)(?P=quote)(?:[ \t]+#.*)?[ \t]*$")
+_CITATION_DATE_RE = re.compile(r"^date-released:[ \t]*(?P<quote>['\"]?)(?P<date>\d{4}-\d{2}-\d{2})(?P=quote)(?:[ \t]+#.*)?[ \t]*$")
+_CITATION_DOI_RE = re.compile(r"^doi:[ \t]*(?P<quote>['\"]?)(?P<doi>[^\s'\"]+)(?P=quote)(?:[ \t]+#.*)?[ \t]*$")
 
 
 def _citation_reference(path: Path) -> VersionReference:
@@ -246,6 +250,98 @@ def _citation_reference(path: Path) -> VersionReference:
         msg = f"{path} must contain exactly one top-level version; found {len(references)}"
         raise TypeError(msg)
     return references[0]
+
+
+def _require_iso_date(value: str, *, path: Path, line: int, field: str) -> None:
+    """Require one calendar-valid ISO date with source context."""
+    try:
+        date.fromisoformat(value)
+    except ValueError as exc:
+        msg = f"{path}:{line}: {field} is not a valid ISO date: {value!r}"
+        raise TypeError(msg) from exc
+
+
+def _citation_release_date(path: Path) -> tuple[int, str]:
+    """Return the only top-level ``date-released`` value in CITATION.cff."""
+    matches: list[tuple[int, str]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if re.match(r"^date-released(?=\s|:|$)", line) is None:
+            continue
+        match = _CITATION_DATE_RE.fullmatch(line)
+        if match is None:
+            msg = f"{path}:{line_number}: top-level date-released must use YYYY-MM-DD"
+            raise TypeError(msg)
+        value = match.group("date")
+        _require_iso_date(value, path=path, line=line_number, field="top-level date-released")
+        matches.append((line_number, value))
+    if not matches:
+        msg = f"{path}: missing top-level date-released; expected exactly one YYYY-MM-DD value"
+        raise TypeError(msg)
+    if len(matches) != 1:
+        locations = ", ".join(f"{path}:{line}" for line, _value in matches)
+        msg = f"{locations}: duplicate top-level date-released values; expected exactly one"
+        raise TypeError(msg)
+    return matches[0]
+
+
+def _validate_citation_doi(path: Path) -> None:
+    """Require the stable Zenodo concept DOI in top-level citation metadata."""
+    matches: list[tuple[int, str]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if re.match(r"^doi(?=\s|:|$)", line) is None:
+            continue
+        match = _CITATION_DOI_RE.fullmatch(line)
+        if match is None:
+            msg = f"{path}:{line_number}: top-level doi must be a non-empty scalar"
+            raise TypeError(msg)
+        matches.append((line_number, match.group("doi")))
+    if not matches:
+        msg = f"{path}: missing top-level doi; expected Zenodo concept DOI {_ZENODO_CONCEPT_DOI}"
+        raise TypeError(msg)
+    if len(matches) != 1:
+        locations = ", ".join(f"{path}:{line}" for line, _value in matches)
+        msg = f"{locations}: duplicate top-level doi values; expected exactly one Zenodo concept DOI"
+        raise TypeError(msg)
+    line_number, value = matches[0]
+    if value != _ZENODO_CONCEPT_DOI:
+        msg = f"{path}:{line_number}: top-level doi must remain the Zenodo concept DOI {_ZENODO_CONCEPT_DOI}; found {value!r}"
+        raise TypeError(msg)
+
+
+def _validate_release_date_sync(root: Path, package: PackageInfo) -> None:
+    """Require citation metadata and the generated release heading to agree."""
+    citation = root / "CITATION.cff"
+    citation_line, citation_date = _citation_release_date(citation)
+    changelog = root / "CHANGELOG.md"
+    if not changelog.is_file():
+        return
+
+    heading_prefix = re.compile(rf"^## \[v?{re.escape(package.version)}\]")
+    heading = re.compile(rf"^## \[v?{re.escape(package.version)}\] - (?P<date>\d{{4}}-\d{{2}}-\d{{2}})$")
+    changelog_matches: list[tuple[int, str]] = []
+    for line_number, line in enumerate(changelog.read_text(encoding="utf-8").splitlines(), start=1):
+        if heading_prefix.match(line) is None:
+            continue
+        match = heading.fullmatch(line)
+        if match is None:
+            msg = f"{changelog}:{line_number}: release heading for {package.version} must end with YYYY-MM-DD"
+            raise TypeError(msg)
+        value = match.group("date")
+        _require_iso_date(value, path=changelog, line=line_number, field=f"release heading date for {package.version}")
+        changelog_matches.append((line_number, value))
+    if not changelog_matches:
+        return
+    if len(changelog_matches) != 1:
+        locations = ", ".join(f"{changelog}:{line}" for line, _value in changelog_matches)
+        msg = f"{locations}: duplicate release headings for {package.version}; expected exactly one"
+        raise TypeError(msg)
+    changelog_line, changelog_date = changelog_matches[0]
+    if citation_date != changelog_date:
+        msg = (
+            f"release date mismatch: {citation}:{citation_line} has {citation_date}, "
+            f"but {changelog}:{changelog_line} has {changelog_date}; both must use the generated UTC release date"
+        )
+        raise TypeError(msg)
 
 
 def _iter_markdown_files(root: Path) -> list[Path]:
@@ -368,7 +464,10 @@ def _version_references(root: Path, package: PackageInfo) -> list[VersionReferen
 def find_version_mismatches(root: Path) -> list[VersionMismatch]:
     """Return release-version references that differ from Cargo.toml."""
     package = _read_cargo_package_info(root / "Cargo.toml")
-    return [VersionMismatch(reference=reference, package=package) for reference in _version_references(root, package) if reference.version != package.version]
+    references = _version_references(root, package)
+    _validate_release_date_sync(root, package)
+    _validate_citation_doi(root / "CITATION.cff")
+    return [VersionMismatch(reference=reference, package=package) for reference in references if reference.version != package.version]
 
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:

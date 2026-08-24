@@ -2,11 +2,11 @@
 
 import subprocess
 from pathlib import PureWindowsPath
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tag_release import _get_repo_url, create_tag, main, validate_semver
+from tag_release import _get_repo_url, _package_version, create_tag, main, validate_semver
 
 # ---------------------------------------------------------------------------
 # _get_repo_url
@@ -129,6 +129,59 @@ class TestValidateSemver:
 
 
 class TestCreateTag:
+    @pytest.fixture(autouse=True)
+    def _matching_package_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Keep existing tag tests focused on their original contracts."""
+        monkeypatch.setattr("tag_release._package_version", lambda _changelog: "1.2.3")
+
+    def test_package_version_reads_adjacent_cargo_manifest(self, tmp_path) -> None:
+        """The preflight source of truth is the package table beside the changelog."""
+        changelog = tmp_path / "CHANGELOG.md"
+        changelog.write_text("# Changelog\n", encoding="utf-8")
+        (tmp_path / "Cargo.toml").write_text('[package]\nname = "example"\nversion = "1.2.4"\n', encoding="utf-8")
+
+        assert _package_version(changelog) == "1.2.4"
+
+    @pytest.mark.parametrize(
+        ("manifest", "error_type", "message"),
+        [
+            ("[package\n", ValueError, "Could not parse"),
+            ('[workspace]\nmembers = ["member"]\n', ValueError, r"does not define a \[package\] table"),
+            ('[package]\nname = "example"\n', ValueError, "does not define a non-empty package version"),
+            ('[package]\nversion = ""\n', ValueError, "does not define a non-empty package version"),
+            ("[package]\nversion = 123\n", ValueError, "does not define a non-empty package version"),
+        ],
+    )
+    def test_package_version_rejects_invalid_manifests(
+        self,
+        tmp_path,
+        manifest: str,
+        error_type: type[Exception],
+        message: str,
+    ) -> None:
+        """Malformed or incomplete manifests fail with path-qualified errors."""
+        changelog = tmp_path / "CHANGELOG.md"
+        changelog.write_text("# Changelog\n", encoding="utf-8")
+        (tmp_path / "Cargo.toml").write_text(manifest, encoding="utf-8")
+
+        with pytest.raises(error_type, match=message) as exc_info:
+            _package_version(changelog)
+
+        assert "Cargo.toml" in str(exc_info.value)
+
+    def test_package_version_reports_manifest_read_failure(self, tmp_path) -> None:
+        """Filesystem failures become controlled release-preflight errors."""
+        changelog = tmp_path / "CHANGELOG.md"
+        cargo_toml = tmp_path / "Cargo.toml"
+
+        with (
+            patch.object(type(cargo_toml), "read_text", side_effect=PermissionError("denied")),
+            pytest.raises(ValueError, match="Could not read") as exc_info,
+        ):
+            _package_version(changelog)
+
+        assert str(cargo_toml) in str(exc_info.value)
+
     def test_next_step_sets_release_title(
         self,
         tmp_path,
@@ -210,6 +263,20 @@ class TestCreateTag:
         assert marker not in output.out
         assert marker not in output.err
 
+    def test_rejects_tag_that_differs_from_cargo_before_git(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A mismatched requested tag fails before querying or mutating tags."""
+        changelog = tmp_path / "CHANGELOG.md"
+        changelog.write_text("# Changelog\n", encoding="utf-8")
+        mock_tag_exists = MagicMock()
+        monkeypatch.setattr("tag_release.find_changelog", lambda: changelog)
+        monkeypatch.setattr("tag_release._package_version", lambda _changelog: "1.2.4")
+        monkeypatch.setattr("tag_release._tag_exists", mock_tag_exists)
+
+        with pytest.raises(ValueError, match="does not match Cargo package version"):
+            create_tag("v1.2.3")
+
+        mock_tag_exists.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # main
@@ -229,3 +296,31 @@ def test_main_handles_git_timeout(capsys) -> None:
 
     assert exc_info.value.code == 1
     assert "Error: Command '['git', 'tag']' timed out after 30 seconds" in capsys.readouterr().err
+
+
+def test_main_handles_package_metadata_error_before_git(tmp_path, capsys) -> None:
+    """Manifest contract failures use the normal CLI diagnostic and avoid Git."""
+    changelog = tmp_path / "CHANGELOG.md"
+    mock_tag_exists = MagicMock()
+    with (
+        patch("sys.argv", ["tag-release", "v1.2.3"]),
+        patch("tag_release.find_changelog", return_value=changelog),
+        patch("tag_release._package_version", side_effect=ValueError("invalid package version")),
+        patch("tag_release._tag_exists", mock_tag_exists),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main()
+
+    assert exc_info.value.code == 1
+    assert "Error: invalid package version" in capsys.readouterr().err
+    mock_tag_exists.assert_not_called()
+
+
+def test_main_does_not_hide_unexpected_type_error() -> None:
+    """Programming type errors retain their traceback instead of looking user-caused."""
+    with (
+        patch("sys.argv", ["tag-release", "v1.2.3"]),
+        patch("tag_release.create_tag", side_effect=TypeError("unexpected defect")),
+        pytest.raises(TypeError, match="unexpected defect"),
+    ):
+        main()
