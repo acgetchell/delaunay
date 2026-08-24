@@ -81,9 +81,9 @@ Update release metadata to match the crate version:
 - `pyproject.toml`: update `[project] version` for the Python utility package.
 
 Review the citation identity fields at the same time: author, ORCID,
-repository, license, and DOI. Keep the DOI policy deliberate: update it only
-when the release has a known release-specific DOI or the archival policy
-changes.
+repository, license, and DOI. Keep the Zenodo concept DOI
+`10.5281/zenodo.16931097` unchanged across releases; do not replace it with a
+version-specific DOI.
 
 Refresh both committed lockfiles after manual metadata edits:
 

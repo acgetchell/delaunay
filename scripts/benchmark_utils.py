@@ -497,6 +497,15 @@ class ReleaseReportConfig:
             raise ValueError(msg)
 
 
+@dataclass(frozen=True, slots=True)
+class ToolRunOptions:
+    """Execution controls for one repository support command."""
+
+    timeout: int = RELEASE_COMMAND_TIMEOUT_SECONDS
+    env: dict[str, str] | None = None
+    stream_output: bool = False
+
+
 @dataclass(frozen=True)
 class RevisionEvidence:
     """Source, toolchain, and command evidence for one measured revision."""
@@ -845,7 +854,7 @@ def _ci_performance_sidecar_timestamp(criterion_dir: Path) -> str | None:
 
 def is_valid_criterion_estimate(mean_ns: float, low_ns: float, high_ns: float) -> bool:
     """Return whether Criterion estimate values are finite and ordered."""
-    return all(math.isfinite(value) for value in (mean_ns, low_ns, high_ns)) and mean_ns > 0 and 0 <= low_ns <= mean_ns <= high_ns
+    return all(math.isfinite(value) and value > 0 for value in (mean_ns, low_ns, high_ns)) and low_ns <= high_ns
 
 
 def _is_object_mapping(value: object) -> TypeIs[Mapping[object, object]]:
@@ -881,8 +890,8 @@ def _parse_criterion_estimate(data: object) -> CriterionEstimate | None:
 
     try:
         mean_ns = _criterion_float(mean_data["point_estimate"])
-        low_ns = _criterion_float(confidence_interval.get("lower_bound", mean_ns))
-        high_ns = _criterion_float(confidence_interval.get("upper_bound", mean_ns))
+        low_ns = _criterion_float(confidence_interval["lower_bound"])
+        high_ns = _criterion_float(confidence_interval["upper_bound"])
     except _CRITERION_ESTIMATE_PARSE_ERRORS:
         return None
 
@@ -3542,12 +3551,25 @@ def _format_command_failure(command: list[str], exc: subprocess.CalledProcessErr
     return "\n".join(parts)
 
 
-def _run_tool(command: str, args: list[str], *, cwd: Path, timeout: int = RELEASE_COMMAND_TIMEOUT_SECONDS, env: dict[str, str] | None = None) -> None:
+def _run_tool(command: str, args: list[str], *, cwd: Path, options: ToolRunOptions | None = None) -> None:
     """Run a support command and translate subprocess failures."""
+    resolved_options = options or ToolRunOptions()
     try:
-        run_safe_command(command, args, cwd=cwd, timeout=timeout, env=env)
+        run_safe_command(
+            command,
+            args,
+            cwd=cwd,
+            timeout=resolved_options.timeout,
+            env=resolved_options.env,
+            capture_output=not resolved_options.stream_output,
+        )
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(_format_command_failure([command, *args], exc)) from exc
+
+
+def _progress(message: str) -> None:
+    """Write one immediately visible performance-workflow phase marker."""
+    print(f"[performance] {message}", file=sys.stderr, flush=True)
 
 
 def _run_git(args: list[str], *, cwd: Path, timeout: int = RELEASE_COMMAND_TIMEOUT_SECONDS) -> None:
@@ -3691,6 +3713,13 @@ def resolve_performance_request(options: PerformanceRequestOptions) -> ResolvedP
             raise ValueError(msg)
         current_tag = _current_package_tag(options.repo_root)
         latest = _latest_published_release(options.repo_root).tag
+        if current_tag == latest:
+            msg = (
+                f"current package tag and latest published release are both {latest}; "
+                "use a named local Criterion baseline for same-version experiments, "
+                "or rerun after updating the package version"
+            )
+            raise ValueError(msg)
         return ResolvedPerformanceRequest(current_tag=current_tag, baseline_tag=latest, worktree_ref=options.worktree_ref, tags_to_fetch=(latest,))
 
     if options.current_tag is None or options.baseline_tag is None:
@@ -4110,13 +4139,18 @@ def _run_saved_baseline_for_suite(
             "--save-baseline",
             baseline_tag,
         )
+        _progress(f"running baseline benchmark {target} for {baseline_tag}")
         _run_tool(
             command[0],
             list(command[1:]),
             cwd=worktree,
-            timeout=RELEASE_BENCH_TIMEOUT_SECONDS,
-            env=env,
+            options=ToolRunOptions(
+                timeout=RELEASE_BENCH_TIMEOUT_SECONDS,
+                env=env,
+                stream_output=True,
+            ),
         )
+        _progress(f"completed baseline benchmark {target} for {baseline_tag}")
         commands.append(command)
     return tuple(commands)
 
@@ -4124,18 +4158,34 @@ def _run_saved_baseline_for_suite(
 def _run_latest_for_suite(*, worktree: Path, suite: str, env: dict[str, str] | None) -> tuple[tuple[str, ...], ...]:
     """Run current benchmarks for a suite."""
     if suite == "release-signal" and (worktree / "justfile").exists():
-        _run_tool("just", ["bench-latest"], cwd=worktree, timeout=RELEASE_BENCH_TIMEOUT_SECONDS, env=env)
+        _progress("running current release-signal benchmarks")
+        _run_tool(
+            "just",
+            ["bench-latest"],
+            cwd=worktree,
+            options=ToolRunOptions(
+                timeout=RELEASE_BENCH_TIMEOUT_SECONDS,
+                env=env,
+                stream_output=True,
+            ),
+        )
+        _progress("completed current release-signal benchmarks")
         return (("just", "bench-latest"),)
     commands: list[tuple[str, ...]] = []
     for target in _bench_targets_for_suite(worktree, suite):
         command = ("cargo", "bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", target)
+        _progress(f"running current benchmark {target}")
         _run_tool(
             command[0],
             list(command[1:]),
             cwd=worktree,
-            timeout=RELEASE_BENCH_TIMEOUT_SECONDS,
-            env=env,
+            options=ToolRunOptions(
+                timeout=RELEASE_BENCH_TIMEOUT_SECONDS,
+                env=env,
+                stream_output=True,
+            ),
         )
+        _progress(f"completed current benchmark {target}")
         commands.append(command)
     return tuple(commands)
 
@@ -4148,6 +4198,7 @@ def _generate_local_baseline_into_worktree(
 ) -> RevisionEvidence:
     """Generate a local baseline and return its complete revision evidence."""
     baseline_worktree = tmp_dir / "baseline-worktree"
+    _progress(f"preparing baseline worktree for {config.baseline_tag}")
     _run_git(["worktree", "add", "--detach", str(baseline_worktree), config.baseline_tag], cwd=config.repo_root)
     try:
         observed_baseline_tag = _current_package_tag(baseline_worktree)
@@ -4725,6 +4776,7 @@ def _build_performance_bundle_in_temp_worktree(*, config: ReleaseReportConfig) -
         tmp_dir = Path(tmp)
         worktree = tmp_dir / "worktree"
 
+        _progress(f"preparing current worktree for {config.current_tag}")
         _run_git(["worktree", "add", "--detach", str(worktree), config.worktree_ref], cwd=config.repo_root)
         try:
             if config.apply_current_diff:
@@ -4778,6 +4830,7 @@ def _build_performance_bundle_in_temp_worktree(*, config: ReleaseReportConfig) -
                 )
                 current_acquisition_commands = ()
                 baseline_acquisition_commands = ()
+            _progress("collecting and validating performance artifacts")
             context = ArtifactContext(
                 release=ReleasePair(current=config.current_tag, baseline=config.baseline_tag),
                 statistic="median",

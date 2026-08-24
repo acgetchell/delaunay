@@ -520,7 +520,7 @@ def test_realization_validation_stable_ids_survive_saved_baseline_comparison(tmp
     assert {comparison.benchmark_id for comparison in comparisons} == {"/".join(benchmark_id) for benchmark_id in benchmark_ids}
 
 
-def test_run_latest_for_explicit_suite_bypasses_release_signal_recipe(tmp_path: Path) -> None:
+def test_run_latest_for_explicit_suite_bypasses_release_signal_recipe(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A named suite should run its own Cargo targets even when Just is present."""
     (tmp_path / "justfile").write_text("", encoding=UTF8)
     (tmp_path / "Cargo.toml").write_text(
@@ -541,9 +541,137 @@ def test_run_latest_for_explicit_suite_bypasses_release_signal_recipe(tmp_path: 
             "topology_guarantee_construction",
         ],
         cwd=tmp_path,
-        timeout=benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS,
-        env=None,
+        options=benchmark_utils.ToolRunOptions(
+            timeout=benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS,
+            env=None,
+            stream_output=True,
+        ),
     )
+    assert capsys.readouterr().err.splitlines() == [
+        "[performance] running current benchmark topology_guarantee_construction",
+        "[performance] completed current benchmark topology_guarantee_construction",
+    ]
+
+
+def test_run_saved_baseline_streams_with_progress(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Saved-baseline benchmarks stream output with the release timeout."""
+    (tmp_path / "Cargo.toml").write_text(
+        '[[bench]]\nname = "topology_guarantee_construction"\n',
+        encoding=UTF8,
+    )
+    environment = {"CARGO_TARGET_DIR": str(tmp_path / "criterion-target")}
+
+    with patch("benchmark_utils._run_tool") as run_tool:
+        commands = benchmark_utils._run_saved_baseline_for_suite(
+            worktree=tmp_path,
+            baseline_tag="v0.7.7",
+            suite="topology",
+            env=environment,
+        )
+
+    assert commands == (
+        (
+            "cargo",
+            "bench",
+            "--profile",
+            benchmark_utils.BENCHMARK_BUILD_FLAVOR,
+            "--bench",
+            "topology_guarantee_construction",
+            "--",
+            "--save-baseline",
+            "v0.7.7",
+        ),
+    )
+    run_tool.assert_called_once_with(
+        "cargo",
+        [
+            "bench",
+            "--profile",
+            benchmark_utils.BENCHMARK_BUILD_FLAVOR,
+            "--bench",
+            "topology_guarantee_construction",
+            "--",
+            "--save-baseline",
+            "v0.7.7",
+        ],
+        cwd=tmp_path,
+        options=benchmark_utils.ToolRunOptions(
+            timeout=benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS,
+            env=environment,
+            stream_output=True,
+        ),
+    )
+    assert capsys.readouterr().err.splitlines() == [
+        "[performance] running baseline benchmark topology_guarantee_construction for v0.7.7",
+        "[performance] completed baseline benchmark topology_guarantee_construction for v0.7.7",
+    ]
+
+
+def test_run_latest_release_signal_streams_without_false_completion(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A failed release-signal recipe streams and emits no completion marker."""
+    (tmp_path / "justfile").write_text("", encoding=UTF8)
+    environment = {"CARGO_TARGET_DIR": str(tmp_path / "criterion-target")}
+
+    with (
+        patch("benchmark_utils._run_tool", side_effect=RuntimeError("benchmark failed")) as run_tool,
+        pytest.raises(RuntimeError, match="benchmark failed"),
+    ):
+        benchmark_utils._run_latest_for_suite(worktree=tmp_path, suite="release-signal", env=environment)
+
+    run_tool.assert_called_once_with(
+        "just",
+        ["bench-latest"],
+        cwd=tmp_path,
+        options=benchmark_utils.ToolRunOptions(
+            timeout=benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS,
+            env=environment,
+            stream_output=True,
+        ),
+    )
+    assert capsys.readouterr().err.splitlines() == ["[performance] running current release-signal benchmarks"]
+
+
+def test_run_tool_can_stream_long_running_command_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Streaming commands inherit stdout/stderr while keeping their long timeout."""
+    observed_kwargs: dict[str, object] = {}
+
+    def fake_run(*_args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        observed_kwargs.update(kwargs)
+        return completed_process()
+
+    monkeypatch.setattr(benchmark_utils, "run_safe_command", fake_run)
+
+    benchmark_utils._run_tool(
+        "cargo",
+        ["bench"],
+        cwd=tmp_path,
+        options=benchmark_utils.ToolRunOptions(
+            timeout=benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS,
+            stream_output=True,
+        ),
+    )
+
+    assert observed_kwargs["capture_output"] is False
+    assert observed_kwargs["timeout"] == benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS
+
+
+def test_run_tool_captures_short_command_output_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Short support commands retain captured output for structured diagnostics."""
+    observed_kwargs: dict[str, object] = {}
+
+    def fake_run(*_args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        observed_kwargs.update(kwargs)
+        return completed_process()
+
+    monkeypatch.setattr(benchmark_utils, "run_safe_command", fake_run)
+
+    benchmark_utils._run_tool("gh", ["release", "download"], cwd=tmp_path)
+
+    assert observed_kwargs["capture_output"] is True
+    assert observed_kwargs["timeout"] == benchmark_utils.RELEASE_COMMAND_TIMEOUT_SECONDS
 
 
 @pytest.mark.parametrize("point_estimate", [float("nan"), float("inf"), 0.0, -1.0])
@@ -684,6 +812,42 @@ def test_resolve_performance_request_current_vs_latest_uses_package_version_and_
     assert request.current_tag == "v0.8.0"
     assert request.baseline_tag == "v0.7.8"
     assert request.tags_to_fetch == ("v0.7.8",)
+
+
+def test_performance_local_rejects_identical_inferred_tags_before_external_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Same-version inference stops before fetch, worktree, or benchmark boundaries."""
+    (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.0"\n', encoding=UTF8)
+    monkeypatch.setattr(
+        benchmark_utils,
+        "_latest_published_release",
+        lambda _root: benchmark_utils.PublishedRelease(tag="v0.8.0", published_at="2026-08-01T00:00:00Z"),
+    )
+    preflight = Mock()
+    fetch = Mock()
+    generate = Mock()
+    worktree = Mock()
+    benchmark = Mock()
+    monkeypatch.setattr(benchmark_utils, "_preflight_performance_destinations", preflight)
+    monkeypatch.setattr(benchmark_utils, "_fetch_for_performance_request", fetch)
+    monkeypatch.setattr(benchmark_utils, "generate_performance_worktree_report", generate)
+    monkeypatch.setattr(benchmark_utils, "_run_git", worktree)
+    monkeypatch.setattr(benchmark_utils, "_run_tool", benchmark)
+    args = create_argument_parser().parse_args(["performance-local"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        benchmark_utils._cmd_performance_local(args, tmp_path)
+
+    assert exc_info.value.code == 1
+    assert "both v0.8.0" in capsys.readouterr().err
+    preflight.assert_not_called()
+    fetch.assert_not_called()
+    generate.assert_not_called()
+    worktree.assert_not_called()
+    benchmark.assert_not_called()
 
 
 def test_promote_performance_report_archives_previous_and_updates_index(tmp_path: Path) -> None:
@@ -1600,7 +1764,9 @@ class TestCriterionParser:
         [
             {"mean": {"point_estimate": float("nan"), "confidence_interval": {"lower_bound": 100000.0, "upper_bound": 120000.0}}},
             {"mean": {"point_estimate": float("inf"), "confidence_interval": {"lower_bound": 100000.0, "upper_bound": 120000.0}}},
-            {"mean": {"point_estimate": 110000.0, "confidence_interval": {"lower_bound": 120000.0, "upper_bound": 130000.0}}},
+            {"mean": {"point_estimate": 110000.0, "confidence_interval": {"lower_bound": 130000.0, "upper_bound": 120000.0}}},
+            {"mean": {"point_estimate": 110000.0, "confidence_interval": {"upper_bound": 120000.0}}},
+            {"mean": {"point_estimate": 110000.0, "confidence_interval": {"lower_bound": 100000.0}}},
         ],
     )
     def test_parse_estimates_json_rejects_invalid_estimates(self, estimates_data) -> None:
@@ -1654,8 +1820,8 @@ class TestCriterionParser:
         finally:
             estimates_path.unlink()
 
-    def test_parse_estimates_json_very_fast_benchmark_division_by_zero_protection(self) -> None:
-        """Test division by zero protection for very fast benchmarks with near-zero confidence intervals."""
+    def test_parse_estimates_json_rejects_zero_confidence_bound(self) -> None:
+        """Criterion confidence bounds must be strictly positive."""
         estimates_data = {
             "mean": {
                 "point_estimate": 1000.0,  # 1 microsecond in nanoseconds
@@ -1674,20 +1840,33 @@ class TestCriterionParser:
         try:
             result = CriterionParser.parse_estimates_json(estimates_path, 1000, "2D")
 
-            # Should not crash and should return valid data with protected throughput calculation
-            assert result is not None
-            assert result.points == 1000
-            assert result.dimension == "2D"
-            assert result.time_mean == 1.0  # 1 microsecond
-            assert result.time_low == 0.0  # Lower bound of confidence interval
-            assert result.time_high == 2.0  # Upper bound
+            assert result is None
+        finally:
+            estimates_path.unlink()
 
-            # Throughput should be calculated with epsilon protection
-            # thrpt_high = points * 1000 / max(low_us, eps) = 1000 * 1000 / max(0.0, 1e-9) = 1000 * 1000 / 1e-9
-            assert result.throughput_high is not None
-            assert result.throughput_high > 1e12  # Should be very large due to epsilon protection
-            assert result.throughput_mean is not None
-            assert result.throughput_low is not None
+    def test_parse_estimates_json_accepts_interval_that_excludes_point_estimate(self) -> None:
+        """Bootstrap point estimates need not lie inside marginal intervals."""
+        estimates_data = {
+            "mean": {
+                "point_estimate": 130000.0,
+                "confidence_interval": {
+                    "lower_bound": 100000.0,
+                    "upper_bound": 120000.0,
+                },
+            },
+        }
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(estimates_data, f)
+            f.flush()
+            estimates_path = Path(f.name)
+
+        try:
+            result = CriterionParser.parse_estimates_json(estimates_path, 1000, "2D")
+
+            assert result is not None
+            assert result.time_mean == pytest.approx(130.0)
+            assert result.time_low == pytest.approx(100.0)
+            assert result.time_high == pytest.approx(120.0)
         finally:
             estimates_path.unlink()
 
@@ -4672,7 +4851,7 @@ class TestPerformanceSummaryGenerator:
             {"mean": []},
             {"mean": {"point_estimate": 100000.0, "confidence_interval": []}},
             {"mean": {"point_estimate": float("nan"), "confidence_interval": {"lower_bound": 90000.0, "upper_bound": 110000.0}}},
-            {"mean": {"point_estimate": 100000.0, "confidence_interval": {"lower_bound": 110000.0, "upper_bound": 120000.0}}},
+            {"mean": {"point_estimate": 100000.0, "confidence_interval": {"lower_bound": 120000.0, "upper_bound": 110000.0}}},
         ],
     )
     def test_parse_single_method_result_rejects_invalid_estimates(self, tmp_path, estimates_data) -> None:

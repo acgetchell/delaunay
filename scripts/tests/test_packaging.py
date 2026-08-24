@@ -1,7 +1,10 @@
 """Tests for the installed Python utility package definition."""
 
 import ast
+import shutil
+import subprocess
 import tomllib
+import zipfile
 from pathlib import Path
 
 
@@ -66,3 +69,42 @@ def test_console_entry_point_import_closure_is_packaged() -> None:
         pending.extend(_local_imports(scripts_dir / f"{module}.py", local_modules) - reachable)
 
     assert reachable <= packaged_modules
+
+
+def test_support_package_uses_its_own_readme(tmp_path: Path) -> None:
+    """Built Python metadata describes the support tools, not the Rust crate."""
+    repository = Path(__file__).parents[2]
+    configuration = tomllib.loads((repository / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert configuration["project"]["readme"] == "scripts/README.md"
+
+    source = tmp_path / "source"
+    scripts = source / "scripts"
+    scripts.mkdir(parents=True)
+    for filename in ("LICENSE", "pyproject.toml", "uv.lock"):
+        shutil.copy2(repository / filename, source / filename)
+    shutil.copy2(repository / "scripts" / "README.md", scripts / "README.md")
+    for module in configuration["tool"]["setuptools"]["py-modules"]:
+        shutil.copy2(repository / "scripts" / f"{module}.py", scripts / f"{module}.py")
+
+    uv = shutil.which("uv")
+    assert uv is not None
+    wheel_output = tmp_path / "dist"
+    subprocess.run(  # noqa: S603 - executable is resolved; arguments are repository constants.
+        [uv, "build", "--wheel", "--out-dir", str(wheel_output)],
+        cwd=source,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    wheels = list(wheel_output.glob("*.whl"))
+    assert len(wheels) == 1
+    with zipfile.ZipFile(wheels[0]) as wheel:
+        metadata_paths = [name for name in wheel.namelist() if name.endswith(".dist-info/METADATA")]
+        assert len(metadata_paths) == 1
+        metadata = wheel.read(metadata_paths[0]).decode("utf-8").replace("\r\n", "\n")
+
+    _headers, separator, description = metadata.partition("\n\n")
+    assert separator
+    assert description.startswith("# Scripts Directory\n")
