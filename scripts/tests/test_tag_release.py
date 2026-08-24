@@ -1,12 +1,13 @@
 """Tests for tag_release.py — repo URL normalization and credential safety."""
 
 import subprocess
+from datetime import date
 from pathlib import PureWindowsPath
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tag_release import _get_repo_url, _package_version, create_tag, main, validate_semver
+from tag_release import _citation_release_date, _get_repo_url, _package_version, create_tag, main, validate_semver
 
 # ---------------------------------------------------------------------------
 # _get_repo_url
@@ -133,6 +134,8 @@ class TestCreateTag:
     def _matching_package_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Keep existing tag tests focused on their original contracts."""
         monkeypatch.setattr("tag_release._package_version", lambda _changelog: "1.2.3")
+        monkeypatch.setattr("tag_release._citation_release_date", lambda _changelog: date(2026, 8, 24))
+        monkeypatch.setattr("tag_release._current_utc_date", lambda: date(2026, 8, 24))
 
     def test_package_version_reads_adjacent_cargo_manifest(self, tmp_path) -> None:
         """The preflight source of truth is the package table beside the changelog."""
@@ -181,6 +184,29 @@ class TestCreateTag:
             _package_version(changelog)
 
         assert str(cargo_toml) in str(exc_info.value)
+
+    def test_citation_release_date_reads_one_valid_top_level_date(self, tmp_path) -> None:
+        """The tag preflight reads the intended publication day from citation metadata."""
+        changelog = tmp_path / "CHANGELOG.md"
+        (tmp_path / "CITATION.cff").write_text("date-released: '2026-08-24'\n", encoding="utf-8")
+
+        assert _citation_release_date(changelog) == date(2026, 8, 24)
+
+    @pytest.mark.parametrize(
+        ("citation", "message"),
+        [
+            ("title: example\n", "missing top-level date-released"),
+            ("date-released: 2026-02-30\n", "not a valid ISO date"),
+            ("date-released: 2026-08-24\ndate-released: 2026-08-25\n", "duplicate top-level date-released"),
+        ],
+    )
+    def test_citation_release_date_rejects_invalid_contracts(self, tmp_path, citation: str, message: str) -> None:
+        """Missing, impossible, or ambiguous publication dates fail closed."""
+        changelog = tmp_path / "CHANGELOG.md"
+        (tmp_path / "CITATION.cff").write_text(citation, encoding="utf-8")
+
+        with pytest.raises(ValueError, match=message):
+            _citation_release_date(changelog)
 
     def test_next_step_sets_release_title(
         self,
@@ -276,6 +302,24 @@ class TestCreateTag:
             create_tag("v1.2.3")
 
         mock_tag_exists.assert_not_called()
+
+    def test_rejects_stale_publication_date_before_git(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A release delayed across UTC midnight cannot create or replace a tag."""
+        changelog = tmp_path / "CHANGELOG.md"
+        changelog.write_text("# Changelog\n", encoding="utf-8")
+        mock_tag_exists = MagicMock()
+        mock_create_tag = MagicMock()
+        monkeypatch.setattr("tag_release.find_changelog", lambda: changelog)
+        monkeypatch.setattr("tag_release._citation_release_date", lambda _changelog: date(2026, 8, 23))
+        monkeypatch.setattr("tag_release._current_utc_date", lambda: date(2026, 8, 24))
+        monkeypatch.setattr("tag_release._tag_exists", mock_tag_exists)
+        monkeypatch.setattr("tag_release.run_git_command_with_input", mock_create_tag)
+
+        with pytest.raises(ValueError, match="does not match the current UTC date"):
+            create_tag("v1.2.3", force=True)
+
+        mock_tag_exists.assert_not_called()
+        mock_create_tag.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

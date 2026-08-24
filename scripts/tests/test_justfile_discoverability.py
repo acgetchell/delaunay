@@ -2,6 +2,7 @@
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 from collections import defaultdict
@@ -111,7 +112,8 @@ def test_release_signal_benchmark_recipes_match_python_runner() -> None:
 def test_canonical_performance_recipes_share_the_cross_repository_contract() -> None:
     """Canonical release workflows should expose stable names and positional arguments."""
     recipes = just_recipes()
-    assert {"performance-local", "performance-release", "performance-doc", "performance-github-assets"} <= recipes.keys()
+    assert {"performance-local", "performance-release", "performance-readme", "performance-doc", "performance-github-assets"} <= recipes.keys()
+    assert {"perf-local", "perf-release", "perf-github-assets"}.isdisjoint(recipes)
 
     bench_parameters = recipes["bench-compare"]["parameters"]
     assert [parameter["name"] for parameter in bench_parameters] == ["baseline", "suite", "scope"]
@@ -129,8 +131,68 @@ def test_canonical_performance_recipes_share_the_cross_repository_contract() -> 
         command = run_just("--dry-run", name, "v0.8.0", "v0.7.8")
         rendered = command.stdout + command.stderr
         assert f'benchmark-utils {name} "$current_tag" "$baseline_tag"' in rendered
-        assert 'current_tag="v0.8.0"' in rendered
-        assert 'baseline_tag="v0.7.8"' in rendered
+        assert "current_tag='v0.8.0'" in rendered
+        assert "baseline_tag='v0.7.8'" in rendered
+
+    readme_command = run_just("--dry-run", "performance-readme")
+    assert "uv run --locked publish-readme-performance" in readme_command.stdout + readme_command.stderr
+
+
+def test_canonical_performance_recipes_shell_quote_tag_arguments() -> None:
+    """Tag arguments must remain data in public recipes and their shared helper."""
+    injected = 'v0.8.1"; printf injected; # '
+
+    for recipe in ("performance-github-assets", "performance-release", "_performance-tag-pair-state"):
+        command = run_just("--dry-run", recipe, injected, "v0.8.0")
+        rendered = command.stdout + command.stderr
+        current_assignment = next(line for line in rendered.splitlines() if line.startswith("current_tag="))
+        baseline_assignment = next(line for line in rendered.splitlines() if line.startswith("baseline_tag="))
+
+        assert shlex.split(current_assignment) == [f"current_tag={injected}"]
+        assert shlex.split(baseline_assignment) == ["baseline_tag=v0.8.0"]
+
+
+def test_release_metadata_recipe_uses_the_current_utc_date_internally() -> None:
+    """Release preparation accepts only the target tag from the caller."""
+    recipes = just_recipes()
+    parameters = recipes["update-version"]["parameters"]
+
+    assert [parameter["name"] for parameter in parameters] == ["tag"]
+    command = run_just("--dry-run", "update-version", "v0.8.1")
+    rendered = command.stdout + command.stderr
+    assert "update-release-version 'v0.8.1'" in rendered
+    assert "--release-date" not in rendered
+    assert "check-docs-version-sync" in rendered
+    assert "just update-version <tag>" in run_just().stdout
+
+
+def test_release_workflows_fail_closed_before_writes_or_tag_mutation() -> None:
+    """Release recipes should expose their non-mutating metadata gates."""
+    recipes = just_recipes()
+    strict_check = run_just("--dry-run", "release-version-check")
+    assert "check-docs-version-sync --final-release" in strict_check.stdout + strict_check.stderr
+
+    for name in ("tag", "tag-force"):
+        dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
+        assert "release-version-check" in dependencies
+
+        injected = "v0.8.0; echo INJECTED"
+        command = run_just("--dry-run", name, injected)
+        rendered = command.stdout + command.stderr
+        tag_command = next(line for line in rendered.splitlines() if line.startswith("uv run --locked tag-release "))
+        expected = ["uv", "run", "--locked", "tag-release", injected]
+        if name == "tag-force":
+            expected.append("--force")
+        assert shlex.split(tag_command) == expected
+
+    changelog = run_just("--dry-run", "changelog-unreleased", "v0.8.1")
+    rendered = changelog.stdout + changelog.stderr
+    metadata_index = rendered.index("cargo metadata --locked --format-version 1 --no-deps")
+    release_lookup_index = rendered.index('update-release-version "$version" --print-previous-release')
+    cliff_index = rendered.index('git-cliff --tag "$version" -o CHANGELOG.md')
+    assert metadata_index < release_lookup_index < cliff_index
+    assert '[[ "$version" != "v$package_version" ]]' in rendered
+    assert '--sync-changelog-date --previous-release "$previous_release"' in rendered
 
 
 def test_canonical_performance_recipes_reject_partial_tag_pairs_before_dispatch() -> None:
@@ -218,6 +280,27 @@ def test_uv_backed_recipes_reuse_pinned_guard() -> None:
         assert "_ensure-uv" in dependencies, name
 
 
+def test_setup_tools_closes_external_and_cargo_update_prerequisites() -> None:
+    """Setup should fail early on gh, then provision and verify its update helper."""
+    recipes = just_recipes()
+    dependencies = [dependency["recipe"] for dependency in recipes["setup-tools"]["dependencies"]]
+    body = json.dumps(recipes["setup-tools"]["body"])
+
+    assert dependencies == ["_ensure-cargo", "_ensure-chktex", "_ensure-gh", "_ensure-jq", "_ensure-rustup", "_ensure-uv"]
+    assert "External prerequisites that must already be on PATH: uv, gh, jq, rustup, cargo, and chktex." in body
+    assert "unpinned cargo-update bootstrap helper" in body
+    assert "cargo install --locked cargo-update" in body
+    assert "cmds=(uv gh jq" in body
+    assert "cmds+=(cargo-install-update" in body
+
+    setup_result = run_just("--dry-run", "setup-tools")
+    rendered = setup_result.stdout + setup_result.stderr
+    first_mutation = rendered.index("uv sync --locked --group dev")
+    for prerequisite in ("cargo", "chktex", "gh", "jq", "rustup"):
+        assert rendered.index(f"command -v {prerequisite}") < first_mutation
+    assert rendered.index("uv --version") < first_mutation
+
+
 def test_validation_and_benchmark_uv_runs_are_locked() -> None:
     """Validation guards and benchmark workflows must reject lockfile drift."""
     paths = (
@@ -273,21 +356,32 @@ def test_paper_workflow_tracks_validation_figure_producers() -> None:
 def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
     """Update recipes should cover repo state without touching unrelated global tools."""
     recipes = just_recipes()
-    update_dependencies = {dependency["recipe"] for dependency in recipes["update"]["dependencies"]}
+    update_dependencies = [dependency["recipe"] for dependency in recipes["update"]["dependencies"]]
 
-    assert update_dependencies == {"update-cargo-tools", "update-dependencies"}
+    assert update_dependencies == ["_ensure-cargo-install-update", "update-dependencies", "update-cargo-tools"]
+
+    aggregate_result = run_just("--dry-run", "update")
+    aggregate_update = aggregate_result.stdout + aggregate_result.stderr
+    assert aggregate_update.index("command -v cargo-install-update") < aggregate_update.index("cargo upgrade --incompatible allow")
 
     dependency_result = run_just("--dry-run", "update-dependencies")
     dependency_update = dependency_result.stdout + dependency_result.stderr
+    dependency_preflights = [dependency["recipe"] for dependency in recipes["update-dependencies"]["dependencies"]]
+    assert dependency_preflights[:2] == ["_ensure-cargo-edit", "_ensure-uv"]
+    assert dependency_update.index("cargo_tool_has_exact_version") < dependency_update.index("cargo upgrade --incompatible allow")
+    assert dependency_update.index("uv --version") < dependency_update.index("cargo upgrade --incompatible allow")
     assert "cargo upgrade --incompatible allow" in dependency_update
     assert "cargo update" in dependency_update
+    assert "uv run --locked update-python-dev-pins" in dependency_update
     assert "uv lock --upgrade" in dependency_update
+    assert dependency_update.index("uv run --locked update-python-dev-pins") < dependency_update.index("uv lock --upgrade")
     assert "uv sync --locked --group dev" in dependency_update
     assert "cargo install-update --all" not in dependency_update
     assert "uv tool upgrade" not in dependency_update
 
     tool_result = run_just("--dry-run", "update-cargo-tools")
     tool_update = tool_result.stdout + tool_result.stderr
+    assert "command -v cargo-install-update" in tool_update
     assert "cargo install-update --locked" in tool_update
     assert "update-cargo-tool-pins" in tool_update
     assert "cargo install-update --all" not in tool_update

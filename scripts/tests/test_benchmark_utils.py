@@ -867,14 +867,21 @@ def test_promote_performance_report_archives_previous_and_updates_index(tmp_path
         csv=archive_dir / "data" / "v0.8.0-vs-v0.7.8.csv",
         provenance=archive_dir / "data" / "v0.8.0-vs-v0.7.8.provenance.json",
     )
-    promoted_report = benchmark_utils.render_performance_bundle(performance_artifacts.load_bundle(artifacts), evidence_paths=durable, evidence_state="promoted")
+    promoted_report = benchmark_utils.render_performance_bundle(
+        performance_artifacts.load_bundle(artifacts),
+        evidence_paths=benchmark_utils._promoted_evidence_paths(durable, project_root=tmp_path),
+        evidence_state="promoted",
+    )
     source.write_text(promoted_report, encoding=UTF8)
 
     promoted = promote_performance_report(
         source=source,
         artifacts=artifacts,
-        current=current,
-        archive_dir=archive_dir,
+        destinations=benchmark_utils.PerformancePromotionDestinations(
+            project_root=tmp_path,
+            current=current,
+            archive_dir=archive_dir,
+        ),
         expected=benchmark_utils.PerformanceReportId(current_tag="v0.8.0", baseline_tag="v0.7.8"),
     )
 
@@ -914,7 +921,11 @@ def test_promote_performance_report_rolls_back_every_destination_on_failure(
         provenance=archive_dir / "data" / "v0.8.0-vs-v0.7.8.provenance.json",
     )
     source.write_text(
-        benchmark_utils.render_performance_bundle(performance_artifacts.load_bundle(artifacts), evidence_paths=durable, evidence_state="promoted"),
+        benchmark_utils.render_performance_bundle(
+            performance_artifacts.load_bundle(artifacts),
+            evidence_paths=benchmark_utils._promoted_evidence_paths(durable, project_root=tmp_path),
+            evidence_state="promoted",
+        ),
         encoding=UTF8,
     )
 
@@ -928,14 +939,19 @@ def test_promote_performance_report_rolls_back_every_destination_on_failure(
         promote_performance_report(
             source=source,
             artifacts=artifacts,
-            current=current,
-            archive_dir=archive_dir,
+            destinations=benchmark_utils.PerformancePromotionDestinations(
+                project_root=tmp_path,
+                current=current,
+                archive_dir=archive_dir,
+            ),
             expected=benchmark_utils.PerformanceReportId(current_tag="v0.8.0", baseline_tag="v0.7.8"),
         )
 
     assert current.read_text(encoding=UTF8) == delaunay_report("0.7.8", "v0.7.7")
     assert index.read_text(encoding=UTF8) == "old index\n"
     assert not archived.exists()
+    assert not durable.csv.exists()
+    assert not durable.provenance.exists()
 
 
 def test_promote_performance_report_rejects_conflicting_existing_archive_before_mutation(tmp_path: Path) -> None:
@@ -954,7 +970,11 @@ def test_promote_performance_report_rejects_conflicting_existing_archive_before_
         provenance=archive_dir / "data" / "v0.8.0-vs-v0.7.8.provenance.json",
     )
     source.write_text(
-        benchmark_utils.render_performance_bundle(performance_artifacts.load_bundle(artifacts), evidence_paths=durable, evidence_state="promoted"),
+        benchmark_utils.render_performance_bundle(
+            performance_artifacts.load_bundle(artifacts),
+            evidence_paths=benchmark_utils._promoted_evidence_paths(durable, project_root=tmp_path),
+            evidence_state="promoted",
+        ),
         encoding=UTF8,
     )
     prior_current = current.read_bytes()
@@ -963,8 +983,11 @@ def test_promote_performance_report_rejects_conflicting_existing_archive_before_
         promote_performance_report(
             source=source,
             artifacts=artifacts,
-            current=current,
-            archive_dir=archive_dir,
+            destinations=benchmark_utils.PerformancePromotionDestinations(
+                project_root=tmp_path,
+                current=current,
+                archive_dir=archive_dir,
+            ),
             expected=benchmark_utils.PerformanceReportId(current_tag="v0.8.0", baseline_tag="v0.7.8"),
         )
 
@@ -996,6 +1019,47 @@ def test_release_generation_preflights_output_aliases_before_measurement(tmp_pat
         )
 
 
+@pytest.mark.parametrize("escape", ["traversal", "symlink"])
+def test_release_generation_rejects_archive_escape_before_measurement_or_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    escape: str,
+) -> None:
+    """Tracked performance destinations must remain below the explicit root."""
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if escape == "traversal":
+        archive_dir = project_root / "docs" / "archive" / ".." / ".." / ".." / "outside"
+    else:
+        docs = project_root / "docs"
+        docs.mkdir()
+        (docs / "archive").symlink_to(outside, target_is_directory=True)
+        archive_dir = docs / "archive" / "performance"
+
+    measurement = Mock()
+    publication = Mock()
+    monkeypatch.setattr(benchmark_utils, "_build_performance_bundle_in_temp_worktree", measurement)
+    monkeypatch.setattr(benchmark_utils, "_publish_performance_bundle", publication)
+
+    with pytest.raises(ValueError, match="contained by repository root"):
+        benchmark_utils.generate_and_promote_performance_report(
+            output=project_root / "target" / "bench-reports" / "performance.md",
+            current=project_root / "docs" / "PERFORMANCE.md",
+            archive_dir=archive_dir,
+            config=ReleaseReportConfig(
+                repo_root=project_root,
+                current_tag="v0.8.0",
+                baseline_tag="v0.7.8",
+                worktree_ref="HEAD",
+            ),
+        )
+
+    measurement.assert_not_called()
+    publication.assert_not_called()
+
+
 def test_performance_doc_promotes_retained_bundle_without_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Retained artifacts should be sufficient to rebuild and promote docs."""
     output = tmp_path / "target" / "bench-reports" / "performance.md"
@@ -1019,8 +1083,11 @@ def test_performance_doc_promotes_retained_bundle_without_commands(tmp_path: Pat
     report_id = benchmark_utils.render_and_promote_performance_artifacts(
         output=output,
         artifacts=artifacts,
-        current=current,
-        archive_dir=archive_dir,
+        destinations=benchmark_utils.PerformancePromotionDestinations(
+            project_root=tmp_path,
+            current=current,
+            archive_dir=archive_dir,
+        ),
         expected_current_tag="v0.8.0",
     )
 
@@ -1046,8 +1113,11 @@ def test_performance_doc_rejects_same_version_without_changing_outputs(tmp_path:
         benchmark_utils.render_and_promote_performance_artifacts(
             output=output,
             artifacts=artifacts,
-            current=current,
-            archive_dir=tmp_path / "docs" / "archive" / "performance",
+            destinations=benchmark_utils.PerformancePromotionDestinations(
+                project_root=tmp_path,
+                current=current,
+                archive_dir=tmp_path / "docs" / "archive" / "performance",
+            ),
             expected_current_tag="v0.8.0",
         )
 
@@ -1073,8 +1143,11 @@ def test_performance_doc_rejects_malformed_pair_without_changing_outputs(tmp_pat
         benchmark_utils.render_and_promote_performance_artifacts(
             output=output,
             artifacts=artifacts,
-            current=current,
-            archive_dir=tmp_path / "docs" / "archive" / "performance",
+            destinations=benchmark_utils.PerformancePromotionDestinations(
+                project_root=tmp_path,
+                current=current,
+                archive_dir=tmp_path / "docs" / "archive" / "performance",
+            ),
             expected_current_tag="v0.8.0",
         )
 
@@ -1094,8 +1167,11 @@ def test_performance_doc_rejects_stale_current_release_before_writing(tmp_path: 
         benchmark_utils.render_and_promote_performance_artifacts(
             output=output,
             artifacts=artifacts,
-            current=current,
-            archive_dir=tmp_path / "docs" / "archive" / "performance",
+            destinations=benchmark_utils.PerformancePromotionDestinations(
+                project_root=tmp_path,
+                current=current,
+                archive_dir=tmp_path / "docs" / "archive" / "performance",
+            ),
             expected_current_tag="v0.8.0",
         )
 
@@ -1117,8 +1193,11 @@ def test_performance_doc_rejects_zero_comparable_rows_before_writing(tmp_path: P
         benchmark_utils.render_and_promote_performance_artifacts(
             output=output,
             artifacts=artifacts,
-            current=tmp_path / "docs" / "PERFORMANCE.md",
-            archive_dir=tmp_path / "docs" / "archive" / "performance",
+            destinations=benchmark_utils.PerformancePromotionDestinations(
+                project_root=tmp_path,
+                current=tmp_path / "docs" / "PERFORMANCE.md",
+                archive_dir=tmp_path / "docs" / "archive" / "performance",
+            ),
             expected_current_tag="v0.8.0",
         )
 
@@ -1165,14 +1244,20 @@ def test_renderer_distinguishes_scratch_and_promoted_evidence_paths(tmp_path: Pa
         csv=tmp_path / "docs" / "archive" / "performance" / "data" / "v0.8.0-vs-v0.7.8.csv",
         provenance=tmp_path / "docs" / "archive" / "performance" / "data" / "v0.8.0-vs-v0.7.8.provenance.json",
     )
+    current = tmp_path / "docs" / "PERFORMANCE.md"
 
     scratch_report = benchmark_utils.render_performance_artifacts(scratch)
-    promoted_report = benchmark_utils.render_performance_bundle(performance_artifacts.load_bundle(scratch), evidence_paths=durable, evidence_state="promoted")
+    promoted_report = benchmark_utils.render_performance_bundle(
+        performance_artifacts.load_bundle(scratch),
+        evidence_paths=benchmark_utils._promoted_evidence_paths(durable, project_root=tmp_path),
+        evidence_state="promoted",
+    )
 
     assert "Retained scratch evidence" in scratch_report
     assert scratch.csv.as_posix() in scratch_report
     assert "Promoted evidence" in promoted_report
-    assert durable.csv.as_posix() in promoted_report
+    assert durable.csv.relative_to(tmp_path).as_posix() in promoted_report
+    assert durable.csv.as_posix() not in promoted_report
     assert scratch.csv.as_posix() not in promoted_report
 
 
@@ -4660,8 +4745,11 @@ class TestTimeoutHandling:
                 csv=tmp_path / "target" / "bench-reports" / "performance.csv",
                 provenance=tmp_path / "target" / "bench-reports" / "performance.provenance.json",
             ),
-            current=tmp_path / "docs" / "PERFORMANCE.md",
-            archive_dir=tmp_path / "docs" / "archive" / "performance",
+            destinations=benchmark_utils.PerformancePromotionDestinations(
+                project_root=tmp_path,
+                current=tmp_path / "docs" / "PERFORMANCE.md",
+                archive_dir=tmp_path / "docs" / "archive" / "performance",
+            ),
             expected_current_tag="v0.8.0",
         )
 

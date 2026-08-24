@@ -443,6 +443,15 @@ class PerformanceReportId:
 
 
 @dataclass(frozen=True)
+class PerformancePromotionDestinations:
+    """Explicit repository boundary and tracked performance destinations."""
+
+    project_root: Path
+    current: Path
+    archive_dir: Path
+
+
+@dataclass(frozen=True)
 class PerformancePromotionPlan:
     """Validated file payloads and destinations for one report promotion."""
 
@@ -3369,17 +3378,47 @@ def _durable_performance_artifact_paths(archive_dir: Path, report_id: Performanc
     return ArtifactPaths(csv=data_dir / f"{stem}.csv", provenance=data_dir / f"{stem}.provenance.json")
 
 
+def _repository_relative_path(project_root: Path, path: Path, *, label: str) -> Path:
+    """Resolve *path* and return its location relative to the repository root."""
+    resolved_root = project_root.resolve(strict=False)
+    resolved_path = path.resolve(strict=False)
+    try:
+        return resolved_path.relative_to(resolved_root)
+    except ValueError as error:
+        msg = f"{label} must be contained by repository root {resolved_root}, got {resolved_path}"
+        raise ValueError(msg) from error
+
+
+def _promoted_evidence_paths(durable: ArtifactPaths, *, project_root: Path) -> ArtifactPaths:
+    """Return validated repository-relative evidence paths for tracked reports."""
+    return ArtifactPaths(
+        csv=_repository_relative_path(project_root, durable.csv, label="promoted performance CSV"),
+        provenance=_repository_relative_path(
+            project_root,
+            durable.provenance,
+            label="promoted performance provenance",
+        ),
+    )
+
+
 def _validated_promotion_source(
     source: Path,
     artifacts: ArtifactPaths,
     expected: PerformanceReportId,
     durable_artifacts: ArtifactPaths,
+    project_root: Path,
 ) -> tuple[PerformanceBundle, str, PerformanceReportId]:
     """Validate one canonical report and its independently expected identity."""
     bundle = load_bundle(artifacts)
     bundle.require_promotable()
     source_text = _normalize_how_to_update(_read_text(source))
-    rendered_text = _normalize_how_to_update(render_performance_bundle(bundle, evidence_paths=durable_artifacts, evidence_state="promoted"))
+    rendered_text = _normalize_how_to_update(
+        render_performance_bundle(
+            bundle,
+            evidence_paths=_promoted_evidence_paths(durable_artifacts, project_root=project_root),
+            evidence_state="promoted",
+        )
+    )
     if source_text != rendered_text:
         msg = "benchmark report is not the canonical rendering of its retained artifact pair"
         raise ValueError(msg)
@@ -3433,17 +3472,25 @@ def _plan_performance_promotion(
     *,
     source: Path,
     artifacts: ArtifactPaths,
-    current: Path,
-    archive_dir: Path,
+    destinations: PerformancePromotionDestinations,
     expected: PerformanceReportId,
 ) -> PerformancePromotionPlan:
     """Validate all promotion inputs and conflicts before the first mutation."""
+    current = destinations.current
+    archive_dir = destinations.archive_dir
+    project_root = destinations.project_root
     normalized_expected = PerformanceReportId(
         current_tag=normalize_release_tag(expected.current_tag),
         baseline_tag=normalize_release_tag(expected.baseline_tag),
     )
     durable_artifacts = _durable_performance_artifact_paths(archive_dir, normalized_expected)
-    _, source_text, source_id = _validated_promotion_source(source, artifacts, expected, durable_artifacts)
+    _, source_text, source_id = _validated_promotion_source(
+        source,
+        artifacts,
+        expected,
+        durable_artifacts,
+        project_root,
+    )
     current_text, archive_path = _promotion_archive_destination(current, archive_dir, source_id)
 
     index_path = archive_dir / "README.md"
@@ -3484,6 +3531,14 @@ def _plan_performance_promotion(
         durable_artifacts.provenance,
         *(() if archive_path is None else (archive_path,)),
     )
+    for label, path in (
+        ("current performance report", current),
+        ("performance archive index", index_path),
+        ("durable performance CSV", durable_artifacts.csv),
+        ("durable performance provenance", durable_artifacts.provenance),
+        *(() if archive_path is None else (("archived performance report", archive_path),)),
+    ):
+        _repository_relative_path(project_root, path, label=label)
     return PerformancePromotionPlan(
         report_id=source_id,
         source_text=source_text,
@@ -3525,19 +3580,21 @@ def promote_performance_report(
     *,
     source: Path,
     artifacts: ArtifactPaths,
-    current: Path,
-    archive_dir: Path,
+    destinations: PerformancePromotionDestinations,
     expected: PerformanceReportId,
 ) -> PerformanceReportId:
     """Archive the old report and durably promote its exact evidence pair."""
     plan = _plan_performance_promotion(
         source=source,
         artifacts=artifacts,
-        current=current,
-        archive_dir=archive_dir,
+        destinations=destinations,
         expected=expected,
     )
-    _apply_performance_promotion(plan, current=current, archive_dir=archive_dir)
+    _apply_performance_promotion(
+        plan,
+        current=destinations.current,
+        archive_dir=destinations.archive_dir,
+    )
     return plan.report_id
 
 
@@ -3630,6 +3687,11 @@ def _stable_published_releases(releases: object) -> list[PublishedRelease]:
 def _published_stable_releases(repo_root: Path) -> list[PublishedRelease]:
     """Return stable published releases for the current GitHub repository."""
     return _stable_published_releases(_github_release_list(repo_root))
+
+
+def published_stable_release_tags(repo_root: Path) -> list[str]:
+    """Return stable tag names from published, non-draft GitHub releases."""
+    return [release.tag for release in _published_stable_releases(repo_root)]
 
 
 def _latest_published_release(repo_root: Path) -> PublishedRelease:
@@ -4880,6 +4942,7 @@ def _preflight_performance_destinations(
     report_id: PerformanceReportId,
     current: Path | None = None,
     archive_dir: Path | None = None,
+    project_root: Path | None = None,
 ) -> None:
     """Reject deterministic output aliases before fetches or measurements."""
     artifacts = _artifact_paths_for_output(output)
@@ -4887,6 +4950,9 @@ def _preflight_performance_destinations(
     if current is not None:
         if archive_dir is None:
             msg = "archive_dir is required when preflighting a promotion"
+            raise ValueError(msg)
+        if project_root is None:
+            msg = "project_root is required when preflighting a promotion"
             raise ValueError(msg)
         paths.update(
             {
@@ -4898,10 +4964,16 @@ def _preflight_performance_destinations(
         durable = _durable_performance_artifact_paths(archive_dir, report_id)
         paths["durable CSV"] = durable.csv
         paths["durable provenance"] = durable.provenance
+        for label, path in paths.items():
+            if label in {"Markdown output", "artifact CSV", "artifact provenance"}:
+                continue
+            _repository_relative_path(project_root, path, label=label)
         if current.exists():
             current_id = parse_performance_report_id(_normalize_how_to_update(_read_text(current)))
             if current_id != report_id:
-                paths["prior report archive"] = archive_dir / current_id.archive_name
+                prior_archive = archive_dir / current_id.archive_name
+                _repository_relative_path(project_root, prior_archive, label="prior report archive")
+                paths["prior report archive"] = prior_archive
     ensure_distinct_paths(paths)
 
 
@@ -4911,6 +4983,7 @@ def _publish_performance_bundle(
     output: Path,
     current: Path | None = None,
     archive_dir: Path | None = None,
+    project_root: Path | None = None,
 ) -> PerformanceReportId:
     """Publish artifacts, reload-render Markdown, and optionally promote docs."""
     artifacts = _artifact_paths_for_output(output)
@@ -4931,10 +5004,13 @@ def _publish_performance_bundle(
                 if archive_dir is None:
                     msg = "archive_dir is required when promoting performance documentation"
                     raise ValueError(msg)
+                if project_root is None:
+                    msg = "project_root is required when promoting performance documentation"
+                    raise ValueError(msg)
                 durable_artifacts = _durable_performance_artifact_paths(archive_dir, report_id)
                 rendered = render_performance_bundle(
                     load_bundle(artifacts),
-                    evidence_paths=durable_artifacts,
+                    evidence_paths=_promoted_evidence_paths(durable_artifacts, project_root=project_root),
                     evidence_state="promoted",
                 )
             _write_text_atomic(output, rendered)
@@ -4942,11 +5018,17 @@ def _publish_performance_bundle(
                 if archive_dir is None:
                     msg = "archive_dir is required when promoting performance documentation"
                     raise ValueError(msg)
+                if project_root is None:
+                    msg = "project_root is required when promoting performance documentation"
+                    raise ValueError(msg)
                 report_id = promote_performance_report(
                     source=output,
                     artifacts=artifacts,
-                    current=current,
-                    archive_dir=archive_dir,
+                    destinations=PerformancePromotionDestinations(
+                        project_root=project_root,
+                        current=current,
+                        archive_dir=archive_dir,
+                    ),
                     expected=report_id,
                 )
             return report_id
@@ -4996,6 +5078,7 @@ def generate_and_promote_performance_report(
         report_id=PerformanceReportId(current_tag=current_tag, baseline_tag=baseline_tag),
         current=current,
         archive_dir=archive_dir,
+        project_root=config.repo_root,
     )
     bundle = _build_performance_bundle_in_temp_worktree(
         config=ReleaseReportConfig(
@@ -5010,18 +5093,26 @@ def generate_and_promote_performance_report(
             baseline_source=config.baseline_source,
         )
     )
-    return _publish_performance_bundle(bundle=bundle, output=output, current=current, archive_dir=archive_dir)
+    return _publish_performance_bundle(
+        bundle=bundle,
+        output=output,
+        current=current,
+        archive_dir=archive_dir,
+        project_root=config.repo_root,
+    )
 
 
 def render_and_promote_performance_artifacts(
     *,
     output: Path,
     artifacts: ArtifactPaths,
-    current: Path,
-    archive_dir: Path,
+    destinations: PerformancePromotionDestinations,
     expected_current_tag: str,
 ) -> PerformanceReportId:
     """Render and promote retained artifacts without Cargo or worktrees."""
+    current = destinations.current
+    archive_dir = destinations.archive_dir
+    project_root = destinations.project_root
     ensure_distinct_paths(
         {
             "Markdown output": output,
@@ -5047,6 +5138,7 @@ def render_and_promote_performance_artifacts(
         ),
         current=current,
         archive_dir=archive_dir,
+        project_root=project_root,
     )
     prior_output = output.read_bytes() if output.exists() else None
     try:
@@ -5057,13 +5149,16 @@ def render_and_promote_performance_artifacts(
         durable_artifacts = _durable_performance_artifact_paths(archive_dir, report_id)
         _write_text_atomic(
             output,
-            render_performance_bundle(bundle, evidence_paths=durable_artifacts, evidence_state="promoted"),
+            render_performance_bundle(
+                bundle,
+                evidence_paths=_promoted_evidence_paths(durable_artifacts, project_root=project_root),
+                evidence_state="promoted",
+            ),
         )
         return promote_performance_report(
             source=output,
             artifacts=artifacts,
-            current=current,
-            archive_dir=archive_dir,
+            destinations=destinations,
             expected=report_id,
         )
     except BaseException:
@@ -8194,6 +8289,7 @@ def _cmd_performance_release(args: argparse.Namespace, project_root: Path) -> No
             report_id=PerformanceReportId(current_tag=request.current_tag, baseline_tag=request.baseline_tag),
             current=current,
             archive_dir=archive_dir,
+            project_root=project_root,
         )
         _fetch_for_performance_request(project_root=project_root, request=request, include_current=False)
         config = _release_config_from_args(
@@ -8228,8 +8324,11 @@ def _cmd_performance_doc(args: argparse.Namespace, project_root: Path) -> None:
         report_id = render_and_promote_performance_artifacts(
             output=output,
             artifacts=artifacts,
-            current=current,
-            archive_dir=archive_dir,
+            destinations=PerformancePromotionDestinations(
+                project_root=project_root,
+                current=current,
+                archive_dir=archive_dir,
+            ),
             expected_current_tag=_current_package_tag(project_root),
         )
     except _RECOVERABLE_CLI_ERRORS as exc:

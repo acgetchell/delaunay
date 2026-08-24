@@ -18,9 +18,11 @@ import re
 import subprocess
 import sys
 import tomllib
+from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import check_docs_version_sync as version_sync
 from subprocess_utils import (
     ExecutableNotFoundError,
     run_git_command,
@@ -143,6 +145,35 @@ def _package_version(changelog: Path) -> str:
     return version
 
 
+def _citation_release_date(changelog: Path) -> date:
+    """Return the one calendar-valid top-level publication date beside the changelog."""
+    citation = changelog.parent / "CITATION.cff"
+    try:
+        _line, value = version_sync.citation_release_date(citation)
+    except (OSError, TypeError) as exc:
+        msg = f"Could not validate {citation}: {exc}"
+        raise PackageMetadataError(msg) from exc
+    return date.fromisoformat(value)
+
+
+def _current_utc_date() -> date:
+    """Return the current UTC calendar day through a patchable clock boundary."""
+    return datetime.now(UTC).date()
+
+
+def _validate_publication_date(changelog: Path) -> None:
+    """Require the intended citation publication date to equal today's UTC date."""
+    intended = _citation_release_date(changelog)
+    current = _current_utc_date()
+    if intended != current:
+        msg = (
+            f"CITATION.cff intended publication date {intended.isoformat()} does not match "
+            f"the current UTC date {current.isoformat()}; rerun release metadata and changelog "
+            "generation with the actual publication date before tagging"
+        )
+        raise ValueError(msg)
+
+
 def _validated_release_target(tag_version: str) -> tuple[str, Path]:
     """Validate the requested tag against Cargo before any Git tag query."""
     validate_semver(tag_version)
@@ -152,6 +183,7 @@ def _validated_release_target(tag_version: str) -> tuple[str, Path]:
     if version != package_version:
         msg = f"Tag version {version!r} does not match Cargo package version {package_version!r}"
         raise ValueError(msg)
+    _validate_publication_date(changelog)
     return version, changelog
 
 

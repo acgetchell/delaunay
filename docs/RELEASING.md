@@ -1,371 +1,323 @@
 # Releasing delaunay
 
-This guide documents the release flow for `vX.Y.Z`: prepare a dedicated
-release PR, merge it, create the final annotated tag from the generated
-changelog, publish to crates.io, and create the GitHub release.
+Prepare each `vX.Y.Z` release in a dedicated PR. After that PR is merged,
+create the annotated tag, publish to crates.io, create the GitHub release, and
+verify its durable benchmark asset.
 
-The release changelog is generated with `git-cliff --tag` through
-`just changelog-unreleased`, so no temporary local tag is needed.
+The changelog is generated for the target tag before the tag exists, so the
+release process does not require a temporary local tag.
 
-Applies to versions `vX.Y.Z`. Prefer updating documentation before publishing
-to crates.io.
+Release recipes are content-idempotent where their inputs permit it. Repeating
+`update-version` on the same UTC day or repeating `performance-readme` for the
+same retained bundle produces no file changes. `performance-release` is the
+explicit exception because new measurements may vary. If publication moves to
+another UTC day, rerun the release metadata and changelog steps before merge or
+publication so both record the new date.
 
----
+## Prepare the environment
 
-## Conventions and environment
-
-Set these variables to avoid repeating the version string:
+Set the target tag once:
 
 ```bash
-# tag has the leading v, version does not
 TAG=vX.Y.Z
-VERSION=${TAG#v}
-PREVIOUS_TAG=vA.B.C
 ```
 
-Verify your git remotes:
+No `VERSION`, previous-tag, or release-date variable is required. The release
+tooling derives the version history from `TAG` and published GitHub Releases
+and records the current UTC date when release metadata is updated.
+
+Verify GitHub authentication and the repository remotes, then synchronize
+`main`:
 
 ```bash
+gh auth status
 git remote -v
-```
-
-Ensure your local `main` is up to date before beginning:
-
-```bash
 git switch main
 git pull --ff-only
 ```
 
----
+Install or verify the development tools before running maintenance recipes.
+GitHub CLI is an external prerequisite. Setup installs the pinned Rust CLI
+tools and the intentionally unpinned `cargo-update` bootstrap package that
+provides `cargo-install-update` for `just update`, then verifies both `gh` and
+`cargo-install-update`:
 
-## Step 1: Create a clean release PR
+```bash
+just setup
+```
 
-This PR should primarily include version bumps, changelog updates, benchmark
-summary updates, and documentation updates. All major code changes should
+Refresh Cargo dependency requirements, exact direct Python development-tool
+pins, lockfiles, and repository-owned Cargo tool pins before creating the
+release branch:
+
+```bash
+just update
+```
+
+`just update` resolves exact pins under `[dependency-groups].dev` together for
+the repository's supported Python version before refreshing `uv.lock`. It does
+not change ranged development requirements, runtime or optional dependencies,
+or `[build-system].requires` through that exact-pin step. Its
+`cargo-install-update` preflight runs before either dependency updater can
+change declarations or lockfiles.
+
+Review any tracked dependency or tool changes and land them separately before
+continuing with the release PR, then synchronize `main` again. Dependency and
+tool upgrades remain independently reviewable; `just update-version`
+deliberately does not run `just update`.
+
+`update-version` and the release performance recipes use published, non-draft,
+non-prerelease GitHub Releases as the authoritative stable release history.
+
+## Step 1: Prepare the release PR
+
+Keep the release PR focused on version metadata, the generated changelog,
+benchmark artifacts, and release documentation. Major code changes should
 already be on `main`.
 
-Finalize release-facing metadata and documentation in this dedicated release
-PR. Ordinary feature, fix, review, and hygiene work should not preemptively
-bump versions or prepare release artifacts.
-
-Small, critical fixes discovered during the release process may be included,
-but keep them minimal and release-critical.
-
-Update release-facing documentation on this PR branch before publishing. Do not
-defer README, `docs/`, or benchmark documentation fixes until after the release:
-crates.io, docs.rs, and the generated benchmark summary are all versioned with
-the release artifacts.
-
-1. Create the release branch
+### 1. Create the release branch
 
 ```bash
 git switch -c "release/$TAG"
 ```
 
-2. Bump versions
-
-Preferred, if `cargo-edit` is installed:
+### 2. Update release metadata
 
 ```bash
-cargo set-version "$VERSION"
+just update-version "$TAG"
 ```
 
-Alternative: edit `Cargo.toml` manually and update `version = "..."` under
-`[package]`.
+The recipe requires one stable `vX.Y.Z` target that is not older than a
+published stable GitHub Release and that has at least one earlier stable
+release. It infers the previous release and atomically synchronizes:
 
-Update release metadata to match the crate version:
+- `Cargo.toml`, `Cargo.lock`, `pyproject.toml`, and `uv.lock` package versions;
+- `CITATION.cff` version and current UTC `date-released`;
+- README dependency examples and non-performance tag-pinned links;
+- active documentation dependency, `cargo add`, and explicit performance-pair
+  examples; and
+- the target changelog heading date when that generated heading already
+  exists.
 
-- `CITATION.cff`: update `version` and `date-released`.
-- `CITATION.cff`: keep `abstract` synchronized with the first paragraph under
-  `README.md`'s Introduction; update both together when either changes.
-- `pyproject.toml`: update `[project] version` for the Python utility package.
+The complete edit is planned before any file is replaced and caught failures
+roll every changed file back. The recipe preserves the Zenodo all-versions
+concept DOI `10.5281/zenodo.16931097`; it does not add or rotate a
+version-specific DOI. It does not generate the changelog, run benchmarks, or
+upgrade dependencies.
 
-Review the citation identity fields at the same time: author, ORCID,
-repository, license, and DOI. Keep the Zenodo concept DOI
-`10.5281/zenodo.16931097` unchanged across releases; do not replace it with a
-version-specific DOI.
+Review the resulting metadata diff before continuing.
 
-Refresh both committed lockfiles after manual metadata edits:
+If the publication day changes, rerun this step and
+`just changelog-unreleased "$TAG"`, then amend the release PR before merging.
+Never keep a stale date merely to preserve an earlier run.
 
-```bash
-cargo metadata --format-version 1 --no-deps > /dev/null
-uv lock
-```
-
-Review version references in active documentation and package metadata:
-
-```bash
-just docs-version-check
-```
-
-The automated check covers package metadata, lockfiles, citation version,
-release-pinned README links, active documentation dependency and `cargo add`
-snippets, and current-tag arguments in benchmark workflow examples. Historical
-prose, archived reports, baseline arguments, and tool versions intentionally
-remain independent of the current package version.
-
-3. Generate the release changelog
+### 3. Generate the release changelog
 
 ```bash
-# Generates CHANGELOG.md as though TAG already exists, then applies
-# markdown hygiene and archives completed minor release series.
 just changelog-unreleased "$TAG"
 ```
 
-`just changelog-unreleased` runs
-`GIT_CLIFF_OFFLINE=true git-cliff --tag "$TAG" -o CHANGELOG.md`, then
-`postprocess-changelog`, then `archive-changelog`. The root changelog keeps
-Unreleased plus the active minor series; older completed minor series live
-under `docs/archive/changelog/`.
+This generates `CHANGELOG.md` as though the target tag already existed,
+archives completed minor series under `docs/archive/changelog/`, and
+synchronizes the target heading with the intended date recorded in
+`CITATION.cff`. Before writing, it rejects a non-stable tag or a tag that does
+not match the Cargo package version. Review the generated changelog and archive
+changes. Do not edit generated changelog files manually.
 
-4. Refresh checked-in performance results, if needed
+### 4. Generate the release performance comparison
 
-Per-version benchmark storage is handled by the release-published benchmark
-workflow in Step 2; do not run this only to preserve release benchmark data.
-Run it only when the release PR intentionally updates public performance claims
-or the checked-in human-readable `benches/PERFORMANCE_RESULTS.md` summary:
-
-```bash
-just bench-perf-summary
-```
-
-Run it after the version bump so the generated file reports the current Cargo
-package version. The recipe already runs `benchmark-utils generate-summary
---run-benchmarks --profile perf`, which refreshes the perf-profile Criterion
-`ci_performance_suite` data, captures the generated construction simplex counts
-emitted by the benchmark harness, records current Criterion run metadata,
-reruns the circumsphere benchmark, and regenerates
-`benches/PERFORMANCE_RESULTS.md`. No separate Criterion refresh step is
-required.
-
-Review generated benchmark docs before committing them. Confirm the file shows
-`Version $VERSION Results`, `Current Criterion Run Information`, and
-`Simplices Generated`, and does not retain `Historical Version Comparison`,
-`Circumsphere Predicate Analysis`, `Method Disagreements`, or
-`Baseline Artifact Information`. Treat benchmark output as release evidence only
-when the underlying harnesses maintain their scientific invariants; a faster
-invariant-violating run is release-blocking, not a publishable improvement.
-
-When the release PR needs a curated release-to-release comparison in active
-docs, run the temp-worktree promotion workflow after the version bump:
+Run this after the package version has been updated:
 
 ```bash
 just performance-release
 ```
 
-This compares the current package version against the previous stable published
-release, retains Markdown, versioned CSV, and provenance JSON under
-`target/bench-reports/`, reload-validates the retained pair, writes the curated
-report to `docs/PERFORMANCE.md`, and archives the previous curated report under
-`docs/archive/performance/`. It also copies the exact promoted CSV/provenance
-bytes into `docs/archive/performance/data/`. Review the scratch artifacts and
-all tracked documentation/evidence changes. Each destination uses atomic file
-replacement and caught failures roll back; a hard interruption can stop between
-files, so inspect the destinations and rerun the idempotent command. To repair a
-specific pair, pass both tags explicitly:
+The no-argument form compares the current package version with the previous
+stable published release. It runs the release-signal Criterion measurements,
+retains `target/bench-reports/performance.{md,csv,provenance.json}`, validates
+the CSV/provenance pair after reloading it, promotes `docs/PERFORMANCE.md`, and
+archives the prior report plus the exact promoted evidence under
+`docs/archive/performance/`.
+
+The temporary current worktree includes staged and unstaged changes to tracked
+files but excludes untracked files. Stage any new benchmark-relevant file
+before running the comparison. Do not run `just clean` or `cargo clean` until
+the retained inputs have been reviewed and the README publication succeeds.
+
+If measurement succeeded and only report promotion must be retried, use
+`just performance-doc`. It reads the retained CSV/provenance pair and runs no
+Cargo benchmarks or measurement worktrees. Explicit current/baseline tag pairs
+are reserved for repair paths and must always be supplied together.
+
+Treat performance output as release evidence only when the measured workflow
+preserves Delaunay's numerical and topological invariants. A faster
+invariant-violating run is a failed release check.
+
+### 5. Publish the README performance snapshot
 
 ```bash
-just performance-release "$TAG" "$PREVIOUS_TAG"
+just performance-readme
 ```
 
-Supplying only one tag fails before fetch or benchmark side effects. If the
-measurements are already retained and only report formatting or promotion must
-be retried, run `just performance-doc`. It reads the canonical CSV and
-provenance JSON, runs no Cargo benchmarks or measurement worktrees, and rejects
-incomplete, invalid, stale, same-version, or scientifically non-comparable
-inputs.
+This command consumes the validated bundle retained and promoted by
+`performance-release`; it never invokes Cargo or Criterion. It atomically
+updates the compact group-level table in `README.md` and the exact canonical
+CSV/provenance pair under `docs/assets/bench/`. README links are pinned to
+`TAG`, so they resolve to the reviewed release artifacts after the tag is
+published. Caught publication failures restore every prior README-owned file.
 
-For manual investigation only, `DELAUNAY_BENCH_EXPORT_METRICS=1` can print the
-construction vertex/simplex metric lines without Criterion sampling. Prefer
-pairing it with a `tds_new` Criterion filter, for example:
+### 6. Validate the release branch
 
 ```bash
-DELAUNAY_BENCH_EXPORT_METRICS=1 \
-  cargo bench --profile perf --bench ci_performance_suite -- \
-  "tds_new_3d/tds_new/750"
-```
-
-This helper is not a replacement for `just bench-perf-summary` in the release
-flow.
-
-5. Validate the release branch
-
-```bash
-just docs-version-check
-just cargo-lock-check
 just ci
+just release-version-check
 just publish-check
 ```
 
-6. Review, stage, and commit the release branch
+`just ci` includes lockfile, citation, documentation, Python tooling, tests,
+and benchmark-compilation checks. `release-version-check` invokes the strict
+`check-docs-version-sync --final-release` gate, requiring exactly one current
+changelog heading whose date matches `CITATION.cff`. `publish-check` validates
+crates.io metadata and dry-runs the exact package from the intentionally dirty
+release worktree.
 
-Release workflows can update tracked files and create new archive files, and a
-critical release fix may legitimately touch source or tooling outside a fixed
-metadata list. Keep the dedicated release branch clean of unrelated work,
-review the complete release delta, and then stage all intended changes:
+### 7. Review, stage, and commit the release artifacts
+
+Inspect all changes before staging:
 
 ```bash
 git status --short
-git diff HEAD --check
-git --no-pager diff HEAD --stat
+git --no-pager diff
+```
 
-# After confirming every changed and untracked path belongs in the release PR:
-git add --all
-git status --short
-git diff --cached --check
-git --no-pager diff --cached --stat
+Expected release artifacts include package metadata and lockfiles,
+`CITATION.cff`, `CHANGELOG.md`, `README.md`, `docs/PERFORMANCE.md`, and generated
+files under `docs/archive/` and `docs/assets/bench/`. Stage only reviewed paths;
+do not stage unrelated work or the entire `docs/` tree without inspecting it.
+
+Then inspect and commit the staged release delta:
+
+```bash
 git --no-pager diff --cached
-
-benchmark_bullet=""
-if ! git diff --cached --quiet -- benches/PERFORMANCE_RESULTS.md; then
-    benchmark_bullet=$'\n- Refresh release benchmark summary'
-fi
 
 git commit -m "chore(release): release $TAG
 
 - Bump version to $TAG
 - Update citation and utility package metadata
-- Update changelog with latest changes
-- Update documentation for release${benchmark_bullet}"
+- Generate the release changelog
+- Update benchmark and performance artifacts
+- Update release documentation"
 ```
 
-If the initial status includes unrelated work, stop and separate it before
-running `git add --all`; do not stage a mixed worktree merely because it is on a
-release branch.
-
-The commit template adds its benchmark bullet only when
-`benches/PERFORMANCE_RESULTS.md` is present in the staged diff. If no checked-in
-benchmark summary changed, ensure that file is absent from the staged diff; the
-file and its benchmark bullet are then both omitted.
-
-7. Push the branch and open a PR
+### 8. Push the branch and open the PR
 
 ```bash
 git push -u origin "release/$TAG"
 ```
 
-PR metadata:
+Use `chore(release): release $TAG` as the PR title and describe the PR as a
+focused release preparation without feature work.
 
-- Title: `chore(release): release $TAG`
-- Description: Clean release PR with version bump, changelog, benchmark
-  summary if applicable, and documentation updates. No feature work.
+### Handling fixes found during preparation
 
-### Handling fixes discovered during the release process
+For a critical fix that must be included, make and commit the fix. If it changes
+measured code, benchmark harnesses, toolchain or dependency inputs, or benchmark
+configuration, rerun `just performance-release "$TAG" "vA.B.C"` with the same
+baseline used for the release comparison, then rerun `just performance-readme`.
+Rerun `just changelog-unreleased "$TAG"`, review and stage only the regenerated
+release outputs, commit that update separately, and rerun the final release and
+publish gates.
 
-If you discover issues after generating the changelog:
+For a non-critical fix, file an issue and defer it. Do not hand-edit the
+generated changelog to add a known-issue note.
 
-1. For critical fixes that must be in this release, make and commit the fix,
-   then regenerate the release changelog:
+Retries on the same UTC day keep the recorded release date unchanged. If
+publication moves to a different UTC day, rerun `just update-version "$TAG"`
+and `just changelog-unreleased "$TAG"`, then rerun the final release and
+publish checks before merge or publication.
 
-   ```bash
-   just changelog-unreleased "$TAG"
-   git add CHANGELOG.md docs/archive/changelog/
-   git commit -m "docs: update changelog with release fixes"
-   ```
+## Step 2: Publish after the PR is merged
 
-2. For non-critical fixes, document them as known issues in the release notes
-   or include them in the next release.
-
----
-
-## Step 2: After the PR is merged into main
-
-1. Sync your local `main` to the merge commit
+### 1. Synchronize `main`
 
 ```bash
 git switch main
 git pull --ff-only
 ```
 
-2. Create the final annotated tag using the changelog content
+### 2. Create and verify the annotated tag
 
 ```bash
-# Creates the annotated tag from the matching CHANGELOG.md section.
-# Archived versions are read from docs/archive/changelog/ automatically.
-# For large changelogs (>125KB), the tag message points to the changelog
-# section instead of embedding the full content.
 just tag "$TAG"
+git --no-pager tag -l --format='%(contents)' "$TAG"
 ```
 
-3. Optional: verify the tag message content
+`just tag` first runs `release-version-check`, then builds the annotation from
+the matching active or archived changelog section. For a changelog larger than
+125 kB, the annotation points to that section instead of embedding it. It fails
+before any Git tag query or mutation unless the `CITATION.cff` intended
+publication date equals the current UTC day. If the day changed after the
+original PR merged, prepare and merge a corrective release-metadata PR by
+rerunning `just update-version "$TAG"` on the new UTC day, then resynchronize
+local `main` and rerun the gates before tagging. Do not force the stale date
+through.
 
-```bash
-git tag -l --format='%(contents)' "$TAG"
-```
-
-4. Push the tag
+### 3. Push the tag
 
 ```bash
 git push origin "$TAG"
 ```
 
-5. Publish to crates.io
+### 4. Publish to crates.io
 
 ```bash
-# Publish the crate. Ensure docs are already updated on main via the PR.
 cargo publish --locked
 ```
 
-6. Create the GitHub release with notes from the tag annotation
+### 5. Create the GitHub release
 
 ```bash
 gh release create "$TAG" --title "$TAG" --notes-from-tag
 ```
 
-Always set the GitHub release title to the exact tag string, including the
-leading `v`.
+Keep the release title identical to the tag, including its leading `v`.
 
-Publishing the release triggers `.github/workflows/release-benchmarks.yml`, which
-runs fresh perf-profile release-signal benchmarks on `ubuntu-latest`, packages
-`baseline_results.txt`, `PERFORMANCE_RESULTS.md`, raw Criterion data, and
-metadata, then attaches
-`delaunay-$TAG-criterion-baseline.tar.gz` to the GitHub Release. That release
-asset is for GitHub Actions CI comparisons; keep local same-machine timing
-baselines under the ignored `baseline-artifact/` or `baseline-artifacts/` paths.
-Use `just performance-github-assets "$TAG" "vX.Y.Z"` to compare two stored
-release assets without local benchmark runs. New archives carry a versioned
-measurement sidecar binding source revision, measurement commands, toolchain,
-host, completed targets, normalized measurement plan, Criterion sample, and
-content digest to the requested clean release tag; acquisition commands and
-archive digests are retained separately. Because the two GitHub-hosted release
-runs are separate measurement sessions, their report retains absolute intervals
-but never emits before/after ratios. Existing legacy archives remain usable as
-provenance-limited absolute timing evidence, with unavailable facts explicit
-and promotion disabled. Raw Criterion evidence remains in the `.tar.gz` release
-assets.
+### 6. Verify the durable Criterion baseline
 
-7. Confirm release benchmark assets
-
-After the release benchmark workflow completes, verify that the GitHub Release
-has the durable benchmark baseline asset:
+Publishing the GitHub release triggers the `Release Benchmarks` workflow.
+After it completes, verify that the release contains its long-lived baseline
+archive:
 
 ```bash
 gh release view "$TAG" --json assets \
   --jq ".assets[] | select(.name == \"delaunay-$TAG-criterion-baseline.tar.gz\") | .name" | cat
 ```
 
-The command must print `delaunay-$TAG-criterion-baseline.tar.gz`. An Actions
-artifact alone is not a durable release baseline.
+The command must print `delaunay-$TAG-criterion-baseline.tar.gz`. A short-lived
+Actions artifact is not a substitute for this release asset. The archive binds
+the requested clean release tag to its source revision, measurement commands,
+toolchain, host, normalized measurement plan, completed benchmark targets,
+Criterion sample, and content digest.
 
-8. Clean up the release branch
+Use `just performance-github-assets "$TAG" "vA.B.C"` only when comparing two
+stored release archives. Because those runs are separate measurement sessions,
+the resulting report retains absolute intervals but suppresses ratios.
+
+### 7. Verify the Zenodo release metadata
+
+After the GitHub release has been archived by Zenodo, open the new
+version-specific Zenodo record reached from the repository's concept DOI. Check
+that its software version exactly matches `$TAG` (including the leading `v`)
+and its publication date exactly matches `date-released` in `CITATION.cff`.
+Do not treat the all-versions concept
+landing page alone as evidence for the new record. Correct a mismatch before
+declaring the release complete.
+
+### 8. Remove the merged release branch
+
+After crates.io, GitHub, benchmark-asset, and Zenodo verification succeed:
 
 ```bash
 git branch -d "release/$TAG"
 git push origin --delete "release/$TAG"
 ```
-
----
-
-## Notes and tips
-
-- Do not create a temporary local release tag for changelog generation; use
-  `just changelog-unreleased "$TAG"`.
-- Keep the release PR scoped to version, changelog, archive, benchmark summary,
-  and documentation changes.
-- `just changelog` regenerates the current changelog from existing tags and may
-  update `docs/archive/changelog/`.
-- `just changelog-unreleased "$TAG"` is for release PR preparation before the
-  final tag exists.
-- `just tag "$TAG"` is for the final post-merge annotated tag.
-- If multiple files reference the version, confirm all of them are updated
-  consistently.
