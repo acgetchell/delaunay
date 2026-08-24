@@ -3386,7 +3386,17 @@ rules:
               metavariable: $MODE
               regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
       - patterns:
+          - pattern: $PATH.open(mode=$MODE, ...)
+          - metavariable-regex:
+              metavariable: $MODE
+              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+      - patterns:
           - pattern: open($PATH, $MODE, ...)
+          - metavariable-regex:
+              metavariable: $MODE
+              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+      - patterns:
+          - pattern: open($PATH, mode=$MODE, ...)
           - metavariable-regex:
               metavariable: $MODE
               regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'

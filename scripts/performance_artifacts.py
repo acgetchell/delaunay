@@ -562,6 +562,7 @@ class PerformanceBundle:
             msg = "performance dataset must contain at least one row"
             raise ValueError(msg)
         keys: set[str] = set()
+        comparison_blockers = self.context.comparison_blockers
         for row in self.rows:
             if row.suite != self.context.suite:
                 msg = f"row suite {row.suite!r} does not match report suite {self.context.suite!r}"
@@ -573,7 +574,7 @@ class PerformanceBundle:
                 msg = f"duplicate benchmark_id: {row.benchmark_id!r}"
                 raise ValueError(msg)
             keys.add(row.benchmark_id)
-            if row.coverage_status == "comparable" and self.context.comparison_blockers:
+            if row.coverage_status == "comparable" and comparison_blockers:
                 msg = "comparable row is not supported by compatible measurement provenance"
                 raise ValueError(msg)
 

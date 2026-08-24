@@ -473,7 +473,7 @@ just performance-doc
 just performance-github-assets
 
 # Explicit repair
-just performance-release <current-tag> <previous-tag>
+just performance-release 'current-tag' 'previous-tag'
 ```
 
 `just performance-local` writes `performance.md` plus retained `performance.csv` and

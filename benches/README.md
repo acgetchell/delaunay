@@ -52,7 +52,7 @@ Common maintainer flows:
   `docs/PERFORMANCE.md` and archive the previous curated report.
 - After a GitHub Release publishes: confirm the release benchmark workflow
   attached `delaunay-vX.Y.Z-criterion-baseline.tar.gz`; use
-  `just performance-github-assets <current-tag> <baseline-tag>` when you need a
+  `just performance-github-assets 'current-tag' 'baseline-tag'` when you need a
   report from stored release assets.
 
 Criterion saved-baseline reports use Cargo's Criterion output under
