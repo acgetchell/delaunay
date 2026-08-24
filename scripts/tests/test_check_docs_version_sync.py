@@ -217,7 +217,10 @@ def test_find_version_mismatches_ignores_historical_docs_and_test_fixtures(tmp_p
     fixtures = tmp_path / "tests" / "fixtures"
     fixtures.mkdir(parents=True)
     stale_snippet = 'delaunay = "0.1.0"\njust performance-release v0.1.0 v0.0.9\n'
-    (tmp_path / "CHANGELOG.md").write_text(stale_snippet, encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        f"# Changelog\n\n## [{_VERSION}] - 2026-01-02\n\n{stale_snippet}",
+        encoding="utf-8",
+    )
     (archive / "old.md").write_text(stale_snippet, encoding="utf-8")
     (fixtures / "example.md").write_text(stale_snippet, encoding="utf-8")
 
@@ -328,6 +331,20 @@ def test_release_date_must_match_generated_changelog_heading(tmp_path: Path) -> 
     message = str(exc_info.value)
     assert "CITATION.cff:4" in message
     assert "CHANGELOG.md:3" in message
+
+
+def test_release_date_rejects_missing_current_changelog_heading(tmp_path: Path) -> None:
+    """An existing changelog must contain exactly one current-version heading."""
+    _write_project(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [1.2.2] - 2026-01-02\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TypeError, match=r"missing release heading for 1\.2\.3") as exc_info:
+        check_docs_version_sync.find_version_mismatches(tmp_path)
+
+    assert "CHANGELOG.md" in str(exc_info.value)
 
 
 def test_release_date_rejects_malformed_current_changelog_heading(tmp_path: Path) -> None:

@@ -330,7 +330,8 @@ def _validate_release_date_sync(root: Path, package: PackageInfo) -> None:
         _require_iso_date(value, path=changelog, line=line_number, field=f"release heading date for {package.version}")
         changelog_matches.append((line_number, value))
     if not changelog_matches:
-        return
+        msg = f"{changelog}: missing release heading for {package.version}; expected exactly one"
+        raise TypeError(msg)
     if len(changelog_matches) != 1:
         locations = ", ".join(f"{changelog}:{line}" for line, _value in changelog_matches)
         msg = f"{locations}: duplicate release headings for {package.version}; expected exactly one"
