@@ -179,7 +179,7 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
   integrity manifest. It owns bounded envelope parsing, typed load/migration
   APIs, canonical UUID-ordered streaming hashes with map-only buffering,
   owner-bound reuse of Level-3 f-vector/Euler evidence, and independently
-  replayed D4/D5 Euclidean construction proof before Levels 3–5 restoration.
+  replayed 4D/5D Euclidean construction proof before Levels 3–5 restoration.
 - `spherical.rs` - bounded `S^2`/`S^3` construction,
   realization-validation, and empty-cap Delaunay backend using the topology
   space coordinate/metric backend.
