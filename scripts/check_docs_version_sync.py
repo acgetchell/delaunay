@@ -475,7 +475,7 @@ BENCHMARK_TAG_PAIR_RE = re.compile(
     r"(?P<current>v?[0-9][^\s`]+)"
     r"(?P<separator>[ \t]+)"
     r"(?P<baseline>[^\s`]+)"
-    r"(?=[ \t]|`|$)",
+    r"(?=[ \t\r]|`|$)",
     re.MULTILINE,
 )
 BENCHMARK_SINGLE_TAG_RE = re.compile(

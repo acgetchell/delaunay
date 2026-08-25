@@ -132,6 +132,23 @@ def test_successful_update_preserves_crlf_line_endings(tmp_path: Path) -> None:
     assert b"\n" not in content.replace(b"\r\n", b"")
 
 
+def test_successful_update_preserves_crlf_benchmark_commands(tmp_path: Path) -> None:
+    _write_project(tmp_path)
+    benchmarking = tmp_path / "docs" / "BENCHMARKING.md"
+    benchmarking.write_bytes(benchmarking.read_bytes().replace(b"\n", b"\r\n"))
+
+    summary = update_release_version.update_release_version(
+        tmp_path,
+        "v1.2.3",
+        previous=_previous(),
+    )
+
+    content = benchmarking.read_bytes()
+    assert benchmarking in summary.changed_paths
+    assert b"just performance-release v1.2.3 v1.2.2\r\n" in content
+    assert b"\n" not in content.replace(b"\r\n", b"")
+
+
 def test_update_release_version_advances_existing_release_dates_together(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

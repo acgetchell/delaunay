@@ -78,6 +78,30 @@ def test_parse_resolution_rejects_missing_direct_tool() -> None:
         update_python_dev_pins.parse_resolution("mcp==1.29.0\n", pins)
 
 
+def test_resolve_latest_pins_preserves_retained_constraint_for_managed_distribution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(project_text("ruff==0.16.2", "ruff<0.17"), encoding="utf-8")
+    calls: list[tuple[str, list[str], dict[str, object]]] = []
+
+    def fake_run(command: str, args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((command, args, kwargs))
+        return subprocess.CompletedProcess([command, *args], 0, stdout="ruff==0.16.4\n", stderr="")
+
+    monkeypatch.setattr(update_python_dev_pins, "run_safe_command", fake_run)
+
+    resolved = update_python_dev_pins.resolve_latest_pins(
+        [update_python_dev_pins.DevPin("ruff", "0.16.2")],
+        "3.14",
+        tmp_path,
+    )
+
+    assert resolved == [update_python_dev_pins.DevPin("ruff", "0.16.4")]
+    assert calls[0][2]["input"] == "packaging>=26\nruff\nruff<0.17\n"
+
+
 def test_update_dev_pins_resolves_then_applies_one_exact_transaction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -124,7 +148,7 @@ def test_update_dev_pins_resolves_then_applies_one_exact_transaction(
         ],
         {
             "cwd": tmp_path,
-            "input": "ruff\nsemgrep\n",
+            "input": "packaging>=26\npytest>=9.1\nruff\nsemgrep\nty~=0.0.66\n",
             "timeout": update_python_dev_pins.UV_PIP_COMPILE_TIMEOUT_SECONDS,
         },
     )
@@ -333,6 +357,36 @@ def test_main_rolls_back_manifest_and_lock_after_uv_add_timeout(
     assert "timed out after 300 seconds" in captured.err
     assert pyproject.read_text(encoding="utf-8") == original_manifest
     assert uv_lock.read_bytes() == original_lock
+
+
+def test_main_rejects_symlinked_lock_without_mutating_link_or_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    original_manifest = project_text("ruff==0.16.2")
+    pyproject.write_text(original_manifest, encoding="utf-8")
+    lock_target = tmp_path / "shared.lock"
+    original_lock = b"version = 1\n"
+    lock_target.write_bytes(original_lock)
+    uv_lock = tmp_path / "uv.lock"
+    uv_lock.symlink_to(lock_target.name)
+
+    def unexpected_uv(*_args: object, **_kwargs: object) -> None:
+        msg = "uv must not run with a symlinked lockfile"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(update_python_dev_pins, "run_safe_command", unexpected_uv)
+
+    assert update_python_dev_pins.main(["--pyproject", str(pyproject)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "uv.lock must not be a symbolic link" in captured.err
+    assert uv_lock.is_symlink()
+    assert uv_lock.readlink().as_posix() == lock_target.name
+    assert lock_target.read_bytes() == original_lock
+    assert pyproject.read_text(encoding="utf-8") == original_manifest
 
 
 def test_main_reports_primary_and_rollback_failures_without_traceback(

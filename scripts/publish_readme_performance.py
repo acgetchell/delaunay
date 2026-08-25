@@ -217,13 +217,19 @@ def publish_readme_performance(
     )
     source_csv = source.csv.read_bytes()
     source_provenance = source.provenance.read_bytes()
+    missing_durable = [path for path in (durable.csv, durable.provenance) if not path.is_file()]
+    if missing_durable:
+        rendered = ", ".join(path.relative_to(resolved_root).as_posix() for path in missing_durable)
+        msg = f"promoted performance evidence is missing: {rendered}; run `just performance-release` before publishing the README snapshot"
+        raise ValueError(msg)
     if durable.csv.read_bytes() != source_csv or durable.provenance.read_bytes() != source_provenance:
         msg = "retained performance data does not match the exact bundle promoted by `just performance-release`"
         raise ValueError(msg)
 
     performance_report = resolved_root / "docs/PERFORMANCE.md"
     if not performance_report.is_file():
-        msg = f"{performance_report} is missing; run `just performance-release` before publishing the README snapshot"
+        report_label = performance_report.relative_to(resolved_root).as_posix()
+        msg = f"{report_label} is missing; run `just performance-release` before publishing the README snapshot"
         raise ValueError(msg)
     durable_evidence = ArtifactPaths(
         csv=durable.csv.relative_to(resolved_root),

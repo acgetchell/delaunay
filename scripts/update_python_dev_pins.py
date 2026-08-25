@@ -128,9 +128,59 @@ def parse_resolution(output: str, pins: list[DevPin]) -> list[DevPin]:
     return latest
 
 
+def _resolution_requirements(text: str, pins: list[DevPin]) -> str:
+    """Return project and retained dev constraints with managed pins unpinned."""
+    data = tomllib.loads(text)
+    project = _required_table(data, "project")
+    dependencies = project.get("dependencies", [])
+    if not isinstance(dependencies, list):
+        msg = "project.dependencies must be an array"
+        raise TypeError(msg)
+
+    requirements: list[str] = []
+    for dependency in dependencies:
+        if not isinstance(dependency, str):
+            msg = "project.dependencies entries must be strings"
+            raise TypeError(msg)
+        requirements.append(dependency)
+
+    groups = _required_table(data, "dependency-groups")
+    dev = groups.get("dev")
+    if not isinstance(dev, list):
+        msg = "dependency-groups.dev must be an array"
+        raise TypeError(msg)
+    managed = {canonicalize_name(pin.name): pin for pin in pins}
+    for raw_requirement in dev:
+        if not isinstance(raw_requirement, str):
+            msg = "dependency-groups.dev entries must be strings"
+            raise TypeError(msg)
+        try:
+            requirement = Requirement(raw_requirement)
+        except InvalidRequirement as error:
+            msg = f"dependency-groups.dev contains an invalid requirement: {raw_requirement!r}"
+            raise ValueError(msg) from error
+        specifiers = list(requirement.specifier)
+        pin = managed.get(canonicalize_name(requirement.name))
+        if (
+            pin is not None
+            and not requirement.extras
+            and requirement.marker is None
+            and requirement.url is None
+            and len(specifiers) == 1
+            and specifiers[0].operator == "=="
+            and "*" not in specifiers[0].version
+            and specifiers[0].version == pin.version
+        ):
+            requirements.append(pin.name)
+        else:
+            requirements.append(raw_requirement)
+    return "".join(f"{requirement}\n" for requirement in requirements)
+
+
 def resolve_latest_pins(pins: list[DevPin], python_version: str, project_root: Path) -> list[DevPin]:
     """Resolve the latest mutually compatible cross-platform set without writes."""
-    requirements = "".join(f"{pin.name}\n" for pin in pins)
+    manifest = project_root / "pyproject.toml"
+    requirements = _resolution_requirements(manifest.read_text(encoding="utf-8"), pins)
     result = run_safe_command(
         "uv",
         [
@@ -261,6 +311,10 @@ def _require_applied_pins(pyproject: Path, expected: list[DevPin], original: byt
 def update_dev_pins(pyproject: Path) -> dict[str, tuple[str, str]]:
     """Resolve and apply all changed exact direct pins in one uv transaction."""
     manifest = _conventional_manifest(pyproject)
+    uv_lock = manifest.parent / "uv.lock"
+    if uv_lock.is_symlink():
+        msg = f"uv.lock must not be a symbolic link: {uv_lock}"
+        raise ValueError(msg)
     python_version, current = parse_project(manifest.read_text(encoding="utf-8"))
     if not current:
         return {}
@@ -269,7 +323,6 @@ def update_dev_pins(pyproject: Path) -> dict[str, tuple[str, str]]:
     if not changes:
         return changes
 
-    uv_lock = manifest.parent / "uv.lock"
     snapshots = {
         manifest: manifest.read_bytes(),
         uv_lock: uv_lock.read_bytes() if uv_lock.exists() else None,

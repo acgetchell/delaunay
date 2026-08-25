@@ -4964,10 +4964,16 @@ def _preflight_performance_destinations(
         durable = _durable_performance_artifact_paths(archive_dir, report_id)
         paths["durable CSV"] = durable.csv
         paths["durable provenance"] = durable.provenance
+        tracked_destinations = {
+            current,
+            archive_dir / "README.md",
+            archive_dir / report_id.archive_name,
+            durable.csv,
+            durable.provenance,
+        }
         for label, path in paths.items():
-            if label in {"Markdown output", "artifact CSV", "artifact provenance"}:
-                continue
-            _repository_relative_path(project_root, path, label=label)
+            if path in tracked_destinations:
+                _repository_relative_path(project_root, path, label=label)
         if current.exists():
             current_id = parse_performance_report_id(_normalize_how_to_update(_read_text(current)))
             if current_id != report_id:

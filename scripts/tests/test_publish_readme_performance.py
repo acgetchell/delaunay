@@ -178,6 +178,21 @@ def test_publish_readme_performance_rejects_stale_current_release_before_writing
 
 
 @pytest.mark.parametrize("artifact", ["csv", "provenance"])
+def test_publish_readme_performance_requires_complete_promoted_bundle(tmp_path: Path, artifact: str) -> None:
+    source = _write_project(tmp_path)
+    suffix = ".csv" if artifact == "csv" else ".provenance.json"
+    durable = tmp_path / "docs/archive/performance/data" / f"v0.8.1-vs-v0.8.0{suffix}"
+    durable.unlink()
+    original = (tmp_path / "README.md").read_bytes()
+
+    with pytest.raises(ValueError, match=r"promoted performance evidence is missing: .*just performance-release"):
+        publish_readme_performance.publish_readme_performance(tmp_path, artifacts=source, readme=tmp_path / "README.md")
+
+    assert (tmp_path / "README.md").read_bytes() == original
+    assert not (tmp_path / "docs/assets/bench").exists()
+
+
+@pytest.mark.parametrize("artifact", ["csv", "provenance"])
 def test_publish_readme_performance_requires_exact_promoted_bundle(tmp_path: Path, artifact: str) -> None:
     source = _write_project(tmp_path)
     suffix = ".csv" if artifact == "csv" else ".provenance.json"

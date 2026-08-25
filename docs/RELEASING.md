@@ -37,10 +37,10 @@ git pull --ff-only
 ```
 
 Install or verify the development tools before running maintenance recipes.
-GitHub CLI is an external prerequisite. Setup installs the pinned Rust CLI
-tools and the intentionally unpinned `cargo-update` bootstrap package that
-provides `cargo-install-update` for `just update`, then verifies both `gh` and
-`cargo-install-update`:
+`just setup` requires `uv`, `jq`, `rustup`, Cargo, `chktex`, and GitHub CLI
+(`gh`) on `PATH`. Setup installs the pinned Rust CLI tools and the intentionally
+unpinned `cargo-update` bootstrap package that provides `cargo-install-update`
+for `just update`, then verifies both `gh` and `cargo-install-update`:
 
 ```bash
 just setup
