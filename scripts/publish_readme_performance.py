@@ -212,8 +212,21 @@ def publish_readme_performance(
     baseline = bundle.context.release.baseline
     archive_stem = f"{current}-vs-{baseline}"
     durable = ArtifactPaths(
-        csv=resolved_root / "docs/archive/performance/data" / f"{archive_stem}.csv",
-        provenance=resolved_root / "docs/archive/performance/data" / f"{archive_stem}.provenance.json",
+        csv=_contained_destination(
+            resolved_root,
+            resolved_root / "docs/archive/performance/data" / f"{archive_stem}.csv",
+            label="promoted performance CSV",
+        ),
+        provenance=_contained_destination(
+            resolved_root,
+            resolved_root / "docs/archive/performance/data" / f"{archive_stem}.provenance.json",
+            label="promoted performance provenance",
+        ),
+    )
+    performance_report = _contained_destination(
+        resolved_root,
+        resolved_root / "docs/PERFORMANCE.md",
+        label="promoted performance report",
     )
     source_csv = source.csv.read_bytes()
     source_provenance = source.provenance.read_bytes()
@@ -226,7 +239,6 @@ def publish_readme_performance(
         msg = "retained performance data does not match the exact bundle promoted by `just performance-release`"
         raise ValueError(msg)
 
-    performance_report = resolved_root / "docs/PERFORMANCE.md"
     if not performance_report.is_file():
         report_label = performance_report.relative_to(resolved_root).as_posix()
         msg = f"{report_label} is missing; run `just performance-release` before publishing the README snapshot"

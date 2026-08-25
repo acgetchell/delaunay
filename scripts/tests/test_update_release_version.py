@@ -118,7 +118,7 @@ def test_update_release_version_is_content_idempotent_on_the_same_utc_day(tmp_pa
 def test_successful_update_preserves_crlf_line_endings(tmp_path: Path) -> None:
     _write_project(tmp_path)
     cargo_lock = tmp_path / "Cargo.lock"
-    cargo_lock.write_bytes(cargo_lock.read_bytes().replace(b"\n", b"\r\n"))
+    cargo_lock.write_bytes(cargo_lock.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
 
     summary = update_release_version.update_release_version(
         tmp_path,
@@ -135,7 +135,7 @@ def test_successful_update_preserves_crlf_line_endings(tmp_path: Path) -> None:
 def test_successful_update_preserves_crlf_benchmark_commands(tmp_path: Path) -> None:
     _write_project(tmp_path)
     benchmarking = tmp_path / "docs" / "BENCHMARKING.md"
-    benchmarking.write_bytes(benchmarking.read_bytes().replace(b"\n", b"\r\n"))
+    benchmarking.write_bytes(benchmarking.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
 
     summary = update_release_version.update_release_version(
         tmp_path,

@@ -207,6 +207,27 @@ def test_publish_readme_performance_requires_exact_promoted_bundle(tmp_path: Pat
     assert not (tmp_path / "docs/assets/bench").exists()
 
 
+@pytest.mark.parametrize("artifact", ["csv", "provenance"])
+def test_publish_readme_performance_rejects_external_durable_symlink(tmp_path: Path, artifact: str) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = _write_project(root)
+    suffix = ".csv" if artifact == "csv" else ".provenance.json"
+    durable = root / "docs/archive/performance/data" / f"v0.8.1-vs-v0.8.0{suffix}"
+    outside = tmp_path / f"outside{suffix}"
+    outside.write_bytes(durable.read_bytes())
+    durable.unlink()
+    durable.symlink_to(outside)
+    original = (root / "README.md").read_bytes()
+    label = "CSV" if artifact == "csv" else artifact
+
+    with pytest.raises(ValueError, match=rf"promoted performance {label}.*must be contained"):
+        publish_readme_performance.publish_readme_performance(root, artifacts=source)
+
+    assert (root / "README.md").read_bytes() == original
+    assert not (root / "docs/assets/bench").exists()
+
+
 def test_publish_readme_performance_requires_promoted_report(tmp_path: Path) -> None:
     source = _write_project(tmp_path)
     report = tmp_path / "docs/PERFORMANCE.md"
@@ -218,6 +239,24 @@ def test_publish_readme_performance_requires_promoted_report(tmp_path: Path) -> 
 
     assert (tmp_path / "README.md").read_bytes() == original
     assert not (tmp_path / "docs/assets/bench").exists()
+
+
+def test_publish_readme_performance_rejects_external_report_symlink(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = _write_project(root)
+    report = root / "docs/PERFORMANCE.md"
+    outside = tmp_path / "PERFORMANCE.md"
+    outside.write_bytes(report.read_bytes())
+    report.unlink()
+    report.symlink_to(outside)
+    original = (root / "README.md").read_bytes()
+
+    with pytest.raises(ValueError, match=r"promoted performance report.*must be contained"):
+        publish_readme_performance.publish_readme_performance(root, artifacts=source)
+
+    assert (root / "README.md").read_bytes() == original
+    assert not (root / "docs/assets/bench").exists()
 
 
 def test_publish_readme_performance_rejects_stale_promoted_report(tmp_path: Path) -> None:
