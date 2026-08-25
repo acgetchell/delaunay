@@ -48,8 +48,9 @@ Common maintainer flows:
 - Before pushing performance-sensitive Rust or benchmark changes: run
   `just perf-large-scale-smoke`, then `just perf-no-regressions` when the work
   is PR-ready.
-- During release PR preparation: run `just performance-release` to update
-  `docs/PERFORMANCE.md` and archive the previous curated report.
+- During release PR preparation: run `just performance-release`, then
+  `just performance-readme`, to update the curated report, archive its
+  predecessor, and publish the matching README snapshot.
 - After a GitHub Release publishes: confirm the release benchmark workflow
   attached `delaunay-vX.Y.Z-criterion-baseline.tar.gz`; use
   `just performance-github-assets 'current-tag' 'baseline-tag'` when you need a
@@ -84,15 +85,20 @@ published release assets, or retained inputs:
   only the documentation promotion. It runs no Cargo benchmarks or measurement
   worktrees and rejects incomplete, invalid, stale, same-version, or
   scientifically non-comparable inputs.
+- `just performance-readme` validates the retained promoted bundle, then
+  atomically publishes a compact README table and the canonical README-owned
+  CSV/provenance pair. It runs no benchmarks.
 
 Promotion uses per-file atomic replacement and rolls back caught failures. A
-hard process or machine interruption can stop between replacements; inspect
-`docs/PERFORMANCE.md`, `docs/archive/performance/`, and its `data/` directory,
-then rerun the idempotent command.
+hard process or machine interruption can stop between replacements. Inspect
+`docs/PERFORMANCE.md`, `docs/archive/performance/` and its `data/` directory,
+`README.md`, and `docs/assets/bench/`, then rerun the owning idempotent command:
+`just performance-doc` or `just performance-readme` for an already-retained
+bundle.
 
-The `perf-local`, `perf-github-assets`, and `perf-release` names remain thin
-compatibility aliases; new documentation and automation use the canonical
-names.
+Exact-renaming `perf-*` compatibility aliases are intentionally absent. The
+remaining `perf-*` recipes are Delaunay-specific regression, stress, and
+profiling workflows with distinct semantics.
 
 Use explicit tag pairs only for release repair or regeneration. Both tags are
 required together; a partial pair fails before fetching or benchmarking:
@@ -121,6 +127,8 @@ Artifact ownership is deliberately narrow:
 | `docs/PERFORMANCE.md` | Yes | `performance-release`, `performance-doc` | Latest curated distinct-release report |
 | `docs/archive/performance/` | Yes | `performance-release`, `performance-doc` | Older curated distinct-release reports |
 | `docs/archive/performance/data/` | Yes | `performance-release`, `performance-doc` | Exact CSV/provenance evidence for each new promoted report |
+| `README.md` | Yes | `performance-readme` | Compact snapshot of the latest retained and promoted comparison |
+| `docs/assets/bench/release-performance.*` | Yes | `performance-readme` | Exact README-owned CSV/provenance snapshot |
 | `delaunay-vX.Y.Z-criterion-baseline.tar.gz` | Release asset | release benchmark workflow | Raw Criterion data and versioned measurement metadata |
 
 CSV, not Parquet, is canonical for the retained comparison because this dataset
@@ -190,6 +198,7 @@ allocation checks, or targeted diagnostics.
 | Compare current tree against latest published release locally | `just performance-local` |
 | Compare stored GitHub Release benchmark assets | `just performance-github-assets [current-tag baseline-tag]` |
 | Measure, retain, validate, and promote release docs | `just performance-release [current-tag baseline-tag]` |
+| Publish the retained comparison snapshot to the README | `just performance-readme` |
 | Promote docs from a retained CSV/provenance pair | `just performance-doc` |
 | Allocation-contract microbenchmarks | `just bench-allocations` |
 | Persist/update the default local baseline artifact | `just perf-baseline` |
@@ -331,6 +340,7 @@ Use the `performance-*` family for retained release-to-release reports:
 just performance-local
 just performance-github-assets
 just performance-release
+just performance-readme
 just performance-doc
 just performance-release "$TAG" "$PREVIOUS_TAG"
 ```
@@ -338,8 +348,10 @@ just performance-release "$TAG" "$PREVIOUS_TAG"
 `performance-local` and `performance-github-assets` retain Markdown, CSV, and
 provenance JSON bundles without changing tracked documentation.
 `performance-release` measures locally, retains and reload-validates the bundle,
-then promotes tracked docs. `performance-doc` performs only the reload,
-rendering, and promotion from retained inputs. Explicit `<current-tag>
+then promotes tracked docs. The canonical release flow immediately follows it
+with `performance-readme` to publish the matching README table and durable
+assets. `performance-doc` performs only the reload, rendering, and promotion
+from retained inputs. Explicit `<current-tag>
 <baseline-tag>` arguments repair or regenerate a specific distinct release
 pair; neither tag may be supplied alone.
 

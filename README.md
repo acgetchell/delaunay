@@ -3,7 +3,7 @@
 [![DOI](https://badgen.net/badge/DOI/10.5281%2Fzenodo.16931097/blue)](https://doi.org/10.5281/zenodo.16931097)
 [![Crates.io](https://badgen.net/crates/v/delaunay)](https://crates.io/crates/delaunay)
 [![Downloads](https://badgen.net/crates/d/delaunay)](https://crates.io/crates/delaunay)
-[![License](https://badgen.net/github/license/acgetchell/delaunay)](https://github.com/acgetchell/delaunay/blob/main/LICENSE)
+[![License](https://badgen.net/github/license/acgetchell/delaunay)](https://github.com/acgetchell/delaunay/blob/v0.8.0/LICENSE)
 [![Docs.rs](https://docs.rs/delaunay/badge.svg)](https://docs.rs/delaunay)
 [![CI][ci-badge]][ci-workflow]
 [![CodeQL][codeql-badge]][codeql-workflow]
@@ -332,6 +332,16 @@ just bench-perf-summary
 See [`benches/README.md`](benches/README.md) for benchmark selection, fixture sizes, release baselines,
 and large-scale profiling guidance.
 
+Release PRs publish a compact group-level snapshot from the validated retained
+CSV/provenance bundle. The geometric-mean ratios are descriptive summaries;
+the full report retains every benchmark and confidence interval.
+
+<!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->
+
+No retained release-comparison bundle has been published to the README yet.
+
+<!-- PERFORMANCE_RELEASE_TABLE:END -->
+
 ## 🛣️ Limitations and Roadmap
 
 Current routine construction coverage targets 2D through 5D. Exact orientation, relative in-sphere,
@@ -414,7 +424,7 @@ section of [REFERENCES.md](REFERENCES.md).
 
 ## 📜 License
 
-This project is licensed under the [BSD 3-Clause License](https://github.com/acgetchell/delaunay/blob/main/LICENSE).
+This project is licensed under the [BSD 3-Clause License](https://github.com/acgetchell/delaunay/blob/v0.8.0/LICENSE).
 
 ---
 

@@ -224,7 +224,7 @@ def _uv_lock_reference(path: Path, project: PythonProjectInfo) -> VersionReferen
     candidate_indices: list[int] = []
     for index, entry in enumerate(entries):
         source = entry.get("source")
-        if entry.get("name") == project.name and _is_parsed_object(source) and isinstance(source.get("editable"), str):
+        if entry.get("name") == project.name and _is_parsed_object(source) and source.get("editable") == ".":
             candidate_indices.append(index)
     return _single_package_reference(path, entries, candidate_indices, project.name, ReferenceKind.UV_LOCK)
 
@@ -308,35 +308,47 @@ def _validate_citation_doi(path: Path) -> None:
         raise TypeError(msg)
 
 
-def _validate_release_date_sync(root: Path, package: PackageInfo) -> None:
-    """Require citation metadata and the generated release heading to agree."""
-    citation = root / "CITATION.cff"
-    citation_line, citation_date = _citation_release_date(citation)
-    changelog = root / "CHANGELOG.md"
-    if not changelog.is_file():
-        return
-
-    heading_prefix = re.compile(rf"^## \[v?{re.escape(package.version)}\]")
-    heading = re.compile(rf"^## \[v?{re.escape(package.version)}\] - (?P<date>\d{{4}}-\d{{2}}-\d{{2}})$")
-    changelog_matches: list[tuple[int, str]] = []
-    for line_number, line in enumerate(changelog.read_text(encoding="utf-8").splitlines(), start=1):
+def changelog_release_date(path: Path, version: str) -> tuple[int, str] | None:
+    """Return one generated release-heading date, or ``None`` before generation."""
+    heading_prefix = re.compile(rf"^## \[v?{re.escape(version)}\]")
+    heading = re.compile(rf"^## \[v?{re.escape(version)}\] - (?P<date>\d{{4}}-\d{{2}}-\d{{2}})$")
+    matches: list[tuple[int, str]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if heading_prefix.match(line) is None:
             continue
         match = heading.fullmatch(line)
         if match is None:
-            msg = f"{changelog}:{line_number}: release heading for {package.version} must end with YYYY-MM-DD"
+            msg = f"{path}:{line_number}: release heading for {version} must end with YYYY-MM-DD"
             raise TypeError(msg)
         value = match.group("date")
-        _require_iso_date(value, path=changelog, line=line_number, field=f"release heading date for {package.version}")
-        changelog_matches.append((line_number, value))
-    if not changelog_matches:
-        msg = f"{changelog}: missing release heading for {package.version}; expected exactly one"
+        _require_iso_date(value, path=path, line=line_number, field=f"release heading date for {version}")
+        matches.append((line_number, value))
+    if not matches:
+        return None
+    if len(matches) != 1:
+        locations = ", ".join(f"{path}:{line}" for line, _value in matches)
+        msg = f"{locations}: duplicate release headings for {version}; expected exactly one"
         raise TypeError(msg)
-    if len(changelog_matches) != 1:
-        locations = ", ".join(f"{changelog}:{line}" for line, _value in changelog_matches)
-        msg = f"{locations}: duplicate release headings for {package.version}; expected exactly one"
-        raise TypeError(msg)
-    changelog_line, changelog_date = changelog_matches[0]
+    return matches[0]
+
+
+def _validate_release_date_sync(root: Path, package: PackageInfo, *, final_release: bool) -> None:
+    """Require citation metadata and the applicable generated release heading to agree."""
+    citation = root / "CITATION.cff"
+    citation_line, citation_date = _citation_release_date(citation)
+    changelog = root / "CHANGELOG.md"
+    if not changelog.is_file():
+        if final_release:
+            msg = f"{changelog}: final release validation requires a generated heading for {package.version}"
+            raise TypeError(msg)
+        return
+    changelog_match = changelog_release_date(changelog, package.version)
+    if changelog_match is None:
+        if final_release:
+            msg = f"{changelog}: final release validation requires exactly one generated heading for {package.version}"
+            raise TypeError(msg)
+        return
+    changelog_line, changelog_date = changelog_match
     if citation_date != changelog_date:
         msg = (
             f"release date mismatch: {citation}:{citation_line} has {citation_date}, "
@@ -354,10 +366,30 @@ def _iter_markdown_files(root: Path) -> list[Path]:
     return sorted(markdown_files)
 
 
+# The transactional release updater consumes the checker's parsers so the
+# writer and validator cannot drift onto different release surfaces.
+read_cargo_package_info = _read_cargo_package_info
+read_python_project_info = _read_python_project_info
+toml_table_key_line = _toml_table_key_line
+cargo_lock_reference = _cargo_lock_reference
+pyproject_reference = _pyproject_reference
+uv_lock_reference = _uv_lock_reference
+citation_reference = _citation_reference
+citation_release_date = _citation_release_date
+iter_active_markdown_files = _iter_markdown_files
+
+
 def _dependency_regex(package_name: str) -> re.Pattern[str]:
     """Build a regex for Cargo dependency snippets naming *package_name*."""
     escaped_name = re.escape(package_name)
-    return re.compile(rf'(?<![\w.-]){escaped_name}\s*=\s*(?:"(?P<plain>[^"]+)"|\{{[^}}]*version\s*=\s*"(?P<table>[^"]+)"[^}}]*\}})')
+    return re.compile(
+        rf"(?<![\w.-]){escaped_name}\s*=\s*(?:"
+        rf'"(?P<plain>[^\"]+)"|\'(?P<plain_literal>[^\']+)\'|'
+        rf"\{{[^}}]*version\s*=\s*(?:\"(?P<table>[^\"]+)\"|'(?P<table_literal>[^']+)')[^}}]*\}})"
+    )
+
+
+dependency_regex = _dependency_regex
 
 
 def _dependency_references(path: Path, package_name: str) -> list[VersionReference]:
@@ -366,7 +398,7 @@ def _dependency_references(path: Path, package_name: str) -> list[VersionReferen
     references: list[VersionReference] = []
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         for match in dependency_re.finditer(line):
-            version = match.group("plain") or match.group("table")
+            version = match.group("plain") or match.group("plain_literal") or match.group("table") or match.group("table_literal")
             references.append(
                 VersionReference(
                     path=path,
@@ -383,6 +415,9 @@ def _cargo_add_regex(package_name: str) -> re.Pattern[str]:
     """Build a regex for cargo-add commands naming *package_name*."""
     escaped_name = re.escape(package_name)
     return re.compile(rf"(?<![\w.-])cargo\s+add\b[^`\n]*?(?<![\w.-]){escaped_name}@(?P<version>[^\s`]+)")
+
+
+cargo_add_regex = _cargo_add_regex
 
 
 def _cargo_add_references(path: Path, package_name: str) -> list[VersionReference]:
@@ -403,11 +438,17 @@ def _cargo_add_references(path: Path, package_name: str) -> list[VersionReferenc
     return references
 
 
-_README_TAG_LINK_RE = re.compile(
+README_TAG_LINK_RE = re.compile(
     r"https://(?:github\.com/acgetchell/delaunay/(?:blob|raw|tree)/|raw\.githubusercontent\.com/acgetchell/delaunay/)"
     r"(?:v(?P<version>[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)"
-    r"|(?P<revision>[0-9a-f]{7,40}))(?=/|$|[^0-9A-Za-z._+-])"
+    r"|(?P<revision>[0-9a-f]{7,40}))(?P<path>/[^)\s]*)?(?=$|[)\s])"
 )
+
+
+def readme_tag_link_is_performance_asset(match: re.Match[str]) -> bool:
+    """Return whether a README link is owned by ``performance-readme``."""
+    path = str(match.group("path") or "")
+    return path.startswith(("/docs/assets/bench/", "/docs/archive/performance/data/")) or path == "/docs/PERFORMANCE.md"
 
 
 def _readme_tag_references(path: Path) -> list[VersionReference]:
@@ -422,25 +463,54 @@ def _readme_tag_references(path: Path) -> list[VersionReference]:
                 ReferenceKind.README_TAG_LINK,
                 line.strip(),
             )
-            for match in _README_TAG_LINK_RE.finditer(line)
+            for match in README_TAG_LINK_RE.finditer(line)
+            if not readme_tag_link_is_performance_asset(match)
         )
     return references
 
 
-_BENCHMARK_CURRENT_TAG_RE = re.compile(
-    r"just (?:performance|perf)-(?:github-assets|release)\s+v"
-    r"(?P<version>[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?=\s|`)"
+_STABLE_RELEASE_TAG_RE = re.compile(r"^v(?P<major>0|[1-9][0-9]*)\.(?P<minor>0|[1-9][0-9]*)\.(?P<patch>0|[1-9][0-9]*)$")
+BENCHMARK_TAG_PAIR_RE = re.compile(
+    r"(?P<prefix>just performance-(?:github-assets|release)[ \t]+)"
+    r"(?P<current>v?[0-9][^\s`]+)"
+    r"(?P<separator>[ \t]+)"
+    r"(?P<baseline>[^\s`]+)"
+    r"(?=[ \t\r]|`|$)",
+    re.MULTILINE,
+)
+BENCHMARK_SINGLE_TAG_RE = re.compile(
+    r"just performance-(?:github-assets|release)[ \t]+"
+    r"(?P<current>v?[0-9][^\s`|]+)"
+    r"(?=[ \t]*(?:`|\||$))",
 )
 
 
+def _stable_tag_components(value: str, *, path: Path, line: int, label: str) -> tuple[int, int, int]:
+    """Parse one stable documentation tag into comparable numeric components."""
+    match = _STABLE_RELEASE_TAG_RE.fullmatch(value)
+    if match is None:
+        msg = f"{path}:{line}: benchmark {label} must be a stable tag in vX.Y.Z form, got {value!r}"
+        raise TypeError(msg)
+    return int(match.group("major")), int(match.group("minor")), int(match.group("patch"))
+
+
 def _benchmark_current_tag_references(path: Path) -> list[VersionReference]:
-    """Return current-release tag arguments in benchmark workflow examples."""
+    """Validate benchmark release pairs and return their current-tag references."""
     references: list[VersionReference] = []
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        references.extend(
-            VersionReference(path, line_number, match.group("version"), ReferenceKind.BENCHMARK_CURRENT_TAG, line.strip())
-            for match in _BENCHMARK_CURRENT_TAG_RE.finditer(line)
-        )
+        incomplete = BENCHMARK_SINGLE_TAG_RE.search(line)
+        if incomplete is not None:
+            msg = f"{path}:{line_number}: benchmark command with current tag {incomplete.group('current')!r} is missing its baseline tag"
+            raise TypeError(msg)
+        for match in BENCHMARK_TAG_PAIR_RE.finditer(line):
+            current = match.group("current")
+            baseline = match.group("baseline")
+            current_components = _stable_tag_components(current, path=path, line=line_number, label="current tag")
+            baseline_components = _stable_tag_components(baseline, path=path, line=line_number, label="baseline tag")
+            if baseline_components >= current_components:
+                msg = f"{path}:{line_number}: benchmark baseline tag {baseline} must be older than current tag {current}"
+                raise TypeError(msg)
+            references.append(VersionReference(path, line_number, current.removeprefix("v"), ReferenceKind.BENCHMARK_CURRENT_TAG, line.strip()))
     return references
 
 
@@ -462,11 +532,11 @@ def _version_references(root: Path, package: PackageInfo) -> list[VersionReferen
     return references
 
 
-def find_version_mismatches(root: Path) -> list[VersionMismatch]:
-    """Return release-version references that differ from Cargo.toml."""
+def find_version_mismatches(root: Path, *, final_release: bool = False) -> list[VersionMismatch]:
+    """Return release-version mismatches, optionally requiring final changelog evidence."""
     package = _read_cargo_package_info(root / "Cargo.toml")
     references = _version_references(root, package)
-    _validate_release_date_sync(root, package)
+    _validate_release_date_sync(root, package, final_release=final_release)
     _validate_citation_doi(root / "CITATION.cff")
     return [VersionMismatch(reference=reference, package=package) for reference in references if reference.version != package.version]
 
@@ -480,6 +550,11 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         color=False,
     )
     parser.add_argument("root", nargs="?", type=Path, default=Path.cwd(), help="Repository root to check (default: current directory)")
+    parser.add_argument(
+        "--final-release",
+        action="store_true",
+        help="require exactly one current-version CHANGELOG heading matching CITATION.cff",
+    )
     return parser.parse_args(argv)
 
 
@@ -488,7 +563,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     root = args.root.resolve()
     try:
-        mismatches = find_version_mismatches(root)
+        mismatches = find_version_mismatches(root, final_release=args.final_release)
     except (OSError, TypeError, tomllib.TOMLDecodeError) as error:
         print(f"Could not check release-version synchronization: {error}", file=sys.stderr)
         return 1

@@ -123,23 +123,29 @@ parameterized implementation helpers live in `just/helpers.just`.
 
 Tool-version variables in the root `justfile` are the source of truth for both
 local setup and GitHub Actions. `just setup-tools` installs or synchronizes the
-repository toolchain, while private `_ensure-*` dependencies fail fast when a
+repository toolchain. It requires `uv`, `gh`, `jq`, `rustup`, Cargo, and
+`chktex` on `PATH`, installs the pinned Rust CLI tools, and provisions the
+unpinned `cargo-update` bootstrap package that supplies
+`cargo-install-update`. Its final inventory verifies both `gh` and
+`cargo-install-update`. Private `_ensure-*` dependencies fail fast when a
 required tool or pinned version is unavailable during an individual recipe.
 `just setup` composes `setup-tools` with the development build.
 
 Use `just update` for deliberate dependency and tool maintenance. It composes
-`just update-dependencies`, which advances compatible and incompatible
-dependency requirements in `Cargo.toml`, updates `Cargo.lock`, and upgrades all
-uv-locked dependency groups within the constraints declared by
-`pyproject.toml`, with
+`just update-dependencies`, which advances compatible and incompatible Cargo
+requirements and `Cargo.lock`, resolves any exact direct pins under
+`[dependency-groups].dev` as one universal set for the supported Python
+version, then upgrades `uv.lock`, with
 `just update-cargo-tools`, which upgrades only the locally installed Cargo CLI
 packages owned by `setup-tools` and atomically reconciles their root `justfile`
 pins after every requested package updates successfully. The Cargo tool updater requires
 `cargo-install-update` from the `cargo-update` package and does not touch other
 Cargo-installed executables or uv's user-global tool environments. `setup-tools`
-and CI consume the reconciled declarations. Intentional exact
-uv overrides remain pinned until their declarations are changed explicitly;
-reproducible development tool versions otherwise come from `uv.lock`.
+and CI consume the reconciled declarations. The exact-pin step leaves ranged
+development requirements, project/runtime dependencies, optional dependencies,
+build requirements, and intentional uv overrides unchanged.
+The aggregate `just update` runs its `cargo-install-update` preflight before
+either dependency updater can change declarations or lockfiles.
 
 Agents should **prefer running `just` commands instead of invoking the
 underlying tools directly**. The justfile ensures the correct flags,
@@ -239,6 +245,15 @@ This compares the Cargo package version against `Cargo.lock`, `pyproject.toml`,
 dependency and `cargo add` snippets, and current-tag benchmark workflow
 examples.
 
+After generating a release changelog, run the strict final release gate:
+
+```bash
+just release-version-check
+```
+
+It invokes `check-docs-version-sync --final-release`, requiring exactly one
+current-version changelog heading whose date matches `CITATION.cff`.
+
 ---
 
 ## Full CI Validation
@@ -328,8 +343,9 @@ just notebook-check
 just bench-compile
 ```
 
-Commands that run benchmarks and produce performance data use the `perf`
-profile:
+Performance workflows use the following command surface. Commands that perform
+measurements use the `perf` profile; `performance-doc` and
+`performance-readme` only consume retained evidence:
 
 ```bash
 just bench
@@ -342,6 +358,7 @@ just performance-local
 just performance-github-assets
 just performance-release
 just performance-doc
+just performance-readme
 just perf-baseline
 just perf-compare
 just perf-vs-ref
@@ -458,6 +475,12 @@ asset and release-promotion recipes accept explicit `<current-tag>
 before any fetch or benchmark side effect. Temp-worktree release commands apply
 tracked checkout changes by default; untracked files must be added to git before
 they affect the generated report.
+
+Use `just performance-readme` after `performance-release` to validate that the
+retained bundle exactly matches the promoted durable evidence, then publish a
+compact group-level README table and the canonical CSV/provenance pair under
+`docs/assets/bench/`. It runs no benchmarks, updates tag-pinned evidence links,
+and rolls back every README-owned destination on caught failures.
 
 Scratch Markdown identifies the adjacent CSV/provenance pair under
 `target/bench-reports/`. A promoted report instead identifies the exact durable
@@ -854,6 +877,7 @@ just action-lint
 | Apply formatters/auto-fixes | `just fix` |
 | Validate Markdown-only changes | `just check-docs` |
 | Validate release-version references | `just docs-version-check` |
+| Validate final release changelog/citation synchronization | `just release-version-check` |
 | Validate `Cargo.toml`/`Cargo.lock` synchronization | `just cargo-lock-check` |
 | Validate configuration-only changes | `just check-config` |
 | Validate Python scripts/tests | `just python-check` and `just test-python` |
@@ -870,7 +894,9 @@ just action-lint
 | Compile release integration tests without running | `just test-integration-compile` |
 | Run examples | `just examples` |
 | Update dependency declarations, locks, and repo-owned Cargo tools | `just update` |
-| Update Cargo declarations and Cargo/uv dependency locks | `just update-dependencies` |
+| Update Cargo declarations and Cargo/Python dependency locks | `just update-dependencies` |
+| Update release metadata with the current UTC date | `just update-version vX.Y.Z` |
+| Validate crates.io metadata and dry-run the package | `just publish-check` |
 | Run full GitHub-equivalent CI | `just ci` |
 | Run perf-profile benchmarks | `just bench` |
 
@@ -941,6 +967,20 @@ exists with:
 ```bash
 just changelog-unreleased vX.Y.Z
 ```
+
+First set release metadata; the updater records the current UTC date:
+
+```bash
+just update-version vX.Y.Z
+```
+
+Same-day retries are content-idempotent; a retry after UTC midnight updates
+`CITATION.cff` and any existing target changelog heading together.
+`changelog-unreleased` first rejects a non-stable tag or a tag that differs
+from Cargo metadata, before `git-cliff` writes the changelog, then synchronizes
+the generated heading from `CITATION.cff`. Finish with
+`just release-version-check` and `just publish-check` before merge or
+publication.
 
 Create annotated release tags from the generated changelog after the release PR
 is merged with:

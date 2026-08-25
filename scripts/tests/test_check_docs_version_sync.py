@@ -53,6 +53,18 @@ def test_find_version_mismatches_accepts_matching_dependency_snippets(tmp_path: 
     assert check_docs_version_sync.find_version_mismatches(tmp_path) == []
 
 
+def test_find_version_mismatches_reports_single_quoted_dependency_snippets(tmp_path: Path) -> None:
+    """TOML literal-string dependency versions remain release-owned surfaces."""
+    _write_project(
+        tmp_path,
+        readme="delaunay = '1.2.2'\ndelaunay = { features = ['diagnostics'], version = '1.2.1' }\n",
+    )
+
+    mismatches = check_docs_version_sync.find_version_mismatches(tmp_path)
+
+    assert [mismatch.reference.version for mismatch in mismatches] == ["1.2.2", "1.2.1"]
+
+
 def test_find_version_mismatches_reports_stale_dependency_snippets(tmp_path: Path) -> None:
     """Stale active documentation snippets are reported with source context."""
     _write_project(tmp_path)
@@ -156,7 +168,7 @@ def test_readme_tag_references_reject_longer_non_semver_tags(tmp_path: Path, tag
     assert check_docs_version_sync._readme_tag_references(readme) == []
 
 
-@pytest.mark.parametrize("recipe", ["performance-github-assets", "performance-release", "perf-github-assets", "perf-release"])
+@pytest.mark.parametrize("recipe", ["performance-github-assets", "performance-release"])
 def test_find_version_mismatches_reports_stale_benchmark_current_tags(tmp_path: Path, recipe: str) -> None:
     """The first explicit benchmark release tag is the current release tag."""
     _write_project(tmp_path)
@@ -179,8 +191,8 @@ def test_find_version_mismatches_reports_stale_benchmark_current_tags(tmp_path: 
     assert mismatches[0].reference.version == "1.2.2"
 
 
-def test_benchmark_current_tag_references_ignore_baselines_and_historical_prose(tmp_path: Path) -> None:
-    """Only the current-tag argument is checked for benchmark examples."""
+def test_benchmark_current_tag_references_validate_pair_and_ignore_historical_prose(tmp_path: Path) -> None:
+    """A valid baseline relationship is checked without scanning historical prose."""
     benchmarking = tmp_path / "BENCHMARKING.md"
     benchmarking.write_text(
         "just performance-release v1.2.3 v1.2.2\nThe v1.2.2 harness compares against v1.2.1.\n",
@@ -190,6 +202,65 @@ def test_benchmark_current_tag_references_ignore_baselines_and_historical_prose(
     references = check_docs_version_sync._benchmark_current_tag_references(benchmarking)
 
     assert [(reference.line, reference.version) for reference in references] == [(1, "1.2.3")]
+
+
+@pytest.mark.parametrize("baseline", ["v1.2", "v1.2.3", "v1.2.4"])
+def test_find_version_mismatches_rejects_invalid_benchmark_baseline(tmp_path: Path, baseline: str) -> None:
+    """Malformed, equal, and newer benchmark baselines fail closed."""
+    _write_project(tmp_path)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    workflow = docs / "workflow.md"
+    workflow.write_text(f"just performance-release v1.2.3 {baseline}\n", encoding="utf-8")
+
+    with pytest.raises(TypeError, match="benchmark baseline tag") as exc_info:
+        check_docs_version_sync.find_version_mismatches(tmp_path)
+
+    assert "workflow.md:1" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("current", ["1.2.3", "v1.2"])
+def test_find_version_mismatches_rejects_invalid_benchmark_current_tag(tmp_path: Path, current: str) -> None:
+    """Numeric current tags cannot evade stable vX.Y.Z parsing."""
+    _write_project(tmp_path)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    workflow = docs / "workflow.md"
+    workflow.write_text(f"just performance-release {current} v1.2.2\n", encoding="utf-8")
+
+    with pytest.raises(TypeError, match="benchmark current tag") as exc_info:
+        check_docs_version_sync.find_version_mismatches(tmp_path)
+
+    assert "workflow.md:1" in str(exc_info.value)
+
+
+def test_find_version_mismatches_rejects_benchmark_command_missing_baseline(tmp_path: Path) -> None:
+    """A lone explicit current tag cannot evade the complete command contract."""
+    _write_project(tmp_path)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    workflow = docs / "workflow.md"
+    workflow.write_text("`just performance-release v1.2.3`\n", encoding="utf-8")
+
+    with pytest.raises(TypeError, match="missing its baseline tag") as exc_info:
+        check_docs_version_sync.find_version_mismatches(tmp_path)
+
+    assert "workflow.md:1" in str(exc_info.value)
+
+
+def test_find_version_mismatches_leaves_performance_readme_links_to_their_owner(tmp_path: Path) -> None:
+    """Performance publication, not metadata updates, owns tagged evidence links."""
+    _write_project(
+        tmp_path,
+        readme=(
+            "[license](https://github.com/acgetchell/delaunay/blob/v1.2.3/LICENSE)\n"
+            "[report](https://github.com/acgetchell/delaunay/blob/v1.2.2/docs/PERFORMANCE.md)\n"
+            "[csv](https://github.com/acgetchell/delaunay/blob/v1.2.2/docs/assets/bench/release-performance.csv)\n"
+            "[provenance](https://github.com/acgetchell/delaunay/blob/v1.2.2/docs/archive/performance/data/v1.2.2-vs-v1.2.1.provenance.json)\n"
+        ),
+    )
+
+    assert check_docs_version_sync.find_version_mismatches(tmp_path) == []
 
 
 @pytest.mark.parametrize(
@@ -232,6 +303,18 @@ def test_find_version_mismatches_rejects_missing_editable_uv_package(tmp_path: P
     _write_project(tmp_path)
     (tmp_path / "uv.lock").write_text(
         'version = 1\n\n[[package]]\nname = "delaunay-scripts"\nversion = "1.2.3"\nsource = { registry = "https://pypi.org/simple" }\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TypeError, match=r"exactly one uv\.lock editable package"):
+        check_docs_version_sync.find_version_mismatches(tmp_path)
+
+
+def test_find_version_mismatches_rejects_same_named_non_root_editable_uv_package(tmp_path: Path) -> None:
+    """A same-named package outside the repository root is not authoritative."""
+    _write_project(tmp_path)
+    (tmp_path / "uv.lock").write_text(
+        'version = 1\n\n[[package]]\nname = "delaunay-scripts"\nversion = "1.2.3"\nsource = { editable = "../other" }\n',
         encoding="utf-8",
     )
 
@@ -333,18 +416,38 @@ def test_release_date_must_match_generated_changelog_heading(tmp_path: Path) -> 
     assert "CHANGELOG.md:3" in message
 
 
-def test_release_date_rejects_missing_current_changelog_heading(tmp_path: Path) -> None:
-    """An existing changelog must contain exactly one current-version heading."""
+def test_release_date_allows_target_heading_before_changelog_generation(tmp_path: Path) -> None:
+    """Metadata can be bumped before changelog-unreleased generates its heading."""
     _write_project(tmp_path)
     (tmp_path / "CHANGELOG.md").write_text(
         "# Changelog\n\n## [1.2.2] - 2026-01-02\n",
         encoding="utf-8",
     )
 
-    with pytest.raises(TypeError, match=r"missing release heading for 1\.2\.3") as exc_info:
-        check_docs_version_sync.find_version_mismatches(tmp_path)
+    assert check_docs_version_sync.find_version_mismatches(tmp_path) == []
 
-    assert "CHANGELOG.md" in str(exc_info.value)
+
+def test_final_release_requires_current_changelog_heading(tmp_path: Path) -> None:
+    """The strict final gate rejects the tolerant pre-generation state."""
+    _write_project(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [1.2.2] - 2026-01-02\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TypeError, match="final release validation requires exactly one generated heading"):
+        check_docs_version_sync.find_version_mismatches(tmp_path, final_release=True)
+
+
+def test_final_release_accepts_exactly_one_matching_changelog_heading(tmp_path: Path) -> None:
+    """The strict final gate accepts one current heading with the citation date."""
+    _write_project(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [1.2.3] - 2026-01-02\n",
+        encoding="utf-8",
+    )
+
+    assert check_docs_version_sync.find_version_mismatches(tmp_path, final_release=True) == []
 
 
 def test_release_date_rejects_malformed_current_changelog_heading(tmp_path: Path) -> None:
@@ -396,3 +499,13 @@ def test_main_prints_mismatches(tmp_path: Path, capsys: pytest.CaptureFixture[st
 
     assert exit_code == 1
     assert "Release-version references are out of sync" in capsys.readouterr().err
+
+
+def test_main_final_release_reports_missing_changelog_heading(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The CLI exposes strict final-release changelog validation."""
+    _write_project(tmp_path)
+
+    exit_code = check_docs_version_sync.main(["--final-release", str(tmp_path)])
+
+    assert exit_code == 1
+    assert "final release validation requires" in capsys.readouterr().err

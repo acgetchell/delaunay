@@ -47,8 +47,11 @@ paper-pdf-check = "paper_check:main"
 paper-pdf-normalize = "paper_pdf_normalize:main"
 paper-source-date-epoch = "paper_source_date:main"
 postprocess-changelog = "postprocess_changelog:main"
+publish-readme-performance = "publish_readme_performance:main"
 tag-release = "tag_release:main"
 update-cargo-tool-pins = "update_cargo_tool_pins:main"
+update-python-dev-pins = "update_python_dev_pins:main"
+update-release-version = "update_release_version:main"
 
 # Configure setuptools to find packages in scripts/ directory
 [tool.setuptools]
@@ -69,9 +72,12 @@ py-modules = [
     "paper_source_date",
     "performance_artifacts",
     "postprocess_changelog",
+    "publish_readme_performance",
     "subprocess_utils",
     "tag_release",
     "update_cargo_tool_pins",
+    "update_python_dev_pins",
+    "update_release_version",
 ]
 
 [tool.ruff]
@@ -198,9 +204,12 @@ known-first-party = [
     "paper_source_date",
     "performance_artifacts",
     "postprocess_changelog",
+    "publish_readme_performance",
     "subprocess_utils",
     "tag_release",
     "update_cargo_tool_pins",
+    "update_python_dev_pins",
+    "update_release_version",
 ]
 force-single-line = false
 split-on-trailing-comma = true

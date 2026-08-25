@@ -171,12 +171,28 @@ changelog: _ensure-git-cliff _ensure-rumdl python-sync
 
 # Generate the changelog as if releasing the requested version.
 [group('release')]
-changelog-unreleased version: _ensure-git-cliff _ensure-rumdl python-sync
+changelog-unreleased version: _ensure-gh _ensure-git-cliff _ensure-rumdl python-sync
     #!/usr/bin/env bash
     set -euo pipefail
-    GIT_CLIFF_OFFLINE=true git-cliff --tag {{ version }} -o CHANGELOG.md
+    version={{ quote(version) }}
+    if [[ ! "$version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+        echo "❌ Release tag must use stable vX.Y.Z form, got: $version" >&2
+        exit 2
+    fi
+    package_version="$(
+        cargo metadata --locked --format-version 1 --no-deps \
+            | uv run --locked python -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])'
+    )"
+    if [[ "$version" != "v$package_version" ]]; then
+        echo "❌ Release tag $version does not match Cargo package version $package_version." >&2
+        echo "   Run 'just update-version $version' before generating the changelog." >&2
+        exit 2
+    fi
+    previous_release="$(uv run --locked update-release-version "$version" --print-previous-release)"
+    GIT_CLIFF_OFFLINE=true git-cliff --tag "$version" -o CHANGELOG.md
     uv run --locked postprocess-changelog
     uv run --locked archive-changelog
+    uv run --locked update-release-version "$version" --sync-changelog-date --previous-release "$previous_release"
     rumdl fmt --silent CHANGELOG.md docs/archive/changelog/*.md
 
 # Run every non-mutating validator outside the test suites.
@@ -353,6 +369,7 @@ help-workflows:
     @echo "Canonical performance workflows:"
     @echo "  just performance-local  # Measure current tree vs latest release; retain bundle"
     @echo "  just performance-release # Measure, retain, validate, and promote release docs"
+    @echo "  just performance-readme # Publish retained release data to README assets/table"
     @echo "  just performance-doc    # Promote docs from retained CSV/JSON; no benchmarks"
     @echo "  just performance-github-assets # Compare stored release assets; retain bundle"
     @echo ""
@@ -373,6 +390,8 @@ help-workflows:
     @echo "Release and optional workflows:"
     @echo "  just publish-check      # Validate metadata and cargo publish --dry-run"
     @echo "  just changelog          # Regenerate and format changelog artifacts"
+    @echo "  just release-version-check # Require final changelog/citation synchronization"
+    @echo "  just update-version <tag>        # Synchronize release metadata using the current UTC date"
     @echo "  just ci-slow            # Default CI plus slow correctness tests"
     @echo "  just ci-baseline        # Default CI plus persistent perf baseline refresh"
     @echo "  just coverage           # Generate local HTML coverage"
@@ -701,11 +720,6 @@ perf-baseline-to out ref="main": _ensure-uv
 perf-compare file threshold="7.5": _ensure-uv
     uv run --locked benchmark-utils compare --baseline "{{ file }}" --threshold {{ threshold }} --dev
 
-# Compare stored GitHub Release benchmark assets without local cargo runs.
-[group('benchmarks and performance')]
-perf-github-assets current_tag="" baseline_tag="":
-    just performance-github-assets "{{ current_tag }}" "{{ baseline_tag }}"
-
 # Show detailed performance-check, benchmark, and profiling workflows.
 [group('benchmarks and performance')]
 perf-help:
@@ -719,6 +733,7 @@ perf-help:
     @echo "  just performance-github-assets # Compare stored GitHub Release benchmark assets"
     @echo "  just performance-release  # Measure, retain, and promote release performance docs"
     @echo "  just performance-doc      # Promote docs from retained CSV/JSON without benchmarks"
+    @echo "  just performance-readme   # Publish retained release data to README assets/table"
     @echo "  just perf-large-scale-smoke # Quick pre-push 2D-5D wall-clock smoke guard"
     @echo "  just perf-no-regressions   # Fast pre-PR guard with a cached same-machine main baseline"
     @echo "  just perf-vs-ref <ref> [threshold] # Compare current tree vs a cached same-machine ref baseline"
@@ -854,20 +869,10 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
     echo ""
     echo "✅ Large-scale smoke guard passed for 2D-5D"
 
-# Compare the current tree against the latest published release in temp worktrees.
-[group('benchmarks and performance')]
-perf-local:
-    just performance-local
-
 # Fast pre-PR performance guard against a cached same-machine main baseline.
 [group('benchmarks and performance')]
 perf-no-regressions threshold="7.5": _ensure-uv
     uv run --locked benchmark-utils compare-ref --ref main --threshold {{ threshold }} --dev --output benches/worktree_vs_main_compare_results.txt
-
-# Generate local release-signal measurements in temp worktrees, then promote/archive docs.
-[group('benchmarks and performance')]
-perf-release current_tag="" baseline_tag="":
-    just performance-release "{{ current_tag }}" "{{ baseline_tag }}"
 
 # Compare the current tree against a cached same-machine ref baseline.
 [group('benchmarks and performance')]
@@ -884,8 +889,8 @@ performance-doc: _ensure-uv
 performance-github-assets current_tag="" baseline_tag="": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    current_tag="{{ current_tag }}"
-    baseline_tag="{{ baseline_tag }}"
+    current_tag={{ quote(current_tag) }}
+    baseline_tag={{ quote(baseline_tag) }}
     tag_pair_state="$(just --quiet _performance-tag-pair-state "$current_tag" "$baseline_tag")"
     if [[ "$tag_pair_state" == "invalid" ]]; then
         exit 2
@@ -901,13 +906,18 @@ performance-github-assets current_tag="" baseline_tag="": _ensure-uv
 performance-local: _ensure-uv
     uv run --locked benchmark-utils performance-local
 
+# Validate retained release measurements and atomically publish README assets/table.
+[group('benchmarks and performance')]
+performance-readme: _ensure-uv
+    uv run --locked publish-readme-performance
+
 # Measure, retain, reload-validate, and promote release performance documentation.
 [group('benchmarks and performance')]
 performance-release current_tag="" baseline_tag="": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    current_tag="{{ current_tag }}"
-    baseline_tag="{{ baseline_tag }}"
+    current_tag={{ quote(current_tag) }}
+    baseline_tag={{ quote(baseline_tag) }}
     tag_pair_state="$(just --quiet _performance-tag-pair-state "$current_tag" "$baseline_tag")"
     if [[ "$tag_pair_state" == "invalid" ]]; then
         exit 2
@@ -1113,6 +1123,11 @@ python-sync: _ensure-uv
 python-typecheck: _ensure-uv
     uv run --locked --group notebooks ty check scripts/ --error all
 
+# Require final release versions plus matching changelog and citation dates.
+[group('release')]
+release-version-check: _ensure-uv
+    uv run --locked check-docs-version-sync --final-release
+
 # Run the opt-in companion binary with the CLI feature and perf profile.
 [group('build and setup')]
 run *args:
@@ -1176,10 +1191,10 @@ semgrep-test: _ensure-uv
 setup: setup-tools build
     echo "✅ Setup complete! Run 'just help-workflows' to see available commands."
 
-# Install and verify pinned repository development tools.
-[doc('Install and verify pinned repository development tools.')]
+# Install and verify repository development tools.
+[doc('Install and verify repository development tools.')]
 [group('build and setup')]
-setup-tools: _ensure-uv
+setup-tools: _ensure-cargo _ensure-chktex _ensure-gh _ensure-jq _ensure-rustup _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -1201,6 +1216,15 @@ setup-tools: _ensure-uv
             cargo install --locked "$package" --version "$expected_version"
         else
             echo "  ✓ $binary $expected_version"
+        fi
+    }
+
+    ensure_cargo_install_update() {
+        if ! have cargo-install-update; then
+            echo "  ⏳ Installing cargo-update (cargo)..."
+            cargo install --locked cargo-update
+        else
+            echo "  ✓ cargo-install-update"
         fi
     }
 
@@ -1272,8 +1296,8 @@ setup-tools: _ensure-uv
         cargo install --locked tectonic --version "$expected_version"
     }
 
-    echo "This recipe installs pinned Rust CLI tools through cargo."
-    echo "External prerequisites that must already be on PATH: uv, jq, rustup, cargo, and chktex."
+    echo "This recipe installs pinned Rust CLI tools and the unpinned cargo-update bootstrap helper through cargo."
+    echo "External prerequisites that must already be on PATH: uv, gh, jq, rustup, cargo, and chktex."
     echo "pkg-config, plus native development files, is required only when the pinned Tectonic version must be installed."
     echo ""
 
@@ -1297,6 +1321,7 @@ setup-tools: _ensure-uv
         echo "  ✓ llvm-tools-preview"
     fi
 
+    ensure_cargo_install_update
     ensure_pinned_cargo_tool cargo-llvm-cov cargo-llvm-cov "{{ cargo_llvm_cov_version }}" llvm-cov
     ensure_pinned_cargo_tool cargo-upgrade cargo-edit "{{ cargo_edit_version }}" upgrade
     ensure_pinned_cargo_tool cargo-machete cargo-machete "{{ cargo_machete_version }}"
@@ -1316,8 +1341,8 @@ setup-tools: _ensure-uv
     echo "Verifying required commands are available..."
     missing=0
 
-    cmds=(uv jq taplo dprint tectonic tex-fmt rumdl git-cliff typos zizmor chktex samply)
-    cmds+=(cargo-nextest cargo-llvm-cov cargo-upgrade cargo-machete)
+    cmds=(uv gh jq taplo dprint tectonic tex-fmt rumdl git-cliff typos zizmor chktex samply)
+    cmds+=(cargo-install-update cargo-nextest cargo-llvm-cov cargo-upgrade cargo-machete)
 
     for cmd in "${cmds[@]}"; do
         if have "$cmd"; then
@@ -1427,13 +1452,13 @@ spherical-readme-hero: _ensure-uv paper-cli
 
 # Create an annotated git tag from the CHANGELOG.md section for the given version
 [group('release')]
-tag version: python-sync
-    uv run --locked tag-release {{ version }}
+tag version: python-sync release-version-check
+    uv run --locked tag-release {{ quote(version) }}
 
 # Replace an existing annotated tag from the CHANGELOG.md section.
 [group('release')]
-tag-force version: python-sync
-    uv run --locked tag-release {{ version }} --force
+tag-force version: python-sync release-version-check
+    uv run --locked tag-release {{ quote(version) }} --force
 
 # Run every default Rust and Python test bucket once.
 [group('workflows')]
@@ -1579,21 +1604,22 @@ unused-deps: _ensure-cargo-machete
 
 # Update dependency requirements, locks, and locally installed Cargo tools owned by this repository.
 [group('build and setup')]
-update: update-dependencies update-cargo-tools
+update: _ensure-cargo-install-update update-dependencies update-cargo-tools
     @echo "✅ Repository dependencies and tools updated."
+
+# Advance Cargo dependency declarations and lockfile entries.
+[doc('Update Cargo.toml dependency requirements and Cargo.lock.')]
+[group('build and setup')]
+update-cargo-dependencies: _ensure-cargo-edit
+    cargo upgrade --incompatible allow
+    cargo update
 
 # Update locally installed Cargo CLI tools owned by `setup-tools` and reconcile their pins.
 [doc('Update Cargo CLI tools owned by setup-tools and reconcile their root justfile pins.')]
 [group('build and setup')]
-update-cargo-tools: _ensure-uv
+update-cargo-tools: _ensure-cargo-install-update _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-
-    if ! command -v cargo-install-update >/dev/null 2>&1; then
-        echo "❌ 'cargo-install-update' not found. Install it with:"
-        echo "   cargo install --locked cargo-update"
-        exit 1
-    fi
 
     packages=(
         cargo-edit
@@ -1614,14 +1640,26 @@ update-cargo-tools: _ensure-uv
     cargo install-update --locked "${packages[@]}"
     uv run --locked update-cargo-tool-pins
 
-# Advance Cargo dependency declarations, update Cargo and uv locks, then sync uv dev tools.
-[doc('Update Cargo.toml dependency requirements and all Cargo/uv locked dependencies.')]
+# Advance Cargo and exact Python development requirements plus their lockfiles.
+[doc('Update Cargo and Python development requirements plus all Cargo/uv locked dependencies.')]
 [group('build and setup')]
-update-dependencies: _ensure-uv _ensure-cargo-edit
-    cargo upgrade --incompatible allow
-    cargo update
+update-dependencies: _ensure-cargo-edit _ensure-uv update-cargo-dependencies update-python-dependencies
+
+# Resolve latest exact Python development tools, retain ranged requirements, and sync.
+[doc('Update exact dependency-groups.dev pins and uv.lock through uv.')]
+[group('build and setup')]
+update-python-dependencies: _ensure-uv
+    uv run --locked update-python-dev-pins
     uv lock --upgrade
     uv sync --locked --group dev
+
+# Update release metadata with the current UTC date and infer the prior stable published release.
+[doc('Update package, citation, lockfile, and non-artifact documentation release versions.')]
+[group('release')]
+update-version tag: _ensure-gh _ensure-uv
+    uv run --locked update-release-version {{ quote(tag) }}
+    cargo metadata --locked --format-version 1 --no-deps > /dev/null
+    uv run --locked check-docs-version-sync
 
 # Refresh reviewer-facing validation diagrams from the reproducible notebook.
 [group('notebooks and papers')]

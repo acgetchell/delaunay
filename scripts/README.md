@@ -25,12 +25,16 @@ These commands are exposed by `pyproject.toml`; all support `--help`.
 ```bash
 just changelog
 just changelog-unreleased vX.Y.Z
+just release-version-check
 just tag vX.Y.Z
+just update-version vX.Y.Z
 
 uv run --locked check-docs-version-sync --help
+uv run --locked check-docs-version-sync --final-release
 uv run --locked postprocess-changelog --help
 uv run --locked archive-changelog --help
 uv run --locked tag-release vX.Y.Z --help
+uv run --locked update-release-version vX.Y.Z
 ```
 
 `just changelog` runs `git-cliff`, applies markdown hygiene, and archives
@@ -42,6 +46,12 @@ Cargo package version against release-facing docs and metadata.
 Use `just changelog-unreleased vX.Y.Z` while preparing a release PR before the
 final tag exists. Use `just tag vX.Y.Z` after the release PR is merged to
 create the annotated release tag from the matching changelog section.
+`just update-version vX.Y.Z` infers the previous stable published GitHub
+Release and atomically synchronizes release metadata with the current UTC date.
+Same-day retries are content-idempotent; later-day retries advance citation and
+existing target changelog dates together.
+`just release-version-check` runs the strict final gate, which requires one
+current-version changelog heading whose date matches `CITATION.cff`.
 
 ### Notebook utilities
 
@@ -73,6 +83,7 @@ uv run --locked benchmark-utils performance-local
 uv run --locked benchmark-utils performance-github-assets
 uv run --locked benchmark-utils performance-release
 uv run --locked benchmark-utils performance-doc
+uv run --locked publish-readme-performance
 ```
 
 `benchmark-utils` handles Criterion baseline generation and packaging,
@@ -114,6 +125,11 @@ analyses, but those caches are not promotion inputs and must be reproducible
 from the validated CSV. Raw Criterion data remains in the release
 `delaunay-vX.Y.Z-criterion-baseline.tar.gz` assets.
 
+`publish-readme-performance` consumes the retained bundle after promotion and
+atomically publishes the compact README table plus the canonical
+`docs/assets/bench/release-performance.{csv,provenance.json}` pair. It never
+runs Cargo or Criterion.
+
 ### Hardware utilities
 
 ```bash
@@ -133,11 +149,25 @@ just coverage-ci
 
 ### Tool-pin maintenance
 
+Prefer the repository recipes for coordinated updates. The direct locked
+Python-pin updater is also available for focused diagnosis:
+
+```bash
+just update-python-dependencies
+uv run --locked update-python-dev-pins --help
+```
+
 `just update` upgrades the Cargo CLI packages owned by `setup-tools`, then runs
 `update-cargo-tool-pins` to atomically reconcile their installed versions with
 the root `justfile`. The updater validates the complete managed package set
 before replacing the pin source, so missing or malformed Cargo output leaves
 the existing declarations unchanged.
+
+Before `uv.lock` is refreshed, `update-python-dev-pins` discovers exact simple
+pins under `[dependency-groups].dev`, resolves their latest mutually compatible
+universal set for the supported Python version, and replaces them together.
+Ranged development requirements and runtime/build requirements remain outside
+that rewrite.
 
 ## Shell helpers
 

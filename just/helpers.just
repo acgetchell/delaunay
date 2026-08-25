@@ -30,7 +30,21 @@ _ensure-actionlint: _ensure-uv
     set -euo pipefail
     uv run --locked actionlint -version >/dev/null
 
+_ensure-cargo:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo >/dev/null || { echo "❌ 'cargo' not found. Install Rust via https://rustup.rs and ensure cargo is on PATH."; exit 1; }
+
 _ensure-cargo-edit: (_ensure-pinned-cargo-tool "cargo-upgrade" "cargo-edit" cargo_edit_version "upgrade")
+
+_ensure-cargo-install-update:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo-install-update >/dev/null || {
+        echo "❌ 'cargo-install-update' not found. Run 'just setup-tools' or install it with:"
+        echo "   cargo install --locked cargo-update"
+        exit 1
+    }
 
 _ensure-cargo-llvm-cov: (_ensure-pinned-cargo-tool "cargo-llvm-cov" "cargo-llvm-cov" cargo_llvm_cov_version "llvm-cov")
 
@@ -45,6 +59,11 @@ _ensure-chktex:
     }
 
 _ensure-dprint: (_ensure-pinned-cargo-tool "dprint" "dprint" dprint_version)
+
+_ensure-gh:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v gh >/dev/null || { echo "❌ 'gh' not found. Install GitHub CLI and ensure it is on PATH."; exit 1; }
 
 _ensure-git-cliff: (_ensure-pinned-cargo-tool "git-cliff" "git-cliff" git_cliff_version)
 
@@ -73,6 +92,11 @@ _ensure-pinned-cargo-tool binary package version cargo_subcommand="":
     fi
 
 _ensure-rumdl: (_ensure-pinned-cargo-tool "rumdl" "rumdl" rumdl_version)
+
+_ensure-rustup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v rustup >/dev/null || { echo "❌ 'rustup' not found. Install Rust via https://rustup.rs and ensure rustup is on PATH."; exit 1; }
 
 _ensure-samply: (_ensure-pinned-cargo-tool "samply" "samply" samply_version)
 
@@ -162,8 +186,8 @@ _pachner-stress-dim label vertices attempts validate_every output_dir mode:
 _performance-tag-pair-state current_tag baseline_tag:
     #!/usr/bin/env bash
     set -euo pipefail
-    current_tag="{{ current_tag }}"
-    baseline_tag="{{ baseline_tag }}"
+    current_tag={{ quote(current_tag) }}
+    baseline_tag={{ quote(baseline_tag) }}
     if [[ -n "$current_tag" || -n "$baseline_tag" ]]; then
         if [[ -z "$current_tag" || -z "$baseline_tag" ]]; then
             echo "current_tag and baseline_tag must be provided together" >&2
