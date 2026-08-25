@@ -31,9 +31,14 @@ use crate::refinement::RefinementError;
 use crate::repair::DelaunayRepairOperation;
 use crate::topology::traits::topological_space::GlobalTopology;
 use crate::triangulation::Triangulation;
-use crate::triangulation::builder::{TriangulationBuildFailure, TriangulationBuilder};
+use crate::triangulation::builder::{
+    TriangulationBuildFailure, TriangulationBuilder, TriangulationBuilderError,
+};
 use crate::triangulation::realization::TriangulationRealizationValidationError;
-use crate::triangulation::validation::{TopologyGuarantee, TriangulationValidationError};
+use crate::triangulation::validation::{
+    TopologyCertificationEvidence, TopologyConstructionProvenance, TopologyGuarantee,
+    TriangulationValidationError,
+};
 use std::num::NonZeroUsize;
 use thiserror::Error;
 
@@ -466,6 +471,35 @@ pub(crate) enum DelaunayTdsRestorationError<K, U, V, const D: usize> {
         #[source]
         failure: DelaunayTriangulationRefinementError<K, U, V, D>,
     },
+}
+
+/// Owner-independent typed reason extracted from a failed checkpoint restoration.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum DelaunayTdsRestorationReason {
+    /// Levels 3–4 promotion failed.
+    Triangulation {
+        /// Typed Levels 3–4 promotion failure.
+        source: TriangulationBuilderError,
+    },
+    /// Level 5 promotion failed.
+    Delaunay {
+        /// Typed Level 5 promotion failure.
+        source: DelaunayTriangulationValidationError,
+    },
+}
+
+impl<K, U, V, const D: usize> DelaunayTdsRestorationError<K, U, V, D> {
+    /// Discards the retained lower-layer owner while preserving the typed reason.
+    pub(crate) fn into_reason(self) -> DelaunayTdsRestorationReason {
+        match self {
+            Self::Triangulation { failure } => DelaunayTdsRestorationReason::Triangulation {
+                source: failure.into_reason(),
+            },
+            Self::Delaunay { failure } => DelaunayTdsRestorationReason::Delaunay {
+                source: failure.into_reason(),
+            },
+        }
+    }
 }
 
 /// Cadence for explicit validation checkpoints during construction diagnostics.
@@ -1029,41 +1063,25 @@ where
     // -------------------------------------------------------------------------
     // PURE STRUCT ASSEMBLY
     // -------------------------------------------------------------------------
-    /// Create a validated `DelaunayTriangulation` from a `Tds` with explicit topology context.
-    ///
-    /// This is the strict promotion path for validated serialized TDS data whose
-    /// runtime [`TopologyGuarantee`] or [`GlobalTopology`] metadata must be
-    /// restored. TDS deserialization supplies Levels 1–2; internally this
-    /// composes the same strict Levels 3–4 certification used by
-    /// [`TriangulationBuilder`] with an internal
-    /// Level 5-only promotion. The result therefore carries
-    /// the cumulative Levels 1–5 guarantee without rechecking an unchanged lower
-    /// proof between boundaries.
-    ///
-    /// The public [`DelaunayRefinementBuilder`](crate::DelaunayRefinementBuilder)
-    /// documentation demonstrates the equivalent staged restoration workflow
-    /// through the supported API.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DelaunayTdsRestorationError`] if construction is incomplete or
-    /// if topology, realized geometry, or the Delaunay predicate fails under
-    /// the supplied context. The error retains the strongest lower-layer proof
-    /// owner established by the composed transition.
-    pub(crate) fn try_restore_from_tds_with_topology_context(
+    /// Restores a checkpoint after an independent replay proved construction provenance.
+    pub(crate) fn try_restore_with_provenance(
         tds: Tds<U, V, D>,
         kernel: K,
         topology_guarantee: TopologyGuarantee,
         global_topology: GlobalTopology<D>,
-    ) -> Result<Self, DelaunayTdsRestorationError<K, U, V, D>> {
-        let triangulation = TriangulationBuilder::new(tds, kernel)
+        construction_provenance: TopologyConstructionProvenance,
+    ) -> Result<(Self, TopologyCertificationEvidence), DelaunayTdsRestorationError<K, U, V, D>>
+    {
+        let (triangulation, topology_evidence) = TriangulationBuilder::new(tds, kernel)
             .topology_guarantee(topology_guarantee)
             .global_topology(global_topology)
-            .build()
+            .construction_provenance(construction_provenance)
+            .build_with_topology_evidence()
             .map_err(|failure| DelaunayTdsRestorationError::Triangulation { failure })?;
-        DelaunayTriangulationDraft::from_triangulation(triangulation)
+        let triangulation = DelaunayTriangulationDraft::from_triangulation(triangulation)
             .try_into_delaunay()
-            .map_err(|failure| DelaunayTdsRestorationError::Delaunay { failure })
+            .map_err(|failure| DelaunayTdsRestorationError::Delaunay { failure })?;
+        Ok((triangulation, topology_evidence))
     }
 }
 
@@ -1074,7 +1092,7 @@ mod tests {
     use crate::core::algorithms::flips::{
         DelaunayRepairDiagnostics, DelaunayRepairPostconditionFailure, RepairQueueOrder,
     };
-    use crate::core::tds::{SimplexKey, TdsBuilder, VertexKey};
+    use crate::core::tds::{TdsBuilder, VertexKey};
     use crate::core::vertex::Vertex;
     use crate::delaunay_model::EuclideanDelaunayReportDomain;
     use crate::geometry::coordinate_range::CoordinateRange;
@@ -1082,12 +1100,35 @@ mod tests {
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::CoordinateConversionError;
     use crate::geometry::util::generate_random_points_in_range_seeded;
-    use crate::triangulation::builder::TriangulationBuilderError;
     use crate::vertex;
     use slotmap::KeyData;
-    use std::assert_matches;
-    use std::{error::Error, sync::Once};
     use uuid::Uuid;
+
+    use std::{assert_matches, error::Error, sync::Once};
+
+    impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
+    where
+        K: Kernel<D, Scalar = f64>,
+        U: DataType,
+        V: DataType,
+    {
+        /// Restores a test TDS with explicit topology context and no provenance.
+        pub(crate) fn try_restore_from_tds_with_topology_context(
+            tds: Tds<U, V, D>,
+            kernel: K,
+            topology_guarantee: TopologyGuarantee,
+            global_topology: GlobalTopology<D>,
+        ) -> Result<Self, DelaunayTdsRestorationError<K, U, V, D>> {
+            Self::try_restore_with_provenance(
+                tds,
+                kernel,
+                topology_guarantee,
+                global_topology,
+                TopologyConstructionProvenance::Unproven,
+            )
+            .map(|(triangulation, _evidence)| triangulation)
+        }
+    }
 
     #[derive(Clone, Debug)]
     struct PanickingKernel;

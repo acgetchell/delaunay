@@ -417,11 +417,15 @@ The release integration profile similarly grants 60 seconds on Windows only
 to the promoted 4D property families that sit at the 10-second boundary there.
 The cospherical 3D `OnSuspicion` sequence property receives the same focused
 headroom across platforms because hosted runners can cross the default
-integration-test watchdog. The overrides combine the narrowest applicable
-platform, integration-binary, and test-name filters so unrelated tests retain
-the normal budget. The deterministic 5D SoS in-sphere property also receives a
-cross-platform 60-second override because each generated case performs two
-complete exact expansions and can cross the hosted-runner boundary.
+integration-test watchdog. The isolated downstream checkpoint fixture receives
+a 120-second override because it intentionally performs a clean standalone
+dependency build in a separate target directory to prevent Cargo feature
+unification from masking the behavior under test. The overrides combine the
+narrowest applicable platform, integration-binary, and test-name filters so
+unrelated tests retain the normal budget. The deterministic 5D SoS in-sphere
+property also receives a cross-platform 60-second override because each
+generated case performs two complete exact expansions and can cross the
+hosted-runner boundary.
 
 For test-only changes, run only the matching focused recipe. If multiple test
 target classes changed, compose those focused recipes once each. Use

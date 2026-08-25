@@ -51,6 +51,7 @@
 //! | Task | Import |
 //! |---|---|
 //! | Construct/configure a Delaunay triangulation | `use delaunay::prelude::construction::*` |
+//! | Decode, migrate, inspect, or verify versioned checkpoints | `use delaunay::prelude::checkpoint::*` |
 //! | Build/validate/repair generic triangulations | `use delaunay::prelude::triangulation::*` |
 //! | Incremental insertion diagnostics and result types | `use delaunay::prelude::insertion::*` |
 //! | Post-construction vertex deletion errors and keys | `use delaunay::prelude::deletion::*` |
@@ -853,6 +854,9 @@ mod core {
             TdsOwnerRollbackTransaction, TdsRollbackOwner, TdsRollbackTransaction,
             TdsRollbackWindow,
         };
+        pub(crate) use snapshot::{
+            RawTdsSnapshot, TdsSnapshot, TdsSnapshotError, ValidatedTdsSerialization,
+        };
     }
 
     /// General utility functions organized by functionality.
@@ -1021,6 +1025,9 @@ pub use crate::triangulation::flips;
 pub(crate) mod insertion;
 /// Unified Pachner move workflow API for local topology editing.
 pub use crate::triangulation::pachner;
+/// Versioned checkpoint manifests and integrity-checked Delaunay serialization.
+#[path = "delaunay/serialization.rs"]
+pub mod checkpoint;
 /// Level 5 Delaunay triangulation owner.
 #[path = "delaunay/model.rs"]
 pub(crate) mod delaunay_model;
@@ -1029,9 +1036,6 @@ pub mod refinement;
 /// Repair policies and outcomes for Delaunay triangulations.
 #[path = "delaunay/repair.rs"]
 pub mod repair;
-/// Serialization support for Delaunay triangulations.
-#[path = "delaunay/serialization.rs"]
-pub(crate) mod serialization;
 /// Prototype spherical Delaunay construction via the spherical topology backend.
 #[path = "delaunay/spherical.rs"]
 pub mod spherical;
@@ -1529,6 +1533,18 @@ pub mod prelude {
         ConflictError, InternalInconsistencySite, LocateError, LocateFallback,
         LocateFallbackReason, LocateResult, LocateStats, locate, locate_with_stats,
     };
+
+    /// Versioned scientific manifests for serialized Delaunay checkpoints.
+    pub mod checkpoint {
+        pub use crate::checkpoint::{
+            DELAUNAY_CHECKPOINT_DIGEST_ALGORITHM, DELAUNAY_CHECKPOINT_DIGEST_VERSION,
+            DELAUNAY_CHECKPOINT_MANIFEST_VERSION, DELAUNAY_CHECKPOINT_SCHEMA_VERSION,
+            DelaunayCheckpoint, DelaunayCheckpointDecodeError, DelaunayCheckpointDigest,
+            DelaunayCheckpointDigestAlgorithm, DelaunayCheckpointError,
+            DelaunayCheckpointLoadError, DelaunayCheckpointManifest,
+            DelaunayCheckpointTdsHydrationError, DelaunayCheckpointV1,
+        };
+    }
 
     // Re-export incremental insertion types
     pub use crate::{

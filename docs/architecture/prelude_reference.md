@@ -9,6 +9,7 @@ they exercise.
 | Unified Pachner move workflow / local topology edits | `use delaunay::prelude::pachner::*` |
 | Collection aliases and small buffers | `use delaunay::prelude::collections::*` |
 | Construct/configure Euclidean, toroidal, or spherical Delaunay triangulations | `use delaunay::prelude::construction::*` |
+| Decode, migrate, inspect, and verify versioned Delaunay checkpoints | `use delaunay::prelude::checkpoint::*` |
 | Build, validate, query, or repair generic triangulations | `use delaunay::prelude::triangulation::*` |
 | Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
 | Export stable simplicial-complex primitives | `use delaunay::prelude::export::*` |

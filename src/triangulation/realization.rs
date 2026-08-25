@@ -36,7 +36,9 @@ use crate::topology::traits::global_topology_model::{
 };
 use crate::topology::traits::topological_space::TopologyKind;
 use crate::triangulation::Triangulation;
-use crate::triangulation::validation::TriangulationValidationError;
+use crate::triangulation::validation::{
+    TopologyCertificationEvidence, TriangulationValidationError,
+};
 use num_traits::ToPrimitive;
 use thiserror::Error;
 use uuid::Uuid;
@@ -997,7 +999,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// The method is deliberately non-mutating. Callers that canonicalize a
     /// candidate first must own rollback around that preprocessing and invoke
     /// this same proof before committing it.
-    pub(super) fn certify_levels_three_four(&self) -> Result<(), TriangulationCertificationError>
+    pub(super) fn certify_levels_three_four(
+        &self,
+    ) -> Result<TopologyCertificationEvidence, TriangulationCertificationError>
     where
         K: Kernel<D, Scalar = f64>,
         U: DataType,
@@ -1011,11 +1015,12 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             });
         }
 
-        self.is_valid_topology()
+        let topology_evidence = self
+            .certify_topology()
             .map_err(|source| TriangulationCertificationError::Topology { source })?;
         self.is_valid_realization()
             .map_err(|source| TriangulationCertificationError::Realization { source })?;
-        Ok(())
+        Ok(topology_evidence)
     }
 
     /// Validates realized geometry only (Level 4).
@@ -2081,12 +2086,10 @@ fn sweep_and_prune_candidate_simplex_pairs<const D: usize, B>(
 mod tests {
     use super::*;
     use crate::builder::DelaunayTriangulationBuilder;
-    use crate::core::tds::Tds;
     use crate::core::vertex::Vertex;
     use crate::delaunay_property_validation::DelaunayValidationError;
     use crate::geometry::kernel::FastKernel;
     use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
-    use crate::triangulation::Triangulation;
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use crate::vertex;
     use approx::assert_abs_diff_eq;

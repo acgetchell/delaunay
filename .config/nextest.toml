@@ -80,6 +80,17 @@ binary(=proptest_delaunay_triangulation)
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.ci.overrides]]
+# This regression deliberately compiles and runs a standalone downstream crate
+# in a separate target directory so Cargo feature unification cannot mask the
+# serde_json configuration under test. A clean dependency build can cross the
+# normal per-test watchdog even though the fixture itself is small.
+filter = '''
+binary(=checkpoint_downstream)
+& test(=downstream_json_without_float_roundtrip_preserves_checkpoint_bits)
+'''
+slow-timeout = { period = "120s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
 # Complete 5D exact SoS expansion can cross the default budget on hosted
 # runners. Keep the exception limited to the deterministic co-spherical
 # property that exercises two expansions per generated case.

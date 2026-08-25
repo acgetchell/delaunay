@@ -4,6 +4,13 @@
 
 #[cfg(feature = "cli")]
 mod cli_tests {
+    use ciborium::value::Value as CborValue;
+    use delaunay::prelude::checkpoint::{
+        DELAUNAY_CHECKPOINT_SCHEMA_VERSION, DelaunayCheckpointManifest,
+    };
+    use delaunay::prelude::construction::DelaunayTriangulation;
+    use delaunay::prelude::geometry::RobustKernel;
+    use serde_json::{Value, from_slice, from_value};
     use std::{
         collections::HashSet,
         fs,
@@ -11,8 +18,6 @@ mod cli_tests {
         process::{Command, Output},
         time::{SystemTime, UNIX_EPOCH},
     };
-
-    use serde_json::Value;
 
     fn delaunay_command() -> Command {
         Command::new(env!("CARGO_BIN_EXE_delaunay"))
@@ -60,7 +65,7 @@ mod cli_tests {
     }
 
     fn stdout_json(output: &Output) -> Value {
-        serde_json::from_slice(&output.stdout).expect("stdout should contain JSON")
+        from_slice(&output.stdout).expect("stdout should contain JSON")
     }
 
     fn assert_stderr_contains(output: &Output, expected: &str) {
@@ -71,15 +76,50 @@ mod cli_tests {
         );
     }
 
-    fn generated_triangulation_tds(json: &Value) -> &Value {
-        assert_eq!(json["schema_version"], 1);
-        json.get("tds")
-            .expect("triangulation JSON should include the proof owner's TDS")
+    fn generated_triangulation_tds(json: &Value) -> CborValue {
+        assert_eq!(json["schema_version"], DELAUNAY_CHECKPOINT_SCHEMA_VERSION);
+        assert_eq!(json["manifest"]["manifest_version"], 1);
+        assert_eq!(json["manifest"]["digest"]["version"], 1);
+        assert_eq!(json["manifest"]["digest"]["algorithm"], "sha256");
+        assert_eq!(
+            json["manifest"]["digest"]["value"]
+                .as_str()
+                .expect("triangulation manifest should include a digest")
+                .len(),
+            64
+        );
+        let bytes = json["tds"]
+            .as_array()
+            .expect("triangulation JSON should include embedded TDS bytes")
+            .iter()
+            .map(|value| {
+                u8::try_from(value.as_u64().expect("TDS byte should be unsigned"))
+                    .expect("TDS byte should fit u8")
+            })
+            .collect::<Vec<_>>();
+        ciborium::de::from_reader(bytes.as_slice()).expect("embedded TDS should decode")
+    }
+
+    fn cbor_field<'a>(value: &'a CborValue, name: &str) -> &'a CborValue {
+        value
+            .as_map()
+            .expect("embedded TDS record should be a map")
+            .iter()
+            .find_map(|(key, value)| (key.as_text() == Some(name)).then_some(value))
+            .unwrap_or_else(|| panic!("embedded TDS record should contain {name}"))
     }
 
     fn assert_generated_triangulation_json(json: &Value, dimension: usize, vertex_count: usize) {
         let tds = generated_triangulation_tds(json);
-        let vertices = tds["vertices"]
+        assert_eq!(json["manifest"]["dimension"], dimension);
+        assert_eq!(
+            json["manifest"]["f_vector"]
+                .as_array()
+                .expect("triangulation manifest should include an f-vector")
+                .len(),
+            dimension + 1
+        );
+        let vertices = cbor_field(&tds, "vertices")
             .as_array()
             .expect("triangulation JSON should include vertices");
         assert_eq!(vertices.len(), vertex_count);
@@ -87,27 +127,28 @@ mod cli_tests {
         let vertex_ids: HashSet<_> = vertices
             .iter()
             .map(|vertex| {
-                let coordinates = vertex["point"]
+                let coordinates = cbor_field(vertex, "point")
                     .as_array()
                     .expect("vertex JSON should include coordinates");
                 assert_eq!(coordinates.len(), dimension);
                 assert!(
                     coordinates
                         .iter()
-                        .all(|coordinate| coordinate.as_f64().is_some_and(f64::is_finite))
+                        .all(|coordinate| coordinate.as_float().is_some_and(f64::is_finite))
                 );
-                vertex["uuid"]
-                    .as_str()
-                    .expect("vertex JSON should include a UUID string")
+                cbor_field(vertex, "uuid")
+                    .as_bytes()
+                    .expect("vertex CBOR should include UUID bytes")
+                    .clone()
             })
             .collect();
         assert_eq!(vertex_ids.len(), vertex_count);
 
-        let simplex_vertices = tds["simplex_vertices"]
-            .as_object()
+        let simplex_vertices = cbor_field(&tds, "simplex_vertices")
+            .as_map()
             .expect("triangulation JSON should include simplex vertex references");
         assert!(!simplex_vertices.is_empty());
-        for references in simplex_vertices.values() {
+        for (_, references) in simplex_vertices {
             let references = references
                 .as_array()
                 .expect("simplex vertex references should be an array");
@@ -116,8 +157,9 @@ mod cli_tests {
                 .iter()
                 .map(|reference| {
                     reference
-                        .as_str()
-                        .expect("simplex vertex reference should be a UUID string")
+                        .as_bytes()
+                        .expect("simplex vertex reference should be UUID bytes")
+                        .clone()
                 })
                 .collect();
             assert_eq!(referenced_ids.len(), dimension + 1);
@@ -141,7 +183,7 @@ mod cli_tests {
 
     fn file_json(path: &Path) -> Value {
         let bytes = fs::read(path).expect("JSON output file should be readable");
-        serde_json::from_slice(&bytes).expect("output file should contain JSON")
+        from_slice(&bytes).expect("output file should contain JSON")
     }
 
     #[test]
@@ -205,12 +247,13 @@ mod cli_tests {
         assert_success(&output);
 
         let json = stdout_json(&output);
-        let vertices = generated_triangulation_tds(&json)["vertices"]
+        let tds = generated_triangulation_tds(&json);
+        let vertices = cbor_field(&tds, "vertices")
             .as_array()
             .expect("triangulation JSON should include vertices");
         assert_eq!(vertices.len(), 8);
         for vertex in vertices {
-            let point = vertex["point"]
+            let point = cbor_field(vertex, "point")
                 .as_array()
                 .expect("vertex JSON should include coordinates");
             assert_eq!(point.len(), 3);
@@ -219,8 +262,8 @@ mod cli_tests {
                 .iter()
                 .map(|coordinate| {
                     let coordinate = coordinate
-                        .as_f64()
-                        .expect("coordinate should be a JSON number");
+                        .as_float()
+                        .expect("coordinate should be a CBOR float");
                     coordinate * coordinate
                 })
                 .sum();
@@ -446,14 +489,23 @@ mod cli_tests {
             "--dimension",
             "4",
             "--vertices",
-            "5",
+            "6",
             "--seed",
             "4",
             "--output",
             path.to_str().expect("target path should be UTF-8"),
         ]);
         assert_success(&output);
-        assert_generated_triangulation_json(&file_json(&path), 4, 5);
+        let json = file_json(&path);
+        assert_generated_triangulation_json(&json, 4, 6);
+        let expected_manifest: DelaunayCheckpointManifest =
+            from_value(json["manifest"].clone()).unwrap();
+        let restored: DelaunayTriangulation<RobustKernel<f64>, (), (), 4> =
+            from_slice(&fs::read(&path).expect("4D checkpoint should be readable")).unwrap();
+        assert_eq!(restored.number_of_vertices(), 6);
+        assert!(restored.number_of_simplices() > 1);
+        assert_eq!(restored.checkpoint_manifest().unwrap(), expected_manifest);
+        restored.validate().unwrap();
     }
 
     #[test]
@@ -465,14 +517,23 @@ mod cli_tests {
             "--dimension",
             "5",
             "--vertices",
-            "6",
+            "7",
             "--seed",
             "5",
             "--output",
             path.to_str().expect("target path should be UTF-8"),
         ]);
         assert_success(&output);
-        assert_generated_triangulation_json(&file_json(&path), 5, 6);
+        let json = file_json(&path);
+        assert_generated_triangulation_json(&json, 5, 7);
+        let expected_manifest: DelaunayCheckpointManifest =
+            from_value(json["manifest"].clone()).unwrap();
+        let restored: DelaunayTriangulation<RobustKernel<f64>, (), (), 5> =
+            from_slice(&fs::read(&path).expect("5D checkpoint should be readable")).unwrap();
+        assert_eq!(restored.number_of_vertices(), 7);
+        assert!(restored.number_of_simplices() > 1);
+        assert_eq!(restored.checkpoint_manifest().unwrap(), expected_manifest);
+        restored.validate().unwrap();
     }
 
     #[test]

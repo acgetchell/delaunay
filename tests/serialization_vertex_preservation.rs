@@ -9,7 +9,6 @@
 //! The test helps determine if vertex loss is expected behavior (duplicate removal)
 //! or a bug in serialization/deserialization.
 
-use delaunay::assert_jaccard_gte;
 use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, TopologyGuarantee,
 };
@@ -94,13 +93,9 @@ fn test_vertex_preservation_with_duplicates_3d() {
     );
     assert_eq!(deser_vertex_count, tds_vertex_count);
 
-    // Verify coordinate preservation using Jaccard similarity (≥ 0.99 threshold)
-    // This accounts for potential floating-point precision differences in JSON serialization
-    assert_jaccard_gte!(
-        &tds_coords,
-        &deser_coords,
-        0.99,
-        "Vertex coordinate preservation via serialization (3D with duplicates)"
+    assert_eq!(
+        deser_coords, tds_coords,
+        "JSON must preserve exact f64 bits"
     );
 }
 
@@ -127,7 +122,7 @@ fn test_vertex_preservation_without_duplicates_3d() {
         "vertex preservation baseline after construction"
     );
 
-    // Extract vertex coordinate sets for Jaccard comparison
+    // Extract vertex coordinate sets for exact checkpoint comparison.
     let before_coords = vertex_coordinate_set(&dt);
 
     let json = serde_json::to_string(&dt).expect("Serialization failed");
@@ -146,12 +141,9 @@ fn test_vertex_preservation_without_duplicates_3d() {
     // Note: Robust triangulation may discard some input vertices as unsalvageable
     // even when there are no exact coordinate duplicates. We treat the constructed
     // TDS as the baseline and verify that serialization preserves its vertices.
-    // Use Jaccard similarity to verify serialization preserves vertices
-    assert_jaccard_gte!(
-        &before_coords,
-        &after_coords,
-        0.99,
-        "Vertex coordinate preservation via serialization (3D without duplicates)"
+    assert_eq!(
+        after_coords, before_coords,
+        "JSON must preserve exact f64 bits"
     );
 }
 
@@ -202,7 +194,7 @@ fn test_vertex_preservation_many_duplicates_3d() {
         "Vertex count after construction should equal unique input coordinates"
     );
 
-    // Extract vertex coordinate sets for Jaccard comparison
+    // Extract vertex coordinate sets for exact checkpoint comparison.
     let before_coords = vertex_coordinate_set(&dt);
 
     let json = serde_json::to_string(&dt).expect("Serialization failed");
@@ -218,11 +210,8 @@ fn test_vertex_preservation_many_duplicates_3d() {
     );
     assert_eq!(deser_vertex_count, tds_vertex_count);
 
-    // Use Jaccard similarity to verify serialization preserves vertices
-    assert_jaccard_gte!(
-        &before_coords,
-        &after_coords,
-        0.99,
-        "Vertex coordinate preservation via serialization (3D with many duplicates)"
+    assert_eq!(
+        after_coords, before_coords,
+        "JSON must preserve exact f64 bits"
     );
 }

@@ -17,11 +17,13 @@
 //!   TDS validation before returning the value.
 //!
 //! Downstream crates should normally use `Serialize`/`Deserialize` on `Tds<U, V, D>`
-//! instead of these crate-private records. That path preserves vertex payloads
+//! instead of the crate-private records. That path preserves vertex payloads
 //! (`U`) and simplex payloads (`V`) whenever those types satisfy the crate's data
 //! serialization bounds, while keeping `VertexKey` and `SimplexKey` out of the
-//! durable format. The raw snapshot shape is serde-backed today, but its role is
-//! a persistence boundary rather than a serde-specific domain model.
+//! durable format. Semantic reconstruction failures remain available through
+//! [`TdsSnapshotError`] when a higher-level persistence boundary needs typed
+//! diagnostics. The raw snapshot shape is serde-backed today, but its role is a
+//! persistence boundary rather than a serde-specific domain model.
 
 #![forbid(unsafe_code)]
 
@@ -41,17 +43,19 @@ use crate::core::{
     vertex::Vertex,
 };
 use serde::{
-    Deserialize, Deserializer, Serialize,
+    Deserialize, Deserializer, Serialize, Serializer,
     de::{self, MapAccess, Visitor},
-    ser::SerializeStruct,
-};
-use std::{
-    fmt,
-    marker::PhantomData,
-    sync::{Arc, atomic::AtomicU64},
+    ser::{self, SerializeStruct},
 };
 use thiserror::Error;
 use uuid::Uuid;
+
+use std::{
+    fmt,
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+    sync::{Arc, atomic::AtomicU64},
+};
 
 // =============================================================================
 // SNAPSHOT ERROR TYPES
@@ -64,7 +68,7 @@ use uuid::Uuid;
 /// inconsistent topology before constructing a live [`Tds`].
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
-enum TdsSnapshotError {
+pub(crate) enum TdsSnapshotError {
     /// A simplex could not resolve one of its vertex keys to a vertex UUID while
     /// building a snapshot.
     #[error("Could not resolve vertex UUIDs for simplex {simplex_uuid}: {source}")]
@@ -90,13 +94,6 @@ enum TdsSnapshotError {
         simplex_uuid: Uuid,
         /// Neighbor key that could not be resolved.
         neighbor_key: SimplexKey,
-    },
-    /// The runtime TDS failed validation before snapshot serialization.
-    #[error("Source TDS failed validation before snapshot serialization: {source}")]
-    SourceValidationFailed {
-        /// Structured validation failure from the source TDS.
-        #[source]
-        source: TdsError,
     },
     /// A snapshot vertex UUID appeared more than once.
     #[error("Duplicate vertex UUID {vertex_uuid} in TDS snapshot vertices")]
@@ -215,6 +212,189 @@ enum TdsSnapshotError {
 // RAW SNAPSHOT RECORD TYPES
 // =============================================================================
 
+/// Raw sequence that retains only the entries a fixed-arity field can use.
+///
+/// The decoder still counts discarded excess entries so semantic parsing can
+/// preserve exact `actual`/`expected` diagnostics without allocating storage
+/// proportional to a malformed relationship list.
+#[derive(Debug)]
+struct RawBoundedSlots<T> {
+    values: Vec<T>,
+    actual_len: usize,
+}
+
+impl<T> RawBoundedSlots<T> {
+    const fn from_values(values: Vec<T>) -> Self {
+        let actual_len = values.len();
+        Self { values, actual_len }
+    }
+
+    const fn actual_len(&self) -> usize {
+        self.actual_len
+    }
+
+    fn as_slice(&self) -> &[T] {
+        &self.values
+    }
+}
+
+fn deserialize_bounded_slots<'de, De, T>(
+    deserializer: De,
+    retained_limit: usize,
+) -> Result<RawBoundedSlots<T>, De::Error>
+where
+    De: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    struct RawBoundedSlotsVisitor<T> {
+        retained_limit: usize,
+        _phantom: PhantomData<T>,
+    }
+
+    impl<'de, T> Visitor<'de> for RawBoundedSlotsVisitor<T>
+    where
+        T: Deserialize<'de>,
+    {
+        type Value = RawBoundedSlots<T>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            write!(
+                formatter,
+                "a fixed-arity sequence retaining at most {} entries",
+                self.retained_limit
+            )
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let mut values = Vec::with_capacity(self.retained_limit);
+            while values.len() < self.retained_limit {
+                let Some(value) = sequence.next_element()? else {
+                    return Ok(RawBoundedSlots::from_values(values));
+                };
+                values.push(value);
+            }
+
+            let mut actual_len = values.len();
+            while sequence.next_element::<de::IgnoredAny>()?.is_some() {
+                actual_len = actual_len.checked_add(1).ok_or_else(|| {
+                    de::Error::custom("fixed-arity sequence length exceeds usize")
+                })?;
+            }
+
+            Ok(RawBoundedSlots { values, actual_len })
+        }
+    }
+
+    deserializer.deserialize_seq(RawBoundedSlotsVisitor {
+        retained_limit,
+        _phantom: PhantomData,
+    })
+}
+
+/// Raw sequence with the `D + 1` arity of simplex-local relationships.
+#[derive(Debug)]
+struct RawSimplexSlots<T, const D: usize>(RawBoundedSlots<T>);
+
+impl<T, const D: usize> RawSimplexSlots<T, D> {
+    const fn from_values(values: Vec<T>) -> Self {
+        Self(RawBoundedSlots::from_values(values))
+    }
+
+    const fn actual_len(&self) -> usize {
+        self.0.actual_len()
+    }
+}
+
+impl<T, const D: usize> Deref for RawSimplexSlots<T, D> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_slice()
+    }
+}
+
+impl<T, const D: usize> DerefMut for RawSimplexSlots<T, D> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0.values
+    }
+}
+
+impl<T, const D: usize> Serialize for RawSimplexSlots<T, D>
+where
+    T: Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.values.serialize(serializer)
+    }
+}
+
+impl<'de, T, const D: usize> Deserialize<'de> for RawSimplexSlots<T, D>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
+    where
+        De: Deserializer<'de>,
+    {
+        let retained_limit = D
+            .checked_add(1)
+            .ok_or_else(|| de::Error::custom("simplex slot arity exceeds usize"))?;
+        deserialize_bounded_slots(deserializer, retained_limit).map(Self)
+    }
+}
+
+/// Raw sequence with an exact const-generic coordinate arity.
+#[derive(Debug)]
+struct RawExactSlots<T, const N: usize>(RawBoundedSlots<T>);
+
+impl<T, const N: usize> RawExactSlots<T, N> {
+    const fn from_values(values: Vec<T>) -> Self {
+        Self(RawBoundedSlots::from_values(values))
+    }
+
+    const fn actual_len(&self) -> usize {
+        self.0.actual_len()
+    }
+}
+
+impl<T, const N: usize> Deref for RawExactSlots<T, N> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_slice()
+    }
+}
+
+impl<T, const N: usize> Serialize for RawExactSlots<T, N>
+where
+    T: Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.values.serialize(serializer)
+    }
+}
+
+impl<'de, T, const N: usize> Deserialize<'de> for RawExactSlots<T, N>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
+    where
+        De: Deserializer<'de>,
+    {
+        deserialize_bounded_slots(deserializer, N).map(Self)
+    }
+}
+
 /// Raw durable UUID-based image of a TDS topology.
 ///
 /// This type is intentionally heavier than the runtime TDS. It is for I/O and
@@ -229,41 +409,41 @@ enum TdsSnapshotError {
     ),
     deny_unknown_fields
 )]
-struct RawTdsSnapshot<U, V, const D: usize> {
+pub(crate) struct RawTdsSnapshot<U, V, const D: usize> {
     vertices: Vec<Vertex<U, D>>,
     simplices: Vec<RawSnapshotSimplex<V>>,
     #[serde(deserialize_with = "deserialize_simplex_vertices_no_duplicates")]
-    simplex_vertices: FastHashMap<Uuid, Vec<Uuid>>,
+    simplex_vertices: FastHashMap<Uuid, RawSimplexSlots<Uuid, D>>,
     #[serde(deserialize_with = "deserialize_simplex_neighbors_no_duplicates")]
-    simplex_neighbors: FastHashMap<Uuid, Vec<Option<Uuid>>>,
+    simplex_neighbors: FastHashMap<Uuid, RawSimplexSlots<Option<Uuid>, D>>,
     #[serde(
         default,
         deserialize_with = "deserialize_simplex_vertex_offsets_no_duplicates"
     )]
-    simplex_vertex_offsets: FastHashMap<Uuid, Vec<Vec<i8>>>,
+    simplex_vertex_offsets: FastHashMap<Uuid, RawSimplexSlots<RawExactSlots<i8, D>, D>>,
 }
 
-fn deserialize_simplex_vertices_no_duplicates<'de, De>(
+fn deserialize_simplex_vertices_no_duplicates<'de, De, const D: usize>(
     deserializer: De,
-) -> Result<FastHashMap<Uuid, Vec<Uuid>>, De::Error>
+) -> Result<FastHashMap<Uuid, RawSimplexSlots<Uuid, D>>, De::Error>
 where
     De: Deserializer<'de>,
 {
     deserialize_uuid_map_no_duplicates("simplex_vertices", deserializer)
 }
 
-fn deserialize_simplex_neighbors_no_duplicates<'de, De>(
+fn deserialize_simplex_neighbors_no_duplicates<'de, De, const D: usize>(
     deserializer: De,
-) -> Result<FastHashMap<Uuid, Vec<Option<Uuid>>>, De::Error>
+) -> Result<FastHashMap<Uuid, RawSimplexSlots<Option<Uuid>, D>>, De::Error>
 where
     De: Deserializer<'de>,
 {
     deserialize_uuid_map_no_duplicates("simplex_neighbors", deserializer)
 }
 
-fn deserialize_simplex_vertex_offsets_no_duplicates<'de, De>(
+fn deserialize_simplex_vertex_offsets_no_duplicates<'de, De, const D: usize>(
     deserializer: De,
-) -> Result<FastHashMap<Uuid, Vec<Vec<i8>>>, De::Error>
+) -> Result<FastHashMap<Uuid, RawSimplexSlots<RawExactSlots<i8, D>, D>>, De::Error>
 where
     De: Deserializer<'de>,
 {
@@ -355,7 +535,7 @@ struct RawSnapshotSimplex<V> {
 /// missing relationship records, dangling UUID references, and malformed
 /// per-simplex arity.
 #[derive(Debug)]
-struct TdsSnapshot<U, V, const D: usize> {
+pub(crate) struct TdsSnapshot<U, V, const D: usize> {
     vertices: Vec<Vertex<U, D>>,
     simplices: Vec<TdsSnapshotSimplex<V, D>>,
 }
@@ -365,8 +545,8 @@ struct TdsSnapshot<U, V, const D: usize> {
 /// Runtime `Simplex` values keep slotmap-local vertex and neighbor keys. This
 /// snapshot simplex keeps the same relationships as UUIDs so hydration can
 /// allocate fresh keys without trusting process-local handles from disk.
-#[derive(Debug)]
-struct TdsSnapshotSimplex<V, const D: usize> {
+#[derive(Clone, Debug)]
+pub(crate) struct TdsSnapshotSimplex<V, const D: usize> {
     uuid: Uuid,
     data: Option<V>,
     vertex_uuids: SnapshotVertexUuidSlots<D>,
@@ -380,7 +560,7 @@ struct TdsSnapshotSimplex<V, const D: usize> {
 /// `D + 1` invariant. This private wrapper is the parsed representation: it is
 /// constructed only after checking arity, dangling UUID references, and duplicate
 /// lifted vertex identities.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct SnapshotVertexUuidSlots<const D: usize> {
     slots: SimplexVertexUuidBuffer,
 }
@@ -389,11 +569,11 @@ impl<const D: usize> SnapshotVertexUuidSlots<D> {
     /// Parses untrusted vertex UUID slots and proves they match one D-simplex.
     fn parse(
         simplex_uuid: Uuid,
-        slots: &[Uuid],
+        slots: &RawSimplexSlots<Uuid, D>,
         vertex_uuids: &SnapshotUuidSet,
         periodic_offsets: Option<&SnapshotPeriodicOffsetSlots<D>>,
     ) -> Result<Self, TdsSnapshotError> {
-        validate_snapshot_vertex_slot_arity::<D>(simplex_uuid, slots.len())?;
+        validate_snapshot_vertex_slot_arity::<D>(simplex_uuid, slots.actual_len())?;
 
         for (index, &vertex_uuid) in slots.iter().enumerate() {
             if !vertex_uuids.contains(&vertex_uuid) {
@@ -462,7 +642,7 @@ impl<const D: usize> SnapshotVertexUuidSlots<D> {
 }
 
 /// Validated optional neighbor UUID slots aligned with one D-simplex's facets.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct SnapshotNeighborUuidSlots<const D: usize> {
     slots: NeighborBuffer<Option<Uuid>>,
 }
@@ -471,10 +651,10 @@ impl<const D: usize> SnapshotNeighborUuidSlots<D> {
     /// Parses untrusted neighbor UUID slots and proves referenced simplices exist.
     fn parse(
         simplex_uuid: Uuid,
-        slots: &[Option<Uuid>],
+        slots: &RawSimplexSlots<Option<Uuid>, D>,
         simplex_uuids: &SnapshotUuidSet,
     ) -> Result<Self, TdsSnapshotError> {
-        validate_snapshot_neighbor_slot_arity::<D>(simplex_uuid, slots.len())?;
+        validate_snapshot_neighbor_slot_arity::<D>(simplex_uuid, slots.actual_len())?;
 
         for &neighbor_uuid in slots.iter().flatten() {
             if !simplex_uuids.contains(&neighbor_uuid) {
@@ -518,25 +698,45 @@ impl<const D: usize> SnapshotNeighborUuidSlots<D> {
 }
 
 /// Validated periodic-offset slots aligned with one D-simplex's vertex slots.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct SnapshotPeriodicOffsetSlots<const D: usize> {
     slots: PeriodicOffsetBuffer<D>,
 }
 
 impl<const D: usize> SnapshotPeriodicOffsetSlots<D> {
     /// Parses raw periodic-offset rows and proves they match simplex vertex slots.
-    fn parse(simplex_uuid: Uuid, offsets: &[Vec<i8>]) -> Result<Self, TdsSnapshotError> {
+    fn parse(
+        simplex_uuid: Uuid,
+        offsets: &RawSimplexSlots<RawExactSlots<i8, D>, D>,
+    ) -> Result<Self, TdsSnapshotError> {
         let mut slots = PeriodicOffsetBuffer::new();
         for (offset_index, offset) in offsets.iter().enumerate() {
-            let parsed_offset = offset.as_slice().try_into().map_err(|_| {
+            if offset.actual_len() != D {
+                return Err(TdsSnapshotError::PeriodicOffsetDimensionMismatch {
+                    simplex_uuid,
+                    offset_index,
+                    expected: D,
+                    actual: offset.actual_len(),
+                });
+            }
+            let parsed_offset = offset.as_ref().try_into().map_err(|_| {
                 TdsSnapshotError::PeriodicOffsetDimensionMismatch {
                     simplex_uuid,
                     offset_index,
                     expected: D,
-                    actual: offset.len(),
+                    actual: offset.actual_len(),
                 }
             })?;
             slots.push(parsed_offset);
+        }
+        if offsets.actual_len() != D + 1 {
+            return Err(TdsSnapshotError::InvalidSimplex {
+                simplex_uuid,
+                source: SimplexValidationError::PeriodicOffsetLengthMismatch {
+                    expected: D + 1,
+                    found: offsets.actual_len(),
+                },
+            });
         }
         Self::try_from_parsed_offsets(simplex_uuid, slots)
     }
@@ -580,6 +780,33 @@ impl<const D: usize> SnapshotPeriodicOffsetSlots<D> {
 }
 
 impl<SnapshotData, const D: usize> TdsSnapshotSimplex<SnapshotData, D> {
+    /// Returns this simplex's durable identity.
+    pub(crate) const fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+
+    /// Returns the optional user payload captured for this simplex.
+    pub(crate) const fn data(&self) -> Option<&SnapshotData> {
+        self.data.as_ref()
+    }
+
+    /// Returns the validated vertex UUID slots in simplex-local order.
+    pub(crate) fn vertex_uuids(&self) -> &[Uuid] {
+        self.vertex_uuids.slots.as_slice()
+    }
+
+    /// Returns the validated neighbor UUID slots in facet-local order.
+    pub(crate) fn neighbor_uuids(&self) -> &[Option<Uuid>] {
+        self.neighbor_uuids.slots.as_slice()
+    }
+
+    /// Returns validated periodic offsets aligned with the vertex UUID slots.
+    pub(crate) fn periodic_vertex_offsets(&self) -> Option<&[[i8; D]]> {
+        self.periodic_vertex_offsets
+            .as_ref()
+            .map(|offsets| offsets.slots.as_slice())
+    }
+
     /// Builds validated UUID relationships around caller-selected snapshot payload data.
     ///
     /// The relationship checks are identical for owned and borrowed payloads, so
@@ -659,7 +886,7 @@ where
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
         let has_data = self.data.is_some();
         let field_count = if has_data { 2 } else { 1 };
@@ -772,8 +999,13 @@ type RawSnapshotSimplexParts<V> = (
 // =============================================================================
 
 impl<U, V, const D: usize> RawTdsSnapshot<U, V, D> {
+    /// Parses and hydrates one codec-decoded snapshot with typed semantic failures.
+    pub(crate) fn try_into_tds(self) -> Result<Tds<U, V, D>, TdsSnapshotError> {
+        self.parse()?.into_tds()
+    }
+
     /// Parses raw snapshot records into a validated UUID snapshot.
-    fn parse(self) -> Result<TdsSnapshot<U, V, D>, TdsSnapshotError> {
+    pub(crate) fn parse(self) -> Result<TdsSnapshot<U, V, D>, TdsSnapshotError> {
         let Self {
             vertices,
             simplices,
@@ -813,8 +1045,55 @@ impl<U, V, const D: usize> RawTdsSnapshot<U, V, D> {
 }
 
 impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
+    /// Returns the validated vertex records in their interchange order.
+    pub(crate) fn vertices(&self) -> impl Iterator<Item = &Vertex<U, D>> {
+        self.vertices.iter()
+    }
+
+    /// Returns the validated simplex records in their interchange order.
+    pub(crate) fn simplices(&self) -> impl Iterator<Item = &TdsSnapshotSimplex<V, D>> {
+        self.simplices.iter()
+    }
+
+    /// Maps payloads while preserving the validated UUID relationship proof.
+    pub(crate) fn try_map_payloads<NewU, NewV, E>(
+        &self,
+        mut map_vertex: impl FnMut(&U) -> Result<NewU, E>,
+        mut map_simplex: impl FnMut(&V) -> Result<NewV, E>,
+    ) -> Result<TdsSnapshot<NewU, NewV, D>, E> {
+        let vertices = self
+            .vertices
+            .iter()
+            .map(|vertex| {
+                let data = vertex.data().map(&mut map_vertex).transpose()?;
+                let mut mapped =
+                    Vertex::from_validated_point_with_uuid(*vertex.point(), vertex.uuid(), data);
+                mapped.set_incident_simplex(vertex.incident_simplex());
+                Ok(mapped)
+            })
+            .collect::<Result<Vec<_>, E>>()?;
+        let simplices = self
+            .simplices
+            .iter()
+            .map(|simplex| {
+                Ok(TdsSnapshotSimplex {
+                    uuid: simplex.uuid,
+                    data: simplex.data.as_ref().map(&mut map_simplex).transpose()?,
+                    vertex_uuids: simplex.vertex_uuids.clone(),
+                    neighbor_uuids: simplex.neighbor_uuids.clone(),
+                    periodic_vertex_offsets: simplex.periodic_vertex_offsets.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>, E>>()?;
+
+        Ok(TdsSnapshot {
+            vertices,
+            simplices,
+        })
+    }
+
     /// Converts this validated snapshot into the raw serializable shape.
-    fn into_raw(self) -> RawTdsSnapshot<U, V, D> {
+    pub(crate) fn into_raw(self) -> RawTdsSnapshot<U, V, D> {
         let mut raw_simplices = Vec::with_capacity(self.simplices.len());
         let mut simplex_vertices = fast_hash_map_with_capacity(self.simplices.len());
         let mut simplex_neighbors = fast_hash_map_with_capacity(self.simplices.len());
@@ -824,10 +1103,18 @@ impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
             let simplex_uuid = simplex.uuid;
             let (raw_simplex, vertex_uuids, neighbor_uuids, offsets) = simplex.into_raw_parts();
             raw_simplices.push(raw_simplex);
-            simplex_vertices.insert(simplex_uuid, vertex_uuids);
-            simplex_neighbors.insert(simplex_uuid, neighbor_uuids);
+            simplex_vertices.insert(simplex_uuid, RawSimplexSlots::from_values(vertex_uuids));
+            simplex_neighbors.insert(simplex_uuid, RawSimplexSlots::from_values(neighbor_uuids));
             if let Some(offsets) = offsets {
-                simplex_vertex_offsets.insert(simplex_uuid, offsets);
+                simplex_vertex_offsets.insert(
+                    simplex_uuid,
+                    RawSimplexSlots::from_values(
+                        offsets
+                            .into_iter()
+                            .map(RawExactSlots::from_values)
+                            .collect(),
+                    ),
+                );
             }
         }
 
@@ -841,7 +1128,7 @@ impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
     }
 
     /// Parses a durable UUID snapshot into a fresh key-based runtime TDS.
-    fn into_tds(self) -> Result<Tds<U, V, D>, TdsSnapshotError> {
+    pub(crate) fn into_tds(self) -> Result<Tds<U, V, D>, TdsSnapshotError> {
         let ParsedVertexStorage {
             vertices,
             uuid_to_vertex_key,
@@ -874,15 +1161,12 @@ impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
 }
 
 impl<'a, U, V, const D: usize> TdsSnapshot<&'a U, &'a V, D> {
-    /// Converts a valid live key-based TDS into a borrowed durable UUID snapshot.
+    /// Converts a TDS whose Levels 1–2 proof was established by the caller.
     ///
-    /// This is the production serialization path for [`Tds`]. It validates the
-    /// live topology, stores UUID relationships, and borrows payload data so
-    /// callers only need [`DataSerialize`] rather than `Copy`.
-    fn try_from_tds(tds: &'a Tds<U, V, D>) -> Result<Self, TdsSnapshotError> {
-        tds.validate()
-            .map_err(|source| TdsSnapshotError::SourceValidationFailed { source })?;
-
+    /// The checkpoint pipeline uses this only after its preparation stage has
+    /// validated the exact unchanged owner. Relationship resolution remains
+    /// fallible because it translates runtime keys into durable UUIDs.
+    pub(crate) fn try_from_validated_tds(tds: &'a Tds<U, V, D>) -> Result<Self, TdsSnapshotError> {
         let vertices = tds
             .vertices()
             .map(|(_vertex_key, vertex)| {
@@ -964,9 +1248,9 @@ fn parse_raw_simplex<V, const D: usize>(
     raw_simplex: RawSnapshotSimplex<V>,
     vertex_uuids: &SnapshotUuidSet,
     simplex_uuids: &SnapshotUuidSet,
-    simplex_vertices: &FastHashMap<Uuid, Vec<Uuid>>,
-    simplex_neighbors: &FastHashMap<Uuid, Vec<Option<Uuid>>>,
-    simplex_vertex_offsets: &FastHashMap<Uuid, Vec<Vec<i8>>>,
+    simplex_vertices: &FastHashMap<Uuid, RawSimplexSlots<Uuid, D>>,
+    simplex_neighbors: &FastHashMap<Uuid, RawSimplexSlots<Option<Uuid>, D>>,
+    simplex_vertex_offsets: &FastHashMap<Uuid, RawSimplexSlots<RawExactSlots<i8, D>, D>>,
 ) -> Result<TdsSnapshotSimplex<V, D>, TdsSnapshotError> {
     let simplex_uuid = raw_simplex.uuid;
     let data = raw_simplex.data;
@@ -1098,11 +1382,11 @@ fn rebuild_simplices<V, const D: usize>(
 
 /// Rejects relationship maps that mention simplices absent from the snapshot
 /// simplex records.
-fn validate_relationship_keys(
+fn validate_relationship_keys<const D: usize>(
     simplex_uuids: &SnapshotUuidSet,
-    simplex_vertices: &FastHashMap<Uuid, Vec<Uuid>>,
-    simplex_neighbors: &FastHashMap<Uuid, Vec<Option<Uuid>>>,
-    simplex_vertex_offsets: &FastHashMap<Uuid, Vec<Vec<i8>>>,
+    simplex_vertices: &FastHashMap<Uuid, RawSimplexSlots<Uuid, D>>,
+    simplex_neighbors: &FastHashMap<Uuid, RawSimplexSlots<Option<Uuid>, D>>,
+    simplex_vertex_offsets: &FastHashMap<Uuid, RawSimplexSlots<RawExactSlots<i8, D>, D>>,
 ) -> Result<(), TdsSnapshotError> {
     for &simplex_uuid in simplex_vertices.keys() {
         if !simplex_uuids.contains(&simplex_uuid) {
@@ -1164,6 +1448,48 @@ fn assign_neighbors<V, const D: usize>(
 // TDS CODEC IMPLEMENTATIONS
 // =============================================================================
 
+/// Proof-bearing serialization adapter for one immutably borrowed valid TDS.
+pub(crate) struct ValidatedTdsSerialization<'a, U, V, const D: usize> {
+    tds: &'a Tds<U, V, D>,
+}
+
+impl<'a, U, V, const D: usize> ValidatedTdsSerialization<'a, U, V, D> {
+    /// Validates Levels 1–2 and retains an immutable borrow of the exact owner.
+    ///
+    /// The borrow prevents mutation until every manifest and serialization
+    /// consumer of this evidence has finished.
+    pub(crate) fn try_new(tds: &'a Tds<U, V, D>) -> Result<Self, TdsError> {
+        tds.validate()?;
+        Ok(Self { tds })
+    }
+
+    /// Returns the unchanged TDS bound to this validation evidence.
+    pub(crate) const fn tds(&self) -> &'a Tds<U, V, D> {
+        self.tds
+    }
+
+    /// Builds the validated durable UUID snapshot for the unchanged owner.
+    pub(crate) fn snapshot(&self) -> Result<TdsSnapshot<&'a U, &'a V, D>, TdsSnapshotError> {
+        TdsSnapshot::try_from_validated_tds(self.tds)
+    }
+}
+
+impl<U, V, const D: usize> Serialize for ValidatedTdsSerialization<'_, U, V, D>
+where
+    U: DataSerialize,
+    V: DataSerialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.snapshot()
+            .map_err(ser::Error::custom)?
+            .into_raw()
+            .serialize(serializer)
+    }
+}
+
 impl<U, V, const D: usize> Serialize for Tds<U, V, D>
 where
     U: DataSerialize,
@@ -1171,11 +1497,10 @@ where
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
-        TdsSnapshot::try_from_tds(self)
-            .map_err(serde::ser::Error::custom)?
-            .into_raw()
+        ValidatedTdsSerialization::try_new(self)
+            .map_err(ser::Error::custom)?
             .serialize(serializer)
     }
 }
@@ -1190,9 +1515,7 @@ where
         De: Deserializer<'de>,
     {
         RawTdsSnapshot::<U, V, D>::deserialize(deserializer)?
-            .parse()
-            .map_err(de::Error::custom)?
-            .into_tds()
+            .try_into_tds()
             .map_err(de::Error::custom)
     }
 }
@@ -1204,14 +1527,30 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::simplex::SimplexValidationError;
-    use crate::core::tds::{TdsBuilder, TriangulationConstructionState};
-    use crate::core::vertex::Vertex;
+    use crate::core::tds::TdsBuilder;
     use crate::geometry::point::Point;
     use crate::vertex;
     use proptest::prelude::*;
     use slotmap::KeyData;
     use std::assert_matches;
+
+    #[test]
+    fn raw_simplex_slots_count_excess_without_retaining_it() {
+        let encoded = serde_json::to_value(vec![7_u16; 128]).unwrap();
+        let slots: RawSimplexSlots<u16, 2> = serde_json::from_value(encoded).unwrap();
+
+        assert_eq!(slots.actual_len(), 128);
+        assert_eq!(slots.0.values.len(), 3);
+    }
+
+    impl<'a, U, V, const D: usize> TdsSnapshot<&'a U, &'a V, D> {
+        /// Builds a borrowed snapshot through the ordinary validation boundary.
+        fn try_from_tds(tds: &'a Tds<U, V, D>) -> Result<Self, TdsSnapshotError> {
+            tds.validate()
+                .map_err(|source| TdsSnapshotError::ValidationFailed { source })?;
+            Self::try_from_validated_tds(tds)
+        }
+    }
 
     impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
         /// Converts a valid live key-based TDS into an owned mutation fixture.
@@ -1221,7 +1560,7 @@ mod tests {
             V: Copy,
         {
             tds.validate()
-                .map_err(|source| TdsSnapshotError::SourceValidationFailed { source })?;
+                .map_err(|source| TdsSnapshotError::ValidationFailed { source })?;
 
             let vertices = tds
                 .vertices()
@@ -1965,9 +2304,10 @@ mod tests {
 
         let mut snapshot = raw_snapshot_from_tds(&dt);
         let unknown_neighbor_simplex_uuid = Uuid::new_v4();
-        snapshot
-            .simplex_neighbors
-            .insert(unknown_neighbor_simplex_uuid, vec![None, None, None, None]);
+        snapshot.simplex_neighbors.insert(
+            unknown_neighbor_simplex_uuid,
+            RawSimplexSlots::from_values(vec![None, None, None, None]),
+        );
 
         let err = snapshot
             .parse()
@@ -1981,9 +2321,14 @@ mod tests {
 
         let mut snapshot = raw_snapshot_from_tds(&dt);
         let unknown_offset_simplex_uuid = Uuid::new_v4();
-        snapshot
-            .simplex_vertex_offsets
-            .insert(unknown_offset_simplex_uuid, vec![vec![0_i8, 0_i8, 0_i8]; 4]);
+        snapshot.simplex_vertex_offsets.insert(
+            unknown_offset_simplex_uuid,
+            RawSimplexSlots::from_values(
+                (0..4)
+                    .map(|_| RawExactSlots::from_values(vec![0_i8, 0_i8, 0_i8]))
+                    .collect(),
+            ),
+        );
 
         let err = snapshot
             .parse()
@@ -2319,7 +2664,8 @@ mod tests {
             .get_mut(&simplex_uuid)
             .expect("simplex should have snapshot vertex UUIDs");
 
-        vertex_uuids.push(Uuid::new_v4());
+        vertex_uuids.0.values.push(Uuid::new_v4());
+        vertex_uuids.0.actual_len = vertex_uuids.0.values.len();
 
         let err = snapshot
             .parse()
@@ -2429,7 +2775,11 @@ mod tests {
     #[test]
     fn test_tds_snapshot_error_preserves_periodic_offset_dimension_mismatch() {
         let (_original, simplex_uuid, _expected_offsets) = periodic_offset_tds_2d();
-        let offsets = vec![vec![0_i8, 0_i8], vec![1_i8], vec![0_i8, 1_i8]];
+        let offsets = RawSimplexSlots::from_values(vec![
+            RawExactSlots::from_values(vec![0_i8, 0_i8]),
+            RawExactSlots::from_values(vec![1_i8]),
+            RawExactSlots::from_values(vec![0_i8, 1_i8]),
+        ]);
 
         let err = SnapshotPeriodicOffsetSlots::<2>::parse(simplex_uuid, &offsets)
             .expect_err("wrong periodic offset dimension should be rejected");
@@ -2512,7 +2862,7 @@ mod tests {
 
         snapshot
             .simplex_neighbors
-            .insert(simplex_uuid, vec![None, None]);
+            .insert(simplex_uuid, RawSimplexSlots::from_values(vec![None, None]));
 
         let err = snapshot
             .parse()
@@ -2551,7 +2901,7 @@ mod tests {
         let err = TdsSnapshot::try_from_tds(&tds)
             .expect_err("snapshotting dangling runtime neighbor key should fail");
 
-        assert_matches!(err, TdsSnapshotError::SourceValidationFailed { .. });
+        assert_matches!(err, TdsSnapshotError::ValidationFailed { .. });
     }
 
     #[test]

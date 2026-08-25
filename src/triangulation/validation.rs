@@ -114,7 +114,7 @@ use crate::core::collections::{
 };
 use crate::core::operations::{InsertionTelemetry, InsertionTelemetryMode, SuspicionFlags};
 use crate::core::tds::{
-    InvariantError, InvariantKind, InvariantViolation, SimplexKey, Tds, TdsError,
+    InvariantError, InvariantKind, InvariantViolation, SimplexKey, Tds, TdsError, TopologyOwnerId,
     TriangulationValidationReport, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
@@ -777,6 +777,45 @@ impl TopologyConstructionProvenance {
     }
 }
 
+/// Owner-bound Level-3 evidence retained across an unchanged publication path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TopologyCertificationEvidence {
+    owner: TopologyOwnerId,
+    generation: u64,
+    result: TopologyCheckResult,
+}
+
+impl TopologyCertificationEvidence {
+    /// Captures one successful Level-3 result for the exact TDS owner state.
+    fn new<U, V, const D: usize>(tds: &Tds<U, V, D>, result: TopologyCheckResult) -> Self {
+        Self {
+            owner: tds.topology_owner_id(),
+            generation: tds.generation(),
+            result,
+        }
+    }
+
+    /// Returns the f-vector only while this evidence still matches the owner.
+    ///
+    /// The result borrows both the evidence and the checked TDS, preventing
+    /// mutation of that owner while the retained metrics remain observable.
+    pub(crate) fn simplex_counts<'owner, U, V, const D: usize>(
+        &'owner self,
+        tds: &'owner Tds<U, V, D>,
+    ) -> Option<&'owner FVector> {
+        (self.owner == tds.topology_owner_id() && self.generation == tds.generation())
+            .then_some(&self.result.counts)
+    }
+
+    /// Returns the Euler characteristic only while this evidence matches the owner.
+    pub(crate) fn euler_characteristic<U, V, const D: usize>(
+        &self,
+        tds: &Tds<U, V, D>,
+    ) -> Option<isize> {
+        self.simplex_counts(tds).map(|_| self.result.chi)
+    }
+}
+
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Drops construction evidence before a high-dimensional mutation whose
     /// local postconditions do not prove that every vertex link remains a PL
@@ -1320,6 +1359,11 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// links (when required by the topology guarantee), isolated vertices, and
     /// Euler characteristic.
     fn validate_topology_core(&self) -> Result<(), InvariantError> {
+        self.certify_topology().map(|_| ())
+    }
+
+    /// Runs Level 3 once and binds its topology metrics to this TDS generation.
+    pub(super) fn certify_topology(&self) -> Result<TopologyCertificationEvidence, InvariantError> {
         // 1. Connectedness
         //
         // Checked first because it is cheaper than building the facet-to-simplices map
@@ -1333,13 +1377,22 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
         let facet_to_simplices =
             ValidatedFacetDegreeMap::try_from_facet_map(&self.tds, &facet_to_simplices)?;
-        self.validate_topology_core_from_validated_facet_map(facet_to_simplices)
+        let result = self.certify_topology_from_facets(facet_to_simplices)?;
+        Ok(TopologyCertificationEvidence::new(&self.tds, result))
     }
 
     fn validate_topology_core_from_validated_facet_map(
         &self,
         facet_to_simplices: ValidatedFacetDegreeMap<'_, U, V, D>,
     ) -> Result<(), InvariantError> {
+        self.certify_topology_from_facets(facet_to_simplices)
+            .map(|_| ())
+    }
+
+    fn certify_topology_from_facets(
+        &self,
+        facet_to_simplices: ValidatedFacetDegreeMap<'_, U, V, D>,
+    ) -> Result<TopologyCheckResult, InvariantError> {
         // 2b. Boundary manifoldness in codimension 2: the boundary must be "closed"
         // (i.e., its ridges must have degree 2 within boundary facets).
         validate_closed_boundary_from_validated_facet_map(
@@ -1396,7 +1449,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             .into());
         }
 
-        Ok(())
+        Ok(topology_result)
     }
 
     /// Computes a coherent intrinsic orientation witness for a pure 2D or 3D complex.
@@ -2345,7 +2398,7 @@ mod tests {
     use crate::core::facet::FacetError;
     use crate::core::operations::InsertionOutcome;
     use crate::core::simplex::Simplex;
-    use crate::core::tds::{GeometricError, NeighborValidationError, Tds};
+    use crate::core::tds::{GeometricError, NeighborValidationError};
     use crate::core::vertex::Vertex;
     use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::coordinate_range::CoordinateRange;

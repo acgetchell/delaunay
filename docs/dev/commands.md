@@ -325,6 +325,9 @@ property families retain that default coverage with a Windows-only 60-second
 override because their release runtimes sit at the 10-second boundary on
 Windows runners. The cospherical 3D `OnSuspicion` sequence property has a
 focused cross-platform 60-second override for the same hosted-runner boundary.
+The isolated downstream checkpoint fixture has a focused 120-second override
+because it compiles a standalone crate in a separate target directory to prove
+that Cargo feature unification does not supply `serde_json/float_roundtrip`.
 The deterministic 5D SoS in-sphere property has a cross-platform 60-second
 override because its two complete exact expansions per generated case can also
 cross that boundary on hosted runners. Unaffected tests keep the normal budget.

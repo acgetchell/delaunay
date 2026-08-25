@@ -168,6 +168,7 @@ allocation checks, or targeted diagnostics.
 | Benchmark | Purpose | Scale | Typical Runtime | Used By |
 |-----------|---------|-------|-----------------|---------|
 | `allocation_hot_paths.rs` | Bootstrap/insert/query/barycenter allocations | Calibrated 2D-5D canaries | ~1-2 min | Manual allocation checks |
+| `checkpoint_serialization.rs` | Manifest and JSON checkpoint write/load | 64-vertex 2D owner | <1 min | Checkpoint tuning |
 | `ci_performance_suite.rs` | Public workflow regression contract | Calibrated 2D-5D canaries | ~5-10 min | CI, baselines, `just perf-no-regressions` |
 | `circumsphere_containment.rs` | Circumsphere predicates and solves | 2D-5D predicates, 3D LU/exact solves | ~5 min | Predicate/circumcenter tuning |
 | `cold_path_predicates.rs` | Track predicate paths | Hot, centered, and certified exact cases in 2D-5D | ~2-5 min | Predicate tuning |
@@ -186,6 +187,7 @@ allocation checks, or targeted diagnostics.
 | Use Case | Command |
 |----------|---------|
 | Final local invariant validation gate | `just ci` |
+| Measure checkpoint manifest and JSON write/load paths | `cargo bench --bench checkpoint_serialization --features bench -- --noplot` |
 | Quick local large-scale wall-clock guard | `just perf-large-scale-smoke` |
 | Fast local PR performance guard with cached same-machine main baseline | `just perf-no-regressions` |
 | Compare current branch against a local release/ref baseline | `just perf-vs-ref v0.7.8` |
@@ -222,6 +224,13 @@ allocation checks, or targeted diagnostics.
 | One-dimension acceptance/profiling run | `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` |
 | Isolated 32k-vertex 2D Level 4 acceptance run | `DELAUNAY_LARGE_DEBUG_VALIDATION=realization just debug-large-scale-2d 32000` |
 | Deep profiling | `cargo bench --profile perf --bench profiling_suite --features count-allocations` |
+
+The checkpoint benchmark uses one deterministic 2D owner because its purpose is
+to isolate digest construction and codec overhead, whose dimension-generic
+implementation is shared across dimensions. Correctness and exact replay remain
+covered separately by the 2D–5D checkpoint tests; expanding the timed matrix
+would primarily repeat topology construction cost rather than sharpen this
+serialization signal.
 
 ## Profiles And Local Guards
 
