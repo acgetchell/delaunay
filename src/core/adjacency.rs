@@ -132,7 +132,7 @@ pub struct SimplexNeighborIndex<'tds> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, query::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -470,7 +470,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt.as_triangulation();
-        let incidence = tri.incidence().unwrap();
+        let incidence = tri.incidence();
         let edge_index = tri.build_edge_index().unwrap();
         let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
 

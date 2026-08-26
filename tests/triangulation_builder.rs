@@ -636,16 +636,6 @@ fn test_explicit_toroidal_torus_euler_mismatch_without_override() {
 // Explicit construction (try_from_vertices_and_simplices)
 // =============================================================================
 
-fn explicit_builder_parse_error<U, const D: usize>(
-    vertices: &[Vertex<U, D>],
-    simplices: &[Vec<usize>],
-) -> ExplicitConstructionError {
-    match DelaunayTriangulationBuilder::try_from_vertices_and_simplices(vertices, simplices) {
-        Ok(_) => panic!("explicit simplex specs should be rejected before builder storage"),
-        Err(err) => err,
-    }
-}
-
 /// Builds the origin and unit-basis facet plus an equal-coordinate apex.
 /// An apex sum above one places it across the shared facet from the origin.
 fn shared_facet_vertices<const D: usize>(apex_coordinate_sum: f64) -> Vec<Vertex<(), D>> {
@@ -1402,45 +1392,6 @@ fn test_explicit_unreferenced_vertices_rejected() {
     );
 }
 
-/// Error variant: empty simplices returns ExplicitConstruction(EmptySimplices).
-#[test]
-fn test_explicit_error_variant_empty_simplices() {
-    let vertices = vec![vertex!([0.0_f64, 0.0]).unwrap()];
-    let simplices: Vec<Vec<usize>> = vec![];
-
-    let err = explicit_builder_parse_error(&vertices, &simplices);
-
-    assert!(
-        matches!(err, ExplicitConstructionError::EmptySimplices),
-        "Expected ExplicitConstruction(EmptySimplices), got: {err}"
-    );
-}
-
-/// Error variant: wrong arity returns ExplicitConstruction(InvalidSimplexArity { .. }).
-#[test]
-fn test_explicit_error_variant_wrong_arity() {
-    let vertices = vec![
-        vertex!([0.0_f64, 0.0]).unwrap(),
-        vertex!([1.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0]).unwrap(),
-    ];
-    let simplices = vec![vec![0, 1]]; // 2D expects 3 vertices
-
-    let err = explicit_builder_parse_error(&vertices, &simplices);
-
-    assert!(
-        matches!(
-            err,
-            ExplicitConstructionError::InvalidSimplexArity {
-                simplex_index: 0,
-                actual: 2,
-                expected: 3
-            }
-        ),
-        "Expected InvalidSimplexArity, got: {err}"
-    );
-}
-
 /// Error variant: non-manifold facet sharing is rejected during TDS insertion.
 #[test]
 fn test_explicit_error_variant_non_manifold_facet() {
@@ -1516,30 +1467,6 @@ fn test_explicit_error_variant_tds_orientation_normalization() {
             TdsError::InconsistentDataStructure { message }
                 if message.contains("Contradictory orientation constraints")
         )
-    );
-}
-
-/// Error variant: duplicate vertex returns ExplicitConstruction(DuplicateVertexInSimplex { .. }).
-#[test]
-fn test_explicit_error_variant_duplicate_vertex_in_simplex() {
-    let vertices = vec![
-        vertex!([0.0_f64, 0.0]).unwrap(),
-        vertex!([1.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0]).unwrap(),
-    ];
-    let simplices = vec![vec![0, 1, 1]]; // Duplicate vertex 1
-
-    let err = explicit_builder_parse_error(&vertices, &simplices);
-
-    assert!(
-        matches!(
-            err,
-            ExplicitConstructionError::DuplicateVertexInSimplex {
-                simplex_index: 0,
-                vertex_index: 1,
-            }
-        ),
-        "Expected DuplicateVertexInSimplex, got: {err}"
     );
 }
 
@@ -1730,29 +1657,4 @@ fn test_explicit_error_variant_orientation_normalization_summary() {
         }
         other => panic!("expected orientation-normalization variant, got {other:?}"),
     }
-}
-
-/// Error variant: out-of-bounds returns ExplicitConstruction(IndexOutOfBounds { .. }).
-#[test]
-fn test_explicit_error_variant_index_out_of_bounds() {
-    let vertices = vec![
-        vertex!([0.0_f64, 0.0]).unwrap(),
-        vertex!([1.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0]).unwrap(),
-    ];
-    let simplices = vec![vec![0, 1, 99]];
-
-    let err = explicit_builder_parse_error(&vertices, &simplices);
-
-    assert!(
-        matches!(
-            err,
-            ExplicitConstructionError::IndexOutOfBounds {
-                simplex_index: 0,
-                vertex_index: 99,
-                bound: 3,
-            }
-        ),
-        "Expected IndexOutOfBounds, got: {err}"
-    );
 }

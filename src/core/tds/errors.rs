@@ -137,7 +137,7 @@ pub enum GeometricError {
 /// Example usage
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, tds::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {

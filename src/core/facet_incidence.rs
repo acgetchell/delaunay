@@ -1,7 +1,6 @@
-//! TDS-level facet-incidence analysis functions.
+//! TDS-level facet-incidence analysis methods.
 //!
-//! This module implements the `FacetIncidenceAnalysis` trait for triangulation
-//! data structures, providing methods to identify and analyze one-sided facet
+//! These inherent [`Tds`] methods identify and analyze one-sided facet
 //! incidence in d-dimensional triangulations.
 
 #![forbid(unsafe_code)]
@@ -9,15 +8,10 @@
 use super::{
     facet::{FacetError, FacetToSimplicesIndex, FacetView, OneSidedFacetsIter},
     tds::{Tds, TdsError},
-    traits::facet_incidence_analysis::FacetIncidenceAnalysis,
 };
 use std::ptr;
 
-/// Implementation of `FacetIncidenceAnalysis` trait for `Tds`.
-///
-/// This implementation provides efficient one-sided facet incidence analysis
-/// for d-dimensional triangulations using the triangulation data structure.
-impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
+impl<U, V, const D: usize> Tds<U, V, D> {
     /// Identifies all one-sided facet incidences in the TDS.
     ///
     /// This is incidence analysis only: a one-sided facet can be a Euclidean
@@ -57,7 +51,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// // Create a simple 3D triangulation (single tetrahedron)
@@ -85,7 +79,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    fn one_sided_facets(&self) -> Result<OneSidedFacetsIter<'_, U, V, D>, TdsError> {
+    pub fn one_sided_facets(&self) -> Result<OneSidedFacetsIter<'_, U, V, D>, TdsError> {
         // Build an owner-bound index from facet keys to the simplices that contain them.
         let facet_to_simplices = self.build_facet_to_simplices_index()?;
 
@@ -105,7 +99,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     ///
     /// This method rebuilds the facet-to-simplices index on every call, which has O(N·F) complexity.
     /// For checking multiple facets in hot paths, prefer using
-    /// [`FacetIncidenceAnalysis::is_one_sided_facet_with_index`] with a
+    /// [`Tds::is_one_sided_facet_with_index`] with a
     /// precomputed index to avoid recomputation.
     ///
     /// # Arguments
@@ -125,7 +119,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
@@ -150,7 +144,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     /// # }
     /// ```
     #[inline]
-    fn is_one_sided_facet(&self, facet: &FacetView<'_, U, V, D>) -> Result<bool, TdsError> {
+    pub fn is_one_sided_facet(&self, facet: &FacetView<'_, U, V, D>) -> Result<bool, TdsError> {
         ensure_facet_view_owner(self, facet)?;
         let facet_to_simplices = self.build_facet_to_simplices_index()?;
         self.is_one_sided_facet_with_index(facet, &facet_to_simplices)
@@ -159,7 +153,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     /// Checks if a specific facet has one-sided incidence using a precomputed facet index.
     ///
     /// This is an optimized version of
-    /// [`FacetIncidenceAnalysis::is_one_sided_facet`] that accepts a prebuilt
+    /// [`Tds::is_one_sided_facet`] that accepts a prebuilt
     /// owner-bound facet-to-simplices index to avoid recomputation in tight
     /// loops.
     ///
@@ -182,7 +176,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
@@ -205,7 +199,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     /// # }
     /// ```
     #[inline]
-    fn is_one_sided_facet_with_index(
+    pub fn is_one_sided_facet_with_index(
         &self,
         facet: &FacetView<'_, U, V, D>,
         facet_to_simplices: &FacetToSimplicesIndex<'_, U, V, D>,
@@ -234,7 +228,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
@@ -255,7 +249,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    fn number_of_one_sided_facets(&self) -> Result<usize, TdsError> {
+    pub fn number_of_one_sided_facets(&self) -> Result<usize, TdsError> {
         let facet_to_simplices = self.build_facet_to_simplices_index()?;
         Ok(facet_to_simplices
             .iter()
@@ -264,6 +258,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     }
 }
 
+/// Rejects a facet view from another TDS before its cached key is queried.
 fn ensure_facet_view_owner<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     facet: &FacetView<'_, U, V, D>,
@@ -293,7 +288,6 @@ fn ensure_facet_index_owner<U, V, const D: usize>(
 
 #[cfg(test)]
 mod tests {
-    use super::FacetIncidenceAnalysis;
     use crate::core::collections::{FacetToSimplicesMap, SmallBuffer};
     use crate::core::facet::{FacetError, FacetHandle, FacetToSimplicesIndex, FacetView};
     use crate::core::simplex::Simplex;

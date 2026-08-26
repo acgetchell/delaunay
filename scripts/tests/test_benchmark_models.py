@@ -20,6 +20,7 @@ from benchmark_models import (
     CircumsphereTestCase,
     VersionComparisonData,
     extract_benchmark_data,
+    extract_validated_benchmark_records,
     format_benchmark_tables,
     format_throughput_value,
     format_time_value,
@@ -244,6 +245,77 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
         assert second.points == 5000
         assert second.dimension == "3D"
         assert second.time_mean == 550.0
+
+    @pytest.mark.parametrize(
+        ("unit", "mean", "expected_us"),
+        [
+            ("ns", 2_000.0, 2.0),
+            ("us", 2.0, 2.0),
+            ("µs", 2.0, 2.0),
+            ("μs", 2.0, 2.0),
+            ("ms", 2.0, 2_000.0),
+            ("s", 2.0, 2_000_000.0),
+        ],
+    )
+    def test_validated_records_normalize_supported_time_units(
+        self,
+        unit: str,
+        mean: float,
+        expected_us: float,
+    ) -> None:
+        """Every supported legacy unit is normalized before trusted use."""
+        records = extract_validated_benchmark_records(f"=== 10 Points (2D) ===\nTime: [{mean / 2}, {mean}, {mean * 2}] {unit}\n")
+
+        assert len(records) == 1
+        assert isinstance(hash(records[0]), int)
+        assert records[0].time_mean_us == expected_us
+        assert records[0].to_benchmark_data().time_unit == "µs"
+
+    @pytest.mark.parametrize(
+        ("content", "message"),
+        [
+            (
+                "=== Unsized Workload (4D) ===\nTime: [1, 2, 3] µs\n",
+                "missing Benchmark ID",
+            ),
+            (
+                "=== 10 Points (2D) ===\nBenchmark ID: first\nBenchmark ID: second\nTime: [1, 2, 3] µs\n",
+                "duplicate Benchmark ID",
+            ),
+            (
+                "=== 10 Points (2D) ===\nBenchmark ID : ambiguous\nTime: [1, 2, 3] µs\n",
+                "malformed Benchmark ID",
+            ),
+            (
+                "=== 0 Points (2D) ===\nTime: [1, 2, 3] µs\n",
+                "Malformed benchmark section header",
+            ),
+            (
+                "=== 10 Points (2D) ===\nTime: [1, 2, 3] µs\nTime: [1, 2, 3] µs\n",
+                "duplicate Time",
+            ),
+            (
+                "=== 10 Points (2D) ===\nTime: [1, 2, 3] fortnight\n",
+                "unsupported Time unit",
+            ),
+            (
+                "=== 10 Points (2D) ===\nTime: [1, nan, 3] µs\n",
+                "positive finite",
+            ),
+            (
+                "=== 10 Points (2D) ===\nTime: [1, 2, 3] µs\n=== 10 Points (2D) ===\nTime: [1, 2, 3] µs\n",
+                "Duplicate benchmark comparison key",
+            ),
+        ],
+    )
+    def test_validated_records_reject_ambiguous_or_invalid_sections(
+        self,
+        content: str,
+        message: str,
+    ) -> None:
+        """Malformed identity, timing, unit, and duplicate states fail closed."""
+        with pytest.raises(ValueError, match=message):
+            extract_validated_benchmark_records(content)
 
     def test_parse_benchmark_header(self) -> None:
         """Test parsing benchmark header lines."""

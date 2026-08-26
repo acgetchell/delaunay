@@ -1613,8 +1613,8 @@ def postprocess(path: Path) -> None:
             tmp_path.unlink()
 
 
-def main() -> None:
-    """CLI entry point for ``postprocess-changelog``."""
+def main(argv: list[str] | None = None) -> int:
+    """Run ``postprocess-changelog`` with concise file diagnostics."""
     parser = argparse.ArgumentParser(
         prog="postprocess-changelog",
         description="Apply markdown hygiene to a git-cliff generated CHANGELOG.md.",
@@ -1627,15 +1627,21 @@ def main() -> None:
         default="CHANGELOG.md",
         help="Path to CHANGELOG.md (default: CHANGELOG.md)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     changelog = Path(args.path)
     if not changelog.is_file():
-        print(f"Error: {changelog} not found", file=sys.stderr)
-        sys.exit(1)
+        print(f"postprocess-changelog: error: not a regular file: {changelog}", file=sys.stderr)
+        return 1
 
-    postprocess(changelog)
+    try:
+        postprocess(changelog)
+    except (UnicodeDecodeError, OSError) as error:
+        detail = " ".join(str(error).split()) or type(error).__name__
+        print(f"postprocess-changelog: error: {changelog}: {detail}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

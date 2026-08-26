@@ -50,7 +50,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -99,7 +99,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         let mut facet_to_simplices: FacetToSimplicesMap = fast_hash_map_with_capacity(cap);
 
         // Iterate over all simplices and their facets
-        for (simplex_id, simplex) in &self.simplices {
+        for (simplex_id, simplex) in self.simplices.iter() {
             // Use direct key-based method to avoid UUID→Key lookups
             // The error from simplex_vertices is already TdsError
             let vertices = self.simplex_vertices(simplex_id)?;
@@ -173,7 +173,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
         // Check the key-to-UUID direction first (direct storage map access),
         // then only do UUID-to-key lookup verification when needed.
-        for (vertex_key, vertex) in &self.vertices {
+        for (vertex_key, vertex) in self.vertices.iter() {
             let vertex_uuid = vertex.uuid();
 
             // Check key-to-UUID direction first (direct storage map access - no hash lookup)
@@ -241,7 +241,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
         // Check the key-to-UUID direction first (direct storage map access),
         // then only do UUID-to-key lookup verification when needed.
-        for (simplex_key, simplex) in &self.simplices {
+        for (simplex_key, simplex) in self.simplices.iter() {
             let simplex_uuid = simplex.uuid();
 
             // Check key-to-UUID direction first (direct storage map access - no hash lookup)
@@ -284,7 +284,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Returns `TdsError::VertexNotFound` if any simplex
     /// references a vertex key that doesn't exist in the vertices `storage map`.
     pub(crate) fn validate_simplex_vertex_keys(&self) -> Result<(), TdsError> {
-        for (simplex_key, simplex) in &self.simplices {
+        for (simplex_key, simplex) in self.simplices.iter() {
             let simplex_uuid = simplex.uuid();
             for (vertex_idx, &vertex_key) in simplex.vertices().iter().enumerate() {
                 if !self.vertices.contains_key(vertex_key) {
@@ -311,7 +311,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// - point to an existing simplex key, and
     /// - reference a simplex that actually contains the vertex.
     fn validate_vertex_incidence(&self) -> Result<(), TdsError> {
-        for (vertex_key, vertex) in &self.vertices {
+        for (vertex_key, vertex) in self.vertices.iter() {
             let Some(incident_simplex_key) = vertex.incident_simplex() else {
                 continue;
             };
@@ -403,7 +403,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             }
         }
 
-        for (simplex_key, simplex) in &self.simplices {
+        for (simplex_key, simplex) in self.simplices.iter() {
             for vertex_key in simplex.vertices() {
                 let Some(incident_simplices) = vertex_to_simplices.get(vertex_key) else {
                     return Err(TdsError::VertexNotFound {
@@ -449,7 +449,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             fast_hash_map_with_capacity(self.simplices.len());
         let mut duplicates = Vec::new();
 
-        for (simplex_key, _simplex) in &self.simplices {
+        for (simplex_key, _simplex) in self.simplices.iter() {
             let vertices = self.simplex_vertices(simplex_key)?;
             let vertex_uuid_offsets =
                 self.build_periodic_vertex_uuid_offsets(simplex_key, vertices)?;
@@ -500,7 +500,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Returns [`TdsError::DuplicateCoordinatesInSimplex`] on the first simplex found
     /// containing two vertices with identical coordinates.
     fn validate_simplex_coordinate_uniqueness(&self) -> Result<(), TdsError> {
-        for (_simplex_key, simplex) in &self.simplices {
+        for (_simplex_key, simplex) in self.simplices.iter() {
             let vkeys = simplex.vertices();
             // O(D²) pairwise comparison per simplex — acceptable since D is small (≤ 6).
             for i in 0..vkeys.len() {
@@ -569,7 +569,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -617,7 +617,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// - [`IndexOutOfBounds`](TdsError::IndexOutOfBounds) / [`DimensionMismatch`](TdsError::DimensionMismatch)
     ///   — facet-extraction helpers encounter invalid indices or periodic-offset count mismatches.
     fn validate_coherent_orientation(&self) -> Result<(), TdsError> {
-        for (simplex_key, simplex) in &self.simplices {
+        for (simplex_key, simplex) in self.simplices.iter() {
             let Some(neighbors) = simplex.neighbor_keys() else {
                 continue;
             };
@@ -1043,7 +1043,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1135,7 +1135,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1166,7 +1166,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # }
     /// ```
     pub fn validate(&self) -> Result<(), TdsError> {
-        for (_vertex_key, vertex) in &self.vertices {
+        for (_vertex_key, vertex) in self.vertices.iter() {
             if let Err(source) = (*vertex).is_valid() {
                 return Err(TdsError::InvalidVertex {
                     vertex_id: vertex.uuid(),
@@ -1175,7 +1175,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             }
         }
 
-        for (simplex_key, simplex) in &self.simplices {
+        for (simplex_key, simplex) in self.simplices.iter() {
             if let Err(source) = simplex.is_valid() {
                 let Some(simplex_id) = self.simplex_uuid_from_key(simplex_key) else {
                     return Err(TdsError::InconsistentDataStructure {
@@ -1231,7 +1231,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// let tds: Tds<(), (), 2> = Tds::empty();
     /// assert!(tds.structure_report().is_ok());
@@ -1367,7 +1367,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     pub fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
         let mut violations = Vec::new();
 
-        for (_vertex_key, vertex) in &self.vertices {
+        for (_vertex_key, vertex) in self.vertices.iter() {
             if let Err(report) = (*vertex).vertex_report() {
                 violations.extend(report.violations.into_iter().map(|source| {
                     InvariantViolation {
@@ -1382,7 +1382,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             }
         }
 
-        for (simplex_key, simplex) in &self.simplices {
+        for (simplex_key, simplex) in self.simplices.iter() {
             if let Err(report) = simplex.simplex_report() {
                 violations.extend(report.violations.into_iter().map(|source| {
                     let error = self.simplex_uuid_from_key(simplex_key).map_or_else(
@@ -1728,7 +1728,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         &self,
         simplex_vertices: &SimplexVerticesMap,
     ) -> Result<(), TdsError> {
-        for (simplex_key, simplex) in &self.simplices {
+        for (simplex_key, simplex) in self.simplices.iter() {
             let Some(neighbor_keys) = simplex.neighbor_keys() else {
                 continue; // Skip simplices without neighbors
             };

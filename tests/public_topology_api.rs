@@ -76,7 +76,7 @@ where
         .next()
         .map(|(simplex_key, _)| simplex_key)
         .ok_or(PublicTopologyApiTestError::EmptySingleSimplexSimplices)?;
-    let incidence = tri.incidence()?;
+    let incidence = tri.incidence();
     let edge_index = tri.build_edge_index()?;
     let neighbor_index = tri.build_simplex_neighbor_index()?;
     let adjacency = tri.adjacency()?;
@@ -332,7 +332,7 @@ fn split_topology_indexes_on_double_tetrahedron() -> Result<(), PublicTopologyAp
     }
 
     // Build opt-in split topology views and validate key properties.
-    let incidence = tri.incidence()?;
+    let incidence = tri.incidence();
     let edge_index = tri.build_edge_index()?;
     let neighbor_index = dt.build_simplex_neighbor_index()?;
 

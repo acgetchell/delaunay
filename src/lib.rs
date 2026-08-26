@@ -55,6 +55,7 @@
 //! | Build/validate/repair generic triangulations | `use delaunay::prelude::triangulation::*` |
 //! | Incremental insertion diagnostics and result types | `use delaunay::prelude::insertion::*` |
 //! | Post-construction vertex deletion errors and keys | `use delaunay::prelude::deletion::*` |
+//! | Topological operation outcomes, policies, and telemetry | `use delaunay::prelude::operations::*` |
 //! | Read-only queries, traversal, ridge views, simplex barycenters, convex hull | `use delaunay::prelude::query::*` |
 //! | Point location and conflict-region algorithms | `use delaunay::prelude::algorithms::*` |
 //! | Geometry helpers, simplex realizations, coordinate ranges, predicates, points | `use delaunay::prelude::geometry::*` |
@@ -678,8 +679,8 @@ mod core {
                 RepairDiagnostics, RepairQueues, default_max_flips, duration_nanos_saturating,
                 emit_repair_debug_summary, enqueue_facet, enqueue_simplex_facets, flip_signature,
                 non_convergent_error, pop_queue, predicate_key_from_vertices,
-                repair_ridge_debug_enabled, repair_trace_enabled, run_next_edge_repair_step,
-                run_next_facet_repair_step, run_next_ridge_repair_step,
+                repair_flip_is_unavailable, repair_ridge_debug_enabled, repair_trace_enabled,
+                run_next_edge_repair_step, run_next_facet_repair_step, run_next_ridge_repair_step,
                 run_next_triangle_repair_step, seed_repair_queues,
                 should_emit_postcondition_facet_debug, should_emit_ridge_debug,
             };
@@ -814,11 +815,11 @@ mod core {
 
         pub(crate) mod spatial_hash_grid;
 
-        pub(crate) use aliases::StorageMap;
         pub use aliases::{
             Entry, FacetIndex, FastBuildHasher, FastHashMap, FastHashSet, FastHasher,
             MAX_PRACTICAL_DIMENSION_SIZE, SecureHashMap, SecureHashSet, SmallBuffer, Uuid,
         };
+        pub(crate) use aliases::{StorageKeys, StorageMap};
 
         pub use buffers::*;
         pub use helpers::*;
@@ -851,8 +852,8 @@ mod core {
         pub use keys::{SimplexKey, VertexKey};
         pub use model::{Tds, TopologyOwner, TopologyOwnerId};
         pub(crate) use rollback::{
-            TdsOwnerRollbackTransaction, TdsRollbackOwner, TdsRollbackTransaction,
-            TdsRollbackWindow,
+            TdsOwnerRollbackTransaction, TdsRollbackOwner, TdsRollbackSavepoint,
+            TdsRollbackTransaction, TdsRollbackWindow,
         };
         pub(crate) use snapshot::{
             RawTdsSnapshot, TdsSnapshot, TdsSnapshotError, ValidatedTdsSerialization,
@@ -883,7 +884,6 @@ mod core {
     /// Traits for Delaunay triangulation data structures.
     pub mod traits {
         pub mod data_type;
-        pub mod facet_incidence_analysis;
         pub use data_type::*;
     }
 
@@ -1124,7 +1124,7 @@ pub use crate::triangulation::realization::{
     TriangulationRealizationValidationError, TriangulationRealizationValidationErrorKind,
     TriangulationRealizationValidationReport,
 };
-pub use crate::triangulation::repair::LocalFacetRepairGuard;
+pub use crate::triangulation::repair::{LocalFacetRepairGuard, TriangulationRepairOperation};
 pub use crate::triangulation::validation::{
     OrientationWitness, TopologyGuarantee, TriangulationValidationError,
     ValidationConfigurationError, ValidationPolicy,
@@ -1308,8 +1308,8 @@ pub mod collections {
         SimplexKeySet, SimplexNeighborsMap, SimplexSecondaryMap, SimplexVertexBuffer,
         SimplexVertexKeyBuffer, SimplexVertexKeysMap, SimplexVertexUuidBuffer, SimplexVerticesMap,
         SmallBuffer, Uuid, UuidToSimplexKeyMap, UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet,
-        VertexSecondaryMap, VertexToSimplicesMap, VertexUuidBuffer, VertexUuidSet,
-        fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+        VertexSecondaryMap, VertexToSimplicesMap, VertexUuidSet, fast_hash_map_with_capacity,
+        fast_hash_set_with_capacity,
     };
 
     /// Expert aliases for algorithm-local scratch buffers.
@@ -1423,7 +1423,6 @@ pub mod query {
     pub use crate::core::traits::data_type::{
         DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
     };
-    pub use crate::core::traits::facet_incidence_analysis::FacetIncidenceAnalysis;
     pub use crate::core::util::measure_with_result;
     pub use crate::flips::RidgeHandle;
     pub use crate::geometry::Point;
@@ -1463,8 +1462,8 @@ pub mod prelude {
     // Re-export the public low-level facades.
     pub use crate::query::{
         DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
-        FacetIncidenceAnalysis, QueryError, RidgeCandidate, RidgeCandidateError, RidgeHandle,
-        RidgeLinkView, RidgeQuery, RidgeView, SimplexBarycenterError, SimplexDataFillError,
+        QueryError, RidgeCandidate, RidgeCandidateError, RidgeHandle, RidgeLinkView, RidgeQuery,
+        RidgeView, SimplexBarycenterError, SimplexDataFillError,
     };
     pub use crate::tds::*;
     pub use crate::vertex;
@@ -1653,10 +1652,9 @@ pub mod prelude {
         pub use crate::vertex;
         pub use crate::{
             CavityFillingError, CavityRepairStage, DelaunayIncrementalBuilder,
-            DelaunayIncrementalBuilderError, DelaunayTriangulation, DeleteVertexError,
-            FinalDelaunayValidationContext, FinalTopologyValidationContext,
-            SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
-            TriangulationConstructionError, TriangulationRealizationValidationError,
+            DelaunayIncrementalBuilderError, DelaunayTriangulation, FinalDelaunayValidationContext,
+            FinalTopologyValidationContext, SpatialIndexConstructionFailure, TopologyGuarantee,
+            Triangulation, TriangulationConstructionError, TriangulationRealizationValidationError,
             try_vertices_from_points,
         };
         pub use crate::{
@@ -1709,10 +1707,10 @@ pub mod prelude {
         pub use crate::query::{
             AllFacetsIter, BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity,
             DataSerde, DataSerialize, DataType, EdgeIndex, EdgeKey, EdgeKeyError, EdgeView,
-            FacetIncidenceAnalysis, FacetIncidenceView, FacetToSimplicesIndex, FacetView,
-            IncidenceView, OneSidedFacetsIter, QueryError, RidgeCandidate, RidgeCandidateError,
-            RidgeHandle, RidgeLinkView, RidgeQuery, RidgeView, SimplexFacetsIter,
-            SimplexNeighborIndex, TopologyIndexBuildError, TriangulationAdjacency,
+            FacetIncidenceView, FacetToSimplicesIndex, FacetView, IncidenceView,
+            OneSidedFacetsIter, QueryError, RidgeCandidate, RidgeCandidateError, RidgeHandle,
+            RidgeLinkView, RidgeQuery, RidgeView, SimplexFacetsIter, SimplexNeighborIndex,
+            TopologyIndexBuildError, TriangulationAdjacency,
         };
         pub use crate::tds::{
             FacetHandle, InvariantError, NeighborSlot, Simplex, SimplexKey, Tds,
@@ -1860,11 +1858,16 @@ pub mod prelude {
     /// std::assert_matches!(err, DeleteVertexError::VertexNotFound { .. });
     /// ```
     pub mod deletion {
-        pub use crate::DeleteVertexError;
         pub use crate::tds::VertexKey;
+        pub use crate::{DeleteVertexError, TriangulationRepairOperation};
     }
 
-    /// Topological operation telemetry and repair decisions.
+    /// Topological operation outcomes, policies, and lightweight telemetry.
+    ///
+    /// This prelude intentionally overlaps [`prelude::insertion`](crate::prelude::insertion)
+    /// for insertion result types: `insertion` groups the complete insertion
+    /// error/result workflow, while `operations` groups cross-operation semantic
+    /// classification, repair decisions, and suspicion flags.
     pub mod operations {
         pub use crate::{
             InsertionOutcome, InsertionResult, InsertionStatistics, RepairDecision,
@@ -1980,7 +1983,7 @@ pub mod prelude {
             SimplexSecondaryMap, SimplexVertexBuffer, SimplexVertexKeyBuffer, SimplexVertexKeysMap,
             SimplexVertexUuidBuffer, SimplexVerticesMap, SmallBuffer, Uuid, UuidToSimplexKeyMap,
             UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet, VertexSecondaryMap,
-            VertexToSimplicesMap, VertexUuidBuffer, VertexUuidSet, fast_hash_map_with_capacity,
+            VertexToSimplicesMap, VertexUuidSet, fast_hash_map_with_capacity,
             fast_hash_set_with_capacity,
         };
 
@@ -2044,7 +2047,7 @@ pub mod prelude {
                 PeriodicSimplexSpanError, SimplexIntersectionFailure, SimplexIntersectionWitness,
                 SimplexRealizationBuffer, axis_aligned_bounding_boxes_overlap,
                 coordinate_range_for_axis, try_periodic_simplex_span,
-                validate_simplex_realizations_intersect_only_in_shared_faces,
+                validate_simplex_intersection,
             },
             robust_predicates::{
                 ConsistencyResult, InsphereConsistencyError, robust_insphere, robust_orientation,
@@ -2096,19 +2099,19 @@ pub mod prelude {
         };
     }
 
-    /// Focused exports for construction telemetry and opt-in diagnostic helpers.
+    /// Focused exports for construction telemetry and opt-in debug helpers.
     ///
-    /// Construction telemetry is always available.  Expensive verification and
-    /// violation-report helpers are compiled only with the `diagnostics`
-    /// feature because they are intended for explicit debugging workflows, not
-    /// the default public API surface.
+    /// Construction telemetry is always available. The tracing helper is
+    /// compiled only with the `diagnostics` feature. Structured validation
+    /// reports remain in [`prelude::validation`](crate::prelude::validation).
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::diagnostics::NeighborSlot;
+    /// use delaunay::prelude::diagnostics::ConstructionTelemetry;
     ///
-    /// assert!(NeighborSlot::Boundary.is_boundary());
+    /// let telemetry = ConstructionTelemetry::default();
+    /// assert!(!telemetry.has_data());
     /// ```
     pub mod diagnostics {
         #[cfg(feature = "diagnostics")]
@@ -2116,10 +2119,6 @@ pub mod prelude {
         pub use crate::debug_print_first_delaunay_violation;
         pub use crate::diagnostics::{
             BatchLocalRepairTrigger, ConstructionTelemetry, LocalRepairSample,
-        };
-        pub use crate::tds::NeighborSlot;
-        pub use crate::{
-            DelaunayViolationDetail, DelaunayViolationReport, delaunay_violation_report,
         };
     }
 
@@ -2212,10 +2211,9 @@ pub mod prelude {
         pub use crate::geometry::traits::coordinate::Coordinate;
         pub use crate::query::{
             AllFacetsIter, BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity,
-            DataSerde, DataSerialize, DataType, FacetIncidenceAnalysis, FacetView,
-            OneSidedFacetsIter, QueryError, RidgeCandidate, RidgeCandidateError, RidgeHandle,
-            RidgeLinkView, RidgeQuery, RidgeView, Simplex, SimplexBarycenterError,
-            SimplexDataFillError, SimplexFacetsIter, Vertex,
+            DataSerde, DataSerialize, DataType, FacetView, OneSidedFacetsIter, QueryError,
+            RidgeCandidate, RidgeCandidateError, RidgeHandle, RidgeLinkView, RidgeQuery, RidgeView,
+            Simplex, SimplexBarycenterError, SimplexDataFillError, SimplexFacetsIter, Vertex,
         };
 
         // Read-only predicates (useful in benchmarks / lightweight geometry checks)
@@ -2275,10 +2273,10 @@ pub mod prelude {
             generate_random_points_in_ball_seeded, generate_random_points_in_range,
             generate_random_points_in_range_seeded, generate_random_points_periodic,
             generate_random_triangulation_in_range,
-            generate_random_triangulation_in_range_with_topology_guarantee,
-            scaled_bounds_by_point_count, try_generate_poisson_points, try_generate_random_points,
+            generate_random_triangulation_in_range_with_topology, scaled_bounds_by_point_count,
+            try_generate_poisson_points, try_generate_random_points,
             try_generate_random_points_seeded, try_generate_random_triangulation,
-            try_generate_random_triangulation_with_topology_guarantee,
+            try_generate_random_triangulation_with_topology,
         };
     }
 

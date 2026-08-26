@@ -3,10 +3,10 @@
 #![forbid(unsafe_code)]
 
 use super::{
-    DataType, FacetHandle, FastHashSet, FlipContext, FlipContextError, FlipError,
-    FlipPredicateError, FlipPredicateOperation, Key, LastAppliedFlip, MAX_PRACTICAL_DIMENSION_SIZE,
-    Orientation, PeriodicOffsetBuffer, RepairDiagnostics, ReplacementPeriodicOffsets, RidgeHandle,
-    Simplex, SimplexKey, SimplexKeyBuffer, SmallBuffer, Tds, VertexKey, align_periodic_offset,
+    FacetHandle, FastHashSet, FlipContext, FlipContextError, FlipError, FlipPredicateError,
+    FlipPredicateOperation, Key, LastAppliedFlip, MAX_PRACTICAL_DIMENSION_SIZE, Orientation,
+    PeriodicOffsetBuffer, RepairDiagnostics, ReplacementPeriodicOffsets, RidgeHandle, Simplex,
+    SimplexKey, SimplexKeyBuffer, SmallBuffer, Tds, VertexKey, align_periodic_offset,
     collect_simplices_around_ridge, periodic_offset_lifted_into_simplex,
     periodic_offsets_or_zero_frame, push_unique_simplex_key, ridge_vertices_from_simplex,
     robust_orientation, should_emit_postcondition_facet_debug, should_emit_ridge_debug,
@@ -628,11 +628,7 @@ pub(super) fn permutation_odd<Id: PartialEq>(
 pub(super) fn validate_replacement_orientation<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplices: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
-) -> Result<(), FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), FlipError> {
     for vertices in simplices {
         let points = vertices_to_points(tds, vertices)?;
         match robust_orientation(&points) {
@@ -660,11 +656,7 @@ where
 pub(super) fn simplices_containing_vertices<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     vertices: &[VertexKey],
-) -> SimplexKeyBuffer
-where
-    U: DataType,
-    V: DataType,
-{
+) -> SimplexKeyBuffer {
     let mut simplices = SimplexKeyBuffer::new();
     'simplices: for (simplex_key, simplex) in tds.simplices() {
         for &vkey in vertices {
@@ -688,10 +680,7 @@ pub(super) fn debug_ridge_context<U, V, const D: usize>(
     reported_multiplicity: Option<usize>,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: Option<&LastAppliedFlip>,
-) where
-    U: DataType,
-    V: DataType,
-{
+) {
     if !should_emit_ridge_debug(diagnostics, reported_multiplicity) {
         return;
     }
@@ -757,11 +746,7 @@ pub(super) fn ridge_incident_simplex_summary<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     ridge_vertices: &SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-) -> String
-where
-    U: DataType,
-    V: DataType,
-{
+) -> String {
     let Some(simplex) = tds.simplex(simplex_key) else {
         return format!("{simplex_key:?}: missing");
     };
@@ -779,10 +764,7 @@ where
 pub(super) fn ridge_neighbor_simplices_for_simplex<V, const D: usize>(
     simplex: &Simplex<V, D>,
     ridge_vertices: &SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-) -> SmallBuffer<SimplexKey, 2>
-where
-    V: DataType,
-{
+) -> SmallBuffer<SimplexKey, 2> {
     let mut ridge_neighbors: SmallBuffer<SimplexKey, 2> = SmallBuffer::new();
     for (idx, &vertex_key) in simplex.vertices().iter().enumerate() {
         if ridge_vertices.contains(&vertex_key) {
@@ -803,11 +785,7 @@ pub(super) fn predecessor_flip_summary<U, V, const D: usize>(
     ridge: RidgeHandle,
     global_simplices: &[SimplexKey],
     last_applied_flip: &LastAppliedFlip,
-) -> String
-where
-    U: DataType,
-    V: DataType,
-{
+) -> String {
     let global_simplices_in_new: Vec<SimplexKey> = global_simplices
         .iter()
         .copied()
@@ -840,11 +818,7 @@ where
 pub(super) fn simplex_vertex_summary<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
-) -> String
-where
-    U: DataType,
-    V: DataType,
-{
+) -> String {
     let Some(simplex) = tds.simplex(simplex_key) else {
         return format!("{simplex_key:?}: missing");
     };
@@ -859,10 +833,7 @@ pub(super) fn debug_postcondition_facet_context<U, V, const D: usize>(
     context: &FlipContext<D, 2>,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: Option<&LastAppliedFlip>,
-) where
-    U: DataType,
-    V: DataType,
-{
+) {
     if !should_emit_postcondition_facet_debug(diagnostics) {
         return;
     }
@@ -905,11 +876,7 @@ pub(super) fn facet_incident_simplex_summary<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     facet_vertices: &[VertexKey],
-) -> String
-where
-    U: DataType,
-    V: DataType,
-{
+) -> String {
     let Some(simplex) = tds.simplex(simplex_key) else {
         return format!("{simplex_key:?}: missing");
     };
@@ -936,11 +903,7 @@ pub(super) fn postcondition_facet_predecessor_summary<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     incident_simplices: &[SimplexKey],
     last_applied_flip: &LastAppliedFlip,
-) -> String
-where
-    U: DataType,
-    V: DataType,
-{
+) -> String {
     let incident_simplices_in_new: Vec<SimplexKey> = incident_simplices
         .iter()
         .copied()

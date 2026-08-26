@@ -12,6 +12,7 @@ use crate::core::algorithms::flips::{
     DelaunayRepairError, FlipError, apply_bistellar_flip_k1_inverse_raw,
     repair_delaunay_with_flips_k2_k3,
 };
+use crate::core::algorithms::insertion::InsertionError;
 use crate::core::collections::SimplexKeyBuffer;
 use crate::core::tds::{InvariantError, NeighborValidationError, SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
@@ -19,7 +20,10 @@ use crate::delaunay_model::DelaunayTriangulation;
 use crate::delaunay_rollback::{DelaunayRollbackTransaction, DelaunaySpatialIndexRollback};
 use crate::geometry::kernel::Kernel;
 use crate::repair::DelaunayRepairOperation;
-use crate::triangulation::validation::{TopologyGuarantee, insertion_error_to_invariant_error};
+use crate::triangulation::repair::{
+    TriangulationRepairOperation, VertexRemovalError, insertion_error_to_vertex_removal_error,
+};
+use crate::triangulation::validation::TopologyGuarantee;
 use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
 
@@ -41,6 +45,16 @@ pub enum DeleteVertexError {
         #[from]
         source: Box<InvariantError>,
     },
+
+    /// A typed triangulation repair primitive failed during deletion.
+    #[error("Vertex deletion {operation} failed: {source}")]
+    TriangulationRepairFailed {
+        /// Deletion phase that failed.
+        operation: TriangulationRepairOperation,
+        /// Typed insertion or repair failure.
+        #[source]
+        source: Box<InsertionError>,
+    },
 }
 
 impl From<InvariantError> for DeleteVertexError {
@@ -51,12 +65,23 @@ impl From<InvariantError> for DeleteVertexError {
     }
 }
 
+impl From<VertexRemovalError> for DeleteVertexError {
+    fn from(source: VertexRemovalError) -> Self {
+        match source {
+            VertexRemovalError::Invariant { source } => Self::InvariantViolation { source },
+            VertexRemovalError::Operation { operation, source } => {
+                Self::TriangulationRepairFailed { operation, source }
+            }
+        }
+    }
+}
+
 /// Tries the inverse-k1 fast path before falling back to fan deletion so the
 /// transaction can reuse the cheapest valid removal proof available.
 fn remove_with_fast_path_or_fallback<K, U, V, const D: usize>(
     transaction: &mut DelaunayRollbackTransaction<'_, K, U, V, D>,
     vertex_key: VertexKey,
-) -> Result<(usize, Option<SimplexKeyBuffer>), InvariantError>
+) -> Result<(usize, Option<SimplexKeyBuffer>), VertexRemovalError>
 where
     K: Kernel<D, Scalar = f64>,
     U: DataType,
@@ -64,20 +89,24 @@ where
 {
     let fast_path_result = {
         let delaunay = transaction.delaunay_mut();
+        delaunay.invalidate_euclidean_report_domain();
         apply_bistellar_flip_k1_inverse_raw(&mut delaunay.tri.tds, vertex_key)
     };
     match fast_path_result {
         Ok(info) => Ok((info.removed_simplices.len(), Some(info.new_simplices))),
         Err(FlipError::NeighborWiring { reason }) => {
             transaction.restore();
-            Err(TdsError::InvalidNeighbors {
-                reason: NeighborValidationError::FlipNeighborWiring { reason },
+            Err(InvariantError::Tds {
+                source: TdsError::InvalidNeighbors {
+                    reason: NeighborValidationError::FlipNeighborWiring { reason },
+                },
             }
             .into())
         }
         Err(_) => {
             transaction.restore();
             let delaunay = transaction.delaunay_mut();
+            delaunay.invalidate_euclidean_report_domain();
             let outcome = delaunay.tri.remove_vertex_with_repair_seeds(vertex_key)?;
             let seed_simplices = (!outcome.repair_seed_simplices.is_empty())
                 .then_some(outcome.repair_seed_simplices);
@@ -147,8 +176,9 @@ where
     ///   ([`DeleteVertexError::VertexNotFound`]).
     /// - The inverse k=1 flip encounters a neighbor-wiring failure
     ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Tds`]).
-    /// - Fan retriangulation fails ([`DeleteVertexError::InvariantViolation`] wrapping
-    ///   [`InvariantError::Tds`]).
+    /// - Cavity extraction, fan retriangulation, neighbor repair, or another typed
+    ///   triangulation repair primitive fails
+    ///   ([`DeleteVertexError::TriangulationRepairFailed`]).
     /// - Post-deletion topology validation fails, for example because deletion would leave
     ///   isolated vertices or a lower-dimensional remnant
     ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Triangulation`]).
@@ -158,9 +188,10 @@ where
     /// - Level 5 Delaunay validation fails after deletion when automatic repair is disabled
     ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Delaunay`] wrapping
     ///   [`DelaunayTriangulationValidationError::VerificationFailed`]).
-    /// - Orientation canonicalization fails after repair, either as a TDS-level predicate or
-    ///   lookup failure ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Tds`])
-    ///   or as triangulation-level positive-orientation non-convergence
+    /// - Orientation canonicalization fails after repair, either as a typed operation failure
+    ///   ([`DeleteVertexError::TriangulationRepairFailed`]), a TDS invariant failure
+    ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Tds`]), or
+    ///   triangulation-level positive-orientation non-convergence
     ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Triangulation`]).
     ///
     /// # Examples
@@ -269,7 +300,7 @@ where
 
         let mut transaction =
             DelaunayRollbackTransaction::begin(self, DelaunaySpatialIndexRollback::Restore);
-        let result: Result<usize, InvariantError> = (|| {
+        let result: Result<usize, VertexRemovalError> = (|| {
             let (simplices_removed, seed_simplices) =
                 remove_with_fast_path_or_fallback(&mut transaction, vertex_key)?;
 
@@ -296,16 +327,20 @@ where
                         .tri
                         .normalize_and_promote_positive_orientation()
                         .map_err(|e| {
-                            insertion_error_to_invariant_error(
+                            insertion_error_to_vertex_removal_error(
                                 e,
-                                "Orientation canonicalization failed after vertex deletion",
+                                TriangulationRepairOperation::PostDelaunayRepairOrientationCanonicalization,
                             )
                         })?;
-                } else {
-                    delaunay
-                        .is_valid_delaunay()
-                        .map_err(|source| InvariantError::Delaunay { source })?;
                 }
+
+                delaunay.insertion_state.last_inserted_simplex = None;
+                if let Some(index) = delaunay.spatial_index.as_mut() {
+                    index.remove_vertex(&vertex_key, &removed_vertex_coords);
+                }
+                delaunay
+                    .validate()
+                    .map_err(|source| InvariantError::Delaunay { source })?;
             }
 
             Ok(simplices_removed)
@@ -313,12 +348,6 @@ where
 
         match result {
             Ok(simplices_removed) => {
-                let delaunay = transaction.delaunay_mut();
-                delaunay.insertion_state.last_inserted_simplex = None;
-                if let Some(index) = delaunay.spatial_index.as_mut() {
-                    index.remove_vertex(&vertex_key, &removed_vertex_coords);
-                }
-                delaunay.invalidate_euclidean_report_domain();
                 transaction.commit();
                 Ok(simplices_removed)
             }
@@ -573,6 +602,86 @@ mod tests {
     gen_delete_vertex_rollback_tests!(5);
 
     #[test]
+    fn delete_vertex_final_validation_rolls_back_owner_coupled_state() {
+        let vertices = simplex_vertices::<2>();
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
+            .unwrap();
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::EveryInsertion;
+
+        let inserted_vertex = interior_vertex_for_k1_insert::<2>();
+        let vertex_key = dt.insert_vertex(inserted_vertex).unwrap();
+        let survivor_key = dt
+            .vertices()
+            .find_map(|(key, _)| (key != vertex_key).then_some(key))
+            .unwrap();
+        let stale_incident_simplex = dt
+            .simplices()
+            .find_map(|(key, simplex)| simplex.contains_vertex(vertex_key).then_some(key))
+            .unwrap();
+        let hint_simplex = dt.simplices().next().map(|(key, _)| key);
+        dt.insertion_state.last_inserted_simplex = hint_simplex;
+        let mut spatial_index = HashGridIndex::<2>::try_new(1.0).unwrap();
+        for (key, vertex) in dt.vertices() {
+            spatial_index.insert_vertex(key, vertex.point().coords());
+        }
+        dt.spatial_index = Some(spatial_index);
+
+        let tds_before = dt.tri.tds.clone_for_rollback();
+        let owner_before = dt.tri.tds.topology_owner_id();
+        let generation_before = dt.tri.tds.generation();
+        let last_inserted_simplex_before = dt.insertion_state.last_inserted_simplex;
+        let spatial_index_before = dt
+            .spatial_index
+            .as_ref()
+            .map(HashGridIndex::<2>::debug_snapshot);
+        let report_domain_before = dt.euclidean_report_domain;
+        assert!(report_domain_before.supports_local_certificate());
+        let mut observed_invalid_report_domain = false;
+
+        let result = dt.delete_vertex_with_repair(vertex_key, |delaunay, _, _, _| {
+            observed_invalid_report_domain = !delaunay
+                .euclidean_report_domain
+                .supports_local_certificate();
+            delaunay
+                .tri
+                .tds
+                .vertex_mut_for_test(survivor_key)
+                .expect("rollback fixture survivor should remain live")
+                .set_incident_simplex(Some(stale_incident_simplex));
+            Ok(())
+        });
+
+        assert!(observed_invalid_report_domain);
+        assert_matches!(
+            result,
+            Err(DeleteVertexError::InvariantViolation { source })
+                if matches!(
+                    source.as_ref(),
+                    InvariantError::Delaunay {
+                        source: DelaunayTriangulationValidationError::Tds { .. }
+                    }
+                )
+        );
+        assert_eq!(dt.tri.tds, tds_before);
+        assert_eq!(dt.tri.tds.topology_owner_id(), owner_before);
+        assert_eq!(dt.tri.tds.generation(), generation_before);
+        assert_eq!(
+            dt.insertion_state.last_inserted_simplex,
+            last_inserted_simplex_before
+        );
+        assert_eq!(
+            dt.spatial_index
+                .as_ref()
+                .map(HashGridIndex::<2>::debug_snapshot),
+            spatial_index_before
+        );
+        assert_eq!(dt.euclidean_report_domain, report_domain_before);
+        dt.validate().unwrap();
+    }
+
+    #[test]
     fn test_delete_vertex_fast_path_inverse_k1() {
         init_tracing();
         let vertices: Vec<Vertex<(), 3>> = vec![
@@ -803,5 +912,24 @@ mod tests {
         );
         assert!(dt.vertices().any(|(_, v)| v.uuid() == deleted_uuid));
         dt.is_valid_delaunay().unwrap();
+    }
+
+    #[test]
+    fn delete_vertex_error_preserves_triangulation_repair_source() {
+        let source = InsertionError::CavityFilling {
+            reason: crate::core::algorithms::insertion::CavityFillingError::EmptyFanTriangulation,
+        };
+        let error = DeleteVertexError::from(VertexRemovalError::Operation {
+            operation: TriangulationRepairOperation::FanTriangulation,
+            source: Box::new(source.clone()),
+        });
+
+        assert_eq!(
+            error,
+            DeleteVertexError::TriangulationRepairFailed {
+                operation: TriangulationRepairOperation::FanTriangulation,
+                source: Box::new(source),
+            }
+        );
     }
 }

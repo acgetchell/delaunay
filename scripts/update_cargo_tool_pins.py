@@ -1,4 +1,4 @@
-"""Reconcile repository Cargo-tool pins with installed package versions."""
+"""Reconcile repository tool pins with installed package versions."""
 
 import argparse
 import os
@@ -8,7 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from subprocess_utils import ExecutableNotFoundError, run_cargo_command
+from subprocess_utils import ExecutableNotFoundError, run_cargo_command, run_safe_command
 
 PIN_TO_PACKAGE = {
     "cargo_edit_version": "cargo-edit",
@@ -26,8 +26,11 @@ PIN_TO_PACKAGE = {
     "typos_version": "typos-cli",
     "zizmor_version": "zizmor",
 }
+PIN_TO_TOOL = {**PIN_TO_PACKAGE, "uv_version": "uv"}
 PACKAGE_HEADER = re.compile(r"^(?P<package>[A-Za-z0-9_-]+) v(?P<version>[^\s:]+):$", re.MULTILINE)
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
+STABLE_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+TOOL_VERSION = re.compile(r"(?<![0-9A-Za-z_.+-])v?(?P<version>[0-9]+\.[0-9]+\.[0-9]+)(?![0-9A-Za-z_.+-])")
 
 
 def parse_installed_packages(output: str) -> dict[str, str]:
@@ -46,14 +49,27 @@ def parse_installed_packages(output: str) -> dict[str, str]:
     return packages
 
 
+def parse_tool_version(output: str, tool: str) -> str:
+    """Extract one stable semantic version from a tool's version output."""
+    versions = [match.group("version") for match in TOOL_VERSION.finditer(output)]
+    if len(versions) != 1:
+        msg = f"expected exactly one {tool} version, found {len(versions)}"
+        raise ValueError(msg)
+    version = versions[0]
+    if STABLE_VERSION.fullmatch(version) is None:
+        msg = f"invalid installed version for {tool}: {version}; expected stable X.Y.Z"
+        raise ValueError(msg)
+    return str(version)
+
+
 def update_pin_text(text: str, installed: dict[str, str]) -> tuple[str, dict[str, tuple[str, str]]]:
     """Return Just source with every managed pin reconciled exactly once."""
     updated = text
     changes: dict[str, tuple[str, str]] = {}
-    for pin, package in PIN_TO_PACKAGE.items():
-        version = installed.get(package)
+    for pin, tool in PIN_TO_TOOL.items():
+        version = installed.get(tool)
         if version is None:
-            msg = f"managed Cargo package is not installed: {package}"
+            msg = f"managed tool is not installed: {tool}"
             raise ValueError(msg)
         assignment = re.compile(rf'^(?P<prefix>{re.escape(pin)}\s*:=\s*")(?P<version>[^"]+)(?P<suffix>"\s*)$', re.MULTILINE)
         matches = list(assignment.finditer(updated))
@@ -68,10 +84,12 @@ def update_pin_text(text: str, installed: dict[str, str]) -> tuple[str, dict[str
     return updated, changes
 
 
-def reconcile_pins(justfile: Path, installed_output: str) -> dict[str, tuple[str, str]]:
+def reconcile_pins(justfile: Path, installed_output: str, uv_output: str) -> dict[str, tuple[str, str]]:
     """Atomically reconcile ``justfile`` and return changed pin versions."""
     original = justfile.read_text(encoding="utf-8")
-    updated, changes = update_pin_text(original, parse_installed_packages(installed_output))
+    installed = parse_installed_packages(installed_output)
+    installed["uv"] = parse_tool_version(uv_output, "uv")
+    updated, changes = update_pin_text(original, installed)
     if not changes:
         return changes
 
@@ -96,17 +114,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Reconcile managed Cargo-tool pins from the local Cargo installation."""
+    """Reconcile managed pins from the active Cargo and uv installations."""
     args = parse_args(argv)
     try:
-        result = run_cargo_command(["install", "--list"], timeout=30)
-        changes = reconcile_pins(args.justfile, result.stdout)
+        cargo = run_cargo_command(["install", "--list"], timeout=30)
+        uv = run_safe_command("uv", ["--version"], timeout=30)
+        changes = reconcile_pins(args.justfile, cargo.stdout, uv.stdout)
     except (ExecutableNotFoundError, OSError, subprocess.SubprocessError, ValueError) as error:
-        print(f"failed to update Cargo-tool pins: {error}", file=sys.stderr)
+        print(f"failed to update tool pins: {error}", file=sys.stderr)
         return 1
 
     if not changes:
-        print("Cargo-tool pins already match installed repository tools.")
+        print("Tool pins already match installed repository tools.")
         return 0
     for pin, (old_version, new_version) in changes.items():
         print(f"Updated {pin}: {old_version} -> {new_version}")

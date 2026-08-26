@@ -118,18 +118,24 @@ _ensure-tex-fmt: (_ensure-pinned-cargo-tool "tex-fmt" "tex-fmt" tex_fmt_version)
 
 _ensure-typos: (_ensure-pinned-cargo-tool "typos" "typos-cli" typos_version)
 
-_ensure-uv:
+_ensure-uv: _ensure-uv-available
     #!/usr/bin/env bash
     set -euo pipefail
-    installed_version=""
-    if command -v uv >/dev/null; then
-        installed_version="$(uv --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
+    installed_version="$(uv --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
     if [[ "$installed_version" != "{{ uv_version }}" ]]; then
         echo "❌ 'uv' {{ uv_version }} not found (found: ${installed_version:-missing})."
         echo "   Install the pinned external prerequisite from https://github.com/astral-sh/uv"
         exit 1
     fi
+
+_ensure-uv-available:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v uv >/dev/null || {
+        echo "❌ 'uv' not found. Install it from https://github.com/astral-sh/uv" >&2
+        exit 1
+    }
+    uv --version >/dev/null
 
 _ensure-yamllint: _ensure-uv
     #!/usr/bin/env bash
@@ -172,7 +178,7 @@ _pachner-stress-dim label vertices attempts validate_every output_dir mode:
 
     mkdir -p "$output_dir"
 
-    echo "Pachner stress ${label}/${mode}: ${vertices} vertices, ${attempts} attempted moves."
+    echo "Pachner stress ${label}/${mode}: ${vertices} vertices, ${attempts} workload steps."
     echo "Validation scope: topology (Levels 1-3; Level 4 realization overlap scan deferred to #482)."
     cargo run --locked --profile perf --features cli --bin pachner-stress -- \
         --dimension "$label" \

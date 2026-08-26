@@ -24,10 +24,10 @@ use super::{
     enqueue_facet, enqueue_simplex_facets, env, facet_key_from_vertices,
     facet_vertices_from_simplex, flip_signature, flip_would_create_degenerate_simplex,
     is_delaunay_violation_k2, is_delaunay_violation_k3, k2_flip_would_create_degenerate_simplex,
-    non_convergent_error, pop_queue, removed_simplex_frame, repair_ridge_debug_enabled,
-    repair_trace_enabled, ridge_vertices_from_simplex, run_next_edge_repair_step,
-    run_next_facet_repair_step, run_next_ridge_repair_step, run_next_triangle_repair_step,
-    seed_repair_queues,
+    non_convergent_error, pop_queue, removed_simplex_frame, repair_flip_is_unavailable,
+    repair_ridge_debug_enabled, repair_trace_enabled, ridge_vertices_from_simplex,
+    run_next_edge_repair_step, run_next_facet_repair_step, run_next_ridge_repair_step,
+    run_next_triangle_repair_step, seed_repair_queues, validate_bistellar_flip_dynamic,
 };
 
 /// Run a single flip-repair attempt using k=2 (and k=3 in 3D+).
@@ -466,7 +466,7 @@ pub struct DelaunayRepairStats {
 )]
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct LocalRepairPhaseTiming {
-    /// Nanoseconds spent cloning the TDS snapshot used for rollback.
+    /// Nanoseconds spent opening the touched-record rollback journal.
     pub(crate) snapshot_nanos: u64,
     /// Nanoseconds spent applying flip-repair attempts.
     pub(crate) attempt_nanos: u64,
@@ -482,12 +482,12 @@ pub(crate) struct LocalRepairPhaseTiming {
     pub(crate) attempt_triangle_nanos: u64,
     /// Nanoseconds spent replaying postcondition predicates.
     pub(crate) postcondition_nanos: u64,
-    /// Nanoseconds spent restoring the TDS from a saved snapshot.
+    /// Nanoseconds spent restoring the TDS from its touched-record journal.
     pub(crate) restore_nanos: u64,
 }
 
 impl LocalRepairPhaseTiming {
-    /// Adds rollback snapshot-clone time so setup cost stays separate from repair work.
+    /// Adds rollback-journal setup time so it stays separate from repair work.
     fn record_snapshot(&mut self, elapsed: Duration) {
         self.snapshot_nanos = self
             .snapshot_nanos
@@ -795,14 +795,7 @@ where
 
         let applied = match apply_delaunay_flip_k2(tds, &context) {
             Ok(applied) => applied,
-            Err(
-                err @ (FlipError::DegenerateSimplex
-                | FlipError::NegativeOrientation { .. }
-                | FlipError::DuplicateSimplex
-                | FlipError::NonManifoldFacet
-                | FlipError::InsertedSimplexAlreadyExists { .. }
-                | FlipError::SimplexCreation { source: _ }),
-            ) => {
+            Err(err) if repair_flip_is_unavailable(&err) => {
                 if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
                     tracing::debug!(
                         "k=2 flip skipped in repair_delaunay_with_flips_k2_attempt (facet={facet:?}): {err}"
@@ -1098,8 +1091,8 @@ where
 ///
 /// Two attempts are made with alternating queue orders (FIFO → LIFO) to escape
 /// flip cycles — the same strategy as [`repair_delaunay_with_flips_k2_k3`], but without the
-/// `None`-reseed fallback.  A TDS snapshot is taken so that a failed attempt does not
-/// leave the triangulation partially modified.
+/// `None`-reseed fallback. A touched-record TDS journal is opened so that a failed
+/// attempt does not leave the triangulation partially modified.
 ///
 /// It is designed for per-insertion bulk construction and for the final bounded pass in
 /// `finalize_bulk_construction`.  On non-convergence after both attempts the caller
@@ -1296,7 +1289,7 @@ where
             }
         }
         Err(err) => {
-            // On failure, restore the TDS to the pre-repair snapshot so callers that
+            // On failure, restore the TDS to the pre-repair journal boundary so callers that
             // soft-fail (e.g. D≥4 bulk construction) receive a structurally valid
             // triangulation rather than a partially-modified one.
             let restore_started = Instant::now();
@@ -1331,8 +1324,6 @@ pub(crate) fn verify_tds_via_flip_predicates_assuming_connected<K, U, V, const D
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     // The caller's `Triangulation` already proves connectivity as part of Levels 1–4.
     // Promotion to `DelaunayTriangulation` therefore replays only the local
@@ -1364,11 +1355,7 @@ where
 /// verifier, including predicate, connectivity, and postcondition failures.
 pub(crate) fn verify_complete_euclidean_tds_via_robust_flip_predicates<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
-) -> Result<(), DelaunayRepairError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), DelaunayRepairError> {
     verify_delaunay_with_topology(tds, &RobustKernel::new(), GlobalTopology::Euclidean)
 }
 
@@ -1383,8 +1370,6 @@ pub(super) fn verify_delaunay_with_topology<K, U, V, const D: usize>(
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     verify_repair_postcondition_with_topology(
         tds,
@@ -1406,8 +1391,6 @@ pub(super) fn verify_local_repair_postcondition<K, U, V, const D: usize>(
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     verify_repair_postcondition_with_topology(
         tds,
@@ -1456,8 +1439,6 @@ pub(super) fn verify_repair_postcondition_with_topology<K, U, V, const D: usize>
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     let topology_model = global_topology.model();
     verify_repair_postcondition_locally(
@@ -1484,8 +1465,6 @@ pub(super) fn verify_repair_postcondition_locally<K, U, V, const D: usize>(
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     let config = RepairAttemptConfig {
         attempt: 0,
@@ -1598,8 +1577,6 @@ pub(super) fn verify_postcondition_k2_facets<K, U, V, const D: usize>(
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     while let Some((facet, _key)) = pop_queue(queue, config.queue_order) {
         let context = match build_k2_flip_context(tds, facet) {
@@ -1720,8 +1697,6 @@ pub(super) fn verify_postcondition_k3_ridges<K, U, V, const D: usize>(
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     while let Some((ridge, _key)) = pop_queue(queue, config.queue_order) {
         let context = match build_k3_flip_context(tds, ridge) {
@@ -1820,8 +1795,6 @@ pub(super) fn verify_postcondition_inverse_k2_edges<K, U, V, const D: usize>(
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     while let Some((edge, _key)) = pop_queue(queue, config.queue_order) {
         let context = match build_k2_flip_context_from_edge(tds, edge) {
@@ -1873,17 +1846,44 @@ where
             }
         };
 
-        if !violates {
-            if repair_trace_enabled() {
-                tracing::debug!(
-                    "[repair] postcondition inverse k=2 flip still applicable (edge={edge:?})"
-                );
+        if violates {
+            continue;
+        }
+
+        let inverse_kind = BistellarFlipKind::from_validated(2, D).inverse();
+        match validate_bistellar_flip_dynamic(tds, inverse_kind.k(), &context) {
+            Ok(_) => {
+                if repair_trace_enabled() {
+                    tracing::debug!(
+                        "[repair] postcondition inverse k=2 flip still applicable (edge={edge:?})"
+                    );
+                }
+                return Err(DelaunayRepairError::PostconditionFailed {
+                    reason: Box::new(
+                        DelaunayRepairPostconditionFailure::LocalInverseK2Violation { edge },
+                    ),
+                });
             }
-            return Err(DelaunayRepairError::PostconditionFailed {
-                reason: Box::new(
-                    DelaunayRepairPostconditionFailure::LocalInverseK2Violation { edge },
-                ),
-            });
+            Err(error) if repair_flip_is_unavailable(&error) => {
+                if repair_trace_enabled() {
+                    tracing::debug!(
+                        "[repair] postcondition inverse k=2 predicate preferred an unavailable flip (edge={edge:?}) reason={error}"
+                    );
+                }
+            }
+            Err(error @ FlipError::PredicateFailure { .. }) => {
+                resolve_postcondition_predicate_failure(
+                    mode,
+                    DelaunayRepairVerificationContext::LocalInverseK2PostconditionVerification,
+                    &error,
+                )?;
+            }
+            Err(error) => {
+                return Err(verification_failed(
+                    DelaunayRepairVerificationContext::LocalInverseK2PostconditionVerification,
+                    error,
+                ));
+            }
         }
     }
 
@@ -1903,8 +1903,6 @@ pub(super) fn verify_postcondition_inverse_k3_triangles<K, U, V, const D: usize>
 ) -> Result<(), DelaunayRepairError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     while let Some((triangle, _key)) = pop_queue(queue, config.queue_order) {
         let context = match build_k3_flip_context_from_triangle(tds, triangle) {
@@ -1949,17 +1947,44 @@ where
             }
         };
 
-        if !violates {
-            if repair_trace_enabled() {
-                tracing::debug!(
-                    "[repair] postcondition inverse k=3 flip still applicable (triangle={triangle:?})"
-                );
+        if violates {
+            continue;
+        }
+
+        let inverse_kind = BistellarFlipKind::from_validated(3, D).inverse();
+        match validate_bistellar_flip_dynamic(tds, inverse_kind.k(), &context) {
+            Ok(_) => {
+                if repair_trace_enabled() {
+                    tracing::debug!(
+                        "[repair] postcondition inverse k=3 flip still applicable (triangle={triangle:?})"
+                    );
+                }
+                return Err(DelaunayRepairError::PostconditionFailed {
+                    reason: Box::new(
+                        DelaunayRepairPostconditionFailure::LocalInverseK3Violation { triangle },
+                    ),
+                });
             }
-            return Err(DelaunayRepairError::PostconditionFailed {
-                reason: Box::new(
-                    DelaunayRepairPostconditionFailure::LocalInverseK3Violation { triangle },
-                ),
-            });
+            Err(error) if repair_flip_is_unavailable(&error) => {
+                if repair_trace_enabled() {
+                    tracing::debug!(
+                        "[repair] postcondition inverse k=3 predicate preferred an unavailable flip (triangle={triangle:?}) reason={error}"
+                    );
+                }
+            }
+            Err(error @ FlipError::PredicateFailure { .. }) => {
+                resolve_postcondition_predicate_failure(
+                    mode,
+                    DelaunayRepairVerificationContext::LocalInverseK3PostconditionVerification,
+                    &error,
+                )?;
+            }
+            Err(error) => {
+                return Err(verification_failed(
+                    DelaunayRepairVerificationContext::LocalInverseK3PostconditionVerification,
+                    error,
+                ));
+            }
         }
     }
 

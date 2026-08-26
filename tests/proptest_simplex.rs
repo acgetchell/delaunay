@@ -46,12 +46,17 @@ macro_rules! test_simplex_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        for (_simplex_key, simplex) in dt.simplices() {
-                            let vertex_keys = simplex.vertices();
-                            let unique_vertices: HashSet<_> = vertex_keys.iter().collect();
-                            prop_assert_eq!(unique_vertices.len(), vertex_keys.len());
-                        }
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D simplex-uniqueness fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    for (_simplex_key, simplex) in dt.simplices() {
+                        let vertex_keys = simplex.vertices();
+                        let unique_vertices: HashSet<_> = vertex_keys.iter().collect();
+                        prop_assert_eq!(unique_vertices.len(), vertex_keys.len());
                     }
                 }
 
@@ -64,10 +69,15 @@ macro_rules! test_simplex_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        for (_simplex_key, simplex) in dt.simplices() {
-                            prop_assert_eq!(simplex.vertices().len(), $expected_vertices);
-                        }
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D simplex-cardinality fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    for (_simplex_key, simplex) in dt.simplices() {
+                        prop_assert_eq!(simplex.vertices().len(), $expected_vertices);
                     }
                 }
 
@@ -80,11 +90,16 @@ macro_rules! test_simplex_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        for (_simplex_key, simplex) in dt.simplices() {
-                            if let Some(neighbors) = simplex.neighbors() {
-                                prop_assert!(neighbors.len() <= $max_neighbors);
-                            }
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D simplex-neighbor fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    for (_simplex_key, simplex) in dt.simplices() {
+                        if let Some(neighbors) = simplex.neighbors() {
+                            prop_assert!(neighbors.len() <= $max_neighbors);
                         }
                     }
                 }
@@ -98,11 +113,16 @@ macro_rules! test_simplex_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        let mut seen_uuids = HashSet::new();
-                        for (_simplex_key, simplex) in dt.simplices() {
-                            prop_assert!(seen_uuids.insert(simplex.uuid()));
-                        }
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D simplex-UUID fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    let mut seen_uuids = HashSet::new();
+                    for (_simplex_key, simplex) in dt.simplices() {
+                        prop_assert!(seen_uuids.insert(simplex.uuid()));
                     }
                 }
 
@@ -115,13 +135,20 @@ macro_rules! test_simplex_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        if dt.validate_structure().is_ok() {
-                            for (_simplex_key, simplex) in dt.simplices() {
-                                prop_assert_eq!(simplex.vertices().len(), $expected_vertices);
-                                prop_assert!(simplex.uuid().as_u128() != 0);
-                            }
-                        }
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D simplex-validation fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    dt.validate_structure().map_err(|error| TestCaseError::fail(format!(
+                        "{}D constructed simplex fixture failed structural validation: {error:?}",
+                        $dim,
+                    )))?;
+                    for (_simplex_key, simplex) in dt.simplices() {
+                        prop_assert_eq!(simplex.vertices().len(), $expected_vertices);
+                        prop_assert!(simplex.uuid().as_u128() != 0);
                     }
                 }
             }

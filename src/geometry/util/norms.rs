@@ -55,7 +55,9 @@ pub fn squared_norm<const D: usize>(coords: &[f64; D]) -> f64 {
 /// The 2D case uses `f64::hypot(a, b)` which avoids overflow and underflow
 /// issues when computing `sqrt(a² + b²)`. For higher dimensions, the function
 /// implements a similar approach by finding the maximum absolute value and
-/// scaling all coordinates relative to it.
+/// scaling all coordinates relative to it. In the generalized path, any NaN
+/// component produces NaN; otherwise any infinite component produces positive
+/// infinity.
 ///
 /// # Arguments
 ///
@@ -92,6 +94,13 @@ pub fn hypot<const D: usize>(coords: &[f64; D]) -> f64 {
             coords[0].hypot(coords[1])
         }
         _ => {
+            if coords.iter().any(|coordinate| coordinate.is_nan()) {
+                return f64::NAN;
+            }
+            if coords.iter().any(|coordinate| coordinate.is_infinite()) {
+                return f64::INFINITY;
+            }
+
             // For higher dimensions, implement generalized hypot
             // Find the maximum absolute value to avoid overflow/underflow
             let max_abs = coords
@@ -119,6 +128,11 @@ pub fn hypot<const D: usize>(coords: &[f64; D]) -> f64 {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
+
+    fn assert_positive_infinity(value: f64) {
+        assert!(value.is_infinite());
+        assert!(value.is_sign_positive());
+    }
 
     #[test]
     fn test_hypot_2d() {
@@ -178,6 +192,21 @@ mod tests {
         let distance_large = hypot(&[1e200, 1e200]);
         assert!(distance_large.is_finite());
         assert!(distance_large > 0.0);
+    }
+
+    #[test]
+    fn test_hypot_infinite_components_1d_to_5d() {
+        assert_positive_infinity(hypot(&[f64::NEG_INFINITY]));
+        assert_positive_infinity(hypot(&[0.0, f64::INFINITY]));
+        assert_positive_infinity(hypot(&[0.0, f64::NEG_INFINITY, 1.0]));
+        assert_positive_infinity(hypot(&[0.0, 1.0, f64::INFINITY, 2.0]));
+        assert_positive_infinity(hypot(&[0.0, 1.0, 2.0, f64::NEG_INFINITY, 3.0]));
+    }
+
+    #[test]
+    fn test_generalized_hypot_preserves_nan() {
+        assert!(hypot(&[f64::NAN, 0.0, 0.0]).is_nan());
+        assert!(hypot(&[f64::INFINITY, f64::NAN, 0.0]).is_nan());
     }
 
     #[test]

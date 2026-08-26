@@ -3,6 +3,7 @@
 # ruleid: delaunay.python.no-future-annotations-on-python314
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import tempfile
@@ -30,6 +31,14 @@ def direct_process_spawning() -> None:
     subprocess.getstatusoutput("true")
     # ruleid: delaunay.python.no-direct-subprocess-run-outside-wrapper
     os.system("true")
+
+
+async def direct_async_process_spawning() -> None:
+    """Exercise async process-spawning APIs that bypass the wrapper."""
+    # ruleid: delaunay.python.no-direct-subprocess-run-outside-wrapper
+    await asyncio.create_subprocess_exec("true")
+    # ruleid: delaunay.python.no-direct-subprocess-run-outside-wrapper
+    await asyncio.create_subprocess_shell("true")
 
 
 def wrapped_process_spawning() -> None:
@@ -66,10 +75,24 @@ def performance_artifact_writes(path: Path) -> None:
     open(path, mode="x+b")
     # ruleid: delaunay.python.performance-artifact-writes-are-transactional
     open(file=path, mode="w", encoding="utf-8")
+    # ruleid: delaunay.python.performance-artifact-writes-are-transactional
+    path.open("r+", encoding="utf-8")
+    # ruleid: delaunay.python.performance-artifact-writes-are-transactional
+    path.open(mode="r+b")
+    # ruleid: delaunay.python.performance-artifact-writes-are-transactional
+    open(path, "r+b")
+    # ruleid: delaunay.python.performance-artifact-writes-are-transactional
+    open(path, mode="r+", encoding="utf-8")
+    # ruleid: delaunay.python.performance-artifact-writes-are-transactional
+    open(file=path, mode="r+b")
     # ok: delaunay.python.performance-artifact-writes-are-transactional
     path.open(mode="rb")
     # ok: delaunay.python.performance-artifact-writes-are-transactional
+    path.open("r", encoding="utf-8")
+    # ok: delaunay.python.performance-artifact-writes-are-transactional
     open(path, mode="r", encoding="utf-8")
+    # ok: delaunay.python.performance-artifact-writes-are-transactional
+    open(file=path, mode="rb")
     # ok: delaunay.python.performance-artifact-writes-are-transactional
     tempfile.NamedTemporaryFile("wb", dir=path.parent)
 

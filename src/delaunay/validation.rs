@@ -42,10 +42,7 @@ use crate::triangulation::validation::{
 use std::num::NonZeroUsize;
 use thiserror::Error;
 
-impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
-where
-    K: Kernel<D>,
-{
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Builds a detailed Level 5 empty-circumsphere diagnostic without claiming
     /// that this Levels 1–4 owner is Delaunay.
     ///
@@ -176,8 +173,6 @@ pub(crate) fn certify_level_five_for_refinement<K, U, V, const D: usize>(
 ) -> Result<DelaunayLevelFiveCertificate<D>, DelaunayTriangulationValidationError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     if triangulation.global_topology().is_euclidean() {
         is_delaunay_property_only(&triangulation.tds).map_err(|source| {
@@ -599,8 +594,6 @@ impl ValidationCadence {
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     // -------------------------------------------------------------------------
     // VALIDATION
@@ -1071,6 +1064,9 @@ where
         global_topology: GlobalTopology<D>,
         construction_provenance: TopologyConstructionProvenance,
     ) -> Result<(Self, TopologyCertificationEvidence), DelaunayTdsRestorationError<K, U, V, D>>
+    where
+        U: DataType,
+        V: DataType,
     {
         let (triangulation, topology_evidence) = TriangulationBuilder::new(tds, kernel)
             .topology_guarantee(topology_guarantee)

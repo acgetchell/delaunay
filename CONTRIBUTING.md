@@ -34,10 +34,16 @@ Our community is built on:
 
 ## Getting Started
 
-Install [Rust via rustup][rustup], Git, Python, `uv`, and `just`. The pinned
-Rust toolchain is declared in `rust-toolchain.toml`; Python development tooling
-is described in [docs/dev/python.md][dev-python] and
+Install [Rust via rustup][rustup], Git, Python, and `uv`. The pinned Rust
+toolchain is declared in `rust-toolchain.toml`; Python development tooling is
+described in [docs/dev/python.md][dev-python] and
 [scripts/README.md][scripts-readme].
+
+From the repository root, install the same Just version used by CI:
+
+```bash
+bash scripts/bootstrap_just.sh
+```
 
 For the current command list and workflow details, use:
 
@@ -54,8 +60,11 @@ just check
 just test
 ```
 
-Run `just ci` before opening or updating a pull request when the change is ready
-for full validation. For command details, see [docs/dev/commands.md][dev-commands].
+Before opening or updating a pull request, run the final validator for every
+touched surface in the validation matrix. Core Rust or other broad changes
+require `just ci`; documentation, configuration, Python, notebook, test-only,
+benchmark-only, and example-only changes use their focused validators. See
+[docs/dev/commands.md][dev-commands] for the authoritative matrix.
 
 ## AI-Assisted Development
 

@@ -41,7 +41,7 @@ use std::{
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, topology::spaces::*};
 /// use delaunay::prelude::topology::validation::{
 ///     ManifoldError, RidgeCandidate, RidgeCandidateError,
 /// };
@@ -135,7 +135,7 @@ impl LiftedVertexId {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, topology::spaces::*};
 /// use delaunay::prelude::topology::validation::{
 ///     ManifoldError, RidgeCandidate, RidgeCandidateError,
 /// };

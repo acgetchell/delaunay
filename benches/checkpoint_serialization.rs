@@ -15,26 +15,34 @@ use std::hint::black_box;
 mod bench_utils;
 use bench_utils::{OrAbort, OrAbortWithContext};
 
-fn representative_triangulation() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> {
+fn representative_triangulation() -> DelaunayTriangulation<AdaptiveKernel<f64>, u32, u32, 2> {
     let mut vertices = Vec::with_capacity(64);
     for row in 0_u32..8 {
         for column in 0_u32..8 {
             let jitter = f64::from((row * 17 + column * 31) % 11) * 1.0e-4;
             vertices.push(
-                Vertex::try_new([f64::from(column) + jitter, f64::from(row) - jitter]).or_abort(),
+                Vertex::try_new_with_data(
+                    [f64::from(column) + jitter, f64::from(row) - jitter],
+                    row * 8 + column,
+                )
+                .or_abort(),
             );
         }
     }
-    DelaunayTriangulationBuilder::new(&vertices)
+    let mut triangulation = DelaunayTriangulationBuilder::new(&vertices)
+        .simplex_data_type::<u32>()
         .build()
-        .or_abort()
+        .or_abort();
+    triangulation
+        .fill_simplex_data(|_, simplex| u32::try_from(simplex.number_of_vertices()).or_abort());
+    triangulation
 }
 
 fn checkpoint_benches(criterion: &mut Criterion) {
     let triangulation = representative_triangulation();
     let checkpoint_json = to_vec(&triangulation).or_abort();
     let expected_manifest = triangulation.checkpoint_manifest().or_abort();
-    let checkpoint: DelaunayCheckpoint<(), (), 2> = from_slice(&checkpoint_json).or_abort();
+    let checkpoint: DelaunayCheckpoint<u32, u32, 2> = from_slice(&checkpoint_json).or_abort();
     let restored = checkpoint
         .try_into_delaunay_with_kernel(AdaptiveKernel::new())
         .or_abort();
@@ -56,7 +64,7 @@ fn checkpoint_benches(criterion: &mut Criterion) {
     });
     group.bench_function("json_load", |bencher| {
         bencher.iter(|| {
-            let checkpoint: DelaunayCheckpoint<(), (), 2> =
+            let checkpoint: DelaunayCheckpoint<u32, u32, 2> =
                 from_slice(black_box(&checkpoint_json)).or_abort();
             black_box(
                 checkpoint

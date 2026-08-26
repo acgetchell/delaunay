@@ -96,15 +96,6 @@ pub type FacetSharingSimplicesBuffer = SmallBuffer<SimplexKey, 2>;
 /// - Geometric predicate vertex lists
 pub type SimplexVertexBuffer<T> = SmallBuffer<T, MAX_PRACTICAL_DIMENSION_SIZE>;
 
-/// Buffer sized for UUID collections in vertex operations.
-/// Optimized for storing vertex UUIDs from a single simplex (D+1 UUIDs).
-///
-/// # Use Cases
-/// - Duplicate simplex detection
-/// - Vertex uniqueness checks
-/// - Simplex vertex UUID collections
-pub type VertexUuidBuffer = SimplexVertexBuffer<Uuid>;
-
 /// Buffer sized for `VertexKey` collections in validation and internal operations.
 /// Handles vertex keys from a single D-dimensional simplex.
 ///

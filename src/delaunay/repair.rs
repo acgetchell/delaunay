@@ -218,7 +218,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
 
     /// Applies the repair schedule only when stored simplices and topology can
     /// support bistellar flips.
-    pub(crate) fn should_run_delaunay_repair_for(
+    pub(crate) const fn should_run_delaunay_repair_for(
         &self,
         topology: TopologyGuarantee,
         insertion_count: usize,

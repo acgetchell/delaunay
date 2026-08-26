@@ -57,7 +57,7 @@ pub(crate) fn stable_facet_identifier_from_vertex_uuids(vertex_uuids: &[Uuid]) -
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, tds::*};
 /// use delaunay::prelude::tds::checked_facet_key_from_vertex_keys;
 ///
 /// # #[derive(Debug, thiserror::Error)]

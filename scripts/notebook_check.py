@@ -96,7 +96,7 @@ class NotebookDocument:
 
     path: Path
     nbformat: int
-    nbformat_minor: int | None
+    nbformat_minor: int
     cells: tuple[NotebookCell, ...]
 
 
@@ -171,10 +171,24 @@ def parse_execution_count(value: Any, *, path: Path, index: int) -> int | None:
     """Parse a notebook code-cell execution count."""
     if value is None:
         return None
-    if isinstance(value, int):
-        return value
-    msg = f"{path}: cell {index}: execution_count must be an integer or null"
-    raise TypeError(msg)
+    if type(value) is not int:
+        msg = f"{path}: cell {index}: execution_count must be a nonnegative integer or null"
+        raise TypeError(msg)
+    if value < 0:
+        msg = f"{path}: cell {index}: execution_count must be nonnegative, got {value}"
+        raise ValueError(msg)
+    return value
+
+
+def parse_nbformat_minor(value: Any, *, path: Path) -> int:
+    """Parse an exact nonnegative notebook minor format version."""
+    if type(value) is not int:
+        msg = f"{path}: expected nbformat_minor to be a nonnegative integer"
+        raise TypeError(msg)
+    if value < 0:
+        msg = f"{path}: expected nbformat_minor to be nonnegative, got {value}"
+        raise ValueError(msg)
+    return value
 
 
 def parse_nbformat(value: Any, *, path: Path) -> int:
@@ -218,10 +232,7 @@ def load_notebook(path: Path) -> NotebookDocument:
     if not isinstance(cells, list):
         msg = f"{path}: expected notebook cells to be a list"
         raise TypeError(msg)
-    nbformat_minor = notebook.get("nbformat_minor")
-    if nbformat_minor is not None and not isinstance(nbformat_minor, int):
-        msg = f"{path}: expected nbformat_minor to be an integer or null"
-        raise TypeError(msg)
+    nbformat_minor = parse_nbformat_minor(notebook.get("nbformat_minor"), path=path)
     return NotebookDocument(
         path=path,
         nbformat=nbformat,
@@ -317,9 +328,9 @@ class NotebookVisitor(ast.NodeVisitor):
                 self.diagnostics.append(Diagnostic("error", self.cell, f"{call_name} uses shell=True"))
             if call_name == "subprocess.run" and not has_keyword(node, "timeout"):
                 self.diagnostics.append(Diagnostic("warning", self.cell, "subprocess.run lacks timeout; add one or document why it can run unbounded"))
-            if call_name == "subprocess.Popen" and not has_wait_timeout(node):
+            if call_name == "subprocess.Popen":
                 self.diagnostics.append(
-                    Diagnostic("warning", self.cell, "subprocess.Popen stream lacks timeout; ensure tutorial commands cannot hang indefinitely"),
+                    Diagnostic("error", self.cell, "subprocess.Popen is prohibited in notebooks; use subprocess.run(..., timeout=...)"),
                 )
         self.generic_visit(node)
 
@@ -360,11 +371,6 @@ def keyword_bool(node: ast.Call, name: str) -> bool:
         if keyword.arg == name and isinstance(keyword.value, ast.Constant):
             return keyword.value.value is True
     return False
-
-
-def has_wait_timeout(node: ast.Call) -> bool:
-    """Return whether a Popen call obviously wraps a timeout in the same call."""
-    return has_keyword(node, "timeout")
 
 
 def extract_code(notebook: NotebookDocument) -> CodeSnapshot:

@@ -9,6 +9,21 @@ throughout the benchmark infrastructure.
 import math
 import re
 from dataclasses import dataclass
+from typing import cast
+
+TIME_UNIT_TO_MICROSECONDS = {
+    "ns": 1e-3,
+    "µs": 1.0,
+    "μs": 1.0,
+    "us": 1.0,
+    "ms": 1e3,
+    "s": 1e6,
+}
+_CANONICAL_TIME_UNIT = "µs"
+_BENCHMARK_HEADER_RE = re.compile(r"^=== (?:(\d+) Points|Unsized Workload) \((.+)\) ===$")
+_TIME_LINE_RE = re.compile(r"^Time:\s*\[([^]]*)\]\s+(\S+)\s*$")
+_THROUGHPUT_LINE_RE = re.compile(r"^Throughput:\s*\[([^]]*)\]\s+(\S+)\s*$")
+_BENCHMARK_ID_RE = re.compile(r"^Benchmark ID:\s*(\S(?:.*\S)?)\s*$")
 
 
 @dataclass
@@ -84,6 +99,53 @@ class BenchmarkData:
 
         lines.append("")
         return "\n".join(lines)
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedBenchmarkRecord:
+    """One immutable, fully validated legacy benchmark section."""
+
+    points: int | None
+    dimension: str
+    benchmark_id: str
+    time_low_us: float
+    time_mean_us: float
+    time_high_us: float
+    throughput_low: float | None = None
+    throughput_mean: float | None = None
+    throughput_high: float | None = None
+    throughput_unit: str | None = None
+
+    @property
+    def comparison_key(self) -> str:
+        """Return the section's single validated comparison identity."""
+        if self.benchmark_id:
+            return self.benchmark_id
+        if self.points is None:
+            msg = "Unsized benchmarks require exactly one Benchmark ID line"
+            raise ValueError(msg)
+        return f"{self.points}_{self.dimension}"
+
+    def to_benchmark_data(self) -> BenchmarkData:
+        """Convert the trusted parse record to the mutable reporting model."""
+        benchmark = BenchmarkData(
+            points=self.points,
+            dimension=self.dimension,
+            benchmark_id=self.benchmark_id,
+        ).with_timing(
+            self.time_low_us,
+            self.time_mean_us,
+            self.time_high_us,
+            _CANONICAL_TIME_UNIT,
+        )
+        if self.throughput_low is not None and self.throughput_mean is not None and self.throughput_high is not None and self.throughput_unit is not None:
+            benchmark.with_throughput(
+                self.throughput_low,
+                self.throughput_mean,
+                self.throughput_high,
+                self.throughput_unit,
+            )
+        return benchmark
 
 
 @dataclass
@@ -166,21 +228,64 @@ def parse_benchmark_header(line: str) -> BenchmarkData | None:
         BenchmarkData object or None if no match
     """
     # Match patterns like "=== 1000 Points (2D) ===" or "=== Unsized Workload (4D) ==="
-    match = re.match(r"^=== (?:(\d+) Points|Unsized Workload) \((.+)\) ===$", line.strip())
+    match = _BENCHMARK_HEADER_RE.match(line.strip())
     if match:
         points = int(match.group(1)) if match.group(1) is not None else None
-        dimension = match.group(2)
+        if points is not None and points <= 0:
+            return None
+        dimension = match.group(2).strip()
+        if not dimension:
+            return None
         return BenchmarkData(points=points, dimension=dimension)
     return None
 
 
-# NOTE: For hot-path parsing of large baseline files in CI, consider precompiling
-# the regex patterns below using re.compile() for better performance.
-
-
-def _is_valid_positive_interval(values: list[float]) -> bool:
+def _is_valid_positive_interval(values: tuple[float, ...] | list[float]) -> bool:
     """Return whether values form a finite, positive low/mean/high interval."""
     return len(values) == 3 and all(math.isfinite(value) and value > 0.0 for value in values) and values[0] <= values[1] <= values[2]
+
+
+def _parse_positive_interval(values_text: str, *, label: str) -> tuple[float, float, float]:
+    """Parse one finite positive low/mean/high interval without partial state."""
+    try:
+        values = tuple(float(value.strip()) for value in values_text.split(","))
+    except ValueError as exc:
+        msg = f"{label} interval contains a non-numeric value: {values_text!r}"
+        raise ValueError(msg) from exc
+    if not _is_valid_positive_interval(values):
+        msg = f"{label} interval must contain three ordered positive finite values: {values_text!r}"
+        raise ValueError(msg)
+    return values[0], values[1], values[2]
+
+
+def _parse_normalized_time_line(line: str) -> tuple[float, float, float]:
+    """Parse a Time line and normalize its supported unit to microseconds."""
+    match = _TIME_LINE_RE.match(line.strip())
+    if match is None:
+        msg = f"malformed Time line: {line.strip()!r}"
+        raise ValueError(msg)
+    low, mean, high = _parse_positive_interval(match.group(1), label="Time")
+    unit = match.group(2)
+    scale = TIME_UNIT_TO_MICROSECONDS.get(unit)
+    if scale is None:
+        supported = ", ".join(sorted(TIME_UNIT_TO_MICROSECONDS))
+        msg = f"unsupported Time unit {unit!r}; expected one of: {supported}"
+        raise ValueError(msg)
+    normalized = (low * scale, mean * scale, high * scale)
+    if not _is_valid_positive_interval(normalized):
+        msg = f"Time interval is not finite after normalizing {unit!r} to {_CANONICAL_TIME_UNIT}"
+        raise ValueError(msg)
+    return normalized
+
+
+def _parse_throughput_line(line: str) -> tuple[float, float, float, str]:
+    """Parse one complete optional Throughput line."""
+    match = _THROUGHPUT_LINE_RE.match(line.strip())
+    if match is None:
+        msg = f"malformed Throughput line: {line.strip()!r}"
+        raise ValueError(msg)
+    low, mean, high = _parse_positive_interval(match.group(1), label="Throughput")
+    return low, mean, high, cast("str", match.group(2))
 
 
 def parse_time_data(benchmark: BenchmarkData, line: str) -> bool:
@@ -194,34 +299,15 @@ def parse_time_data(benchmark: BenchmarkData, line: str) -> bool:
     Returns:
         True if data was parsed successfully, False otherwise
     """
-    # Match pattern like "Time: [100.0, 110.0, 120.0] µs"
-    # Support scientific notation (1.2e3) and flexible whitespace.
-    match = re.match(r"^Time:\s*\[([0-9eE+.\-,\s]+)\]\s+(.+)$", line.strip())
-    if match:
-        try:
-            # Parse the list of numbers
-            values_str = match.group(1)
-            unit = match.group(2)
-            values = [float(x.strip()) for x in values_str.split(",")]
-
-            if _is_valid_positive_interval(values):
-                benchmark.time_low = values[0]
-                benchmark.time_mean = values[1]
-                benchmark.time_high = values[2]
-                benchmark.time_unit = unit
-                return True
-        except ValueError:
-            pass
-    return False
-
-
-def _parse_benchmark_id_data(benchmark: BenchmarkData, line: str) -> bool:
-    """Parse optional baseline benchmark identifier metadata."""
-    match = re.match(r"^Benchmark ID:\s*(.+)$", line.strip())
-    if match:
-        benchmark.benchmark_id = match.group(1).strip()
-        return True
-    return False
+    try:
+        low, mean, high = _parse_normalized_time_line(line)
+    except ValueError:
+        return False
+    benchmark.time_low = low
+    benchmark.time_mean = mean
+    benchmark.time_high = high
+    benchmark.time_unit = _CANONICAL_TIME_UNIT
+    return True
 
 
 def parse_throughput_data(benchmark: BenchmarkData, line: str) -> bool:
@@ -235,25 +321,130 @@ def parse_throughput_data(benchmark: BenchmarkData, line: str) -> bool:
     Returns:
         True if data was parsed successfully, False otherwise
     """
-    # Match pattern like "Throughput: [8000.0, 9090.9, 10000.0] Kelem/s"
-    # Support scientific notation (1.2e3) and flexible whitespace.
-    match = re.match(r"^Throughput:\s*\[([0-9eE+.\-,\s]+)\]\s+(.+)$", line.strip())
-    if match:
-        try:
-            # Parse the list of numbers
-            values_str = match.group(1)
-            unit = match.group(2)
-            values = [float(x.strip()) for x in values_str.split(",")]
+    try:
+        low, mean, high, unit = _parse_throughput_line(line)
+    except ValueError:
+        return False
+    benchmark.throughput_low = low
+    benchmark.throughput_mean = mean
+    benchmark.throughput_high = high
+    benchmark.throughput_unit = unit
+    return True
 
-            if _is_valid_positive_interval(values):
-                benchmark.throughput_low = values[0]
-                benchmark.throughput_mean = values[1]
-                benchmark.throughput_high = values[2]
-                benchmark.throughput_unit = unit
-                return True
-        except ValueError:
-            pass
-    return False
+
+@dataclass(slots=True)
+class _PendingBenchmarkSection:
+    """Mutable parser state that is never exposed as trusted benchmark data."""
+
+    points: int | None
+    dimension: str
+    benchmark_id: str | None = None
+    timing_us: tuple[float, float, float] | None = None
+    throughput: tuple[float, float, float, str] | None = None
+
+    @property
+    def label(self) -> str:
+        """Return a stable diagnostic label before identity validation completes."""
+        if self.benchmark_id is not None:
+            return self.benchmark_id
+        if self.points is None:
+            return f"Unsized Workload ({self.dimension})"
+        return f"{self.points} Points ({self.dimension})"
+
+    def finish(self) -> ParsedBenchmarkRecord:
+        """Validate the complete section and publish an immutable record."""
+        if self.points is None and self.benchmark_id is None:
+            msg = f"Malformed baseline section {self.label!r}: missing Benchmark ID line"
+            raise ValueError(msg)
+        if self.timing_us is None:
+            msg = f"Malformed baseline section {self.label!r}: missing or invalid Time line"
+            raise ValueError(msg)
+        throughput_low: float | None = None
+        throughput_mean: float | None = None
+        throughput_high: float | None = None
+        throughput_unit: str | None = None
+        if self.throughput is not None:
+            throughput_low, throughput_mean, throughput_high, throughput_unit = self.throughput
+        return ParsedBenchmarkRecord(
+            points=self.points,
+            dimension=self.dimension,
+            benchmark_id=self.benchmark_id or "",
+            time_low_us=self.timing_us[0],
+            time_mean_us=self.timing_us[1],
+            time_high_us=self.timing_us[2],
+            throughput_low=throughput_low,
+            throughput_mean=throughput_mean,
+            throughput_high=throughput_high,
+            throughput_unit=throughput_unit,
+        )
+
+
+def _consume_section_line(
+    section: _PendingBenchmarkSection,
+    line: str,
+    *,
+    line_number: int,
+) -> None:
+    """Parse one recognized line into untrusted section state."""
+    if line.startswith("Benchmark ID"):
+        match = _BENCHMARK_ID_RE.match(line)
+        if match is None:
+            msg = f"Malformed baseline section {section.label!r} at line {line_number}: malformed Benchmark ID line"
+            raise ValueError(msg)
+        if section.benchmark_id is not None:
+            msg = f"Malformed baseline section {section.label!r} at line {line_number}: duplicate Benchmark ID line"
+            raise ValueError(msg)
+        section.benchmark_id = match.group(1)
+    elif line.startswith("Time"):
+        if section.timing_us is not None:
+            msg = f"Malformed baseline section {section.label!r} at line {line_number}: duplicate Time line"
+            raise ValueError(msg)
+        try:
+            section.timing_us = _parse_normalized_time_line(line)
+        except ValueError as exc:
+            msg = f"Malformed baseline section {section.label!r} at line {line_number}: {exc}"
+            raise ValueError(msg) from exc
+    elif line.startswith("Throughput"):
+        if section.throughput is not None:
+            msg = f"Malformed baseline section {section.label!r} at line {line_number}: duplicate Throughput line"
+            raise ValueError(msg)
+        try:
+            section.throughput = _parse_throughput_line(line)
+        except ValueError as exc:
+            msg = f"Malformed baseline section {section.label!r} at line {line_number}: {exc}"
+            raise ValueError(msg) from exc
+
+
+def extract_validated_benchmark_records(baseline_content: str) -> tuple[ParsedBenchmarkRecord, ...]:
+    """Parse legacy baseline text into unique immutable benchmark records."""
+    records: list[ParsedBenchmarkRecord] = []
+    current: _PendingBenchmarkSection | None = None
+
+    for line_number, line in enumerate(baseline_content.splitlines(), start=1):
+        stripped = line.strip()
+        header = parse_benchmark_header(line)
+        if header is not None:
+            if current is not None:
+                records.append(current.finish())
+            current = _PendingBenchmarkSection(points=header.points, dimension=header.dimension)
+            continue
+        if stripped.startswith("==="):
+            msg = f"Malformed benchmark section header at line {line_number}: {stripped!r}"
+            raise ValueError(msg)
+        if current is None:
+            continue
+        _consume_section_line(current, stripped, line_number=line_number)
+
+    if current is not None:
+        records.append(current.finish())
+
+    seen: set[str] = set()
+    for record in records:
+        if record.comparison_key in seen:
+            msg = f"Duplicate benchmark comparison key in baseline: {record.comparison_key!r}"
+            raise ValueError(msg)
+        seen.add(record.comparison_key)
+    return tuple(records)
 
 
 def extract_benchmark_data(baseline_content: str) -> list[BenchmarkData]:
@@ -266,36 +457,7 @@ def extract_benchmark_data(baseline_content: str) -> list[BenchmarkData]:
     Returns:
         List of BenchmarkData objects parsed from content
     """
-    benchmarks = []
-    current_benchmark = None
-
-    for line in baseline_content.split("\n"):
-        # Try to parse as benchmark header
-        benchmark = parse_benchmark_header(line)
-        if benchmark:
-            # Save previous benchmark if it exists
-            if current_benchmark:
-                benchmarks.append(current_benchmark)
-            current_benchmark = benchmark
-            continue
-
-        if current_benchmark:
-            if _parse_benchmark_id_data(current_benchmark, line):
-                continue
-
-            # Try to parse time data
-            if parse_time_data(current_benchmark, line):
-                continue
-
-            # Try to parse throughput data
-            if parse_throughput_data(current_benchmark, line):
-                continue
-
-    # Don't forget the last benchmark
-    if current_benchmark:
-        benchmarks.append(current_benchmark)
-
-    return benchmarks
+    return [record.to_benchmark_data() for record in extract_validated_benchmark_records(baseline_content)]
 
 
 # Benchmark formatting functions

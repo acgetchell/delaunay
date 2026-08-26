@@ -126,11 +126,16 @@ macro_rules! gen_tds_validity {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_tds_from_vertices_is_valid_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
-                        prop_assert!(dt.is_valid_structure().is_ok(),
-                            "{}D Tds should be valid: {:?}",
-                            $dim, dt.is_valid_structure().err());
-                    }
+                    let dt = DelaunayTriangulation::builder(&vertices).build().map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D TDS fixture construction failed for {} generated vertices: {error:?}",
+                            $dim,
+                            vertices.len(),
+                        ))
+                    })?;
+                    prop_assert!(dt.is_valid_structure().is_ok(),
+                        "{}D Tds should be valid: {:?}",
+                        $dim, dt.is_valid_structure().err());
                 }
             }
         }
@@ -144,7 +149,13 @@ macro_rules! gen_neighbor_symmetry {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_neighbor_symmetry_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
+                    let dt = DelaunayTriangulation::builder(&vertices).build().map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D neighbor-symmetry fixture construction failed for {} generated vertices: {error:?}",
+                            $dim,
+                            vertices.len(),
+                        ))
+                    })?;
                         for (simplex_key, simplex) in dt.simplices() {
                             if let Some(neighbors) = simplex.neighbors() {
                                 let simplex_neighbors: HashSet<_> = neighbors.flatten().collect();
@@ -189,7 +200,6 @@ macro_rules! gen_neighbor_symmetry {
                                 }
                             }
                         }
-                    }
                 }
             }
         }
@@ -204,8 +214,19 @@ macro_rules! gen_neighbor_index_semantics {
                 #[test]
                 fn [<prop_neighbor_index_semantics_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     // Use stack-allocated buffer for D facet vertices (D ≤ 7 typical)
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
-                        prop_assume!(dt.is_valid_structure().is_ok());
+                    let dt = DelaunayTriangulation::builder(&vertices).build().map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D neighbor-index fixture construction failed for {} generated vertices: {error:?}",
+                            $dim,
+                            vertices.len(),
+                        ))
+                    })?;
+                        prop_assert!(
+                            dt.is_valid_structure().is_ok(),
+                            "{}D neighbor-index fixture must pass structural validation: {:?}",
+                            $dim,
+                            dt.is_valid_structure().err(),
+                        );
                         for (simplex_key, simplex) in dt.simplices() {
                             if let Some(neighbors) = simplex.neighbors() {
                                 let a_vertices = simplex.vertices();
@@ -234,7 +255,6 @@ macro_rules! gen_neighbor_index_semantics {
                                 }
                             }
                         }
-                    }
                 }
             }
         }
@@ -248,7 +268,13 @@ macro_rules! gen_simplex_vertices_exist_in_tds {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_simplex_vertices_exist_in_tds_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
+                    let dt = DelaunayTriangulation::builder(&vertices).build().map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D simplex-incidence fixture construction failed for {} generated vertices: {error:?}",
+                            $dim,
+                            vertices.len(),
+                        ))
+                    })?;
                         let all_vertex_keys: HashSet<_> = dt.vertices().map(|(key, _)| key).collect();
                         for (_simplex_key, simplex) in dt.simplices() {
                             for vertex_key in simplex.vertices() {
@@ -256,7 +282,6 @@ macro_rules! gen_simplex_vertices_exist_in_tds {
                                     "{}D simplex vertex should exist in TDS", $dim);
                             }
                         }
-                    }
                 }
             }
         }
@@ -270,7 +295,13 @@ macro_rules! gen_no_duplicate_simplices {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_no_duplicate_simplices_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
+                    let dt = DelaunayTriangulation::builder(&vertices).build().map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D simplex-uniqueness fixture construction failed for {} generated vertices: {error:?}",
+                            $dim,
+                            vertices.len(),
+                        ))
+                    })?;
                         let mut seen = HashSet::new();
                         for (_simplex_key, simplex) in dt.simplices() {
                             // Use stack-allocated buffer for D+1 vertices (D ≤ 7 typical)
@@ -278,7 +309,6 @@ macro_rules! gen_no_duplicate_simplices {
                             vs.sort_unstable();
                             prop_assert!(seen.insert(vs), "Found duplicate {}D simplex", $dim);
                         }
-                    }
                 }
             }
         }
@@ -292,10 +322,15 @@ macro_rules! gen_dimension_consistency {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_dimension_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
-                        if dt.number_of_vertices() >= $min_vertices && dt.number_of_simplices() > 0 {
-                            prop_assert_eq!(dt.dim(), $dim as i32, "{}D Tds dimension mismatch", $dim);
-                        }
+                    let dt = DelaunayTriangulation::builder(&vertices).build().map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D dimension-consistency fixture construction failed for {} generated vertices: {error:?}",
+                            $dim,
+                            vertices.len(),
+                        ))
+                    })?;
+                    if dt.number_of_vertices() >= $min_vertices && dt.number_of_simplices() > 0 {
+                        prop_assert_eq!(dt.dim(), $dim as i32, "{}D Tds dimension mismatch", $dim);
                     }
                 }
             }
@@ -310,11 +345,16 @@ macro_rules! gen_vertex_count_consistency {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_vertex_count_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
-                        let keys = dt.vertices().count();
-                        let n = dt.number_of_vertices();
-                        prop_assert_eq!(keys, n, "{}D vertex keys count should match number_of_vertices", $dim);
-                    }
+                    let dt = DelaunayTriangulation::builder(&vertices).build().map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D vertex-count fixture construction failed for {} generated vertices: {error:?}",
+                            $dim,
+                            vertices.len(),
+                        ))
+                    })?;
+                    let keys = dt.vertices().count();
+                    let n = dt.number_of_vertices();
+                    prop_assert_eq!(keys, n, "{}D vertex keys count should match number_of_vertices", $dim);
                 }
             }
         }
@@ -328,11 +368,16 @@ macro_rules! gen_simplex_vertex_count {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_simplex_vertex_count_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
-                        for (_, c) in dt.simplices() {
-                            prop_assert_eq!(c.number_of_vertices(), $expected,
-                                "{}D simplices must have exactly {} vertices (D+1)", $dim, $expected);
-                        }
+                    let dt = DelaunayTriangulation::builder(&vertices).build().map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D simplex-cardinality fixture construction failed for {} generated vertices: {error:?}",
+                            $dim,
+                            vertices.len(),
+                        ))
+                    })?;
+                    for (_, c) in dt.simplices() {
+                        prop_assert_eq!(c.number_of_vertices(), $expected,
+                            "{}D simplices must have exactly {} vertices (D+1)", $dim, $expected);
                     }
                 }
             }
@@ -447,16 +492,21 @@ macro_rules! gen_is_valid_topology {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_triangulation_is_valid_topology_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
-                        let topology_result = dt.as_triangulation().is_valid_topology();
-                        prop_assert!(
-                            topology_result.is_ok(),
-                            "{}D successfully-built triangulation must satisfy Level 3 topology ({} simplices): {:?}",
+                    let dt = DelaunayTriangulation::builder(&vertices).build().map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D topology fixture construction failed for {} generated vertices: {error:?}",
                             $dim,
-                            dt.number_of_simplices(),
-                            topology_result.err()
-                        );
-                    }
+                            vertices.len(),
+                        ))
+                    })?;
+                    let topology_result = dt.as_triangulation().is_valid_topology();
+                    prop_assert!(
+                        topology_result.is_ok(),
+                        "{}D successfully-built triangulation must satisfy Level 3 topology ({} simplices): {:?}",
+                        $dim,
+                        dt.number_of_simplices(),
+                        topology_result.err()
+                    );
                 }
             }
         }
@@ -488,7 +538,8 @@ macro_rules! gen_high_dim_tds_smoke {
                 struct SmokeStats {
                     generated: usize,
                     accepted: usize,
-                    rejected_construction_failed: usize,
+                    rejected_too_few_unique: usize,
+                    construction_failures: usize,
                 }
 
                 let config = Config {
@@ -503,12 +554,26 @@ macro_rules! gen_high_dim_tds_smoke {
                     let mut stats = stats.borrow_mut();
                     stats.generated += 1;
 
+                    let unique_vertex_count = vertices
+                        .iter()
+                        .map(|vertex| vertex.point().coords().map(f64::to_bits))
+                        .collect::<HashSet<_>>()
+                        .len();
+                    if unique_vertex_count <= $dim {
+                        stats.rejected_too_few_unique += 1;
+                        return Err(TestCaseError::reject(format!(
+                            "{}D: fewer than {} coordinate-distinct generated vertices",
+                            $dim,
+                            $dim + 1,
+                        )));
+                    }
+
                     let dt = match DelaunayTriangulation::builder(&vertices).build() {
                         Ok(dt) => dt,
                         Err(err) => {
-                            stats.rejected_construction_failed += 1;
-                            return Err(TestCaseError::reject(format!(
-                                "{}D: construction failed in active TDS smoke test: {err}",
+                            stats.construction_failures += 1;
+                            return Err(TestCaseError::fail(format!(
+                                "{}D: construction failed in active TDS smoke test: {err:?}",
                                 $dim
                             )));
                         }
@@ -576,35 +641,27 @@ macro_rules! gen_high_dim_tds_smoke {
                 if print_stats {
                     let rejected_total = stats.generated.saturating_sub(stats.accepted);
                     tracing::warn!(
-                        "prop_high_dim_tds_active_smoke_{}d reject stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} construction_failed={}",
+                        "prop_high_dim_tds_active_smoke_{}d stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} construction_failures={}",
                         $dim,
                         stats.generated,
                         stats.accepted,
                         acceptance_rate_whole,
                         acceptance_rate_frac,
                         rejected_total,
-                        stats.rejected_construction_failed
+                        stats.rejected_too_few_unique,
+                        stats.construction_failures
                     );
                 }
 
-                let max_allowed_construction_rejections =
-                    (stats.generated.max(1).saturating_mul(9)) / 10;
-                assert!(
-                    stats.rejected_construction_failed <= max_allowed_construction_rejections,
-                    "prop_high_dim_tds_active_smoke_{}d had {} construction rejects above allowed {}; generated={}, accepted={}",
-                    $dim,
-                    stats.rejected_construction_failed,
-                    max_allowed_construction_rejections,
-                    stats.generated,
-                    stats.accepted
-                );
-
-                assert!(
-                    stats.accepted > 0,
-                    "prop_high_dim_tds_active_smoke_{}d should accept at least one case",
+                run_result.unwrap();
+                let expected_accepted = usize::try_from(target_cases)
+                    .expect("configured proptest case count should fit usize");
+                assert_eq!(
+                    stats.accepted,
+                    expected_accepted,
+                    "prop_high_dim_tds_active_smoke_{}d should accept every configured case after input admission",
                     $dim
                 );
-                run_result.unwrap();
             }
         }
     };

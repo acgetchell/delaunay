@@ -4,7 +4,7 @@
 //! public APIs and internal algorithms use consistent collection types.
 
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
-use slotmap::DenseSlotMap;
+use slotmap::{DenseSlotMap, Key};
 use smallvec::SmallVec;
 
 /// Compact index type for facet positions within a simplex.
@@ -59,7 +59,167 @@ pub use uuid::Uuid;
 /// // Internal use only: `StorageMap` is intentionally not exported publicly.
 /// use delaunay::prelude::collections::StorageMap;
 /// ```
-pub type StorageMap<K, V> = DenseSlotMap<K, V>;
+#[derive(Clone, Debug)]
+pub struct StorageMap<K: Key, V> {
+    slots: DenseSlotMap<K, Option<V>>,
+    live_len: usize,
+}
+
+/// Iterator over the live keys in a [`StorageMap`].
+///
+/// Transaction tombstones remain allocated in the underlying slot map so that
+/// rollback can restore their exact generational keys. This iterator hides
+/// those tombstones from ordinary topology traversal.
+#[derive(Clone, Debug)]
+pub(crate) struct StorageKeys<'a, K: Key, V> {
+    inner: slotmap::dense::Iter<'a, K, Option<V>>,
+}
+
+impl<K: Key, V> Iterator for StorageKeys<'_, K, V> {
+    type Item = K;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner
+            .find_map(|(key, value)| value.is_some().then_some(key))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let (_, upper) = self.inner.size_hint();
+        (0, upper)
+    }
+}
+
+impl<K: Key, V> StorageMap<K, V> {
+    /// Creates an empty keyed storage map.
+    #[must_use]
+    pub fn with_key() -> Self {
+        Self {
+            slots: DenseSlotMap::with_key(),
+            live_len: 0,
+        }
+    }
+
+    /// Creates an empty keyed storage map with capacity for `capacity` values.
+    #[must_use]
+    pub fn with_capacity_and_key(capacity: usize) -> Self {
+        Self {
+            slots: DenseSlotMap::with_capacity_and_key(capacity),
+            live_len: 0,
+        }
+    }
+
+    /// Inserts one live value and returns its stable generational key.
+    pub fn insert(&mut self, value: V) -> K {
+        let key = self.slots.insert(Some(value));
+        self.live_len = self.live_len.saturating_add(1);
+        key
+    }
+
+    /// Removes one live value and invalidates its key immediately.
+    pub fn remove(&mut self, key: K) -> Option<V> {
+        let value = self.slots.remove(key).flatten()?;
+        self.live_len = self.live_len.saturating_sub(1);
+        Some(value)
+    }
+
+    /// Temporarily removes a live value without invalidating its key.
+    ///
+    /// Rollback transactions use this to make the value absent from ordinary
+    /// queries and validators while retaining an exact restoration slot. The
+    /// caller must later call either [`Self::restore_tombstone`] or
+    /// [`Self::finalize_tombstone`].
+    pub(crate) fn tombstone(&mut self, key: K) -> Option<V> {
+        let value = self.slots.get_mut(key)?.take()?;
+        self.live_len = self.live_len.saturating_sub(1);
+        Some(value)
+    }
+
+    /// Restores a transaction tombstone at its original generational key.
+    pub(crate) fn restore_tombstone(&mut self, key: K, value: V) -> Result<(), V> {
+        let Some(slot) = self.slots.get_mut(key) else {
+            return Err(value);
+        };
+        if slot.is_some() {
+            return Err(value);
+        }
+        *slot = Some(value);
+        self.live_len = self.live_len.saturating_add(1);
+        Ok(())
+    }
+
+    /// Commits a transaction tombstone and invalidates its key.
+    pub(crate) fn finalize_tombstone(&mut self, key: K) -> bool {
+        matches!(self.slots.remove(key), Some(None))
+    }
+
+    /// Returns a shared reference to one live value.
+    #[must_use]
+    pub fn get(&self, key: K) -> Option<&V> {
+        self.slots.get(key).and_then(Option::as_ref)
+    }
+
+    /// Returns a mutable reference to one live value.
+    #[must_use]
+    pub fn get_mut(&mut self, key: K) -> Option<&mut V> {
+        self.slots.get_mut(key).and_then(Option::as_mut)
+    }
+
+    /// Returns whether `key` identifies a live value.
+    #[must_use]
+    pub fn contains_key(&self, key: K) -> bool {
+        self.get(key).is_some()
+    }
+
+    /// Returns the number of live values.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.live_len
+    }
+
+    /// Iterates over live key/value pairs.
+    pub fn iter(&self) -> impl Iterator<Item = (K, &V)> {
+        self.slots
+            .iter()
+            .filter_map(|(key, value)| value.as_ref().map(|value| (key, value)))
+    }
+
+    /// Iterates mutably over live key/value pairs.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (K, &mut V)> {
+        self.slots
+            .iter_mut()
+            .filter_map(|(key, value)| value.as_mut().map(|value| (key, value)))
+    }
+
+    /// Iterates over live keys.
+    pub(crate) fn keys(&self) -> StorageKeys<'_, K, V> {
+        StorageKeys {
+            inner: self.slots.iter(),
+        }
+    }
+
+    /// Iterates over shared live values.
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.iter().map(|(_, value)| value)
+    }
+}
+
+impl<K: Key, V> Default for StorageMap<K, V> {
+    fn default() -> Self {
+        Self::with_key()
+    }
+}
+
+#[cfg(test)]
+mod test_support {
+    use super::*;
+
+    impl<K: Key, V> StorageMap<K, V> {
+        /// Iterates over mutable live values for malformed-state fixtures.
+        pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+            self.iter_mut().map(|(_, value)| value)
+        }
+    }
+}
 
 // =============================================================================
 // CORE OPTIMIZED TYPES

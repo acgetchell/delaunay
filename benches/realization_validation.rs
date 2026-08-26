@@ -15,7 +15,7 @@ use delaunay::prelude::construction::{DelaunayTriangulation, DelaunayTriangulati
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{
     AdaptiveKernel, CoordinateRange, ExactPredicates, LabeledSimplexRealization,
-    validate_simplex_realizations_intersect_only_in_shared_faces,
+    validate_simplex_intersection,
 };
 use delaunay::try_vertices_from_points;
 
@@ -68,9 +68,7 @@ fn register_valid_narrow_phase<const D: usize>(
     transverse_scale: f64,
 ) {
     let (first, second) = shared_face_pair::<D>(transverse_scale);
-    if let Err(error) =
-        validate_simplex_realizations_intersect_only_in_shared_faces(&first, &second)
-    {
+    if let Err(error) = validate_simplex_intersection(&first, &second) {
         abort_benchmark(format_args!(
             "{D}D {case} fixture must meet only in its shared face: {error}"
         ));
@@ -78,12 +76,10 @@ fn register_valid_narrow_phase<const D: usize>(
 
     group.bench_function(BenchmarkId::new(case, format!("{D}d")), |b| {
         b.iter(|| {
-            let _ = black_box(
-                validate_simplex_realizations_intersect_only_in_shared_faces(
-                    black_box(&first),
-                    black_box(&second),
-                ),
-            );
+            let _ = black_box(validate_simplex_intersection(
+                black_box(&first),
+                black_box(&second),
+            ));
         });
     });
 }

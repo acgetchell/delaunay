@@ -219,14 +219,14 @@ def load_validation_demo(path: Path) -> tuple[ValidationCase, tuple[ValidationCa
     with path.open(encoding="utf-8") as handle:
         artifact = json.load(handle, parse_constant=_reject_json_constant)
     root = _object(artifact, str(path))
-    expected_metadata = {
-        "schema": "delaunay.validation_demo",
-        "schema_version": 1,
-        "dimension": 2,
-    }
-    for field, expected in expected_metadata.items():
-        if root.get(field) != expected:
-            raise ValueError(f"unexpected validation-demo {field}: expected {expected!r}, got {root.get(field)!r}")
+    if root.get("schema") != "delaunay.validation_demo":
+        raise ValueError(f"unexpected validation-demo schema: expected 'delaunay.validation_demo', got {root.get('schema')!r}")
+    schema_version = _integer(root.get("schema_version"), "schema_version")
+    if schema_version != 1:
+        raise ValueError(f"unexpected validation-demo schema_version: expected 1, got {schema_version!r}")
+    dimension = _integer(root.get("dimension"), "dimension")
+    if dimension != 2:
+        raise ValueError(f"unexpected validation-demo dimension: expected 2, got {dimension!r}")
     baseline = _case(root.get("valid_baseline"), "valid_baseline", expected_level=0)
     raw_cases = _list(root.get("cases"), "cases")
     if len(raw_cases) != 5:

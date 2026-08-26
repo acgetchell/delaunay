@@ -78,15 +78,9 @@ jobs:
           fi
 
           mkdir -p release-benchmark-artifacts
-          cargo bench --profile perf --bench ci_performance_suite
-          cargo bench --profile perf --bench circumsphere_containment
-          cargo bench --profile perf --bench cold_path_predicates
-          cargo bench --profile perf --bench locate
-          cargo bench --profile perf --bench realization_validation
+          just bench-latest 3600
           uv run --locked benchmark-utils generate-summary \
             --strict \
-            --profile perf \
-            --bench-timeout 3600 \
             --output release-benchmark-artifacts/PERFORMANCE_RESULTS.md
           uv run --locked benchmark-utils write-baseline \
             --ref "$RELEASE_TAG" \

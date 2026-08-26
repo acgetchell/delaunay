@@ -144,11 +144,55 @@ def test_load_notebook_rejects_unknown_cell_type(tmp_path: Path) -> None:
 
 
 def test_load_notebook_rejects_bad_execution_count(tmp_path: Path) -> None:
-    """Code cell execution counts must be integers or null."""
+    """Code cell execution counts must use an exact integer JSON token."""
     notebook = tmp_path / "bad-execution-count.ipynb"
     write_notebook(notebook, [code_cell("x = 1", execution_count="1")])
 
-    with pytest.raises(TypeError, match="execution_count must be an integer or null"):
+    with pytest.raises(TypeError, match="execution_count must be a nonnegative integer or null"):
+        load_notebook(notebook)
+
+
+@pytest.mark.parametrize("execution_count", [True, False, 1.0])
+def test_load_notebook_rejects_non_integer_execution_count(tmp_path: Path, execution_count: bool | float) -> None:
+    """Booleans and floats must not masquerade as execution-count integers."""
+    notebook = tmp_path / "non-integer-execution-count.ipynb"
+    write_notebook(notebook, [code_cell("x = 1", execution_count=execution_count)])
+
+    with pytest.raises(TypeError, match="execution_count must be a nonnegative integer or null"):
+        load_notebook(notebook)
+
+
+def test_load_notebook_rejects_negative_execution_count(tmp_path: Path) -> None:
+    """Negative execution counts are outside the nbformat domain."""
+    notebook = tmp_path / "negative-execution-count.ipynb"
+    write_notebook(notebook, [code_cell("x = 1", execution_count=-1)])
+
+    with pytest.raises(ValueError, match="execution_count must be nonnegative"):
+        load_notebook(notebook)
+
+
+@pytest.mark.parametrize("nbformat_minor", [None, True, False, 5.0])
+def test_load_notebook_rejects_non_integer_nbformat_minor(tmp_path: Path, nbformat_minor: bool | float | None) -> None:
+    """The minor format version must be present as an exact integer token."""
+    notebook = tmp_path / "non-integer-minor.ipynb"
+    notebook.write_text(
+        json.dumps({"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": nbformat_minor}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TypeError, match="nbformat_minor to be a nonnegative integer"):
+        load_notebook(notebook)
+
+
+def test_load_notebook_rejects_negative_nbformat_minor(tmp_path: Path) -> None:
+    """Negative minor format versions are outside the nbformat domain."""
+    notebook = tmp_path / "negative-minor.ipynb"
+    notebook.write_text(
+        json.dumps({"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": -1}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="nbformat_minor to be nonnegative"):
         load_notebook(notebook)
 
 
@@ -197,6 +241,40 @@ def test_code_cell_diagnostics_report_dirty_outputs_and_syntax(tmp_path: Path) -
     assert "has 1 output block(s); clear outputs before committing" in messages
     assert "execution_count=7; clear execution counts" in messages
     assert any(message.startswith("syntax error:") for message in messages)
+
+
+def test_code_cell_diagnostics_accept_subprocess_run_with_timeout(tmp_path: Path) -> None:
+    """A bounded one-shot subprocess is the supported notebook process API."""
+    notebook_path = tmp_path / "bounded-subprocess.ipynb"
+    write_notebook(
+        notebook_path,
+        [code_cell('import subprocess\nsubprocess.run(["tool"], check=True, timeout=30)\n')],
+    )
+    notebook = load_notebook(notebook_path)
+
+    diagnostics = code_cell_diagnostics(notebook_path, notebook, LintOptions(run_ruff=False, run_format=False, run_ty=False))
+
+    assert diagnostics == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'import subprocess\nsubprocess.Popen(["tool"])\n',
+        'import subprocess\nsubprocess.Popen(["tool"], timeout=30)\n',
+    ],
+)
+def test_code_cell_diagnostics_prohibit_popen_even_with_constructor_timeout(tmp_path: Path, source: str) -> None:
+    """A nonexistent Popen constructor timeout must never suppress the error."""
+    notebook_path = tmp_path / "popen.ipynb"
+    write_notebook(notebook_path, [code_cell(source)])
+    notebook = load_notebook(notebook_path)
+
+    diagnostics = code_cell_diagnostics(notebook_path, notebook, LintOptions(run_ruff=False, run_format=False, run_ty=False))
+
+    assert [(diagnostic.severity, diagnostic.message) for diagnostic in diagnostics] == [
+        ("error", "subprocess.Popen is prohibited in notebooks; use subprocess.run(..., timeout=...)"),
+    ]
 
 
 def test_lint_allow_outputs_accepts_rendered_notebook(tmp_path: Path) -> None:

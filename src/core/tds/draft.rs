@@ -3,11 +3,15 @@
 #![forbid(unsafe_code)]
 
 use super::model::UnverifiedTds;
-use super::{SimplexKey, Tds, TdsConstructionError, TdsError, TdsMutationError, VertexKey};
+use super::{
+    SimplexKey, Tds, TdsConstructionError, TdsError, TdsMutationError, TdsRollbackSavepoint,
+    VertexKey,
+};
 use crate::core::collections::SimplexVertexKeyBuffer;
 use crate::core::simplex::Simplex;
 use crate::core::simplex::SimplexValidationError;
 use crate::core::vertex::Vertex;
+use crate::refinement::RefinementError;
 use thiserror::Error;
 
 /// Typed failures while staging an explicit simplex in a [`TdsDraft`].
@@ -223,17 +227,6 @@ impl<U, V, const D: usize> TdsDraft<U, V, D> {
         self.storage.validate()
     }
 
-    /// Copies this workspace while preserving topology identity for rollback.
-    pub(crate) fn clone_for_rollback(&self) -> Self
-    where
-        U: Clone,
-        V: Clone,
-    {
-        Self {
-            storage: self.storage.clone_for_rollback(),
-        }
-    }
-
     /// Inserts a simplex after the caller has proved cross-simplex topology.
     pub(crate) fn insert_simplex_prechecked_topology(
         &mut self,
@@ -250,27 +243,70 @@ impl<U, V, const D: usize> TdsDraft<U, V, D> {
     /// Returns [`TdsDraftError`] when derived adjacency, incidence,
     /// orientation, or cumulative validation fails. The rejected workspace is
     /// dropped rather than exposed as a `Tds`.
-    pub fn finish(mut self) -> Result<Tds<U, V, D>, TdsDraftError> {
-        self.storage
-            .assign_neighbors()
-            .map_err(|source| TdsDraftError::NeighborAssignment {
-                source: Box::new(source),
-            })?;
-        self.storage.assign_incident_simplices().map_err(|source| {
-            TdsDraftError::IncidentAssignment {
-                source: Box::new(source),
-            }
-        })?;
-        self.storage
-            .normalize_coherent_orientation()
-            .map_err(|source| TdsDraftError::OrientationNormalization {
-                source: Box::new(source),
-            })?;
-        self.storage
-            .publish()
-            .map_err(|source| TdsDraftError::Validation {
-                source: Box::new(source),
-            })
+    pub fn finish(self) -> Result<Tds<U, V, D>, TdsDraftError> {
+        self.finish_recoverable()
+            .map_err(RefinementError::into_reason)
+    }
+
+    /// Opens a move-safe rollback journal for a consuming publication attempt.
+    pub(crate) fn begin_rollback_savepoint(&mut self) -> TdsRollbackSavepoint {
+        self.storage.begin_rollback_savepoint()
+    }
+
+    /// Restores a rejected consuming publication attempt.
+    pub(crate) fn rollback_savepoint(&mut self, savepoint: TdsRollbackSavepoint) {
+        self.storage.rollback_savepoint(savepoint);
+    }
+
+    /// Commits a consuming publication attempt that did not leave this draft layer.
+    pub(crate) fn commit_savepoint(&mut self, savepoint: TdsRollbackSavepoint) {
+        self.storage.commit_savepoint(savepoint);
+    }
+
+    /// Publishes while retaining rejected storage for an internal rollback boundary.
+    pub(crate) fn finish_recoverable(
+        mut self,
+    ) -> Result<Tds<U, V, D>, RefinementError<Self, TdsDraftError>> {
+        if let Err(source) = self.storage.assign_neighbors() {
+            return Err(RefinementError::new(
+                self,
+                TdsDraftError::NeighborAssignment {
+                    source: Box::new(source),
+                },
+            ));
+        }
+        if let Err(source) = self.storage.assign_incident_simplices() {
+            return Err(RefinementError::new(
+                self,
+                TdsDraftError::IncidentAssignment {
+                    source: Box::new(source),
+                },
+            ));
+        }
+        if let Err(source) = self.storage.normalize_coherent_orientation() {
+            return Err(RefinementError::new(
+                self,
+                TdsDraftError::OrientationNormalization {
+                    source: Box::new(source),
+                },
+            ));
+        }
+        self.storage.publish_recoverable().map_err(|failure| {
+            let (storage, source) = (*failure).into_parts();
+            RefinementError::new(
+                Self { storage },
+                TdsDraftError::Validation {
+                    source: Box::new(source),
+                },
+            )
+        })
+    }
+
+    /// Rewraps storage after an internal rollback restored its unpublished state.
+    pub(crate) const fn from_rolled_back_storage(storage: Tds<U, V, D>) -> Self {
+        Self {
+            storage: UnverifiedTds { storage },
+        }
     }
 }
 

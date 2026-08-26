@@ -40,7 +40,7 @@ mod proptest_config;
 
 use ::uuid::Uuid;
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, DelaunayTriangulationBuilder, TopologyGuarantee,
+    DelaunayTriangulation, DelaunayTriangulationBuilder, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::tds::SimplexKey;
@@ -50,7 +50,7 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use proptest_config::with_default_cases;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // =============================================================================
 // TEST CONFIGURATION
@@ -59,6 +59,15 @@ use std::collections::HashMap;
 /// Strategy for generating finite f64 coordinates
 fn finite_coordinate() -> impl Strategy<Value = f64> {
     (-100.0..100.0).prop_filter("must be finite", |x: &f64| x.is_finite())
+}
+
+/// Counts coordinate-distinct generated vertices before construction.
+fn unique_vertex_count<const D: usize>(vertices: &[Vertex<(), D>]) -> usize {
+    vertices
+        .iter()
+        .map(|vertex| vertex.point().coords().map(f64::to_bits))
+        .collect::<HashSet<_>>()
+        .len()
 }
 
 // =============================================================================
@@ -391,21 +400,27 @@ macro_rules! test_quality_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices)
+                    let dt = DelaunayTriangulationBuilder::new(&vertices)
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
-                    {
-                        let tri = dt.as_triangulation();
-                        for (simplex_key, _) in dt.simplices() {
-                            if let Ok(ratio) = radius_ratio(tri, simplex_key) {
-                                prop_assert!(
-                                    ratio > 0.0,
-                                    "{}D radius ratio should be positive, got {}",
-                                    $dim,
-                                    ratio
-                                );
-                            }
-                        }
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D positive-radius-ratio fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    let tri = dt.as_triangulation();
+                    for (simplex_key, _) in dt.simplices() {
+                        let ratio = radius_ratio(tri, simplex_key).map_err(|error| {
+                            TestCaseError::fail(format!(
+                                "{}D radius ratio failed for simplex {simplex_key:?}: {error:?}",
+                                $dim,
+                            ))
+                        })?;
+                        prop_assert!(
+                            ratio > 0.0,
+                            "{}D radius ratio should be positive, got {}",
+                            $dim,
+                            ratio
+                        );
                     }
                 }
 
@@ -420,10 +435,13 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates")),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices)
+                    let dt = DelaunayTriangulationBuilder::new(&vertices)
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
-                    {
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D translated radius-ratio source construction failed: {error:?}",
+                            $dim,
+                        )))?;
                         // Translate all vertices
                         let translated_vertices: Vec<_> = vertices
                             .iter()
@@ -440,10 +458,13 @@ macro_rules! test_quality_properties {
                         let translated_vertices = try_vertices_from_points(&translated_vertices)
                             .expect("finite point coordinates");
 
-                        if let Ok(dt_translated) = DelaunayTriangulationBuilder::new(&translated_vertices)
+                        let dt_translated = DelaunayTriangulationBuilder::new(&translated_vertices)
                             .topology_guarantee(TopologyGuarantee::PLManifold)
                             .build()
-                        {
+                            .map_err(|error| TestCaseError::fail(format!(
+                                "{}D translated radius-ratio construction failed: {error:?}",
+                                $dim,
+                            )))?;
                             // Build mapping from original UUIDs to translated UUIDs
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(translated_vertices.iter())
@@ -460,10 +481,18 @@ macro_rules! test_quality_properties {
                                 |orig_key, trans_key| {
                                     let tri = dt.as_triangulation();
                                     let tri_translated = dt_translated.as_triangulation();
-                                    if let (Ok(ratio_orig), Ok(ratio_trans)) = (
-                                        radius_ratio(tri, orig_key),
-                                        radius_ratio(tri_translated, trans_key),
-                                    ) {
+                                    let ratio_orig = radius_ratio(tri, orig_key).map_err(|error| {
+                                        TestCaseError::fail(format!(
+                                            "{}D source radius ratio failed for simplex {orig_key:?}: {error:?}",
+                                            $dim,
+                                        ))
+                                    })?;
+                                    let ratio_trans = radius_ratio(tri_translated, trans_key).map_err(|error| {
+                                        TestCaseError::fail(format!(
+                                            "{}D translated radius ratio failed for simplex {trans_key:?}: {error:?}",
+                                            $dim,
+                                        ))
+                                    })?;
                                         let rel_diff = ((ratio_orig - ratio_trans).abs()
                                             / ratio_orig.max(1.0))
                                         .min(1.0);
@@ -475,12 +504,9 @@ macro_rules! test_quality_properties {
                                             ratio_trans,
                                             rel_diff
                                         );
-                                    }
                                     Ok(())
                                 },
                             )?;
-                        }
-                    }
                 }
 
                 /// Property: Normalized volume is translation-invariant
@@ -493,10 +519,13 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates")),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices)
+                    let dt = DelaunayTriangulationBuilder::new(&vertices)
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
-                    {
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D translated normalized-volume source construction failed: {error:?}",
+                            $dim,
+                        )))?;
                         // Translate all vertices
                         let translated_vertices: Vec<_> = vertices
                             .iter()
@@ -513,10 +542,13 @@ macro_rules! test_quality_properties {
                         let translated_vertices = try_vertices_from_points(&translated_vertices)
                             .expect("finite point coordinates");
 
-                        if let Ok(dt_translated) = DelaunayTriangulationBuilder::new(&translated_vertices)
+                        let dt_translated = DelaunayTriangulationBuilder::new(&translated_vertices)
                             .topology_guarantee(TopologyGuarantee::PLManifold)
                             .build()
-                        {
+                            .map_err(|error| TestCaseError::fail(format!(
+                                "{}D translated normalized-volume construction failed: {error:?}",
+                                $dim,
+                            )))?;
                             // Build UUID mapping
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(translated_vertices.iter())
@@ -533,10 +565,18 @@ macro_rules! test_quality_properties {
                                 |orig_key, trans_key| {
                                     let tri = dt.as_triangulation();
                                     let tri_translated = dt_translated.as_triangulation();
-                                    if let (Ok(vol_orig), Ok(vol_trans)) = (
-                                        normalized_volume(tri, orig_key),
-                                        normalized_volume(tri_translated, trans_key),
-                                    ) {
+                                    let vol_orig = normalized_volume(tri, orig_key).map_err(|error| {
+                                        TestCaseError::fail(format!(
+                                            "{}D source normalized volume failed for simplex {orig_key:?}: {error:?}",
+                                            $dim,
+                                        ))
+                                    })?;
+                                    let vol_trans = normalized_volume(tri_translated, trans_key).map_err(|error| {
+                                        TestCaseError::fail(format!(
+                                            "{}D translated normalized volume failed for simplex {trans_key:?}: {error:?}",
+                                            $dim,
+                                        ))
+                                    })?;
                                         let rel_diff = ((vol_orig - vol_trans).abs()
                                             / vol_orig.max(1e-6))
                                         .min(1.0);
@@ -548,12 +588,9 @@ macro_rules! test_quality_properties {
                                             vol_trans,
                                             rel_diff
                                         );
-                                    }
                                     Ok(())
                                 },
                             )?;
-                        }
-                    }
                 }
 
                 /// Property: Normalized volume is scale-invariant (uniform scaling)
@@ -566,10 +603,13 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates")),
                     scale in 0.1f64..10.0f64
                 ) {
-                    if let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices)
+                    let dt = DelaunayTriangulationBuilder::new(&vertices)
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
-                    {
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D scaled normalized-volume source construction failed: {error:?}",
+                            $dim,
+                        )))?;
                         // Scale all vertices uniformly
                         let scaled_vertices: Vec<_> = vertices
                             .iter()
@@ -586,10 +626,13 @@ macro_rules! test_quality_properties {
                         let scaled_vertices = try_vertices_from_points(&scaled_vertices)
                             .expect("finite point coordinates");
 
-                        if let Ok(dt_scaled) = DelaunayTriangulationBuilder::new(&scaled_vertices)
+                        let dt_scaled = DelaunayTriangulationBuilder::new(&scaled_vertices)
                             .topology_guarantee(TopologyGuarantee::PLManifold)
                             .build()
-                        {
+                            .map_err(|error| TestCaseError::fail(format!(
+                                "{}D scaled normalized-volume construction failed: {error:?}",
+                                $dim,
+                            )))?;
                             // Build UUID mapping
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(scaled_vertices.iter())
@@ -606,10 +649,18 @@ macro_rules! test_quality_properties {
                                 |orig_key, scaled_key| {
                                     let tri = dt.as_triangulation();
                                     let tri_scaled = dt_scaled.as_triangulation();
-                                    if let (Ok(vol_orig), Ok(vol_scaled)) = (
-                                        normalized_volume(tri, orig_key),
-                                        normalized_volume(tri_scaled, scaled_key),
-                                    ) {
+                                    let vol_orig = normalized_volume(tri, orig_key).map_err(|error| {
+                                        TestCaseError::fail(format!(
+                                            "{}D source normalized volume failed for simplex {orig_key:?}: {error:?}",
+                                            $dim,
+                                        ))
+                                    })?;
+                                    let vol_scaled = normalized_volume(tri_scaled, scaled_key).map_err(|error| {
+                                        TestCaseError::fail(format!(
+                                            "{}D scaled normalized volume failed for simplex {scaled_key:?}: {error:?}",
+                                            $dim,
+                                        ))
+                                    })?;
                                         let rel_diff = ((vol_orig - vol_scaled).abs()
                                             / vol_orig.max(1e-6))
                                         .min(1.0);
@@ -621,12 +672,9 @@ macro_rules! test_quality_properties {
                                             vol_scaled,
                                             rel_diff
                                         );
-                                    }
                                     Ok(())
                                 },
                             )?;
-                        }
-                    }
                 }
 
                 /// Property: Both metrics detect degeneracy consistently
@@ -638,10 +686,13 @@ macro_rules! test_quality_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices)
+                    let dt = DelaunayTriangulationBuilder::new(&vertices)
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
-                    {
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D degeneracy-consistency fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
                         let tri = dt.as_triangulation();
                         for (simplex_key, _) in dt.simplices() {
                             let rr_result = radius_ratio(tri, simplex_key);
@@ -672,7 +723,6 @@ macro_rules! test_quality_properties {
                                 }
                             }
                         }
-                    }
                 }
 
             }
@@ -717,24 +767,27 @@ macro_rules! test_facet_topology_invariant {
                         $min_vertices..$max_vertices
                     )
                 ) {
-                    // Build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices)
+                    // Exact coordinate duplicates can leave the generator below the construction domain.
+                    prop_assume!(unique_vertex_count(&vertices) > $dim);
+                    let dt = DelaunayTriangulation::builder(&vertices)
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
-                    {
-                        let tri = dt.as_triangulation();
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D no-over-shared-facets fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    let tri = dt.as_triangulation();
 
-                        // Get all simplex keys
-                        let simplex_keys: Vec<_> = tri.simplices().map(|(k, _)| k).collect();
+                    // Get all simplex keys
+                    let simplex_keys: Vec<_> = tri.simplices().map(|(k, _)| k).collect();
 
-                        // Validate no over-shared facets
-                        let has_issues = tri.has_local_facet_issues(&simplex_keys)?;
-                        prop_assert!(
-                            !has_issues,
-                            "{}D: Triangulation has over-shared facets (violates manifold topology invariant)",
-                            $dim
-                        );
-                    }
+                    // Validate no over-shared facets
+                    let has_issues = tri.has_local_facet_issues(&simplex_keys)?;
+                    prop_assert!(
+                        !has_issues,
+                        "{}D: Triangulation has over-shared facets (violates manifold topology invariant)",
+                        $dim
+                    );
                 }
 
                 /// Property: After repair, no over-shared facets remain
@@ -746,29 +799,32 @@ macro_rules! test_facet_topology_invariant {
                         $min_vertices..$max_vertices
                     )
                 ) {
-                    // Build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices)
+                    // Exact coordinate duplicates can leave the generator below the construction domain.
+                    prop_assume!(unique_vertex_count(&vertices) > $dim);
+                    let dt = DelaunayTriangulation::builder(&vertices)
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
-                    {
-                        let mut tri = dt.into_triangulation();
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D facet-repair fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    let mut tri = dt.into_triangulation();
 
-                        // Get all simplex keys
-                        let simplex_keys: Vec<_> = tri.simplices().map(|(k, _)| k).collect();
+                    // Get all simplex keys
+                    let simplex_keys: Vec<_> = tri.simplices().map(|(k, _)| k).collect();
 
-                        // If there are any issues, repair them
-                        if let Some(repair) = tri.local_facet_repair(&simplex_keys)? {
-                            let _removed = repair.repair(usize::MAX)?;
+                    // If there are any issues, repair them
+                    if let Some(repair) = tri.local_facet_repair(&simplex_keys)? {
+                        let _removed = repair.repair(usize::MAX)?;
 
-                            // After repair, re-check - should have no issues
-                            let simplex_keys_after: Vec<_> = tri.simplices().map(|(k, _)| k).collect();
-                            let issues_after = tri.has_local_facet_issues(&simplex_keys_after)?;
-                            prop_assert!(
-                                !issues_after,
-                                "{}D: After repair, over-shared facets still remain",
-                                $dim
-                            );
-                        }
+                        // After repair, re-check - should have no issues
+                        let simplex_keys_after: Vec<_> = tri.simplices().map(|(k, _)| k).collect();
+                        let issues_after = tri.has_local_facet_issues(&simplex_keys_after)?;
+                        prop_assert!(
+                            !issues_after,
+                            "{}D: After repair, over-shared facets still remain",
+                            $dim
+                        );
                     }
                 }
 
@@ -781,21 +837,24 @@ macro_rules! test_facet_topology_invariant {
                         $min_vertices..$max_vertices
                     )
                 ) {
-                    // Build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices)
+                    // Exact coordinate duplicates can leave the generator below the construction domain.
+                    prop_assume!(unique_vertex_count(&vertices) > $dim);
+                    let dt = DelaunayTriangulation::builder(&vertices)
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
-                    {
-                        let tri = dt.as_triangulation();
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D empty-facet-scope fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    let tri = dt.as_triangulation();
 
-                        // Empty simplex list should always return None
-                        let issues = tri.has_local_facet_issues(&[])?;
-                        prop_assert!(
-                            !issues,
-                            "{}D: Empty simplex list should have no issues",
-                            $dim
-                        );
-                    }
+                    // Empty simplex list should always return None
+                    let issues = tri.has_local_facet_issues(&[])?;
+                    prop_assert!(
+                        !issues,
+                        "{}D: Empty simplex list should have no issues",
+                        $dim
+                    );
                 }
             }
         }
@@ -822,7 +881,8 @@ macro_rules! gen_high_dim_facet_topology_smoke {
                 struct SmokeStats {
                     generated: usize,
                     accepted: usize,
-                    rejected_construction_failed: usize,
+                    rejected_too_few_unique: usize,
+                    construction_failures: usize,
                 }
 
                 let config = Config {
@@ -841,15 +901,24 @@ macro_rules! gen_high_dim_facet_topology_smoke {
                     let mut stats = stats.borrow_mut();
                     stats.generated += 1;
 
+                    if unique_vertex_count(&vertices) <= $dim {
+                        stats.rejected_too_few_unique += 1;
+                        return Err(TestCaseError::reject(format!(
+                            "{}D: fewer than {} coordinate-distinct generated vertices",
+                            $dim,
+                            $dim + 1,
+                        )));
+                    }
+
                     let dt = match DelaunayTriangulation::builder(&vertices)
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
                     {
                         Ok(dt) => dt,
                         Err(err) => {
-                            stats.rejected_construction_failed += 1;
-                            return Err(TestCaseError::reject(format!(
-                                "{}D: construction failed in active facet-topology smoke test: {err}",
+                            stats.construction_failures += 1;
+                            return Err(TestCaseError::fail(format!(
+                                "{}D: construction failed in active facet-topology smoke test after input admission: {err:?}",
                                 $dim
                             )));
                         }
@@ -887,35 +956,27 @@ macro_rules! gen_high_dim_facet_topology_smoke {
                 if print_stats {
                     let rejected_total = stats.generated.saturating_sub(stats.accepted);
                     tracing::warn!(
-                        "prop_high_dim_facet_topology_active_smoke_{}d reject stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} construction_failed={}",
+                        "prop_high_dim_facet_topology_active_smoke_{}d stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} construction_failures={}",
                         $dim,
                         stats.generated,
                         stats.accepted,
                         acceptance_rate_whole,
                         acceptance_rate_frac,
                         rejected_total,
-                        stats.rejected_construction_failed
+                        stats.rejected_too_few_unique,
+                        stats.construction_failures
                     );
                 }
 
-                let max_allowed_construction_rejections =
-                    usize::try_from(target_cases).map_or(usize::MAX, |cases| cases.max(1));
-                assert!(
-                    stats.rejected_construction_failed <= max_allowed_construction_rejections,
-                    "prop_high_dim_facet_topology_active_smoke_{}d had {} construction rejects above allowed {}; generated={}, accepted={}",
-                    $dim,
-                    stats.rejected_construction_failed,
-                    max_allowed_construction_rejections,
-                    stats.generated,
-                    stats.accepted
-                );
-
-                assert!(
-                    stats.accepted > 0,
-                    "prop_high_dim_facet_topology_active_smoke_{}d should accept at least one case",
+                run_result.unwrap();
+                let expected_accepted = usize::try_from(target_cases)
+                    .expect("configured proptest case count should fit usize");
+                assert_eq!(
+                    stats.accepted,
+                    expected_accepted,
+                    "prop_high_dim_facet_topology_active_smoke_{}d should accept every configured case after input admission",
                     $dim
                 );
-                run_result.unwrap();
             }
         }
     };

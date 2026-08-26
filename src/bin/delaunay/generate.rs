@@ -10,7 +10,8 @@ use delaunay::{
     prelude::{
         construction::{DelaunayTriangulationBuilder, TopologyGuarantee},
         generators::{
-            generate_random_points_in_ball_seeded, generate_random_points_in_range_seeded,
+            RandomPointCount, generate_random_points_in_ball_seeded,
+            generate_random_points_in_range_seeded,
         },
         geometry::{CoordinateRange, ExactPredicates, RobustKernel},
         query::ConvexHull,
@@ -100,8 +101,8 @@ pub enum GenerateCommand {
 #[derive(Debug)]
 pub struct GenerateConfig<const D: usize> {
     kind: GenerateKind,
-    pub vertices: NonZeroUsize,
-    pub distribution: GenerateDistribution,
+    vertices: RandomPointCount<D>,
+    distribution: GenerateDistribution,
     seed: u64,
     output: Option<ArtifactPath>,
 }
@@ -109,16 +110,14 @@ pub struct GenerateConfig<const D: usize> {
 impl<const D: usize> GenerateConfig<D> {
     /// Validate dimension-dependent generation limits.
     fn try_new(args: GenerateArgs) -> Result<Self, CliError> {
-        let minimum = D + 1;
-        let vertices = validated_nonzero_count(
-            args.vertices,
-            |vertices| vertices.get() >= minimum,
-            || CliError::TooFewVertices {
+        let minimum = RandomPointCount::<D>::minimum();
+        let vertices = NonZeroUsize::new(args.vertices)
+            .and_then(|vertices| RandomPointCount::try_new(vertices).ok())
+            .ok_or(CliError::TooFewVertices {
                 target: VertexCountTarget::EuclideanGeneration { dimension: D },
                 vertices: args.vertices,
                 minimum,
-            },
-        )?;
+            })?;
 
         Ok(Self {
             kind: args.kind,
@@ -127,6 +126,16 @@ impl<const D: usize> GenerateConfig<D> {
             seed: args.seed,
             output: args.output.map(ArtifactPath::try_new).transpose()?,
         })
+    }
+
+    /// Return the dimension-sufficient random point count.
+    pub(crate) const fn vertex_count(&self) -> RandomPointCount<D> {
+        self.vertices
+    }
+
+    /// Return the selected random point distribution.
+    pub(crate) const fn distribution(&self) -> GenerateDistribution {
+        self.distribution
     }
 }
 
@@ -165,7 +174,8 @@ fn run_dimension<const D: usize>(config: &GenerateConfig<D>) -> Result<(), CliEr
 where
     RobustKernel<f64>: ExactPredicates<D>,
 {
-    let triangulation = build_delaunay::<D>(config.vertices, config.seed, config.distribution)?;
+    let triangulation =
+        build_delaunay::<D>(config.vertex_count(), config.seed, config.distribution())?;
     match config.kind {
         GenerateKind::Triangulation => {
             write_json_output(&triangulation, config.output.as_ref())?;
@@ -184,7 +194,7 @@ where
 
 /// Build a random PL-manifold Delaunay triangulation for CLI export.
 fn build_delaunay<const D: usize>(
-    vertex_count: NonZeroUsize,
+    vertex_count: RandomPointCount<D>,
     seed: u64,
     distribution: GenerateDistribution,
 ) -> Result<DelaunayTriangulation<RobustKernel<f64>, (), (), D>, CliError>
@@ -237,15 +247,4 @@ fn build_convex_hull_export<const D: usize>(
         facet_count: facets.len(),
         facets,
     })
-}
-
-/// Parse a count once while preserving the command's threshold diagnostic.
-fn validated_nonzero_count<E>(
-    value: usize,
-    is_valid: impl FnOnce(NonZeroUsize) -> bool,
-    error: impl FnOnce() -> E,
-) -> Result<NonZeroUsize, E> {
-    NonZeroUsize::new(value)
-        .filter(|count| is_valid(*count))
-        .ok_or_else(error)
 }

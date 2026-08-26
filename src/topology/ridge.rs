@@ -75,7 +75,7 @@ pub enum RidgeCandidateError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, topology::validation::*};
 /// use delaunay::prelude::topology::validation::{
 ///     ManifoldError, RidgeCandidate, RidgeCandidateError,
 /// };
@@ -129,7 +129,7 @@ impl<const D: usize> RidgeCandidate<D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, topology::validation::*};
     /// use delaunay::prelude::topology::validation::{
     ///     RidgeCandidate, RidgeCandidateError,
     /// };
@@ -191,7 +191,7 @@ impl<const D: usize> RidgeCandidate<D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, topology::validation::*};
     /// use delaunay::prelude::topology::validation::{
     ///     RidgeCandidate, RidgeCandidateError,
     /// };
@@ -229,7 +229,7 @@ impl<const D: usize> RidgeCandidate<D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, topology::validation::*};
     /// use delaunay::prelude::topology::validation::{
     ///     RidgeCandidate, RidgeCandidateError,
     /// };
@@ -273,7 +273,7 @@ impl<const D: usize> RidgeCandidate<D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, topology::validation::*};
     /// use delaunay::prelude::topology::validation::{
     ///     ManifoldError, RidgeCandidate, RidgeCandidateError,
     /// };
@@ -324,7 +324,7 @@ impl<const D: usize> RidgeCandidate<D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, topology::validation::*};
     /// use delaunay::prelude::topology::validation::{
     ///     ManifoldError, RidgeCandidate, RidgeCandidateError,
     /// };
@@ -391,7 +391,7 @@ impl<'tds, U, V, const D: usize> RidgeQuery<'tds, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, topology::validation::*};
     /// use delaunay::prelude::topology::validation::{
     ///     ManifoldError, RidgeCandidate, RidgeCandidateError, RidgeQuery,
     /// };
@@ -477,7 +477,7 @@ impl<'tds, U, V, const D: usize> RidgeQuery<'tds, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, topology::validation::*};
     /// use delaunay::prelude::topology::validation::{
     ///     ManifoldError, RidgeCandidate, RidgeCandidateError,
     /// };
@@ -570,7 +570,7 @@ impl<'tds, U, V, const D: usize> RidgeView<'tds, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, topology::validation::*};
     /// use delaunay::prelude::topology::validation::{
     ///     ManifoldError, RidgeCandidate, RidgeCandidateError, RidgeView,
     /// };
@@ -660,7 +660,7 @@ impl<'tds, U, V, const D: usize> RidgeView<'tds, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, topology::validation::*};
     /// use delaunay::prelude::topology::validation::{
     ///     ManifoldError, RidgeCandidate, RidgeCandidateError,
     /// };
@@ -741,7 +741,7 @@ impl<U, V, const D: usize> Eq for RidgeView<'_, U, V, D> {}
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, topology::validation::*};
 /// use delaunay::prelude::topology::validation::{
 ///     ManifoldError, RidgeCandidate, RidgeCandidateError,
 /// };

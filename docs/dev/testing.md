@@ -153,6 +153,43 @@ Typical invariants include:
 - manifold link conditions
 - orientation predicate correctness
 
+#### Fail-closed admission and production errors
+
+Property tests must fail closed after independently admitting generated input.
+Use `prop_assume!`, `TestCaseError::reject`, or an early successful return only
+for domain facts computed directly from raw generated values, such as too few
+coordinate-distinct points or a deliberately excluded non-finite coordinate.
+Never reject or silently skip a case because a builder, insertion, predicate,
+serialization, deserialization, or validation operation returned an error.
+After admission, map every unexpected production error to
+`TestCaseError::fail` with the operation, dimension or input position, and the
+typed error's debug representation.
+
+```rust
+// Good: admission is an input-only fact; construction must then succeed.
+prop_assume!(unique_coordinate_count(&points) > D);
+let triangulation = build(&points).map_err(|error| {
+    TestCaseError::fail(format!("{D}D construction failed: {error:?}"))
+})?;
+```
+
+```rust
+// Bad: a production failure is converted into a rejected or passing case.
+let Ok(triangulation) = build(&points) else {
+    return Err(TestCaseError::reject("construction failed"));
+};
+if let Ok(value) = predicate(&triangulation) {
+    prop_assert!(value);
+}
+```
+
+Properties that drive `TestRunner` directly must also establish deterministic
+acceptance evidence. After a successful run, assert that the accepted count
+equals the configured target case count; do not make the minimum acceptance
+rate depend on an optional environment variable. Rejected raw inputs may
+increase the generated count, but production failures must never contribute to
+that rejection telemetry.
+
 ---
 
 ## Floating-Point Comparisons
@@ -508,6 +545,10 @@ just test-slow
 ## Documentation Tests
 
 Public documentation examples must compile.
+Public Rustdoc code fences must also use focused workflow preludes instead of
+`use delaunay::prelude::*`; `scripts/tests/test_rustdoc_imports.py` scans only
+repository-owned Rust sources under `src/` and fails on both kitchen-sink
+imports and unterminated documentation fences.
 
 Validate with:
 

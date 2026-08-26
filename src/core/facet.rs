@@ -41,7 +41,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::{construction::*, tds::*};
 //!
 //! # #[derive(Debug, thiserror::Error)]
 //! # enum ExampleError {
@@ -319,7 +319,7 @@ pub enum FacetError {
 /// # Example
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, tds::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -373,7 +373,7 @@ impl FacetHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -439,7 +439,7 @@ impl FacetHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -477,7 +477,7 @@ impl FacetHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -523,7 +523,7 @@ impl FacetHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -680,7 +680,7 @@ impl<'tds, U, V, const D: usize> FacetView<'tds, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -741,7 +741,7 @@ impl<'tds, U, V, const D: usize> FacetView<'tds, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -844,7 +844,7 @@ impl<'tds, U, V, const D: usize> FacetView<'tds, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -889,7 +889,7 @@ impl<'tds, U, V, const D: usize> FacetView<'tds, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -935,7 +935,7 @@ impl<'tds, U, V, const D: usize> FacetView<'tds, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -984,7 +984,7 @@ impl<'tds, U, V, const D: usize> FacetView<'tds, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1487,7 +1487,7 @@ impl<U, V, const D: usize> Eq for FacetView<'_, U, V, D> {}
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, tds::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -1609,7 +1609,7 @@ impl<U, V, const D: usize> FusedIterator for SimplexFacetsIter<'_, U, V, D> {}
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, tds::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -1642,7 +1642,7 @@ impl<U, V, const D: usize> FusedIterator for SimplexFacetsIter<'_, U, V, D> {}
 #[derive(Clone)]
 pub struct AllFacetsIter<'tds, U, V, const D: usize> {
     tds: &'tds Tds<U, V, D>,
-    simplex_keys: slotmap::dense::Keys<'tds, SimplexKey, Simplex<V, D>>,
+    simplex_keys: crate::core::collections::StorageKeys<'tds, SimplexKey, Simplex<V, D>>,
     state: AllFacetsIterState,
 }
 
@@ -1692,7 +1692,7 @@ impl<'tds, U, V, const D: usize> AllFacetsIter<'tds, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1751,7 +1751,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1802,7 +1802,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1895,7 +1895,7 @@ impl<'tds, U, V, const D: usize> Iterator for AllFacetsIter<'tds, U, V, D> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, tds::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -1945,7 +1945,7 @@ impl<'tds, U, V, const D: usize> BoundaryFacetsIter<'tds, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -2019,7 +2019,7 @@ impl<U, V, const D: usize> FusedIterator for BoundaryFacetsIter<'_, U, V, D> {}
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, tds::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {

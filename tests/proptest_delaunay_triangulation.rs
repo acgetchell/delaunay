@@ -36,12 +36,12 @@
 mod proptest_config;
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, DedupPolicy, DelaunayIncrementalBuilder, DelaunayIncrementalBuilderError,
-    DelaunayTriangulation, TopologyGuarantee, Vertex,
+    ConstructionOptions, DedupPolicy, DelaunayIncrementalBuilder, DelaunayTriangulation,
+    TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::insertion::InsertionOutcome;
-use delaunay::prelude::validation::{DelaunayTriangulationValidationError, ValidationPolicy};
+use delaunay::prelude::validation::ValidationPolicy;
 use delaunay::try_vertices_from_points;
 use delaunay::vertex;
 use proptest::prelude::*;
@@ -259,12 +259,12 @@ fn has_no_nearly_coplanar_tetrahedra_3d(vertices: &[Vertex<(), 3>]) -> bool {
 ///   the chosen triangulation.
 /// - This property is intentionally scoped to a slice of 3D space where we expect insertion-order
 ///   invariance for **validation Levels 1–3** without depending on perturbation heuristics.
-fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<(), 3>]) -> bool {
+fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<(), 3>]) -> Result<bool, TestCaseError> {
     const MAX_N: usize = 15;
 
     let n = vertices.len();
     if n < 5 {
-        return true;
+        return Ok(true);
     }
 
     // Guardrail: this filter is O(n^5) due to iterating all 5-point subsets, and it performs up to
@@ -334,14 +334,15 @@ fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<(), 3>]) -> bool {
                                 s += 1;
                             }
 
-                            let Ok(in_sphere) = kernel.in_sphere(&simplex, &test_point) else {
-                                // Treat any conversion/predicate failure as a degeneracy for test purposes.
-                                return false;
-                            };
+                            let in_sphere = kernel.in_sphere(&simplex, &test_point).map_err(|error| {
+                                TestCaseError::fail(format!(
+                                    "3D co-spherical admission predicate failed for tuple ({i}, {j}, {k}, {l}, {m}) with test index {test_idx}: {error:?}"
+                                ))
+                            })?;
 
                             // 0 == on boundary => co-spherical.
                             if in_sphere == 0 {
-                                return false;
+                                return Ok(false);
                             }
                         }
                     }
@@ -350,7 +351,7 @@ fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<(), 3>]) -> bool {
         }
     }
 
-    true
+    Ok(true)
 }
 
 /// Assert the layered validation contract we rely on in these properties:
@@ -556,47 +557,39 @@ where
     Ok(())
 }
 
-/// 3D-only helper for the insertion-order robustness property: perform incremental insertion and
-/// classify whether the run stayed within the "no retry / no skip" scope.
+/// Performs a clean 3D incremental run and fails with the exact insertion
+/// context if production needs a retry, skips an input, or returns an error.
 ///
-/// This makes the contract explicit in the test: we only accept "clean" runs where insertion
+/// This makes the contract explicit in the test: admitted inputs require "clean" runs where insertion
 /// succeeded on the first attempt for every vertex and did not skip any input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InsertionOrder3dRunStatus {
-    Clean,
-    UsedRetry,
-    UsedSkip,
-    NonRetryableError,
-}
-
 fn insert_vertices_3d_no_retry_or_skip(
     dt: &mut DelaunayIncrementalBuilder<AdaptiveKernel<f64>, (), (), 3>,
     vertices: &[Vertex<(), 3>],
-) -> InsertionOrder3dRunStatus {
+) -> Result<(), TestCaseError> {
     for (idx, v) in vertices.iter().enumerate() {
-        let result = dt.insert_best_effort_with_statistics(*v);
-        let Ok((outcome, stats)) = result else {
-            if std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some()
-                && let Err(err) = result
-            {
-                let points: Vec<_> = vertices.iter().map(|vertex| *vertex.point()).collect();
-                tracing::warn!(
-                    "3D insertion-order: non-retryable insertion error at index {idx}: {err}"
-                );
-                tracing::warn!("3D insertion-order: insertion order points: {points:?}");
-            }
-            return InsertionOrder3dRunStatus::NonRetryableError;
-        };
+        let (outcome, stats) = dt.insert_best_effort_with_statistics(*v).map_err(|error| {
+            TestCaseError::fail(format!(
+                "3D insertion-order run failed at input {idx} ({:?}): {error:?}",
+                v.point(),
+            ))
+        })?;
 
         if stats.attempts > 1 {
-            return InsertionOrder3dRunStatus::UsedRetry;
+            return Err(TestCaseError::fail(format!(
+                "3D insertion-order run required {} attempts at input {idx} ({:?}): {stats:?}",
+                stats.attempts,
+                v.point(),
+            )));
         }
 
-        if matches!(outcome, InsertionOutcome::Skipped { .. }) {
-            return InsertionOrder3dRunStatus::UsedSkip;
+        if let InsertionOutcome::Skipped { error } = outcome {
+            return Err(TestCaseError::fail(format!(
+                "3D insertion-order run skipped input {idx} ({:?}): {error:?}; stats={stats:?}",
+                v.point(),
+            )));
         }
     }
-    InsertionOrder3dRunStatus::Clean
+    Ok(())
 }
 
 #[test]
@@ -723,28 +716,21 @@ macro_rules! gen_incremental_insertion_validity {
                     });
                     prop_assume!(!is_dup);
 
-                    let dt = DelaunayTriangulation::builder(&initial_vertices).topology_guarantee(TopologyGuarantee::PLManifold).build();
-                    if let Err(err) = &dt {
-                        if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
-                            tracing::warn!(
-                                "{}D: incremental insertion construction failed (treated as rejection): {err}",
-                                $dim
-                            );
-                        }
-                    }
-                    let mut dt = dt.prop_assume_ok()?;
+                    let mut dt = DelaunayTriangulation::builder(&initial_vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D incremental-insertion fixture construction failed after input admission: {error:?}",
+                            $dim,
+                        )))?;
                     prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
 
-                    let insert_result = dt.insert_vertex(additional_vertex);
-                    if let Err(e) = &insert_result {
-                        if std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some() {
-                            tracing::warn!(
-                                "{}D: incremental insertion error (treated as rejection): {e}",
-                                $dim
-                            );
-                        }
-                    }
-                    prop_assume!(insert_result.is_ok());
+                    dt.insert_vertex(additional_vertex).map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D incremental insertion failed after input admission: {error:?}",
+                            $dim,
+                        ))
+                    })?;
                     prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion");
                 }
             }
@@ -774,7 +760,9 @@ repo_proptest! {
 
         // Scope to general-position inputs for 3D incremental insertion.
         prop_assume!(has_no_nearly_coplanar_tetrahedra_3d(&initial_vertices));
-        prop_assume!(has_no_cospherical_5_tuples_3d(&initial_vertices));
+        let initial_has_no_cospherical_tuples =
+            has_no_cospherical_5_tuples_3d(&initial_vertices)?;
+        prop_assume!(initial_has_no_cospherical_tuples);
 
         let additional_vertex =
             vertex!(additional_point.into()).unwrap();
@@ -795,29 +783,36 @@ repo_proptest! {
         all_vertices.push(additional_vertex);
         prop_assume!(has_no_coordinate_hyperplane_degeneracy(&all_vertices));
         prop_assume!(has_no_nearly_coplanar_tetrahedra_3d(&all_vertices));
-        prop_assume!(has_no_cospherical_5_tuples_3d(&all_vertices));
+        let combined_has_no_cospherical_tuples = has_no_cospherical_5_tuples_3d(&all_vertices)?;
+        prop_assume!(combined_has_no_cospherical_tuples);
 
-        let dt = DelaunayTriangulation::builder(&initial_vertices).topology_guarantee(TopologyGuarantee::PLManifold).build();
-        prop_assume!(dt.is_ok());
-        let mut dt = dt.unwrap();
+        let mut dt = DelaunayTriangulation::builder(&initial_vertices)
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .build()
+            .map_err(|error| TestCaseError::fail(format!(
+                "3D incremental-insertion fixture construction failed after general-position admission: {error:?}"
+            )))?;
         prop_assert_levels_1_to_3_valid!(3, &dt, "initial triangulation");
 
-        let insert_result = dt.insert_best_effort_with_statistics(additional_vertex);
-        if let Err(e) = &insert_result
-            && std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some()
-        {
-            tracing::warn!("3D: incremental insertion error (treated as rejection): {e}");
+        let (outcome, stats) = dt
+            .insert_best_effort_with_statistics(additional_vertex)
+            .map_err(|error| TestCaseError::fail(format!(
+                "3D incremental insertion failed after general-position admission: {error:?}"
+            )))?;
+        match outcome {
+            InsertionOutcome::Inserted { .. } => {}
+            InsertionOutcome::Skipped { error } => {
+                return Err(TestCaseError::fail(format!(
+                    "3D incremental insertion skipped an admitted input: {error:?}; stats={stats:?}"
+                )));
+            }
         }
-        prop_assume!(insert_result.is_ok());
-        let (outcome, stats) = insert_result.unwrap();
-        if let InsertionOutcome::Skipped { error } = &outcome
-            && std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some()
-        {
-            tracing::warn!("3D: incremental insertion skipped (treated as rejection): {error}");
-        }
-        prop_assume!(matches!(outcome, InsertionOutcome::Inserted { .. }));
-        // Reject cases that required perturbation retries; those are handled in dedicated suites.
-        prop_assume!(stats.attempts == 1);
+        prop_assert_eq!(
+            stats.attempts,
+            1,
+            "3D incremental insertion required perturbation retry after general-position admission: {:?}",
+            stats
+        );
         prop_assert_levels_1_to_3_valid!(3, &dt, "after insertion");
     }
 }
@@ -903,11 +898,24 @@ macro_rules! gen_duplicate_coords_test {
                         $min..=$max
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
+                    // Exact duplicates can leave fewer than D+1 vertices, outside the
+                    // construction domain exercised by this property.
+                    let unique_vertex_count = vertices
+                        .iter()
+                        .map(|vertex| vertex.point().coords().map(f64::to_bits))
+                        .collect::<HashSet<_>>()
+                        .len();
+                    prop_assume!(unique_vertex_count > $dim);
+
                     let options = ConstructionOptions::default()
                         .with_dedup_policy(DedupPolicy::Exact);
-                    let dt = DelaunayTriangulation::builder(&vertices).construction_options(options).build();
-                    prop_assume!(dt.is_ok());
-                    let mut dt = dt.unwrap();
+                    let mut dt = DelaunayTriangulation::builder(&vertices)
+                        .construction_options(options)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D duplicate-coordinate fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
                     dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)
                         .expect("explicit-only validation policy should be compatible");
                     // Select a vertex that is actually present in the triangulation.
@@ -997,16 +1005,13 @@ repo_proptest! {
                     prop_assume!(has_no_coordinate_hyperplane_degeneracy(&vertices));
 
                     // Use the builder topology guarantee to triangulate ALL vertices together.
-                    let dt = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build();
-                    if let Err(err) = &dt {
-                        if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
-                            tracing::warn!(
-                                "{}D: empty-circumsphere construction failed (treated as rejection): {err}",
-                                $dim
-                            );
-                        }
-                    }
-                    let dt = dt.prop_assume_ok()?;
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D empty-circumsphere construction failed: {error:?}",
+                            $dim,
+                        )))?;
 
                     // Verify the triangulation satisfies the Delaunay property (Level 5).
                     // The validator uses the fast local flip certificate when conclusive and
@@ -1050,8 +1055,8 @@ macro_rules! gen_high_dim_delaunay_smoke {
                     accepted: usize,
                     rejected_too_few_unique: usize,
                     rejected_coordinate_hyperplane: usize,
-                    rejected_construction_failed: usize,
-                    rejected_duplicate_cloud_failed: usize,
+                    construction_failures: usize,
+                    duplicate_cloud_failures: usize,
                 }
 
                 init_tracing();
@@ -1097,9 +1102,9 @@ macro_rules! gen_high_dim_delaunay_smoke {
                     let mut dt = match DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         Ok(dt) => dt,
                         Err(err) => {
-                            stats.rejected_construction_failed += 1;
-                            return Err(TestCaseError::reject(format!(
-                                "{}D: construction failed in active smoke test: {err}",
+                            stats.construction_failures += 1;
+                            return Err(TestCaseError::fail(format!(
+                                "{}D: construction failed in active smoke test after input admission: {err:?}",
                                 $dim
                             )));
                         }
@@ -1145,9 +1150,9 @@ macro_rules! gen_high_dim_delaunay_smoke {
                     let cloud_dt = match DelaunayTriangulation::builder(&cloud_vertices).construction_options(options).build() {
                         Ok(dt) => dt,
                         Err(err) => {
-                            stats.rejected_duplicate_cloud_failed += 1;
-                            return Err(TestCaseError::reject(format!(
-                                "{}D: duplicate-cloud construction failed in active smoke test: {err}",
+                            stats.duplicate_cloud_failures += 1;
+                            return Err(TestCaseError::fail(format!(
+                                "{}D: duplicate-cloud construction failed in active smoke test after source admission: {err:?}",
                                 $dim
                             )));
                         }
@@ -1176,36 +1181,12 @@ macro_rules! gen_high_dim_delaunay_smoke {
                 let acceptance_rate_whole = acceptance_rate_percent_x100 / 100;
                 let acceptance_rate_frac = acceptance_rate_percent_x100 % 100;
 
-                let min_acceptance_pct_str =
-                    std::env::var(format!("DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT_{}D", $dim))
-                        .ok()
-                        .or_else(|| std::env::var("DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT").ok());
-                if let Some(min_acceptance_pct_str) = min_acceptance_pct_str {
-                    if let Ok(min_acceptance_pct) = min_acceptance_pct_str.parse::<u128>() {
-                        let min_acceptance_pct_x100 = min_acceptance_pct * 100;
-                        assert!(
-                            acceptance_rate_percent_x100 >= min_acceptance_pct_x100,
-                            "prop_high_dim_delaunay_active_smoke_{}d acceptance rate {}.{:02}% below required {min_acceptance_pct}% (generated={}, accepted={})",
-                            $dim,
-                            acceptance_rate_whole,
-                            acceptance_rate_frac,
-                            stats.generated,
-                            stats.accepted
-                        );
-                    } else {
-                        tracing::warn!(
-                            "prop_high_dim_delaunay_active_smoke_{}d: invalid DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT value {min_acceptance_pct_str:?} (expected integer percent, e.g. 10)",
-                            $dim
-                        );
-                    }
-                }
-
                 let print_stats =
                     std::env::var_os("DELAUNAY_PROPTEST_REJECT_STATS").is_some() || run_result.is_err();
                 if print_stats {
                     let rejected_total = stats.generated.saturating_sub(stats.accepted);
                     tracing::warn!(
-                        "prop_high_dim_delaunay_active_smoke_{}d reject stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} coord_hyperplane={} construction_failed={} duplicate_cloud_failed={}",
+                        "prop_high_dim_delaunay_active_smoke_{}d stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} coord_hyperplane={} construction_failures={} duplicate_cloud_failures={}",
                         $dim,
                         stats.generated,
                         stats.accepted,
@@ -1214,34 +1195,20 @@ macro_rules! gen_high_dim_delaunay_smoke {
                         rejected_total,
                         stats.rejected_too_few_unique,
                         stats.rejected_coordinate_hyperplane,
-                        stats.rejected_construction_failed,
-                        stats.rejected_duplicate_cloud_failed
+                        stats.construction_failures,
+                        stats.duplicate_cloud_failures
                     );
                 }
 
-                let construction_rejections = stats
-                    .rejected_construction_failed
-                    .saturating_add(stats.rejected_duplicate_cloud_failed);
-                let max_allowed_construction_rejections =
-                    usize::try_from(target_cases).map_or(usize::MAX, |cases| cases.max(1));
-                assert!(
-                    construction_rejections <= max_allowed_construction_rejections,
-                    "prop_high_dim_delaunay_active_smoke_{}d had {} construction rejects (primary={}, duplicate_cloud={}) above allowed {}; generated={}, accepted={}",
-                    $dim,
-                    construction_rejections,
-                    stats.rejected_construction_failed,
-                    stats.rejected_duplicate_cloud_failed,
-                    max_allowed_construction_rejections,
-                    stats.generated,
-                    stats.accepted
-                );
-
-                assert!(
-                    stats.accepted > 0,
-                    "prop_high_dim_delaunay_active_smoke_{}d should accept at least one case",
+                run_result.unwrap();
+                let expected_accepted = usize::try_from(target_cases)
+                    .expect("configured proptest case count should fit usize");
+                assert_eq!(
+                    stats.accepted,
+                    expected_accepted,
+                    "prop_high_dim_delaunay_active_smoke_{}d should accept every configured case after input admission",
                     $dim
                 );
-                run_result.unwrap();
             }
         }
     };
@@ -1295,9 +1262,13 @@ macro_rules! gen_insertion_order_robustness_test {
                     prop_assume!(has_no_coordinate_hyperplane_degeneracy(&points));
 
                     // Build first triangulation with natural order
-                    let dt_a = DelaunayTriangulation::builder(&points).topology_guarantee(TopologyGuarantee::PLManifold).build();
-                    prop_assume!(dt_a.is_ok());
-                    let dt_a = dt_a.unwrap();
+                    let dt_a = DelaunayTriangulation::builder(&points)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D natural-order construction failed: {error:?}",
+                            $dim,
+                        )))?;
 
                     let validation_a = dt_a.as_triangulation().validate();
                     prop_assert!(
@@ -1312,9 +1283,13 @@ macro_rules! gen_insertion_order_robustness_test {
                     let mut points_shuffled = points;
                     points_shuffled.shuffle(&mut rng);
 
-                    let dt_b = DelaunayTriangulation::builder(&points_shuffled).topology_guarantee(TopologyGuarantee::PLManifold).build();
-                    prop_assume!(dt_b.is_ok());
-                    let dt_b = dt_b.unwrap();
+                    let dt_b = DelaunayTriangulation::builder(&points_shuffled)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D shuffled-order construction failed: {error:?}",
+                            $dim,
+                        )))?;
 
                     let validation_b = dt_b.as_triangulation().validate();
                     prop_assert!(
@@ -1377,17 +1352,13 @@ gen_insertion_order_robustness_test!(2, 6, 10);
 #[test]
 #[expect(
     clippy::too_many_lines,
-    reason = "Large property-based test with extensive rejection tracking and diagnostics"
+    reason = "Large property-based test with generator-admission tracking and diagnostics"
 )]
 fn prop_insertion_order_robustness_3d() {
-    /// Rejection-rate tracking for the specialized 3D insertion-order property.
+    /// Generator-admission tracking for the specialized 3D insertion-order property.
     ///
-    /// By default this is *metrics-only* (no hard thresholds) because:
-    /// - proptest seeds vary across runs, and
-    /// - this property is explicitly scoped via rejection filters.
-    ///
-    /// CI can optionally enforce a minimum acceptance rate by setting:
-    /// - `DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT` (integer percentage, e.g. `10`)
+    /// Every production operation fails the property after the raw generated
+    /// input passes these independently computed scope filters.
     ///
     /// To print the summary (captured unless `cargo test -- --nocapture`):
     ///   `DELAUNAY_PROPTEST_REJECT_STATS=1 cargo test prop_insertion_order_robustness_3d --test proptest_delaunay_triangulation -- --nocapture`
@@ -1399,24 +1370,6 @@ fn prop_insertion_order_robustness_3d() {
         rejected_too_few_unique: usize,
         rejected_nearly_coplanar: usize,
         rejected_cospherical: usize,
-
-        rejected_run_a_used_retry: usize,
-        rejected_run_a_used_skip: usize,
-        rejected_run_a_non_retryable_error: usize,
-        rejected_run_a_invalid_levels_1_to_3_publication: usize,
-
-        rejected_run_b_used_retry: usize,
-        rejected_run_b_used_skip: usize,
-        rejected_run_b_non_retryable_error: usize,
-        rejected_run_b_invalid_levels_1_to_3_publication: usize,
-
-        rejected_new_a_failed: usize,
-        rejected_new_a_skipped_vertices: usize,
-        rejected_new_a_invalid_levels_1_to_3: usize,
-
-        rejected_new_b_failed: usize,
-        rejected_new_b_skipped_vertices: usize,
-        rejected_new_b_invalid_levels_1_to_3: usize,
     }
 
     init_tracing();
@@ -1461,7 +1414,7 @@ fn prop_insertion_order_robustness_3d() {
         }
 
         // Reject point sets with co-spherical 5-tuples (degenerate Delaunay cases).
-        if !has_no_cospherical_5_tuples_3d(&points) {
+        if !has_no_cospherical_5_tuples_3d(&points)? {
             stats.rejected_cospherical += 1;
             return Err(TestCaseError::reject(
                 "3D: co-spherical 5-tuple present (out of scope)",
@@ -1473,104 +1426,28 @@ fn prop_insertion_order_robustness_3d() {
         // - no skipped vertices
         let mut dt_a: DelaunayIncrementalBuilder<_, (), (), 3> =
             DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
-        let run_a = insert_vertices_3d_no_retry_or_skip(&mut dt_a, &points);
-        match run_a {
-            InsertionOrder3dRunStatus::Clean => {}
-            InsertionOrder3dRunStatus::UsedRetry => {
-                stats.rejected_run_a_used_retry += 1;
-                return Err(TestCaseError::reject(
-                    "3D: run A required retry/perturbation (out of scope)",
-                ));
-            }
-            InsertionOrder3dRunStatus::UsedSkip => {
-                stats.rejected_run_a_used_skip += 1;
-                return Err(TestCaseError::reject(
-                    "3D: run A skipped a vertex (out of scope)",
-                ));
-            }
-            InsertionOrder3dRunStatus::NonRetryableError => {
-                stats.rejected_run_a_non_retryable_error += 1;
-                return Err(TestCaseError::reject(
-                    "3D: run A hit non-retryable insertion error (out of scope)",
-                ));
-            }
-        }
+        insert_vertices_3d_no_retry_or_skip(&mut dt_a, &points)?;
 
-        let dt_a = match dt_a.finish() {
-            Ok(dt) => dt,
-            Err(error)
-                if matches!(
-                    &error,
-                    DelaunayIncrementalBuilderError::FinalValidation {
-                        source: DelaunayTriangulationValidationError::Tds { .. }
-                            | DelaunayTriangulationValidationError::Triangulation { .. },
-                    }
-                ) =>
-            {
-                stats.rejected_run_a_invalid_levels_1_to_3_publication += 1;
-                return Err(TestCaseError::reject(format!(
-                    "3D: Triangulation A (clean insertion run) failed Levels 1–3 publication validation (treated as out of scope): {error:?}"
-                )));
-            }
-            Err(error) => {
-                return Err(TestCaseError::fail(format!(
-                    "3D: Triangulation A (clean insertion run) failed Level 4 or Level 5 certification: {error:?}"
-                )));
-            }
-        };
+        let dt_a = dt_a.finish().map_err(|error| {
+            TestCaseError::fail(format!(
+                "3D: Triangulation A clean insertion run failed owner publication: {error:?}"
+            ))
+        })?;
 
-        // Build triangulation B with shuffled order, same retry/skip rejection.
+        // Build triangulation B with shuffled order under the same clean-run requirement.
         let mut rng = rand::rngs::StdRng::seed_from_u64(0x00DE_C0DE);
         let mut points_shuffled = points.clone();
         points_shuffled.shuffle(&mut rng);
 
         let mut dt_b: DelaunayIncrementalBuilder<_, (), (), 3> =
             DelaunayIncrementalBuilder::with_topology_guarantee(TopologyGuarantee::PLManifold);
-        let run_b = insert_vertices_3d_no_retry_or_skip(&mut dt_b, &points_shuffled);
-        match run_b {
-            InsertionOrder3dRunStatus::Clean => {}
-            InsertionOrder3dRunStatus::UsedRetry => {
-                stats.rejected_run_b_used_retry += 1;
-                return Err(TestCaseError::reject(
-                    "3D: run B required retry/perturbation (out of scope)",
-                ));
-            }
-            InsertionOrder3dRunStatus::UsedSkip => {
-                stats.rejected_run_b_used_skip += 1;
-                return Err(TestCaseError::reject(
-                    "3D: run B skipped a vertex (out of scope)",
-                ));
-            }
-            InsertionOrder3dRunStatus::NonRetryableError => {
-                stats.rejected_run_b_non_retryable_error += 1;
-                return Err(TestCaseError::reject(
-                    "3D: run B hit non-retryable insertion error (out of scope)",
-                ));
-            }
-        }
+        insert_vertices_3d_no_retry_or_skip(&mut dt_b, &points_shuffled)?;
 
-        let dt_b = match dt_b.finish() {
-            Ok(dt) => dt,
-            Err(error)
-                if matches!(
-                    &error,
-                    DelaunayIncrementalBuilderError::FinalValidation {
-                        source: DelaunayTriangulationValidationError::Tds { .. }
-                            | DelaunayTriangulationValidationError::Triangulation { .. },
-                    }
-                ) =>
-            {
-                stats.rejected_run_b_invalid_levels_1_to_3_publication += 1;
-                return Err(TestCaseError::reject(format!(
-                    "3D: Triangulation B (clean insertion run) failed Levels 1–3 publication validation (treated as out of scope): {error:?}"
-                )));
-            }
-            Err(error) => {
-                return Err(TestCaseError::fail(format!(
-                    "3D: Triangulation B (clean insertion run) failed Level 4 or Level 5 certification: {error:?}"
-                )));
-            }
-        };
+        let dt_b = dt_b.finish().map_err(|error| {
+            TestCaseError::fail(format!(
+                "3D: Triangulation B clean insertion run failed owner publication: {error:?}"
+            ))
+        })?;
 
         // Both should have inserted all vertices (we reject Skipped cases above).
         prop_assert_eq!(
@@ -1598,59 +1475,45 @@ fn prop_insertion_order_robustness_3d() {
         // Parity check: the high-level builder path should also
         // succeed for the same generated inputs. This helps prevent maintenance drift vs the
         // 2D/4D/5D insertion-order tests which use `new()` directly.
-        let dt_new_a = match DelaunayTriangulation::builder(&points).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-            Ok(dt) => dt,
-            Err(e) => {
-                stats.rejected_new_a_failed += 1;
-                return Err(TestCaseError::reject(format!(
-                    "3D: builder PL-manifold construction failed for generated inputs (order A; treated as out of scope): {e}"
-                )));
-            }
-        };
+        let dt_new_a = DelaunayTriangulation::builder(&points)
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .build()
+            .map_err(|error| {
+                TestCaseError::fail(format!(
+                    "3D: builder PL-manifold construction failed for admitted order A: {error:?}"
+                ))
+            })?;
 
-        let dt_new_b = match DelaunayTriangulation::builder(&points_shuffled).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                Ok(dt) => dt,
-                Err(e) => {
-                    stats.rejected_new_b_failed += 1;
-                    return Err(TestCaseError::reject(format!(
-                        "3D: builder PL-manifold construction failed for generated inputs (order B; treated as out of scope): {e}"
-                    )));
-                }
-            };
+        let dt_new_b = DelaunayTriangulation::builder(&points_shuffled)
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .build()
+            .map_err(|error| {
+                TestCaseError::fail(format!(
+                    "3D: builder PL-manifold construction failed for admitted order B: {error:?}"
+                ))
+            })?;
 
-        if dt_new_a.number_of_vertices() != points.len() {
-            stats.rejected_new_a_skipped_vertices += 1;
-            return Err(TestCaseError::reject(format!(
-                "3D: builder PL-manifold construction skipped vertices for generated inputs (order A; treated as out of scope): expected {}, got {}",
-                points.len(),
-                dt_new_a.number_of_vertices()
-            )));
-        }
+        prop_assert_eq!(
+            dt_new_a.number_of_vertices(),
+            points.len(),
+            "3D: builder PL-manifold construction skipped vertices for admitted order A"
+        );
+        prop_assert_eq!(
+            dt_new_b.number_of_vertices(),
+            points.len(),
+            "3D: builder PL-manifold construction skipped vertices for admitted order B"
+        );
 
-        if dt_new_b.number_of_vertices() != points.len() {
-            stats.rejected_new_b_skipped_vertices += 1;
-            return Err(TestCaseError::reject(format!(
-                "3D: builder PL-manifold construction skipped vertices for generated inputs (order B; treated as out of scope): expected {}, got {}",
-                points.len(),
-                dt_new_b.number_of_vertices()
-            )));
-        }
-
-        let validation_new_a = dt_new_a.as_triangulation().validate();
-        if let Err(e) = validation_new_a {
-            stats.rejected_new_a_invalid_levels_1_to_3 += 1;
-            return Err(TestCaseError::reject(format!(
-                "3D: Triangulation A (builder PL-manifold construction) failed Levels 1–3 validation (treated as out of scope): {e:?}"
-            )));
-        }
-
-        let validation_new_b = dt_new_b.as_triangulation().validate();
-        if let Err(e) = validation_new_b {
-            stats.rejected_new_b_invalid_levels_1_to_3 += 1;
-            return Err(TestCaseError::reject(format!(
-                "3D: Triangulation B (builder PL-manifold construction) failed Levels 1–3 validation (treated as out of scope): {e:?}"
-            )));
-        }
+        dt_new_a.as_triangulation().validate().map_err(|error| {
+            TestCaseError::fail(format!(
+                "3D: Triangulation A builder result failed Levels 1–3 publication validation: {error:?}"
+            ))
+        })?;
+        dt_new_b.as_triangulation().validate().map_err(|error| {
+            TestCaseError::fail(format!(
+                "3D: Triangulation B builder result failed Levels 1–3 publication validation: {error:?}"
+            ))
+        })?;
 
         stats.accepted += 1;
         Ok(())
@@ -1672,29 +1535,11 @@ fn prop_insertion_order_robustness_3d() {
     let acceptance_rate_whole = acceptance_rate_percent_x100 / 100;
     let acceptance_rate_frac = acceptance_rate_percent_x100 % 100;
 
-    if let Ok(min_acceptance_pct_str) = std::env::var("DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT") {
-        if let Ok(min_acceptance_pct) = min_acceptance_pct_str.parse::<u128>() {
-            let min_acceptance_pct_x100 = min_acceptance_pct * 100;
-            assert!(
-                acceptance_rate_percent_x100 >= min_acceptance_pct_x100,
-                "prop_insertion_order_robustness_3d acceptance rate {}.{:02}% below required {min_acceptance_pct}% (generated={}, accepted={})",
-                acceptance_rate_whole,
-                acceptance_rate_frac,
-                stats.generated,
-                stats.accepted
-            );
-        } else {
-            tracing::warn!(
-                "prop_insertion_order_robustness_3d: invalid DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT={min_acceptance_pct_str:?} (expected integer percent, e.g. 10)"
-            );
-        }
-    }
-
     if print_stats {
         let rejected_total = stats.generated.saturating_sub(stats.accepted);
 
         tracing::warn!(
-            "prop_insertion_order_robustness_3d reject stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} nearly_coplanar={} cospherical={} run_a(retry={}, skip={}, err={}, invalid={}) run_b(retry={}, skip={}, err={}, invalid={}) new_a(fail={}, skip={}, invalid={}) new_b(fail={}, skip={}, invalid={})",
+            "prop_insertion_order_robustness_3d stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} nearly_coplanar={} cospherical={}",
             stats.generated,
             stats.accepted,
             acceptance_rate_whole,
@@ -1702,25 +1547,17 @@ fn prop_insertion_order_robustness_3d() {
             rejected_total,
             stats.rejected_too_few_unique,
             stats.rejected_nearly_coplanar,
-            stats.rejected_cospherical,
-            stats.rejected_run_a_used_retry,
-            stats.rejected_run_a_used_skip,
-            stats.rejected_run_a_non_retryable_error,
-            stats.rejected_run_a_invalid_levels_1_to_3_publication,
-            stats.rejected_run_b_used_retry,
-            stats.rejected_run_b_used_skip,
-            stats.rejected_run_b_non_retryable_error,
-            stats.rejected_run_b_invalid_levels_1_to_3_publication,
-            stats.rejected_new_a_failed,
-            stats.rejected_new_a_skipped_vertices,
-            stats.rejected_new_a_invalid_levels_1_to_3,
-            stats.rejected_new_b_failed,
-            stats.rejected_new_b_skipped_vertices,
-            stats.rejected_new_b_invalid_levels_1_to_3
+            stats.rejected_cospherical
         );
     }
 
     run_result.unwrap();
+    let expected_accepted =
+        usize::try_from(target_cases).expect("configured proptest case count should fit usize");
+    assert_eq!(
+        stats.accepted, expected_accepted,
+        "prop_insertion_order_robustness_3d should accept every configured case after input admission"
+    );
 }
 
 macro_rules! gen_insertion_order_robustness_high_dim_impl {
@@ -1730,7 +1567,7 @@ macro_rules! gen_insertion_order_robustness_high_dim_impl {
             $(#[$attr])*
             #[expect(
                 clippy::too_many_lines,
-                reason = "Large property-based test with rejection tracking and diagnostics"
+                reason = "Large property-based test with generator-admission tracking and diagnostics"
             )]
             fn [<prop_insertion_order_robustness_ $dim d>]() {
                 /// Rejection-rate tracking for the high-dimensional insertion-order property.
@@ -1744,12 +1581,6 @@ macro_rules! gen_insertion_order_robustness_high_dim_impl {
 
                     rejected_too_few_unique: usize,
                     rejected_coordinate_hyperplane: usize,
-
-                    rejected_new_a_failed: usize,
-                    rejected_new_a_invalid_levels_1_to_3: usize,
-
-                    rejected_new_b_failed: usize,
-                    rejected_new_b_invalid_levels_1_to_3: usize,
                 }
 
                 init_tracing();
@@ -1793,49 +1624,39 @@ macro_rules! gen_insertion_order_robustness_high_dim_impl {
                         )));
                     }
 
-                    let dt_a = match DelaunayTriangulation::builder(&points).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        Ok(dt) => dt,
-                        Err(e) => {
-                            stats.rejected_new_a_failed += 1;
-                            return Err(TestCaseError::reject(format!(
-                                "{}D: new_with_topology_guarantee failed for order A (out of scope): {e}",
-                                $dim
-                            )));
-                        }
-                    };
+                    let dt_a = DelaunayTriangulation::builder(&points)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D: builder PL-manifold construction failed for admitted order A: {error:?}",
+                            $dim,
+                        )))?;
 
-                    let validation_a = dt_a.as_triangulation().validate();
-                    if let Err(e) = validation_a {
-                        stats.rejected_new_a_invalid_levels_1_to_3 += 1;
-                        return Err(TestCaseError::reject(format!(
-                            "{}D: Triangulation A failed Levels 1–3 validation (out of scope): {e:?}",
-                            $dim
-                        )));
-                    }
+                    dt_a.as_triangulation().validate().map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D: Triangulation A failed Levels 1–3 publication validation: {error:?}",
+                            $dim,
+                        ))
+                    })?;
 
                     let mut rng = rand::rngs::StdRng::seed_from_u64(0x00DE_C0DE);
                     let mut points_shuffled = points;
                     points_shuffled.shuffle(&mut rng);
 
-                    let dt_b = match DelaunayTriangulation::builder(&points_shuffled).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        Ok(dt) => dt,
-                        Err(e) => {
-                            stats.rejected_new_b_failed += 1;
-                            return Err(TestCaseError::reject(format!(
-                                "{}D: new_with_topology_guarantee failed for order B (out of scope): {e}",
-                                $dim
-                            )));
-                        }
-                    };
+                    let dt_b = DelaunayTriangulation::builder(&points_shuffled)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D: builder PL-manifold construction failed for admitted order B: {error:?}",
+                            $dim,
+                        )))?;
 
-                    let validation_b = dt_b.as_triangulation().validate();
-                    if let Err(e) = validation_b {
-                        stats.rejected_new_b_invalid_levels_1_to_3 += 1;
-                        return Err(TestCaseError::reject(format!(
-                            "{}D: Triangulation B failed Levels 1–3 validation (out of scope): {e:?}",
-                            $dim
-                        )));
-                    }
+                    dt_b.as_triangulation().validate().map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D: Triangulation B failed Levels 1–3 publication validation: {error:?}",
+                            $dim,
+                        ))
+                    })?;
 
                     let verts_a = dt_a.number_of_vertices();
                     let verts_b = dt_b.number_of_vertices();
@@ -1868,31 +1689,6 @@ macro_rules! gen_insertion_order_robustness_high_dim_impl {
                 let acceptance_rate_whole = acceptance_rate_percent_x100 / 100;
                 let acceptance_rate_frac = acceptance_rate_percent_x100 % 100;
 
-                let min_acceptance_pct_str =
-                    std::env::var(format!("DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT_{}D", $dim))
-                        .ok()
-                        .or_else(|| std::env::var("DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT").ok());
-
-                if let Some(min_acceptance_pct_str) = min_acceptance_pct_str {
-                    if let Ok(min_acceptance_pct) = min_acceptance_pct_str.parse::<u128>() {
-                        let min_acceptance_pct_x100 = min_acceptance_pct * 100;
-                        assert!(
-                            acceptance_rate_percent_x100 >= min_acceptance_pct_x100,
-                            "prop_insertion_order_robustness_{}d acceptance rate {}.{:02}% below required {min_acceptance_pct}% (generated={}, accepted={})",
-                            $dim,
-                            acceptance_rate_whole,
-                            acceptance_rate_frac,
-                            stats.generated,
-                            stats.accepted
-                        );
-                    } else {
-                        tracing::warn!(
-                            "prop_insertion_order_robustness_{}d: invalid DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT value {min_acceptance_pct_str:?} (expected integer percent, e.g. 10)",
-                            $dim
-                        );
-                    }
-                }
-
                 let print_stats =
                     std::env::var_os("DELAUNAY_PROPTEST_REJECT_STATS").is_some() || run_result.is_err();
 
@@ -1900,7 +1696,7 @@ macro_rules! gen_insertion_order_robustness_high_dim_impl {
                     let rejected_total = stats.generated.saturating_sub(stats.accepted);
 
                     tracing::warn!(
-                        "prop_insertion_order_robustness_{}d reject stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} coord_hyperplane={} new_a(fail={}, invalid={}) new_b(fail={}, invalid={})",
+                        "prop_insertion_order_robustness_{}d stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} coord_hyperplane={}",
                         $dim,
                         stats.generated,
                         stats.accepted,
@@ -1908,15 +1704,19 @@ macro_rules! gen_insertion_order_robustness_high_dim_impl {
                         acceptance_rate_frac,
                         rejected_total,
                         stats.rejected_too_few_unique,
-                        stats.rejected_coordinate_hyperplane,
-                        stats.rejected_new_a_failed,
-                        stats.rejected_new_a_invalid_levels_1_to_3,
-                        stats.rejected_new_b_failed,
-                        stats.rejected_new_b_invalid_levels_1_to_3
+                        stats.rejected_coordinate_hyperplane
                     );
                 }
 
                 run_result.unwrap();
+                let expected_accepted = usize::try_from(target_cases)
+                    .expect("configured proptest case count should fit usize");
+                assert_eq!(
+                    stats.accepted,
+                    expected_accepted,
+                    "prop_insertion_order_robustness_{}d should accept every configured case after input admission",
+                    $dim
+                );
             }
         }
     };
@@ -2012,17 +1812,14 @@ macro_rules! gen_duplicate_cloud_test {
                     let build_start = Instant::now();
                     let options = ConstructionOptions::default()
                         .with_dedup_policy(DedupPolicy::try_epsilon(1e-6).unwrap());
-                    let dt = DelaunayTriangulation::builder(&vertices).construction_options(options).build();
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .construction_options(options)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D duplicate-cloud construction failed: {error:?}",
+                            $dim,
+                        )))?;
                     let build_elapsed = build_start.elapsed();
-                    if let Err(err) = &dt {
-                        if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
-                            tracing::warn!(
-                                "{}D: duplicate-cloud construction failed (treated as rejection): {err}",
-                                $dim
-                            );
-                        }
-                    }
-                    let dt = dt.prop_assume_ok()?;
                     if log_coverage {
                         tracing::info!(
                             dim = $dim,

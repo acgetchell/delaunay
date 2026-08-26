@@ -83,3 +83,16 @@ def test_load_validation_demo_reports_duplicate_simplex_index_context(tmp_path: 
 
     with pytest.raises(IndexError, match=r"cases\[0\]\.visual\.duplicate_simplices\[0\]\[2\]"):
         load_validation_demo(path)
+
+
+@pytest.mark.parametrize("schema_version", [True, 1.0, "1"])
+def test_load_validation_demo_rejects_non_integer_schema_version(tmp_path: Path, schema_version: object) -> None:
+    """Schema versions must use exact JSON integer tokens."""
+    path = tmp_path / "validation.json"
+    write_artifact(path)
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    artifact["schema_version"] = schema_version
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+
+    with pytest.raises(TypeError, match="schema_version must be an integer"):
+        load_validation_demo(path)

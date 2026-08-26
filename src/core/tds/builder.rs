@@ -416,6 +416,9 @@ impl<'a, U, V, const D: usize> TdsBuilder<'a, U, D, V> {
     /// reciprocal neighbors, complete incidence, no duplicate simplices, and
     /// coherent combinatorial orientation. The construction state is marked
     /// complete only after [`Tds::validate`] succeeds.
+    /// Input vertices and their payloads are cloned into the new TDS, so `U`
+    /// need only implement [`Clone`]. The simplex payload type `V` is unbounded
+    /// because explicit construction initializes each simplex payload as `None`.
     ///
     /// # Errors
     ///
@@ -425,7 +428,7 @@ impl<'a, U, V, const D: usize> TdsBuilder<'a, U, D, V> {
     /// validation fails.
     pub fn build(self) -> Result<Tds<U, V, D>, TdsBuilderError>
     where
-        U: Copy,
+        U: Clone,
     {
         let parsed = self.input.parse().map_err(TdsBuilderError::from)?;
         let vertices = parsed.vertices;
@@ -433,7 +436,7 @@ impl<'a, U, V, const D: usize> TdsBuilder<'a, U, D, V> {
 
         let mut draft = TdsDraft::new();
         let mut index_to_key = Vec::with_capacity(vertices.len());
-        for (vertex_index, vertex) in vertices.iter().copied().enumerate() {
+        for (vertex_index, vertex) in vertices.iter().cloned().enumerate() {
             let vertex_key =
                 draft
                     .insert_vertex(vertex)

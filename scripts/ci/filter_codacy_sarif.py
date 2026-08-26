@@ -7,7 +7,9 @@ import json
 import math
 import os
 import re
+import shutil
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeIs
@@ -24,7 +26,7 @@ class SarifDocument:
     """Validated SARIF root object with a parsed top-level runs array."""
 
     root: JsonObject
-    runs: list[JsonValue]
+    runs: tuple[JsonObject, ...]
 
     def metadata_without_runs(self) -> JsonObject:
         """Return a deep copy of the SARIF metadata used for split outputs."""
@@ -38,6 +40,15 @@ class CliArgs:
     source: Path
     out_dir: Path
     github_env: Path | None
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedSarif:
+    """One fully serialized split SARIF output ready for staging."""
+
+    filename: str
+    category: str
+    payload: str
 
 
 def is_json_object(value: object) -> TypeIs[JsonObject]:
@@ -114,6 +125,41 @@ def keep_repository_owned_opengrep_rules(run: JsonObject) -> None:
         driver["rules"] = [rule for rule in rules if is_json_object(rule) and rule.get("id") in used_rule_ids]
 
 
+def require_run_object(value: JsonValue | None, message: str) -> JsonObject:
+    """Return one required run-owned object or fail with its indexed description."""
+    if not is_json_object(value):
+        raise SystemExit(message)
+    return value
+
+
+def validate_optional_object_array(value: JsonValue | None, description: str) -> None:
+    """Validate one optional run-owned array whose entries must be objects."""
+    if value is None:
+        return
+    if not isinstance(value, list):
+        raise SystemExit(f"{description} must be an array")
+    for entry_index, entry in enumerate(value, start=1):
+        if not is_json_object(entry):
+            raise SystemExit(f"{description} entry {entry_index} must be a JSON object")
+
+
+def parse_sarif_run(raw: JsonValue, index: int) -> JsonObject:
+    """Parse one SARIF run object and report its one-based index on failure."""
+    run = require_run_object(raw, f"Codacy SARIF run {index} must be a JSON object")
+    tool = require_run_object(run.get("tool"), f"Codacy SARIF run {index} must contain a tool object")
+    driver = require_run_object(tool.get("driver"), f"Codacy SARIF run {index} must contain a tool.driver object")
+    driver_name = driver.get("name")
+    if not isinstance(driver_name, str) or not driver_name.strip():
+        raise SystemExit(f"Codacy SARIF run {index} must contain a non-empty tool.driver.name string")
+
+    validate_optional_object_array(driver.get("rules"), f"Codacy SARIF run {index} tool.driver.rules")
+    validate_optional_object_array(run.get("results"), f"Codacy SARIF run {index} results")
+    automation = run.get("automationDetails")
+    if automation is not None and not is_json_object(automation):
+        raise SystemExit(f"Codacy SARIF run {index} automationDetails must be a JSON object")
+    return run
+
+
 def parse_sarif_document(raw: object) -> SarifDocument:
     """Parse raw JSON into the SARIF shape this splitter requires."""
     if not is_json_object(raw):
@@ -125,7 +171,8 @@ def parse_sarif_document(raw: object) -> SarifDocument:
         message = "Codacy SARIF did not contain a runs array"
         raise SystemExit(message)
 
-    return SarifDocument(root=raw, runs=runs)
+    parsed_runs = tuple(parse_sarif_run(run, index) for index, run in enumerate(runs, start=1))
+    return SarifDocument(root=raw, runs=parsed_runs)
 
 
 def load_sarif(source: Path) -> SarifDocument:
@@ -143,22 +190,14 @@ def load_sarif(source: Path) -> SarifDocument:
     return parse_sarif_document(sarif)
 
 
-def split_sarif_runs(sarif: SarifDocument, out_dir: Path) -> int:
-    """Write one uploadable SARIF file per non-empty run and return the count."""
+def render_sarif_runs(sarif: SarifDocument) -> tuple[RenderedSarif, ...]:
+    """Filter and fully serialize every non-empty SARIF run without filesystem effects."""
     if not sarif.runs:
         print("Codacy SARIF did not contain any runs to upload")
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for stale in sorted(out_dir.glob("*.sarif")):
-        stale.unlink()
-
     seen_categories: dict[str, int] = {}
-    uploadable_count = 0
+    rendered: list[RenderedSarif] = []
     for index, run in enumerate(sarif.runs, start=1):
-        if not is_json_object(run):
-            print(f"Skipping malformed SARIF run {index}")
-            continue
-
         run_copy = copy.deepcopy(run)
         keep_repository_owned_opengrep_rules(run_copy)
 
@@ -184,14 +223,76 @@ def split_sarif_runs(sarif: SarifDocument, out_dir: Path) -> int:
         split_sarif.setdefault("version", "2.1.0")
         split_sarif["runs"] = [run_copy]
 
-        out_file = out_dir / f"{index:02d}-{category}.sarif"
-        out_file.write_text(json.dumps(split_sarif, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-        print(f"Wrote {out_file} with category {category}")
-        uploadable_count += 1
+        rendered.append(
+            RenderedSarif(
+                filename=f"{index:02d}-{category}.sarif",
+                category=category,
+                payload=json.dumps(split_sarif, indent=2, allow_nan=False) + "\n",
+            )
+        )
 
-    if uploadable_count == 0:
+    return tuple(rendered)
+
+
+def _write_staged_sarif(path: Path, payload: str) -> None:
+    """Write one pre-rendered SARIF payload into a private staging directory."""
+    path.write_text(payload, encoding="utf-8")
+
+
+def _replace_path(source: Path, destination: Path) -> None:
+    """Atomically replace one filesystem path; kept separate for fault injection."""
+    source.replace(destination)
+
+
+def publish_sarif_set(rendered: tuple[RenderedSarif, ...], out_dir: Path) -> None:
+    """Publish a complete SARIF generation by atomically swapping its directory."""
+    parent = out_dir.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    if out_dir.exists() and not out_dir.is_dir():
+        raise NotADirectoryError(out_dir)
+
+    staging = Path(tempfile.mkdtemp(prefix=f".{out_dir.name}.stage-", dir=parent))
+    backup = Path(tempfile.mkdtemp(prefix=f".{out_dir.name}.backup-", dir=parent))
+    backup.rmdir()
+    previous_moved = False
+    try:
+        for output in rendered:
+            _write_staged_sarif(staging / output.filename, output.payload)
+
+        if out_dir.exists():
+            _replace_path(out_dir, backup)
+            previous_moved = True
+        try:
+            _replace_path(staging, out_dir)
+        except (OSError, KeyboardInterrupt, SystemExit) as primary:
+            if previous_moved:
+                try:
+                    _replace_path(backup, out_dir)
+                except (OSError, KeyboardInterrupt, SystemExit) as rollback:
+                    message = "SARIF publication failed and rollback was incomplete"
+                    raise BaseExceptionGroup(
+                        message,
+                        [primary, rollback],
+                    ) from primary
+            raise
+        previous_moved = False
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+        if backup.exists():
+            shutil.rmtree(backup)
+
+
+def split_sarif_runs(sarif: SarifDocument, out_dir: Path) -> int:
+    """Transactionally publish one uploadable SARIF file per non-empty run."""
+    rendered = render_sarif_runs(sarif)
+    publish_sarif_set(rendered, out_dir)
+    for output in rendered:
+        print(f"Wrote {out_dir / output.filename} with category {output.category}")
+
+    if not rendered:
         print("No non-empty Codacy SARIF runs to upload")
-    return uploadable_count
+    return len(rendered)
 
 
 def write_github_env(out_dir: Path, uploadable_count: int, env_file: Path | None) -> None:

@@ -68,9 +68,9 @@ into architecture docs; link to the command guide instead.
   Level 3 topology validation belongs with `Triangulation` and the topology
   helpers it consumes.
 - Focused preludes should stay narrow and workflow-specific. Use
-  `delaunay::prelude::pachner::*` for local move workflows, and import
-  primitive bistellar flips directly from `delaunay::flips` only when testing,
-  benchmarking, or documenting that primitive layer.
+  `delaunay::prelude::pachner::*` for ordinary local move workflows. The public
+  primitive bistellar API remains available to expert callers through a direct
+  `delaunay::flips` import, but is intentionally excluded from preludes.
 
 ## Maintenance Notes
 

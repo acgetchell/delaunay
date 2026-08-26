@@ -1150,6 +1150,7 @@ impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
                 construction_state: TriangulationConstructionState::Incomplete(vertex_count),
                 generation: Arc::new(AtomicU64::new(0)),
                 identity: Arc::new(Uuid::new_v4()),
+                rollback_journals: Vec::new(),
             },
         };
 

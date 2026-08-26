@@ -256,39 +256,33 @@ mod allocation_contracts {
         );
     }
 
-    /// Calibrates insertion against one owner clone while leaving headroom for
-    /// dimension-dependent exact-predicate fallback allocations.
-    fn assert_post_bootstrap_insertion_budget<const D: usize>(
-        info: &AllocationInfo,
-        single_owner_clone: &AllocationInfo,
-    ) {
-        let allocation_headroom = match D {
-            2 | 3 => 10_000,
-            4 => 100_000,
-            5 => 5_000_000,
+    /// Keeps journaled insertion within a dimension-specific absolute budget.
+    ///
+    /// This deliberately does not scale the allowance from a whole-owner clone:
+    /// doing so would let a reintroduced storage-linear rollback pass its own
+    /// allocation canary.
+    fn assert_post_bootstrap_insertion_budget<const D: usize>(info: &AllocationInfo) {
+        let max_allocations = match D {
+            2 => 25_000,
+            3 => 50_000,
+            4 => 500_000,
+            5 => 8_000_000,
             _ => 10_000_000,
         };
-        let byte_headroom = match D {
-            2 | 3 => 2 * 1024 * 1024,
-            4 => 8 * 1024 * 1024,
-            5 => 128 * 1024 * 1024,
+        let max_bytes = match D {
+            2 => 8 * 1024 * 1024,
+            3 => 16 * 1024 * 1024,
+            4 => 64 * 1024 * 1024,
+            5 => 512 * 1024 * 1024,
             _ => 256 * 1024 * 1024,
         };
-        let max_allocations = single_owner_clone
-            .count_total
-            .saturating_mul(4)
-            .saturating_add(allocation_headroom);
-        let max_bytes = single_owner_clone
-            .bytes_total
-            .saturating_mul(2)
-            .saturating_add(byte_headroom);
         assert!(
             info.count_total <= max_allocations,
-            "{D}D post-bootstrap insertion exceeded the single-owner-clone calibrated allocation budget {max_allocations}; insertion={info:?}, clone={single_owner_clone:?}"
+            "{D}D post-bootstrap insertion exceeded the journal-era allocation budget {max_allocations}; insertion={info:?}"
         );
         assert!(
             info.bytes_total <= max_bytes,
-            "{D}D post-bootstrap insertion exceeded the single-owner-clone calibrated byte budget {max_bytes}; insertion={info:?}, clone={single_owner_clone:?}"
+            "{D}D post-bootstrap insertion exceeded the journal-era byte budget {max_bytes}; insertion={info:?}"
         );
         let current_allocations = u64::try_from(info.count_current).or_abort();
         let current_bytes = u64::try_from(info.bytes_current).or_abort();
@@ -361,7 +355,6 @@ mod allocation_contracts {
         fixture: &DimensionFixture<D>,
     ) {
         let candidate = vertex!(*fixture.query.coords()).or_abort();
-        let ((), single_owner_clone) = measure_with_result(|| drop(fixture.dt.clone()));
         let vertex_count = fixture.vertex_count;
 
         group.bench_function(
@@ -378,7 +371,7 @@ mod allocation_contracts {
                         let vertex_key = inserted.or_abort();
                         assert_eq!(dt.number_of_vertices(), vertex_count + 1);
                         assert!(dt.vertex(vertex_key).is_some());
-                        assert_post_bootstrap_insertion_budget::<D>(&info, &single_owner_clone);
+                        assert_post_bootstrap_insertion_budget::<D>(&info);
                         black_box(dt);
                     },
                     criterion::BatchSize::LargeInput,
@@ -413,6 +406,29 @@ mod allocation_contracts {
                         (simplex_count, vertex_count, simplex_count, vertex_count,)
                     );
                     assert_zero_allocations(&info, "public simplices()/vertices() iterators");
+                });
+            },
+        );
+    }
+
+    fn bench_incidence_view_construction<const D: usize>(
+        group: &mut BenchmarkGroup<'_, WallTime>,
+        fixture: &DimensionFixture<D>,
+    ) {
+        group.bench_function(
+            BenchmarkId::new(
+                format!("zero_alloc/incidence_view_construction_{D}d"),
+                fixture.vertex_count,
+            ),
+            |b| {
+                b.iter(|| {
+                    let ((), info) = measure_with_result(|| {
+                        let _ = black_box(fixture.dt.incidence());
+                    });
+                    assert_zero_allocations(
+                        &info,
+                        "proof-bearing DelaunayTriangulation::incidence",
+                    );
                 });
             },
         );
@@ -570,6 +586,7 @@ mod allocation_contracts {
         bench_bootstrap_publication::<D>(group);
         bench_post_bootstrap_insertion(group, &fixture);
         bench_public_iterators(group, &fixture);
+        bench_incidence_view_construction(group, &fixture);
         bench_simplex_vertices(group, &fixture);
         bench_simplex_barycenter(group, &fixture);
         bench_simplex_vertex_uuid_iter(group, &fixture);

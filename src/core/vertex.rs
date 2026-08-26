@@ -279,7 +279,7 @@ impl<U, const D: usize> Vertex<U, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -648,10 +648,10 @@ impl<U, const D: usize> Vertex<U, D> {
     /// let vertex: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0])?;
     /// assert!(vertex.is_valid().is_ok());
     ///
-    /// match Vertex::<(), 3>::try_new_with_uuid(Point::default(), Uuid::nil(), None) {
-    ///     Err(VertexValidationError::InvalidUuid { .. }) => (), // Expected - nil UUID
-    ///     other => panic!("Expected InvalidUuid error, got: {:?}", other),
-    /// }
+    /// std::assert_matches!(
+    ///     Vertex::<(), 3>::try_new_with_uuid(Point::default(), Uuid::nil(), None),
+    ///     Err(VertexValidationError::InvalidUuid { .. })
+    /// );
     /// # Ok(())
     /// # }
     /// ```

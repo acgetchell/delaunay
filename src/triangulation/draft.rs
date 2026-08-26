@@ -85,11 +85,60 @@ where
     U: DataType,
     V: DataType,
 {
-    /// Publishes the staged workspace through canonicalizing Levels 3–4 validation.
-    pub(crate) fn finish_canonicalizing(
+    /// Publishes already-normalized TDS storage without a canonicalizing clone.
+    pub(crate) fn finish_strict(
         self,
     ) -> Result<Triangulation<K, U, V, D>, TriangulationBuildFailure<U, V, D>> {
-        self.finish(TriangulationBuildMode::Canonicalizing)
+        self.finish(TriangulationBuildMode::Strict)
+    }
+
+    /// Canonicalizes inside a caller-owned TDS rollback journal.
+    ///
+    /// Failure returns the mutated TDS so the caller can restore its journal.
+    /// This avoids the detached full-TDS before-image required by the ordinary
+    /// canonicalizing builder boundary.
+    pub(crate) fn finish_canonicalizing_in_transaction(
+        mut self,
+    ) -> Result<Triangulation<K, U, V, D>, TriangulationBuildFailure<U, V, D>> {
+        let validation_policy = self.selected_validation_policy.unwrap_or_else(|| {
+            self.triangulation
+                .topology_guarantee
+                .default_validation_policy()
+        });
+
+        if let Err(source) = self
+            .triangulation
+            .try_set_validation_policy(validation_policy)
+        {
+            return Err(RefinementError::new(
+                self.triangulation.into_tds(),
+                TriangulationBuilderError::ValidationConfiguration { source },
+            ));
+        }
+
+        let publication = (|| {
+            self.triangulation
+                .normalize_and_promote_positive_orientation()
+                .map_err(
+                    |source| TriangulationBuilderError::OrientationNormalization {
+                        source: Box::new(source),
+                    },
+                )?;
+            self.triangulation
+                .validate_geometric_nondegeneracy()
+                .map_err(|source| TriangulationBuilderError::GeometricNondegeneracy {
+                    source: Box::new(source),
+                })?;
+            self.triangulation
+                .certify_levels_three_four()
+                .map_err(map_certification_error)?;
+            Ok(())
+        })();
+
+        if let Err(source) = publication {
+            return Err(RefinementError::new(self.triangulation.into_tds(), source));
+        }
+        Ok(self.triangulation.into_verified())
     }
 
     /// Consumes the candidate and publishes it only after Levels 1–4 validation.

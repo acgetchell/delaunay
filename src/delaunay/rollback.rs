@@ -4,18 +4,23 @@
 
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::operations::DelaunayInsertionState;
-use crate::core::tds::{Tds, TdsOwnerRollbackTransaction, TdsRollbackOwner, TdsRollbackWindow};
+use crate::core::tds::{
+    Tds, TdsOwnerRollbackTransaction, TdsRollbackOwner, TdsRollbackSavepoint, TdsRollbackWindow,
+};
 use crate::delaunay_model::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
 use crate::triangulation::validation::TopologyConstructionProvenance;
 use crate::triangulation::{Triangulation, rollback::TriangulationRollbackWindow};
 
 impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for DelaunayTriangulation<K, U, V, D> {
-    fn rollback_tds(&self) -> &Tds<U, V, D> {
-        &self.tri.tds
-    }
-
     fn rollback_tds_mut(&mut self) -> &mut Tds<U, V, D> {
         &mut self.tri.tds
+    }
+}
+
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
+    /// Commits a journal that crossed the private Levels 1–5 publication path.
+    pub(crate) fn commit_tds_savepoint(&mut self, savepoint: TdsRollbackSavepoint) {
+        self.tri.tds.commit_savepoint(savepoint);
     }
 }
 

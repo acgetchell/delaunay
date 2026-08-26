@@ -14,7 +14,7 @@ on:
     # Only run on changes that could affect performance
     paths:
       - ".github/workflows/benchmarks.yml"
-      - ".github/actions/setup-just/action.yml"
+      - ".github/actions/setup-just/**"
       - ".python-version"
       - "justfile"
       - "pyproject.toml"
@@ -37,7 +37,7 @@ on:
     # Only run on changes that could affect performance
     paths:
       - ".github/workflows/benchmarks.yml"
-      - ".github/actions/setup-just/action.yml"
+      - ".github/actions/setup-just/**"
       - ".python-version"
       - "justfile"
       - "pyproject.toml"

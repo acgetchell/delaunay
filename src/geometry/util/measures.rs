@@ -779,7 +779,7 @@ fn facet_measure_gram_matrix<const D: usize>(
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, geometry::*};
 /// use delaunay::prelude::geometry::surface_measure;
 ///
 /// # #[derive(Debug, thiserror::Error)]

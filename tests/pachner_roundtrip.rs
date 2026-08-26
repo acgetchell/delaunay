@@ -84,13 +84,6 @@ struct TopologySnapshot {
     simplex_vertex_uuids: Vec<Vec<Uuid>>,
 }
 
-fn attempt_pachner_move<const D: usize>(
-    tri: &mut Tri<D>,
-    pachner_move: PachnerMove<(), D>,
-) -> Result<PachnerMoveResult<D>, FlipError> {
-    tri.propose_pachner(pachner_move)?.attempt_on(tri)
-}
-
 fn topology_and_delaunay_valid<const D: usize>(
     tri: &Triangulation<RobustKernel<f64>, (), (), D>,
 ) -> bool {
@@ -230,14 +223,14 @@ fn stale_pachner_error_propagates_through_delaunay_result() {
     let vertex: Vertex<(), 4> =
         vertex!(vertex_coords).expect("centroid of a stable simplex should be a valid vertex");
     let vertex_uuid = vertex.uuid();
-    let inserted = attempt_pachner_move(
-        &mut tri,
-        PachnerMove::K1Insert {
+    let inserted = tri
+        .propose_pachner(PachnerMove::K1Insert {
             simplex_key: stale_simplex,
             vertex,
-        },
-    )
-    .expect("initial k=1 insert should make the simplex key stale");
+        })
+        .expect("initial k=1 proposal should be valid")
+        .attempt_on(&mut tri)
+        .expect("initial k=1 insert should make the simplex key stale");
     let inserted_vertex = vertex_key_by_uuid(&tri, vertex_uuid)
         .expect("initial k=1 insert should create the requested vertex");
     assert_k1_insert_result(&inserted, inserted_vertex);
@@ -282,7 +275,10 @@ fn edge_to_facet_query_tracks_2d_k2_mutation_freshness() {
             .is_some()
     );
 
-    let info = attempt_pachner_move(&mut tri, PachnerMove::K2 { facet })
+    let info = tri
+        .propose_pachner(PachnerMove::K2 { facet })
+        .expect("selected fixture facet should produce a 2D k=2 proposal")
+        .attempt_on(&mut tri)
         .expect("2D k=2 flip should succeed on selected fixture facet");
     assert_eq!(info.inserted_face_vertices.len(), 2);
 
@@ -355,7 +351,10 @@ fn pachner_feasibility_agrees_with_successful_2d_k2_attempt() {
 fn pachner_feasibility_rejects_unsupported_2d_k2_inverse_without_mutating() {
     let mut tri = build_flippable_dt_2d();
     let facet = flippable_k2_facet_2d(&tri);
-    let forward = attempt_pachner_move(&mut tri, PachnerMove::K2 { facet })
+    let forward = tri
+        .propose_pachner(PachnerMove::K2 { facet })
+        .expect("selected fixture facet should produce a 2D k=2 proposal")
+        .attempt_on(&mut tri)
         .expect("2D k=2 attempt should create an inverse edge candidate");
     let edge = inserted_edge_2d(&tri, &forward.inserted_face_vertices);
     let pachner_move = PachnerMove::K2Inverse { edge };
@@ -396,7 +395,10 @@ fn pachner_feasibility_rejects_boundary_facet_like_attempt_2d() {
 fn pachner_feasibility_rejects_stale_facet_like_attempt_2d() {
     let mut tri = build_flippable_dt_2d();
     let facet = flippable_k2_facet_2d(&tri);
-    let first_flip = attempt_pachner_move(&mut tri, PachnerMove::K2 { facet })
+    let first_flip = tri
+        .propose_pachner(PachnerMove::K2 { facet })
+        .expect("fresh fixture facet should produce a k=2 proposal")
+        .attempt_on(&mut tri)
         .expect("first k=2 attempt should stale the original facet");
     assert!(!first_flip.new_simplices.is_empty());
     let stale_move = PachnerMove::K2 { facet };
@@ -541,13 +543,12 @@ fn try_stale_k1_insert(
 ) -> DelaunayResult<()> {
     let vertex: Vertex<(), 4> = vertex!(vertex_coords)?;
     let vertex_uuid = vertex.uuid();
-    let inserted = attempt_pachner_move(
-        tri,
-        PachnerMove::K1Insert {
+    let inserted = tri
+        .propose_pachner(PachnerMove::K1Insert {
             simplex_key: stale_simplex,
             vertex,
-        },
-    )?;
+        })?
+        .attempt_on(tri)?;
     let inserted_vertex = vertex_key_by_uuid(tri, vertex_uuid)
         .expect("unexpected successful stale insert should create the requested vertex");
     assert_k1_insert_result(&inserted, inserted_vertex);
@@ -649,9 +650,11 @@ fn flippable_k2_facet_2d(tri: &Tri2) -> FacetHandle {
         let facet = facet.expect("2D fixture facets should reborrow as live views");
         let facet = facet.handle();
         let mut trial = tri.clone();
-        if attempt_pachner_move(&mut trial, PachnerMove::K2 { facet }).is_ok()
-            && topology_and_delaunay_valid(&trial)
-        {
+        let attempt = match trial.propose_pachner(PachnerMove::K2 { facet }) {
+            Ok(proposal) => proposal.attempt_on(&mut trial),
+            Err(error) => Err(error),
+        };
+        if attempt.is_ok() && topology_and_delaunay_valid(&trial) {
             return facet;
         }
     }
@@ -1053,7 +1056,10 @@ fn assert_stale_k2_preserves_topology(mut tri: Tri4) {
 #[cfg(feature = "slow-tests")]
 fn assert_stale_k2_inverse_preserves_topology(mut tri: Tri4) {
     let facet = flippable_k2_facet(&tri);
-    let info = attempt_pachner_move(&mut tri, PachnerMove::K2 { facet })
+    let info = tri
+        .propose_pachner(PachnerMove::K2 { facet })
+        .expect("selected fixture facet should produce a k=2 proposal")
+        .attempt_on(&mut tri)
         .expect("k=2 flip should create an inverse edge");
     let edge = inserted_edge(&tri, &info.inserted_face_vertices);
     let stale_proposal = tri
@@ -1101,7 +1107,10 @@ fn assert_stale_k3_preserves_topology(mut tri: Tri4) {
 #[cfg(feature = "slow-tests")]
 fn assert_stale_k3_inverse_preserves_topology(mut tri: Tri4) {
     let ridge = flippable_k3_ridge(&tri);
-    let info = attempt_pachner_move(&mut tri, PachnerMove::K3 { ridge })
+    let info = tri
+        .propose_pachner(PachnerMove::K3 { ridge })
+        .expect("selected fixture ridge should produce a k=3 proposal")
+        .attempt_on(&mut tri)
         .expect("k=3 flip should create an inverse triangle");
     let triangle = inserted_triangle(&info.inserted_face_vertices);
     let stale_proposal = tri
@@ -1148,25 +1157,25 @@ fn roundtrip_k1(tri: &mut Tri4) {
     let simplex_key = first_simplex(tri);
     let new_vertex: Vertex<(), 4> = vertex!(simplex_centroid(tri, simplex_key)).unwrap();
     let new_uuid = new_vertex.uuid();
-    let inserted = attempt_pachner_move(
-        tri,
-        PachnerMove::K1Insert {
+    let inserted = tri
+        .propose_pachner(PachnerMove::K1Insert {
             simplex_key,
             vertex: new_vertex,
-        },
-    )
-    .expect("k=1 insert should succeed on stable 4D fixture");
+        })
+        .expect("stable simplex should produce a k=1 insertion proposal")
+        .attempt_on(tri)
+        .expect("k=1 insert should succeed on stable 4D fixture");
     assert_eq!(inserted.inserted_face_vertices.len(), 1);
 
     let inserted_key =
         vertex_key_by_uuid(tri, new_uuid).expect("inserted k=1 vertex should be present");
-    let removed = attempt_pachner_move(
-        tri,
-        PachnerMove::K1Remove {
+    let removed = tri
+        .propose_pachner(PachnerMove::K1Remove {
             vertex_key: inserted_key,
-        },
-    )
-    .expect("k=1 remove should invert insert");
+        })
+        .expect("inserted vertex should produce a k=1 removal proposal")
+        .attempt_on(tri)
+        .expect("k=1 remove should invert insert");
     assert_pachner_result_contract(
         &removed,
         BistellarFlipKind::try_k1(4)
@@ -1183,13 +1192,17 @@ fn flippable_k2_facet(tri: &Tri4) -> FacetHandle {
         let facet = facet.expect("4D fixture facets should reborrow as live views");
         let facet = facet.handle();
         let mut trial = tri.clone();
-        let Ok(info) = attempt_pachner_move(&mut trial, PachnerMove::K2 { facet }) else {
+        let Ok(proposal) = trial.propose_pachner(PachnerMove::K2 { facet }) else {
+            continue;
+        };
+        let Ok(info) = proposal.attempt_on(&mut trial) else {
             continue;
         };
         let edge = inserted_edge(&trial, &info.inserted_face_vertices);
-        if attempt_pachner_move(&mut trial, PachnerMove::K2Inverse { edge }).is_ok()
-            && topology_and_delaunay_valid(&trial)
-        {
+        let Ok(inverse) = trial.propose_pachner(PachnerMove::K2Inverse { edge }) else {
+            continue;
+        };
+        if inverse.attempt_on(&mut trial).is_ok() && topology_and_delaunay_valid(&trial) {
             return facet;
         }
     }
@@ -1199,7 +1212,10 @@ fn flippable_k2_facet(tri: &Tri4) -> FacetHandle {
 /// Applies a k=2 forward/inverse pair and checks both move reports.
 #[cfg(feature = "slow-tests")]
 fn roundtrip_k2(tri: &mut Tri4, facet: FacetHandle) {
-    let info: PachnerMoveResult<4> = attempt_pachner_move(tri, PachnerMove::K2 { facet })
+    let info: PachnerMoveResult<4> = tri
+        .propose_pachner(PachnerMove::K2 { facet })
+        .expect("selected facet should produce a k=2 proposal")
+        .attempt_on(tri)
         .expect("k=2 flip should succeed on selected stable 4D facet");
     assert_pachner_result_contract(
         &info,
@@ -1207,7 +1223,10 @@ fn roundtrip_k2(tri: &mut Tri4, facet: FacetHandle) {
         FlipDirection::Forward,
     );
     let edge = inserted_edge(tri, &info.inserted_face_vertices);
-    let inverse = attempt_pachner_move(tri, PachnerMove::K2Inverse { edge })
+    let inverse = tri
+        .propose_pachner(PachnerMove::K2Inverse { edge })
+        .expect("inserted edge should produce a k=2 inverse proposal")
+        .attempt_on(tri)
         .expect("k=2 inverse should succeed after k=2 flip");
     assert_pachner_result_contract(
         &inverse,
@@ -1236,13 +1255,17 @@ fn flippable_k3_ridge(tri: &Tri4) -> RidgeHandle {
     for ridge in tri.ridge_handles() {
         let ridge = ridge.expect("4D fixture ridges should produce live handles");
         let mut trial = tri.clone();
-        let Ok(info) = attempt_pachner_move(&mut trial, PachnerMove::K3 { ridge }) else {
+        let Ok(proposal) = trial.propose_pachner(PachnerMove::K3 { ridge }) else {
+            continue;
+        };
+        let Ok(info) = proposal.attempt_on(&mut trial) else {
             continue;
         };
         let triangle = inserted_triangle(&info.inserted_face_vertices);
-        if attempt_pachner_move(&mut trial, PachnerMove::K3Inverse { triangle }).is_ok()
-            && topology_and_delaunay_valid(&trial)
-        {
+        let Ok(inverse) = trial.propose_pachner(PachnerMove::K3Inverse { triangle }) else {
+            continue;
+        };
+        if inverse.attempt_on(&mut trial).is_ok() && topology_and_delaunay_valid(&trial) {
             return ridge;
         }
     }
@@ -1252,20 +1275,23 @@ fn flippable_k3_ridge(tri: &Tri4) -> RidgeHandle {
 /// Applies a k=3 forward/inverse pair and checks both move reports.
 #[cfg(feature = "slow-tests")]
 fn roundtrip_k3(tri: &mut Tri4, ridge: RidgeHandle) {
-    let info: PachnerMoveResult<4> = attempt_pachner_move(tri, PachnerMove::K3 { ridge })
+    let info: PachnerMoveResult<4> = tri
+        .propose_pachner(PachnerMove::K3 { ridge })
+        .expect("selected ridge should produce a k=3 proposal")
+        .attempt_on(tri)
         .expect("k=3 flip should succeed on selected stable 4D ridge");
     assert_pachner_result_contract(
         &info,
         BistellarFlipKind::try_k3(4).expect("4D k=3 move kind should be valid"),
         FlipDirection::Forward,
     );
-    let inverse = attempt_pachner_move(
-        tri,
-        PachnerMove::K3Inverse {
+    let inverse = tri
+        .propose_pachner(PachnerMove::K3Inverse {
             triangle: inserted_triangle(&info.inserted_face_vertices),
-        },
-    )
-    .expect("k=3 inverse should succeed after k=3 flip");
+        })
+        .expect("inserted triangle should produce a k=3 inverse proposal")
+        .attempt_on(tri)
+        .expect("k=3 inverse should succeed after k=3 flip");
     assert_pachner_result_contract(
         &inverse,
         BistellarFlipKind::try_k3(4)

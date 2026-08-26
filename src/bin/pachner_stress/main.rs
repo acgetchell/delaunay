@@ -8,9 +8,9 @@ mod cli_output;
 
 use std::{
     fmt::{self, Display},
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{self, BufWriter, Write},
-    num::{NonZeroUsize, TryFromIntError},
+    num::NonZeroUsize,
     path::{Component, Path, PathBuf},
     process::ExitCode,
     time::Instant,
@@ -39,6 +39,7 @@ use delaunay::{
     },
     try_vertices_from_points,
 };
+use num_traits::ToPrimitive;
 use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 use serde::Serialize;
 
@@ -54,7 +55,8 @@ const DEFAULT_RETRY_ATTEMPTS: usize = 24;
 const DEFAULT_VALIDATE_EVERY: usize = 1_000;
 const PACHNER_STRESS_VALIDATION_SCOPE_LABEL: &str = "topology";
 const PACHNER_STRESS_EXPORT_SCHEMA: &str = "delaunay.pachner_stress";
-const PACHNER_STRESS_EXPORT_SCHEMA_VERSION: u32 = 1;
+const PACHNER_STRESS_EXPORT_SCHEMA_VERSION: u32 = 2;
+const ARTIFACT_COLLISION_PROBE_ATTEMPTS: u32 = 128;
 const DEFAULT_VERTEX_GROWTH_DIVISOR: usize = 10;
 const DEFAULT_VERTEX_SHRINK_DIVISOR: usize = 20;
 
@@ -75,7 +77,7 @@ struct PachnerStressArgs {
     /// Initial vertex count. Defaults to 10000 in 3D and 1000 in 4D.
     #[arg(long)]
     vertices: Option<usize>,
-    /// Attempted Pachner moves.
+    /// Workload steps: a pair in round-trip mode or one proposal in random-walk mode.
     #[arg(long, default_value_t = DEFAULT_ATTEMPTS)]
     attempts: usize,
     /// Validation and progress-reporting cadence.
@@ -223,21 +225,13 @@ impl PachnerStressMode {
             Self::RandomWalk => "random-walk",
         }
     }
-
-    /// Return the expected mutation attempts for one configured step.
-    const fn expected_moves_per_step(self) -> usize {
-        match self {
-            Self::RoundTrip => 2,
-            Self::RandomWalk => 1,
-        }
-    }
 }
 
 /// Positive count arguments validated by the Pachner stress diagnostic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 enum PachnerStressCountArgument {
-    /// Attempted Pachner moves.
+    /// Configured workload steps.
     Attempts,
     /// Validation and progress-reporting cadence.
     ValidateEvery,
@@ -305,6 +299,38 @@ impl Display for PachnerStressCountArgument {
     }
 }
 
+/// Filesystem operation used to compare exact missing artifact names.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+enum PachnerStressArtifactProbeOperation {
+    /// Create the isolated probe directory.
+    CreateDirectory,
+    /// Create parent directories for the first exact suffix.
+    CreateParent,
+    /// Create the first exact suffix as a file.
+    CreateFile,
+    /// Inspect whether the second exact suffix resolves.
+    InspectAlias,
+    /// Compare two resolved probe entries.
+    CompareIdentity,
+    /// Remove the isolated probe directory.
+    RemoveDirectory,
+}
+
+impl Display for PachnerStressArtifactProbeOperation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            Self::CreateDirectory => "create probe directory",
+            Self::CreateParent => "create probe parent",
+            Self::CreateFile => "create probe file",
+            Self::InspectAlias => "inspect probe alias",
+            Self::CompareIdentity => "compare probe identity",
+            Self::RemoveDirectory => "remove probe directory",
+        };
+        f.write_str(label)
+    }
+}
+
 /// Configuration for one exact Pachner stress workload.
 #[derive(Clone, Copy, Debug)]
 struct PachnerStressConfig {
@@ -368,7 +394,7 @@ impl PachnerStressConfig {
         })
     }
 
-    /// Positive number of attempted moves in this exact workload.
+    /// Positive number of workload steps in this exact workload.
     pub const fn move_attempts(self) -> NonZeroUsize {
         self.move_attempts
     }
@@ -428,32 +454,51 @@ impl PachnerStressArtifacts {
     }
 }
 
+/// Compare artifact destinations without normalizing their exact component names.
 fn artifact_paths_conflict(
     first: &ArtifactPath,
     second: &ArtifactPath,
 ) -> Result<bool, PachnerStressError> {
     let first_identity = artifact_path_identity(first.as_path())?;
     let second_identity = artifact_path_identity(second.as_path())?;
+    let first_exists = try_artifact_exists(first.as_path())?;
+    let second_exists = try_artifact_exists(second.as_path())?;
+    if first_exists && second_exists {
+        return same_file::is_same_file(first.as_path(), second.as_path()).map_err(|source| {
+            PachnerStressError::ArtifactCompareIdentity {
+                first: first.as_path().to_owned(),
+                second: second.as_path().to_owned(),
+                source,
+            }
+        });
+    }
+
     if first_identity == second_identity {
         return Ok(true);
     }
-
-    let first_exists = try_artifact_exists(first.as_path())?;
-    let second_exists = try_artifact_exists(second.as_path())?;
-    if !first_exists || !second_exists {
+    if first_exists || second_exists {
         return Ok(false);
     }
 
-    same_file::is_same_file(first.as_path(), second.as_path()).map_err(|source| {
-        PachnerStressError::ArtifactCompareIdentity {
-            first: first.as_path().to_owned(),
-            second: second.as_path().to_owned(),
-            source,
-        }
-    })
+    if !existing_prefixes_match(&first_identity, &second_identity)? {
+        return Ok(false);
+    }
+    probe_missing_artifact_collision(
+        &first_identity.existing_prefix,
+        &first_identity.missing_suffix,
+        &second_identity.missing_suffix,
+    )
 }
 
-fn artifact_path_identity(path: &Path) -> Result<PathBuf, PachnerStressError> {
+/// Exact path identity split at the first missing filesystem component.
+#[derive(Debug, Eq, PartialEq)]
+struct ArtifactPathIdentity {
+    existing_prefix: PathBuf,
+    missing_suffix: PathBuf,
+}
+
+/// Resolve the existing filesystem anchor while retaining every missing component exactly.
+fn artifact_path_identity(path: &Path) -> Result<ArtifactPathIdentity, PachnerStressError> {
     let absolute = if path.is_absolute() {
         path.to_owned()
     } else {
@@ -461,11 +506,12 @@ fn artifact_path_identity(path: &Path) -> Result<PathBuf, PachnerStressError> {
             .map_err(|source| PachnerStressError::ArtifactWorkingDirectory { source })?;
         working_directory.join(path)
     };
-    canonicalize_existing_prefix(&absolute).map(platform_identity)
+    canonicalize_existing_prefix(&absolute)
 }
 
-fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, PachnerStressError> {
-    let mut identity = PathBuf::new();
+/// Canonicalize only components whose filesystem identity already exists.
+fn canonicalize_existing_prefix(path: &Path) -> Result<ArtifactPathIdentity, PachnerStressError> {
+    let mut existing_prefix = PathBuf::new();
     let mut missing_suffix = PathBuf::new();
 
     for component in path.components() {
@@ -473,19 +519,19 @@ fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, PachnerStressErr
             Component::CurDir => {}
             Component::ParentDir => {
                 if missing_suffix.as_os_str().is_empty() {
-                    identity.pop();
+                    existing_prefix.pop();
                 } else {
                     missing_suffix.pop();
                 }
             }
             Component::Prefix(_) | Component::RootDir => {
-                identity.push(component.as_os_str());
+                existing_prefix.push(component.as_os_str());
             }
             Component::Normal(name) if missing_suffix.as_os_str().is_empty() => {
-                let candidate = identity.join(name);
+                let candidate = existing_prefix.join(name);
                 match candidate.try_exists() {
                     Ok(true) => {
-                        identity = fs::canonicalize(&candidate).map_err(|source| {
+                        existing_prefix = fs::canonicalize(&candidate).map_err(|source| {
                             PachnerStressError::ArtifactResolveIdentity {
                                 path: candidate,
                                 source,
@@ -505,20 +551,159 @@ fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, PachnerStressErr
         }
     }
 
-    if identity.as_os_str().is_empty() {
+    if existing_prefix.as_os_str().is_empty() {
         return Err(PachnerStressError::ArtifactUnresolvablePath {
             path: path.to_owned(),
         });
     }
-    identity.push(missing_suffix);
-    Ok(identity)
+    Ok(ArtifactPathIdentity {
+        existing_prefix,
+        missing_suffix,
+    })
 }
 
-fn platform_identity(path: PathBuf) -> PathBuf {
-    if cfg!(any(target_os = "macos", target_os = "windows")) {
-        PathBuf::from(path.to_string_lossy().to_lowercase())
-    } else {
-        path
+/// Compare the filesystem identities that own two exact missing suffixes.
+fn existing_prefixes_match(
+    first: &ArtifactPathIdentity,
+    second: &ArtifactPathIdentity,
+) -> Result<bool, PachnerStressError> {
+    if first.existing_prefix == second.existing_prefix {
+        return Ok(true);
+    }
+    same_file::is_same_file(&first.existing_prefix, &second.existing_prefix).map_err(|source| {
+        PachnerStressError::ArtifactCompareIdentity {
+            first: first.existing_prefix.clone(),
+            second: second.existing_prefix.clone(),
+            source,
+        }
+    })
+}
+
+/// Ask the destination filesystem whether two exact missing suffixes alias.
+fn probe_missing_artifact_collision(
+    existing_prefix: &Path,
+    first_suffix: &Path,
+    second_suffix: &Path,
+) -> Result<bool, PachnerStressError> {
+    if first_suffix == second_suffix {
+        return Ok(true);
+    }
+    if first_suffix.as_os_str().is_empty() || second_suffix.as_os_str().is_empty() {
+        return Ok(false);
+    }
+    if !fs::metadata(existing_prefix)
+        .map_err(|source| PachnerStressError::ArtifactInspect {
+            path: existing_prefix.to_owned(),
+            source,
+        })?
+        .is_dir()
+    {
+        return Ok(false);
+    }
+
+    let probe = ArtifactCollisionProbe::try_new(existing_prefix)?;
+    let first = probe.directory().join(first_suffix);
+    if let Some(parent) = first.parent() {
+        fs::create_dir_all(parent).map_err(|source| {
+            PachnerStressError::ArtifactCollisionProbe {
+                operation: PachnerStressArtifactProbeOperation::CreateParent,
+                path: parent.to_owned(),
+                source,
+            }
+        })?;
+    }
+    let first_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&first)
+        .map_err(|source| PachnerStressError::ArtifactCollisionProbe {
+            operation: PachnerStressArtifactProbeOperation::CreateFile,
+            path: first.clone(),
+            source,
+        })?;
+    let second = probe.directory().join(second_suffix);
+    let conflict = match second.try_exists() {
+        Ok(true) => same_file::is_same_file(&first, &second).map_err(|source| {
+            PachnerStressError::ArtifactCollisionProbe {
+                operation: PachnerStressArtifactProbeOperation::CompareIdentity,
+                path: second,
+                source,
+            }
+        }),
+        Ok(false) => Ok(false),
+        Err(source) => Err(PachnerStressError::ArtifactCollisionProbe {
+            operation: PachnerStressArtifactProbeOperation::InspectAlias,
+            path: second,
+            source,
+        }),
+    };
+    drop(first_file);
+    let conflict = conflict?;
+    probe.finish()?;
+    Ok(conflict)
+}
+
+/// Short-lived directory that inherits the destination filesystem's name rules.
+struct ArtifactCollisionProbe {
+    directory: PathBuf,
+    cleanup_pending: bool,
+}
+
+impl ArtifactCollisionProbe {
+    /// Reserve a unique probe directory without transforming target path names.
+    fn try_new(parent: &Path) -> Result<Self, PachnerStressError> {
+        for attempt in 0..ARTIFACT_COLLISION_PROBE_ATTEMPTS {
+            let directory = parent.join(format!(
+                ".pachner-stress-path-probe-{}-{attempt}",
+                std::process::id()
+            ));
+            match fs::create_dir(&directory) {
+                Ok(()) => {
+                    return Ok(Self {
+                        directory,
+                        cleanup_pending: true,
+                    });
+                }
+                Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(source) => {
+                    return Err(PachnerStressError::ArtifactCollisionProbe {
+                        operation: PachnerStressArtifactProbeOperation::CreateDirectory,
+                        path: directory,
+                        source,
+                    });
+                }
+            }
+        }
+        Err(PachnerStressError::ArtifactCollisionProbeExhausted {
+            directory: parent.to_owned(),
+            attempts: ARTIFACT_COLLISION_PROBE_ATTEMPTS,
+        })
+    }
+
+    /// Borrow the unique directory while the collision probe is active.
+    fn directory(&self) -> &Path {
+        &self.directory
+    }
+
+    /// Remove the completed probe and surface cleanup failures.
+    fn finish(mut self) -> Result<(), PachnerStressError> {
+        fs::remove_dir_all(&self.directory).map_err(|source| {
+            PachnerStressError::ArtifactCollisionProbe {
+                operation: PachnerStressArtifactProbeOperation::RemoveDirectory,
+                path: self.directory.clone(),
+                source,
+            }
+        })?;
+        self.cleanup_pending = false;
+        Ok(())
+    }
+}
+
+impl Drop for ArtifactCollisionProbe {
+    fn drop(&mut self) {
+        if self.cleanup_pending {
+            let _ = fs::remove_dir_all(&self.directory);
+        }
     }
 }
 
@@ -546,15 +731,15 @@ struct PachnerStressSource {
 #[derive(Clone, Copy, Debug, Serialize)]
 struct PachnerStressReport {
     sequence: usize,
-    attempts: usize,
-    accepted: usize,
-    rejected: usize,
+    completed_steps: usize,
+    proposal_attempts: u128,
+    accepted_mutations: u128,
     candidate_misses: usize,
-    proposal_rejections: usize,
+    proposal_rejections: u128,
     validations: usize,
     validation_nanos: u128,
     elapsed_nanos: u128,
-    attempts_per_second: u128,
+    proposals_per_second: u128,
     final_vertices: usize,
     final_simplices: usize,
 }
@@ -569,7 +754,7 @@ struct PachnerStressSummary {
     mode: &'static str,
     validation_scope: &'static str,
     configured_vertices: usize,
-    attempts: usize,
+    configured_steps: usize,
     validate_every: usize,
     key_refresh_every: usize,
     retry_attempts: usize,
@@ -584,12 +769,12 @@ struct PachnerStressSummary {
 #[derive(Clone, Copy)]
 struct PachnerStressProgress {
     sequence: usize,
-    step: usize,
-    attempts: usize,
-    accepted: usize,
-    rejected: usize,
+    completed_steps: usize,
+    configured_steps: usize,
+    proposal_attempts: u128,
+    accepted_mutations: u128,
     candidate_misses: usize,
-    proposal_rejections: usize,
+    proposal_rejections: u128,
     validations: usize,
     validation_nanos: u128,
     acceptance_rate: f64,
@@ -600,18 +785,25 @@ struct PachnerStressProgress {
 /// Mutable counters accumulated by one stress workload.
 #[derive(Clone, Copy, Debug, Default)]
 struct PachnerStressCounters {
-    accepted: usize,
+    proposal_attempts: u128,
+    accepted_mutations: u128,
     candidate_misses: usize,
-    proposal_rejections: usize,
+    proposal_rejections: u128,
     validations: usize,
     validation_nanos: u128,
 }
 
 impl PachnerStressCounters {
-    /// Count steps that did not produce an accepted move.
-    const fn rejected(self) -> usize {
-        self.candidate_misses
-            .saturating_add(self.proposal_rejections)
+    /// Record one proposal that committed one topology mutation.
+    const fn record_accepted_mutation(&mut self) {
+        self.proposal_attempts = self.proposal_attempts.saturating_add(1);
+        self.accepted_mutations = self.accepted_mutations.saturating_add(1);
+    }
+
+    /// Record one proposal rejected before it could commit a mutation.
+    const fn record_proposal_rejection(&mut self) {
+        self.proposal_attempts = self.proposal_attempts.saturating_add(1);
+        self.proposal_rejections = self.proposal_rejections.saturating_add(1);
     }
 }
 
@@ -711,18 +903,19 @@ impl PachnerStressReporter {
             let mut handle = stdout.lock();
             writeln!(
                 handle,
-                "pachner_stress_progress dimension={} label={} mode={} validation_scope={} sequence={} step={} attempts={} accepted={} \
-                 rejected={} candidate_misses={} proposal_rejections={} validations={} \
+                "pachner_stress_progress schema_version={} dimension={} label={} mode={} validation_scope={} sequence={} completed_steps={} configured_steps={} \
+                 proposal_attempts={} accepted_mutations={} candidate_misses={} proposal_rejections={} validations={} \
                  validation_nanos={} acceptance_rate={:.6} vertices={} simplices={}",
+                PACHNER_STRESS_EXPORT_SCHEMA_VERSION,
                 config.dimension.value(),
                 config.label(),
                 config.mode.label(),
                 PACHNER_STRESS_VALIDATION_SCOPE_LABEL,
                 progress.sequence,
-                progress.step,
-                progress.attempts,
-                progress.accepted,
-                progress.rejected,
+                progress.completed_steps,
+                progress.configured_steps,
+                progress.proposal_attempts,
+                progress.accepted_mutations,
                 progress.candidate_misses,
                 progress.proposal_rejections,
                 progress.validations,
@@ -737,16 +930,17 @@ impl PachnerStressReporter {
         if let Some(progress_artifact) = &mut self.progress {
             writeln!(
                 progress_artifact.writer,
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{},{}",
+                PACHNER_STRESS_EXPORT_SCHEMA_VERSION,
                 config.dimension.value(),
                 config.label(),
                 config.mode.label(),
                 PACHNER_STRESS_VALIDATION_SCOPE_LABEL,
                 progress.sequence,
-                progress.step,
-                progress.attempts,
-                progress.accepted,
-                progress.rejected,
+                progress.completed_steps,
+                progress.configured_steps,
+                progress.proposal_attempts,
+                progress.accepted_mutations,
                 progress.candidate_misses,
                 progress.proposal_rejections,
                 progress.validations,
@@ -778,23 +972,24 @@ impl PachnerStressReporter {
             let mut handle = stdout.lock();
             writeln!(
                 handle,
-                "pachner_stress_metric dimension={} label={} mode={} validation_scope={} sequence={} attempts={} accepted={} rejected={} \
-                 candidate_misses={} proposal_rejections={} validations={} validation_nanos={} \
-                 elapsed_nanos={} attempts_per_second={} final_vertices={} final_simplices={}",
+                "pachner_stress_metric schema_version={} dimension={} label={} mode={} validation_scope={} sequence={} completed_steps={} \
+                 proposal_attempts={} accepted_mutations={} candidate_misses={} proposal_rejections={} validations={} validation_nanos={} \
+                 elapsed_nanos={} proposals_per_second={} final_vertices={} final_simplices={}",
+                PACHNER_STRESS_EXPORT_SCHEMA_VERSION,
                 config.dimension.value(),
                 config.label(),
                 config.mode.label(),
                 PACHNER_STRESS_VALIDATION_SCOPE_LABEL,
                 report.sequence,
-                report.attempts,
-                report.accepted,
-                report.rejected,
+                report.completed_steps,
+                report.proposal_attempts,
+                report.accepted_mutations,
                 report.candidate_misses,
                 report.proposal_rejections,
                 report.validations,
                 report.validation_nanos,
                 report.elapsed_nanos,
-                report.attempts_per_second,
+                report.proposals_per_second,
                 report.final_vertices,
                 report.final_simplices
             )
@@ -941,18 +1136,18 @@ where
         }
     };
     let elapsed = start.elapsed();
-    let attempts = u128::try_from(config.move_attempts().get())?;
     let report = PachnerStressReport {
         sequence: 1,
-        attempts: config.move_attempts().get(),
-        accepted: counters.accepted,
-        rejected: counters.rejected(),
+        completed_steps: config.move_attempts().get(),
+        proposal_attempts: counters.proposal_attempts,
+        accepted_mutations: counters.accepted_mutations,
         candidate_misses: counters.candidate_misses,
         proposal_rejections: counters.proposal_rejections,
         validations: counters.validations,
         validation_nanos: counters.validation_nanos,
         elapsed_nanos: elapsed.as_nanos(),
-        attempts_per_second: attempts.saturating_mul(1_000_000_000) / elapsed.as_nanos().max(1),
+        proposals_per_second: counters.proposal_attempts.saturating_mul(1_000_000_000)
+            / elapsed.as_nanos().max(1),
         final_vertices: tri.number_of_vertices(),
         final_simplices: tri.number_of_simplices(),
     };
@@ -967,7 +1162,7 @@ where
         mode: config.mode.label(),
         validation_scope: PACHNER_STRESS_VALIDATION_SCOPE_LABEL,
         configured_vertices: config.vertex_count.get(),
-        attempts: config.move_attempts().get(),
+        configured_steps: config.move_attempts().get(),
         validate_every: config.validate_every().get(),
         key_refresh_every: config.key_refresh_every().get(),
         retry_attempts: config.retry_attempts().get(),
@@ -1062,7 +1257,7 @@ fn run_pachner_round_trip_sequence<const D: usize>(
         match dt.propose_pachner(request) {
             Ok(proposal) => {
                 let Ok(forward) = proposal.attempt_on(dt) else {
-                    counters.proposal_rejections = counters.proposal_rejections.saturating_add(1);
+                    counters.record_proposal_rejection();
                     maybe_validate_stress_step(
                         dt,
                         config,
@@ -1073,13 +1268,13 @@ fn run_pachner_round_trip_sequence<const D: usize>(
                     )?;
                     continue;
                 };
-                counters.accepted = counters.accepted.saturating_add(1);
+                counters.record_accepted_mutation();
                 let inverse = inverse_move_from_forward_result(dt, &forward)?;
                 let _inverse_result = dt.propose_pachner(inverse)?.attempt_on(dt)?;
-                counters.accepted = counters.accepted.saturating_add(1);
+                counters.record_accepted_mutation();
             }
             Err(_) => {
-                counters.proposal_rejections = counters.proposal_rejections.saturating_add(1);
+                counters.record_proposal_rejection();
             }
         }
 
@@ -1113,14 +1308,14 @@ fn run_pachner_random_walk_sequence<const D: usize>(
         match dt.propose_pachner(request) {
             Ok(proposal) => match proposal.attempt_on(dt) {
                 Ok(_) => {
-                    counters.accepted = counters.accepted.saturating_add(1);
+                    counters.record_accepted_mutation();
                 }
                 Err(_) => {
-                    counters.proposal_rejections = counters.proposal_rejections.saturating_add(1);
+                    counters.record_proposal_rejection();
                 }
             },
             Err(_) => {
-                counters.proposal_rejections = counters.proposal_rejections.saturating_add(1);
+                counters.record_proposal_rejection();
             }
         }
 
@@ -1180,15 +1375,15 @@ fn validate_stress_step<const D: usize>(
             config,
             PachnerStressProgress {
                 sequence,
-                step,
-                attempts: config.move_attempts().get(),
-                accepted: counters.accepted,
-                rejected: counters.rejected(),
+                completed_steps: step,
+                configured_steps: config.move_attempts().get(),
+                proposal_attempts: counters.proposal_attempts,
+                accepted_mutations: counters.accepted_mutations,
                 candidate_misses: counters.candidate_misses,
                 proposal_rejections: counters.proposal_rejections,
                 validations: counters.validations,
                 validation_nanos: counters.validation_nanos,
-                acceptance_rate: stress_acceptance_rate(config, *counters)?,
+                acceptance_rate: stress_acceptance_rate(*counters)?,
                 vertices: dt.number_of_vertices(),
                 simplices: dt.number_of_simplices(),
             },
@@ -1216,25 +1411,26 @@ fn validate_stress_topology_state<const D: usize>(
     Ok(())
 }
 
-/// Convert bounded diagnostic counters into f64 telemetry values.
-fn trace_value(value: usize) -> Result<f64, TryFromIntError> {
-    u32::try_from(value).map(f64::from)
-}
-
-/// Compute accepted mutation ratio from flat stress counters.
-fn stress_acceptance_rate(
-    config: PachnerStressConfig,
-    counters: PachnerStressCounters,
-) -> Result<f64, PachnerStressError> {
-    let expected = config
-        .move_attempts()
-        .get()
-        .saturating_mul(config.mode.expected_moves_per_step());
-    let total = trace_value(expected)?;
-    if total == 0.0 {
+/// Compute the accepted-mutation ratio over proposals completed so far.
+fn stress_acceptance_rate(counters: PachnerStressCounters) -> Result<f64, PachnerStressError> {
+    if counters.proposal_attempts == 0 {
         Ok(0.0)
     } else {
-        Ok(trace_value(counters.accepted)? / total)
+        let accepted =
+            counters
+                .accepted_mutations
+                .to_f64()
+                .ok_or(PachnerStressError::CounterConversion {
+                    value: counters.accepted_mutations,
+                })?;
+        let proposals =
+            counters
+                .proposal_attempts
+                .to_f64()
+                .ok_or(PachnerStressError::CounterConversion {
+                    value: counters.proposal_attempts,
+                })?;
+        Ok(accepted / proposals)
     }
 }
 
@@ -1245,14 +1441,14 @@ fn stress_validation_context(
     counters: PachnerStressCounters,
 ) -> String {
     format!(
-        "Pachner stress validation label={} mode={} step={} attempts={} accepted={} \
-         rejected={} candidate_misses={} proposal_rejections={}",
+        "Pachner stress validation label={} mode={} completed_steps={} configured_steps={} \
+         proposal_attempts={} accepted_mutations={} candidate_misses={} proposal_rejections={}",
         config.label(),
         config.mode.label(),
         step,
         config.move_attempts().get(),
-        counters.accepted,
-        counters.rejected(),
+        counters.proposal_attempts,
+        counters.accepted_mutations,
         counters.candidate_misses,
         counters.proposal_rejections
     )
@@ -1429,8 +1625,9 @@ fn create_progress_writer(path: &ArtifactPath) -> Result<BufWriter<File>, Pachne
     let mut writer = path.create_writer()?;
     writeln!(
         writer,
-        "dimension,label,mode,validation_scope,sequence,step,attempts,accepted,rejected,candidate_misses,\
-         proposal_rejections,validations,validation_nanos,acceptance_rate,vertices,simplices"
+        "schema_version,dimension,label,mode,validation_scope,sequence,completed_steps,configured_steps,\
+         proposal_attempts,accepted_mutations,candidate_misses,proposal_rejections,validations,\
+         validation_nanos,acceptance_rate,vertices,simplices"
     )
     .map_err(|source| PachnerStressError::ArtifactWrite {
         path: path.as_path().to_owned(),
@@ -1528,6 +1725,29 @@ enum PachnerStressError {
         source: io::Error,
     },
 
+    /// The target filesystem's missing-name behavior could not be probed.
+    #[error("failed to {operation} at {path:?}: {source}")]
+    ArtifactCollisionProbe {
+        /// Probe operation that failed.
+        operation: PachnerStressArtifactProbeOperation,
+        /// Exact probe path involved in the failure.
+        path: PathBuf,
+        /// Underlying operating-system error.
+        #[source]
+        source: io::Error,
+    },
+
+    /// Every bounded collision-probe name was already present.
+    #[error(
+        "failed to reserve an artifact collision probe under {directory:?} after {attempts} attempts"
+    )]
+    ArtifactCollisionProbeExhausted {
+        /// Existing destination directory where probes were attempted.
+        directory: PathBuf,
+        /// Bounded number of unique names attempted.
+        attempts: u32,
+    },
+
     /// Streaming a diagnostic artifact failed.
     #[error("failed to write artifact {path:?}: {source}")]
     ArtifactWrite {
@@ -1620,12 +1840,11 @@ enum PachnerStressError {
         source: FlipError,
     },
 
-    /// Diagnostic counter conversion exceeded f64-safe trace storage.
-    #[error("Pachner stress diagnostic counter conversion failed: {source}")]
+    /// A diagnostic counter could not be represented in rate telemetry.
+    #[error("Pachner stress diagnostic counter {value} cannot be represented in rate telemetry")]
     CounterConversion {
-        /// Underlying integer conversion error.
-        #[from]
-        source: TryFromIntError,
+        /// Counter value that could not be converted.
+        value: u128,
     },
 
     /// A forward move reported an inserted face arity this stress mode cannot invert.
@@ -1701,8 +1920,12 @@ fn validated_nonzero_count<E>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::assert_relative_eq;
     #[cfg(unix)]
-    use std::os::unix::fs::symlink;
+    use std::{
+        ffi::OsString,
+        os::unix::{ffi::OsStringExt, fs::symlink},
+    };
     use std::{
         fs,
         path::Path,
@@ -1823,6 +2046,78 @@ mod tests {
     }
 
     #[test]
+    fn distinct_missing_names_keep_distinct_artifact_identities() {
+        let directory = target_artifact_path("distinct-missing", "dir");
+        fs::create_dir_all(&directory).expect("scratch directory should be created");
+        let first = ArtifactPath::try_new(directory.join("progress.csv"))
+            .expect("first output path should validate");
+        let second = ArtifactPath::try_new(directory.join("summary.json"))
+            .expect("second output path should validate");
+
+        assert!(
+            !artifact_paths_conflict(&first, &second)
+                .expect("distinct diagnostic artifact identities should compare")
+        );
+
+        fs::remove_dir_all(directory).expect("scratch directory should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_missing_names_keep_exact_artifact_identities() {
+        let directory = target_artifact_path("non-utf8-missing", "dir");
+        fs::create_dir_all(&directory).expect("scratch directory should be created");
+        let first_name = OsString::from_vec(vec![b'a', 0xfe, b'.', b'c', b's', b'v']);
+        let second_name = OsString::from_vec(vec![b'a', 0xff, b'.', b'c', b's', b'v']);
+        let first = directory.join(first_name);
+        let second = directory.join(second_name);
+
+        assert_ne!(
+            artifact_path_identity(&first)
+                .expect("first non-UTF-8 artifact identity should resolve"),
+            artifact_path_identity(&second)
+                .expect("second non-UTF-8 artifact identity should resolve")
+        );
+
+        fs::remove_dir_all(directory).expect("scratch directory should be removed");
+    }
+
+    #[test]
+    fn missing_name_collisions_follow_the_destination_filesystem_case_rules() {
+        let directory = target_artifact_path("case-sensitive-missing", "dir");
+        fs::create_dir_all(&directory).expect("scratch directory should be created");
+        let case_probe_upper = directory.join("CaseProbe");
+        let case_probe_lower = directory.join("caseprobe");
+        fs::write(&case_probe_upper, b"upper").expect("case probe should be created");
+        let case_sensitive = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&case_probe_lower)
+        {
+            Ok(file) => {
+                drop(file);
+                fs::remove_file(&case_probe_lower).expect("lower case probe should be removed");
+                true
+            }
+            Err(source) if source.kind() == io::ErrorKind::AlreadyExists => false,
+            Err(source) => panic!("lower case probe should be created: {source}"),
+        };
+        fs::remove_file(case_probe_upper).expect("upper case probe should be removed");
+
+        let upper = ArtifactPath::try_new(directory.join("Progress.csv"))
+            .expect("upper-case output path should validate");
+        let lower = ArtifactPath::try_new(directory.join("progress.csv"))
+            .expect("lower-case output path should validate");
+        assert_eq!(
+            artifact_paths_conflict(&upper, &lower)
+                .expect("filesystem-aware diagnostic artifact identities should compare"),
+            !case_sensitive
+        );
+
+        fs::remove_dir_all(directory).expect("scratch directory should be removed");
+    }
+
+    #[test]
     fn existing_hard_link_aliases_share_one_diagnostic_artifact_identity() {
         let directory = target_artifact_path("hard-link-alias", "dir");
         fs::create_dir_all(&directory).expect("scratch directory should be created");
@@ -1905,8 +2200,9 @@ mod tests {
         let header = fs::read_to_string(&path).expect("progress CSV header should be readable");
         assert_eq!(
             header,
-            "dimension,label,mode,validation_scope,sequence,step,attempts,accepted,rejected,candidate_misses,\
-             proposal_rejections,validations,validation_nanos,acceptance_rate,vertices,simplices\n"
+            "schema_version,dimension,label,mode,validation_scope,sequence,completed_steps,configured_steps,\
+             proposal_attempts,accepted_mutations,candidate_misses,proposal_rejections,validations,\
+             validation_nanos,acceptance_rate,vertices,simplices\n"
         );
         fs::remove_file(path).expect("progress CSV fixture should be removed");
     }
@@ -1930,5 +2226,57 @@ mod tests {
         assert_eq!(config.validate_every().get(), 2);
         assert_eq!(config.key_refresh_every().get(), 7);
         assert_eq!(config.retry_attempts().get(), 4);
+    }
+
+    #[test]
+    fn attempts_accept_the_full_usize_domain_in_both_modes() {
+        let maximum = usize::MAX.to_string();
+        for mode in ["round-trip", "random-walk"] {
+            let args = PachnerStressArgs::try_parse_from([
+                "pachner-stress",
+                "--mode",
+                mode,
+                "--vertices",
+                "4",
+                "--attempts",
+                maximum.as_str(),
+            ])
+            .expect("usize::MAX should parse as a raw attempt count");
+            let command = args
+                .into_validated()
+                .expect("usize::MAX should remain valid through semantic parsing");
+
+            assert_eq!(command.config.move_attempts().get(), usize::MAX);
+        }
+    }
+
+    #[test]
+    fn acceptance_rate_uses_completed_proposals_not_configured_steps() {
+        let counters = PachnerStressCounters {
+            proposal_attempts: 2,
+            accepted_mutations: 1,
+            ..PachnerStressCounters::default()
+        };
+
+        assert_relative_eq!(
+            stress_acceptance_rate(counters).expect("bounded counters should convert"),
+            0.5
+        );
+    }
+
+    #[test]
+    fn acceptance_rate_covers_maximum_round_trip_proposal_domain() {
+        let maximum_steps = u128::try_from(usize::MAX)
+            .expect("the platform usize domain should fit u128 telemetry");
+        let counters = PachnerStressCounters {
+            proposal_attempts: maximum_steps * 2,
+            accepted_mutations: maximum_steps * 2 - 1,
+            ..PachnerStressCounters::default()
+        };
+
+        let rate = stress_acceptance_rate(counters)
+            .expect("the accepted usize counter domain should convert end-to-end");
+        assert!(rate.is_finite());
+        assert!((0.0..=1.0).contains(&rate));
     }
 }

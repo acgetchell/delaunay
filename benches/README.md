@@ -179,8 +179,19 @@ allocation checks, or targeted diagnostics.
 | `realization_validation.rs` | Level 4 narrow phase and whole validation | Realistic/near-degenerate 2D-5D | ~1-5 min | Level 4 tuning |
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex deletion |
 | `locate.rs` | Point-location facet-walk latency (no-hint vs exact-hint) | 2D-5D fixed cases | ~1-3 min | Locate/walk tuning |
-| `tds_clone.rs` | `Tds::clone()` snapshot cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback design baselines |
+| `tds_clone.rs` | Owner clone and topology-view cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback and incidence baselines |
 | `topology_guarantee_construction.rs` | Cost of PL-manifold validation audit cadences | 2D-5D construction cases | ~45-60 min | Manual topology policy work |
+
+### Checkpoint Serialization Workload Identity
+
+The current checkpoint workload identity is
+`checkpoint-serialization/u32-payloads-v1`. Its 8×8 fixture stores the row-major
+index `row * 8 + column` as each vertex's `u32` payload and stores the simplex
+vertex count (three for this 2D triangulation) as each simplex's `u32` payload.
+This is an intentional incompatible replacement for the earlier unit-payload
+workload: unit-payload timings and saved Criterion baselines must not be compared
+with this identity. Delete or rename an old saved checkpoint baseline and create
+a fresh `u32-payloads-v1` baseline before drawing performance conclusions.
 
 ## Selection Guide
 
@@ -432,10 +443,11 @@ just bench-pachner-stress
 
 The `just pachner-stress` recipe runs 9,000 vertices in 3D and 1,000 vertices in
 4D; the dimension-specific recipes use the same defaults. These recipes default
-to 100 attempted Pachner steps with topology validation every 10 attempts. The
-direct `pachner-stress` binary has larger soak-test defaults: 10,000
-vertices in 3D or 1,000 in 4D, 100,000 attempts, and validation every 1,000
-attempts.
+to 100 workload steps with topology validation every 10 steps. `--attempts`
+retains its flag spelling but counts workload steps: one forward/inverse pair in
+`round-trip` mode or one candidate/proposal cycle in `random-walk` mode. The
+direct `pachner-stress` binary has larger soak-test defaults: 10,000 vertices in
+3D or 1,000 in 4D, 100,000 steps, and validation every 1,000 steps.
 
 The default `round-trip` mode commits a forward move and its inverse when a
 candidate is locally valid. The `random-walk` mode commits accepted moves over
@@ -443,8 +455,12 @@ an evolving triangulation. Both modes write progress CSV and summary JSON under
 `target/pachner_stress/` and also emit parseable stdout telemetry: one
 `pachner_stress_source` line for the prepared triangulation,
 `pachner_stress_progress` lines after each validation cadence, and a final
-`pachner_stress_metric` line with accepted/rejected attempts, proposal
-diagnostics, validation time, and final topology size.
+`pachner_stress_metric` line with proposal attempts, accepted mutations,
+proposal rejections, validation time, and final topology size. Summary and
+progress schema version 2 names the units explicitly: `configured_steps` and
+`completed_steps` describe workload progress, while `proposal_attempts` and
+`accepted_mutations` describe actual Pachner work. Interim acceptance rates use
+completed proposal attempts as their denominator.
 
 Use `just bench-pachner-stress*` for Criterion timing evidence. Criterion
 requires at least 10 samples. The benchmark recipe measures stable accepted

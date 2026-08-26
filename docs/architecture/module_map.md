@@ -46,7 +46,7 @@ algorithm machinery that operates on it:
 - `adjacency.rs` - optional lifetime-bound topology indexes:
   `IncidenceView`, `EdgeIndex`, `SimplexNeighborIndex`, and
   `TriangulationAdjacency`.
-- `facet_incidence.rs` - TDS-level one-sided/two-sided facet incidence
+- `facet_incidence.rs` - inherent TDS-level one-sided/two-sided facet incidence
   analysis; topology-aware boundary classification lives in the
   `Triangulation`/manifold layer.
 - `collections/` - optimized collection aliases, key maps, buffers, and
@@ -60,7 +60,7 @@ algorithm machinery that operates on it:
   does not own a construction workflow.
 - `algorithms/` also owns point location and PL-manifold repair algorithms
   alongside the focused flip module.
-- `traits/` - core boundary/data trait definitions and facet-incidence analysis.
+- `traits/` - core boundary and data trait definitions.
 - `util/` - shared helpers for UUIDs, hashing, deduplication, allocation
   measurement, facet keys, Jaccard diagnostics, Hilbert ordering, and
   canonical point order.

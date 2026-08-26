@@ -31,7 +31,7 @@ use slotmap::SparseSecondaryMap;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::construction::*;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -81,7 +81,7 @@ pub type SimplexSecondaryMap<V> = SparseSecondaryMap<SimplexKey, V>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::construction::*;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {

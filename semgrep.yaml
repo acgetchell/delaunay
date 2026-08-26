@@ -3069,7 +3069,7 @@ rules:
         - "/scripts/**/*.py"
       exclude:
         - "/tests/semgrep/**"
-    pattern-regex: '^\s*except\s+Exception(?:\s+as\s+\w+)?\s*:'
+    pattern-regex: '^\s*except\s+(?:Exception|\([^)]*\bException\b[^)]*\))(?:\s+as\s+\w+)?\s*:'
 
   - id: delaunay.python.no-future-annotations-on-python314
     languages:
@@ -3389,6 +3389,8 @@ rules:
       - pattern: subprocess.check_output(...)
       - pattern: subprocess.getoutput(...)
       - pattern: subprocess.getstatusoutput(...)
+      - pattern: asyncio.create_subprocess_exec(...)
+      - pattern: asyncio.create_subprocess_shell(...)
       - pattern: os.system(...)
 
   - id: delaunay.python.safe-tar-extraction
@@ -3439,27 +3441,27 @@ rules:
           - pattern: $PATH.open($MODE, ...)
           - metavariable-regex:
               metavariable: $MODE
-              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+              regex: '^[''\"][rwaxtb+]*[wax+][rwaxtb+]*[''\"]$'
       - patterns:
           - pattern: $PATH.open(mode=$MODE, ...)
           - metavariable-regex:
               metavariable: $MODE
-              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+              regex: '^[''\"][rwaxtb+]*[wax+][rwaxtb+]*[''\"]$'
       - patterns:
           - pattern: open($PATH, $MODE, ...)
           - metavariable-regex:
               metavariable: $MODE
-              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+              regex: '^[''\"][rwaxtb+]*[wax+][rwaxtb+]*[''\"]$'
       - patterns:
           - pattern: open($PATH, mode=$MODE, ...)
           - metavariable-regex:
               metavariable: $MODE
-              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+              regex: '^[''\"][rwaxtb+]*[wax+][rwaxtb+]*[''\"]$'
       - patterns:
           - pattern: open(file=$PATH, mode=$MODE, ...)
           - metavariable-regex:
               metavariable: $MODE
-              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+              regex: '^[''\"][rwaxtb+]*[wax+][rwaxtb+]*[''\"]$'
 
   - id: delaunay.python.performance-promotion-is-csv-only
     languages:

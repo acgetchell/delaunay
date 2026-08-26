@@ -6,7 +6,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::{construction::*, topology::validation::*};
 //!
 //! # #[derive(Debug, thiserror::Error)]
 //! # enum ExampleError {
@@ -204,7 +204,7 @@ pub enum TopologyClassification {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, topology::validation::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -469,7 +469,7 @@ fn insert_simplices_of_size(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, topology::validation::*};
 /// use delaunay::prelude::topology::validation::euler;
 ///
 /// # #[derive(Debug, thiserror::Error)]
@@ -765,7 +765,7 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, topology::validation::*};
 /// use delaunay::prelude::topology::validation::TopologyClassification;
 ///
 /// # #[derive(Debug, thiserror::Error)]

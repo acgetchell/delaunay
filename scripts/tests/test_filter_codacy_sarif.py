@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ci import filter_codacy_sarif
 from ci.filter_codacy_sarif import JsonObject, is_json_object, load_sarif, parse_sarif_document, split_sarif_runs, write_github_env
 
 if TYPE_CHECKING:
@@ -97,6 +98,17 @@ def test_split_requires_runs_array(tmp_path: Path) -> None:
         split_sarif_runs(parse_sarif_document({}), tmp_path / "sarif")
 
 
+def test_structurally_valid_empty_runs_publish_an_empty_generation(tmp_path: Path) -> None:
+    """Only validated runs with no rules or results may yield no output files."""
+    out_dir = tmp_path / "sarif"
+    out_dir.mkdir()
+    (out_dir / "stale.sarif").write_text("old generation\n", encoding="utf-8")
+    sarif = parse_sarif_document({"runs": [{"tool": {"driver": {"name": "ruff"}}}]})
+
+    assert split_sarif_runs(sarif, out_dir) == 0
+    assert list(out_dir.iterdir()) == []
+
+
 def test_load_sarif_rejects_non_object_root(tmp_path: Path) -> None:
     """The JSON boundary rejects non-object SARIF before split processing."""
     sarif = tmp_path / "codacy.sarif"
@@ -144,11 +156,127 @@ def test_load_sarif_failure_does_not_touch_output_directory(tmp_path: Path) -> N
     assert stale.read_text(encoding="utf-8") == "keep me\n"
 
 
-def test_split_skips_malformed_run_entries(tmp_path: Path) -> None:
-    """Malformed run entries stay rejected after the root document is parsed."""
-    sarif = parse_sarif_document({"runs": ["not-a-run", {"tool": {"driver": {"name": "ruff"}}, "results": [{"ruleId": "F401"}]}]})
+@pytest.mark.parametrize(
+    ("run", "message"),
+    [
+        ("not-a-run", "run 2 must be a JSON object"),
+        ({}, "run 2 must contain a tool object"),
+        ({"tool": []}, "run 2 must contain a tool object"),
+        ({"tool": {}}, "run 2 must contain a tool.driver object"),
+        ({"tool": {"driver": {"name": ""}}}, "run 2 must contain a non-empty tool.driver.name string"),
+        ({"tool": {"driver": {"name": "ruff", "rules": {}}}}, "run 2 tool.driver.rules must be an array"),
+        ({"tool": {"driver": {"name": "ruff", "rules": ["F401"]}}}, "run 2 tool.driver.rules entry 1 must be a JSON object"),
+        ({"tool": {"driver": {"name": "ruff"}}, "results": {}}, "run 2 results must be an array"),
+        ({"tool": {"driver": {"name": "ruff"}}, "results": ["F401"]}, "run 2 results entry 1 must be a JSON object"),
+        ({"tool": {"driver": {"name": "ruff"}}, "automationDetails": []}, "run 2 automationDetails must be a JSON object"),
+    ],
+)
+def test_parse_rejects_each_malformed_run_before_destination_changes(tmp_path: Path, run: object, message: str) -> None:
+    """Indexed run-shape errors fail before a prior output generation is touched."""
+    out_dir = tmp_path / "sarif"
+    out_dir.mkdir()
+    previous = out_dir / "previous.sarif"
+    previous.write_text("old generation\n", encoding="utf-8")
 
-    assert split_sarif_runs(sarif, tmp_path / "sarif") == 1
+    with pytest.raises(SystemExit, match=message):
+        parse_sarif_document({"runs": [{"tool": {"driver": {"name": "valid"}}}, run]})
+
+    assert previous.read_text(encoding="utf-8") == "old generation\n"
+
+
+def test_staging_write_failure_preserves_the_previous_complete_generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failure while staging a later run never exposes partial replacement files."""
+    out_dir = tmp_path / "sarif"
+    out_dir.mkdir()
+    previous = out_dir / "previous.sarif"
+    previous.write_text("old generation\n", encoding="utf-8")
+    sarif = parse_sarif_document(
+        {
+            "runs": [
+                {"tool": {"driver": {"name": "ruff"}}, "results": [{"ruleId": "F401"}]},
+                {"tool": {"driver": {"name": "mypy"}}, "results": [{"ruleId": "assignment"}]},
+            ]
+        }
+    )
+    real_write = filter_codacy_sarif._write_staged_sarif
+    write_count = 0
+
+    def fail_second_write(path: Path, payload: str) -> None:
+        nonlocal write_count
+        write_count += 1
+        if write_count == 2:
+            message = "injected staging write failure"
+            raise OSError(message)
+        real_write(path, payload)
+
+    monkeypatch.setattr(filter_codacy_sarif, "_write_staged_sarif", fail_second_write)
+
+    with pytest.raises(OSError, match="injected staging write failure"):
+        split_sarif_runs(sarif, out_dir)
+
+    assert sorted(path.name for path in out_dir.iterdir()) == ["previous.sarif"]
+    assert previous.read_text(encoding="utf-8") == "old generation\n"
+
+
+def test_serialization_failure_precedes_staging_and_preserves_previous_generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every output is serialized before the publisher can touch its destination."""
+    out_dir = tmp_path / "sarif"
+    out_dir.mkdir()
+    previous = out_dir / "previous.sarif"
+    previous.write_text("old generation\n", encoding="utf-8")
+    sarif = parse_sarif_document(
+        {
+            "runs": [
+                {"tool": {"driver": {"name": "ruff"}}, "results": [{"ruleId": "F401"}]},
+                {"tool": {"driver": {"name": "mypy"}}, "results": [{"ruleId": "assignment"}]},
+            ]
+        }
+    )
+    real_dumps = filter_codacy_sarif.json.dumps
+    serialization_count = 0
+
+    def fail_second_serialization(value: object, *, indent: int, allow_nan: bool) -> str:
+        nonlocal serialization_count
+        serialization_count += 1
+        if serialization_count == 2:
+            message = "injected serialization failure"
+            raise ValueError(message)
+        return real_dumps(value, indent=indent, allow_nan=allow_nan)
+
+    monkeypatch.setattr(filter_codacy_sarif.json, "dumps", fail_second_serialization)
+
+    with pytest.raises(ValueError, match="injected serialization failure"):
+        split_sarif_runs(sarif, out_dir)
+
+    assert sorted(path.name for path in out_dir.iterdir()) == ["previous.sarif"]
+    assert previous.read_text(encoding="utf-8") == "old generation\n"
+
+
+def test_commit_replace_failure_rolls_back_the_previous_complete_generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed staged-directory commit restores the exact prior generation."""
+    out_dir = tmp_path / "sarif"
+    out_dir.mkdir()
+    previous = out_dir / "previous.sarif"
+    previous.write_text("old generation\n", encoding="utf-8")
+    sarif = parse_sarif_document({"runs": [{"tool": {"driver": {"name": "ruff"}}, "results": [{"ruleId": "F401"}]}]})
+    real_replace = filter_codacy_sarif._replace_path
+    replace_count = 0
+
+    def fail_staged_commit(source: Path, destination: Path) -> None:
+        nonlocal replace_count
+        replace_count += 1
+        if replace_count == 2:
+            message = "injected commit replace failure"
+            raise OSError(message)
+        real_replace(source, destination)
+
+    monkeypatch.setattr(filter_codacy_sarif, "_replace_path", fail_staged_commit)
+
+    with pytest.raises(OSError, match="injected commit replace failure"):
+        split_sarif_runs(sarif, out_dir)
+
+    assert sorted(path.name for path in out_dir.iterdir()) == ["previous.sarif"]
+    assert previous.read_text(encoding="utf-8") == "old generation\n"
 
 
 def test_write_github_env_records_upload_state(tmp_path: Path) -> None:

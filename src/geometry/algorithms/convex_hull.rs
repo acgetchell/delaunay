@@ -10,7 +10,7 @@
 //! # Example
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::{construction::*, query::*};
 //! use delaunay::prelude::query::ConvexHull;
 //!
 //! # #[derive(Debug, thiserror::Error)]
@@ -47,7 +47,6 @@ use crate::core::collections::{
     FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
 use crate::core::facet::FacetError;
-use crate::core::traits::data_type::DataType;
 use crate::core::util::stable_facet_identifier_from_vertex_uuids;
 use crate::core::vertex::Vertex;
 use crate::geometry::point::Point;
@@ -209,12 +208,12 @@ impl<U, const D: usize> ConvexHullVertex<U, D> {
     }
 }
 
-impl<U: Copy, const D: usize> From<&Vertex<U, D>> for ConvexHullVertex<U, D> {
+impl<U: Clone, const D: usize> From<&Vertex<U, D>> for ConvexHullVertex<U, D> {
     fn from(vertex: &Vertex<U, D>) -> Self {
         Self {
             point: *vertex.point(),
             uuid: vertex.uuid(),
-            data: vertex.data().copied(),
+            data: vertex.data().cloned(),
         }
     }
 }
@@ -353,7 +352,7 @@ impl<U, const D: usize> ConvexHull<U, D> {
 
 impl<U, const D: usize> ConvexHull<U, D>
 where
-    U: DataType,
+    U: Clone + PartialEq,
 {
     /// Parses and certifies a convex hull from a triangulation boundary.
     ///
@@ -368,21 +367,62 @@ where
     /// the input is empty or closed, a facet is malformed or degenerate, or a
     /// source vertex disproves boundary convexity.
     ///
+    /// Vertex payloads are cloned into the owned hull and compared only when
+    /// one stable vertex identity appears in multiple boundary records. Thus
+    /// `U` requires [`Clone`] and [`PartialEq`], while source simplex payloads
+    /// are not inspected and impose no bound on `V`.
+    ///
     /// # Performance
     ///
     /// Construction copies the boundary and performs one orientation predicate
     /// per source-vertex/facet pair. Later visibility queries inspect only the
     /// owned hull and never rebuild a source-TDS lookup.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    /// };
+    /// use delaunay::prelude::geometry::CoordinateConversionError;
+    /// use delaunay::prelude::query::{
+    ///     ConvexHull, ConvexHullConstructionError, ConvexHullQueryError, Point,
+    /// };
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     HullConstruction(#[from] ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     HullQuery(#[from] ConvexHullQueryError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let hull = ConvexHull::try_from_triangulation(triangulation.as_triangulation())?;
+    /// let outside = Point::try_from([2.0, 2.0, 2.0])?;
+    ///
+    /// assert!(hull.is_point_outside(&outside)?);
+    /// assert_eq!(hull.facets().count(), 4);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[expect(
         clippy::too_many_lines,
         reason = "the publication boundary keeps ordered parsing and proof checks visible together"
     )]
     pub fn try_from_triangulation<K, V>(
         tri: &Triangulation<K, U, V, D>,
-    ) -> Result<Self, ConvexHullConstructionError>
-    where
-        V: DataType,
-    {
+    ) -> Result<Self, ConvexHullConstructionError> {
         if tri.number_of_vertices() == 0 {
             return Err(ConvexHullConstructionError::InsufficientData {
                 reason: ConvexHullInsufficientDataReason::NoVertices,
@@ -439,9 +479,7 @@ where
 
                 let stored_index = if let Some(&stored_index) = vertex_indices.get(&vertex_uuid) {
                     let stored = &vertices[stored_index];
-                    if stored.point() != vertex.point()
-                        || stored.data().copied() != vertex.data().copied()
-                    {
+                    if stored.point() != vertex.point() || stored.data() != vertex.data() {
                         return Err(ConvexHullConstructionError::ConflictingVertexIdentity {
                             vertex_uuid,
                         });
@@ -515,7 +553,9 @@ where
 
         ConvexHullDraft { vertices, facets }.certify(tri)
     }
+}
 
+impl<U, const D: usize> ConvexHull<U, D> {
     /// Finds all facets visible from `point`.
     ///
     /// # Errors
@@ -579,17 +619,11 @@ where
     }
 }
 
-impl<U, const D: usize> ConvexHullDraft<U, D>
-where
-    U: DataType,
-{
+impl<U, const D: usize> ConvexHullDraft<U, D> {
     fn certify<K, V>(
         self,
         tri: &Triangulation<K, U, V, D>,
-    ) -> Result<ConvexHull<U, D>, ConvexHullConstructionError>
-    where
-        V: DataType,
-    {
+    ) -> Result<ConvexHull<U, D>, ConvexHullConstructionError> {
         for (facet_index, facet) in self.facets.iter().enumerate() {
             let facet_uuids: FastHashSet<Uuid> = facet
                 .vertex_indices
@@ -792,6 +826,18 @@ mod tests {
             })
             .collect();
 
-        assert!(handles.into_iter().all(|handle| handle.join().unwrap()));
+        let results: Vec<_> = handles
+            .into_iter()
+            .enumerate()
+            .map(|(worker, handle)| (worker, handle.join()))
+            .collect();
+
+        for (worker, result) in results {
+            let is_outside = result.unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+            assert!(
+                is_outside,
+                "worker {worker} should classify its point as outside"
+            );
+        }
     }
 }

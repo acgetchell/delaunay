@@ -701,8 +701,9 @@ until trusted periodic construction is available in those dimensions.
 - **Vertex Validity**: All vertices pass `Vertex::is_valid()`
 - **Simplex Validity**: All simplices pass `Simplex::is_valid()`
 - **Simplex Coordinate Uniqueness**: No simplex contains two vertices with identical coordinates
-  (exact `OrderedFloat` comparison). Duplicate-coordinate vertices produce zero-volume
-  simplices that break SoS and Pachner moves.
+  (exact `OrderedFloat` comparison). SoS can distinguish repeated coordinates by
+  vertex identity symbolically, but the unperturbed simplex is still zero-volume
+  and not a valid realization for Pachner moves.
   **Note**: Level 2 `is_valid()` and `structure_report()` do **not** check coordinate uniqueness.
   Use cumulative `validate()` or `validation_report()` for the stronger Level 1 guarantee.
 

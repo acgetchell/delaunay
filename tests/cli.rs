@@ -4,6 +4,7 @@
 
 #[cfg(feature = "cli")]
 mod cli_tests {
+    use approx::assert_abs_diff_eq;
     use ciborium::value::Value as CborValue;
     use delaunay::prelude::checkpoint::{
         DELAUNAY_CHECKPOINT_SCHEMA_VERSION, DelaunayCheckpointManifest,
@@ -201,6 +202,9 @@ mod cli_tests {
         let diagnostic_help = output_text(&diagnostic_help.stdout);
         assert!(diagnostic_help.contains("Run validated Pachner-move stress diagnostics"));
         assert!(diagnostic_help.contains("--dimension"));
+        assert!(diagnostic_help.contains("Workload steps"));
+        assert!(diagnostic_help.contains("round-trip mode"));
+        assert!(!diagnostic_help.contains("Attempted Pachner moves"));
     }
 
     #[test]
@@ -594,7 +598,7 @@ mod cli_tests {
             "--vertices",
             "5",
             "--attempts",
-            "1",
+            "2",
             "--validate-every",
             "1",
             "--key-refresh-every",
@@ -617,43 +621,73 @@ mod cli_tests {
 
         let json = file_json(&summary_path);
         assert_eq!(json["schema"], "delaunay.pachner_stress");
-        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["schema_version"], 2);
         assert_eq!(json["dimension"], 3);
         assert_eq!(json["label"], "3d");
         assert_eq!(json["mode"], "round-trip");
         assert_eq!(json["validation_scope"], "topology");
         assert_eq!(json["configured_vertices"], 5);
-        assert_eq!(json["attempts"], 1);
+        assert_eq!(json["configured_steps"], 2);
         assert_eq!(json["validate_every"], 1);
         assert_eq!(json["key_refresh_every"], 1);
         assert_eq!(json["retry_attempts"], 4);
         assert_eq!(json["seed"], 7);
         assert_eq!(json["source"]["mode"], "round-trip");
         assert_eq!(json["source"]["validation_scope"], "topology");
-        assert_eq!(json["report"]["attempts"], 1);
+        assert_eq!(json["report"]["completed_steps"], 2);
+        let proposal_attempts = json["report"]["proposal_attempts"]
+            .as_u64()
+            .expect("proposal attempts should be an unsigned count");
+        let accepted_mutations = json["report"]["accepted_mutations"]
+            .as_u64()
+            .expect("accepted mutations should be an unsigned count");
+        let proposal_rejections = json["report"]["proposal_rejections"]
+            .as_u64()
+            .expect("proposal rejections should be an unsigned count");
+        assert_eq!(proposal_attempts, accepted_mutations + proposal_rejections);
+        assert!(proposal_attempts <= 4);
+        assert!(json.get("attempts").is_none());
+        assert!(json["report"].get("accepted").is_none());
 
         let progress = fs::read_to_string(progress_path).expect("progress CSV should be readable");
         let rows: Vec<_> = progress.lines().collect();
         assert_eq!(
             rows.len(),
-            2,
-            "expected one CSV header and one progress row"
+            3,
+            "expected one CSV header and two progress rows"
         );
         assert_eq!(
             rows[0],
-            "dimension,label,mode,validation_scope,sequence,step,attempts,accepted,rejected,candidate_misses,\
-             proposal_rejections,validations,validation_nanos,acceptance_rate,vertices,simplices"
+            "schema_version,dimension,label,mode,validation_scope,sequence,completed_steps,configured_steps,\
+             proposal_attempts,accepted_mutations,candidate_misses,proposal_rejections,validations,\
+             validation_nanos,acceptance_rate,vertices,simplices"
         );
         let fields: Vec<_> = rows[1].split(',').collect();
-        assert_eq!(fields.len(), 16);
-        assert_eq!(fields[0], "3");
-        assert_eq!(fields[1], "3d");
-        assert_eq!(fields[2], "round-trip");
-        assert_eq!(fields[3], "topology");
-        assert_eq!(fields[4], "1");
+        assert_eq!(fields.len(), 17);
+        assert_eq!(fields[0], "2");
+        assert_eq!(fields[1], "3");
+        assert_eq!(fields[2], "3d");
+        assert_eq!(fields[3], "round-trip");
+        assert_eq!(fields[4], "topology");
         assert_eq!(fields[5], "1");
         assert_eq!(fields[6], "1");
-        assert_eq!(fields[11], "1");
+        assert_eq!(fields[7], "2");
+        assert_eq!(fields[12], "1");
+        let completed_proposals = fields[8]
+            .parse::<u32>()
+            .expect("progress proposal attempts should parse");
+        let accepted = fields[9]
+            .parse::<u32>()
+            .expect("progress accepted mutations should parse");
+        let acceptance_rate = fields[14]
+            .parse::<f64>()
+            .expect("progress acceptance rate should parse");
+        assert!(completed_proposals > 0);
+        assert_abs_diff_eq!(
+            acceptance_rate,
+            f64::from(accepted) / f64::from(completed_proposals),
+            epsilon = 1.0e-6
+        );
     }
 
     #[test]
@@ -692,12 +726,24 @@ mod cli_tests {
         assert_eq!(json["mode"], "random-walk");
         assert_eq!(json["validation_scope"], "topology");
         assert_eq!(json["configured_vertices"], 5);
-        assert_eq!(json["attempts"], 2);
+        assert_eq!(json["schema_version"], 2);
+        assert_eq!(json["configured_steps"], 2);
         assert_eq!(json["validate_every"], 1);
         assert_eq!(json["source"]["mode"], "random-walk");
         assert_eq!(json["source"]["validation_scope"], "topology");
-        assert_eq!(json["report"]["attempts"], 2);
+        assert_eq!(json["report"]["completed_steps"], 2);
         assert_eq!(json["report"]["validations"], 2);
+        let proposal_attempts = json["report"]["proposal_attempts"]
+            .as_u64()
+            .expect("proposal attempts should be an unsigned count");
+        let accepted_mutations = json["report"]["accepted_mutations"]
+            .as_u64()
+            .expect("accepted mutations should be an unsigned count");
+        let proposal_rejections = json["report"]["proposal_rejections"]
+            .as_u64()
+            .expect("proposal rejections should be an unsigned count");
+        assert_eq!(proposal_attempts, accepted_mutations + proposal_rejections);
+        assert!(proposal_attempts <= 2);
     }
 
     #[test]
@@ -731,6 +777,12 @@ mod cli_tests {
         assert!(stdout.contains("pachner_stress_source"));
         assert!(stdout.contains("pachner_stress_progress"));
         assert!(stdout.contains("pachner_stress_metric"));
+        assert!(stdout.contains("schema_version=2"));
+        assert!(stdout.contains("completed_steps=1 configured_steps=1"));
+        assert!(stdout.contains("proposal_attempts="));
+        assert!(stdout.contains("accepted_mutations="));
+        assert!(!stdout.contains(" attempts="));
+        assert!(!stdout.contains(" accepted="));
     }
 
     #[test]

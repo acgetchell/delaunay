@@ -349,7 +349,7 @@ fn scale_aware_epsilon<const D: usize>(
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, geometry::*};
 /// use delaunay::prelude::geometry::radius_ratio;
 ///
 /// # #[derive(Debug, thiserror::Error)]
@@ -462,7 +462,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, geometry::*};
 /// use delaunay::prelude::geometry::normalized_volume;
 ///
 /// # #[derive(Debug, thiserror::Error)]

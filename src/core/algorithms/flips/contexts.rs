@@ -13,9 +13,9 @@ use super::{
     ReplacementPeriodicOffsets, ReplacementSimplexVertices, RidgeHandle, Simplex, SimplexKey,
     SimplexKeyBuffer, SmallBuffer, Tds, TdsConstructionFailure, TriangleHandle, Vertex, VertexKey,
     VertexKeyList, apply_bistellar_flip_dynamic_raw, apply_bistellar_flip_raw,
-    apply_bistellar_flip_with_k, collect_simplices_around_ridge, env, facet_vertices_from_simplex,
-    k1_inserted_vertex_periodic_offset, lift_vertex_point, matching_source_simplex,
-    missing_opposite_for_simplex, once, periodic_offsets_or_zero_frame,
+    apply_bistellar_flip_with_k_raw, collect_simplices_around_ridge, env,
+    facet_vertices_from_simplex, k1_inserted_vertex_periodic_offset, lift_vertex_point,
+    matching_source_simplex, missing_opposite_for_simplex, once, periodic_offsets_or_zero_frame,
     predicate_key_from_vertices, prepare_bistellar_flip, ridge_vertices_from_simplex,
     robust_orientation, simplex_extras_for_ridge, vertex_point, vertex_point_lifted_into_simplex,
     vertices_to_points, vertices_to_points_with_optional_lift,
@@ -37,8 +37,6 @@ pub(super) fn is_delaunay_violation_k3<K, U, V, const D: usize>(
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     delaunay_violation_k3_for_ridge(
         tds,
@@ -89,11 +87,7 @@ pub(crate) fn validate_bistellar_flip_dynamic<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     k_move: usize,
     context: &FlipContextDyn<D>,
-) -> Result<FlipFeasibility<D>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FlipFeasibility<D>, FlipError> {
     Ok(prepare_bistellar_flip(
         tds,
         k_move,
@@ -115,7 +109,7 @@ where
     U: DataType,
     V: DataType,
 {
-    apply_bistellar_flip_with_k(
+    apply_bistellar_flip_with_k_raw(
         tds,
         2,
         &context.removed_face_vertices,
@@ -129,8 +123,8 @@ where
 
 /// Apply a k=3 Delaunay-repair move with positive replacement geometry.
 ///
-/// This preserves positive replacement geometry and failure atomicity through
-/// the shared TDS rollback transaction.
+/// This preserves positive replacement geometry inside the caller-owned repair
+/// transaction.
 pub(super) fn apply_delaunay_flip_k3<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     context: &FlipContext<D, 3>,
@@ -139,7 +133,7 @@ where
     U: DataType,
     V: DataType,
 {
-    apply_bistellar_flip_with_k(
+    apply_bistellar_flip_with_k_raw(
         tds,
         3,
         &context.removed_face_vertices,
@@ -154,8 +148,8 @@ where
 /// Apply a dynamic-size Delaunay-repair move.
 ///
 /// This variant is used when the repair search cannot statically name `k`; it
-/// still routes through the same validated, failure-atomic bistellar mutation
-/// path as the dimension-specific helpers.
+/// still routes through the same validated bistellar mutation path inside the
+/// caller-owned repair transaction.
 pub(super) fn apply_delaunay_flip_dynamic<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     k_move: usize,
@@ -165,7 +159,7 @@ where
     U: DataType,
     V: DataType,
 {
-    apply_bistellar_flip_with_k(
+    apply_bistellar_flip_with_k_raw(
         tds,
         k_move,
         &context.removed_face_vertices,
@@ -216,11 +210,7 @@ impl<const D: usize> PreparedFlip<D> {
 pub(crate) fn build_k2_flip_context<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     facet: FacetHandle,
-) -> Result<FlipContext<D, 2>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FlipContext<D, 2>, FlipError> {
     if D < 2 {
         return Err(FlipError::UnsupportedDimension { dimension: D });
     }
@@ -410,11 +400,7 @@ pub(super) fn flip_error_from_edge_key_error<const D: usize>(error: EdgeKeyError
 pub(crate) fn build_k2_flip_context_from_edge<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     edge: EdgeKey,
-) -> Result<FlipContextDyn<D>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FlipContextDyn<D>, FlipError> {
     if D < 3 {
         return Err(FlipError::UnsupportedDimension { dimension: D });
     }
@@ -617,8 +603,6 @@ pub(super) fn delaunay_violation_k2_for_facet<K, U, V, const D: usize>(
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     if facet_vertices.len() != D {
         return Err(FlipContextError::K2FacetArity {
@@ -730,11 +714,7 @@ pub(super) fn flip_would_create_degenerate_simplex<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     removed_face_vertices: &[VertexKey],
     inserted_face_vertices: &[VertexKey],
-) -> Result<bool, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<bool, FlipError> {
     for &omit in removed_face_vertices {
         let mut vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::with_capacity(D + 1);
@@ -769,11 +749,7 @@ where
 pub(super) fn k2_flip_would_create_degenerate_simplex<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     context: &FlipContext<D, 2>,
-) -> Result<bool, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<bool, FlipError> {
     if context.inserted_face_vertices.len() != 2 {
         return Err(FlipContextError::WrongInsertedFaceArity {
             k_move: 2,
@@ -805,8 +781,6 @@ pub(super) fn is_delaunay_violation_k2<K, U, V, const D: usize>(
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     if context.inserted_face_vertices.len() != 2 {
         return Err(FlipContextError::WrongInsertedFaceArity {
@@ -858,11 +832,7 @@ where
 pub(crate) fn build_k3_flip_context<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     ridge: RidgeHandle,
-) -> Result<FlipContext<D, 3>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FlipContext<D, 3>, FlipError> {
     build_k3_flip_context_with_star_limit(tds, ridge, None)
 }
 
@@ -870,11 +840,7 @@ where
 pub(super) fn build_k3_flip_context_for_repair<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     ridge: RidgeHandle,
-) -> Result<FlipContext<D, 3>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FlipContext<D, 3>, FlipError> {
     build_k3_flip_context_with_star_limit(tds, ridge, Some(3))
 }
 
@@ -883,11 +849,7 @@ pub(super) fn build_k3_flip_context_with_star_limit<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     ridge: RidgeHandle,
     max_simplices: Option<usize>,
-) -> Result<FlipContext<D, 3>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FlipContext<D, 3>, FlipError> {
     if D < 3 {
         return Err(FlipError::UnsupportedDimension { dimension: D });
     }
@@ -990,11 +952,7 @@ where
 pub(crate) fn build_k3_flip_context_from_triangle<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     triangle: TriangleHandle,
-) -> Result<FlipContextDyn<D>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FlipContextDyn<D>, FlipError> {
     if D < 4 {
         return Err(FlipError::UnsupportedDimension { dimension: D });
     }
@@ -1093,8 +1051,6 @@ pub(super) fn delaunay_violation_k3_for_ridge<K, U, V, const D: usize>(
 ) -> Result<bool, FlipError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     if triangle_vertices.len() != 3 {
         return Err(FlipContextError::WrongInsertedFaceArity {

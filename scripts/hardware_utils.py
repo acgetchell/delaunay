@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from subprocess_utils import ExceptionFamily, ExecutableNotFoundError, run_safe_command
@@ -690,18 +690,34 @@ class HardwareComparator:
         return None
 
 
-def main() -> None:
-    """Command-line interface for hardware utilities."""
+def create_argument_parser() -> argparse.ArgumentParser:
+    """Create the command-specific hardware utility argument parser."""
     parser = argparse.ArgumentParser(
         description="Cross-platform hardware information detection and comparison",
         suggest_on_error=True,
         color=False,
     )
-    parser.add_argument("command", choices=["info", "kv", "compare"], help="Command to run")
-    parser.add_argument("--baseline-file", help="Path to baseline file (required for 'compare' command)")
-    parser.add_argument("--json", action="store_true", help="Output in JSON format")
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-    args = parser.parse_args()
+    info_parser = subparsers.add_parser("info", help="Display human-readable hardware information")
+    info_parser.add_argument("--json", action="store_true", help="Output hardware information as JSON")
+
+    subparsers.add_parser("kv", help="Display hardware information as key=value records")
+
+    compare_parser = subparsers.add_parser("compare", help="Compare current hardware with a benchmark baseline")
+    compare_parser.add_argument(
+        "--baseline-file",
+        type=Path,
+        required=True,
+        help="Path to the benchmark baseline file",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the requested hardware utility command."""
+    parser = create_argument_parser()
+    args = parser.parse_args(argv)
 
     hardware = HardwareInfo()
 
@@ -712,37 +728,31 @@ def main() -> None:
         else:
             formatted_info = hardware.format_hardware_info()
             print(formatted_info, end="")
+        return 0
 
-    elif args.command == "kv":
+    if args.command == "kv":
         info = hardware.get_hardware_info()
         for key, value in info.items():
             print(f"{key}={value}")
+        return 0
 
-    elif args.command == "compare":
-        if not args.baseline_file:
-            print("error: --baseline-file is required for 'compare'", file=sys.stderr)
-            sys.exit(2)
+    baseline_path = cast("Path", args.baseline_file)
+    if not baseline_path.is_file():
+        print(f"hardware-utils compare: error: baseline is not a regular file: {baseline_path}", file=sys.stderr)
+        return 2
 
-        baseline_path = Path(args.baseline_file)
-        if not baseline_path.exists():
-            print(f"error: baseline file not found: {baseline_path}", file=sys.stderr)
-            sys.exit(2)
+    try:
+        baseline_content = baseline_path.read_text(encoding="utf-8")
+        current_info = hardware.get_hardware_info()
+        baseline_info = HardwareComparator.parse_baseline_hardware(baseline_content)
 
-        try:
-            baseline_content = baseline_path.read_text(encoding="utf-8", errors="replace")
-            current_info = hardware.get_hardware_info()
-            baseline_info = HardwareComparator.parse_baseline_hardware(baseline_content)
-
-            report, has_warnings = HardwareComparator.compare_hardware(current_info, baseline_info)
-            print(report, end="")
-
-            # Exit with warning code if there are hardware differences
-            sys.exit(1 if has_warnings else 0)
-
-        except (OSError, UnicodeDecodeError, ValueError) as exc:
-            print(f"error: comparison failed: {exc}", file=sys.stderr)
-            sys.exit(1)
+        report, has_warnings = HardwareComparator.compare_hardware(current_info, baseline_info)
+        print(report, end="")
+        return 1 if has_warnings else 0
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        print(f"hardware-utils compare: error: {baseline_path}: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

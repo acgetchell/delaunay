@@ -9,12 +9,16 @@ across different platforms with proper mocking.
 import platform
 import subprocess
 import sys
+from typing import TYPE_CHECKING
 from unittest.mock import mock_open, patch
 
 import pytest
 
 from hardware_utils import HardwareComparator, HardwareInfo, main
 from subprocess_utils import ExecutableNotFoundError
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture
@@ -652,6 +656,56 @@ Other content here...
 
 class TestHardwareUtilsIntegration:
     """Integration tests for hardware_utils functionality."""
+
+    def test_info_json_option_writes_only_json_to_stdout(self, capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+        expected = {"OS": "TestOS", "CPU": "Test CPU"}
+        monkeypatch.setattr(HardwareInfo, "get_hardware_info", lambda _self: expected)
+
+        status = main(["info", "--json"])
+
+        captured = capsys.readouterr()
+        assert status == 0
+        assert captured.err == ""
+        assert captured.out == '{\n  "OS": "TestOS",\n  "CPU": "Test CPU"\n}\n'
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["kv", "--json"],
+            ["info", "--baseline-file", "baseline.txt"],
+            ["compare", "--json", "--baseline-file", "baseline.txt"],
+        ],
+    )
+    def test_command_specific_options_are_rejected_for_other_commands(self, argv: list[str], capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(argv)
+
+        captured = capsys.readouterr()
+        assert exc_info.value.code == 2
+        assert captured.out == ""
+        assert "unrecognized arguments:" in captured.err
+
+    def test_compare_requires_baseline_file(self, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["compare"])
+
+        captured = capsys.readouterr()
+        assert exc_info.value.code == 2
+        assert captured.out == ""
+        assert "the following arguments are required: --baseline-file" in captured.err
+
+    def test_compare_reports_result_on_stdout_only(self, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+        baseline = tmp_path / "baseline.txt"
+        baseline.write_text("Hardware Information:\n  OS: TestOS\n", encoding="utf-8")
+        monkeypatch.setattr(HardwareInfo, "get_hardware_info", lambda _self: {"OS": "TestOS"})
+        monkeypatch.setattr(HardwareComparator, "compare_hardware", lambda _current, _baseline: ("compatible\n", False))
+
+        status = main(["compare", "--baseline-file", str(baseline)])
+
+        captured = capsys.readouterr()
+        assert status == 0
+        assert captured.out == "compatible\n"
+        assert captured.err == ""
 
     def test_main_suggests_close_command_name(self, capsys, monkeypatch) -> None:
         """Python 3.14 argparse suggestions should help recover from command typos."""

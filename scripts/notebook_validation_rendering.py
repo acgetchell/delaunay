@@ -1,14 +1,29 @@
 """Render and independently validate validation-demo notebook figures."""
 
 import math
+import shutil
+import tempfile
 from dataclasses import dataclass
 from functools import cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from notebook_validation import CircumcircleWitness, Point2, ValidationCase, ValidationVisual
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+VALIDATION_FIGURE_SLUGS = {
+    1: "element_validity",
+    2: "combinatorial_consistency",
+    3: "intrinsic_pl_topology",
+    4: "valid_realization",
+    5: "geometric_predicates",
+}
+VALIDATION_HIERARCHY_FIGURE_NAME = "validation_hierarchy.png"
+EXPECTED_VALIDATION_FIGURE_NAMES = (
+    VALIDATION_HIERARCHY_FIGURE_NAME,
+    *(f"validation_level_{level}_{slug}.png" for level, slug in VALIDATION_FIGURE_SLUGS.items()),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,16 +49,76 @@ def save_figure_png(
     figure: Any,
     png_path: Path,
     *,
-    tracked_figure_dir: Path | None = None,
     dpi: int = 180,
 ) -> None:
-    """Save a notebook PNG and an explicitly enabled canonical copy."""
+    """Serialize one notebook figure to a scratch PNG path."""
     png_path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(png_path, dpi=dpi, facecolor=figure.get_facecolor())
-    if tracked_figure_dir is not None:
-        tracked_png_path = tracked_figure_dir / png_path.name
-        tracked_png_path.parent.mkdir(parents=True, exist_ok=True)
-        figure.savefig(tracked_png_path, dpi=dpi, facecolor=figure.get_facecolor())
+
+
+def validation_level_figure_name(case: ValidationCase) -> str:
+    """Return the canonical PNG name for one validation level."""
+    try:
+        slug = VALIDATION_FIGURE_SLUGS[case.level]
+    except KeyError as error:
+        raise ValueError(f"unsupported validation level for documentation figure: {case.level}") from error
+    return f"validation_level_{case.level}_{slug}.png"
+
+
+def validate_validation_figure_set(directory: Path) -> tuple[Path, ...]:
+    """Validate an exact, complete six-PNG validation figure directory."""
+    expected_names = set(EXPECTED_VALIDATION_FIGURE_NAMES)
+    actual_names = {path.name for path in directory.iterdir()}
+    if actual_names != expected_names:
+        missing = sorted(expected_names - actual_names)
+        unexpected = sorted(actual_names - expected_names)
+        raise ValueError(f"validation figure set is incomplete: missing={missing}, unexpected={unexpected}")
+    for name in EXPECTED_VALIDATION_FIGURE_NAMES:
+        path = directory / name
+        if not path.is_file():
+            raise ValueError(f"validation figure is not a regular file: {path}")
+        with path.open("rb") as file:
+            signature = file.read(len(PNG_SIGNATURE))
+        if signature != PNG_SIGNATURE:
+            raise ValueError(f"validation figure is not a PNG file: {path}")
+    return tuple(directory / name for name in EXPECTED_VALIDATION_FIGURE_NAMES)
+
+
+def _copy_file(source: Path, destination: Path) -> None:
+    """Copy one staged figure through a focused failure-injection seam."""
+    shutil.copyfile(source, destination)
+
+
+def _replace_path(source: Path, destination: Path) -> None:
+    """Atomically replace one path through a focused failure-injection seam."""
+    source.replace(destination)
+
+
+def publish_validation_figure_set(staged_directory: Path, destination: Path) -> tuple[Path, ...]:
+    """Transactionally replace a complete validation figure directory."""
+    staged_paths = validate_validation_figure_set(staged_directory)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{destination.name}-publish-", dir=destination.parent) as temporary_name:
+        transaction_root = Path(temporary_name)
+        candidate = transaction_root / "candidate"
+        backup = transaction_root / "previous"
+        candidate.mkdir()
+        for source in staged_paths:
+            _copy_file(source, candidate / source.name)
+        validate_validation_figure_set(candidate)
+
+        had_destination = destination.exists()
+        if had_destination:
+            if not destination.is_dir():
+                raise NotADirectoryError(f"validation figure destination must be a directory: {destination}")
+            _replace_path(destination, backup)
+        try:
+            _replace_path(candidate, destination)
+        except OSError:
+            if had_destination:
+                _replace_path(backup, destination)
+            raise
+    return tuple(destination / name for name in EXPECTED_VALIDATION_FIGURE_NAMES)
 
 
 def visual_points(visual: ValidationVisual) -> list[tuple[str, Point2]]:
@@ -406,7 +481,7 @@ VALIDATION_HIERARCHY_LAYERS = (
 )
 
 
-def render_validation_hierarchy_figure(output_path: Path, *, tracked_figure_dir: Path | None = None) -> None:
+def render_validation_hierarchy_figure(output_path: Path) -> None:
     """Render the five-level validation hierarchy overview PNG."""
     plotting = _plotting_backend()
     figure, axis = plotting.pyplot.subplots(figsize=(13.2, 8.8), facecolor="white", layout="constrained")
@@ -488,7 +563,7 @@ def render_validation_hierarchy_figure(output_path: Path, *, tracked_figure_dir:
         color="#475569",
         wrap=False,
     )
-    save_figure_png(figure, output_path, tracked_figure_dir=tracked_figure_dir, dpi=180)
+    save_figure_png(figure, output_path, dpi=180)
     plotting.pyplot.show()
     plotting.pyplot.close(figure)
 
@@ -761,8 +836,6 @@ def draw_validation_family_glyph(axis: Any, level: int, family_index: int) -> No
 def render_validation_layer_map(
     case: ValidationCase,
     output_path: Path,
-    *,
-    tracked_figure_dir: Path | None = None,
 ) -> None:
     """Render every implemented validation family owned by one layer."""
     layer = VALIDATION_HIERARCHY_LAYERS[case.level - 1]
@@ -787,7 +860,7 @@ def render_validation_layer_map(
         weight="bold",
         color="#0f172a",
     )
-    save_figure_png(figure, output_path, tracked_figure_dir=tracked_figure_dir, dpi=220)
+    save_figure_png(figure, output_path, dpi=220)
     plotting.pyplot.show()
     plotting.pyplot.close(figure)
 
@@ -795,12 +868,10 @@ def render_validation_layer_map(
 def render_validation_case_figure(
     case: ValidationCase,
     output_path: Path,
-    *,
-    tracked_figure_dir: Path | None = None,
 ) -> None:
     """Render a complete layer map, retaining the focused Level 5 witness."""
     if case.level < 5:
-        render_validation_layer_map(case, output_path, tracked_figure_dir=tracked_figure_dir)
+        render_validation_layer_map(case, output_path)
         return
     layer = VALIDATION_HIERARCHY_LAYERS[4]
     plotting = _plotting_backend()
@@ -817,6 +888,32 @@ def render_validation_case_figure(
         fontsize=11.0,
         color="#0f172a",
     )
-    save_figure_png(figure, output_path, tracked_figure_dir=tracked_figure_dir, dpi=240)
+    save_figure_png(figure, output_path, dpi=240)
     plotting.pyplot.show()
     plotting.pyplot.close(figure)
+
+
+def render_validation_figure_set(
+    cases: tuple[ValidationCase, ...],
+    scratch_directory: Path,
+    *,
+    tracked_directory: Path | None = None,
+) -> tuple[Path, ...]:
+    """Render, validate, and transactionally publish all validation PNG files."""
+    levels = tuple(case.level for case in cases)
+    if levels != tuple(VALIDATION_FIGURE_SLUGS):
+        raise ValueError(f"validation cases must contain ordered Levels 1-5, got {levels}")
+    for case_index, case in enumerate(cases):
+        validate_case_visual_invariants(case, case_index)
+
+    scratch_directory.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".validation-render-", dir=scratch_directory.parent) as temporary_name:
+        staged_directory = Path(temporary_name)
+        render_validation_hierarchy_figure(staged_directory / VALIDATION_HIERARCHY_FIGURE_NAME)
+        for case in cases:
+            render_validation_case_figure(case, staged_directory / validation_level_figure_name(case))
+        validate_validation_figure_set(staged_directory)
+        scratch_paths = publish_validation_figure_set(staged_directory, scratch_directory)
+        if tracked_directory is not None:
+            publish_validation_figure_set(staged_directory, tracked_directory)
+    return scratch_paths

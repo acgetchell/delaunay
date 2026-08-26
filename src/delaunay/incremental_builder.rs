@@ -24,8 +24,8 @@ use crate::core::operations::{
     DelaunayInsertionState, InsertionOutcome, InsertionResult, InsertionStatistics,
 };
 use crate::core::tds::{
-    TdsDraft, TdsDraftError, TdsDraftInsertionError, TdsError, TriangulationValidationReport,
-    VertexKey,
+    TdsDraft, TdsDraftError, TdsDraftInsertionError, TdsError, TdsRollbackSavepoint,
+    TriangulationValidationReport, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
@@ -33,6 +33,7 @@ use crate::delaunay_model::{DelaunayTriangulation, EuclideanDelaunayReportDomain
 use crate::draft::DelaunayTriangulationDraft;
 use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates};
 use crate::geometry::traits::coordinate::CoordinateValues;
+use crate::refinement::RefinementError;
 use crate::repair::DelaunayCheckPolicy;
 use crate::topology::traits::{GlobalTopology, TopologyKind};
 use crate::triangulation::builder::TriangulationBuilderError;
@@ -239,15 +240,16 @@ impl<K, U, V, const D: usize> DelaunayBootstrapWorkspace<K, U, V, D> {
             .tds
             .insert_vertex(vertex)
             .map_err(InsertionError::from)?;
-        self.vertex_keys.push(vertex_key);
-        if let Some(index) = self.spatial_index.as_mut() {
-            index.insert_vertex(vertex_key, &coords);
-        }
 
-        let hint = if self.vertex_keys.len() == D + 1 {
+        let hint = if self.vertex_keys.len() + 1 == D + 1 {
             Some(
                 self.tds
-                    .insert_simplex(self.vertex_keys.iter().copied())
+                    .insert_simplex(
+                        self.vertex_keys
+                            .iter()
+                            .copied()
+                            .chain(std::iter::once(vertex_key)),
+                    )
                     .map_err(
                         |source| DelaunayIncrementalBuilderError::BootstrapAssembly { source },
                     )?,
@@ -255,6 +257,14 @@ impl<K, U, V, const D: usize> DelaunayBootstrapWorkspace<K, U, V, D> {
         } else {
             None
         };
+
+        // Publish auxiliary state only after every fallible TDS mutation has
+        // succeeded. The caller-owned TDS savepoint handles a rejected first
+        // simplex without requiring a workspace clone.
+        self.vertex_keys.push(vertex_key);
+        if let Some(index) = self.spatial_index.as_mut() {
+            index.insert_vertex(vertex_key, &coords);
+        }
 
         Ok((
             InsertionOutcome::Inserted { vertex_key, hint },
@@ -264,28 +274,6 @@ impl<K, U, V, const D: usize> DelaunayBootstrapWorkspace<K, U, V, D> {
                 result: InsertionResult::Inserted,
             },
         ))
-    }
-}
-
-impl<K, U, V, const D: usize> DelaunayBootstrapWorkspace<K, U, V, D>
-where
-    K: Clone,
-    U: Clone,
-    V: Clone,
-{
-    /// Copies the small bootstrap workspace while preserving owner identity for rollback.
-    fn clone_for_rollback(&self) -> Self {
-        Self {
-            tds: self.tds.clone_for_rollback(),
-            vertex_keys: self.vertex_keys.clone(),
-            kernel: self.kernel.clone(),
-            topology_guarantee: self.topology_guarantee,
-            global_topology: self.global_topology,
-            validation_policy: self.validation_policy,
-            insertion_state: self.insertion_state,
-            spatial_index: self.spatial_index.clone(),
-            euclidean_report_domain: self.euclidean_report_domain,
-        }
     }
 }
 
@@ -311,7 +299,7 @@ where
         )
         .construction_provenance(TopologyConstructionProvenance::EuclideanDelaunayInsertion)
         .validation_policy(self.validation_policy)
-        .finish_canonicalizing()
+        .finish_strict()
         .map_err(
             |failure| DelaunayIncrementalBuilderError::TriangulationPublication {
                 source: failure.into_reason(),
@@ -329,6 +317,110 @@ where
                 source: failure.into_reason(),
             },
         )
+    }
+
+    /// Publishes the first simplex while carrying its TDS journal through every proof layer.
+    fn try_into_owner_after_insertion(
+        mut self,
+        savepoint: TdsRollbackSavepoint,
+        inserted_vertex_key: VertexKey,
+        inserted_coords: [f64; D],
+        insertion_state_before: DelaunayInsertionState,
+    ) -> Result<
+        DelaunayTriangulation<K, U, V, D>,
+        RefinementError<Self, DelaunayIncrementalBuilderError>,
+    > {
+        let tds_draft = std::mem::take(&mut self.tds);
+        let tds = match tds_draft.finish_recoverable() {
+            Ok(tds) => tds,
+            Err(failure) => {
+                let (mut tds_draft, source) = failure.into_parts();
+                tds_draft.rollback_savepoint(savepoint);
+                self.tds = tds_draft;
+                self.restore_auxiliary_after_failed_insertion(
+                    inserted_vertex_key,
+                    &inserted_coords,
+                    insertion_state_before,
+                );
+                return Err(RefinementError::new(
+                    self,
+                    DelaunayIncrementalBuilderError::TdsPublication { source },
+                ));
+            }
+        };
+
+        let triangulation = match TriangulationDraft::with_topology_context(
+            tds,
+            self.kernel.clone(),
+            self.topology_guarantee,
+            self.global_topology,
+        )
+        .construction_provenance(TopologyConstructionProvenance::EuclideanDelaunayInsertion)
+        .validation_policy(self.validation_policy)
+        .finish_canonicalizing_in_transaction()
+        {
+            Ok(triangulation) => triangulation,
+            Err(failure) => {
+                let (mut tds, source) = failure.into_parts();
+                tds.rollback_savepoint(savepoint);
+                self.tds = TdsDraft::from_rolled_back_storage(tds);
+                self.restore_auxiliary_after_failed_insertion(
+                    inserted_vertex_key,
+                    &inserted_coords,
+                    insertion_state_before,
+                );
+                return Err(RefinementError::new(
+                    self,
+                    DelaunayIncrementalBuilderError::TriangulationPublication { source },
+                ));
+            }
+        };
+
+        let candidate = DelaunayTriangulationDraft::from_parts(
+            triangulation,
+            self.insertion_state,
+            self.spatial_index.clone(),
+            self.euclidean_report_domain,
+        );
+        match candidate.try_into_delaunay() {
+            Ok(mut triangulation) => {
+                triangulation.commit_tds_savepoint(savepoint);
+                Ok(triangulation)
+            }
+            Err(failure) => {
+                let (triangulation, source) = failure.into_parts();
+                let mut tds = triangulation.into_tds();
+                tds.rollback_savepoint(savepoint);
+                self.tds = TdsDraft::from_rolled_back_storage(tds);
+                self.restore_auxiliary_after_failed_insertion(
+                    inserted_vertex_key,
+                    &inserted_coords,
+                    insertion_state_before,
+                );
+                Err(RefinementError::new(
+                    self,
+                    DelaunayIncrementalBuilderError::DelaunayCertification { source },
+                ))
+            }
+        }
+    }
+
+    /// Restores non-TDS fields after the TDS savepoint has removed the candidate vertex.
+    fn restore_auxiliary_after_failed_insertion(
+        &mut self,
+        inserted_vertex_key: VertexKey,
+        inserted_coords: &[f64; D],
+        insertion_state_before: DelaunayInsertionState,
+    ) {
+        assert_eq!(
+            self.vertex_keys.pop(),
+            Some(inserted_vertex_key),
+            "bootstrap publication must roll back its most recent vertex"
+        );
+        if let Some(index) = self.spatial_index.as_mut() {
+            index.remove_vertex(&inserted_vertex_key, inserted_coords);
+        }
+        self.insertion_state = insertion_state_before;
     }
 }
 
@@ -616,6 +708,37 @@ impl<K, U, V, const D: usize> DelaunayIncrementalBuilder<K, U, V, D> {
     /// a bootstrap workspace and therefore has no owner-level topology to audit.
     /// Call [`validate_structure`](Self::validate_structure) independently when
     /// checking that partial state.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayIncrementalBuilder, DelaunayIncrementalBuilderError,
+    /// };
+    /// use delaunay::prelude::geometry::CoordinateConversionError;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     Incremental(#[from] DelaunayIncrementalBuilderError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let mut builder = DelaunayIncrementalBuilder::<_, (), (), 2>::new();
+    /// assert!(builder.owner_topology_report().is_none());
+    ///
+    /// for vertex in [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ] {
+    ///     let _ = builder.insert_vertex(vertex)?;
+    /// }
+    /// std::assert_matches!(builder.owner_topology_report(), Some(Ok(())));
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn owner_topology_report(&self) -> Option<Result<(), TriangulationValidationReport>>
     where
@@ -725,28 +848,47 @@ where
         let mut publication = None;
         let result = match &mut self.state {
             DelaunayIncrementalBuilderState::Bootstrap(state) => {
-                let publication_snapshot =
-                    (state.tds.number_of_vertices() >= D).then(|| state.clone_for_rollback());
+                let publication_savepoint = state.tds.begin_rollback_savepoint();
+                let inserted_coords = *vertex.point().coords();
+                let insertion_state_before = state.insertion_state;
                 let (outcome, statistics) = match state.insert_vertex(vertex) {
                     Ok(result) => result,
                     Err(error) => {
-                        if let Some(snapshot) = publication_snapshot {
-                            *state = snapshot;
-                        }
+                        state.tds.rollback_savepoint(publication_savepoint);
                         return Err(error);
                     }
                 };
-                if let InsertionOutcome::Inserted { hint, .. } = outcome {
+                if let InsertionOutcome::Inserted { vertex_key, hint } = outcome {
                     state.insertion_state.last_inserted_simplex = hint;
                     state.insertion_state.delaunay_repair_insertion_count = state
                         .insertion_state
                         .delaunay_repair_insertion_count
                         .saturating_add(1);
-                    if state.is_publishable()
-                        && let Some(snapshot) = publication_snapshot
-                    {
-                        publication = Some(std::mem::replace(state, snapshot));
+                    if state.is_publishable() {
+                        let replacement = DelaunayBootstrapWorkspace::with_topology_context(
+                            state.kernel.clone(),
+                            state.topology_guarantee,
+                            state.global_topology,
+                        );
+                        let candidate = std::mem::replace(state, replacement);
+                        match candidate.try_into_owner_after_insertion(
+                            publication_savepoint,
+                            vertex_key,
+                            inserted_coords,
+                            insertion_state_before,
+                        ) {
+                            Ok(triangulation) => publication = Some(triangulation),
+                            Err(failure) => {
+                                let (restored, error) = failure.into_parts();
+                                *state = restored;
+                                return Err(error);
+                            }
+                        }
+                    } else {
+                        state.tds.commit_savepoint(publication_savepoint);
                     }
+                } else {
+                    state.tds.commit_savepoint(publication_savepoint);
                 }
                 (outcome, statistics)
             }
@@ -757,8 +899,7 @@ where
             }
         };
 
-        if let Some(state) = publication {
-            let triangulation = state.try_into_owner()?;
+        if let Some(triangulation) = publication {
             self.state = DelaunayIncrementalBuilderState::Owner(triangulation);
         }
 

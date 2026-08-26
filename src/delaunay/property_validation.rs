@@ -105,7 +105,7 @@ pub enum DelaunayValidationError {
 ///
 /// ```rust
 /// use delaunay::prelude::validation::delaunay_violation_report;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, validation::*};
 ///
 /// # fn main() -> DelaunayResult<()> {
 /// let vertices = vec![
@@ -349,7 +349,7 @@ pub fn is_delaunay_property_only<U, V, const D: usize>(
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, validation::*};
 ///
 /// # fn main() -> DelaunayResult<()> {
 /// let vertices = vec![
@@ -449,7 +449,7 @@ pub fn find_delaunay_violations<U, V, const D: usize>(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, validation::*};
 ///
 /// # fn main() -> DelaunayResult<()> {
 /// let vertices = vec![

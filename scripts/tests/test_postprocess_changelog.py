@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import postprocess_changelog
 from postprocess_changelog import (
     _CodeFence,
     _compact_entry,
@@ -21,6 +22,7 @@ from postprocess_changelog import (
     _reflow_line,
     _squash_heading_parts,
     _strip_dependabot_metadata,
+    main,
     postprocess,
     postprocess_text,
 )
@@ -1163,7 +1165,55 @@ class TestIntegration:
         with pytest.raises(OSError, match="simulated replacement failure"):
             postprocess(changelog)
 
-        assert changelog.read_text(encoding="utf-8") == original
+        assert changelog.read_bytes().decode("utf-8") == original
+        assert list(tmp_path.glob(".CHANGELOG.md.*.tmp")) == []
+
+    def test_cli_reports_malformed_utf8_without_traceback(self, tmp_path: Path, capsys) -> None:
+        changelog = tmp_path / "CHANGELOG.md"
+        changelog.write_bytes(b"# Changelog\n\xff\n")
+
+        status = main([str(changelog)])
+
+        captured = capsys.readouterr()
+        assert status == 1
+        assert captured.out == ""
+        assert captured.err.startswith(f"postprocess-changelog: error: {changelog}:")
+        assert "utf-8" in captured.err
+        assert "Traceback" not in captured.err
+
+    @pytest.mark.parametrize("operation", ["read", "temporary-file", "chmod", "replace"])
+    def test_cli_reports_filesystem_failures_without_traceback(
+        self,
+        operation: str,
+        tmp_path: Path,
+        capsys,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        changelog = tmp_path / "CHANGELOG.md"
+        original = "# Changelog\n\n* Original entry\n"
+        changelog.write_text(original, encoding="utf-8")
+        message = f"simulated {operation} failure"
+
+        def fail_path_operation(*_args: object, **_kwargs: object) -> None:
+            raise OSError(message)
+
+        if operation == "read":
+            monkeypatch.setattr(Path, "read_text", fail_path_operation)
+        elif operation == "temporary-file":
+            monkeypatch.setattr(postprocess_changelog.tempfile, "NamedTemporaryFile", fail_path_operation)
+        elif operation == "chmod":
+            monkeypatch.setattr(Path, "chmod", fail_path_operation)
+        else:
+            monkeypatch.setattr(Path, "replace", fail_path_operation)
+
+        status = main([str(changelog)])
+
+        captured = capsys.readouterr()
+        assert status == 1
+        assert captured.out == ""
+        assert captured.err == f"postprocess-changelog: error: {changelog}: {message}\n"
+        assert "Traceback" not in captured.err
+        assert changelog.read_bytes().decode("utf-8") == original
         assert list(tmp_path.glob(".CHANGELOG.md.*.tmp")) == []
 
     def test_full_changelog_reflow(self, tmp_path: Path) -> None:

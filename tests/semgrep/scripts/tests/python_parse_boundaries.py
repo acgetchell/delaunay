@@ -1,4 +1,5 @@
 import json
+from io import StringIO
 from typing import Any
 
 
@@ -17,6 +18,16 @@ def loads_with_parse_constant(source: str) -> Any:
     return json.loads(source, parse_constant=reject_json_constant)
 
 
+def load_without_parse_constant(source: StringIO) -> Any:
+    # ruleid: delaunay.python.ci-json-loads-reject-nonfinite-constants
+    return json.load(source)
+
+
+def load_with_parse_constant(source: StringIO) -> Any:
+    # ok: delaunay.python.ci-json-loads-reject-nonfinite-constants
+    return json.load(source, parse_constant=reject_json_constant)
+
+
 def dumps_without_allow_nan(value: object) -> str:
     # ruleid: delaunay.python.ci-json-dumps-forbid-nonfinite-output
     return json.dumps(value)
@@ -25,6 +36,16 @@ def dumps_without_allow_nan(value: object) -> str:
 def dumps_with_allow_nan_false(value: object) -> str:
     # ok: delaunay.python.ci-json-dumps-forbid-nonfinite-output
     return json.dumps(value, allow_nan=False)
+
+
+def dump_without_allow_nan(value: object, destination: StringIO) -> None:
+    # ruleid: delaunay.python.ci-json-dumps-forbid-nonfinite-output
+    json.dump(value, destination)
+
+
+def dump_with_allow_nan_false(value: object, destination: StringIO) -> None:
+    # ok: delaunay.python.ci-json-dumps-forbid-nonfinite-output
+    json.dump(value, destination, allow_nan=False)
 
 
 def accepts_zero_vertices(vertices: int) -> bool:

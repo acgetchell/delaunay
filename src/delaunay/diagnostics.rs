@@ -141,9 +141,9 @@ pub struct ConstructionTelemetry {
     pub local_repair_nanos: u64,
     /// Maximum wall-clock nanoseconds spent in one batch local repair call.
     pub local_repair_nanos_max: u64,
-    /// Wall-clock nanoseconds spent cloning local-repair rollback snapshots.
+    /// Wall-clock nanoseconds spent opening local-repair rollback journals.
     pub local_repair_snapshot_nanos: u64,
-    /// Maximum wall-clock nanoseconds spent cloning one local-repair rollback snapshot.
+    /// Maximum wall-clock nanoseconds spent opening one local-repair rollback journal.
     pub local_repair_snapshot_nanos_max: u64,
     /// Wall-clock nanoseconds spent applying local-repair flip attempts.
     pub local_repair_attempt_nanos: u64,
@@ -173,9 +173,9 @@ pub struct ConstructionTelemetry {
     pub local_repair_postcondition_nanos: u64,
     /// Maximum wall-clock nanoseconds spent checking postconditions in one local repair.
     pub local_repair_postcondition_nanos_max: u64,
-    /// Wall-clock nanoseconds spent restoring local-repair rollback snapshots.
+    /// Wall-clock nanoseconds spent restoring local-repair rollback journals.
     pub local_repair_restore_nanos: u64,
-    /// Maximum wall-clock nanoseconds spent restoring one local-repair rollback snapshot.
+    /// Maximum wall-clock nanoseconds spent restoring one local-repair rollback journal.
     pub local_repair_restore_nanos_max: u64,
     /// Total pending seed simplices repaired by batch local repair calls.
     pub local_repair_seed_simplices_total: usize,

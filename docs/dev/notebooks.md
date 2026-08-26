@@ -71,6 +71,12 @@ should reference the same canonical asset instead of maintaining duplicate
 copies. Artifact ownership and paper authorship boundaries live in
 [`docs.md`](docs.md).
 
+Do not direct an interactive validation-notebook run at the tracked asset
+directory. `just validation-doc-figures` is the only refresh entry point: it
+renders and validates the complete hierarchy-plus-five-level PNG set in staging,
+then publishes the directory transactionally so a failed render, write, or
+replacement preserves the previous complete set.
+
 Do not regenerate a potentially expensive tracked figure merely to test a
 notebook. Use linting for routine validation and execute the relevant notebook
 only when its runtime behavior or artifact is part of the task.

@@ -19,8 +19,8 @@ The library provides two distinct APIs for different use cases:
    - Explicit control over individual topology operations
    - Does **not** automatically restore the Delaunay property
    - Designed for topology manipulation, research, and custom algorithms
-   - Keeps raw flip primitives out of preludes; import `delaunay::flips`
-     directly only when testing or documenting the primitive layer itself
+   - Keeps raw flip primitives out of preludes; expert callers who need that
+     lower-level contract import `delaunay::flips` directly
 
 Examples that derive `thiserror::Error` assume the example crate includes
 `thiserror`; run `cargo add thiserror` alongside `delaunay` when copying those
@@ -572,12 +572,14 @@ Topology APIs use names to make ownership visible:
   while `LocalFacetRepairGuard<'tri>` holds the mutable triangulation borrow
   from issue detection through transactional repair. Raw conflict buffers and
   facet-issue maps stay implementation details.
-- Transactional rollback state may own cloned topology or exact mutation
-  records while an operation is in flight. `Tds::clone_for_rollback`,
-  `Tds::clone_from_for_rollback`, `SimplexIncidenceRemoval`, and flip trial
-  workspaces are rollback state, not long-lived public views. Replacing
-  full-TDS clone rollback with a journaled or localized design remains tracked
-  by #364.
+- Transactional rollback state owns exact touched-record before-images while an
+  operation is in flight. The owner-bound TDS journal preserves generational
+  keys with transaction tombstones and restores canonical incidence, topology,
+  generation, and owner-coupled state. The incremental bootstrap carries the
+  same identity-checked journal through its private Levels 1–5 publication
+  transition, committing only after final certification. Detached
+  copy-on-success workspaces are distinct from canonical-owner rollback and may
+  still clone their own input.
 
 ### Simplex-Local Incidence Query Vocabulary
 

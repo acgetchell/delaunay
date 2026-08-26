@@ -107,7 +107,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// ```
     #[must_use]
-    pub fn number_of_vertices(&self) -> usize {
+    pub const fn number_of_vertices(&self) -> usize {
         self.tri.number_of_vertices()
     }
 
@@ -134,7 +134,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// ```
     #[must_use]
-    pub fn number_of_simplices(&self) -> usize {
+    pub const fn number_of_simplices(&self) -> usize {
         self.tri.number_of_simplices()
     }
 
@@ -1221,15 +1221,23 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayIncrementalBuilder;
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayIncrementalBuilder, DelaunayIncrementalBuilderError,
+    /// };
     /// use delaunay::prelude::validation::{
     ///     ValidationConfigurationError, ValidationPolicy,
     /// };
     ///
-    /// # fn main() -> Result<(), ValidationConfigurationError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Incremental(#[from] DelaunayIncrementalBuilderError),
+    /// #     #[error(transparent)]
+    /// #     Validation(#[from] ValidationConfigurationError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let mut dt = DelaunayIncrementalBuilder::<_, (), (), 2>::new()
-    ///     .finish()
-    ///     .expect("the empty complex is a valid Delaunay triangulation");
+    ///     .finish()?;
     ///
     /// dt.try_set_validation_policy(ValidationPolicy::Always)?;
     /// assert_eq!(
@@ -1260,15 +1268,23 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayIncrementalBuilder;
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayIncrementalBuilder, DelaunayIncrementalBuilderError,
+    /// };
     /// use delaunay::prelude::validation::{
     ///     TopologyGuarantee, ValidationConfigurationError,
     /// };
     ///
-    /// # fn main() -> Result<(), ValidationConfigurationError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Incremental(#[from] DelaunayIncrementalBuilderError),
+    /// #     #[error(transparent)]
+    /// #     Validation(#[from] ValidationConfigurationError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let mut dt = DelaunayIncrementalBuilder::<_, (), (), 3>::new()
-    ///     .finish()
-    ///     .expect("the empty complex is a valid Delaunay triangulation");
+    ///     .finish()?;
     /// dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)?;
     ///
     /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
@@ -1914,10 +1930,6 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// This is a convenience wrapper around
     /// [`Triangulation::incidence`](crate::Triangulation::incidence).
     ///
-    /// # Errors
-    ///
-    /// Returns an error if the maintained incidence relation is internally inconsistent.
-    ///
     /// # Examples
     ///
     /// ```rust
@@ -1936,13 +1948,13 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     return Ok(());
     /// };
     ///
-    /// let incidence = dt.incidence()?;
+    /// let incidence = dt.incidence();
     /// assert_eq!(incidence.number_of_adjacent_simplices(vertex_key), 1);
     /// # Ok(())
     /// # }
     /// ```
     #[inline]
-    pub fn incidence(&self) -> Result<IncidenceView<'_>, TopologyIndexBuildError> {
+    pub const fn incidence(&self) -> IncidenceView<'_> {
         self.as_triangulation().incidence()
     }
 

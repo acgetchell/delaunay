@@ -13,7 +13,7 @@ new_key_type! {
     /// # Examples
     ///
         /// ```
-        /// use delaunay::prelude::*;
+        /// use delaunay::prelude::{construction::*, tds::*};
         ///
         /// # #[derive(Debug, thiserror::Error)]
         /// # enum ExampleError {
@@ -55,7 +55,7 @@ new_key_type! {
     /// # Examples
     ///
         /// ```
-        /// use delaunay::prelude::*;
+        /// use delaunay::prelude::{construction::*, tds::*};
         ///
         /// # #[derive(Debug, thiserror::Error)]
         /// # enum ExampleError {

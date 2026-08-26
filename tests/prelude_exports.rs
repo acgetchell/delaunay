@@ -33,7 +33,7 @@ use delaunay::geometry::{
     CoordinateConversionError as GeometryModuleCoordinateConversionError,
     CoordinateRange as GeometryCoordinateRange,
     LabeledSimplexRealization as GeometryModuleLabeledSimplexRealization,
-    validate_simplex_realizations_intersect_only_in_shared_faces as geometry_module_validate_simplex_realizations_intersect_only_in_shared_faces,
+    validate_simplex_intersection as geometry_module_validate_simplex_intersection,
 };
 use delaunay::incremental_builder::{
     DelaunayIncrementalBuilder as ModuleDelaunayIncrementalBuilder,
@@ -41,7 +41,7 @@ use delaunay::incremental_builder::{
 };
 use delaunay::pachner::PachnerMoves as DirectPachnerMoves;
 use delaunay::prelude::DelaunayValidationError;
-use delaunay::prelude::algorithms::LocateResult;
+use delaunay::prelude::algorithms::{ConflictError, LocateResult};
 use delaunay::prelude::collections::{
     SecureHashMap as ScopedSecureHashMap, SecureHashSet as ScopedSecureHashSet,
     SimplexSecondaryMap as ScopedSimplexSecondaryMap, Uuid,
@@ -58,8 +58,8 @@ use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     DelaunayTriangulationConstructionErrorWithStatistics,
     DelaunayTriangulationValidationError as ConstructionDelaunayTriangulationValidationError,
-    DelaunayVerificationError as ConstructionDelaunayVerificationError, DeleteVertexError,
-    ExplicitConstructionError, FinalDelaunayValidationContext, FinalTopologyValidationContext,
+    DelaunayVerificationError as ConstructionDelaunayVerificationError, ExplicitConstructionError,
+    FinalDelaunayValidationContext, FinalTopologyValidationContext,
     GlobalTopologyModelError as ConstructionGlobalTopologyModelError, InsertionOrderStrategy,
     InvalidCoordinateValue as ConstructionInvalidCoordinateValue,
     InvalidPositiveScalar as ConstructionInvalidPositiveScalar, RandomPointGenerationError,
@@ -78,14 +78,12 @@ use delaunay::prelude::delaunayize::{
     DelaunayizeOutcome, SimplexDataRestoreError,
 };
 use delaunay::prelude::deletion::{
-    DeleteVertexError as FocusedDeleteVertexError, VertexKey as DeletionVertexKey,
+    DeleteVertexError as FocusedDeleteVertexError, TriangulationRepairOperation,
+    VertexKey as DeletionVertexKey,
 };
 use delaunay::prelude::diagnostics::ConstructionTelemetry;
 #[cfg(feature = "diagnostics")]
-use delaunay::prelude::diagnostics::{
-    DelaunayViolationDetail, DelaunayViolationReport, NeighborSlot as DiagnosticNeighborSlot,
-    debug_print_first_delaunay_violation, delaunay_violation_report,
-};
+use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
 use delaunay::prelude::export::{
     InvalidCoordinateValue as ExportPreludeInvalidCoordinateValue,
     VISUALIZATION_SCHEMA as ExportPreludeVisualizationSchema,
@@ -111,13 +109,18 @@ use delaunay::prelude::geometry::{
     PeriodicSimplexSpanError, Point, QualitySimplexVerticesError, SimplexIntersectionFailure,
     SimplexIntersectionWitness, SimplexRealizationBuffer, SurfaceMeasureError,
     ValueConversionError, ValueConversionFailureReason, axis_aligned_bounding_boxes_overlap,
-    coordinate_range_for_axis, try_periodic_simplex_span,
-    validate_simplex_realizations_intersect_only_in_shared_faces,
+    coordinate_range_for_axis, try_periodic_simplex_span, validate_simplex_intersection,
 };
 use delaunay::prelude::insertion::{
     InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage, InsertionError,
     InsertionErrorKind as FocusedInsertionErrorKind, InsertionTopologyValidationContext,
     NeighborRebuildError, TdsValidationFailure,
+};
+use delaunay::prelude::operations::{
+    InsertionResult as OperationInsertionResult,
+    InsertionStatistics as OperationInsertionStatistics, RepairDecision as OperationRepairDecision,
+    RepairSkipReason as OperationRepairSkipReason, SuspicionFlags as OperationSuspicionFlags,
+    TopologicalOperation,
 };
 use delaunay::prelude::ordering::{
     HilbertBitDepth, HilbertError, HilbertQuantizedBatch, MAX_HILBERT_BITS, hilbert_index_in_range,
@@ -143,7 +146,6 @@ use delaunay::prelude::query::{
     ConvexHullInsufficientDataReason as QueryConvexHullInsufficientDataReason,
     ConvexHullQueryError, EdgeIndex as QueryEdgeIndex, EdgeKey as QueryEdgeKey,
     EdgeView as QueryEdgeView, FacetHandle as QueryFacetHandle,
-    FacetIncidenceAnalysis as QueryFacetIncidenceAnalysis,
     FacetIncidenceView as QueryFacetIncidenceView, IncidenceView as QueryIncidenceView,
     OneSidedFacetsIter as QueryOneSidedFacetsIter, QueryError,
     RidgeCandidate as QueryRidgeCandidate, RidgeCandidateError as QueryRidgeCandidateError,
@@ -529,12 +531,6 @@ const fn assert_send_sync_unpin<T: Send + Sync + Unpin>() {}
 
 const fn assert_error<T: Error>() {}
 
-const fn assert_query_facet_incidence_trait_export<T>(_: &T)
-where
-    T: QueryFacetIncidenceAnalysis<(), (), 3> + ?Sized,
-{
-}
-
 fn assert_construction_prelude_unsupported_topology_variants() {
     let unsupported_euclidean_topology =
         DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology {
@@ -638,7 +634,7 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
             if source.as_ref() == &incremental_build
     );
 
-    let delete_vertex = DeleteVertexError::VertexNotFound {
+    let delete_vertex = FocusedDeleteVertexError::VertexNotFound {
         vertex_key: VertexKey::from(KeyData::from_ffi(2)),
     };
     assert_matches!(
@@ -665,7 +661,11 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
 #[test]
 fn construction_prelude_exports_low_level_delaunay_error_aliases() {
     let generic_construction = GenericTriangulationConstructionError::FailedToCreateSimplex {
-        message: "prelude smoke test".to_owned(),
+        source: SimplexValidationError::InsufficientVertices {
+            actual: 2,
+            expected: 3,
+            dimension: 2,
+        },
     };
     assert_matches!(
         DelaunayError::from(generic_construction.clone()),
@@ -913,6 +913,21 @@ fn deletion_prelude_exports_delete_vertex_error_and_key() {
     };
 
     assert_matches!(err, FocusedDeleteVertexError::VertexNotFound { .. });
+
+    let source = InsertionError::CavityFilling {
+        reason: CavityFillingError::EmptyFanTriangulation,
+    };
+    let err = FocusedDeleteVertexError::TriangulationRepairFailed {
+        operation: TriangulationRepairOperation::FanTriangulation,
+        source: Box::new(source.clone()),
+    };
+    assert_matches!(
+        err,
+        FocusedDeleteVertexError::TriangulationRepairFailed {
+            operation: TriangulationRepairOperation::FanTriangulation,
+            source: preserved,
+        } if preserved.as_ref() == &source
+    );
 }
 
 #[test]
@@ -1294,9 +1309,6 @@ fn assert_facet_incidence_exports<K>(
     assert_eq!(root_incidence.facet_key(), query_incidence.facet_key());
     assert_eq!(query_incidence.facet_key(), tds_incidence.facet_key());
     assert!(tds_incidence.is_one_sided());
-    let empty_tds: Tds<(), (), 3> = Tds::empty();
-    assert_query_facet_incidence_trait_export(&empty_tds);
-
     let query_facade_one_sided_facets: Option<QueryFacadeOneSidedFacetsIter<'_, (), (), 3>> = None;
     let query_one_sided_facets: Option<QueryOneSidedFacetsIter<'_, (), (), 3>> = None;
     let tds_one_sided_facets: Option<TdsOneSidedFacetsIter<'_, (), (), 3>> = None;
@@ -1384,6 +1396,20 @@ fn assert_insertion_prelude_empty_tds_exports() {
         "primary insertion"
     );
     assert_matches!(LocateResult::Outside, LocateResult::Outside);
+    let simplex_key = SimplexKey::from(KeyData::from_ffi(17));
+    let conflict_error = ConflictError::FacetIndexOutOfBounds {
+        simplex_key,
+        facet_index: 256,
+        exclusive_upper_bound: 256,
+    };
+    assert_matches!(
+        conflict_error,
+        ConflictError::FacetIndexOutOfBounds {
+            simplex_key: key,
+            facet_index: 256,
+            exclusive_upper_bound: 256,
+        } if key == simplex_key
+    );
     assert_matches!(
         ValidationCadence::from_optional_every(Some(128)),
         ValidationCadence::EveryN(every) if every.get() == 128
@@ -1434,9 +1460,29 @@ fn assert_misc_bench_prelude_exports() {
     let mut scoped_secure_set: ScopedSecureHashSet<[u64; 2]> = ScopedSecureHashSet::default();
     scoped_secure_set.insert([3, 4]);
     assert!(scoped_secure_set.contains(&[3, 4]));
+}
 
+#[test]
+fn diagnostics_prelude_covers_default_telemetry() {
     let telemetry = ConstructionTelemetry::default();
     assert!(!telemetry.has_data());
+}
+
+#[test]
+fn operations_prelude_covers_semantic_operation_surface() {
+    let operation = TopologicalOperation::FacetFlip;
+    assert!(operation.requires_pl_manifold());
+    let decision = OperationRepairDecision::Skip {
+        reason: OperationRepairSkipReason::PolicyDisabled,
+    };
+    assert_matches!(decision, OperationRepairDecision::Skip { .. });
+    let statistics = OperationInsertionStatistics {
+        attempts: 1,
+        simplices_removed_during_repair: 0,
+        result: OperationInsertionResult::Inserted,
+    };
+    assert!(statistics.success());
+    assert!(!OperationSuspicionFlags::default().is_suspicious());
 }
 
 #[test]
@@ -1545,10 +1591,10 @@ fn query_preludes_cover_borrowed_adjacency_view() -> Result<(), PreludeExportTes
     let generic_adjacency: GenericTriangulationAdjacency<'_> = dt.as_triangulation().adjacency()?;
     let facade_adjacency: QueryFacadeTriangulationAdjacency<'_> = dt.adjacency()?;
     let root_adjacency: RootTriangulationAdjacency<'_> = dt.adjacency()?;
-    let query_incidence: QueryIncidenceView<'_> = dt.incidence()?;
-    let generic_incidence: GenericIncidenceView<'_> = dt.as_triangulation().incidence()?;
-    let facade_incidence: QueryFacadeIncidenceView<'_> = dt.incidence()?;
-    let root_incidence: RootIncidenceView<'_> = dt.incidence()?;
+    let query_incidence: QueryIncidenceView<'_> = dt.incidence();
+    let generic_incidence: GenericIncidenceView<'_> = dt.as_triangulation().incidence();
+    let facade_incidence: QueryFacadeIncidenceView<'_> = dt.incidence();
+    let root_incidence: RootIncidenceView<'_> = dt.incidence();
     let query_edges: QueryEdgeIndex<'_> = dt.build_edge_index()?;
     let generic_edges: GenericEdgeIndex<'_> = dt.as_triangulation().build_edge_index()?;
     let facade_edges: QueryFacadeEdgeIndex<'_> = dt.build_edge_index()?;
@@ -1738,7 +1784,7 @@ fn geometry_prelude_covers_simplex_realization_validation() -> Result<(), Prelud
     );
     assert!(axis_aligned_bounding_boxes_overlap(&first, &second));
     assert_matches!(
-        validate_simplex_realizations_intersect_only_in_shared_faces(&first, &second),
+        validate_simplex_intersection(&first, &second),
         Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace {
             witness: SimplexIntersectionWitness {
                 shared,
@@ -1754,10 +1800,7 @@ fn geometry_prelude_covers_simplex_realization_validation() -> Result<(), Prelud
         [10_usize, 11, 12],
         [[2.0, 2.0], [3.0, 2.0], [2.0, 3.0]],
     )?;
-    geometry_module_validate_simplex_realizations_intersect_only_in_shared_faces(
-        &first,
-        &module_root_simplex,
-    )?;
+    geometry_module_validate_simplex_intersection(&first, &module_root_simplex)?;
 
     let spanning_simplex =
         LabeledSimplexRealization::try_new([4_usize, 5, 6], [[0.0, 0.0], [1.0, 0.0], [0.0, 0.25]])?;
@@ -2674,15 +2717,9 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
 
 #[cfg(feature = "diagnostics")]
 #[test]
-fn diagnostics_prelude_covers_opt_in_helpers() -> Result<(), PreludeExportTestError> {
+fn diagnostics_prelude_covers_opt_in_helpers() {
     let tds: Tds<(), (), 2> = Tds::empty();
     debug_print_first_delaunay_violation(&tds, None);
-    let report = delaunay_violation_report(&tds, None)?;
-    let _typed_report: DelaunayViolationReport = report;
-    let _typed_detail: Option<DelaunayViolationDetail> = None;
-    assert!(DiagnosticNeighborSlot::Boundary.is_boundary());
-
-    Ok(())
 }
 
 #[test]

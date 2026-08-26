@@ -4,7 +4,7 @@ on:
     paths:
       # Run if workflow changes
       - .github/workflows/audit.yml
-      - .github/actions/setup-just/action.yml
+      - .github/actions/setup-just/**
       # Run if tool-version source changes
       - justfile
       # Run on changed dependencies
@@ -14,7 +14,7 @@ on:
     paths:
       # Run if workflow changes
       - .github/workflows/audit.yml
-      - .github/actions/setup-just/action.yml
+      - .github/actions/setup-just/**
       # Run if tool-version source changes
       - justfile
       # Run on changed dependencies

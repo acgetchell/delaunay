@@ -15,17 +15,28 @@
 mod proptest_config;
 
 use delaunay::prelude::construction::{
-    DelaunayIncrementalBuilder, DelaunayTriangulation, TopologyGuarantee,
+    DelaunayIncrementalBuilder, DelaunayTriangulation, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::insertion::InsertionOutcome;
 use delaunay::prelude::tds::{Tds, TdsError};
 use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
+use std::collections::HashSet;
 
 /// Strategy for generating finite `f64` coordinates in a reasonable range.
 fn finite_coordinate() -> impl Strategy<Value = f64> {
     (-100.0..100.0).prop_filter("must be finite", |x: &f64| x.is_finite())
+}
+
+/// Counts coordinate-distinct inputs before construction so tamper-only
+/// properties reject only generator-domain insufficiency.
+fn unique_vertex_count<const D: usize>(vertices: &[Vertex<(), D>]) -> usize {
+    vertices
+        .iter()
+        .map(|vertex| vertex.point().coords().map(f64::to_bits))
+        .collect::<HashSet<_>>()
+        .len()
 }
 
 macro_rules! gen_orientation_construction_and_tamper_props {
@@ -43,13 +54,18 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                         try_vertices_from_points(&points).expect("finite point coordinates")
                     })
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        prop_assert!(
-                            dt.is_coherently_oriented(),
-                            "{}D: constructed triangulation must be coherently oriented",
-                            $dim
-                        );
-                    }
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D coherent-orientation fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    prop_assert!(
+                        dt.is_coherently_oriented(),
+                        "{}D: constructed triangulation must be coherently oriented",
+                        $dim
+                    );
                 }
 
                 /// Property: swapping one simplex's vertex order should violate TDS structure.
@@ -68,12 +84,24 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                         try_vertices_from_points(&points).expect("finite point coordinates")
                     })
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        prop_assume!(dt.number_of_simplices() >= 2);
+                    prop_assume!(unique_vertex_count(&vertices) > $dim + 1);
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D orientation-tamper fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                        prop_assert!(dt.number_of_simplices() >= 2);
                         prop_assert!(dt.is_coherently_oriented());
 
                         let tds = dt.into_triangulation().into_tds();
-                        let mut serialized = serde_json::to_value(tds).unwrap();
+                        let mut serialized = serde_json::to_value(tds).map_err(|error| {
+                            TestCaseError::fail(format!(
+                                "{}D orientation-tamper serialization failed: {error:?}",
+                                $dim,
+                            ))
+                        })?;
                         let simplex_vertices_map = serialized
                             .get_mut("simplex_vertices")
                             .and_then(serde_json::Value::as_object_mut)
@@ -83,10 +111,15 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                             .next()
                             .and_then(serde_json::Value::as_array_mut)
                             .unwrap();
-                        prop_assume!(first_simplex_vertices.len() >= 2);
+                        prop_assert!(first_simplex_vertices.len() >= 2);
                         first_simplex_vertices.swap(0, 1);
 
-                        let tampered_json = serde_json::to_string(&serialized).unwrap();
+                        let tampered_json = serde_json::to_string(&serialized).map_err(|error| {
+                            TestCaseError::fail(format!(
+                                "{}D orientation-tamper JSON encoding failed: {error:?}",
+                                $dim,
+                            ))
+                        })?;
                         match serde_json::from_str::<Tds<(), (), $dim>>(&tampered_json) {
                             Ok(tampered_tds) => {
                                 prop_assert!(
@@ -116,7 +149,6 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                                 );
                             }
                         }
-                    }
                 }
             }
         }
@@ -145,12 +177,21 @@ macro_rules! gen_orientation_incremental_props {
 
                     for vertex in vertices {
                         let result = dt.insert_best_effort_with_statistics(vertex);
-                        if let Ok((InsertionOutcome::Inserted { .. }, _stats)) = result {
-                            prop_assert!(
-                                dt.is_coherently_oriented(),
-                                "{}D: orientation must remain coherent after successful insertion",
-                                $dim
-                            );
+                        match result {
+                            Ok((InsertionOutcome::Inserted { .. }, _stats)) => {
+                                prop_assert!(
+                                    dt.is_coherently_oriented(),
+                                    "{}D: orientation must remain coherent after successful insertion",
+                                    $dim
+                                );
+                            }
+                            Ok((InsertionOutcome::Skipped { .. }, _stats)) => {}
+                            Err(error) => {
+                                return Err(TestCaseError::fail(format!(
+                                    "{}D incremental orientation insertion failed: {error:?}",
+                                    $dim,
+                                )));
+                            }
                         }
                     }
                 }

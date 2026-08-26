@@ -200,19 +200,37 @@ pub enum ConflictError {
         source: CoordinateConversionError,
     },
 
-    /// Failed to access required simplex data (e.g., vertices) or build facet identifiers.
-    ///
-    /// This represents a *data-sourcing* failure attributable to a specific simplex key:
-    /// the key resolved but its vertex list, facet index, or derived identifier could
-    /// not be produced. For invariant violations that are *not* about a specific simplex
-    /// (e.g., a `boundary_facets` index that must be in range by construction), use
-    /// [`ConflictError::InternalInconsistency`] instead of fabricating a simplex key.
-    #[error("Failed to access required data for simplex {simplex_key:?}: {message}")]
-    SimplexDataAccessFailed {
-        /// The simplex key for which required data could not be accessed.
+    /// A conflict-region simplex disappeared before the traversal or view could consume it.
+    #[error("Conflict-region simplex {simplex_key:?} is no longer present in the TDS")]
+    ConflictSimplexNotFound {
+        /// Missing or stale conflict-region simplex key.
         simplex_key: SimplexKey,
-        /// Human-readable details about what data could not be accessed.
-        message: String,
+    },
+
+    /// A simplex facet index cannot be represented by [`FacetHandle`].
+    #[error(
+        "Facet index {facet_index} for conflict simplex {simplex_key:?} is outside the representable range 0..{exclusive_upper_bound}"
+    )]
+    FacetIndexOutOfBounds {
+        /// Simplex whose facet index was being encoded.
+        simplex_key: SimplexKey,
+        /// Facet index that could not be represented.
+        facet_index: usize,
+        /// Exclusive upper bound of the facet-handle index representation.
+        exclusive_upper_bound: usize,
+    },
+
+    /// Canonical vertex identity for a previously indexed conflict facet was missing.
+    #[error(
+        "Canonical facet cache entry {facet_hash:#x} is missing for conflict simplex {simplex_key:?} facet {facet_index}"
+    )]
+    CanonicalFacetCacheEntryMissing {
+        /// Simplex owning the boundary facet.
+        simplex_key: SimplexKey,
+        /// Facet index within the owning simplex.
+        facet_index: usize,
+        /// Canonical hash identity used to index the missing cache entry.
+        facet_hash: u64,
     },
 
     /// A conflict-region simplex has the wrong number of vertices for this dimension.
@@ -246,10 +264,9 @@ pub enum ConflictError {
     /// valid in correct code. Returning a structured error rather than panicking
     /// preserves the caller's transactional rollback guarantees.
     ///
-    /// Orthogonality: this variant is distinct from
-    /// [`ConflictError::SimplexDataAccessFailed`]. Use `SimplexDataAccessFailed` when
-    /// a specific, real simplex key is the subject of the failure; use
-    /// `InternalInconsistency` when the failure is structural and has no such key.
+    /// Orthogonality: this variant is distinct from the simplex-, facet-index-,
+    /// and facet-cache-specific variants above. Use `InternalInconsistency` when
+    /// the structural failure has no corresponding domain identity.
     /// Treated as non-retryable by [`InsertionError::is_retryable`] because
     /// perturbing coordinates cannot resolve a logic error.
     ///
@@ -750,7 +767,7 @@ pub(crate) struct LocateTrace {
 ///
 /// ```rust
 /// use delaunay::prelude::algorithms::*;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{algorithms::*, construction::*, geometry::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -796,7 +813,7 @@ pub(crate) struct LocateTrace {
 /// ```rust
 /// use delaunay::prelude::geometry::RobustKernel;
 /// use delaunay::prelude::algorithms::*;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{algorithms::*, construction::*, geometry::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -859,7 +876,7 @@ where
 ///
 /// ```rust
 /// use delaunay::prelude::algorithms::*;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{algorithms::*, construction::*, geometry::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -1322,12 +1339,9 @@ where
         }
 
         // Get simplex vertices for in_sphere test
-        let simplex =
-            tds.simplex(simplex_key)
-                .ok_or_else(|| ConflictError::SimplexDataAccessFailed {
-                    simplex_key,
-                    message: "Simplex vanished during BFS traversal".to_string(),
-                })?;
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(ConflictError::ConflictSimplexNotFound { simplex_key })?;
 
         // Collect simplex vertex points in canonical VertexKey order for consistent
         // SoS perturbation priority.
@@ -1561,6 +1575,31 @@ where
     missed_count
 }
 
+/// Encodes one conflict-facet index without losing its simplex and range context.
+fn conflict_facet_index(simplex_key: SimplexKey, facet_index: usize) -> Result<u8, ConflictError> {
+    u8::try_from(facet_index).map_err(|_| ConflictError::FacetIndexOutOfBounds {
+        simplex_key,
+        facet_index,
+        exclusive_upper_bound: usize::from(u8::MAX) + 1,
+    })
+}
+
+/// Retrieves the canonical identity cached for one boundary facet.
+fn cached_conflict_facet_vertices(
+    cache: &FastHashMap<u64, SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+    simplex_key: SimplexKey,
+    facet_index: usize,
+    facet_hash: u64,
+) -> Result<&SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>, ConflictError> {
+    cache
+        .get(&facet_hash)
+        .ok_or(ConflictError::CanonicalFacetCacheEntryMissing {
+            simplex_key,
+            facet_index,
+            facet_hash,
+        })
+}
+
 /// Extract boundary facets of a conflict region (cavity).
 ///
 /// Finds all facets where exactly one adjacent simplex is in the conflict region.
@@ -1579,8 +1618,10 @@ where
 /// # Errors
 ///
 /// Returns `ConflictError` if:
-/// - A conflict simplex cannot be retrieved from the TDS
-/// - Simplex neighbor data is inconsistent
+/// - A conflict simplex cannot be retrieved from the TDS.
+/// - A facet index exceeds the handle representation.
+/// - Canonical facet identity bookkeeping is inconsistent.
+/// - Simplex neighbor data is inconsistent.
 ///
 /// # Algorithm
 ///
@@ -1671,11 +1712,7 @@ pub(crate) fn extract_cavity_boundary<U, V, const D: usize>(
             // Stash canonical vertex keys so we can reuse them for ridge analysis later.
             facet_hash_to_vkeys.entry(facet_hash).or_insert(facet_vkeys);
 
-            let facet_idx_u8 =
-                u8::try_from(facet_idx).map_err(|_| ConflictError::SimplexDataAccessFailed {
-                    simplex_key,
-                    message: format!("Facet index {facet_idx} exceeds u8::MAX"),
-                })?;
+            let facet_idx_u8 = conflict_facet_index(simplex_key, facet_idx)?;
 
             facet_to_conflict
                 .entry(facet_hash)
@@ -1709,15 +1746,12 @@ pub(crate) fn extract_cavity_boundary<U, V, const D: usize>(
                 }
 
                 // Use the cached canonical facet vertex keys for ridge analysis.
-                let facet_vkeys = facet_hash_to_vkeys.get(facet_hash).ok_or_else(|| {
-                    ConflictError::SimplexDataAccessFailed {
-                        simplex_key,
-                        message: format!(
-                            "Missing canonical vertex keys for facet hash {:#x}",
-                            *facet_hash
-                        ),
-                    }
-                })?;
+                let facet_vkeys = cached_conflict_facet_vertices(
+                    &facet_hash_to_vkeys,
+                    simplex_key,
+                    usize::from(facet_idx_u8),
+                    *facet_hash,
+                )?;
 
                 // A ridge is a (D-2)-simplex: remove one more vertex from this (D-1)-facet.
                 if facet_vkeys.len() >= 2 {
@@ -3229,9 +3263,9 @@ mod tests {
 
     /// When a conflict simplex's neighbor list references a non-existent simplex key,
     /// the BFS in `find_conflict_region` pops that key and fails to retrieve the
-    /// simplex, returning `SimplexDataAccessFailed` with a "vanished" message.
+    /// simplex, returning its typed missing-simplex identity.
     #[test]
-    fn test_find_conflict_region_vanished_neighbor_returns_simplex_data_access_failed() {
+    fn test_find_conflict_region_vanished_neighbor_returns_conflict_simplex_not_found() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
@@ -3266,9 +3300,39 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(ConflictError::SimplexDataAccessFailed { simplex_key: ck, .. }) if ck == ghost
+                Err(ConflictError::ConflictSimplexNotFound { simplex_key: ck }) if ck == ghost
             ),
-            "expected SimplexDataAccessFailed for vanished neighbor, got {result:?}"
+            "expected ConflictSimplexNotFound for vanished neighbor, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn conflict_facet_index_reports_key_index_and_bound() {
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(91));
+        let facet_index = usize::from(u8::MAX) + 1;
+
+        assert_eq!(
+            conflict_facet_index(simplex_key, facet_index),
+            Err(ConflictError::FacetIndexOutOfBounds {
+                simplex_key,
+                facet_index,
+                exclusive_upper_bound: usize::from(u8::MAX) + 1,
+            })
+        );
+    }
+
+    #[test]
+    fn cached_conflict_facet_vertices_reports_missing_identity() {
+        let cache = FastHashMap::default();
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(92));
+
+        assert_eq!(
+            cached_conflict_facet_vertices(&cache, simplex_key, 2, 0xfeed_beef),
+            Err(ConflictError::CanonicalFacetCacheEntryMissing {
+                simplex_key,
+                facet_index: 2,
+                facet_hash: 0xfeed_beef,
+            })
         );
     }
 

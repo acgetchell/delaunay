@@ -17,7 +17,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::{construction::*, tds::*};
 //!
 //! # fn main() -> DelaunayResult<()> {
 //! // Create vertices for a tetrahedron
@@ -62,6 +62,7 @@ use super::{
     traits::{DataDeserialize, DataSerialize},
     util::{UuidValidationError, make_uuid, validate_uuid},
 };
+
 use crate::core::collections::{
     FastHashMap, NeighborBuffer, PeriodicOffsetBuffer, SimplexVertexBuffer, SimplexVertexKeyBuffer,
     SimplexVertexUuidBuffer, fast_hash_map_with_capacity,
@@ -73,14 +74,15 @@ use serde::{
     de::{self, IgnoredAny, MapAccess, Visitor},
     ser::SerializeStruct,
 };
+use thiserror::Error;
+use uuid::Uuid;
+
 use std::{
     cmp,
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
 };
-use thiserror::Error;
-use uuid::Uuid;
 
 // =============================================================================
 // ERROR TYPES
@@ -324,7 +326,7 @@ impl NeighborSlot {
 /// Since simplices store keys, use the owning [`Tds`] to resolve vertex data:
 /// ```rust
 /// use delaunay::prelude::collections::Uuid;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, tds::*};
 ///
 /// # fn main() -> DelaunayResult<()> {
 /// // Create a triangulation with some vertices
@@ -390,6 +392,14 @@ pub struct Simplex<V, const D: usize> {
     /// Standalone simplex records omit offsets. TDS snapshots store them
     /// separately in `simplex_vertex_offsets` and restore them during hydration.
     pub(crate) periodic_vertex_offsets: Option<PeriodicOffsetBuffer<D>>,
+}
+
+/// Payload-independent before-image of mutable simplex topology.
+#[derive(Clone, Debug)]
+pub(crate) struct SimplexTopologySnapshot<const D: usize> {
+    vertices: SimplexVertexKeyBuffer,
+    neighbors: Option<NeighborBuffer<NeighborSlot>>,
+    periodic_vertex_offsets: Option<PeriodicOffsetBuffer<D>>,
 }
 
 // =============================================================================
@@ -582,6 +592,22 @@ where
 
 // Minimal trait bounds impl block
 impl<V, const D: usize> Simplex<V, D> {
+    /// Captures the topology fields changed by TDS mutation algorithms.
+    pub(crate) fn topology_snapshot(&self) -> SimplexTopologySnapshot<D> {
+        SimplexTopologySnapshot {
+            vertices: self.vertices.clone(),
+            neighbors: self.neighbors.clone(),
+            periodic_vertex_offsets: self.periodic_vertex_offsets.clone(),
+        }
+    }
+
+    /// Restores topology fields without cloning or constraining the payload.
+    pub(crate) fn restore_topology(&mut self, snapshot: SimplexTopologySnapshot<D>) {
+        self.vertices = snapshot.vertices;
+        self.neighbors = snapshot.neighbors;
+        self.periodic_vertex_offsets = snapshot.periodic_vertex_offsets;
+    }
+
     /// Tries to create a simplex from vertex keys without user data.
     ///
     /// This constructor is `pub(crate)` because live [`VertexKey`] values are
@@ -737,7 +763,7 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
@@ -777,7 +803,7 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
@@ -821,7 +847,7 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
@@ -893,7 +919,7 @@ impl<V, const D: usize> Simplex<V, D> {
     ///
     /// ```
     /// use delaunay::prelude::tds::NeighborSlot;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
@@ -931,7 +957,7 @@ impl<V, const D: usize> Simplex<V, D> {
     /// This method returns keys (not full vertex objects). Use the TDS to resolve keys:
     /// ```rust
     /// use delaunay::prelude::collections::Uuid;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
@@ -1131,7 +1157,7 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
@@ -1166,7 +1192,7 @@ impl<V, const D: usize> Simplex<V, D> {
     ///
     /// ```
     /// use delaunay::prelude::collections::Uuid;
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
@@ -1194,7 +1220,7 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     /// use delaunay::prelude::tds::Simplex;
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -1341,7 +1367,7 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     /// use delaunay::prelude::tds::Simplex;
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -1383,7 +1409,7 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     /// use delaunay::prelude::tds::Simplex;
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -1486,7 +1512,7 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     /// use delaunay::prelude::tds::Simplex;
     ///
     /// # fn main() -> DelaunayResult<()> {

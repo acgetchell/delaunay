@@ -523,6 +523,12 @@ pub enum FlipNeighborCavityFailureKind {
     /// Fan filling produced no simplices.
     #[error("empty fan triangulation")]
     EmptyFanTriangulation,
+    /// Local facet repair quality evaluation failed.
+    #[error("local facet repair quality evaluation")]
+    LocalFacetQualityEvaluation,
+    /// Local facet repair produced a non-finite quality score.
+    #[error("local facet repair non-finite quality")]
+    LocalFacetNonFiniteQuality,
 }
 
 impl From<&CavityFillingError> for FlipNeighborCavityFailureKind {
@@ -554,6 +560,12 @@ impl From<&CavityFillingError> for FlipNeighborCavityFailureKind {
                 Self::UnsupportedDegenerateLocation
             }
             CavityFillingError::EmptyFanTriangulation => Self::EmptyFanTriangulation,
+            CavityFillingError::LocalFacetQualityEvaluation { .. } => {
+                Self::LocalFacetQualityEvaluation
+            }
+            CavityFillingError::LocalFacetNonFiniteQuality { .. } => {
+                Self::LocalFacetNonFiniteQuality
+            }
         }
     }
 }

@@ -122,10 +122,12 @@ recipes instead of repeating their commands. Shared private guards and
 parameterized implementation helpers live in `just/helpers.just`.
 
 Tool-version variables in the root `justfile` are the source of truth for both
-local setup and GitHub Actions. `just setup-tools` installs or synchronizes the
-repository toolchain. It requires `uv`, `gh`, `jq`, `rustup`, Cargo, and
-`chktex` on `PATH`, installs the pinned Rust CLI tools, and provisions the
-unpinned `cargo-update` bootstrap package that supplies
+local setup and GitHub Actions. Before the first `just` invocation, run
+`bash scripts/bootstrap_just.sh`; it installs the pinned Just release only when
+that exact version is not already available. `just setup-tools` then installs
+or synchronizes the repository toolchain. It requires `uv`, `gh`, `jq`,
+`rustup`, Cargo, and `chktex` on `PATH`, installs the pinned Rust CLI tools, and
+provisions the unpinned `cargo-update` bootstrap package that supplies
 `cargo-install-update`. Its final inventory verifies both `gh` and
 `cargo-install-update`. Private `_ensure-*` dependencies fail fast when a
 required tool or pinned version is unavailable during an individual recipe.
@@ -140,12 +142,16 @@ exact direct pins under
 version, then upgrades `uv.lock`, with
 `just update-cargo-tools`, which upgrades only the locally installed Cargo CLI
 packages owned by `setup-tools` and atomically reconciles their root `justfile`
-pins after every requested package updates successfully. The Cargo tool updater requires
-`cargo-install-update` from the `cargo-update` package and does not touch other
-Cargo-installed executables or uv's user-global tool environments. `setup-tools`
-and CI consume the reconciled declarations. The exact-pin step leaves ranged
-development requirements, project/runtime dependencies, optional dependencies,
-build requirements, and intentional uv overrides unchanged.
+pins plus the active uv version after every requested package updates
+successfully. uv remains an external prerequisite managed outside this
+repository; the update workflow accepts its active version long enough to
+record the new pin but does not replace the uv installation. Ordinary uv-backed
+recipes continue to require the exact reconciled pin. The Cargo tool updater
+requires `cargo-install-update` from the `cargo-update` package and does not
+touch other Cargo-installed executables or uv's user-global tool environments.
+`setup-tools` and CI consume the reconciled declarations. The exact-pin step
+leaves ranged development requirements, project/runtime dependencies, optional
+dependencies, build requirements, and intentional uv overrides unchanged.
 The aggregate `just update` runs its `cargo-install-update` preflight before
 either dependency updater can change declarations or lockfiles.
 
@@ -310,10 +316,10 @@ aggregate recipe that executes every notebook.
 
 `just semgrep` scans repository-owned Rust under `src/`, `examples/`, and
 `benches/`. Because Semgrep's default ignore policy excludes test directories,
-the recipe also scans tracked Python tests with the shared configuration and
-tracked Rust tests with every repository rule that explicitly owns those
-surfaces. Deliberate violations under `tests/semgrep/` remain excluded from
-that repository scan and are exercised only by `just semgrep-test`.
+the shared target enumerator also supplies tracked Python and Rust tests to
+both local validation and the hosted SARIF workflow. Deliberate violations
+under `tests/semgrep/` remain excluded from repository scans and are exercised
+only by `just semgrep-test`.
 
 `just test` is tests-only. `test-integration-compile` is an explicit no-run
 smoke recipe for cases where a compile-only check is the desired validator; do
@@ -399,14 +405,18 @@ use the dimension-specific `just pachner-stress-3d [attempts] [vertices]
 [validate_every] [output_dir] [mode]` or `just pachner-stress-4d [attempts]
 [vertices] [validate_every] [output_dir] [mode]` recipe; their `vertices`
 parameters default to 9,000 and 1,000, respectively. All three recipes default
-to 100 attempted moves with progress every 10 attempts, write progress CSV plus
+to 100 workload steps with progress every 10 steps, write progress CSV plus
 summary JSON under `target/pachner_stress/`, and keep parseable stdout
 stage/report/progress lines so long workloads can be diagnosed without making
 the workflow part of routine CI. These direct stress recipes currently validate
 topology scope only (Levels 1-3); the large Level 4 realization overlap scan is
 deferred to the dedicated realization-validation work. The `pachner-stress`
 binary supports `round-trip` and `random-walk` modes; `round-trip` is the
-default. Use
+default. The existing `--attempts` flag counts forward/inverse pairs in
+`round-trip` mode and candidate/proposal cycles in `random-walk` mode. Schema
+version 2 reports configured/completed steps separately from actual proposal
+attempts and accepted mutations, and computes interim acceptance over completed
+proposals. Use
 `just bench-pachner-stress` when Criterion timing statistics for stable 4D move
 and inverse fixtures are needed.
 
@@ -433,10 +443,11 @@ the current Criterion construction metadata and generated simplex counts, and
 regenerates `benches/PERFORMANCE_RESULTS.md`.
 
 Use `just bench-latest` when you need the curated release-signal Criterion
-suite for local saved-baseline comparisons. It runs
-`ci_performance_suite`, `circumsphere_containment`, `cold_path_predicates`,
-`locate`, and `realization_validation`, leaving `target/criterion/new` data suitable for
-`just bench-compare`. The manual `topology_guarantee_construction` suite remains
+suite for local saved-baseline comparisons. The recipe executes the immutable
+target/section/group plan in `scripts/benchmark_utils.py`, leaving
+`target/criterion/new` data suitable for `just bench-compare`; release CI and
+strict summary generation consume that same plan. The manual
+`topology_guarantee_construction` suite remains
 available through `just bench-save-baseline <tag> topology` and
 `cargo bench --locked --profile perf --bench topology_guarantee_construction`. Save the previous release
 signal as `last` with `just bench-save-baseline last` from the baseline
@@ -726,8 +737,10 @@ just papers
 `just paper-cli` builds the local `delaunay` binary used by paper notebooks
 before nbconvert starts its execution timeout. `just validation-doc-figures`
 refreshes the canonical PNG files under `docs/assets/validation/`, which are
-reused directly by `papers/validation.tex`. Ordinary notebook validation does
-not refresh tracked figures. `just paper-tex-fmt-check` runs `tex-fmt --check`,
+reused directly by `papers/validation.tex`. It validates the complete six-file
+set in staging and publishes it transactionally, preserving the prior complete
+set if rendering or publication fails. Ordinary notebook validation and direct
+interactive execution do not refresh tracked figures. `just paper-tex-fmt-check` runs `tex-fmt --check`,
 and `just paper-tex-lint` runs `chktex` over `papers/*.tex`. `just paper-build`
 compiles
 `papers/validation.tex` with Tectonic in `target/papers/validation/` without

@@ -330,7 +330,7 @@ Property-based tests for serialization and deserialization verifying data preser
 - Integration properties default to 32 cases unless they configure a suite-specific local fallback
 - Configure test cases via `PROPTEST_CASES=N`; when set, it takes precedence over both repository and suite-specific
   fallbacks
-- Reproduce failures using `PROPTEST_SEED=<seed>` from test output
+- Reproduce failures using `PROPTEST_RNG_SEED=<seed>` from test output
 - For deterministic ordering when debugging, use `--test-threads=1`
 - Always prefer `--release` mode for representative performance
 
@@ -346,7 +346,7 @@ Proptest automatically captures minimal failing test cases in `.proptest-regress
 - **Reproduction**: To debug a failure, copy the seed from test output:
 
   ```bash
-  PROPTEST_SEED=12345 cargo test --release --test proptest_triangulation -- --nocapture
+  PROPTEST_RNG_SEED=12345 cargo test --release --test proptest_triangulation -- --nocapture
   ```
 
 - **Performance Note**: Regression cases run before random cases; many entries can slow tests

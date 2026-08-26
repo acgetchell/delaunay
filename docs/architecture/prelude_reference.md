@@ -20,6 +20,7 @@ they exercise.
 | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
 | Incremental insertion diagnostics and result types | `use delaunay::prelude::insertion::*` |
 | Post-construction vertex deletion errors and keys | `use delaunay::prelude::deletion::*` |
+| Topological operation outcomes, policies, and telemetry | `use delaunay::prelude::operations::*` |
 | Construct, stage, inspect, or validate low-level TDS values | `use delaunay::prelude::tds::*` |
 | Points, simplex realizations, coordinate ranges, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
 | Random points or triangulations for examples, tests, and benchmarks | `use delaunay::prelude::generators::*` |
@@ -33,6 +34,11 @@ The triangulation, Delaunayize, and validation preludes re-export
 promotion therefore remains recoverable without importing an unrelated
 construction prelude.
 
+The operations prelude intentionally overlaps the insertion prelude for
+insertion result types. Use `insertion` for the complete insertion error/result
+workflow and `operations` for cross-operation classification, repair decisions,
+and suspicion telemetry.
+
 ## Policy
 
 - Focused preludes should remain small, orthogonal, and purpose-specific.
@@ -42,8 +48,11 @@ construction prelude.
   than preserving accidental breadth.
 - The root `delaunay::prelude::*` remains available for quick experiments and
   exploratory tests.
-- Repository examples, benchmarks, and doctests should prefer focused preludes
-  when one communicates the workflow clearly.
+- Repository examples and benchmarks should prefer focused preludes when one
+  communicates the workflow clearly. Public Rustdoc code fences must use
+  focused preludes rather than the root kitchen-sink import; the static test in
+  `scripts/tests/test_rustdoc_imports.py` enforces that boundary while leaving
+  explanatory prose free to mention `delaunay::prelude::*`.
 - Raw bistellar flip primitives remain available through `delaunay::flips` for
   expert/debug workflows, but they are intentionally not part of a prelude.
 - User-facing local move workflows should import
