@@ -1582,7 +1582,10 @@ mod tests {
     use crate::deletion::DeleteVertexError;
     use crate::geometry::kernel::FastKernel;
     use crate::vertex;
-    use crate::{DelaunayTriangulation, TriangulationRealizationValidationError};
+    use crate::{
+        DelaunayTriangulation, DelaunayTriangulationValidationError,
+        TriangulationRealizationValidationError,
+    };
     use std::assert_matches;
 
     use slotmap::KeyData;
@@ -2472,6 +2475,36 @@ mod tests {
             } if key == simplex_key
         );
 
+        let referenced_vertex_error = QualityError::SimplexVertices {
+            simplex_key,
+            source: QualitySimplexVerticesError::ReferencedVertexNotFound {
+                vertex_key,
+                context: "quality vertex lookup".to_string(),
+            },
+        };
+        assert_matches!(
+            quality_error_to_repair_error(simplex_key, referenced_vertex_error),
+            InsertionError::TopologyValidation {
+                source: TdsError::VertexNotFound { vertex_key: key, .. }
+            } if key == vertex_key
+        );
+
+        let unexpected_tds_source = TdsError::InconsistentDataStructure {
+            message: "unexpected quality lookup failure".to_string(),
+        };
+        let unexpected_tds_error = QualityError::SimplexVertices {
+            simplex_key,
+            source: QualitySimplexVerticesError::UnexpectedTdsFailure {
+                source: Box::new(unexpected_tds_source.clone()),
+            },
+        };
+        assert_eq!(
+            quality_error_to_repair_error(simplex_key, unexpected_tds_error),
+            InsertionError::TopologyValidation {
+                source: unexpected_tds_source,
+            }
+        );
+
         let vertex_error = QualityError::VertexNotFound { vertex_key };
         assert_matches!(
             quality_error_to_repair_error(simplex_key, vertex_error),
@@ -2512,6 +2545,7 @@ mod tests {
     #[test]
     fn vertex_removal_error_keeps_validation_and_operation_sources_disjoint() {
         let simplex_key = SimplexKey::from(KeyData::from_ffi(17));
+        let vertex_key = VertexKey::from(KeyData::from_ffi(23));
         let tds_source = TdsError::SimplexNotFound {
             simplex_key,
             context: "vertex-removal test".to_string(),
@@ -2525,6 +2559,60 @@ mod tests {
             ),
             VertexRemovalError::Invariant {
                 source: Box::new(InvariantError::Tds { source: tds_source }),
+            }
+        );
+
+        let topology_source = TriangulationValidationError::IsolatedVertex {
+            vertex_key,
+            vertex_uuid: Uuid::nil(),
+        };
+        assert_eq!(
+            insertion_error_to_vertex_removal_error(
+                InsertionError::TopologyValidationFailed {
+                    context: InsertionTopologyValidationContext::LocalRepair,
+                    source: topology_source.clone(),
+                },
+                TriangulationRepairOperation::NeighborWiring,
+            ),
+            VertexRemovalError::Invariant {
+                source: Box::new(InvariantError::Triangulation {
+                    source: topology_source,
+                }),
+            }
+        );
+
+        let realization_source =
+            TriangulationRealizationValidationError::IncompleteConstruction { vertex_count: 2 };
+        assert_eq!(
+            insertion_error_to_vertex_removal_error(
+                InsertionError::RealizationValidationFailed {
+                    source: realization_source.clone(),
+                },
+                TriangulationRepairOperation::NeighborWiring,
+            ),
+            VertexRemovalError::Invariant {
+                source: Box::new(InvariantError::Realization {
+                    source: realization_source,
+                }),
+            }
+        );
+
+        let delaunay_source = DelaunayTriangulationValidationError::Tds {
+            source: Box::new(TdsError::InconsistentDataStructure {
+                message: "delaunay validation test".to_string(),
+            }),
+        };
+        assert_eq!(
+            insertion_error_to_vertex_removal_error(
+                InsertionError::DelaunayValidationFailed {
+                    source: delaunay_source.clone(),
+                },
+                TriangulationRepairOperation::NeighborWiring,
+            ),
+            VertexRemovalError::Invariant {
+                source: Box::new(InvariantError::Delaunay {
+                    source: delaunay_source,
+                }),
             }
         );
 

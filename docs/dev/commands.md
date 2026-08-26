@@ -342,8 +342,9 @@ irreducible cold-path work can cross the default boundary on hosted runners.
 `test-integration` runs a focused release-profile nextest bucket. Selected 4D
 property families retain that default coverage with a Windows-only 60-second
 override because their release runtimes sit at the 10-second boundary on
-Windows runners. The cospherical 3D `OnSuspicion` sequence property has a
-focused cross-platform 60-second override for the same hosted-runner boundary.
+Windows runners. The 5D local-neighbor repair guardrail has the same focused
+Windows-only override. The cospherical 3D `OnSuspicion` sequence property has
+a focused cross-platform 60-second override for the same hosted-runner boundary.
 The isolated downstream checkpoint fixture has a focused 120-second override
 because it compiles a standalone crate in a separate target directory to prove
 that Cargo feature unification does not supply `serde_json/float_roundtrip`.

@@ -452,6 +452,8 @@ default boundary on hosted runners.
 
 The release integration profile similarly grants 60 seconds on Windows only
 to the promoted 4D property families that sit at the 10-second boundary there.
+The 5D local-neighbor repair guardrail receives the same focused Windows-only
+headroom because its hosted-runner runtime can cross that boundary.
 The cospherical 3D `OnSuspicion` sequence property receives the same focused
 headroom across platforms because hosted runners can cross the default
 integration-test watchdog. The isolated downstream checkpoint fixture receives
@@ -634,6 +636,16 @@ value, and document why thread-local state is needed for parallel-test
 isolation. Prefer explicit inputs, typed fixtures, or harness APIs whenever they
 can cover the branch, and remove the thread-local hook once a cleaner trigger
 exists.
+
+Tests for fallible topology moves, mutations, and repairs must prove the full
+two-outcome contract. Establish that the pre-operation owner is valid through
+the promised validation layers. For success, validate the committed state
+through those layers. For failure, exercise meaningful post-mutation failure
+stages where feasible, compare the complete observable owner state with the
+pre-operation state, and revalidate the restored state. The comparison must
+cover canonical topology plus affected indexes, caches, hints, identity,
+generation, and provenance; recovered counts or a partial topology snapshot are
+not sufficient evidence of failure atomicity.
 
 Keeping helpers and types **above** macros and tests makes them easy to
 find and avoids forward-reference confusion. New helpers should be added

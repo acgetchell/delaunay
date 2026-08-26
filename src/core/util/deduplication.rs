@@ -425,6 +425,19 @@ mod tests {
         let subnormal = [1.0e-310, 0.0];
         assert!(coords_within_epsilon(&a, &subnormal, 2.0e-310));
         assert!(!coords_within_epsilon(&a, &subnormal, 5.0e-311));
+
+        let positive_extreme = [f64::MAX, f64::MAX];
+        let negative_extreme = [-f64::MAX, -f64::MAX];
+        assert!(!coords_within_epsilon(
+            &positive_extreme,
+            &negative_extreme,
+            f64::MAX
+        ));
+        assert!(!coords_within_epsilon_inclusive(
+            &positive_extreme,
+            &negative_extreme,
+            f64::MAX
+        ));
     }
 
     #[test]

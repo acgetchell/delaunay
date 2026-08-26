@@ -71,6 +71,16 @@ binary(=proptest_delaunay_triangulation)
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.ci.overrides]]
+# The 5D local-neighbor repair guardrail can cross the integration-suite
+# watchdog on Windows runners. Keep the normal budget for every other case.
+platform = 'cfg(windows)'
+filter = '''
+binary(=delaunay_incremental_insertion)
+& test(=test_local_neighbor_repair_guardrails_5d)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
 # This cospherical 3D OnSuspicion property can cross the integration-suite
 # watchdog on hosted runners.
 filter = '''

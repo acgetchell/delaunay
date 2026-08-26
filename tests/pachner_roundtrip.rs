@@ -91,7 +91,7 @@ fn topology_and_delaunay_valid<const D: usize>(
         && DelaunayRefinementBuilder::new(tri.clone()).build().is_ok()
 }
 
-fn assert_topology_and_delaunay_valid<const D: usize>(
+fn assert_valid_realized_topology<const D: usize>(
     tri: &Triangulation<RobustKernel<f64>, (), (), D>,
     context: &str,
 ) {
@@ -99,6 +99,13 @@ fn assert_topology_and_delaunay_valid<const D: usize>(
         .unwrap_or_else(|err| panic!("{context} should pass Levels 1-3: {err}"));
     tri.is_valid_realization()
         .unwrap_or_else(|err| panic!("{context} should pass Level 4 realization: {err}"));
+}
+
+fn assert_topology_and_delaunay_valid<const D: usize>(
+    tri: &Triangulation<RobustKernel<f64>, (), (), D>,
+    context: &str,
+) {
+    assert_valid_realized_topology(tri, context);
     DelaunayRefinementBuilder::new(tri.clone())
         .build()
         .unwrap_or_else(|err| panic!("{context} should pass Level 5: {err}"));
@@ -155,6 +162,7 @@ fn pachner_proposal_rejects_different_topology_owner_without_mutating() {
         .expect("source proposal should be valid");
 
     let mut target = build_minimal_simplex_dt::<2>();
+    assert_valid_realized_topology(&target, "wrong-owner target before rejection");
     let before = snapshot_topology_2d(&target);
     let expected_owner = target.topology_owner_id();
     let found_owner = proposal.owner_id().clone();
@@ -171,6 +179,7 @@ fn pachner_proposal_rejects_different_topology_owner_without_mutating() {
         FlipFailureKind::WrongTopologyOwner
     );
     assert_eq!(snapshot_topology_2d(&target), before);
+    assert_valid_realized_topology(&target, "wrong-owner target after feasibility rejection");
 
     let attempted = proposal
         .attempt_on(&mut target)
@@ -185,6 +194,7 @@ fn pachner_proposal_rejects_different_topology_owner_without_mutating() {
         FlipFailureKind::WrongTopologyOwner
     );
     assert_eq!(snapshot_topology_2d(&target), before);
+    assert_valid_realized_topology(&target, "wrong-owner target after attempt rejection");
 }
 
 #[test]
@@ -247,9 +257,8 @@ fn stale_pachner_error_propagates_through_delaunay_result() {
             ),
         "unexpected DelaunayResult error for stale Pachner move: {err:?}"
     );
-    tri.is_valid_structure()
-        .expect("failed Pachner attempt should preserve TDS validity");
     assert_eq!(snapshot_topology(&tri), before_failed_attempt);
+    assert_valid_realized_topology(&tri, "state restored after stale Pachner attempt");
 }
 
 #[test]
@@ -345,6 +354,7 @@ fn pachner_feasibility_agrees_with_successful_2d_k2_attempt() {
         feasibility.inserted_face_vertices.as_ref(),
         Some(&result.inserted_face_vertices)
     );
+    assert_valid_realized_topology(&trial, "successful 2D k=2 Pachner move");
 }
 
 #[test]
@@ -409,6 +419,7 @@ fn pachner_feasibility_rejects_stale_facet_like_attempt_2d() {
         Err(FlipError::MissingSimplex { simplex_key }) if simplex_key == facet.simplex_key()
     );
 
+    assert_valid_realized_topology(&tri, "state before stale-facet rejection");
     let before_failed_attempt = snapshot_topology_2d(&tri);
     let attempted = tri.propose_pachner(stale_move);
     assert_matches!(
@@ -416,6 +427,7 @@ fn pachner_feasibility_rejects_stale_facet_like_attempt_2d() {
         Err(FlipError::MissingSimplex { simplex_key }) if simplex_key == facet.simplex_key()
     );
     assert_eq!(snapshot_topology_2d(&tri), before_failed_attempt);
+    assert_valid_realized_topology(&tri, "state after stale-facet rejection");
 }
 
 #[test]
@@ -436,9 +448,11 @@ fn pachner_feasibility_rejects_duplicate_k1_insert_uuid_without_mutating() {
     assert_duplicate_vertex_uuid_error(tri.propose_pachner(pachner_move), duplicate_uuid);
 
     let trial = tri;
+    assert_valid_realized_topology(&trial, "state before duplicate-UUID rejection");
     let before_failed_attempt = snapshot_topology_2d(&trial);
     assert_duplicate_vertex_uuid_error(trial.propose_pachner(pachner_move), duplicate_uuid);
     assert_eq!(snapshot_topology_2d(&trial), before_failed_attempt);
+    assert_valid_realized_topology(&trial, "state after duplicate-UUID rejection");
 }
 
 #[test]
@@ -722,12 +736,14 @@ fn assert_pachner_rejection_preserves_topology<const D: usize>(
     pachner_move: PachnerMove<(), D>,
     assert_error: impl Fn(&FlipError),
 ) {
+    assert_valid_realized_topology(&tri, "state before rejected Pachner request");
     let before = snapshot_topology_generic(&tri);
     let feasibility = tri
         .propose_pachner(pachner_move)
         .expect_err("Pachner proposal parsing should reject invalid request");
     assert_error(&feasibility);
     assert_eq!(snapshot_topology_generic(&tri), before);
+    assert_valid_realized_topology(&tri, "state after Pachner feasibility rejection");
 
     let trial = tri;
     let attempted = trial
@@ -735,6 +751,7 @@ fn assert_pachner_rejection_preserves_topology<const D: usize>(
         .expect_err("Pachner proposal parsing should reject invalid request");
     assert_error(&attempted);
     assert_eq!(snapshot_topology_generic(&trial), before);
+    assert_valid_realized_topology(&trial, "state after rejected Pachner attempt");
 }
 
 /// Verifies the generic Pachner feasibility arities implied by the reported move kind.
@@ -812,6 +829,7 @@ where
         result.removed_face_vertices
     );
     assert_eq!(result.inserted_face_vertices.as_slice(), &[inserted_vertex]);
+    assert_valid_realized_topology(&trial, &format!("successful {D}D k=1 insertion"));
 
     let remove_move = PachnerMove::K1Remove {
         vertex_key: inserted_vertex,
@@ -844,6 +862,7 @@ where
             .inverse(),
         FlipDirection::Inverse,
     );
+    assert_valid_realized_topology(&trial, &format!("successful {D}D k=1 removal"));
     assert_topology_and_delaunay_valid(&trial, &format!("{D}D k=1 mutation"));
 }
 
@@ -901,6 +920,7 @@ fn assert_failed_attempt_preserves_topology(
     proposal: PachnerProposal<(), 4>,
     assert_error: impl Fn(&FlipError),
 ) {
+    assert_valid_realized_topology(tri, "state before stale Pachner attempt");
     let before = snapshot_topology(tri);
     let proposal_generation = proposal.topology_generation();
     let current_generation = tri.topology_generation();
@@ -911,15 +931,15 @@ fn assert_failed_attempt_preserves_topology(
     assert_error(&feasibility_err);
     assert_stale_proposal_generation(&feasibility_err, proposal_generation, current_generation);
     assert_eq!(snapshot_topology(tri), before);
+    assert_valid_realized_topology(tri, "state after stale Pachner feasibility rejection");
 
     let err = proposal
         .attempt_on(tri)
         .expect_err("stale Pachner proposal should fail");
     assert_error(&err);
     assert_stale_proposal_generation(&err, proposal_generation, current_generation);
-    tri.is_valid_structure()
-        .expect("failed Pachner attempt should preserve TDS validity");
     assert_eq!(snapshot_topology(tri), before);
+    assert_valid_realized_topology(tri, "state restored after stale Pachner attempt");
 }
 
 /// Verifies stale proposal diagnostics report both the parsed and current generations.
@@ -1166,6 +1186,7 @@ fn roundtrip_k1(tri: &mut Tri4) {
         .attempt_on(tri)
         .expect("k=1 insert should succeed on stable 4D fixture");
     assert_eq!(inserted.inserted_face_vertices.len(), 1);
+    assert_valid_realized_topology(tri, "successful 4D k=1 insertion");
 
     let inserted_key =
         vertex_key_by_uuid(tri, new_uuid).expect("inserted k=1 vertex should be present");
@@ -1183,6 +1204,7 @@ fn roundtrip_k1(tri: &mut Tri4) {
             .inverse(),
         FlipDirection::Inverse,
     );
+    assert_valid_realized_topology(tri, "successful 4D k=1 removal");
 }
 
 /// Searches the fixture for a k=2 facet that also supports the public inverse API.
@@ -1222,6 +1244,7 @@ fn roundtrip_k2(tri: &mut Tri4, facet: FacetHandle) {
         BistellarFlipKind::try_k2(4).expect("4D k=2 move kind should be valid"),
         FlipDirection::Forward,
     );
+    assert_valid_realized_topology(tri, "successful 4D k=2 move");
     let edge = inserted_edge(tri, &info.inserted_face_vertices);
     let inverse = tri
         .propose_pachner(PachnerMove::K2Inverse { edge })
@@ -1235,6 +1258,7 @@ fn roundtrip_k2(tri: &mut Tri4, facet: FacetHandle) {
             .inverse(),
         FlipDirection::Inverse,
     );
+    assert_valid_realized_topology(tri, "successful inverse 4D k=2 move");
 }
 
 /// Parses the inserted face of a k=2 move into the edge expected by the inverse API.
@@ -1285,6 +1309,7 @@ fn roundtrip_k3(tri: &mut Tri4, ridge: RidgeHandle) {
         BistellarFlipKind::try_k3(4).expect("4D k=3 move kind should be valid"),
         FlipDirection::Forward,
     );
+    assert_valid_realized_topology(tri, "successful 4D k=3 move");
     let inverse = tri
         .propose_pachner(PachnerMove::K3Inverse {
             triangle: inserted_triangle(&info.inserted_face_vertices),
@@ -1299,6 +1324,7 @@ fn roundtrip_k3(tri: &mut Tri4, ridge: RidgeHandle) {
             .inverse(),
         FlipDirection::Inverse,
     );
+    assert_valid_realized_topology(tri, "successful inverse 4D k=3 move");
 }
 
 /// Parses the inserted face of a k=3 move into the triangle expected by the inverse API.

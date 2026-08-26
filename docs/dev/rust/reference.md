@@ -252,6 +252,17 @@ Higher-level
 when they also mutate insertion hints, spatial indexes, or repair bookkeeping;
 the guard must restore or intentionally invalidate that auxiliary state
 alongside the TDS. Do not wrap only the TDS when owner-coupled state can change.
+
+Treat every fallible topology move, mutation, and repair as a two-outcome
+transaction whose input owner is already valid through the operation's promised
+validation layers. A successful operation validates the candidate through those
+layers before commit. A failed operation restores the complete pre-operation
+owner state and leaves it valid through the same layers; it must never return an
+error with a partially applied edit. Complete restoration includes canonical
+storage, reverse maps and indexes, caches and hints, owner identity, generation,
+and validation or provenance evidence unless the API explicitly documents safe
+invalidation of a derived value.
+
 Issue #364 completed the rollback-infrastructure audit; the separate
 `remove_vertex` orientation-correctness work was resolved in #448.
 

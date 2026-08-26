@@ -822,6 +822,7 @@ mod tests {
     use crate::DelaunayTriangulation;
     use crate::core::facet::FacetError;
     use crate::core::tds::InvariantError;
+    use crate::triangulation::validation::TopologyConstructionProvenance;
     use crate::vertex;
     use std::assert_matches;
 
@@ -860,10 +861,12 @@ mod tests {
         );
         assert!(!inserted.new_simplices.is_empty());
         assert!(tri.validate().is_ok());
+        assert!(tri.validate_realization().is_ok());
 
         let removed = tri.flip_k1_remove(inserted_vertex).unwrap();
         assert!(!removed.removed_simplices.is_empty());
         assert!(tri.validate().is_ok());
+        assert!(tri.validate_realization().is_ok());
     }
 
     #[test]
@@ -971,13 +974,20 @@ mod tests {
             .build()
             .unwrap();
         let mut tri = dt.into_triangulation();
-        let before_vertices = tri.tds.number_of_vertices();
-        let before_simplices = tri.tds.number_of_simplices();
+        tri.validate()
+            .expect("pre-move topology fixture should be valid");
+        tri.validate_realization()
+            .expect("pre-move realization fixture should be valid");
+        let before = tri.tds.clone();
+        let owner_before = tri.tds.topology_owner_id();
+        let generation_before = tri.tds.generation();
+        let provenance_before = tri.topology_construction_provenance;
 
         let err = apply_realized_flip(&mut tri, TopologicalOperation::InsertVertex, |tri| {
             tri.tds
                 .insert_vertex_with_mapping(vertex!([2.0, 2.0]).unwrap())
                 .unwrap();
+            tri.topology_construction_provenance = TopologyConstructionProvenance::Unproven;
             Ok(FlipInfo {
                 kind: BistellarFlipKind::try_k1(2).unwrap(),
                 direction: FlipDirection::Forward,
@@ -994,8 +1004,10 @@ mod tests {
             FlipError::InvariantValidation { source }
                 if matches!(*source, InvariantError::Triangulation { source: _ })
         );
-        assert_eq!(tri.tds.number_of_vertices(), before_vertices);
-        assert_eq!(tri.tds.number_of_simplices(), before_simplices);
+        assert_eq!(tri.tds, before);
+        assert_eq!(tri.tds.topology_owner_id(), owner_before);
+        assert_eq!(tri.tds.generation(), generation_before);
+        assert_eq!(tri.topology_construction_provenance, provenance_before);
         assert!(tri.validate().is_ok());
         assert!(tri.validate_realization().is_ok());
     }

@@ -133,6 +133,11 @@ When in doubt, favor the invariant over the convenient edit.
   `DelaunayTriangulation::is_valid_delaunay` / `validate` (Level 5). An
   operation that cannot preserve them must fail explicitly rather than leave
   inconsistent state behind.
+- Every fallible topology move, mutation, and repair is failure-atomic: success
+  commits a state valid through the operation's promised validation layers;
+  failure restores the prior valid owner state. Detailed implementation and
+  test-proof requirements live in `docs/dev/rust/reference.md` and
+  `docs/dev/testing.md`.
 - PL-manifold invariants: facets have multiplicity 1 (boundary) or 2
   (interior), ridges are linked consistently, and Euler characteristic matches
   the triangulation's `TopologyGuarantee`.

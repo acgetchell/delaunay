@@ -538,6 +538,8 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let identity = Arc::clone(tds.identity());
         let initial_generation = tds.generation();
+        tds.validate()
+            .expect("empty pre-transaction TDS should be valid");
 
         let inserted_key = {
             let mut transaction = TdsRollbackTransaction::begin(&mut tds);
@@ -552,6 +554,54 @@ mod tests {
         assert!(tds.vertex(inserted_key).is_none());
         assert_eq!(tds.generation(), initial_generation);
         assert!(Arc::ptr_eq(&identity, tds.identity()));
+        tds.validate().expect("rollback should restore a valid TDS");
+    }
+
+    #[test]
+    fn parent_rollback_owns_changes_from_a_committed_nested_savepoint() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let identity = Arc::clone(tds.identity());
+        let initial_generation = tds.generation();
+        tds.validate()
+            .expect("empty pre-transaction TDS should be valid");
+
+        let (removed_parent_key, retained_parent_key, child_key) = {
+            let mut transaction = TdsRollbackTransaction::begin(&mut tds);
+            let removed_parent_key = transaction
+                .tds_mut()
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+                .unwrap();
+            let retained_parent_key = transaction
+                .tds_mut()
+                .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
+                .unwrap();
+
+            let savepoint = transaction.tds_mut().begin_rollback_savepoint();
+            transaction
+                .tds_mut()
+                .remove_vertex(removed_parent_key)
+                .unwrap();
+            let child_key = transaction
+                .tds_mut()
+                .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
+                .unwrap();
+            transaction.tds_mut().commit_savepoint(savepoint);
+
+            assert!(transaction.tds_mut().vertex(removed_parent_key).is_none());
+            assert!(transaction.tds_mut().vertex(retained_parent_key).is_some());
+            assert!(transaction.tds_mut().vertex(child_key).is_some());
+
+            transaction.rollback();
+            (removed_parent_key, retained_parent_key, child_key)
+        };
+
+        assert!(tds.vertex(removed_parent_key).is_none());
+        assert!(tds.vertex(retained_parent_key).is_none());
+        assert!(tds.vertex(child_key).is_none());
+        assert_eq!(tds.generation(), initial_generation);
+        assert!(Arc::ptr_eq(&identity, tds.identity()));
+        tds.validate()
+            .expect("parent rollback should restore a valid TDS");
     }
 
     fn assert_insertion_journal_does_not_clone_untouched_storage<const D: usize>() {
