@@ -1607,12 +1607,14 @@ unused-deps: _ensure-cargo-machete
 update: _ensure-cargo-install-update update-dependencies update-cargo-tools
     @echo "✅ Repository dependencies and tools updated."
 
-# Advance Cargo dependency declarations and lockfile entries.
-[doc('Update Cargo.toml dependency requirements and Cargo.lock.')]
+# Advance Cargo dependency declarations and lockfile entries for every resolution root.
+[doc('Update repository Cargo dependency requirements and lockfiles.')]
 [group('build and setup')]
 update-cargo-dependencies: _ensure-cargo-edit
     cargo upgrade --incompatible allow
+    cargo upgrade --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml --incompatible allow
     cargo update
+    cargo update --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml
 
 # Update locally installed Cargo CLI tools owned by `setup-tools` and reconcile their pins.
 [doc('Update Cargo CLI tools owned by setup-tools and reconcile their root justfile pins.')]

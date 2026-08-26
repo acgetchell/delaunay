@@ -1176,6 +1176,21 @@ mod tests {
         TdsBuilder::new(&vertices, &simplices).build().unwrap()
     }
 
+    fn isolated_vertex_tds_3d() -> Tds<(), (), 3> {
+        let vertices = [
+            test_vertex([0.0, 0.0, 0.0]),
+            test_vertex([1.0, 0.0, 0.0]),
+            test_vertex([0.0, 1.0, 0.0]),
+            test_vertex([0.0, 0.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let mut tds = dt.into_triangulation().into_tds();
+        tds.insert_vertex_with_mapping(test_vertex([0.5, 0.5, 0.5]))
+            .unwrap();
+        tds
+    }
+
     fn tds_from_2d_vertices_and_simplices(
         coords: &[[f64; 2]],
         simplices: &[Vec<usize>],
@@ -1639,22 +1654,8 @@ mod tests {
     #[test]
     fn try_from_tds_rejects_topology_validation_failure() {
         init_tracing();
-        let vertices = [
-            test_vertex([0.0, 0.0, 0.0]),
-            test_vertex([1.0, 0.0, 0.0]),
-            test_vertex([0.0, 1.0, 0.0]),
-            test_vertex([0.0, 0.0, 1.0]),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tds = dt.into_triangulation().into_tds();
-
-        let _ = tds
-            .insert_vertex_with_mapping(test_vertex([0.5, 0.5, 0.5]))
-            .unwrap();
-
         let err = DelaunayTriangulation::try_restore_from_tds_with_topology_context(
-            tds,
+            isolated_vertex_tds_3d(),
             AdaptiveKernel::new(),
             TopologyGuarantee::DEFAULT,
             GlobalTopology::DEFAULT,
@@ -1677,6 +1678,29 @@ mod tests {
         );
         tds.validate()
             .expect("failed Levels 3-4 refinement must return the valid Levels 1-2 owner");
+    }
+
+    #[test]
+    fn restoration_reason_preserves_topology_failure_without_owner() {
+        let err = DelaunayTriangulation::try_restore_from_tds_with_topology_context(
+            isolated_vertex_tds_3d(),
+            AdaptiveKernel::new(),
+            TopologyGuarantee::DEFAULT,
+            GlobalTopology::DEFAULT,
+        )
+        .expect_err("checked TDS reconstruction must reject isolated vertices");
+
+        assert_matches!(
+            err.into_reason(),
+            DelaunayTdsRestorationReason::Triangulation {
+                source: TriangulationBuilderError::TopologyValidation { source }
+            } if matches!(
+                source.as_ref(),
+                InvariantError::Triangulation {
+                    source: TriangulationValidationError::IsolatedVertex { .. }
+                }
+            )
+        );
     }
 
     #[test]

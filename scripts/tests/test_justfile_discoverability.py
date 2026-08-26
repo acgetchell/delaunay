@@ -371,7 +371,10 @@ def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
     assert dependency_update.index("cargo_tool_has_exact_version") < dependency_update.index("cargo upgrade --incompatible allow")
     assert dependency_update.index("uv --version") < dependency_update.index("cargo upgrade --incompatible allow")
     assert "cargo upgrade --incompatible allow" in dependency_update
+    fixture_manifest = "tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml"
+    assert f"cargo upgrade --manifest-path {fixture_manifest} --incompatible allow" in dependency_update
     assert "cargo update" in dependency_update
+    assert f"cargo update --manifest-path {fixture_manifest}" in dependency_update
     assert "uv run --locked update-python-dev-pins" in dependency_update
     assert "uv lock --upgrade" in dependency_update
     assert dependency_update.index("uv run --locked update-python-dev-pins") < dependency_update.index("uv lock --upgrade")

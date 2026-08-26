@@ -1534,13 +1534,9 @@ mod tests {
     use slotmap::KeyData;
     use std::assert_matches;
 
-    #[test]
-    fn raw_simplex_slots_count_excess_without_retaining_it() {
-        let encoded = serde_json::to_value(vec![7_u16; 128]).unwrap();
-        let slots: RawSimplexSlots<u16, 2> = serde_json::from_value(encoded).unwrap();
-
-        assert_eq!(slots.actual_len(), 128);
-        assert_eq!(slots.0.values.len(), 3);
+    #[derive(Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+    struct NonCopyPayload {
+        label: String,
     }
 
     impl<'a, U, V, const D: usize> TdsSnapshot<&'a U, &'a V, D> {
@@ -1632,11 +1628,6 @@ mod tests {
         TdsSnapshot::try_from_tds_owned(tds)
             .expect("TDS should snapshot")
             .into_raw()
-    }
-
-    #[derive(Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-    struct NonCopyPayload {
-        label: String,
     }
 
     /// Builds a one-simplex TDS with caller-selected aligned periodic offsets.
@@ -1802,6 +1793,27 @@ mod tests {
     gen_periodic_snapshot_properties!(3, prop::array::uniform3);
     gen_periodic_snapshot_properties!(4, prop::array::uniform4);
     gen_periodic_snapshot_properties!(5, prop::array::uniform5);
+
+    #[test]
+    fn raw_simplex_slots_count_excess_without_retaining_it() {
+        let encoded = serde_json::to_value(vec![7_u16; 128]).unwrap();
+        let slots: RawSimplexSlots<u16, 2> = serde_json::from_value(encoded).unwrap();
+
+        assert_eq!(slots.actual_len(), 128);
+        assert_eq!(slots.0.values.len(), 3);
+    }
+
+    #[test]
+    fn raw_simplex_slots_reject_non_sequence_with_arity_expectation() {
+        let encoded = serde_json::json!({ "slot": 7 });
+        let error = serde_json::from_value::<RawSimplexSlots<u16, 2>>(encoded).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("a fixed-arity sequence retaining at most 3 entries")
+        );
+    }
 
     #[test]
     fn test_tds_snapshot_serialization_includes_stable_uuid_relationships() {

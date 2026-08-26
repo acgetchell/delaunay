@@ -133,7 +133,9 @@ required tool or pinned version is unavailable during an individual recipe.
 
 Use `just update` for deliberate dependency and tool maintenance. It composes
 `just update-dependencies`, which advances compatible and incompatible Cargo
-requirements and `Cargo.lock`, resolves any exact direct pins under
+requirements and lockfiles for both the root package and the isolated
+`tests/fixtures/checkpoint_no_float_roundtrip/` resolution root, resolves any
+exact direct pins under
 `[dependency-groups].dev` as one universal set for the supported Python
 version, then upgrades `uv.lock`, with
 `just update-cargo-tools`, which upgrades only the locally installed Cargo CLI
