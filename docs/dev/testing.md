@@ -153,6 +153,43 @@ Typical invariants include:
 - manifold link conditions
 - orientation predicate correctness
 
+#### Fail-closed admission and production errors
+
+Property tests must fail closed after independently admitting generated input.
+Use `prop_assume!`, `TestCaseError::reject`, or an early successful return only
+for domain facts computed directly from raw generated values, such as too few
+coordinate-distinct points or a deliberately excluded non-finite coordinate.
+Never reject or silently skip a case because a builder, insertion, predicate,
+serialization, deserialization, or validation operation returned an error.
+After admission, map every unexpected production error to
+`TestCaseError::fail` with the operation, dimension or input position, and the
+typed error's debug representation.
+
+```rust
+// Good: admission is an input-only fact; construction must then succeed.
+prop_assume!(unique_coordinate_count(&points) > D);
+let triangulation = build(&points).map_err(|error| {
+    TestCaseError::fail(format!("{D}D construction failed: {error:?}"))
+})?;
+```
+
+```rust
+// Bad: a production failure is converted into a rejected or passing case.
+let Ok(triangulation) = build(&points) else {
+    return Err(TestCaseError::reject("construction failed"));
+};
+if let Ok(value) = predicate(&triangulation) {
+    prop_assert!(value);
+}
+```
+
+Properties that drive `TestRunner` directly must also establish deterministic
+acceptance evidence. After a successful run, assert that the accepted count
+equals the configured target case count; do not make the minimum acceptance
+rate depend on an optional environment variable. Rejected raw inputs may
+increase the generated count, but production failures must never contribute to
+that rejection telemetry.
+
 ---
 
 ## Floating-Point Comparisons
@@ -415,13 +452,19 @@ default boundary on hosted runners.
 
 The release integration profile similarly grants 60 seconds on Windows only
 to the promoted 4D property families that sit at the 10-second boundary there.
+The 5D local-neighbor repair guardrail receives the same focused Windows-only
+headroom because its hosted-runner runtime can cross that boundary.
 The cospherical 3D `OnSuspicion` sequence property receives the same focused
 headroom across platforms because hosted runners can cross the default
-integration-test watchdog. The overrides combine the narrowest applicable
-platform, integration-binary, and test-name filters so unrelated tests retain
-the normal budget. The deterministic 5D SoS in-sphere property also receives a
-cross-platform 60-second override because each generated case performs two
-complete exact expansions and can cross the hosted-runner boundary.
+integration-test watchdog. The isolated downstream checkpoint fixture receives
+a 120-second override because it intentionally performs a clean standalone
+dependency build in a separate target directory to prevent Cargo feature
+unification from masking the behavior under test. The overrides combine the
+narrowest applicable platform, integration-binary, and test-name filters so
+unrelated tests retain the normal budget. The deterministic 5D SoS in-sphere
+property also receives a cross-platform 60-second override because each
+generated case performs two complete exact expansions and can cross the
+hosted-runner boundary.
 
 For test-only changes, run only the matching focused recipe. If multiple test
 target classes changed, compose those focused recipes once each. Use
@@ -504,6 +547,10 @@ just test-slow
 ## Documentation Tests
 
 Public documentation examples must compile.
+Public Rustdoc code fences must also use focused workflow preludes instead of
+`use delaunay::prelude::*`; `scripts/tests/test_rustdoc_imports.py` scans only
+repository-owned Rust sources under `src/` and fails on both kitchen-sink
+imports and unterminated documentation fences.
 
 Validate with:
 
@@ -589,6 +636,16 @@ value, and document why thread-local state is needed for parallel-test
 isolation. Prefer explicit inputs, typed fixtures, or harness APIs whenever they
 can cover the branch, and remove the thread-local hook once a cleaner trigger
 exists.
+
+Tests for fallible topology moves, mutations, and repairs must prove the full
+two-outcome contract. Establish that the pre-operation owner is valid through
+the promised validation layers. For success, validate the committed state
+through those layers. For failure, exercise meaningful post-mutation failure
+stages where feasible, compare the complete observable owner state with the
+pre-operation state, and revalidate the restored state. The comparison must
+cover canonical topology plus affected indexes, caches, hints, identity,
+generation, and provenance; recovered counts or a partial topology snapshot are
+not sufficient evidence of failure atomicity.
 
 Keeping helpers and types **above** macros and tests makes them easy to
 find and avoids forward-reference confusion. New helpers should be added

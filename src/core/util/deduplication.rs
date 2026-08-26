@@ -2,9 +2,9 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::traits::coordinate::OrderedEq;
+use core::cmp::Ordering;
 use thiserror::Error;
 
 /// Errors returned by fallible vertex deduplication helpers.
@@ -61,11 +61,11 @@ pub enum DeduplicationError {
 #[must_use]
 pub fn dedup_vertices_exact<U, const D: usize>(vertices: &[Vertex<U, D>]) -> Vec<Vertex<U, D>>
 where
-    U: DataType,
+    U: Clone,
 {
     let mut unique: Vec<Vertex<U, D>> = Vec::with_capacity(vertices.len());
 
-    for &v in vertices {
+    for v in vertices {
         if unique
             .iter()
             .any(|u| coords_equal_exact(v.point().coords(), u.point().coords()))
@@ -73,7 +73,7 @@ where
             continue;
         }
 
-        unique.push(v);
+        unique.push(v.clone());
     }
 
     unique
@@ -138,7 +138,7 @@ pub fn try_dedup_vertices_epsilon<U, const D: usize>(
     epsilon: f64,
 ) -> Result<Vec<Vertex<U, D>>, DeduplicationError>
 where
-    U: DataType,
+    U: Clone,
 {
     if !epsilon.is_finite() {
         return Err(DeduplicationError::NonFiniteEpsilon);
@@ -156,11 +156,11 @@ fn dedup_vertices_epsilon_nonnegative<U, const D: usize>(
     epsilon: f64,
 ) -> Vec<Vertex<U, D>>
 where
-    U: DataType,
+    U: Clone,
 {
     let mut unique: Vec<Vertex<U, D>> = Vec::with_capacity(vertices.len());
 
-    for &v in vertices {
+    for v in vertices {
         if unique
             .iter()
             .any(|u| coords_within_epsilon(v.point().coords(), u.point().coords(), epsilon))
@@ -168,7 +168,7 @@ where
             continue;
         }
 
-        unique.push(v);
+        unique.push(v.clone());
     }
 
     unique
@@ -218,11 +218,11 @@ pub fn filter_vertices_excluding<U, const D: usize>(
     reference: &[Vertex<U, D>],
 ) -> Vec<Vertex<U, D>>
 where
-    U: DataType,
+    U: Clone,
 {
     let mut filtered = Vec::with_capacity(vertices.len());
 
-    for &v in vertices {
+    for v in vertices {
         if reference
             .iter()
             .any(|ref_v| coords_equal_exact(v.point().coords(), ref_v.point().coords()))
@@ -230,7 +230,7 @@ where
             continue;
         }
 
-        filtered.push(v);
+        filtered.push(v.clone());
     }
 
     filtered
@@ -245,29 +245,91 @@ pub(crate) fn coords_equal_exact<const D: usize>(a: &[f64; D], b: &[f64; D]) -> 
     a.iter().zip(b.iter()).all(|(x, y)| x.ordered_eq(y))
 }
 
-/// Check if two coordinate arrays are within epsilon distance.
+/// Compares Euclidean distance with a non-negative finite threshold without
+/// overflowing when both squared values exceed the binary64 range.
+#[inline]
+fn compare_coordinate_distance_to_threshold<const D: usize>(
+    a: &[f64; D],
+    b: &[f64; D],
+    threshold: f64,
+) -> Option<Ordering> {
+    if !threshold.is_finite() || threshold < 0.0 {
+        return None;
+    }
+
+    let distance_squared = a.iter().zip(b).fold(0.0, |acc, (x, y)| {
+        let difference = *x - *y;
+        difference.mul_add(difference, acc)
+    });
+    let threshold_squared = threshold * threshold;
+    let both_squares_underflowed = distance_squared == 0.0 && threshold_squared == 0.0;
+    let both_squares_overflowed = !distance_squared.is_finite() && !threshold_squared.is_finite();
+
+    if !both_squares_underflowed && !both_squares_overflowed {
+        return distance_squared.partial_cmp(&threshold_squared);
+    }
+
+    // Both squares lost scale, so compare in units of the largest coordinate
+    // difference. This cold path distinguishes both `inf` from `inf` and
+    // nonzero subnormal distances from zero.
+    let mut scale = 0.0_f64;
+    for (x, y) in a.iter().zip(b) {
+        let difference = (*x - *y).abs();
+        if difference.is_nan() {
+            return None;
+        }
+        if difference.is_infinite() {
+            return Some(Ordering::Greater);
+        }
+        scale = scale.max(difference);
+    }
+
+    if scale == 0.0 {
+        return 0.0_f64.partial_cmp(&threshold);
+    }
+
+    let scaled_distance_squared = a.iter().zip(b).fold(0.0, |acc, (x, y)| {
+        let scaled_difference = (*x - *y) / scale;
+        scaled_difference.mul_add(scaled_difference, acc)
+    });
+    let scaled_threshold = threshold / scale;
+    scaled_distance_squared.partial_cmp(&(scaled_threshold * scaled_threshold))
+}
+
+/// Checks whether Euclidean distance is strictly less than epsilon.
 ///
-/// Returns true if Euclidean distance is strictly less than epsilon (distance < epsilon).
+/// Returns `false` when epsilon is negative or non-finite.
 #[inline]
 pub(crate) fn coords_within_epsilon<const D: usize>(
     a: &[f64; D],
     b: &[f64; D],
     epsilon: f64,
 ) -> bool {
-    let dist_sq: f64 = a.iter().zip(b.iter()).fold(0.0, |acc, (x, y)| {
-        let diff = *x - *y;
-        diff.mul_add(diff, acc)
-    });
-    let epsilon_sq = epsilon * epsilon;
+    let comparison = compare_coordinate_distance_to_threshold(a, b, epsilon);
 
     #[cfg(debug_assertions)]
-    if dist_sq.to_bits() == epsilon_sq.to_bits() {
+    if comparison == Some(Ordering::Equal) {
         tracing::debug!(
             "[try_dedup_vertices_epsilon] distance equals epsilon; keeping point (strict < epsilon)"
         );
     }
 
-    dist_sq < epsilon_sq
+    comparison == Some(Ordering::Less)
+}
+
+/// Checks whether Euclidean distance is less than or equal to epsilon.
+///
+/// Returns `false` when epsilon is negative or non-finite.
+#[inline]
+pub(crate) fn coords_within_epsilon_inclusive<const D: usize>(
+    a: &[f64; D],
+    b: &[f64; D],
+    epsilon: f64,
+) -> bool {
+    matches!(
+        compare_coordinate_distance_to_threshold(a, b, epsilon),
+        Some(Ordering::Less | Ordering::Equal)
+    )
 }
 
 #[cfg(test)]
@@ -349,6 +411,45 @@ mod tests {
         let b = [1.0, 0.0];
 
         assert!(!coords_within_epsilon(&a, &b, 1.0));
+        assert!(coords_within_epsilon_inclusive(&a, &b, 1.0));
+    }
+
+    #[test]
+    fn test_coords_within_epsilon_handles_extreme_finite_coordinates() {
+        let a = [0.0, 0.0];
+        let b = [1.0e308, 1.0e308];
+
+        assert!(coords_within_epsilon(&a, &b, 1.5e308));
+        assert!(!coords_within_epsilon(&a, &b, 1.3e308));
+
+        let subnormal = [1.0e-310, 0.0];
+        assert!(coords_within_epsilon(&a, &subnormal, 2.0e-310));
+        assert!(!coords_within_epsilon(&a, &subnormal, 5.0e-311));
+
+        let positive_extreme = [f64::MAX, f64::MAX];
+        let negative_extreme = [-f64::MAX, -f64::MAX];
+        assert!(!coords_within_epsilon(
+            &positive_extreme,
+            &negative_extreme,
+            f64::MAX
+        ));
+        assert!(!coords_within_epsilon_inclusive(
+            &positive_extreme,
+            &negative_extreme,
+            f64::MAX
+        ));
+    }
+
+    #[test]
+    fn test_coordinate_distance_comparison_rejects_invalid_thresholds() {
+        let coords = [0.0, 0.0];
+
+        for threshold in [-1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(!coords_within_epsilon(&coords, &coords, threshold));
+            assert!(!coords_within_epsilon_inclusive(
+                &coords, &coords, threshold
+            ));
+        }
     }
 
     #[test]

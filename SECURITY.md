@@ -59,7 +59,8 @@ This crate uses `#![forbid(unsafe_code)]`, reducing memory safety risks. However
 
 Out of scope:
 
-- Expected floating-point instability when using non-exact kernels (e.g., `FastKernel`)
+- Expected numerical limitations of caller-supplied kernels that do not
+  implement `ExactPredicates`. The built-in `FastKernel` is filtered-exact.
 - Performance limitations that are not exploitable as denial-of-service
 - Issues arising from use outside documented APIs
 

@@ -94,7 +94,7 @@ pub enum EdgeKeyError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, tds::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -146,7 +146,7 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -297,7 +297,7 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -339,7 +339,7 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -381,7 +381,7 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -434,7 +434,7 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -496,7 +496,7 @@ impl<'tds, U, V, const D: usize> EdgeView<'tds, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     /// use delaunay::prelude::tds::EdgeKeyError;
     ///
     /// # #[derive(Debug, thiserror::Error)]

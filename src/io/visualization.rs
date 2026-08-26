@@ -14,13 +14,15 @@ use crate::delaunay_model::DelaunayTriangulation;
 use crate::geometry::traits::coordinate::InvalidCoordinateValue;
 use crate::topology::traits::topological_space::TopologyKind;
 use crate::triangulation::validation::TopologyGuarantee;
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use thiserror::Error;
+use uuid::Uuid;
+
 use std::{
     collections::{HashMap, HashSet},
     fmt,
 };
-use thiserror::Error;
-use uuid::Uuid;
 
 /// Supplies absent optional attributes during deserialization without requiring
 /// the attribute payload type to implement `Default`.

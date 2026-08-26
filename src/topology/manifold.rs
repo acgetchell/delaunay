@@ -369,7 +369,7 @@ pub enum BoundaryFacetClassification {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, topology::validation::*};
 /// use delaunay::prelude::topology::validation::{
 ///     BoundaryFacetClassification, classify_boundary_facet,
 /// };
@@ -572,7 +572,7 @@ pub(crate) fn has_boundary_facets_in_validated_facet_map<U, V, const D: usize>(
 ///
 /// ```rust
 /// use delaunay::prelude::geometry::*;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, topology::validation::*};
 /// use delaunay::prelude::topology::spaces::GlobalTopology;
 /// use delaunay::prelude::topology::validation::validate_closed_boundary;
 ///
@@ -1220,7 +1220,7 @@ fn simplex_link_simplices_from_star<U, V, const D: usize>(
 ///
 /// ```rust
 /// use delaunay::prelude::geometry::*;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, topology::validation::*};
 /// use delaunay::prelude::topology::validation::validate_ridge_links;
 ///
 /// # #[derive(Debug, thiserror::Error)]
@@ -1305,7 +1305,7 @@ pub fn validate_ridge_links<U, V, const D: usize>(tds: &Tds<U, V, D>) -> Result<
 /// # Examples
 /// ```rust
 /// use delaunay::prelude::geometry::*;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, topology::validation::*};
 /// use delaunay::prelude::topology::validation::validate_ridge_links_for_simplices;
 /// use delaunay::prelude::collections::SimplexKeyBuffer;
 ///
@@ -1401,7 +1401,7 @@ pub fn validate_ridge_links_for_simplices<U, V, const D: usize>(
 ///
 /// ```rust
 /// use delaunay::prelude::geometry::*;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, topology::validation::*};
 /// use delaunay::prelude::topology::spaces::GlobalTopology;
 /// use delaunay::prelude::topology::validation::{
 ///     validate_closed_boundary, validate_vertex_links,

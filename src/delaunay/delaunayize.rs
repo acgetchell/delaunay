@@ -117,14 +117,28 @@ pub struct FlipRepairDelaunayRefinement {
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
-///     DelaunayResult, DelaunayTriangulationBuilder, GlobalTopology,
-///     TopologyGuarantee,
+///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+///     GlobalTopology, TopologyGuarantee,
 /// };
-/// use delaunay::prelude::geometry::FastKernel;
-/// use delaunay::prelude::triangulation::TriangulationBuilder;
+/// use delaunay::prelude::geometry::{CoordinateConversionError, FastKernel};
+/// use delaunay::prelude::triangulation::{
+///     TriangulationBuildFailure, TriangulationBuilder,
+/// };
+/// use delaunay::prelude::validation::DelaunayTriangulationRefinementError;
 /// use delaunay::DelaunayRefinementBuilder;
 ///
-/// fn main() -> DelaunayResult<()> {
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] CoordinateConversionError),
+/// #     #[error(transparent)]
+/// #     Triangulation(#[from] TriangulationBuildFailure<(), (), 2>),
+/// #     #[error(transparent)]
+/// #     Delaunay(#[from] DelaunayTriangulationRefinementError<FastKernel<f64>, (), (), 2>),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 ///     let vertices = [
 ///         delaunay::vertex![0.0, 0.0]?,
 ///         delaunay::vertex![1.0, 0.0]?,
@@ -136,11 +150,9 @@ pub struct FlipRepairDelaunayRefinement {
 ///     let triangulation = TriangulationBuilder::new(tds, FastKernel::new())
 ///         .topology_guarantee(TopologyGuarantee::PLManifold)
 ///         .global_topology(GlobalTopology::Euclidean)
-///         .build()
-///         .expect("Levels 1-2 storage should satisfy Levels 3-4");
+///         .build()?;
 ///     let reconstructed = DelaunayRefinementBuilder::new(triangulation)
-///         .build()
-///         .expect("fixture should satisfy Level 5");
+///         .build()?;
 ///
 ///     assert_eq!(
 ///         reconstructed.topology_guarantee(),
@@ -212,6 +224,42 @@ where
     /// when the Level 5
     /// predicate rejects the candidate. The failure retains the unchanged
     /// Levels 1–4 triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    /// };
+    /// use delaunay::prelude::delaunayize::DelaunayRefinementBuilder;
+    /// use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateConversionError};
+    /// use delaunay::prelude::validation::DelaunayTriangulationRefinementError;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     Refinement(
+    /// #         #[from]
+    /// #         DelaunayTriangulationRefinementError<AdaptiveKernel<f64>, (), (), 2>,
+    /// #     ),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let source = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let refined = DelaunayRefinementBuilder::new(source.into_triangulation()).build()?;
+    ///
+    /// assert!(refined.is_valid_delaunay().is_ok());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn build(
         self,
     ) -> Result<
@@ -262,6 +310,43 @@ where
     /// Returns [`DelaunayizeRefinementError`] when repair, optional fallback,
     /// or final Level 5 certification fails. Transactional failure returns the
     /// original Levels 1–4 triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
+    /// use delaunay::prelude::delaunayize::{
+    ///     DelaunayRefinementBuilder, DelaunayTriangulationBuilder,
+    ///     DelaunayizeError,
+    /// };
+    /// use delaunay::prelude::geometry::CoordinateConversionError;
+    /// use delaunay::RefinementError;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     Delaunayize(#[from] DelaunayizeError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let source = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let refined = DelaunayRefinementBuilder::new(source.into_triangulation())
+    ///     .repair_by_flips()
+    ///     .build()
+    ///     .map_err(RefinementError::into_reason)?;
+    ///
+    /// assert!(refined.triangulation.is_valid_delaunay().is_ok());
+    /// # Ok(())
+    /// # }
+    /// ```
     #[expect(
         clippy::result_large_err,
         reason = "recoverable refinement failures retain the original proof-bearing owner"
@@ -1213,7 +1298,11 @@ mod tests {
     fn construction_error() -> DelaunayTriangulationConstructionError {
         DelaunayTriangulationConstructionError::from(
             TriangulationConstructionError::FailedToCreateSimplex {
-                message: "synthetic simplex creation failure".to_string(),
+                source: SimplexValidationError::InsufficientVertices {
+                    actual: 2,
+                    expected: 3,
+                    dimension: 2,
+                },
             },
         )
     }

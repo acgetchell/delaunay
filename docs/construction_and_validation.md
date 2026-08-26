@@ -451,8 +451,8 @@ boundaries:
 All consuming promotions are recoverable. `RefinementError<T, E>` couples the
 still-valid lower-layer owner `T` to the typed rejection reason `E`; callers can
 borrow either part or consume the carrier with `into_parts()`. Repair mode keeps
-one rollback snapshot alive through flips and final Level 5 certification, and
-returns the restored Levels 1–4 owner on every failure.
+one touched-record rollback journal open through flips and final Level 5
+certification, and returns the restored Levels 1–4 owner on every failure.
 
 Use the realized-state boundary for checkpoints created after valid local moves
 when Delaunay optimality is not an invariant of the evolved model. Use
@@ -577,10 +577,86 @@ requires a full-dimensional simplex and an atomic cumulative audit.
 
 The serde boundaries mirror those proof owners. Serializing `Tds` produces a
 Levels 1–2 snapshot. Serializing `DelaunayTriangulation` produces a versioned
-owner checkpoint containing that TDS plus its topology guarantee, global
-topology, and validation policy. Loading the owner checkpoint reparses topology
-metadata and re-proves Levels 3–5; a legacy TDS-only payload is rejected instead
-of silently acquiring default higher-layer context.
+schema-v2 owner checkpoint containing that TDS, its proof context, and a
+scientific integrity manifest. Loading the owner checkpoint verifies the
+manifest, reparses topology metadata, and re-proves Levels 3–5; a legacy
+TDS-only payload is rejected instead of silently acquiring default higher-layer
+context. Ordinary schema-v2 loading rejects schema-v1 owners explicitly because
+they have no integrity manifest. The dedicated
+`DelaunayCheckpointV1<U, V, D>` compatibility loader is the executable migration
+bridge: deserialize the legacy owner, call `try_into_delaunay` (or
+`try_into_delaunay_with_kernel`), then serialize the returned validated owner to
+emit schema v2. Legacy outer codecs may already have rounded coordinates or
+collapsed payload states, and schema v1 cannot retrospectively supply integrity
+evidence.
+
+### Owner checkpoint manifests
+
+`DelaunayTriangulation::checkpoint_manifest` recomputes the evidence embedded
+by serialization. It is not an authoritative mutable cache. The manifest stores
+the compile-time dimension, the complete Level-3 f-vector, its alternating-sum
+Euler characteristic, and a versioned SHA-256 digest. Every field remains
+untrusted on load. In particular, no manifest value selects a proof path,
+reconstructs topology, or suppresses Levels 1–5 validation.
+Downstream tooling can call
+`DelaunayTriangulation::verify_checkpoint_manifest` for typed integrity
+failures against an existing owner; this evidence check does not replace
+`DelaunayTriangulation::validate`.
+
+Digest version 1 hashes a crate-defined canonical byte representation rather
+than bytes from the outer serde codec. The representation includes:
+
+- checkpoint schema, digest-representation version, and compile-time dimension;
+- topology guarantee, global-topology variant, exact toroidal period bits and
+  construction mode when periodic, and validation policy;
+- every vertex UUID, exact `f64::to_bits` coordinate, and serialized user
+  payload value;
+- every simplex UUID and serialized user payload value, its ordered vertex-UUID
+  slots, ordered neighbor-UUID slots, and ordered periodic offsets.
+
+Vertex and simplex records are sorted by UUID. The canonical payload serializer
+streams scalar, declared-length sequence, tuple, and enum events directly into
+the digest. It buffers only map key/value fragments needed for deterministic
+sorting and rejects duplicate canonical map keys rather than accepting a
+last-key-wins representation. Slotmap keys, hash-map iteration, snapshot record
+order, and codec map order therefore do not affect the digest. Local simplex
+slots remain ordered because vertex, neighbor, and periodic-offset positions
+have aligned semantics. Ephemeral locate hints, spatial indexes, cached reports,
+insertion scheduling state, and the derived manifest fields themselves do not
+participate.
+
+Schema v2 embeds the validated TDS as a CBOR byte image. JSON and
+other outer codecs therefore transport exact coordinate bits without parsing
+coordinate decimals and do not require downstream `serde_json/float_roundtrip`
+feature unification. The envelope's toroidal periods are likewise stored as
+`f64::to_bits` integers. Present user payloads whose Serde value contains a
+null/unit state are rejected because the current canonical payload model cannot
+distinguish `None`, `Some(())`, and unit injectively; absent payloads remain
+supported. Custom sequences must declare their length so the streaming digest
+can encode the collection prefix without buffering the entire value.
+
+The f-vector records the face count in every dimension for the current
+subdivision; it does not uniquely identify that subdivision. A valid bistellar
+move may therefore change both the f-vector and digest. The
+Euler characteristic is the alternating-sum PL invariant and is preserved by
+such a move. Neither value alone is a checksum or proof of topology, and
+different topology can share the same f-vector. Restoration verifies the digest,
+recomputes the f-vector through the same periodic-aware Level-3 implementation,
+binds those metrics to the restored TDS identity and generation, checks manifest
+Euler consistency from that single proof pass, and still validates through
+Level 5.
+
+Deserialize `DelaunayCheckpoint<U, V, D>` first when tooling needs typed load
+failures. `try_into_delaunay` restores `RobustKernel<f64>`;
+`try_into_delaunay_with_kernel` restores the same TDS, topology guarantee,
+global topology, and validation policy with a caller-supplied exact kernel.
+The direct `Deserialize` implementation for `DelaunayTriangulation` is only the
+convenience adapter for `RobustKernel<f64>` and necessarily converts domain
+failures into the outer codec's error type. In D >= 4, multi-simplex Euclidean
+PL-manifold restoration independently replays point construction and compares
+the exact vertex/coordinate and maximal-cell signatures before reattaching
+construction provenance. Periodic D >= 4 restoration remains a typed rejection
+until trusted periodic construction is available in those dimensions.
 
 ### Methods
 
@@ -625,8 +701,9 @@ of silently acquiring default higher-layer context.
 - **Vertex Validity**: All vertices pass `Vertex::is_valid()`
 - **Simplex Validity**: All simplices pass `Simplex::is_valid()`
 - **Simplex Coordinate Uniqueness**: No simplex contains two vertices with identical coordinates
-  (exact `OrderedFloat` comparison). Duplicate-coordinate vertices produce zero-volume
-  simplices that break SoS and Pachner moves.
+  (exact `OrderedFloat` comparison). SoS can distinguish repeated coordinates by
+  vertex identity symbolically, but the unperturbed simplex is still zero-volume
+  and not a valid realization for Pachner moves.
   **Note**: Level 2 `is_valid()` and `structure_report()` do **not** check coordinate uniqueness.
   Use cumulative `validate()` or `validation_report()` for the stronger Level 1 guarantee.
 

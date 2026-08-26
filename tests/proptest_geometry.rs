@@ -73,25 +73,28 @@ macro_rules! test_geometry_properties {
                 /// Property: All simplex vertices are equidistant from the circumcenter
                 #[test]
                 fn [<prop_circumcenter_equidistance_ $dim d>](
-                    simplex_points in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
-                        $num_points
-                    )
+                    base in prop::array::[<uniform $dim>](finite_coordinate()),
+                    side_lengths in prop::array::[<uniform $dim>](well_conditioned_edge_length())
                 ) {
-                    if let Ok(center) = circumcenter(&simplex_points) {
-                        let center_coords = *center.coords();
-                        let mut distances = simplex_points.iter().map(|point| {
-                            let point_coords = *point.coords();
-                            let diff: [f64; $dim] =
-                                array::from_fn(|i| point_coords[i] - center_coords[i]);
-                            hypot(&diff)
-                        });
-                        if let Some(first_dist) = distances.next() {
-                            for dist in distances {
-                                prop_assert!(
-                                    (dist - first_dist).abs() < 1e-6 * first_dist.max(1.0)
-                                );
-                            }
+                    let simplex_points = axis_aligned_simplex::<$dim>(base, side_lengths);
+                    let center = circumcenter(&simplex_points).map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D axis-aligned simplex circumcenter failed: {error:?}",
+                            $dim,
+                        ))
+                    })?;
+                    let center_coords = *center.coords();
+                    let mut distances = simplex_points.iter().map(|point| {
+                        let point_coords = *point.coords();
+                        let diff: [f64; $dim] =
+                            array::from_fn(|i| point_coords[i] - center_coords[i]);
+                        hypot(&diff)
+                    });
+                    if let Some(first_dist) = distances.next() {
+                        for dist in distances {
+                            prop_assert!(
+                                (dist - first_dist).abs() < 1e-6 * first_dist.max(1.0)
+                            );
                         }
                     }
                 }
@@ -99,22 +102,31 @@ macro_rules! test_geometry_properties {
                 /// Property: Circumradius equals distance from circumcenter to any vertex
                 #[test]
                 fn [<prop_circumradius_matches_distance_ $dim d>](
-                    simplex_points in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
-                        $num_points
-                    )
+                    base in prop::array::[<uniform $dim>](finite_coordinate()),
+                    side_lengths in prop::array::[<uniform $dim>](well_conditioned_edge_length())
                 ) {
-                    if let (Ok(center), Ok(radius)) = (circumcenter(&simplex_points), circumradius(&simplex_points)) {
-                        let center_coords = *center.coords();
-                        if let Some(first_point) = simplex_points.first() {
-                            let point_coords = *first_point.coords();
-                            let mut diff = [0.0; $dim];
-                            for i in 0..$dim {
-                                diff[i] = point_coords[i] - center_coords[i];
-                            }
-                            let dist = hypot(&diff);
-                            prop_assert!((dist - radius).abs() < 1e-6 * radius.max(1.0));
+                    let simplex_points = axis_aligned_simplex::<$dim>(base, side_lengths);
+                    let center = circumcenter(&simplex_points).map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D axis-aligned simplex circumcenter failed: {error:?}",
+                            $dim,
+                        ))
+                    })?;
+                    let radius = circumradius(&simplex_points).map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D axis-aligned simplex circumradius failed: {error:?}",
+                            $dim,
+                        ))
+                    })?;
+                    let center_coords = *center.coords();
+                    if let Some(first_point) = simplex_points.first() {
+                        let point_coords = *first_point.coords();
+                        let mut diff = [0.0; $dim];
+                        for i in 0..$dim {
+                            diff[i] = point_coords[i] - center_coords[i];
                         }
+                        let dist = hypot(&diff);
+                        prop_assert!((dist - radius).abs() < 1e-6 * radius.max(1.0));
                     }
                 }
 
@@ -196,36 +208,50 @@ macro_rules! test_geometry_properties {
                 /// Property: Volume of non-degenerate simplex is positive
                 #[test]
                 fn [<prop_volume_positivity_ $dim d>](
-                    simplex_points in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
-                        $num_points
-                    )
+                    base in prop::array::[<uniform $dim>](finite_coordinate()),
+                    side_lengths in prop::array::[<uniform $dim>](well_conditioned_edge_length())
                 ) {
-                    if let Ok(volume) = simplex_volume(&simplex_points) {
-                        prop_assert!(volume >= 0.0);
-                        if let Ok(radius) = circumradius(&simplex_points) {
-                            if radius > 1e-6 {
-                                prop_assert!(volume > 0.0);
-                            }
-                        }
+                    let simplex_points = axis_aligned_simplex::<$dim>(base, side_lengths);
+                    let volume = simplex_volume(&simplex_points).map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D non-degenerate simplex volume failed: {error:?}",
+                            $dim,
+                        ))
+                    })?;
+                    let radius = circumradius(&simplex_points).map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D non-degenerate simplex circumradius failed: {error:?}",
+                            $dim,
+                        ))
+                    })?;
+                    prop_assert!(volume >= 0.0);
+                    if radius > 1e-6 {
+                        prop_assert!(volume > 0.0);
                     }
                 }
 
                 /// Property: Inradius of non-degenerate simplex is positive
                 #[test]
                 fn [<prop_inradius_positivity_ $dim d>](
-                    simplex_points in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
-                        $num_points
-                    )
+                    base in prop::array::[<uniform $dim>](finite_coordinate()),
+                    side_lengths in prop::array::[<uniform $dim>](well_conditioned_edge_length())
                 ) {
-                    if let Ok(inrad) = inradius(&simplex_points) {
-                        prop_assert!(inrad >= 0.0);
-                        if let Ok(volume) = simplex_volume(&simplex_points) {
-                            if volume > 1e-6 {
-                                prop_assert!(inrad > 0.0);
-                            }
-                        }
+                    let simplex_points = axis_aligned_simplex::<$dim>(base, side_lengths);
+                    let inrad = inradius(&simplex_points).map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D non-degenerate simplex inradius failed: {error:?}",
+                            $dim,
+                        ))
+                    })?;
+                    let volume = simplex_volume(&simplex_points).map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D non-degenerate simplex volume failed: {error:?}",
+                            $dim,
+                        ))
+                    })?;
+                    prop_assert!(inrad >= 0.0);
+                    if volume > 1e-6 {
+                        prop_assert!(inrad > 0.0);
                     }
                 }
 

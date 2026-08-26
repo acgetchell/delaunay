@@ -21,6 +21,7 @@ import tarfile
 import tempfile
 import time
 from dataclasses import replace
+from datetime import UTC, datetime
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
@@ -97,6 +98,9 @@ CIRCUMSPHERE_TITLE = "### Circumsphere Predicate Performance"
 TDS_TITLE = "## Triangulation Data Structure Performance"
 PERFORMANCE_UPDATES_TITLE = "## Performance Data Updates"
 UTF8 = "utf-8"
+DUPLICATE_BASELINE_KEY_SECTIONS = (
+    "=== 10 Points (2D) ===\nBenchmark ID: duplicate/key\nTime: [1, 2, 3] µs\n=== 20 Points (2D) ===\nBenchmark ID: duplicate/key\nTime: [1, 2, 3] µs\n"
+)
 
 
 def completed_process(
@@ -108,6 +112,55 @@ def completed_process(
 ) -> subprocess.CompletedProcess[str]:
     """Return a typed subprocess result for command-wrapper mocks."""
     return subprocess.CompletedProcess(args=args or [], returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+def github_release(
+    tag: str = "v0.8.0",
+    *,
+    is_draft: bool = False,
+    is_prerelease: bool = False,
+    published_at: str | None = "2026-08-01T00:00:00Z",
+) -> dict[str, object]:
+    """Return one exact ``gh release list`` transport record."""
+    return {
+        "tagName": tag,
+        "isDraft": is_draft,
+        "isPrerelease": is_prerelease,
+        "publishedAt": published_at,
+    }
+
+
+def complete_ci_performance_results() -> list[CiPerformanceResult]:
+    """Return one valid parsed result for every public-API summary group."""
+    return [
+        CiPerformanceResult(
+            group_key=group_key,
+            benchmark_id=f"{group_key}/fixture/10",
+            dimension="2D",
+            input_size="10",
+            mean_ns=1_000.0,
+            low_ns=900.0,
+            high_ns=1_100.0,
+        )
+        for group_key in benchmark_utils.CI_PERFORMANCE_SUITE_GROUP_ORDER
+    ]
+
+
+def complete_circumsphere_results(generator: PerformanceSummaryGenerator) -> list[CircumsphereTestCase]:
+    """Return one valid result for every case/method in the summary contract."""
+    methods_by_case: dict[tuple[str, str], dict[str, CircumspherePerformanceData]] = {}
+    for test_name, dimension, method_name in generator._circumsphere_expected_results():
+        methods = methods_by_case.setdefault((test_name, dimension), {})
+        methods[method_name] = CircumspherePerformanceData(method_name, 1_000.0 + len(methods) * 100.0)
+    return [
+        CircumsphereTestCase(
+            test_name,
+            dimension,
+            methods,
+            is_boundary_case=test_name == "Boundary vertex",
+        )
+        for (test_name, dimension), methods in methods_by_case.items()
+    ]
 
 
 def retained_performance_bundle(*, current: str = "v0.8.0", baseline: str = "v0.7.8") -> performance_artifacts.PerformanceBundle:
@@ -235,6 +288,14 @@ def write_named_estimate(  # noqa: PLR0913
         json.dumps({"full_id": benchmark_id, "group_id": group_id or benchmark_id.split("/", maxsplit=1)[0]}),
         encoding="utf-8",
     )
+
+
+def write_complete_release_signal_coverage(project_root: Path) -> None:
+    """Write one valid Criterion estimate for every planned report group."""
+    for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN:
+        for prefix in measurement.required_group_prefixes:
+            group = f"{prefix}fixture" if prefix.endswith("_") else prefix
+            write_estimate(project_root / "target", (group, "fixture"), 1_000.0)
 
 
 def write_versioned_release_asset_metadata(root: Path, *, tag: str, commit: str) -> dict[str, object]:
@@ -433,24 +494,80 @@ def test_release_signal_includes_realization_validation_benchmark() -> None:
 
 
 def test_release_measurement_plan_matches_workflow_and_just_recipe() -> None:
-    """Release metadata should describe the exact full-sampling target sequence."""
+    """Workflow and Just should delegate execution to the immutable Python plan."""
     project_root = Path(__file__).resolve().parents[2]
     workflow = (project_root / ".github" / "workflows" / "release-benchmarks.yml").read_text(encoding=UTF8)
     workflow_step = workflow.split("- name: Generate release benchmark summary", maxsplit=1)[1].split(
         "- name: Package release Criterion baseline",
         maxsplit=1,
     )[0]
-    workflow_targets = tuple(re.findall(r"^\s*cargo bench --profile perf --bench ([a-z0-9_]+)$", workflow_step, flags=re.MULTILINE))
     justfile = (project_root / "justfile").read_text(encoding=UTF8)
-    just_recipe = justfile.split("bench-latest:", maxsplit=1)[1].split("\n# ", maxsplit=1)[0]
-    just_targets = tuple(re.findall(r"^\s*cargo bench --profile perf --bench ([a-z0-9_]+)$", just_recipe, flags=re.MULTILINE))
+    just_recipe_match = re.search(r"^bench-latest\b.*?(?=^# )", justfile, flags=re.MULTILINE | re.DOTALL)
+    assert just_recipe_match is not None
+    just_recipe = just_recipe_match.group()
 
-    assert workflow_targets == benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
-    assert just_targets == benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
+    assert "just bench-latest" in workflow_step
+    assert "cargo bench --profile perf --bench" not in workflow_step
+    assert "benchmark-utils run-release-signal" in just_recipe
+    assert "cargo bench --profile perf --bench" not in just_recipe
     assert tuple(measurement.command for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN) == benchmark_utils.RELEASE_ASSET_MEASUREMENT_COMMANDS
+    assert len({measurement.target for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN}) == len(
+        benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN,
+    )
+    assert len({measurement.report_section for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN}) == len(
+        benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN,
+    )
+    assert all(measurement.report_section for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN)
+    assert all(measurement.required_group_prefixes for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN)
     assert all(measurement.sampling_mode == "full" for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN)
     assert all(not measurement.criterion_arguments for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN)
     assert "--run-benchmarks" not in workflow_step
+
+    expected_group_contracts = {
+        "ci_performance_suite": (
+            "tds_new_",
+            "boundary_facets",
+            "convex_hull",
+            "convex_hull_queries",
+            "validation",
+            "incremental_insert",
+            "explicit_import",
+            "proof_boundaries",
+            "bistellar_flips_",
+        ),
+        "circumsphere_containment": ("random", "2d", "3d", "4d", "5d", "edge_cases_", "circumcenter"),
+        "cold_path_predicates": ("predicates",),
+        "locate": ("locate",),
+        "realization_validation": ("realization_",),
+    }
+    assert {measurement.target: measurement.required_group_prefixes for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN} == (
+        expected_group_contracts
+    )
+
+
+@patch("benchmark_utils.run_cargo_command")
+def test_release_measurement_plan_runner_executes_exact_target_order(mock_cargo, tmp_path: Path) -> None:
+    """The executable plan should be the only owner of release target order."""
+    mock_cargo.return_value = completed_process(stdout=CI_MANIFEST_STDOUT)
+
+    outputs = benchmark_utils.run_release_signal_measurement_plan(tmp_path, bench_timeout=3600)
+
+    assert tuple(outputs) == benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
+    assert [call.args[0] for call in mock_cargo.call_args_list] == [
+        list(measurement.command[1:]) for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN
+    ]
+    assert all(call.kwargs["timeout"] == 3600 for call in mock_cargo.call_args_list)
+
+
+@patch("benchmark_utils.run_cargo_command")
+def test_release_measurement_plan_runner_stops_at_first_failed_target(mock_cargo, tmp_path: Path) -> None:
+    """A failed planned target must prevent later measurements from running."""
+    mock_cargo.return_value = completed_process(returncode=101, stderr="benchmark failed")
+
+    with pytest.raises(RuntimeError, match="ci_performance_suite exited with status 101"):
+        benchmark_utils.run_release_signal_measurement_plan(tmp_path)
+
+    assert mock_cargo.call_count == 1
 
 
 def test_release_measurement_plan_digest_binds_per_target_sampling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -768,6 +885,47 @@ def test_normalize_release_tag_rejects_saved_baseline_names() -> None:
         normalize_release_tag("last")
 
 
+def test_stable_published_releases_parse_strict_normalized_dtos() -> None:
+    releases = benchmark_utils._stable_published_releases(
+        [
+            github_release("0.8.0", published_at="2026-08-01T01:00:00+01:00"),
+            github_release("v0.9.0-rc.1", is_prerelease=True),
+            github_release("v1.0.0", is_draft=True, published_at=None),
+        ]
+    )
+
+    assert releases == [
+        benchmark_utils.PublishedRelease(
+            tag="v0.8.0",
+            published_at=datetime(2026, 8, 1, tzinfo=UTC),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("release", "error", "message"),
+    [
+        ({"tagName": "v0.8.0"}, ValueError, "unexpected fields"),
+        ({**github_release(), "isDraft": 1}, TypeError, "exact boolean"),
+        (github_release(published_at="2026-08-01T00:00:00"), ValueError, "include a timezone"),
+        (github_release(tag="latest"), ValueError, "semantic-version tag"),
+    ],
+)
+def test_stable_published_releases_reject_malformed_transport_records(
+    release: dict[str, object],
+    error: type[Exception],
+    message: str,
+) -> None:
+    """Malformed GitHub API fields never disappear through permissive filtering."""
+    with pytest.raises(error, match=message):
+        benchmark_utils._stable_published_releases([release])
+
+
+def test_stable_published_releases_reject_duplicate_normalized_tags() -> None:
+    with pytest.raises(ValueError, match="duplicate GitHub release tag"):
+        benchmark_utils._stable_published_releases([github_release("v0.8.0"), github_release("0.8.0")])
+
+
 def test_parse_performance_report_id_reads_current_and_baseline_tags() -> None:
     report_id = parse_performance_report_id(delaunay_report("0.8.0", "v0.7.8"))
 
@@ -824,7 +982,10 @@ def test_performance_local_rejects_identical_inferred_tags_before_external_work(
     monkeypatch.setattr(
         benchmark_utils,
         "_latest_published_release",
-        lambda _root: benchmark_utils.PublishedRelease(tag="v0.8.0", published_at="2026-08-01T00:00:00Z"),
+        lambda _root: benchmark_utils.PublishedRelease(
+            tag="v0.8.0",
+            published_at=datetime(2026, 8, 1, tzinfo=UTC),
+        ),
     )
     preflight = Mock()
     fetch = Mock()
@@ -2360,6 +2521,33 @@ Throughput: [9.524, 10.0, 10.526] Kelem/s
         with pytest.raises(BaselineParseError, match=r"malformed/no_timing.*missing or invalid Time line"):
             comparator._parse_baseline_file(baseline_content)
 
+    @pytest.mark.parametrize(
+        ("sections", "message"),
+        [
+            (
+                "=== 10 Points (2D) ===\nTime: [1, 2, 3] fortnight\n",
+                "unsupported Time unit",
+            ),
+            (
+                "=== 10 Points (2D) ===\nTime: [1, 2, 3] µs\nTime: [1, 2, 3] µs\n",
+                "duplicate Time line",
+            ),
+            (
+                DUPLICATE_BASELINE_KEY_SECTIONS,
+                "Duplicate benchmark comparison key",
+            ),
+        ],
+    )
+    def test_parse_baseline_file_wraps_strict_record_failures(
+        self,
+        comparator: PerformanceComparator,
+        sections: str,
+        message: str,
+    ) -> None:
+        """Comparison callers receive one stable baseline parse exception."""
+        with pytest.raises(BaselineParseError, match=message):
+            comparator._parse_baseline_file(sections)
+
     def test_parse_baseline_file_with_unsized_benchmark_id(self, comparator) -> None:
         """Test parsing expanded CI benchmarks without numeric input sizes."""
         baseline_content = """Date: 2023-06-15 10:30:00 PDT
@@ -2687,7 +2875,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert "✅ OVERALL OK" in result
 
     def test_write_performance_comparison_missing_baseline(self, comparator) -> None:
-        """Test performance comparison when some baselines are missing."""
+        """Missing baseline coverage is explicit and fails before aggregation."""
         current_results = [
             BenchmarkData(1000, "2D").with_timing(105.0, 110.0, 115.0, "µs"),
             BenchmarkData(3000, "2D").with_timing(300.0, 310.0, 320.0, "µs"),  # No baseline
@@ -2700,21 +2888,54 @@ Time: [1.0, 1.0, 1.0] µs
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Only one benchmark should be compared, regression could be found based on that single comparison
-        # In this case, we have 10% regression (110 vs 100), so regression should be detected
         assert regression_found
 
         result = output.getvalue()
-        assert "Total benchmarks compared: 1" in result
+        assert "Comparison coverage: NON-COMPARABLE" in result
+        assert "Missing from baseline: 3000_2D" in result
+        assert "Aggregate timing comparison: NOT COMPARABLE" in result
+        assert "Total benchmarks compared:" not in result
         assert "3000 Points (2D)" in result  # Should still show the benchmark without baseline
 
     def test_write_performance_comparison_no_benchmarks(self, comparator) -> None:
-        """Test performance comparison with no benchmarks."""
+        """Empty coverage cannot pass an enforcing performance guard."""
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, [], {})
 
-        # Should return False when no benchmarks to compare
-        assert not regression_found
+        assert regression_found
+        assert "current and baseline benchmark keysets are empty" in output.getvalue()
+
+    def test_total_time_policy_fails_on_non_comparable_coverage(self, comparator) -> None:
+        """The lenient regression policy still enforces complete measurement coverage."""
+        current = [BenchmarkData(10, "2D").with_timing(1.0, 2.0, 3.0, "µs")]
+        baseline = {"20_2D": BenchmarkData(20, "2D").with_timing(1.0, 2.0, 3.0, "µs")}
+
+        output = StringIO()
+        failed = comparator._write_performance_comparison(
+            output,
+            current,
+            baseline,
+            failure_policy="total-time",
+        )
+
+        assert failed
+        assert "Missing from baseline: 10_2D" in output.getvalue()
+        assert "Missing from current run: 20_2D" in output.getvalue()
+
+    def test_duplicate_current_keys_are_non_comparable(self, comparator) -> None:
+        """Duplicate current measurements cannot be collapsed into one aggregate row."""
+        benchmark = BenchmarkData(10, "2D").with_timing(1.0, 2.0, 3.0, "µs")
+        baseline = {"10_2D": BenchmarkData(10, "2D").with_timing(1.0, 2.0, 3.0, "µs")}
+
+        output = StringIO()
+        failed = comparator._write_performance_comparison(
+            output,
+            [benchmark, benchmark],
+            baseline,
+        )
+
+        assert failed
+        assert "Duplicate current benchmark keys: 10_2D" in output.getvalue()
 
     @patch("benchmark_utils.get_git_commit_hash")
     @patch("benchmark_utils.datetime")
@@ -3404,7 +3625,7 @@ class TestEdgeCases:
         return PerformanceComparator(project_root)
 
     def test_empty_current_results(self, comparator) -> None:
-        """Test comparison with empty current results."""
+        """A missing current keyset fails closed."""
         baseline_results = {
             "1000_2D": BenchmarkData(1000, "2D").with_timing(95.0, 100.0, 105.0, "µs"),
         }
@@ -3412,11 +3633,12 @@ class TestEdgeCases:
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, [], baseline_results)
 
-        assert not regression_found
-        assert "SUMMARY" not in output.getvalue()
+        assert regression_found
+        assert "Missing from current run: 1000_2D" in output.getvalue()
+        assert "Aggregate timing comparison: NOT COMPARABLE" in output.getvalue()
 
     def test_empty_baseline_results(self, comparator) -> None:
-        """Test comparison with empty baseline results."""
+        """A missing baseline keyset fails closed."""
         current_results = [
             BenchmarkData(1000, "2D").with_timing(105.0, 110.0, 115.0, "µs"),
         ]
@@ -3424,13 +3646,14 @@ class TestEdgeCases:
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, {})
 
-        assert not regression_found
+        assert regression_found
         result = output.getvalue()
         assert "1000 Points (2D)" in result
-        assert "SUMMARY" not in result
+        assert "Missing from baseline: 1000_2D" in result
+        assert "Aggregate timing comparison: NOT COMPARABLE" in result
 
     def test_all_zero_baseline_times(self, comparator) -> None:
-        """Test comparison when all baseline times are zero."""
+        """Invalid timing evidence fails even when identity coverage matches."""
         current_results = [
             BenchmarkData(1000, "2D").with_timing(105.0, 110.0, 115.0, "µs"),
             BenchmarkData(2000, "2D").with_timing(205.0, 220.0, 235.0, "µs"),
@@ -3444,13 +3667,14 @@ class TestEdgeCases:
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        assert not regression_found
+        assert regression_found
         result = output.getvalue()
         assert "N/A (baseline mean is 0)" in result
-        assert "SUMMARY" not in result  # No valid comparisons
+        assert "Invalid baseline timings: 1000_2D, 2000_2D" in result
+        assert "Aggregate timing comparison: NOT COMPARABLE" in result
 
     def test_mixed_valid_invalid_baselines(self, comparator) -> None:
-        """Test comparison with mix of valid and invalid baseline data."""
+        """One invalid timing prevents a misleading matched-subset aggregate."""
         current_results = [
             BenchmarkData(1000, "2D").with_timing(105.0, 110.0, 115.0, "µs"),
             BenchmarkData(2000, "2D").with_timing(205.0, 220.0, 235.0, "µs"),
@@ -3464,11 +3688,11 @@ class TestEdgeCases:
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Should find regression due to the 10% change in the valid comparison
         assert regression_found
 
         result = output.getvalue()
-        assert "Total benchmarks compared: 1" in result  # Only one valid comparison
+        assert "Invalid baseline timings: 2000_2D" in result
+        assert "Total benchmarks compared:" not in result
         assert "N/A (baseline mean is 0)" in result
         assert "10.0%" in result  # The valid comparison shows 10% change
 
@@ -4888,6 +5112,96 @@ class TestTimeoutHandling:
         )
 
 
+class TestCompareBaselinesCliFailures:
+    """The file-only comparison command reports ordinary path failures cleanly."""
+
+    @staticmethod
+    def _args(old_baseline: Path, new_baseline: Path, output: Path | None = None) -> Any:
+        argv = ["compare-baselines", "--old", str(old_baseline), "--new", str(new_baseline)]
+        if output is not None:
+            argv.extend(["--output", str(output)])
+        return create_argument_parser().parse_args(argv)
+
+    def test_rejects_directory_baseline_without_stdout(self, tmp_path: Path, capsys) -> None:
+        old_baseline = tmp_path / "old"
+        old_baseline.mkdir()
+        new_baseline = tmp_path / "new.txt"
+        new_baseline.write_text("new\n", encoding=UTF8)
+
+        with pytest.raises(SystemExit) as exc_info:
+            execute_command(self._args(old_baseline, new_baseline), tmp_path)
+
+        captured = capsys.readouterr()
+        assert exc_info.value.code == 3
+        assert captured.out == ""
+        assert captured.err == f"benchmark-utils compare-baselines: error: --old must name a regular file: {old_baseline}\n"
+
+    def test_reports_malformed_utf8_without_traceback(self, tmp_path: Path, capsys) -> None:
+        old_baseline = tmp_path / "old.txt"
+        new_baseline = tmp_path / "new.txt"
+        old_baseline.write_bytes(b"\xff")
+        new_baseline.write_text("new\n", encoding=UTF8)
+
+        with pytest.raises(SystemExit) as exc_info:
+            execute_command(self._args(old_baseline, new_baseline), tmp_path)
+
+        captured = capsys.readouterr()
+        assert exc_info.value.code == 1
+        assert captured.out == ""
+        assert captured.err.startswith("benchmark-utils compare-baselines: error: baseline input is not valid UTF-8:")
+        assert "Traceback" not in captured.err
+
+    def test_reports_input_permission_failure_without_traceback(self, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+        old_baseline = tmp_path / "old.txt"
+        new_baseline = tmp_path / "new.txt"
+        old_baseline.write_text("old\n", encoding=UTF8)
+        new_baseline.write_text("new\n", encoding=UTF8)
+
+        def fail_read(_project_root: Path, _old_baseline: Path, _new_baseline: Path) -> tuple[str, bool]:
+            message = "simulated read permission failure"
+            raise PermissionError(message)
+
+        monkeypatch.setattr(benchmark_utils, "render_baseline_comparison", fail_read)
+
+        with pytest.raises(SystemExit) as exc_info:
+            execute_command(self._args(old_baseline, new_baseline), tmp_path)
+
+        captured = capsys.readouterr()
+        assert exc_info.value.code == 1
+        assert captured.out == ""
+        assert captured.err == "benchmark-utils compare-baselines: error: could not read baseline input: simulated read permission failure\n"
+
+    def test_output_failure_preserves_destination_and_suppresses_report(
+        self,
+        tmp_path: Path,
+        capsys,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        old_baseline = tmp_path / "old.txt"
+        new_baseline = tmp_path / "new.txt"
+        old_baseline.write_text("old\n", encoding=UTF8)
+        new_baseline.write_text("new\n", encoding=UTF8)
+        output = tmp_path / "report.txt"
+        output.write_text("previous report\n", encoding=UTF8)
+        monkeypatch.setattr(benchmark_utils, "render_baseline_comparison", lambda *_args: ("comparison report\n", False))
+
+        def fail_replace(_source: Path, _target: Path) -> Path:
+            message = "simulated output permission failure"
+            raise PermissionError(message)
+
+        monkeypatch.setattr(Path, "replace", fail_replace)
+
+        with pytest.raises(SystemExit) as exc_info:
+            execute_command(self._args(old_baseline, new_baseline, output), tmp_path)
+
+        captured = capsys.readouterr()
+        assert exc_info.value.code == 1
+        assert captured.out == ""
+        assert captured.err.startswith(f"benchmark-utils compare-baselines: error: could not publish --output {output}:")
+        assert output.read_text(encoding=UTF8) == "previous report\n"
+        assert list(tmp_path.glob(".report.txt.*.tmp")) == []
+
+
 class TestPerformanceSummaryGenerator:
     """Test cases for PerformanceSummaryGenerator class."""
 
@@ -5267,8 +5581,9 @@ OK: Time change -1.8% within acceptable range
             content = "\n".join(lines)
 
             assert "### Circumsphere Predicate Performance" in content
-            # Should contain fallback performance data when no criterion results exist
-            assert "Basic 3D" in content or "Version unknown" in content
+            assert "Reference fallback timings are shown below" in content
+            assert "#### Reference Fallback Timings" in content
+            assert "Version unknown Results" not in content
 
     def test_get_update_instructions(self) -> None:
         """Test getting performance data update instructions."""
@@ -5280,7 +5595,7 @@ OK: Time change -1.8% within acceptable range
             content = "\n".join(lines)
 
             assert PERFORMANCE_UPDATES_TITLE in content
-            assert "uv run benchmark-utils write-baseline" in content
+            assert "uv run --locked benchmark-utils write-baseline" in content
             assert "just bench-perf-summary" in content
             assert "PerformanceSummaryGenerator" in content
 
@@ -5638,83 +5953,82 @@ Benchmark completed.""",
             with pytest.raises(ValueError, match="bench_timeout must be a positive integer"):
                 generator.generate_summary(bench_timeout=bench_timeout)
 
-    @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
-    @patch("benchmark_utils.PerformanceSummaryGenerator._run_ci_performance_suite")
-    def test_generate_summary_with_benchmarks(self, mock_run_ci_suite, mock_run_benchmarks) -> None:
+    @patch("benchmark_utils.run_release_signal_measurement_plan")
+    def test_generate_summary_with_benchmarks(self, mock_run_plan) -> None:
         """Test generating summary with fresh benchmark run."""
-        mock_run_ci_suite.return_value = True
-        mock_run_benchmarks.return_value = (True, None)
+        mock_run_plan.return_value = {measurement.target: "" for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN}
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
+            write_complete_release_signal_coverage(project_root)
 
             output_file = Path(temp_dir) / "test_summary.md"
 
-            success = generator.generate_summary(output_path=output_file, run_benchmarks=True)
+            with (
+                patch.object(generator, "_parse_ci_performance_suite_results", return_value=complete_ci_performance_results()),
+                patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=complete_circumsphere_results(generator)),
+            ):
+                success = generator.generate_summary(output_path=output_file, run_benchmarks=True)
 
             assert success is True
-            # When run_benchmarks=True without an explicit profile, generate_summary
-            # must default to BENCHMARK_BUILD_FLAVOR.
-            mock_run_ci_suite.assert_called_once_with(
+            mock_run_plan.assert_called_once_with(
+                project_root,
                 cargo_profile=BENCHMARK_BUILD_FLAVOR,
                 bench_timeout=1800,
             )
-            mock_run_benchmarks.assert_called_once_with(cargo_profile=BENCHMARK_BUILD_FLAVOR)
             assert output_file.exists()
 
-    @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
-    @patch("benchmark_utils.PerformanceSummaryGenerator._run_ci_performance_suite")
-    def test_generate_summary_passes_cargo_profile_to_benchmarks(self, mock_run_ci_suite, mock_run_benchmarks) -> None:
+    @patch("benchmark_utils.run_release_signal_measurement_plan")
+    def test_generate_summary_passes_cargo_profile_to_benchmarks(self, mock_run_plan) -> None:
         """Test generating a summary with fresh benchmarks under a specific Cargo profile."""
-        mock_run_ci_suite.return_value = True
-        mock_run_benchmarks.return_value = (True, None)
+        mock_run_plan.return_value = {measurement.target: "" for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN}
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
+            write_complete_release_signal_coverage(project_root)
 
             output_file = Path(temp_dir) / "test_summary.md"
 
             requested_profile = "release"
-            success = generator.generate_summary(output_path=output_file, run_benchmarks=True, cargo_profile=requested_profile)
+            with (
+                patch.object(generator, "_parse_ci_performance_suite_results", return_value=complete_ci_performance_results()),
+                patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=complete_circumsphere_results(generator)),
+            ):
+                success = generator.generate_summary(output_path=output_file, run_benchmarks=True, cargo_profile=requested_profile)
 
             assert success is True
-            mock_run_ci_suite.assert_called_once_with(
+            mock_run_plan.assert_called_once_with(
+                project_root,
                 cargo_profile=requested_profile,
                 bench_timeout=1800,
             )
-            mock_run_benchmarks.assert_called_once_with(cargo_profile=requested_profile)
             assert output_file.exists()
 
-    @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
-    @patch("benchmark_utils.PerformanceSummaryGenerator._run_ci_performance_suite")
-    def test_generate_summary_benchmark_failure_continues(self, mock_run_ci_suite, mock_run_benchmarks, capsys) -> None:
-        """Test that summary generation continues even if benchmark run fails."""
-        mock_run_ci_suite.return_value = False
-        mock_run_benchmarks.return_value = (False, None)
+    @patch("benchmark_utils.run_release_signal_measurement_plan")
+    def test_generate_summary_fresh_benchmark_failure_preserves_previous_report(self, mock_run_plan, capsys) -> None:
+        """A failed fresh run must fail closed without replacing prior evidence."""
+        mock_run_plan.side_effect = RuntimeError("benchmark failed")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
 
             output_file = Path(temp_dir) / "test_summary.md"
+            output_file.write_text("previous report\n", encoding=UTF8)
 
             success = generator.generate_summary(output_path=output_file, run_benchmarks=True)
 
-            assert success is True  # Should still succeed
-            assert output_file.exists()
-
-            # Check warning was printed
+            assert success is False
+            assert output_file.read_text(encoding=UTF8) == "previous report\n"
             captured = capsys.readouterr()
-            assert "Benchmark run failed" in captured.out
+            assert "Fresh benchmark run failed" in captured.err
 
-    @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
-    @patch("benchmark_utils.PerformanceSummaryGenerator._run_ci_performance_suite")
-    def test_generate_summary_strict_benchmark_failure_fails(self, mock_run_ci_suite, mock_run_benchmarks, capsys) -> None:
+    @patch("benchmark_utils.run_release_signal_measurement_plan")
+    def test_generate_summary_strict_benchmark_failure_fails(self, mock_run_plan, capsys) -> None:
         """Test that strict summary generation fails instead of using fallback data."""
-        mock_run_ci_suite.return_value = False
-        mock_run_benchmarks.return_value = (True, None)
+        mock_run_plan.side_effect = RuntimeError("benchmark failed")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -5730,10 +6044,10 @@ Benchmark completed.""",
             assert success is False
             assert not output_file.exists()
             captured = capsys.readouterr()
-            assert "strict summary mode refuses fallback data" in captured.err
+            assert "Fresh benchmark run failed" in captured.err
 
-    def test_generate_summary_strict_rejects_rendered_fallback_data(self, capsys) -> None:
-        """Test that strict summary generation fails when rendered content uses fallback data."""
+    def test_generate_summary_strict_rejects_structural_fallback_provenance(self, capsys) -> None:
+        """Strict generation rejects fallback based on provenance, not rendered prose."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
@@ -5744,36 +6058,21 @@ Benchmark completed.""",
             assert success is False
             assert not output_file.exists()
             captured = capsys.readouterr()
-            assert "detected fallback benchmark data" in captured.err
+            assert "circumsphere evidence uses reference fallback timings" in captured.err
 
     def test_generate_summary_strict_accepts_existing_release_workflow_results(self) -> None:
-        """Five prior Cargo runs are sufficient; numerical-accuracy output is not required."""
-        ci_result = CiPerformanceResult(
-            group_key="construction",
-            benchmark_id="tds_new_2d/tds_new/10",
-            dimension="2D",
-            input_size="10",
-            mean_ns=1_000.0,
-            low_ns=900.0,
-            high_ns=1_100.0,
-        )
-        circumsphere_result = CircumsphereTestCase(
-            "random_2d",
-            "2D",
-            {
-                "insphere": CircumspherePerformanceData("insphere", 1_000.0),
-                "insphere_distance": CircumspherePerformanceData("insphere_distance", 1_100.0),
-                "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 1_200.0),
-            },
-        )
+        """Complete prior Criterion evidence is sufficient; accuracy stdout is optional."""
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            generator = PerformanceSummaryGenerator(Path(temp_dir))
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+            write_complete_release_signal_coverage(project_root)
             output_file = Path(temp_dir) / "test_summary.md"
+            circumsphere_results = complete_circumsphere_results(generator)
             with (
                 patch.object(generator, "_get_triangulation_data_structure_results", return_value=[]),
-                patch.object(generator, "_parse_ci_performance_suite_results", return_value=[ci_result]),
-                patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=[circumsphere_result]),
+                patch.object(generator, "_parse_ci_performance_suite_results", return_value=complete_ci_performance_results()),
+                patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=circumsphere_results),
             ):
                 success = generator.generate_summary(
                     output_path=output_file,
@@ -5783,28 +6082,52 @@ Benchmark completed.""",
 
             assert success is True
             content = output_file.read_text(encoding=UTF8)
-            assert "reference data" not in content
-            assert "To get current numerical accuracy data" not in content
+            assert "Reference fallback timings" not in content
+            assert "section is incomplete" not in content
+
+    def test_release_signal_report_coverage_is_derived_from_every_planned_section(self, tmp_path: Path) -> None:
+        """Every executable target should own exactly one visible report-coverage row."""
+        generator = PerformanceSummaryGenerator(tmp_path)
+        write_complete_release_signal_coverage(tmp_path)
+
+        sections = generator._collect_release_signal_section_evidence()
+        rendered = "\n".join(generator._release_signal_coverage_section(sections))
+
+        assert tuple((section.target, section.report_section) for section in sections) == tuple(
+            (measurement.target, measurement.report_section) for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN
+        )
+        assert all(section.is_complete for section in sections)
+        for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN:
+            assert f"| `{measurement.target}` | {measurement.report_section} |" in rendered
+
+    def test_generate_summary_strict_rejects_missing_planned_report_section(self, tmp_path: Path, capsys) -> None:
+        """A planned target without Criterion groups must block strict publication."""
+        generator = PerformanceSummaryGenerator(tmp_path)
+        for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN[:-1]:
+            for prefix in measurement.required_group_prefixes:
+                group = f"{prefix}fixture" if prefix.endswith("_") else prefix
+                write_estimate(tmp_path / "target", (group, "fixture"), 1_000.0)
+
+        with (
+            patch.object(generator, "_parse_ci_performance_suite_results", return_value=complete_ci_performance_results()),
+            patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=complete_circumsphere_results(generator)),
+        ):
+            success = generator.generate_summary(output_path=tmp_path / "summary.md", strict=True)
+
+        assert success is False
+        assert not (tmp_path / "summary.md").exists()
+        captured = capsys.readouterr()
+        assert "realization_validation report section 'Realization validation' is incomplete" in captured.err
 
     def test_generate_summary_strict_rejects_missing_circumsphere_results(self, capsys) -> None:
         """Test that strict summary generation fails when circumsphere results are absent."""
-        ci_result = CiPerformanceResult(
-            group_key="construction",
-            benchmark_id="tds_new_2d/tds_new/10",
-            dimension="2D",
-            input_size="10",
-            mean_ns=1_000.0,
-            low_ns=900.0,
-            high_ns=1_100.0,
-        )
-
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
             output_file = Path(temp_dir) / "test_summary.md"
 
             with (
-                patch.object(generator, "_parse_ci_performance_suite_results", return_value=[ci_result]),
+                patch.object(generator, "_parse_ci_performance_suite_results", return_value=complete_ci_performance_results()),
                 patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=[]),
             ):
                 success = generator.generate_summary(output_path=output_file, strict=True)
@@ -5812,7 +6135,69 @@ Benchmark completed.""",
             assert success is False
             assert not output_file.exists()
             captured = capsys.readouterr()
-            assert "detected fallback benchmark data" in captured.err
+            assert "circumsphere evidence uses reference fallback timings" in captured.err
+
+    def test_generate_summary_strict_rejects_partial_circumsphere_estimates(self, tmp_path: Path, capsys) -> None:
+        """One missing method estimate makes the fixed circumsphere contract incomplete."""
+        generator = PerformanceSummaryGenerator(tmp_path)
+        circumsphere_results = complete_circumsphere_results(generator)
+        first_case = circumsphere_results[0]
+        first_case.methods.pop("insphere")
+        output_file = tmp_path / "summary.md"
+        output_file.write_text("previous report\n", encoding=UTF8)
+
+        with (
+            patch.object(generator, "_parse_ci_performance_suite_results", return_value=complete_ci_performance_results()),
+            patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=circumsphere_results),
+        ):
+            success = generator.generate_summary(output_path=output_file, strict=True)
+
+        assert success is False
+        assert output_file.read_text(encoding=UTF8) == "previous report\n"
+        captured = capsys.readouterr()
+        assert "circumsphere Criterion evidence is incomplete" in captured.err
+        assert "2d_insphere" in captured.err
+
+    def test_generate_summary_strict_rejects_manifest_result_with_malformed_estimate(self, tmp_path: Path, capsys) -> None:
+        """The runtime manifest makes a skipped malformed CI estimate an explicit gap."""
+        generator = PerformanceSummaryGenerator(tmp_path)
+        manifest_path = tmp_path / "target" / "criterion" / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE
+        manifest_path.parent.mkdir(parents=True)
+        results = complete_ci_performance_results()
+        manifest_path.write_text("\n".join([result.benchmark_id for result in results] + ["validation/malformed/20"]) + "\n", encoding=UTF8)
+        output_file = tmp_path / "summary.md"
+
+        with (
+            patch.object(generator, "_parse_ci_performance_suite_results", return_value=results),
+            patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=complete_circumsphere_results(generator)),
+        ):
+            success = generator.generate_summary(output_path=output_file, strict=True)
+
+        assert success is False
+        assert not output_file.exists()
+        captured = capsys.readouterr()
+        assert "runtime-manifest" in captured.err
+        assert "validation/malformed/20" in captured.err
+
+    def test_generate_summary_atomic_replace_failure_preserves_previous_report(self, tmp_path: Path, capsys) -> None:
+        """A final replacement failure leaves the previous tracked report byte-identical."""
+        generator = PerformanceSummaryGenerator(tmp_path)
+        write_complete_release_signal_coverage(tmp_path)
+        output_file = tmp_path / "summary.md"
+        output_file.write_text("previous report\n", encoding=UTF8)
+
+        with (
+            patch.object(generator, "_parse_ci_performance_suite_results", return_value=complete_ci_performance_results()),
+            patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=complete_circumsphere_results(generator)),
+            patch.object(Path, "replace", side_effect=OSError("injected replace failure")),
+        ):
+            success = generator.generate_summary(output_path=output_file, strict=True)
+
+        assert success is False
+        assert output_file.read_text(encoding=UTF8) == "previous report\n"
+        assert list(tmp_path.glob(".summary.md.*.tmp")) == []
+        captured = capsys.readouterr()
+        assert "injected replace failure" in captured.err
 
     def test_generate_summary_exception_handling(self, capsys) -> None:
         """Test exception handling in generate_summary."""
@@ -5821,7 +6206,7 @@ Benchmark completed.""",
             generator = PerformanceSummaryGenerator(project_root)
 
             output_file = Path(temp_dir) / "readonly" / "summary.md"
-            with patch.object(Path, "open", side_effect=OSError("permission denied")):
+            with patch("benchmark_utils._write_text_atomic", side_effect=OSError("permission denied")):
                 success = generator.generate_summary(output_path=output_file)
 
             assert success is False
@@ -5860,9 +6245,12 @@ Benchmark completed.""",
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
 
-            # Should not crash and should use fallback data
+            # Parsing stays honest; fallback is added only by the evidence collector.
             results = generator._parse_circumsphere_benchmark_results()
-            assert len(results) > 0
+            assert results == []
+            evidence = generator._collect_circumsphere_summary_evidence()
+            assert evidence.provenance == "reference-fallback"
+            assert evidence.test_cases
 
     def test_malformed_estimates_json_edge_case(self) -> None:
         """Test handling of malformed estimates.json files (edge case)."""
@@ -5878,9 +6266,10 @@ Benchmark completed.""",
 
             generator = PerformanceSummaryGenerator(project_root)
 
-            # Should not crash and should use fallback data
+            # Malformed raw evidence must not be returned as measured rows.
             results = generator._parse_circumsphere_benchmark_results()
-            assert len(results) > 0
+            assert results == []
+            assert generator._collect_circumsphere_summary_evidence().provenance == "reference-fallback"
 
     def test_missing_git_info_edge_case(self) -> None:
         """Test handling when git information is not available (edge case)."""
@@ -5902,7 +6291,7 @@ Benchmark completed.""",
                 assert success
 
                 content = output_file.read_text(encoding=UTF8)
-                assert "Version unknown" in content
+                assert "Reference fallback timings are shown below" in content
 
     def test_baseline_fallback_behavior_edge_case(self) -> None:
         """Test baseline file fallback from primary to secondary location (edge case)."""

@@ -1,0 +1,11 @@
+[package]
+name = "checkpoint-no-float-roundtrip"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+delaunay = { path = "../../.." }
+serde_json = { version = "1.0.151", default-features = true }
+
+[workspace]

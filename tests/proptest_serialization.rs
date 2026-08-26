@@ -12,25 +12,17 @@
 #[path = "common/proptest_config.rs"]
 mod proptest_config;
 
-use approx::relative_eq;
-use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
+use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, Vertex};
 use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::query::*;
 use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
 use proptest_config::with_default_cases;
+use std::collections::HashSet;
+use uuid::Uuid;
 
 /// Type alias for the serde round-trip target.
 type DefaultDt<const D: usize> = DelaunayTriangulation<RobustKernel<f64>, (), (), D>;
-
-/// Check if two points are approximately equal (coordinate-wise)
-/// Uses relative epsilon comparison suitable for JSON serialization roundtrips
-fn points_approx_equal<const D: usize>(p1: &Point<D>, p2: &Point<D>) -> bool {
-    p1.coords()
-        .iter()
-        .zip(p2.coords().iter())
-        .all(|(a, b)| relative_eq!(a, b, epsilon = 1e-14, max_relative = 1e-14))
-}
 
 // =============================================================================
 // TEST CONFIGURATION
@@ -39,6 +31,40 @@ fn points_approx_equal<const D: usize>(p1: &Point<D>, p2: &Point<D>) -> bool {
 /// Strategy for generating finite f64 coordinates
 fn finite_coordinate() -> impl Strategy<Value = f64> {
     (-100.0..100.0).prop_filter("must be finite", |x: &f64| x.is_finite())
+}
+
+/// Counts coordinate-distinct inputs before construction so round-trip
+/// properties reject only insufficient generator data.
+fn unique_vertex_count<const D: usize>(vertices: &[Vertex<(), D>]) -> usize {
+    vertices
+        .iter()
+        .map(|vertex| vertex.point().coords().map(f64::to_bits))
+        .collect::<HashSet<_>>()
+        .len()
+}
+
+/// Returns simplex UUIDs and their neighbor UUID slots in stable owner-independent order.
+fn neighbor_signatures<K, const D: usize>(
+    triangulation: &DelaunayTriangulation<K, (), (), D>,
+) -> Vec<(Uuid, Vec<Option<Uuid>>)> {
+    let mut signatures = triangulation
+        .simplices()
+        .map(|(_, simplex)| {
+            let neighbors = simplex
+                .neighbors()
+                .map(|neighbors| {
+                    neighbors
+                        .map(|neighbor| {
+                            neighbor.and_then(|key| triangulation.simplex_uuid_from_key(key))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            (simplex.uuid(), neighbors)
+        })
+        .collect::<Vec<_>>();
+    signatures.sort_unstable_by_key(|(uuid, _)| *uuid);
+    signatures
 }
 
 // =============================================================================
@@ -63,12 +89,28 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        // Serialize to JSON
-                        let json = serde_json::to_string(&dt).expect("Serialization failed");
+                    prop_assume!(unique_vertex_count(&vertices) > $dim);
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D JSON-roundtrip fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    let expected_manifest = dt.checkpoint_manifest().map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D source checkpoint manifest construction failed: {error:?}",
+                            $dim,
+                        ))
+                    })?;
+                    // Serialize to JSON
+                    let json = serde_json::to_string(&dt).map_err(|error| {
+                        TestCaseError::fail(format!("{}D serialization failed: {error:?}", $dim))
+                    })?;
 
-                        let deserialized: DefaultDt<$dim> =
-                            serde_json::from_str(&json).expect("Deserialization failed");
+                    let deserialized: DefaultDt<$dim> = serde_json::from_str(&json).map_err(|error| {
+                        TestCaseError::fail(format!("{}D deserialization failed: {error:?}", $dim))
+                    })?;
 
                         // Verify structure preservation
                         prop_assert_eq!(
@@ -89,7 +131,17 @@ macro_rules! test_serialization_properties {
                             "{}D dimension should be preserved",
                             $dim
                         );
-                    }
+                        prop_assert_eq!(
+                            deserialized.checkpoint_manifest().map_err(|error| {
+                                TestCaseError::fail(format!(
+                                    "{}D restored checkpoint manifest construction failed: {error:?}",
+                                    $dim,
+                                ))
+                            })?,
+                            expected_manifest,
+                            "{}D checkpoint manifest should be preserved",
+                            $dim
+                        );
                 }
 
                 /// Property: Deserialized triangulation remains valid
@@ -101,22 +153,30 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        if dt.validate_structure().is_ok() {
-                            // Serialize and deserialize through the owner checkpoint.
-                            let json = serde_json::to_string(&dt).expect("Serialization failed");
-                            let deserialized: DefaultDt<$dim> =
-                                serde_json::from_str(&json).expect("Deserialization failed");
+                    prop_assume!(unique_vertex_count(&vertices) > $dim);
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D deserialization-validity fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    // Serialize and deserialize through the owner checkpoint.
+                    let json = serde_json::to_string(&dt).map_err(|error| {
+                        TestCaseError::fail(format!("{}D serialization failed: {error:?}", $dim))
+                    })?;
+                    let deserialized: DefaultDt<$dim> = serde_json::from_str(&json).map_err(|error| {
+                        TestCaseError::fail(format!("{}D deserialization failed: {error:?}", $dim))
+                    })?;
 
-                            // Deserialized triangulation should also be valid
-                            prop_assert!(
-                                deserialized.validate_structure().is_ok(),
-                                "{}D deserialized triangulation should be valid: {:?}",
-                                $dim,
-                                deserialized.validate_structure().err()
-                            );
-                        }
-                    }
+                        // Check the cumulative Levels 1-5 contract restored by schema v2.
+                        let validation = deserialized.validate();
+                        prop_assert!(
+                            validation.is_ok(),
+                            "{}D deserialized triangulation should pass Levels 1-5: {:?}",
+                            $dim,
+                            validation.err()
+                        );
                 }
 
                 /// Property: Vertex coordinates preserved after roundtrip
@@ -128,12 +188,15 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        // Filter: Skip minimal/degenerate configurations
-                        // Need more than minimal simplex (D+1) to have meaningful serialization test
-                        prop_assume!(dt.number_of_vertices() > $dim + 1);
-                        // Also skip invalid TDS (can happen with nearly-degenerate geometries)
-                        prop_assume!(dt.validate_structure().is_ok());
+                    // Need more than a minimal simplex for meaningful membership coverage.
+                    prop_assume!(unique_vertex_count(&vertices) > $dim + 1);
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D coordinate-roundtrip fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
 
                         // Collect original vertex points
                         let original_points: Vec<_> = dt.vertices()
@@ -141,9 +204,12 @@ macro_rules! test_serialization_properties {
                             .collect();
 
                         // Serialize and deserialize through the owner checkpoint.
-                        let json = serde_json::to_string(&dt).expect("Serialization failed");
-                        let deserialized: DefaultDt<$dim> =
-                            serde_json::from_str(&json).expect("Deserialization failed");
+                        let json = serde_json::to_string(&dt).map_err(|error| {
+                            TestCaseError::fail(format!("{}D serialization failed: {error:?}", $dim))
+                        })?;
+                        let deserialized: DefaultDt<$dim> = serde_json::from_str(&json).map_err(|error| {
+                            TestCaseError::fail(format!("{}D deserialization failed: {error:?}", $dim))
+                        })?;
 
                         // Collect deserialized vertex points
                         let deserialized_points: Vec<_> = deserialized.vertices()
@@ -158,20 +224,17 @@ macro_rules! test_serialization_properties {
                             $dim
                         );
 
-                        // Check that all original points exist in deserialized
-                        // (order might differ, so we check set equality)
-                        // Use approximate comparison due to JSON floating-point precision limits
+                        // Check exact point membership. Schema v2 carries the TDS as bytes,
+                        // so the outer JSON codec must preserve every f64 bit.
                         for orig_point in &original_points {
-                            let found = deserialized_points.iter()
-                                .any(|deser_point| points_approx_equal(orig_point, deser_point));
+                            let found = deserialized_points.contains(orig_point);
                             prop_assert!(
                                 found,
-                                "{}D vertex point {:?} not found after roundtrip (within tolerance)",
+                                "{}D vertex point {:?} not found exactly after roundtrip",
                                 $dim,
                                 orig_point
                             );
                         }
-                    }
                 }
 
                 /// Property: Neighbor relationships preserved after roundtrip
@@ -183,36 +246,31 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        // Count original neighbor relationships
-                        let mut original_neighbor_count = 0;
-                        for (_key, simplex) in dt.simplices() {
-                            if let Some(neighbors) = simplex.neighbors() {
-                                original_neighbor_count += neighbors.flatten().count();
-                            }
-                        }
+                    prop_assume!(unique_vertex_count(&vertices) > $dim);
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D neighbor-roundtrip fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    let original_neighbors = neighbor_signatures(&dt);
 
                         // Serialize and deserialize through the owner checkpoint.
-                        let json = serde_json::to_string(&dt).expect("Serialization failed");
-                        let deserialized: DefaultDt<$dim> =
-                            serde_json::from_str(&json).expect("Deserialization failed");
+                    let json = serde_json::to_string(&dt).map_err(|error| {
+                        TestCaseError::fail(format!("{}D serialization failed: {error:?}", $dim))
+                    })?;
+                    let deserialized: DefaultDt<$dim> = serde_json::from_str(&json).map_err(|error| {
+                        TestCaseError::fail(format!("{}D deserialization failed: {error:?}", $dim))
+                    })?;
 
-                        // Count deserialized neighbor relationships
-                        let mut deserialized_neighbor_count = 0;
-                        for (_key, simplex) in deserialized.simplices() {
-                            if let Some(neighbors) = simplex.neighbors() {
-                                deserialized_neighbor_count += neighbors.flatten().count();
-                            }
-                        }
-
-                        // Neighbor counts should match
+                        // Exact UUID-based adjacency should match independently of slotmap keys.
                         prop_assert_eq!(
-                            deserialized_neighbor_count,
-                            original_neighbor_count,
-                            "{}D neighbor relationship count should be preserved",
+                            neighbor_signatures(&deserialized),
+                            original_neighbors,
+                            "{}D neighbor UUID slots should be preserved",
                             $dim
                         );
-                    }
                 }
             }
         }

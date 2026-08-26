@@ -45,18 +45,23 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        for facet in dt.facets() {
-                            let facet = facet.expect("facet iterator should resolve valid facets");
-                            let vertex_count = facet.vertices().count();
-                            prop_assert_eq!(
-                                vertex_count,
-                                $expected_facet_vertices,
-                                "{}D facet should have exactly {} vertices",
-                                $dim,
-                                $expected_facet_vertices
-                            );
-                        }
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D facet-cardinality fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    for facet in dt.facets() {
+                        let facet = facet.expect("facet iterator should resolve valid facets");
+                        let vertex_count = facet.vertices().count();
+                        prop_assert_eq!(
+                            vertex_count,
+                            $expected_facet_vertices,
+                            "{}D facet should have exactly {} vertices",
+                            $dim,
+                            $expected_facet_vertices
+                        );
                     }
                 }
 
@@ -69,18 +74,23 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        for facet in dt.facets() {
-                            let facet = facet.expect("facet iterator should resolve valid facets");
-                            let simplex_vertex_count = facet.simplex().vertices().len();
-                            let facet_vertex_count = facet.vertices().count();
-                            prop_assert_eq!(
-                                facet_vertex_count,
-                                simplex_vertex_count - 1,
-                                "{}D facet should have one fewer vertex than simplex",
-                                $dim
-                            );
-                        }
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D facet/simplex fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    for facet in dt.facets() {
+                        let facet = facet.expect("facet iterator should resolve valid facets");
+                        let simplex_vertex_count = facet.simplex().vertices().len();
+                        let facet_vertex_count = facet.vertices().count();
+                        prop_assert_eq!(
+                            facet_vertex_count,
+                            simplex_vertex_count - 1,
+                            "{}D facet should have one fewer vertex than simplex",
+                            $dim
+                        );
                     }
                 }
 
@@ -93,14 +103,19 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        for facet in dt.facets() {
-                            prop_assert!(
-                                facet.is_ok(),
-                                "{}D public facet iterator should only yield valid facets",
-                                $dim
-                            );
-                        }
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D facet-validity fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    for facet in dt.facets() {
+                        prop_assert!(
+                            facet.is_ok(),
+                            "{}D public facet iterator should only yield valid facets",
+                            $dim
+                        );
                     }
                 }
 
@@ -113,19 +128,24 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        let facet_count = dt
-                            .facets()
-                            .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
-                            .expect("facet iterator should resolve valid facets");
-                        prop_assert_eq!(
-                            facet_count,
-                            dt.number_of_simplices() * ($dim + 1),
-                            "{}D triangulation should have exactly {} facets per simplex",
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D simplex-facet fixture construction failed: {error:?}",
                             $dim,
-                            $dim + 1
-                        );
-                    }
+                        )))?;
+                    let facet_count = dt
+                        .facets()
+                        .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                        .expect("facet iterator should resolve valid facets");
+                    prop_assert_eq!(
+                        facet_count,
+                        dt.number_of_simplices() * ($dim + 1),
+                        "{}D triangulation should have exactly {} facets per simplex",
+                        $dim,
+                        $dim + 1
+                    );
                 }
             }
         }
@@ -152,20 +172,27 @@ macro_rules! test_facet_multiplicity {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        // Ensure we're checking a valid triangulation to avoid degenerate edge cases
-                        prop_assume!(dt.is_valid_structure().is_ok());
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D facet-multiplicity fixture construction failed: {error:?}",
+                            $dim,
+                        )))?;
+                    dt.is_valid_structure().map_err(|error| TestCaseError::fail(format!(
+                        "{}D facet-multiplicity fixture failed structural validation: {error:?}",
+                        $dim,
+                    )))?;
 
-                        let mut counts: HashMap<u64, usize> = HashMap::new();
+                    let mut counts: HashMap<u64, usize> = HashMap::new();
 
-                        for facet in dt.facets() {
-                            let facet = facet.expect("facet iterator should resolve valid facets");
-                            *counts.entry(facet.key()).or_default() += 1;
-                        }
+                    for facet in dt.facets() {
+                        let facet = facet.expect("facet iterator should resolve valid facets");
+                        *counts.entry(facet.key()).or_default() += 1;
+                    }
 
-                        for (facet, c) in counts {
-                            prop_assert!(c == 1 || c == 2, "facet {:?} appears {} times (must be 1 or 2)", facet, c);
-                        }
+                    for (facet, c) in counts {
+                        prop_assert!(c == 1 || c == 2, "facet {:?} appears {} times (must be 1 or 2)", facet, c);
                     }
                 }
             }

@@ -55,9 +55,11 @@ just update
 ```
 
 `just update` resolves exact pins under `[dependency-groups].dev` together for
-the repository's supported Python version before refreshing `uv.lock`. It does
-not change ranged development requirements, runtime or optional dependencies,
-or `[build-system].requires` through that exact-pin step. Its
+the repository's supported Python version before refreshing `uv.lock`. Its
+Cargo update also refreshes the root package and the isolated
+`tests/fixtures/checkpoint_no_float_roundtrip/` manifest and lockfile. It does
+not change ranged Python development requirements, runtime or optional
+dependencies, or `[build-system].requires` through that exact-pin step. Its
 `cargo-install-update` preflight runs before either dependency updater can
 change declarations or lockfiles.
 

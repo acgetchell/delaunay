@@ -12,8 +12,8 @@ use crate::triangulation::Triangulation;
 use crate::triangulation::draft::TriangulationDraft;
 use crate::triangulation::realization::TriangulationRealizationValidationError;
 use crate::triangulation::validation::{
-    TopologyConstructionProvenance, TopologyGuarantee, ValidationConfigurationError,
-    ValidationPolicy,
+    TopologyCertificationEvidence, TopologyConstructionProvenance, TopologyGuarantee,
+    ValidationConfigurationError, ValidationPolicy,
 };
 use thiserror::Error;
 
@@ -93,6 +93,12 @@ pub enum TriangulationBuilderError {
 /// storage before returning it for repair or retry.
 pub type TriangulationBuildFailure<U, V, const D: usize> =
     RefinementError<Tds<U, V, D>, TriangulationBuilderError>;
+
+/// Internal build result that retains metrics from the successful Level-3 pass.
+pub(super) type TriangulationBuildWithTopologyEvidence<K, U, V, const D: usize> = Result<
+    (Triangulation<K, U, V, D>, TopologyCertificationEvidence),
+    TriangulationBuildFailure<U, V, D>,
+>;
 
 /// Fluent builder for a proof-bearing Levels 1–4 [`Triangulation`].
 ///
@@ -253,6 +259,14 @@ where
     /// preserves the supplied TDS representation by default. Select
     /// [`Self::canonicalizing`] when success may normalize its orientation.
     pub fn build(self) -> Result<Triangulation<K, U, V, D>, TriangulationBuildFailure<U, V, D>> {
+        self.build_with_topology_evidence()
+            .map(|(triangulation, _evidence)| triangulation)
+    }
+
+    /// Publishes Levels 3–4 while retaining metrics from that exact proof pass.
+    pub(crate) fn build_with_topology_evidence(
+        self,
+    ) -> TriangulationBuildWithTopologyEvidence<K, U, V, D> {
         let validation_policy = self
             .validation_policy
             .unwrap_or_else(|| self.topology_guarantee.default_validation_policy());
@@ -265,7 +279,7 @@ where
         )
         .construction_provenance(self.construction_provenance)
         .validation_policy(validation_policy)
-        .finish(self.build_mode)
+        .finish_with_topology_evidence(self.build_mode)
     }
 }
 
@@ -300,6 +314,41 @@ mod tests {
             .unwrap();
 
         assert!(triangulation.validate_realization().is_ok());
+    }
+
+    #[test]
+    fn retained_topology_evidence_is_bound_to_the_published_owner() {
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+        ];
+        let simplices = [vec![0, 1, 2]];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+
+        let (triangulation, evidence) = TriangulationBuilder::new(tds, AdaptiveKernel::new())
+            .build_with_topology_evidence()
+            .unwrap();
+
+        assert_eq!(
+            evidence
+                .simplex_counts(triangulation.tds())
+                .map(|counts| counts.by_dim.as_slice()),
+            Some([3, 3, 1].as_slice())
+        );
+        assert_eq!(evidence.euler_characteristic(triangulation.tds()), Some(1));
+
+        let cloned_tds = triangulation.tds().clone();
+        assert!(evidence.simplex_counts(&cloned_tds).is_none());
+        assert!(evidence.euler_characteristic(&cloned_tds).is_none());
+
+        let mut published_tds = triangulation.into_tds();
+        assert!(evidence.simplex_counts(&published_tds).is_some());
+        published_tds
+            .insert_vertex_with_mapping(vertex![0.25, 0.25].unwrap())
+            .unwrap();
+        assert!(evidence.simplex_counts(&published_tds).is_none());
+        assert!(evidence.euler_characteristic(&published_tds).is_none());
     }
 
     #[test]

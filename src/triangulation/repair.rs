@@ -20,19 +20,135 @@ use crate::core::tds::{InvariantError, SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::quality::{QualityError, QualitySimplexVerticesError, radius_ratio};
+use crate::geometry::traits::coordinate::CoordinateConversionValue;
 use crate::triangulation::Triangulation;
 use crate::triangulation::rollback::TriangulationRollbackTransaction;
-use crate::triangulation::validation::{
-    TriangulationValidationError, insertion_error_to_invariant_error,
-};
+use crate::triangulation::validation::TriangulationValidationError;
 use std::env;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
+use thiserror::Error;
 use uuid::Uuid;
 
 static FORCE_GLOBAL_NEIGHBOR_REBUILD_ENABLED: OnceLock<bool> = OnceLock::new();
 
 const ORIENTATION_NORMALIZATION_BUDGET: usize = 3;
+
+/// Vertex-removal or local-repair phase that produced an insertion-layer failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TriangulationRepairOperation {
+    /// Extracting the boundary of the vertex-removal cavity.
+    CavityBoundaryExtraction,
+    /// Filling the cavity with a fan triangulation.
+    FanTriangulation,
+    /// Canonicalizing the new fan simplices after filling.
+    FanOrientationCanonicalization,
+    /// Collecting facets that connect the replacement cavity to surviving topology.
+    ExternalFacetCollection,
+    /// Wiring the replacement cavity's neighbor relations.
+    NeighborWiring,
+    /// Selecting and applying local over-shared-facet repair.
+    LocalFacetRepair,
+    /// Repairing neighbor relations after local simplex removal.
+    LocalNeighborRepair,
+    /// Promoting local vertex-removal simplices to positive orientation.
+    LocalOrientationPromotion,
+    /// Falling back to global positive-orientation promotion.
+    GlobalOrientationFallback,
+    /// Canonicalizing orientation after Delaunay repair during vertex deletion.
+    PostDelaunayRepairOrientationCanonicalization,
+    /// Validating connectedness after vertex removal.
+    ConnectednessValidation,
+}
+
+impl fmt::Display for TriangulationRepairOperation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CavityBoundaryExtraction => f.write_str("vertex-removal cavity extraction"),
+            Self::FanTriangulation => f.write_str("vertex-removal fan triangulation"),
+            Self::FanOrientationCanonicalization => {
+                f.write_str("vertex-removal fan orientation canonicalization")
+            }
+            Self::ExternalFacetCollection => {
+                f.write_str("vertex-removal external-facet collection")
+            }
+            Self::NeighborWiring => f.write_str("vertex-removal neighbor wiring"),
+            Self::LocalFacetRepair => f.write_str("vertex-removal local facet repair"),
+            Self::LocalNeighborRepair => f.write_str("vertex-removal local neighbor repair"),
+            Self::LocalOrientationPromotion => {
+                f.write_str("vertex-removal local orientation promotion")
+            }
+            Self::GlobalOrientationFallback => {
+                f.write_str("vertex-removal global orientation fallback")
+            }
+            Self::PostDelaunayRepairOrientationCanonicalization => {
+                f.write_str("post-Delaunay-repair orientation canonicalization")
+            }
+            Self::ConnectednessValidation => f.write_str("vertex-removal connectedness validation"),
+        }
+    }
+}
+
+/// Internal vertex-removal carrier separating validation failures from operation failures.
+#[derive(Clone, Debug, Error, PartialEq)]
+#[non_exhaustive]
+pub enum VertexRemovalError {
+    /// A validation layer rejected the candidate removal.
+    #[error(transparent)]
+    Invariant {
+        /// Typed validation failure.
+        source: Box<InvariantError>,
+    },
+    /// An insertion or repair primitive failed before validation.
+    #[error("{operation} failed: {source}")]
+    Operation {
+        /// Removal phase that failed.
+        operation: TriangulationRepairOperation,
+        /// Typed insertion/repair source.
+        #[source]
+        source: Box<InsertionError>,
+    },
+}
+
+impl From<InvariantError> for VertexRemovalError {
+    fn from(source: InvariantError) -> Self {
+        Self::Invariant {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<TdsError> for VertexRemovalError {
+    fn from(source: TdsError) -> Self {
+        InvariantError::Tds { source }.into()
+    }
+}
+
+/// Preserves validation layers while keeping operational failures out of `InvariantError`.
+pub fn insertion_error_to_vertex_removal_error(
+    error: InsertionError,
+    operation: TriangulationRepairOperation,
+) -> VertexRemovalError {
+    let invariant = match error {
+        InsertionError::TopologyValidation { source } => InvariantError::Tds { source },
+        InsertionError::TopologyValidationFailed { source, .. } => {
+            InvariantError::Triangulation { source }
+        }
+        InsertionError::RealizationValidationFailed { source } => {
+            InvariantError::Realization { source }
+        }
+        InsertionError::DelaunayValidationFailed { source } => InvariantError::Delaunay { source },
+        source => {
+            return VertexRemovalError::Operation {
+                operation,
+                source: Box::new(source),
+            };
+        }
+    };
+    invariant.into()
+}
 
 type IncidentSimplexRepairUpdates =
     SmallBuffer<IncidentSimplexRepairUpdate, CLEANUP_OPERATION_BUFFER_SIZE>;
@@ -68,42 +184,37 @@ fn force_global_neighbor_rebuild_enabled() -> bool {
         .get_or_init(|| env::var_os("DELAUNAY_FORCE_GLOBAL_NEIGHBOR_REBUILD").is_some())
 }
 
-/// Preserve typed TDS lookup/count failures from quality evaluation where possible.
-fn quality_error_to_tds_error(simplex_key: SimplexKey, error: QualityError) -> TdsError {
+/// Keeps genuine TDS lookup failures at Levels 1–2 and preserves all other quality failures.
+fn quality_error_to_repair_error(simplex_key: SimplexKey, error: QualityError) -> InsertionError {
     match error {
         QualityError::SimplexVertices { source, .. } => match source {
             QualitySimplexVerticesError::SimplexNotFound {
                 simplex_key,
                 context,
-            } => TdsError::SimplexNotFound {
-                simplex_key,
-                context,
+            } => InsertionError::TopologyValidation {
+                source: TdsError::SimplexNotFound {
+                    simplex_key,
+                    context,
+                },
             },
             QualitySimplexVerticesError::ReferencedVertexNotFound {
                 vertex_key,
                 context,
-            } => TdsError::VertexNotFound {
-                vertex_key,
-                context,
+            } => InsertionError::TopologyValidation {
+                source: TdsError::VertexNotFound {
+                    vertex_key,
+                    context,
+                },
             },
-            QualitySimplexVerticesError::UnexpectedTdsFailure { source } => *source,
+            QualitySimplexVerticesError::UnexpectedTdsFailure { source } => {
+                InsertionError::TopologyValidation { source: *source }
+            }
         },
-        QualityError::VertexNotFound { vertex_key } => TdsError::VertexNotFound {
-            vertex_key,
-            context: format!("quality evaluation for simplex {simplex_key:?}"),
-        },
-        QualityError::InvalidSimplexArity {
-            actual,
-            expected,
-            dimension,
-        } => TdsError::DimensionMismatch {
-            expected,
-            actual,
-            context: format!("quality evaluation for {dimension}D simplex {simplex_key:?}"),
-        },
-        other => TdsError::InconsistentDataStructure {
-            message: format!("Quality evaluation failed for simplex {simplex_key:?}: {other}"),
-        },
+        source => CavityFillingError::LocalFacetQualityEvaluation {
+            simplex_key,
+            source,
+        }
+        .into(),
     }
 }
 
@@ -184,6 +295,16 @@ impl VertexRemovalOutcome {
             repair_seed_simplices,
         }
     }
+}
+
+/// Private proof controls for exercising the late vertex-removal publication boundary.
+///
+/// Production always uses the default, non-corrupting path. The owning module
+/// test requests a deterministic orientation defect so rollback is proved at
+/// the exact post-repair, pre-publication boundary without global test state.
+#[derive(Clone, Copy, Debug, Default)]
+struct VertexRemovalProofOptions {
+    corrupt_realization_before_final_check: bool,
 }
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
@@ -439,13 +560,24 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`InvariantError`] if the removal cannot be completed while maintaining
-    /// triangulation invariants. The error preserves structured information from whichever
-    /// layer (TDS or Topology) detected the failure.
+    /// Returns [`VertexRemovalError`] if a typed repair operation fails or a
+    /// validation layer rejects the candidate removal.
     pub(crate) fn remove_vertex_with_repair_seeds(
         &mut self,
         vertex_key: VertexKey,
-    ) -> Result<VertexRemovalOutcome, InvariantError> {
+    ) -> Result<VertexRemovalOutcome, VertexRemovalError> {
+        self.remove_vertex_with_repair_seeds_with_options(
+            vertex_key,
+            VertexRemovalProofOptions::default(),
+        )
+    }
+
+    /// Runs vertex removal with private proof controls used by the owning rollback regression.
+    fn remove_vertex_with_repair_seeds_with_options(
+        &mut self,
+        vertex_key: VertexKey,
+        proof_options: VertexRemovalProofOptions,
+    ) -> Result<VertexRemovalOutcome, VertexRemovalError> {
         if self.tds.vertex(vertex_key).is_none() {
             // Vertex not found, nothing to remove.
             return Ok(VertexRemovalOutcome::without_repair_seeds(0));
@@ -459,24 +591,25 @@ where
         if simplices_to_remove.is_empty() {
             // Vertex exists but has no incident simplices; remove it only if the
             // resulting triangulation satisfies the same invariant checks.
-            return self
+            return Ok(self
                 .remove_vertex_with_invariant_checks(vertex_key)
-                .map(VertexRemovalOutcome::without_repair_seeds);
+                .map(VertexRemovalOutcome::without_repair_seeds)?);
         }
 
         let boundary_facets =
-            extract_cavity_boundary(&self.tds, &simplices_to_remove).map_err(|e| {
-                TdsError::InconsistentDataStructure {
-                    message: format!("Failed to extract cavity boundary: {e}"),
+            extract_cavity_boundary(&self.tds, &simplices_to_remove).map_err(|source| {
+                VertexRemovalError::Operation {
+                    operation: TriangulationRepairOperation::CavityBoundaryExtraction,
+                    source: Box::new(InsertionError::ConflictRegion { source }),
                 }
             })?;
 
         if boundary_facets.is_empty() {
             // Use TDS removal for the empty-boundary case, then validate so
             // lower-dimensional remnants are rejected and rolled back.
-            return self
+            return Ok(self
                 .remove_vertex_with_invariant_checks(vertex_key)
-                .map(VertexRemovalOutcome::without_repair_seeds);
+                .map(VertexRemovalOutcome::without_repair_seeds)?);
         }
 
         let affected_vertices =
@@ -490,6 +623,7 @@ where
             &boundary_facets,
             &affected_vertices,
             apex_vertex_key,
+            proof_options,
         )
     }
 
@@ -501,11 +635,12 @@ where
         boundary_facets: &[FacetHandle],
         affected_vertices: &VertexKeySet,
         apex_vertex_key: VertexKey,
-    ) -> Result<VertexRemovalOutcome, InvariantError> {
+        proof_options: VertexRemovalProofOptions,
+    ) -> Result<VertexRemovalOutcome, VertexRemovalError> {
         let mut transaction = TriangulationRollbackTransaction::begin(self);
         let retriangulation_result = {
             let tri = transaction.triangulation_mut();
-            (|| -> Result<VertexRemovalOutcome, InvariantError> {
+            (|| -> Result<VertexRemovalOutcome, VertexRemovalError> {
                 // An arbitrary fan of a vertex-star boundary is not, by
                 // itself, a proof that every D >= 4 link remains a PL
                 // sphere/ball. The mandatory publication boundary below will
@@ -516,13 +651,16 @@ where
                 let new_simplices = tri
                     .fan_fill_cavity(apex_vertex_key, boundary_facets)
                     .map_err(|e| {
-                        insertion_error_to_invariant_error(e, "Fan triangulation failed")
+                        insertion_error_to_vertex_removal_error(
+                            e,
+                            TriangulationRepairOperation::FanTriangulation,
+                        )
                     })?;
                 tri.canonicalize_positive_orientation_for_simplices(&new_simplices)
                     .map_err(|e| {
-                        insertion_error_to_invariant_error(
+                        insertion_error_to_vertex_removal_error(
                             e,
-                            "Orientation canonicalization failed after fan filling",
+                            TriangulationRepairOperation::FanOrientationCanonicalization,
                         )
                     })?;
 
@@ -530,9 +668,9 @@ where
                 let external_facets =
                     external_facets_for_boundary(&tri.tds, simplices_to_remove, boundary_facets)
                         .map_err(|e| {
-                            insertion_error_to_invariant_error(
+                            insertion_error_to_vertex_removal_error(
                                 e,
-                                "External-facet collection failed",
+                                TriangulationRepairOperation::ExternalFacetCollection,
                             )
                         })?;
                 wire_cavity_neighbors(
@@ -541,7 +679,12 @@ where
                     external_facets.iter().copied(),
                     Some(simplices_to_remove),
                 )
-                .map_err(|e| insertion_error_to_invariant_error(e, "Neighbor wiring failed"))?;
+                .map_err(|e| {
+                    insertion_error_to_vertex_removal_error(
+                        e,
+                        TriangulationRepairOperation::NeighborWiring,
+                    )
+                })?;
 
                 // Remove the simplices containing the vertex (now that new simplices are wired up)
                 // Note: remove_simplices_by_keys() automatically clears neighbor pointers in surviving
@@ -584,6 +727,7 @@ where
                     affected_vertices,
                     &surviving_new_simplices,
                     &validation_scope,
+                    proof_options,
                 )?;
 
                 Ok(VertexRemovalOutcome::with_repair_seed_simplices(
@@ -612,7 +756,7 @@ where
         simplices_removed: &mut usize,
         post_repair_frontier: &mut SimplexKeyBuffer,
         max_simplices_removed: usize,
-    ) -> Result<(), InvariantError> {
+    ) -> Result<(), VertexRemovalError> {
         let mut remaining_budget = max_simplices_removed;
 
         loop {
@@ -633,19 +777,19 @@ where
             let repair_outcome = self
                 .repair_local_facet_issues_with_frontier(&issues, remaining_budget)
                 .map_err(|e| {
-                    insertion_error_to_invariant_error(
+                    insertion_error_to_vertex_removal_error(
                         e,
-                        "Local facet repair after vertex removal failed",
+                        TriangulationRepairOperation::LocalFacetRepair,
                     )
                 })?;
             let removed = repair_outcome.removed_count;
             if removed == 0 {
-                return Err(insertion_error_to_invariant_error(
+                return Err(insertion_error_to_vertex_removal_error(
                     CavityFillingError::InvalidFacetSharingAfterRepair {
                         stage: CavityRepairStage::FanTriangulation,
                     }
                     .into(),
-                    "Local facet repair after vertex removal stalled",
+                    TriangulationRepairOperation::LocalFacetRepair,
                 ));
             }
 
@@ -660,9 +804,9 @@ where
 
             self.repair_neighbors_after_local_simplex_removal(new_simplices, post_repair_frontier)
                 .map_err(|e| {
-                    insertion_error_to_invariant_error(
+                    insertion_error_to_vertex_removal_error(
                         e,
-                        "Neighbor repair after facet issue repair failed",
+                        TriangulationRepairOperation::LocalNeighborRepair,
                     )
                 })?;
         }
@@ -672,13 +816,13 @@ where
     fn normalize_vertex_removal_orientation(
         &mut self,
         validation_scope: &SimplexKeyBuffer,
-    ) -> Result<(), InvariantError> {
+    ) -> Result<(), VertexRemovalError> {
         for _ in 0..ORIENTATION_NORMALIZATION_BUDGET {
             self.canonicalize_positive_orientation_for_simplices(validation_scope)
                 .map_err(|e| {
-                    insertion_error_to_invariant_error(
+                    insertion_error_to_vertex_removal_error(
                         e,
-                        "Local orientation promotion failed after vertex removal",
+                        TriangulationRepairOperation::LocalOrientationPromotion,
                     )
                 })?;
             self.tds
@@ -701,9 +845,9 @@ where
 
         self.normalize_and_promote_positive_orientation()
             .map_err(|e| {
-                insertion_error_to_invariant_error(
+                insertion_error_to_vertex_removal_error(
                     e,
-                    "Global orientation fallback failed after local vertex-removal normalization",
+                    TriangulationRepairOperation::GlobalOrientationFallback,
                 )
             })
     }
@@ -713,7 +857,7 @@ where
         &mut self,
         affected_vertices: &VertexKeySet,
         validation_scope: &SimplexKeyBuffer,
-    ) -> Result<(), InvariantError> {
+    ) -> Result<(), VertexRemovalError> {
         for &vertex_key in affected_vertices {
             let needs_repair = self.tds.vertex(vertex_key).is_some_and(|vertex| {
                 !vertex.incident_simplex().is_some_and(|simplex_key| {
@@ -741,7 +885,8 @@ where
                         vertex_key,
                         vertex_uuid: vertex.uuid(),
                     },
-                });
+                }
+                .into());
             };
 
             self.tds
@@ -871,12 +1016,13 @@ where
 
     /// Validates the local postconditions that make successful vertex removal topology-preserving.
     fn validate_vertex_removal_postconditions(
-        &self,
+        &mut self,
         removed_vertex: VertexKey,
         affected_vertices: &VertexKeySet,
         surviving_new_simplices: &SimplexKeyBuffer,
         validation_scope: &SimplexKeyBuffer,
-    ) -> Result<(), InvariantError> {
+        proof_options: VertexRemovalProofOptions,
+    ) -> Result<(), VertexRemovalError> {
         if self.tds.contains_vertex_key(removed_vertex) {
             return Err(InvariantError::Tds {
                 source: TdsError::InconsistentDataStructure {
@@ -884,7 +1030,8 @@ where
                         "Removed vertex {removed_vertex:?} still exists after vertex-removal finalization"
                     ),
                 },
-            });
+            }
+            .into());
         }
 
         if self.tds.number_of_simplices() == 0
@@ -895,18 +1042,29 @@ where
                 .is_valid()
                 .map_err(|source| InvariantError::Tds { source })?;
             self.is_valid_topology()?;
-            return Ok(());
+            return Ok(self
+                .is_valid_realization()
+                .map_err(|source| InvariantError::Realization { source })?);
         }
 
         self.validate_connectedness(surviving_new_simplices)
             .map_err(|e| {
-                insertion_error_to_invariant_error(
+                insertion_error_to_vertex_removal_error(
                     e,
-                    "Vertex-removal connectedness validation failed",
+                    TriangulationRepairOperation::ConnectednessValidation,
                 )
             })?;
         self.validate_mandatory_mutation_postconditions_for_simplices(validation_scope)?;
         self.validate_affected_vertices_non_isolated(affected_vertices)?;
+        if proof_options.corrupt_realization_before_final_check
+            && let Some(&simplex_key) = validation_scope.first()
+        {
+            self.tds
+                .reverse_simplex_orientations(&[simplex_key])
+                .map_err(|source| InvariantError::Tds { source })?;
+        }
+        self.validate_realization_for_simplices(validation_scope)
+            .map_err(|source| InvariantError::Realization { source })?;
 
         #[cfg(debug_assertions)]
         {
@@ -914,8 +1072,6 @@ where
                 .is_valid()
                 .map_err(|source| InvariantError::Tds { source })?;
             self.is_valid_topology()?;
-            self.is_valid_realization()
-                .map_err(|source| InvariantError::Realization { source })?;
         }
 
         Ok(())
@@ -1186,7 +1342,7 @@ where
     fn simplices_for_local_facet_issue_repair(
         &self,
         issues: &FacetIssuesMap,
-    ) -> Result<SimplexKeyBuffer, TdsError> {
+    ) -> Result<SimplexKeyBuffer, InsertionError> {
         let mut simplices_to_remove = SimplexKeySet::default();
 
         // For each over-shared facet, select simplices to remove
@@ -1194,26 +1350,28 @@ where
             // Compute quality for each simplex - propagate errors from quality evaluation
             let mut simplex_qualities: Vec<(SimplexKey, f64, Uuid)> = Vec::new();
             for &(simplex_key, _) in simplex_facet_pairs {
-                let simplex =
-                    self.tds
-                        .simplex(simplex_key)
-                        .ok_or_else(|| TdsError::SimplexNotFound {
+                let simplex = self.tds.simplex(simplex_key).ok_or_else(|| {
+                    InsertionError::TopologyValidation {
+                        source: TdsError::SimplexNotFound {
                             simplex_key,
                             context: "facet repair quality evaluation".to_string(),
-                        })?;
+                        },
+                    }
+                })?;
                 let uuid = simplex.uuid();
 
                 // Propagate quality evaluation errors
                 let ratio = radius_ratio(self, simplex_key)
-                    .map_err(|error| quality_error_to_tds_error(simplex_key, error))?;
+                    .map_err(|error| quality_error_to_repair_error(simplex_key, error))?;
                 if ratio.is_finite() {
                     simplex_qualities.push((simplex_key, ratio, uuid));
                 } else {
-                    return Err(TdsError::InconsistentDataStructure {
-                        message: format!(
-                            "Non-finite quality ratio {ratio} for simplex {simplex_key:?}"
-                        ),
-                    });
+                    return Err(CavityFillingError::LocalFacetNonFiniteQuality {
+                        simplex_key,
+                        simplex_uuid: uuid,
+                        quality: CoordinateConversionValue::from_f64(ratio),
+                    }
+                    .into());
                 }
             }
 
@@ -1301,9 +1459,7 @@ where
             });
         }
 
-        let to_remove = self
-            .simplices_for_local_facet_issue_repair(issues)
-            .map_err(|source| InsertionError::TopologyValidation { source })?;
+        let to_remove = self.simplices_for_local_facet_issue_repair(issues)?;
         let attempted = to_remove.len();
         if attempted > max_simplices_removed {
             return Err(InsertionError::MaxSimplicesRemovedExceeded {
@@ -1419,7 +1575,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DelaunayTriangulation;
     use crate::core::collections::{CavityBoundaryBuffer, NeighborBuffer};
     use crate::core::simplex::{NeighborSlot, Simplex};
     use crate::core::tds::Tds;
@@ -1427,6 +1582,10 @@ mod tests {
     use crate::deletion::DeleteVertexError;
     use crate::geometry::kernel::FastKernel;
     use crate::vertex;
+    use crate::{
+        DelaunayTriangulation, DelaunayTriangulationValidationError,
+        TriangulationRealizationValidationError,
+    };
     use std::assert_matches;
 
     use slotmap::KeyData;
@@ -2053,6 +2212,51 @@ mod tests {
     }
 
     #[test]
+    fn fan_vertex_removal_rolls_back_invalid_post_repair_realization() {
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+            vertex![0.5, 0.5].unwrap(),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let vertex_key = dt
+            .vertices()
+            .find_map(|(key, vertex)| {
+                let coords = vertex.point().coords();
+                ((coords[0] - 0.5).abs() < 1e-10 && (coords[1] - 0.5).abs() < 1e-10).then_some(key)
+            })
+            .unwrap();
+        let mut tri = dt.into_triangulation();
+        let before = tri.tds.clone_for_rollback();
+        let owner_before = tri.tds.topology_owner_id();
+        let generation_before = tri.tds.generation();
+        let result = tri.remove_vertex_with_repair_seeds_with_options(
+            vertex_key,
+            VertexRemovalProofOptions {
+                corrupt_realization_before_final_check: true,
+            },
+        );
+
+        assert_matches!(
+            result,
+            Err(VertexRemovalError::Invariant { source })
+                if matches!(
+                    source.as_ref(),
+                    InvariantError::Realization {
+                        source: TriangulationRealizationValidationError::NegativeSimplexOrientation { .. }
+                    }
+                )
+        );
+        assert_eq!(tri.tds, before);
+        assert_eq!(tri.tds.topology_owner_id(), owner_before);
+        assert_eq!(tri.tds.generation(), generation_before);
+        assert!(tri.tds.contains_vertex_key(vertex_key));
+        tri.validate_realization().unwrap();
+    }
+
+    #[test]
     fn test_vertex_removal_outcome_noops_for_missing_vertex_key() {
         let vertices = [
             vertex![0.0, 0.0, 0.0].unwrap(),
@@ -2124,12 +2328,13 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(InvariantError::Triangulation { source:
-                TriangulationValidationError::IsolatedVertex {
-                    vertex_key,
-                    ..
-                },
-             }) if vertex_key == isolated_survivor
+            Err(VertexRemovalError::Invariant { source })
+                if matches!(
+                    source.as_ref(),
+                    InvariantError::Triangulation {
+                        source: TriangulationValidationError::IsolatedVertex { vertex_key, .. },
+                    } if *vertex_key == isolated_survivor
+                )
         );
         assert_eq!(tri.tds.number_of_vertices(), vertex_count);
         assert_eq!(tri.tds.number_of_simplices(), simplex_count);
@@ -2195,15 +2400,19 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(InvariantError::Triangulation { source:
-                TriangulationValidationError::IsolatedVertex { vertex_key, .. }
-             }) if vertex_key == v3
+            Err(VertexRemovalError::Invariant { source })
+                if matches!(
+                    source.as_ref(),
+                    InvariantError::Triangulation {
+                        source: TriangulationValidationError::IsolatedVertex { vertex_key, .. },
+                    } if *vertex_key == v3
+                )
         );
     }
 
     #[test]
     fn test_vertex_removal_postconditions_reject_still_present_vertex() {
-        let (tri, [v0, ..], simplex_key) = build_single_tet();
+        let (mut tri, [v0, ..], simplex_key) = build_single_tet();
         let affected_vertices = VertexKeySet::default();
         let mut surviving_new_simplices = SimplexKeyBuffer::new();
         surviving_new_simplices.push(simplex_key);
@@ -2215,13 +2424,18 @@ mod tests {
             &affected_vertices,
             &surviving_new_simplices,
             &validation_scope,
+            VertexRemovalProofOptions::default(),
         );
 
         assert_matches!(
             result,
-            Err(InvariantError::Tds {
-                source: TdsError::InconsistentDataStructure { .. }
-            })
+            Err(VertexRemovalError::Invariant { source })
+                if matches!(
+                    source.as_ref(),
+                    InvariantError::Tds {
+                        source: TdsError::InconsistentDataStructure { .. }
+                    }
+                )
         );
     }
 
@@ -2243,7 +2457,7 @@ mod tests {
     }
 
     #[test]
-    fn test_quality_error_to_tds_error_preserves_lookup_variants() {
+    fn test_quality_error_to_repair_error_preserves_lookup_and_quality_sources() {
         let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
         let vertex_key = VertexKey::from(KeyData::from_ffi(2));
 
@@ -2255,19 +2469,56 @@ mod tests {
             },
         };
         assert_matches!(
-            quality_error_to_tds_error(simplex_key, simplex_error),
-            TdsError::SimplexNotFound { simplex_key: key, .. } if key == simplex_key
+            quality_error_to_repair_error(simplex_key, simplex_error),
+            InsertionError::TopologyValidation {
+                source: TdsError::SimplexNotFound { simplex_key: key, .. }
+            } if key == simplex_key
+        );
+
+        let referenced_vertex_error = QualityError::SimplexVertices {
+            simplex_key,
+            source: QualitySimplexVerticesError::ReferencedVertexNotFound {
+                vertex_key,
+                context: "quality vertex lookup".to_string(),
+            },
+        };
+        assert_matches!(
+            quality_error_to_repair_error(simplex_key, referenced_vertex_error),
+            InsertionError::TopologyValidation {
+                source: TdsError::VertexNotFound { vertex_key: key, .. }
+            } if key == vertex_key
+        );
+
+        let unexpected_tds_source = TdsError::InconsistentDataStructure {
+            message: "unexpected quality lookup failure".to_string(),
+        };
+        let unexpected_tds_error = QualityError::SimplexVertices {
+            simplex_key,
+            source: QualitySimplexVerticesError::UnexpectedTdsFailure {
+                source: Box::new(unexpected_tds_source.clone()),
+            },
+        };
+        assert_eq!(
+            quality_error_to_repair_error(simplex_key, unexpected_tds_error),
+            InsertionError::TopologyValidation {
+                source: unexpected_tds_source,
+            }
         );
 
         let vertex_error = QualityError::VertexNotFound { vertex_key };
         assert_matches!(
-            quality_error_to_tds_error(simplex_key, vertex_error),
-            TdsError::VertexNotFound { vertex_key: key, .. } if key == vertex_key
+            quality_error_to_repair_error(simplex_key, vertex_error),
+            InsertionError::CavityFilling {
+                reason: CavityFillingError::LocalFacetQualityEvaluation {
+                    simplex_key: key,
+                    source: QualityError::VertexNotFound { vertex_key: missing },
+                },
+            } if key == simplex_key && missing == vertex_key
         );
     }
 
     #[test]
-    fn test_quality_error_to_tds_error_preserves_arity_mismatch() {
+    fn test_quality_error_to_repair_error_preserves_arity_mismatch() {
         let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
         let error = QualityError::InvalidSimplexArity {
             actual: 3,
@@ -2276,11 +2527,106 @@ mod tests {
         };
 
         assert_matches!(
-            quality_error_to_tds_error(simplex_key, error),
-            TdsError::DimensionMismatch {
-                expected: 4,
-                actual: 3,
-                ..
+            quality_error_to_repair_error(simplex_key, error),
+            InsertionError::CavityFilling {
+                reason: CavityFillingError::LocalFacetQualityEvaluation {
+                    simplex_key: key,
+                    source: QualityError::InvalidSimplexArity {
+                        expected: 4,
+                        actual: 3,
+                        dimension: 3,
+                    },
+                }
+            }
+            if key == simplex_key
+        );
+    }
+
+    #[test]
+    fn vertex_removal_error_keeps_validation_and_operation_sources_disjoint() {
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(17));
+        let vertex_key = VertexKey::from(KeyData::from_ffi(23));
+        let tds_source = TdsError::SimplexNotFound {
+            simplex_key,
+            context: "vertex-removal test".to_string(),
+        };
+        assert_eq!(
+            insertion_error_to_vertex_removal_error(
+                InsertionError::TopologyValidation {
+                    source: tds_source.clone(),
+                },
+                TriangulationRepairOperation::NeighborWiring,
+            ),
+            VertexRemovalError::Invariant {
+                source: Box::new(InvariantError::Tds { source: tds_source }),
+            }
+        );
+
+        let topology_source = TriangulationValidationError::IsolatedVertex {
+            vertex_key,
+            vertex_uuid: Uuid::nil(),
+        };
+        assert_eq!(
+            insertion_error_to_vertex_removal_error(
+                InsertionError::TopologyValidationFailed {
+                    context: InsertionTopologyValidationContext::LocalRepair,
+                    source: topology_source.clone(),
+                },
+                TriangulationRepairOperation::NeighborWiring,
+            ),
+            VertexRemovalError::Invariant {
+                source: Box::new(InvariantError::Triangulation {
+                    source: topology_source,
+                }),
+            }
+        );
+
+        let realization_source =
+            TriangulationRealizationValidationError::IncompleteConstruction { vertex_count: 2 };
+        assert_eq!(
+            insertion_error_to_vertex_removal_error(
+                InsertionError::RealizationValidationFailed {
+                    source: realization_source.clone(),
+                },
+                TriangulationRepairOperation::NeighborWiring,
+            ),
+            VertexRemovalError::Invariant {
+                source: Box::new(InvariantError::Realization {
+                    source: realization_source,
+                }),
+            }
+        );
+
+        let delaunay_source = DelaunayTriangulationValidationError::Tds {
+            source: Box::new(TdsError::InconsistentDataStructure {
+                message: "delaunay validation test".to_string(),
+            }),
+        };
+        assert_eq!(
+            insertion_error_to_vertex_removal_error(
+                InsertionError::DelaunayValidationFailed {
+                    source: delaunay_source.clone(),
+                },
+                TriangulationRepairOperation::NeighborWiring,
+            ),
+            VertexRemovalError::Invariant {
+                source: Box::new(InvariantError::Delaunay {
+                    source: delaunay_source,
+                }),
+            }
+        );
+
+        let insertion_source = InsertionError::CavityFilling {
+            reason: CavityFillingError::EmptyFanTriangulation,
+        };
+        assert_eq!(
+            insertion_error_to_vertex_removal_error(
+                insertion_source.clone(),
+                TriangulationRepairOperation::FanTriangulation,
+            ),
+            VertexRemovalError::Operation {
+                operation: TriangulationRepairOperation::FanTriangulation,
+                source: Box::new(insertion_source),
             }
         );
     }
@@ -2564,9 +2910,16 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(InvariantError::Tds { source: TdsError::InconsistentDataStructure { ref message } })
-                if message.contains("Local facet repair after vertex removal failed")
-                    && message.contains("Local facet repair removal budget exceeded")
+            Err(VertexRemovalError::Operation {
+                operation: TriangulationRepairOperation::LocalFacetRepair,
+                source,
+            }) if matches!(
+                source.as_ref(),
+                InsertionError::MaxSimplicesRemovedExceeded {
+                    max_simplices_removed: 0,
+                    attempted,
+                } if *attempted > 0
+            )
         );
         assert_eq!(simplices_removed, 0);
         assert!(post_repair_frontier.is_empty());

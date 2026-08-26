@@ -57,6 +57,7 @@ rustdoc-args = [ "--cfg", "docsrs" ]
 
 [dependencies]
 allocation-counter = { version = "0.8.1", optional = true } # for memory profiling
+ciborium = { version = "0.2.2", default-features = false }
 clap = { version = "4.6.6", features = [ "derive" ], optional = true }
 la-stack = { version = "0.4.5", default-features = false, features = [ "exact" ] }
 tracing = { version = "0.1.44", default-features = false, features = [ "std" ] }
@@ -67,6 +68,7 @@ ordered-float = { version = "5.5.0", features = [ "serde" ] }
 rand = "0.10.2"
 serde = { version = "1.0.229", features = [ "derive" ] }
 serde_json = { version = "1.0.151", optional = true }
+sha2 = { version = "0.11.0", default-features = false }
 same-file = { version = "1.0.6", optional = true }
 slotmap = { version = "1.1.1", features = [ "serde" ] }
 thiserror = "2.0.20"
@@ -179,6 +181,11 @@ harness = false
 [[bench]]
 name = "topology_guarantee_construction"
 path = "benches/topology_guarantee_construction.rs"
+harness = false
+
+[[bench]]
+name = "checkpoint_serialization"
+path = "benches/checkpoint_serialization.rs"
 harness = false
 
 [lints.rust]

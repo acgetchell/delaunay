@@ -636,7 +636,16 @@ pub fn circumradius_with_center<const D: usize>(
         diff_coords[i] = circumcenter_coords[i] - point_coords[i];
     }
     let distance = hypot(&diff_coords);
-    Ok(distance)
+    if distance.is_finite() {
+        Ok(distance)
+    } else {
+        Err(CircumcenterError::MatrixInversionFailed {
+            reason: CircumcenterFailureReason::NonFiniteMeasure {
+                measure: DegenerateMeasure::Length,
+                value: CoordinateConversionValue::from_numeric_debug(&distance),
+            },
+        })
+    }
 }
 
 #[cfg(test)]
@@ -810,6 +819,27 @@ mod tests {
         let expected_radius: f64 = 3.0_f64.sqrt() / 2.0;
 
         assert_relative_eq!(radius, expected_radius, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn circumradius_rejects_unrepresentable_finite_tetrahedron_radius() {
+        let magnitude = 1.1e308;
+        let points = vec![
+            Point::try_new([-magnitude, -magnitude, -magnitude]).expect("finite point coordinates"),
+            Point::try_new([magnitude, -magnitude, -magnitude]).expect("finite point coordinates"),
+            Point::try_new([-magnitude, magnitude, -magnitude]).expect("finite point coordinates"),
+            Point::try_new([-magnitude, -magnitude, magnitude]).expect("finite point coordinates"),
+        ];
+
+        assert_matches!(
+            circumradius(&points),
+            Err(CircumcenterError::MatrixInversionFailed {
+                reason: CircumcenterFailureReason::NonFiniteMeasure {
+                    measure: DegenerateMeasure::Length,
+                    ..
+                },
+            })
+        );
     }
 
     #[test]

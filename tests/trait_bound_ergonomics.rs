@@ -6,20 +6,30 @@ use delaunay::DelaunayTriangulation;
 use delaunay::prelude::Triangulation;
 use delaunay::prelude::algorithms::{LocateError, locate, locate_with_stats};
 use delaunay::prelude::construction::{
-    DelaunayIncrementalBuilder, GlobalTopology, TopologyGuarantee,
+    DelaunayIncrementalBuilder, GlobalTopology, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::{
     Coordinate, CoordinateValidationError, FastKernel, Point, surface_measure,
 };
-use delaunay::prelude::query::{FacetIncidenceAnalysis, QueryError, TopologyIndexBuildError};
+use delaunay::prelude::query::{
+    ConvexHull, QueryError, TopologyIndexBuildError, extract_edge_set,
+    extract_facet_identifier_set, extract_vertex_coordinate_set,
+};
 use delaunay::prelude::tds::{
-    FacetView, InvariantError, SimplexKey, Tds, Vertex, VertexKey, verify_facet_index_consistency,
+    FacetView, InvariantError, SimplexKey, Tds, TdsBuilder, VertexKey,
+    verify_facet_index_consistency,
 };
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
+use delaunay::prelude::{dedup_vertices_exact, filter_vertices_excluding};
 use uuid::Uuid;
 
 struct Payload;
 struct NotAKernel;
+
+#[derive(Clone, PartialEq)]
+struct ClonePayload(String);
+
+struct OpaquePayload;
 
 type NotAKernelTriangulation = Triangulation<NotAKernel, Payload, Payload, 2>;
 type NotAKernelDelaunay = DelaunayTriangulation<NotAKernel, Payload, Payload, 2>;
@@ -27,6 +37,48 @@ type GenericTrySetTopologyFn =
     fn(&mut NotAKernelTriangulation, GlobalTopology<2>) -> Result<(), InvariantError>;
 
 fn accepts_generic_try_set(_: GenericTrySetTopologyFn) {}
+
+fn storage_methods_compile(tri: &mut NotAKernelTriangulation) {
+    let _ = tri.set_vertex_data(VertexKey::default(), Some(Payload));
+    let _ = tri.set_simplex_data(SimplexKey::default(), Some(Payload));
+}
+
+fn into_tds_compiles(tri: NotAKernelTriangulation) {
+    let _: Tds<Payload, Payload, 2> = tri.into_tds();
+}
+
+fn triangulation_validation_compiles(tri: &NotAKernelTriangulation) {
+    let _ = tri.is_valid_topology();
+    let _ = tri.topology_report();
+    let _ = tri.validate();
+    let _ = tri.validation_report();
+    let _ = tri.is_valid_realization();
+    let _ = tri.realization_diagnostic();
+    let _ = tri.realization_report();
+    let _ = tri.validate_realization();
+}
+
+fn delaunay_validation_compiles(
+    triangulation: &DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2>,
+) {
+    let _ = triangulation.is_valid_delaunay();
+    let _ = triangulation.delaunay_diagnostic();
+    let _ = triangulation.delaunay_report();
+    let _ = triangulation.validate();
+    let _ = triangulation.validation_report();
+}
+
+fn jaccard_extractors_compile(tri: &NotAKernelTriangulation) {
+    let _ = extract_vertex_coordinate_set(tri);
+    let _ = extract_edge_set(tri);
+    let _ = extract_facet_identifier_set(tri);
+}
+
+fn convex_hull_constructor_compiles(
+    tri: &Triangulation<NotAKernel, ClonePayload, OpaquePayload, 2>,
+) {
+    let _ = ConvexHull::try_from_triangulation(tri);
+}
 
 #[derive(Debug, thiserror::Error)]
 enum TraitBoundErgonomicsError {
@@ -106,6 +158,76 @@ fn triangulation_types_do_not_require_kernel_bounds() {
 
     assert!(generic.is_none());
     assert!(delaunay.is_none());
+}
+
+#[test]
+fn storage_and_validation_methods_have_payload_agnostic_contracts() {
+    let storage: fn(&mut NotAKernelTriangulation) = storage_methods_compile;
+    let demotion: fn(NotAKernelTriangulation) = into_tds_compiles;
+    let triangulation_validation: fn(&NotAKernelTriangulation) = triangulation_validation_compiles;
+    let delaunay_validation: fn(&DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2>) =
+        delaunay_validation_compiles;
+
+    std::hint::black_box((
+        storage,
+        demotion,
+        triangulation_validation,
+        delaunay_validation,
+    ));
+}
+
+#[test]
+fn jaccard_and_convex_hull_extractors_have_minimal_payload_bounds() {
+    let jaccard: fn(&NotAKernelTriangulation) = jaccard_extractors_compile;
+    let hull: fn(&Triangulation<NotAKernel, ClonePayload, OpaquePayload, 2>) =
+        convex_hull_constructor_compiles;
+
+    std::hint::black_box((jaccard, hull));
+}
+
+#[test]
+fn tds_builder_clones_non_datatype_vertex_payloads() {
+    let vertices = [
+        delaunay::vertex![0.0, 0.0; data = ClonePayload("first".to_owned())].unwrap(),
+        delaunay::vertex![1.0, 0.0; data = ClonePayload("second".to_owned())].unwrap(),
+        delaunay::vertex![0.0, 1.0; data = ClonePayload("third".to_owned())].unwrap(),
+    ];
+    let simplices = [vec![0, 1, 2]];
+
+    let tds: Tds<ClonePayload, OpaquePayload, 2> = TdsBuilder::new(&vertices, &simplices)
+        .simplex_data_type::<OpaquePayload>()
+        .build()
+        .unwrap();
+    let mut payloads: Vec<_> = tds
+        .vertices()
+        .map(|(_, vertex)| vertex.data().map(|payload| payload.0.as_str()))
+        .collect();
+    payloads.sort_unstable();
+
+    assert_eq!(payloads, [Some("first"), Some("second"), Some("third")]);
+}
+
+#[test]
+fn deduplication_clones_and_preserves_first_noncopy_payload() {
+    let vertices = [
+        delaunay::vertex![0.0, 0.0; data = ClonePayload("first".to_owned())].unwrap(),
+        delaunay::vertex![0.0, 0.0; data = ClonePayload("duplicate".to_owned())].unwrap(),
+        delaunay::vertex![1.0, 0.0; data = ClonePayload("other".to_owned())].unwrap(),
+    ];
+
+    let deduplicated = dedup_vertices_exact(&vertices);
+    let filtered = filter_vertices_excluding(&vertices, &vertices[2..]);
+
+    assert_eq!(deduplicated.len(), 2);
+    assert_eq!(
+        deduplicated[0].data().map(|payload| payload.0.as_str()),
+        Some("first")
+    );
+    assert_eq!(filtered.len(), 2);
+    assert_eq!(
+        filtered[0].data().map(|payload| payload.0.as_str()),
+        Some("first")
+    );
 }
 
 #[test]
@@ -200,9 +322,12 @@ fn delaunay_query_wrappers_accept_non_datatype_payloads() {
         let _ = dt.simplex_neighbors(SimplexKey::default());
         let _ = dt.simplex_vertices(SimplexKey::default());
         let _ = dt.vertex_coords(VertexKey::default());
-        let _ = dt.incidence()?;
-        let _ = dt.build_edge_index()?;
-        let _ = dt.build_simplex_neighbor_index()?;
+        let incidence = dt.incidence();
+        let edge_index = dt.build_edge_index()?;
+        let neighbor_index = dt.build_simplex_neighbor_index()?;
+        std::hint::black_box(incidence.number_of_adjacent_simplices(VertexKey::default()));
+        std::hint::black_box(edge_index.number_of_edges());
+        std::hint::black_box(neighbor_index.number_of_simplex_neighbors(SimplexKey::default()));
         Ok(())
     }
     type QueriesCompileFn = fn(

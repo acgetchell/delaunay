@@ -168,6 +168,7 @@ allocation checks, or targeted diagnostics.
 | Benchmark | Purpose | Scale | Typical Runtime | Used By |
 |-----------|---------|-------|-----------------|---------|
 | `allocation_hot_paths.rs` | Bootstrap/insert/query/barycenter allocations | Calibrated 2D-5D canaries | ~1-2 min | Manual allocation checks |
+| `checkpoint_serialization.rs` | Manifest and JSON checkpoint write/load | 64-vertex 2D owner | <1 min | Checkpoint tuning |
 | `ci_performance_suite.rs` | Public workflow regression contract | Calibrated 2D-5D canaries | ~5-10 min | CI, baselines, `just perf-no-regressions` |
 | `circumsphere_containment.rs` | Circumsphere predicates and solves | 2D-5D predicates, 3D LU/exact solves | ~5 min | Predicate/circumcenter tuning |
 | `cold_path_predicates.rs` | Track predicate paths | Hot, centered, and certified exact cases in 2D-5D | ~2-5 min | Predicate tuning |
@@ -178,14 +179,26 @@ allocation checks, or targeted diagnostics.
 | `realization_validation.rs` | Level 4 narrow phase and whole validation | Realistic/near-degenerate 2D-5D | ~1-5 min | Level 4 tuning |
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex deletion |
 | `locate.rs` | Point-location facet-walk latency (no-hint vs exact-hint) | 2D-5D fixed cases | ~1-3 min | Locate/walk tuning |
-| `tds_clone.rs` | `Tds::clone()` snapshot cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback design baselines |
+| `tds_clone.rs` | Owner clone and topology-view cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback and incidence baselines |
 | `topology_guarantee_construction.rs` | Cost of PL-manifold validation audit cadences | 2D-5D construction cases | ~45-60 min | Manual topology policy work |
+
+### Checkpoint Serialization Workload Identity
+
+The current checkpoint workload identity is
+`checkpoint-serialization/u32-payloads-v1`. Its 8×8 fixture stores the row-major
+index `row * 8 + column` as each vertex's `u32` payload and stores the simplex
+vertex count (three for this 2D triangulation) as each simplex's `u32` payload.
+This is an intentional incompatible replacement for the earlier unit-payload
+workload: unit-payload timings and saved Criterion baselines must not be compared
+with this identity. Delete or rename an old saved checkpoint baseline and create
+a fresh `u32-payloads-v1` baseline before drawing performance conclusions.
 
 ## Selection Guide
 
 | Use Case | Command |
 |----------|---------|
 | Final local invariant validation gate | `just ci` |
+| Measure checkpoint manifest and JSON write/load paths | `cargo bench --bench checkpoint_serialization --features bench -- --noplot` |
 | Quick local large-scale wall-clock guard | `just perf-large-scale-smoke` |
 | Fast local PR performance guard with cached same-machine main baseline | `just perf-no-regressions` |
 | Compare current branch against a local release/ref baseline | `just perf-vs-ref v0.7.8` |
@@ -222,6 +235,13 @@ allocation checks, or targeted diagnostics.
 | One-dimension acceptance/profiling run | `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` |
 | Isolated 32k-vertex 2D Level 4 acceptance run | `DELAUNAY_LARGE_DEBUG_VALIDATION=realization just debug-large-scale-2d 32000` |
 | Deep profiling | `cargo bench --profile perf --bench profiling_suite --features count-allocations` |
+
+The checkpoint benchmark uses one deterministic 2D owner because its purpose is
+to isolate digest construction and codec overhead, whose dimension-generic
+implementation is shared across dimensions. Correctness and exact replay remain
+covered separately by the 2D–5D checkpoint tests; expanding the timed matrix
+would primarily repeat topology construction cost rather than sharpen this
+serialization signal.
 
 ## Profiles And Local Guards
 
@@ -423,10 +443,11 @@ just bench-pachner-stress
 
 The `just pachner-stress` recipe runs 9,000 vertices in 3D and 1,000 vertices in
 4D; the dimension-specific recipes use the same defaults. These recipes default
-to 100 attempted Pachner steps with topology validation every 10 attempts. The
-direct `pachner-stress` binary has larger soak-test defaults: 10,000
-vertices in 3D or 1,000 in 4D, 100,000 attempts, and validation every 1,000
-attempts.
+to 100 workload steps with topology validation every 10 steps. `--attempts`
+retains its flag spelling but counts workload steps: one forward/inverse pair in
+`round-trip` mode or one candidate/proposal cycle in `random-walk` mode. The
+direct `pachner-stress` binary has larger soak-test defaults: 10,000 vertices in
+3D or 1,000 in 4D, 100,000 steps, and validation every 1,000 steps.
 
 The default `round-trip` mode commits a forward move and its inverse when a
 candidate is locally valid. The `random-walk` mode commits accepted moves over
@@ -434,8 +455,12 @@ an evolving triangulation. Both modes write progress CSV and summary JSON under
 `target/pachner_stress/` and also emit parseable stdout telemetry: one
 `pachner_stress_source` line for the prepared triangulation,
 `pachner_stress_progress` lines after each validation cadence, and a final
-`pachner_stress_metric` line with accepted/rejected attempts, proposal
-diagnostics, validation time, and final topology size.
+`pachner_stress_metric` line with proposal attempts, accepted mutations,
+proposal rejections, validation time, and final topology size. Summary and
+progress schema version 2 names the units explicitly: `configured_steps` and
+`completed_steps` describe workload progress, while `proposal_attempts` and
+`accepted_mutations` describe actual Pachner work. Interim acceptance rates use
+completed proposal attempts as their denominator.
 
 Use `just bench-pachner-stress*` for Criterion timing evidence. Criterion
 requires at least 10 samples. The benchmark recipe measures stable accepted
@@ -599,8 +624,8 @@ cargo bench --profile perf --bench tds_clone -- --noplot
 
 This benchmark prebuilds deterministic 2D-5D triangulations and measures only
 `Tds::clone()` on the resulting topology snapshots. Use it when comparing
-rollback snapshot behavior against future journaled or localized rollback
-implementations.
+full-topology clone cost with the current touched-record rollback journals and
+any future localized rollback implementation.
 
 ## PL-Manifold Repair
 

@@ -37,7 +37,7 @@ pub(crate) enum EulerClassificationEvidence {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, topology::validation::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -133,7 +133,7 @@ impl TopologyCheckResult {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, topology::validation::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {

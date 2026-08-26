@@ -10,9 +10,9 @@ use super::{
     FlipMutationError, FlipNeighborWiringError, FlipPredicateError, FlipPredicateOperation,
     MAX_PRACTICAL_DIMENSION_SIZE, NeighborSlot, NeighborValidationError, Orientation, PreparedFlip,
     RemovedSimplexVertexSnapshot, ReplacementPeriodicOffsets, ReplacementSimplexVertices, Simplex,
-    SimplexKey, SimplexKeyBuffer, SmallBuffer, Tds, TdsRollbackTransaction, TdsValidationFailure,
-    VertexKey, VertexKeyList, build_flip_topology_index, env, external_facets_for_boundary,
-    extract_cavity_boundary, facet_key_from_vertices, facet_order, facet_vertices_from_simplex,
+    SimplexKey, SimplexKeyBuffer, SmallBuffer, Tds, TdsValidationFailure, VertexKey, VertexKeyList,
+    build_flip_topology_index, env, external_facets_for_boundary, extract_cavity_boundary,
+    facet_key_from_vertices, facet_order, facet_vertices_from_simplex,
     flip_would_create_nonmanifold_facets_any, flip_would_duplicate_simplex_any,
     normalized_facet_order_with_offsets, orient_replacement_simplices,
     periodic_offsets_or_zero_frame, permutation_odd, repair_trace_enabled,
@@ -23,11 +23,7 @@ use super::{
 pub(super) fn snapshot_removed_simplex_vertices<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     removed_simplices: &SimplexKeyBuffer,
-) -> Result<RemovedSimplexVertexSnapshot, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<RemovedSimplexVertexSnapshot, FlipError> {
     removed_simplices
         .iter()
         .copied()
@@ -38,44 +34,6 @@ where
             Ok(simplex.vertices().iter().copied().collect())
         })
         .collect()
-}
-
-/// Applies a bistellar flip using explicit k and vertex/simplex slices.
-///
-/// # Errors
-///
-/// Returns [`FlipError::DanglingVertexIncidence`] if the maintained incidence
-/// index references a simplex that is no longer present, or another
-/// [`FlipError`] when the move is invalid, geometrically degenerate,
-/// non-manifold, or cannot be applied atomically.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Flip mutation needs explicit move, cavity, policy, and validation inputs"
-)]
-pub(super) fn apply_bistellar_flip_with_k<U, V, const D: usize>(
-    tds: &mut Tds<U, V, D>,
-    k_move: usize,
-    removed_face_vertices: &[VertexKey],
-    inserted_face_vertices: &[VertexKey],
-    removed_simplices: &SimplexKeyBuffer,
-    direction: FlipDirection,
-    orientation_policy: ReplacementOrientationPolicy,
-    validation_scope: FlipValidationScope,
-) -> Result<AppliedFlip<D>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
-    apply_bistellar_flip_with_k_inner(
-        tds,
-        k_move,
-        removed_face_vertices,
-        inserted_face_vertices,
-        removed_simplices,
-        direction,
-        orientation_policy,
-        validation_scope,
-    )
 }
 
 /// Applies a bistellar flip without rollback.
@@ -212,11 +170,7 @@ pub(super) fn prepare_bistellar_flip<U, V, const D: usize>(
     removed_simplices: &SimplexKeyBuffer,
     direction: FlipDirection,
     orientation_policy: ReplacementOrientationPolicy,
-) -> Result<PreparedFlip<D>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<PreparedFlip<D>, FlipError> {
     if k_move == 0 || k_move > D + 1 {
         return Err(FlipContextError::InvalidMoveSize {
             k_move,
@@ -409,75 +363,6 @@ where
         new_simplex_vertices,
         new_simplex_offsets,
         external_facets,
-        removed_simplex_vertices,
-    })
-}
-
-/// Shared implementation for failure-atomic bistellar mutation.
-///
-/// The original TDS is mutated inside the shared rollback transaction and is
-/// committed only after the replacement cavity has been fully rewired and
-/// locally validated.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Flip mutation needs explicit move, cavity, policy, and validation inputs"
-)]
-pub(super) fn apply_bistellar_flip_with_k_inner<U, V, const D: usize>(
-    tds: &mut Tds<U, V, D>,
-    k_move: usize,
-    removed_face_vertices: &[VertexKey],
-    inserted_face_vertices: &[VertexKey],
-    removed_simplices: &SimplexKeyBuffer,
-    direction: FlipDirection,
-    orientation_policy: ReplacementOrientationPolicy,
-    validation_scope: FlipValidationScope,
-) -> Result<AppliedFlip<D>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
-    let PreparedFlip {
-        kind,
-        direction,
-        removed_simplices,
-        removed_face_vertices,
-        inserted_face_vertices,
-        new_simplex_vertices,
-        new_simplex_offsets,
-        external_facets,
-        removed_simplex_vertices,
-    } = prepare_bistellar_flip(
-        tds,
-        k_move,
-        removed_face_vertices,
-        inserted_face_vertices,
-        removed_simplices,
-        direction,
-        orientation_policy,
-    )?;
-
-    let mut transaction = TdsRollbackTransaction::begin(tds);
-    let new_simplices = apply_prepared_flip_mutation(
-        transaction.tds_mut(),
-        new_simplex_vertices,
-        new_simplex_offsets,
-        &external_facets,
-        &removed_simplices,
-        k_move,
-        direction,
-        validation_scope,
-    )?;
-    transaction.commit();
-
-    Ok(AppliedFlip {
-        info: FlipInfo {
-            kind,
-            direction,
-            removed_simplices,
-            new_simplices,
-            removed_face_vertices,
-            inserted_face_vertices,
-        },
         removed_simplex_vertices,
     })
 }
@@ -1610,18 +1495,22 @@ mod tests {
         )
         .unwrap();
 
-        let info = apply_bistellar_flip_with_k(
-            &mut tds,
-            2,
-            &ctx.removed_face_vertices,
-            &ctx.inserted_face_vertices,
-            &ctx.removed_simplices,
-            ctx.direction,
-            ReplacementOrientationPolicy::AllowSigned,
-            FlipValidationScope::LocalCavity,
-        )
-        .unwrap()
-        .info;
+        let info = {
+            let mut transaction = crate::core::tds::TdsRollbackTransaction::begin(&mut tds);
+            let applied = apply_bistellar_flip_with_k_raw(
+                transaction.tds_mut(),
+                2,
+                &ctx.removed_face_vertices,
+                &ctx.inserted_face_vertices,
+                &ctx.removed_simplices,
+                ctx.direction,
+                ReplacementOrientationPolicy::AllowSigned,
+                FlipValidationScope::LocalCavity,
+            )
+            .unwrap();
+            transaction.commit();
+            applied.info
+        };
 
         assert!(!tds.contains_simplex(simplex_cavity_left));
         assert!(!tds.contains_simplex(simplex_cavity_right));

@@ -39,6 +39,13 @@ just notebook-check
 This command validates notebook structure and metadata, extracts code cells,
 and runs Ruff and ty without executing notebooks.
 
+The canonical macOS leg of `just ci` additionally runs
+`just validation-doc-figures-check`. That named check executes only the
+validation notebook, writes regenerated PNG files under `target/`, and compares
+their exact bytes with the tracked figure set without publishing changes.
+Linux and Windows retain the lint-only notebook check because canonical raster
+bytes are platform-owned by the macOS paper workflow.
+
 Execute one notebook deliberately when the task requires runtime validation:
 
 ```bash
@@ -65,11 +72,23 @@ artifact and through a named recipe. Current named workflows include:
   `docs/assets/readme/delaunay_spherical_readme.png`
 - `just validation-doc-figures` for validation figures under
   `docs/assets/validation/`
+- `just validation-doc-figures-check` for a non-mutating currentness check of
+  those figures on the canonical macOS platform
 
 Canonical tracked figures belong under `docs/assets/`. Documentation and papers
 should reference the same canonical asset instead of maintaining duplicate
 copies. Artifact ownership and paper authorship boundaries live in
 [`docs.md`](docs.md).
+
+Do not direct an interactive validation-notebook run at the tracked asset
+directory. `just validation-doc-figures` is the only refresh entry point: it
+renders and validates the complete hierarchy-plus-five-level PNG set in staging,
+then publishes the directory transactionally so a failed render, write, or
+replacement preserves the previous complete set.
+
+Use `just validation-doc-figures-check` when validating rather than refreshing.
+It regenerates into `target/`, compares the complete canonical set, and reports
+the exact stale names without changing tracked files.
 
 Do not regenerate a potentially expensive tracked figure merely to test a
 notebook. Use linting for routine validation and execute the relevant notebook

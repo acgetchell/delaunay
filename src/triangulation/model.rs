@@ -17,7 +17,6 @@ use std::ops::{Deref, DerefMut};
 use crate::core::tds::{
     SimplexKey, Tds, TdsMutationError, TopologyOwner, TopologyOwnerId, VertexKey,
 };
-use crate::geometry::kernel::Kernel;
 use crate::topology::traits::topological_space::GlobalTopology;
 use crate::triangulation::validation::{
     TopologyConstructionProvenance, TopologyGuarantee, ValidationPolicy,
@@ -80,10 +79,7 @@ impl<K, U, V, const D: usize> TopologyOwner for Triangulation<K, U, V, D> {
 // Basic Accessors (Minimal Bounds)
 // =============================================================================
 
-impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
-where
-    K: Kernel<D>,
-{
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Returns a borrowed view of the canonical triangulation storage to
     /// crate-internal algorithms.
     #[inline]
@@ -306,6 +302,7 @@ impl<K, U, V, const D: usize> DerefMut for UnverifiedTriangulation<K, U, V, D> {
 #[cfg(test)]
 pub mod test_support {
     use super::*;
+    use crate::geometry::kernel::Kernel;
 
     impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
     where
@@ -334,6 +331,8 @@ mod tests {
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
+
+    struct NotAKernel;
 
     impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         /// Constructs a prepared TDS fixture without crossing a public
@@ -403,6 +402,27 @@ mod tests {
         let tds = tri.into_tds();
         assert_eq!(tds.topology_owner_id(), owner_id);
         assert_eq!(tds.number_of_vertices(), 1);
+    }
+
+    #[test]
+    fn basic_storage_methods_do_not_require_a_kernel() {
+        let mut tri: Triangulation<NotAKernel, String, String, 2> =
+            Triangulation::new_with_tds(NotAKernel, Tds::empty());
+
+        assert_eq!(tri.tds().number_of_vertices(), 0);
+        let stale_vertex = VertexKey::from(KeyData::from_ffi(0xDEAD_BEEF));
+        let stale_simplex = SimplexKey::from(KeyData::from_ffi(0xFEED_FACE));
+        assert!(
+            tri.set_vertex_data(stale_vertex, Some("vertex".to_owned()))
+                .is_err()
+        );
+        assert!(
+            tri.set_simplex_data(stale_simplex, Some("simplex".to_owned()))
+                .is_err()
+        );
+
+        let tds = tri.into_tds();
+        assert_eq!(tds.number_of_simplices(), 0);
     }
 
     #[test]

@@ -125,14 +125,13 @@ use crate::triangulation::validation::{
     ValidationPolicy,
 };
 use crate::validation::DelaunayTriangulationValidationError;
-use num_traits::ToPrimitive;
-use rand::SeedableRng;
-use rand::rngs::StdRng;
-use rand::seq::SliceRandom;
-use std::marker::PhantomData;
-use std::num::NonZeroUsize;
-use std::time::Instant;
+
+use num_traits::{ToPrimitive, cast};
+use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use thiserror::Error;
+
+use std::{iter, marker::PhantomData, num::NonZeroUsize, time::Instant};
+
 const TWO_POW_52_I64: i64 = 4_503_599_627_370_496; // 2^52
 const TWO_POW_52_F64: f64 = 4_503_599_627_370_496.0; // 2^52
 const MAX_OFFSET_UNITS: i64 = 1_048_576;
@@ -2815,8 +2814,8 @@ where
                     let min_off = -u.min(MAX_OFFSET_UNITS);
                     let max_off = (TWO_POW_52_I64 - 1 - u).min(MAX_OFFSET_UNITS);
                     let off = perturb_units(canon_idx, i).clamp(min_off, max_off);
-                    let adjusted_u = <f64 as num_traits::NumCast>::from(u + off)
-                        .expect("adjusted grid index fits in f64");
+                    let adjusted_u =
+                        cast::<_, f64>(u + off).expect("adjusted grid index fits in f64");
                     coords[i] = (adjusted_u / TWO_POW_52_F64) * domain_i;
                 }
                 coords
@@ -2836,7 +2835,7 @@ where
         // established Hilbert scaffold path in 2D, where its quotient
         // connectivity is covered by the periodic flip regressions.
         let image_indices: Vec<usize> = if D == 3 {
-            std::iter::once(zero_offset_idx)
+            iter::once(zero_offset_idx)
                 .chain((0..image_count).filter(|&k| k != zero_offset_idx))
                 .collect()
         } else {
@@ -2861,9 +2860,7 @@ where
                         0.0
                     } else {
                         let jitter_units = image_jitter_units(canon_idx, i, k);
-                        (<f64 as num_traits::NumCast>::from(jitter_units)
-                            .expect("jitter fits in f64")
-                            / TWO_POW_52_F64)
+                        (cast::<_, f64>(jitter_units).expect("jitter fits in f64") / TWO_POW_52_F64)
                             * domain_periods[i]
                     };
                     new_coords[i] = canonical_f64[canon_idx][i] + shift_f64 + jitter_f64;

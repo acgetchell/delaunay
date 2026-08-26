@@ -56,6 +56,11 @@ Orientation and insphere predicates use staged evaluation:
 This applies to `simplex_orientation`, `insphere`, `insphere_lifted`, `robust_orientation`,
 and `robust_insphere`.
 
+The fast-filter analysis follows Shewchuk [1], exact determinant signs use the
+Bareiss algorithm [6], and symbolic tie-breaking follows Edelsbrunner and
+Mücke [7]. The numbered entries are maintained in
+[`REFERENCES.md`](../REFERENCES.md#inline-citation-keys).
+
 **Dimension limits:** the stack-allocated matrix dispatch supports up to 7×7 matrices
 (`MAX_STACK_MATRIX_DIM = 7`). This means:
 
@@ -273,11 +278,12 @@ solver is meant to recover.
 
 ## Duplicate vertex handling
 
-Duplicate or near-duplicate vertices are a common source of geometric degeneracy: they
-produce zero-volume simplices whose orientation determinant is exactly zero, breaking
-SoS perturbation, Pachner moves, and Delaunay repair. This crate applies a three-layer
-defense-in-depth strategy so that duplicate vertices are caught early and never reach
-the triangulation interior.
+Duplicate or near-duplicate vertices are a common source of geometric
+degeneracy: exact duplicates produce zero-volume simplices in the unperturbed
+geometry. SoS can assign distinct symbolic perturbations to different vertex
+identities even when their coordinates repeat, but that does not make
+coincident vertices a valid realization. The crate rejects them before they can
+undermine Pachner moves or Delaunay repair.
 
 ### Layer 1: Hilbert-sort preprocessing dedup (batch construction)
 
@@ -289,6 +295,10 @@ etc.) using the default
 Hilbert ordering pass quantizes each coordinate to a fixed-width integer grid before
 computing the space-filling curve index. After sorting, vertices that map to the same
 quantized grid cell are adjacent and are removed in a single linear sweep.
+
+Moon et al. [8] provide the locality background, while the crate's index
+calculation follows Skilling [9]; both entries are maintained in
+[`REFERENCES.md`](../REFERENCES.md#inline-citation-keys).
 
 The quantization resolution is `min(128/D, 31)` bits per coordinate, giving:
 

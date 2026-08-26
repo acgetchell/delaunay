@@ -583,7 +583,7 @@ where
         .map_err(RandomPointGenerationError::from)
         .map_err(random_point_generation_error)?;
 
-    generate_random_triangulation_in_range_with_topology_guarantee(
+    generate_random_triangulation_in_range_with_topology(
         n_points,
         bounds,
         vertex_data,
@@ -611,7 +611,7 @@ where
 ///
 /// ```
 /// use delaunay::prelude::construction::DelaunayResult;
-/// use delaunay::prelude::generators::try_generate_random_triangulation_with_topology_guarantee;
+/// use delaunay::prelude::generators::try_generate_random_triangulation_with_topology;
 /// use delaunay::prelude::TopologyGuarantee;
 /// use std::num::NonZeroUsize;
 ///
@@ -619,7 +619,7 @@ where
 /// # let Some(four) = NonZeroUsize::new(4) else {
 /// #     return Ok(());
 /// # };
-/// let dt = try_generate_random_triangulation_with_topology_guarantee::<(), (), 3>(
+/// let dt = try_generate_random_triangulation_with_topology::<(), (), 3>(
 ///     four,
 ///     (-1.0, 1.0),
 ///     None,
@@ -630,7 +630,7 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn try_generate_random_triangulation_with_topology_guarantee<U, V, const D: usize>(
+pub fn try_generate_random_triangulation_with_topology<U, V, const D: usize>(
     n_points: NonZeroUsize,
     bounds: (f64, f64),
     vertex_data: Option<U>,
@@ -649,7 +649,7 @@ where
         .map_err(RandomPointGenerationError::from)
         .map_err(random_point_generation_error)?;
 
-    generate_random_triangulation_in_range_with_topology_guarantee(
+    generate_random_triangulation_in_range_with_topology(
         n_points,
         bounds,
         vertex_data,
@@ -732,7 +732,7 @@ where
     V: DataType,
     AdaptiveKernel<f64>: ExactPredicates<D>,
 {
-    generate_random_triangulation_in_range_with_topology_guarantee(
+    generate_random_triangulation_in_range_with_topology(
         n_points,
         bounds,
         vertex_data,
@@ -774,7 +774,7 @@ where
 /// };
 /// use delaunay::prelude::generators::{
 ///     CoordinateRange, CoordinateRangeError,
-///     generate_random_triangulation_in_range_with_topology_guarantee,
+///     generate_random_triangulation_in_range_with_topology,
 /// };
 /// use delaunay::prelude::TopologyGuarantee;
 /// use std::num::NonZeroUsize;
@@ -793,7 +793,7 @@ where
 ///         },
 ///     }
 /// })?;
-/// let dt = generate_random_triangulation_in_range_with_topology_guarantee::<(), (), 3>(
+/// let dt = generate_random_triangulation_in_range_with_topology::<(), (), 3>(
 ///     four,
 ///     range,
 ///     None,
@@ -804,7 +804,7 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn generate_random_triangulation_in_range_with_topology_guarantee<U, V, const D: usize>(
+pub fn generate_random_triangulation_in_range_with_topology<U, V, const D: usize>(
     n_points: NonZeroUsize,
     bounds: CoordinateRange<f64>,
     vertex_data: Option<U>,
@@ -1612,7 +1612,7 @@ mod tests {
         builder_triangulation.is_valid_delaunay().unwrap();
 
         let guaranteed_triangulation =
-            generate_random_triangulation_in_range_with_topology_guarantee::<(), (), 2>(
+            generate_random_triangulation_in_range_with_topology::<(), (), 2>(
                 nonzero(10),
                 range,
                 None,

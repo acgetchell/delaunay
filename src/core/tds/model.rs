@@ -125,7 +125,7 @@
 //! ## Example: Using Validation
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::{construction::*, tds::*};
 //!
 //! # #[derive(Debug, thiserror::Error)]
 //! # enum ExampleError {
@@ -190,7 +190,7 @@
 //! ## Creating a 3D Triangulation
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::{construction::*, tds::*};
 //!
 //! # #[derive(Debug, thiserror::Error)]
 //! # enum ExampleError {
@@ -237,7 +237,7 @@
 //! ## Adding Vertices to Existing Triangulation
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::{construction::*, tds::*};
 //!
 //! # #[derive(Debug, thiserror::Error)]
 //! # enum ExampleError {
@@ -284,7 +284,7 @@
 //! ## 4D Triangulation
 //!
 //! ```rust
-//! use delaunay::prelude::*;
+//! use delaunay::prelude::{construction::*, tds::*};
 //!
 //! # #[derive(Debug, thiserror::Error)]
 //! # enum ExampleError {
@@ -336,8 +336,8 @@
 #![forbid(unsafe_code)]
 
 use crate::core::collections::{
-    MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeySet, SmallBuffer, StorageMap, UuidToSimplexKeyMap,
-    UuidToVertexKeyMap,
+    MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeySet, SmallBuffer, StorageKeys, StorageMap,
+    UuidToSimplexKeyMap, UuidToVertexKeyMap,
 };
 use crate::core::tds::errors::{NeighborValidationError, TdsError, TriangulationConstructionState};
 use crate::core::tds::incidence::VertexIncidenceIndex;
@@ -462,7 +462,7 @@ pub trait TopologyOwner {
 /// publishes only after Levels 1–2 validation.
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, tds::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -580,6 +580,13 @@ pub struct Tds<U, V, const D: usize> {
     ///
     /// Note: Not serialized - identity is runtime-only.
     pub(in crate::core::tds) identity: Arc<Uuid>,
+
+    /// Proportional rollback state for the currently active mutation window.
+    ///
+    /// The journal contains only records touched by the transaction. It is
+    /// runtime-only and is never cloned or serialized.
+    pub(in crate::core::tds) rollback_journals:
+        Vec<crate::core::tds::rollback::TdsRollbackJournal<U, V, D>>,
 }
 
 impl<U, V, const D: usize> Clone for Tds<U, V, D>
@@ -597,6 +604,7 @@ where
             construction_state: self.construction_state.clone(),
             generation: Arc::new(AtomicU64::new(self.generation.load(Ordering::Relaxed))),
             identity: Arc::new(Uuid::new_v4()),
+            rollback_journals: Vec::new(),
         }
     }
 }
@@ -618,28 +626,8 @@ where
             construction_state: self.construction_state.clone(),
             generation: Arc::new(AtomicU64::new(self.generation.load(Ordering::Relaxed))),
             identity: Arc::clone(&self.identity),
+            rollback_journals: Vec::new(),
         }
-    }
-
-    /// Replaces this storage with a rollback snapshot of `source`.
-    ///
-    /// This has the same cache and handle provenance semantics as
-    /// [`Self::clone_for_rollback`] while reusing existing backing allocations
-    /// where `clone_from` can do so. Hot mutation paths use it to recycle a
-    /// scratch TDS without weakening rollback isolation.
-    pub(crate) fn clone_from_for_rollback(&mut self, source: &Self) {
-        self.vertices.clone_from(&source.vertices);
-        self.simplices.clone_from(&source.simplices);
-        self.uuid_to_vertex_key
-            .clone_from(&source.uuid_to_vertex_key);
-        self.uuid_to_simplex_key
-            .clone_from(&source.uuid_to_simplex_key);
-        self.vertex_to_simplices
-            .clone_from(&source.vertex_to_simplices);
-        self.construction_state
-            .clone_from(&source.construction_state);
-        self.generation = Arc::new(AtomicU64::new(source.generation.load(Ordering::Relaxed)));
-        self.identity = Arc::clone(&source.identity);
     }
 }
 
@@ -882,7 +870,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -939,7 +927,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -980,7 +968,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1019,7 +1007,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1051,7 +1039,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
     /// Returns the concrete simplex-key iterator for internal iterator structs
     /// that need to store traversal state without allocating a key snapshot.
-    pub(crate) fn simplex_key_iter(&self) -> slotmap::dense::Keys<'_, SimplexKey, Simplex<V, D>> {
+    pub(crate) fn simplex_key_iter(&self) -> StorageKeys<'_, SimplexKey, Simplex<V, D>> {
         self.simplices.keys()
     }
 
@@ -1064,7 +1052,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1110,7 +1098,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1165,7 +1153,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Count vertices after adding them:
     ///
     /// ```no_run
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     /// use delaunay::prelude::construction::DelaunayIncrementalBuilder;
     ///
     /// # #[derive(Debug, thiserror::Error)]
@@ -1199,7 +1187,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Count vertices initialized from points:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
+    /// use delaunay::prelude::geometry::Point;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1227,7 +1216,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # }
     /// ```
     #[must_use]
-    pub fn number_of_vertices(&self) -> usize {
+    pub const fn number_of_vertices(&self) -> usize {
         self.vertices.len()
     }
 
@@ -1254,7 +1243,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Dimension progression as vertices are added:
     ///
     /// ```no_run
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     /// use delaunay::prelude::construction::DelaunayIncrementalBuilder;
     ///
     /// # #[derive(Debug, thiserror::Error)]
@@ -1300,7 +1289,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Different dimensional triangulations:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
+    /// use delaunay::prelude::geometry::Point;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1356,7 +1346,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
     /// Refreshes the derived vertex count carried by an incomplete construction state.
     #[inline]
-    pub(super) fn refresh_incomplete_construction_state(&mut self) {
+    pub(super) const fn refresh_incomplete_construction_state(&mut self) {
         if matches!(
             self.construction_state,
             TriangulationConstructionState::Incomplete(_)
@@ -1377,7 +1367,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Count simplices in a newly created triangulation:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
+    /// use delaunay::prelude::geometry::Point;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1408,7 +1399,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Count simplices after triangulation:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
+    /// use delaunay::prelude::geometry::Point;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1445,7 +1437,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// assert_eq!(tds.number_of_simplices(), 0); // No simplices for empty input
     /// ```
     #[must_use]
-    pub fn number_of_simplices(&self) -> usize {
+    pub const fn number_of_simplices(&self) -> usize {
         self.simplices.len()
     }
 
@@ -1467,7 +1459,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1652,7 +1644,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1726,7 +1718,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Successfully finding a simplex key from a UUID:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1802,7 +1794,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Successfully finding a vertex key from a UUID:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1878,7 +1870,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Successfully getting a UUID from a simplex key:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1919,7 +1911,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Round-trip conversion between UUID and key:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1985,7 +1977,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Successfully getting a UUID from a vertex key:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -2026,7 +2018,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Round-trip conversion between UUID and key:
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -2118,7 +2110,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -2165,7 +2157,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, tds::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -2233,13 +2225,15 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// Returns [`TdsError::VertexNotFound`] if a simplex references a missing vertex key.
     pub(super) fn rebuild_vertex_to_simplices_index(&mut self) -> Result<(), TdsError> {
+        let vertex_keys: Vec<_> = self.vertices.keys().collect();
+        self.journal_incidence_before_write(vertex_keys.iter().copied());
         let mut vertex_to_simplices =
             VertexIncidenceIndex::with_vertex_capacity(self.vertices.len());
-        for vertex_key in self.vertices.keys() {
+        for vertex_key in vertex_keys {
             vertex_to_simplices.insert_vertex(vertex_key)?;
         }
 
-        for (simplex_key, simplex) in &self.simplices {
+        for (simplex_key, simplex) in self.simplices.iter() {
             vertex_to_simplices.insert_simplex(simplex_key, simplex.vertices())?;
         }
 
@@ -2302,6 +2296,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             construction_state,
             generation: Arc::new(AtomicU64::new(0)),
             identity: Arc::new(Uuid::new_v4()),
+            rollback_journals: Vec::new(),
         }
     }
 }
@@ -2325,17 +2320,6 @@ impl<U, V, const D: usize> UnverifiedTds<U, V, D> {
             storage: Tds::empty_with_construction_state(
                 TriangulationConstructionState::Incomplete(0),
             ),
-        }
-    }
-
-    /// Returns an internal rollback clone while preserving owner identity.
-    pub(in crate::core::tds) fn clone_for_rollback(&self) -> Self
-    where
-        U: Clone,
-        V: Clone,
-    {
-        Self {
-            storage: self.storage.clone_for_rollback(),
         }
     }
 
@@ -2376,9 +2360,32 @@ mod test_support {
     use crate::core::simplex::Simplex;
     use crate::core::tds::{SimplexKey, TriangulationConstructionState, VertexKey};
     use crate::core::vertex::Vertex;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use uuid::Uuid;
 
     impl<U, V, const D: usize> Tds<U, V, D> {
+        /// Replaces this storage with a rollback clone for detached-copy tests.
+        pub(crate) fn clone_from_for_rollback(&mut self, source: &Self)
+        where
+            U: Clone,
+            V: Clone,
+        {
+            self.vertices.clone_from(&source.vertices);
+            self.simplices.clone_from(&source.simplices);
+            self.uuid_to_vertex_key
+                .clone_from(&source.uuid_to_vertex_key);
+            self.uuid_to_simplex_key
+                .clone_from(&source.uuid_to_simplex_key);
+            self.vertex_to_simplices
+                .clone_from(&source.vertex_to_simplices);
+            self.construction_state
+                .clone_from(&source.construction_state);
+            self.generation = Arc::new(AtomicU64::new(source.generation.load(Ordering::Relaxed)));
+            self.identity = Arc::clone(&source.identity);
+            self.rollback_journals.clear();
+        }
+
         /// Gets mutable vertex storage for a test that deliberately corrupts derived state.
         pub(crate) fn vertex_mut_for_test(
             &mut self,

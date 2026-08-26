@@ -23,6 +23,20 @@ use super::{
 // pathological cases while giving legitimate repair sequences room to converge.
 pub(super) const MAX_REPEAT_SIGNATURE: usize = 128;
 
+/// Identifies deterministic repair-preflight rejections that make a local
+/// predicate preference unavailable to every repair and verification path.
+pub(super) const fn repair_flip_is_unavailable(error: &FlipError) -> bool {
+    matches!(
+        error,
+        FlipError::DegenerateSimplex
+            | FlipError::NegativeOrientation { .. }
+            | FlipError::DuplicateSimplex
+            | FlipError::NonManifoldFacet
+            | FlipError::InsertedSimplexAlreadyExists { .. }
+            | FlipError::SimplexCreation { .. }
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) struct FlipSignature(pub(super) u64);
 
@@ -666,11 +680,7 @@ pub(super) fn seed_repair_queues<U, V, const D: usize>(
     seed_simplices: Option<&[SimplexKey]>,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
-) -> Result<bool, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<bool, FlipError> {
     if let Some(seeds) = seed_simplices {
         let mut present = 0usize;
         let mut missing = 0usize;
@@ -1000,13 +1010,7 @@ where
             log_apply_skip(&err);
             return Ok(true);
         }
-        Err(
-            err @ (FlipError::DegenerateSimplex
-            | FlipError::NegativeOrientation { .. }
-            | FlipError::DuplicateSimplex
-            | FlipError::NonManifoldFacet
-            | FlipError::SimplexCreation { source: _ }),
-        ) => {
+        Err(err) if repair_flip_is_unavailable(&err) => {
             log_apply_skip(&err);
             return Ok(true);
         }
@@ -1194,13 +1198,7 @@ where
             log_apply_skip(&err);
             return Ok(true);
         }
-        Err(
-            err @ (FlipError::DegenerateSimplex
-            | FlipError::NegativeOrientation { .. }
-            | FlipError::DuplicateSimplex
-            | FlipError::NonManifoldFacet
-            | FlipError::SimplexCreation { source: _ }),
-        ) => {
+        Err(err) if repair_flip_is_unavailable(&err) => {
             log_apply_skip(&err);
             return Ok(true);
         }
@@ -1379,13 +1377,7 @@ where
             log_apply_skip(&err);
             return Ok(true);
         }
-        Err(
-            err @ (FlipError::DegenerateSimplex
-            | FlipError::NegativeOrientation { .. }
-            | FlipError::DuplicateSimplex
-            | FlipError::NonManifoldFacet
-            | FlipError::SimplexCreation { source: _ }),
-        ) => {
+        Err(err) if repair_flip_is_unavailable(&err) => {
             log_apply_skip(&err);
             return Ok(true);
         }
@@ -1573,13 +1565,7 @@ where
             log_apply_skip(&err);
             return Ok(true);
         }
-        Err(
-            err @ (FlipError::DegenerateSimplex
-            | FlipError::NegativeOrientation { .. }
-            | FlipError::DuplicateSimplex
-            | FlipError::NonManifoldFacet
-            | FlipError::SimplexCreation { source: _ }),
-        ) => {
+        Err(err) if repair_flip_is_unavailable(&err) => {
             log_apply_skip(&err);
             return Ok(true);
         }
@@ -1615,11 +1601,7 @@ pub(super) fn enqueue_simplex_facets<U, V, const D: usize>(
     queued: &mut FastHashSet<u64>,
     handles: &mut FastHashMap<u64, FacetHandle>,
     stats: &mut DelaunayRepairStats,
-) -> Result<(), FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), FlipError> {
     let Some(simplex) = tds.simplex(simplex_key) else {
         return Ok(());
     };
@@ -1646,10 +1628,7 @@ pub(super) fn enqueue_facet<U, V, const D: usize>(
     queued: &mut FastHashSet<u64>,
     handles: &mut FastHashMap<u64, FacetHandle>,
     stats: &mut DelaunayRepairStats,
-) where
-    U: DataType,
-    V: DataType,
-{
+) {
     let Some(simplex) = tds.simplex(handle.simplex_key()) else {
         return;
     };
@@ -1684,10 +1663,7 @@ pub(super) fn enqueue_simplex_edges<U, V, const D: usize>(
     queue: &mut VecDeque<(EdgeKey, u64)>,
     queued: &mut FastHashSet<u64>,
     stats: &mut DelaunayRepairStats,
-) where
-    U: DataType,
-    V: DataType,
-{
+) {
     if D < 4 {
         return;
     }
@@ -1728,10 +1704,7 @@ pub(super) fn enqueue_simplex_triangles<U, V, const D: usize>(
     queue: &mut VecDeque<(TriangleHandle, u64)>,
     queued: &mut FastHashSet<u64>,
     stats: &mut DelaunayRepairStats,
-) where
-    U: DataType,
-    V: DataType,
-{
+) {
     if D < 5 {
         return;
     }
@@ -1778,11 +1751,7 @@ pub(super) fn enqueue_simplex_ridges<U, V, const D: usize>(
     queued: &mut FastHashSet<u64>,
     handles: &mut FastHashMap<u64, RidgeHandle>,
     stats: &mut DelaunayRepairStats,
-) -> Result<(), FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), FlipError> {
     if D < 3 {
         return Ok(());
     }
@@ -1825,10 +1794,7 @@ pub(super) fn enqueue_ridge<U, V, const D: usize>(
     queued: &mut FastHashSet<u64>,
     handles: &mut FastHashMap<u64, RidgeHandle>,
     stats: &mut DelaunayRepairStats,
-) where
-    U: DataType,
-    V: DataType,
-{
+) {
     if D < 3 {
         return;
     }

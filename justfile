@@ -29,7 +29,7 @@ taplo_version := "0.10.0"
 tectonic_version := "0.17.0"
 tex_fmt_version := "0.5.7"
 typos_version := "1.49.0"
-uv_version := "0.12.5"
+uv_version := "0.12.6"
 zizmor_version := "1.29.0"
 
 # Common cargo-llvm-cov arguments for all coverage runs.
@@ -85,16 +85,12 @@ bench-compile:
 
 # Run the curated release-signal benchmark set and leave Criterion `new` output.
 [group('benchmarks and performance')]
-bench-latest:
-    cargo bench --profile perf --bench ci_performance_suite
-    cargo bench --profile perf --bench circumsphere_containment
-    cargo bench --profile perf --bench cold_path_predicates
-    cargo bench --profile perf --bench locate
-    cargo bench --profile perf --bench realization_validation
+bench-latest bench_timeout="1800": _ensure-uv
+    uv run --locked benchmark-utils run-release-signal --bench-timeout {{ bench_timeout }}
 
 # Run latest measurements and render the latest-vs-last performance report.
 [group('benchmarks and performance')]
-bench-latest-vs-last baseline="last": bench-latest && (bench-compare baseline)
+bench-latest-vs-last baseline="last" bench_timeout="1800": (bench-latest bench_timeout) && (bench-compare baseline)
 
 # Run Criterion's Pachner move and round-trip stress benchmark.
 [group('benchmarks and performance')]
@@ -103,18 +99,19 @@ bench-pachner-stress samples="10": (_bench-pachner-stress samples)
 # Generate a release performance summary from fresh perf-profile benchmark runs.
 [group('benchmarks and performance')]
 bench-perf-summary: _ensure-uv
-    uv run --locked benchmark-utils generate-summary --run-benchmarks --profile perf
+    uv run --locked benchmark-utils generate-summary --run-benchmarks --profile perf --strict
 
 # Save a Criterion baseline for a Delaunay benchmark suite.
 [group('benchmarks and performance')]
-bench-save-baseline tag suite="release-signal":
+bench-save-baseline tag suite="release-signal": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     tag="{{ tag }}"
     suite="{{ suite }}"
     case "$suite" in
         release-signal)
-            targets=(ci_performance_suite circumsphere_containment cold_path_predicates locate realization_validation)
+            uv run --locked benchmark-utils run-release-signal --save-baseline "$tag"
+            exit 0
             ;;
         ci)
             targets=(ci_performance_suite)
@@ -219,7 +216,7 @@ check-fast:
 
 # CI simulation: comprehensive validation.
 [group('workflows')]
-ci: check test bench-compile examples
+ci: _validation-doc-figures-check-if-canonical check test bench-compile examples
     @echo "🎯 CI checks complete!"
 
 # CI followed by an explicit persistent local baseline refresh.
@@ -361,6 +358,7 @@ help-workflows:
     @echo "  just notebook           # Launch the default source notebook"
     @echo "  just notebook-execute   # Execute one notebook under target/notebooks"
     @echo "  just validation-doc-figures # Refresh canonical validation figures"
+    @echo "  just validation-doc-figures-check # Verify canonical figures without publishing"
     @echo "  just paper-check        # Lint, build, and check without tracked changes"
     @echo "  just paper-artifact-check # Compare the build with the reviewer PDF"
     @echo "  just paper-refresh      # Check, then refresh one tracked reviewer PDF"
@@ -760,8 +758,8 @@ perf-help:
     @echo "  just bench-ci              # CI benchmark suite with perf profile"
     @echo "  just bench-allocations     # Allocation-contract microbenchmarks"
     @echo "  just pachner-stress        # 3D+4D direct Pachner CLI stress with CSV/JSON artifacts"
-    @echo "  just pachner-stress-3d     # 3D Pachner CLI stress (100 moves, 9K vertices)"
-    @echo "  just pachner-stress-4d     # 4D Pachner CLI stress (100 moves, 1K vertices)"
+    @echo "  just pachner-stress-3d     # 3D Pachner CLI stress (100 steps, 9K vertices)"
+    @echo "  just pachner-stress-4d     # 4D Pachner CLI stress (100 steps, 1K vertices)"
     @echo "  just bench-pachner-stress  # Criterion timing for Pachner move/round-trip stress"
     @echo "  just perf-no-regressions   # Fast pre-PR 2D-5D regression guard"
     @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
@@ -1140,21 +1138,24 @@ rust-core-check: fmt-check clippy doc-check semgrep semgrep-test
 
 # Repository-owned Semgrep rules for project-specific Rust diagnostics.
 [group('validation')]
-semgrep: _ensure-uv
+semgrep: (semgrep-scan "")
+
+# Run the shared repository Semgrep target set, optionally emitting SARIF.
+[private]
+semgrep-scan sarif_output="": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    # Serialize repository scans to avoid Semgrep shared-state races across workers.
-    uv run --locked semgrep --error --strict --timeout 120 --jobs 1 --config semgrep.yaml .
-
-    # Semgrep's default ignore policy excludes test directories. Pass tracked
-    # Python test files explicitly so test-only repository rules are enforced.
-    python_test_files=()
+    output={{ quote(sarif_output) }}
+    semgrep_targets=()
     while IFS= read -r -d '' file; do
-        python_test_files+=("$file")
-    done < <(git ls-files -z 'scripts/tests/*.py')
-    if [[ "${#python_test_files[@]}" -gt 0 ]]; then
-        uv run --locked semgrep --error --strict --timeout 120 --jobs 1 --config semgrep.yaml "${python_test_files[@]}"
+        semgrep_targets+=("$file")
+    done < <(uv run --locked python scripts/semgrep_targets.py --null)
+    semgrep_args=(--error --strict --timeout 120 --jobs 1 --config semgrep.yaml)
+    if [[ -n "$output" ]]; then
+        semgrep_args+=(--sarif --output "$output")
     fi
+    # Serialize repository scans to avoid Semgrep shared-state races across workers.
+    uv run --locked semgrep "${semgrep_args[@]}" "${semgrep_targets[@]}"
 
 # Test the repository-owned Semgrep rules against their fixtures.
 [group('validation')]
@@ -1602,22 +1603,24 @@ toml-parse-check: _ensure-uv
 unused-deps: _ensure-cargo-machete
     cargo machete
 
-# Update dependency requirements, locks, and locally installed Cargo tools owned by this repository.
+# Update dependency requirements, locks, managed Cargo tools, and the active uv pin.
 [group('build and setup')]
 update: _ensure-cargo-install-update update-dependencies update-cargo-tools
     @echo "✅ Repository dependencies and tools updated."
 
-# Advance Cargo dependency declarations and lockfile entries.
-[doc('Update Cargo.toml dependency requirements and Cargo.lock.')]
+# Advance Cargo dependency declarations and lockfile entries for every resolution root.
+[doc('Update repository Cargo dependency requirements and lockfiles.')]
 [group('build and setup')]
 update-cargo-dependencies: _ensure-cargo-edit
     cargo upgrade --incompatible allow
+    cargo upgrade --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml --incompatible allow
     cargo update
+    cargo update --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml
 
-# Update locally installed Cargo CLI tools owned by `setup-tools` and reconcile their pins.
-[doc('Update Cargo CLI tools owned by setup-tools and reconcile their root justfile pins.')]
+# Update locally installed Cargo CLI tools and reconcile their pins plus the active uv version.
+[doc('Update managed Cargo CLI tools and reconcile all root justfile tool pins.')]
 [group('build and setup')]
-update-cargo-tools: _ensure-cargo-install-update _ensure-uv
+update-cargo-tools: _ensure-cargo-install-update _ensure-uv-available
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -1638,17 +1641,17 @@ update-cargo-tools: _ensure-cargo-install-update _ensure-uv
         zizmor
     )
     cargo install-update --locked "${packages[@]}"
-    uv run --locked update-cargo-tool-pins
+    uv run --locked update-tool-pins
 
 # Advance Cargo and exact Python development requirements plus their lockfiles.
 [doc('Update Cargo and Python development requirements plus all Cargo/uv locked dependencies.')]
 [group('build and setup')]
-update-dependencies: _ensure-cargo-edit _ensure-uv update-cargo-dependencies update-python-dependencies
+update-dependencies: _ensure-cargo-edit _ensure-uv-available update-cargo-dependencies update-python-dependencies
 
 # Resolve latest exact Python development tools, retain ranged requirements, and sync.
 [doc('Update exact dependency-groups.dev pins and uv.lock through uv.')]
 [group('build and setup')]
-update-python-dependencies: _ensure-uv
+update-python-dependencies: _ensure-uv-available
     uv run --locked update-python-dev-pins
     uv lock --upgrade
     uv sync --locked --group dev
@@ -1668,6 +1671,17 @@ validation-doc-figures: _ensure-uv paper-cli
     set -euo pipefail
     mkdir -p docs/assets/validation
     DELAUNAY_BINARY="{{ perf_delaunay_binary }}" DELAUNAY_VALIDATION_DOC_FIGURE_DIR="docs/assets/validation" just notebook-execute notebooks/01_validation.ipynb target/docs/notebooks
+
+# Regenerate validation diagrams under target/ and compare them with tracked artifacts.
+[group('notebooks and papers')]
+validation-doc-figures-check: _ensure-uv paper-cli
+    #!/usr/bin/env bash
+    set -euo pipefail
+    check_root="target/docs/validation-figure-check"
+    generated_dir="target/notebooks/01_validation/validation_figures"
+    rm -rf "$check_root"
+    DELAUNAY_BINARY="{{ perf_delaunay_binary }}" just notebook-execute notebooks/01_validation.ipynb "$check_root/notebook"
+    uv run --locked --group notebooks python -m notebook_validation_rendering "$generated_dir" docs/assets/validation
 
 # Verify repository-owned source-pattern count invariants.
 [group('validation')]

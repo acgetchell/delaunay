@@ -16,6 +16,8 @@ The crate exposes two kinds of diagnostics.
 Always available:
 
 - `validate()` and `validation_report()` for cumulative Levels 1-5 validation.
+- `delaunay::prelude::validation::delaunay_violation_report`,
+  `DelaunayViolationReport`, and `DelaunayViolationDetail` for Level 5 scans.
 - Typed construction, insertion, validation, topology, and repair errors.
 - Repair diagnostics attached to non-convergence and repair-neighbor failures.
 - Construction statistics and telemetry through
@@ -23,8 +25,6 @@ Always available:
 
 Feature-gated with `diagnostics`:
 
-- `delaunay::prelude::diagnostics::delaunay_violation_report`.
-- `DelaunayViolationReport` and `DelaunayViolationDetail`.
 - `debug_print_first_delaunay_violation`.
 - `ConflictRegion::number_of_missed_simplices`.
 - Extra test/debug tracing in selected integration tests and debug harnesses.
@@ -138,7 +138,7 @@ Use `delaunay_violation_report` when you want key-based data about Level 5
 empty-circumsphere violations:
 
 ```rust
-use delaunay::prelude::diagnostics::delaunay_violation_report;
+use delaunay::prelude::validation::delaunay_violation_report;
 use delaunay::prelude::construction::{
     DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };

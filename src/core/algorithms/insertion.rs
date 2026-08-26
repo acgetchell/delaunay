@@ -48,11 +48,11 @@ use crate::core::tds::{
     TriangulationValidationErrorKind, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
-use crate::core::traits::facet_incidence_analysis::FacetIncidenceAnalysis;
 use crate::core::vertex::VertexValidationError;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
+use crate::geometry::quality::QualityError;
 use crate::geometry::robust_predicates::robust_orientation;
 #[cfg(debug_assertions)]
 use crate::geometry::traits::coordinate::DEFAULT_TOLERANCE_F64;
@@ -805,11 +805,25 @@ pub enum InitialSimplexConstructionError {
         uuid: uuid::Uuid,
     },
 
-    /// Bootstrap simplex creation failed.
-    #[error("failed to create bootstrap simplex: {message}")]
+    /// Bootstrap simplex creation failed validation.
+    #[error("failed to create bootstrap simplex: {source}")]
     FailedToCreateSimplex {
-        /// Simplex creation failure detail.
-        message: String,
+        /// Underlying simplex validation error.
+        #[source]
+        source: SimplexValidationError,
+    },
+
+    /// Bootstrap orientation canonicalization lacked enough stored vertex keys.
+    #[error(
+        "cannot canonicalize orientation for {dimension}D bootstrap simplex with {vertex_key_count} vertex key(s); at least {minimum_vertex_key_count} are required"
+    )]
+    OrientationBookkeeping {
+        /// Dimension of the bootstrap simplex.
+        dimension: usize,
+        /// Number of stored bootstrap vertex keys.
+        vertex_key_count: usize,
+        /// Minimum number of keys needed to swap an orientation pair.
+        minimum_vertex_key_count: usize,
     },
 
     /// Not enough vertices were available for the bootstrap simplex.
@@ -940,9 +954,18 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
     fn from(source: TriangulationConstructionError) -> Self {
         match source {
             TriangulationConstructionError::Tds { source } => source.into(),
-            TriangulationConstructionError::FailedToCreateSimplex { message } => {
-                Self::FailedToCreateSimplex { message }
+            TriangulationConstructionError::FailedToCreateSimplex { source } => {
+                Self::FailedToCreateSimplex { source }
             }
+            TriangulationConstructionError::InitialSimplexOrientationBookkeeping {
+                dimension,
+                vertex_key_count,
+                minimum_vertex_key_count,
+            } => Self::OrientationBookkeeping {
+                dimension,
+                vertex_key_count,
+                minimum_vertex_key_count,
+            },
             TriangulationConstructionError::InsertionCavityFilling { source } => {
                 Self::UnexpectedInsertionStage {
                     reason: Box::new(InitialSimplexUnexpectedInsertionStage::CavityFilling {
@@ -1475,6 +1498,29 @@ pub enum CavityFillingError {
     /// Fan filling produced no replacement simplices.
     #[error("fan triangulation produced no simplices")]
     EmptyFanTriangulation,
+
+    /// Geometric quality evaluation failed while selecting a local facet repair.
+    #[error("local facet repair quality evaluation failed for simplex {simplex_key:?}: {source}")]
+    LocalFacetQualityEvaluation {
+        /// Simplex whose repair quality could not be computed.
+        simplex_key: SimplexKey,
+        /// Typed geometric quality failure.
+        #[source]
+        source: QualityError,
+    },
+
+    /// Local facet repair produced a non-finite simplex quality score.
+    #[error(
+        "local facet repair quality for simplex {simplex_uuid} ({simplex_key:?}) is non-finite: {quality}"
+    )]
+    LocalFacetNonFiniteQuality {
+        /// Simplex whose quality score was non-finite.
+        simplex_key: SimplexKey,
+        /// Stable identity of the simplex.
+        simplex_uuid: uuid::Uuid,
+        /// Non-finite quality value represented as a typed diagnostic payload.
+        quality: CoordinateConversionValue,
+    },
 }
 
 /// Stage where cavity repair detected invalid facet sharing.
@@ -2020,9 +2066,10 @@ impl InsertionError {
             // Structural errors (missing simplices, broken invariants) won't be fixed by perturbation.
             Self::TopologyValidation { source } => Self::is_tds_error_retryable(source),
             // Conflict region errors: only geometry-degeneracy variants are retryable.
-            // Structural variants (InvalidStartSimplex, PredicateError, SimplexDataAccessFailed,
-            // InvalidSimplexArity, MissingSimplexVertex, InternalInconsistency — regardless of which typed
-            // `InternalInconsistencySite` carries the failure context) represent caller
+            // Structural variants (invalid/missing simplex identity, predicate errors,
+            // invalid facet bookkeeping, invalid simplex arity, missing simplex vertices,
+            // and InternalInconsistency regardless of which typed site carries the failure)
+            // represent caller
             // or implementation errors that perturbation cannot fix, and so fall
             // through to non-retryable by omission.
             Self::ConflictRegion { source } => {
@@ -2112,6 +2159,7 @@ impl InsertionError {
                 InitialSimplexConstructionError::GeometricDegeneracy { .. } => true,
                 InitialSimplexConstructionError::DuplicateUuid { .. }
                 | InitialSimplexConstructionError::FailedToCreateSimplex { .. }
+                | InitialSimplexConstructionError::OrientationBookkeeping { .. }
                 | InitialSimplexConstructionError::InsufficientVertices { .. }
                 | InitialSimplexConstructionError::ExcessVertices { .. }
                 | InitialSimplexConstructionError::OrientationPredicate { .. }
@@ -2144,7 +2192,9 @@ impl InsertionError {
             | CavityFillingError::BoundarySimplexCountMismatch { .. }
             | CavityFillingError::PerturbationScaleConversion { .. }
             | CavityFillingError::UnsupportedDegenerateLocation { .. }
-            | CavityFillingError::EmptyFanTriangulation => false,
+            | CavityFillingError::EmptyFanTriangulation
+            | CavityFillingError::LocalFacetQualityEvaluation { .. }
+            | CavityFillingError::LocalFacetNonFiniteQuality { .. } => false,
         }
     }
 
@@ -2956,11 +3006,7 @@ pub(crate) fn external_facets_for_boundary<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     internal_simplices: &SimplexKeyBuffer,
     boundary_facets: &[FacetHandle],
-) -> Result<SmallBuffer<FacetHandle, 64>, InsertionError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<SmallBuffer<FacetHandle, 64>, InsertionError> {
     if internal_simplices.is_empty() || boundary_facets.is_empty() {
         return Ok(SmallBuffer::new());
     }
@@ -5902,6 +5948,40 @@ mod tests {
     }
 
     #[test]
+    fn test_initial_simplex_construction_error_preserves_simplex_and_bookkeeping_failures() {
+        let simplex_source = SimplexValidationError::InsufficientVertices {
+            actual: 2,
+            expected: 3,
+            dimension: 2,
+        };
+        assert_eq!(
+            InitialSimplexConstructionError::from(
+                TriangulationConstructionError::FailedToCreateSimplex {
+                    source: simplex_source.clone(),
+                }
+            ),
+            InitialSimplexConstructionError::FailedToCreateSimplex {
+                source: simplex_source,
+            }
+        );
+
+        assert_eq!(
+            InitialSimplexConstructionError::from(
+                TriangulationConstructionError::InitialSimplexOrientationBookkeeping {
+                    dimension: 0,
+                    vertex_key_count: 1,
+                    minimum_vertex_key_count: 2,
+                }
+            ),
+            InitialSimplexConstructionError::OrientationBookkeeping {
+                dimension: 0,
+                vertex_key_count: 1,
+                minimum_vertex_key_count: 2,
+            }
+        );
+    }
+
+    #[test]
     fn test_initial_simplex_construction_error_preserves_unsupported_periodic_dimension() {
         let source = TriangulationConstructionError::UnsupportedPeriodicDimension {
             dimension: 4,
@@ -6197,9 +6277,8 @@ mod tests {
         );
         assert!(
             !InsertionError::ConflictRegion {
-                source: ConflictError::SimplexDataAccessFailed {
+                source: ConflictError::ConflictSimplexNotFound {
                     simplex_key: SimplexKey::from(KeyData::from_ffi(1)),
-                    message: "test".to_string(),
                 }
             }
             .is_retryable()

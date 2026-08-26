@@ -68,8 +68,10 @@ workflow references do not need to be loaded preemptively.
 - **Treat paper prose as author-owned.** Agents must not add substantive
   publication prose to `papers/`; local paper maintenance rules live in
   `docs/dev/docs.md`.
-- **Keep notebook execution deliberate.** Routine notebook validation is
-  lint-only. Execute one notebook only when the task requires it; refresh
+- **Keep notebook execution deliberate.** `just notebook-check` is lint-only.
+  The canonical macOS leg of `just ci` may execute the validation notebook only
+  to compare regenerated figures with tracked artifacts; it must not publish
+  them. Execute other notebooks only when the task requires it, and refresh
   tracked notebook artifacts only through named recipes when the task includes
   that refresh. Every cell must have a unique, stable, descriptive lowercase
   kebab-case ID. Detailed policy lives in `docs/dev/notebooks.md`.
@@ -112,6 +114,11 @@ When in doubt, favor the invariant over the convenient edit.
   `Orientation::DEGENERATE`.
 - No f64 operation may silently lose sign information. Avoid patterns such as
   `unwrap_or(NaN)`, `unwrap_or(f64::INFINITY)`, or "return `true` on error."
+- Repository-owned Rust must not use `f64::algebraic_add`,
+  `f64::algebraic_sub`, `f64::algebraic_mul`, `f64::algebraic_div`, or
+  `f64::algebraic_rem`. Ordinary IEEE-754 operators and deliberate
+  `f64::mul_add` remain allowed. Any other relaxed or fast-math facility
+  requires a separate tracked scientific review before adoption.
 - Algorithms cite their source in `REFERENCES.md` and document conditioning
   behavior.
 - When two predicate implementations answer the same question, property tests
@@ -126,6 +133,11 @@ When in doubt, favor the invariant over the convenient edit.
   `DelaunayTriangulation::is_valid_delaunay` / `validate` (Level 5). An
   operation that cannot preserve them must fail explicitly rather than leave
   inconsistent state behind.
+- Every fallible topology move, mutation, and repair is failure-atomic: success
+  commits a state valid through the operation's promised validation layers;
+  failure restores the prior valid owner state. Detailed implementation and
+  test-proof requirements live in `docs/dev/rust/reference.md` and
+  `docs/dev/testing.md`.
 - PL-manifold invariants: facets have multiplicity 1 (boundary) or 2
   (interior), ridges are linked consistently, and Euler characteristic matches
   the triangulation's `TopologyGuarantee`.

@@ -18,14 +18,12 @@ use crate::core::tds::{
     InvariantError, InvariantKind, SimplexKey, Tds, TdsError, TriangulationConstructionState,
     VertexKey,
 };
-use crate::core::traits::data_type::DataType;
-use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::realization::{
     LabeledSimplexRealization, LabeledSimplexRealizationError, PeriodicSimplexSpanError,
     SimplexIntersectionFailure, axis_aligned_bounding_boxes_overlap, coordinate_range_for_axis,
-    try_periodic_simplex_span, validate_simplex_realizations_intersect_only_in_shared_faces,
+    try_periodic_simplex_span, validate_simplex_intersection,
 };
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{
@@ -36,7 +34,9 @@ use crate::topology::traits::global_topology_model::{
 };
 use crate::topology::traits::topological_space::TopologyKind;
 use crate::triangulation::Triangulation;
-use crate::triangulation::validation::TriangulationValidationError;
+use crate::triangulation::validation::{
+    TopologyCertificationEvidence, TriangulationValidationError,
+};
 use num_traits::ToPrimitive;
 use thiserror::Error;
 use uuid::Uuid;
@@ -997,12 +997,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// The method is deliberately non-mutating. Callers that canonicalize a
     /// candidate first must own rollback around that preprocessing and invoke
     /// this same proof before committing it.
-    pub(super) fn certify_levels_three_four(&self) -> Result<(), TriangulationCertificationError>
-    where
-        K: Kernel<D, Scalar = f64>,
-        U: DataType,
-        V: DataType,
-    {
+    pub(super) fn certify_levels_three_four(
+        &self,
+    ) -> Result<TopologyCertificationEvidence, TriangulationCertificationError> {
         if let TriangulationConstructionState::Incomplete(vertex_count) =
             self.tds.construction_state()
         {
@@ -1011,11 +1008,12 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             });
         }
 
-        self.is_valid_topology()
+        let topology_evidence = self
+            .certify_topology()
             .map_err(|source| TriangulationCertificationError::Topology { source })?;
         self.is_valid_realization()
             .map_err(|source| TriangulationCertificationError::Realization { source })?;
-        Ok(())
+        Ok(topology_evidence)
     }
 
     /// Validates realized geometry only (Level 4).
@@ -1230,12 +1228,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn validate_realization(&self) -> Result<(), TriangulationRealizationValidationError>
-    where
-        K: Kernel<D, Scalar = f64>,
-        U: DataType,
-        V: DataType,
-    {
+    pub fn validate_realization(&self) -> Result<(), TriangulationRealizationValidationError> {
         self.validate().map_err(realization_error_from_invariant)?;
         self.is_valid_realization()
     }
@@ -1769,10 +1762,7 @@ fn validate_simplex_pair_intersection<const D: usize>(
     first: &RealizedSimplex<D>,
     second: &RealizedSimplex<D>,
 ) -> Result<(), TriangulationRealizationValidationError> {
-    match validate_simplex_realizations_intersect_only_in_shared_faces(
-        &first.realization,
-        &second.realization,
-    ) {
+    match validate_simplex_intersection(&first.realization, &second.realization) {
         Ok(()) => Ok(()),
         Err(SimplexIntersectionFailure::SingularBarycentricBasis) => Err(
             TriangulationRealizationValidationError::SingularBarycentricBasis {
@@ -2081,12 +2071,10 @@ fn sweep_and_prune_candidate_simplex_pairs<const D: usize, B>(
 mod tests {
     use super::*;
     use crate::builder::DelaunayTriangulationBuilder;
-    use crate::core::tds::Tds;
     use crate::core::vertex::Vertex;
     use crate::delaunay_property_validation::DelaunayValidationError;
     use crate::geometry::kernel::FastKernel;
     use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
-    use crate::triangulation::Triangulation;
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use crate::vertex;
     use approx::assert_abs_diff_eq;

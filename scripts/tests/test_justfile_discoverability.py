@@ -11,15 +11,15 @@ from typing import Any
 
 import yaml
 
-import benchmark_utils
 import update_cargo_tool_pins
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 JUSTFILE = REPO_ROOT / "justfile"
 HELPER_JUSTFILE = REPO_ROOT / "just" / "helpers.just"
+JUST_BOOTSTRAP = REPO_ROOT / "scripts" / "bootstrap_just.sh"
+JUST_VERSION_RESOLVER = REPO_ROOT / ".github" / "actions" / "setup-just" / "resolve-version.sh"
 RECIPE_DECLARATION = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)(?:\s+.*?)?:(?=\s|$)", re.MULTILINE)
 WORKFLOW_VERSION_LOOKUP = re.compile(r"just --evaluate ([a-z0-9_]+_version)")
-RELEASE_SIGNAL_TARGETS = re.compile(r"^\s*release-signal\)\s*\n\s*targets=\(([^)]*)\)", re.MULTILINE)
 UNLOCKED_UV_RUN = re.compile(r"\buv\s+run\b(?!\s+--locked\b)")
 
 
@@ -71,6 +71,40 @@ def test_bare_just_shows_curated_help() -> None:
     assert "Use 'just --list' for the complete grouped recipe reference." in result.stdout
 
 
+def test_local_and_ci_just_bootstrap_share_the_pinned_version_resolver() -> None:
+    """Docs, local bootstrap, and CI should install the exact Justfile pin."""
+    bash = shutil.which("bash")
+    assert bash is not None
+    resolved = subprocess.run(  # noqa: S603 - executable and script are repository-controlled.
+        [bash, str(JUST_VERSION_RESOLVER)],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+    ).stdout.strip()
+    expected = run_just("--evaluate", "just_version").stdout.strip()
+    action = (REPO_ROOT / ".github" / "actions" / "setup-just" / "action.yml").read_text(encoding="utf-8")
+    bootstrap = JUST_BOOTSTRAP.read_text(encoding="utf-8")
+    bootstrap_command = "bash scripts/bootstrap_just.sh"
+    inline_install_command = 'cargo install --locked --version "$(bash .github/actions/setup-just/resolve-version.sh)" just'
+
+    assert resolved == expected
+    assert "bash .github/actions/setup-just/resolve-version.sh" in action
+    assert "declaration_re=" not in action
+    assert 'resolver="$repo_root/.github/actions/setup-just/resolve-version.sh"' in bootstrap
+    assert 'pinned_version="$(bash "$resolver" "$repo_root/justfile")"' in bootstrap
+    assert '[[ "$installed_version" == "just $pinned_version" ]]' in bootstrap
+    assert 'cargo install --locked --version "$pinned_version" just' in bootstrap
+    assert bootstrap_command in (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert bootstrap_command in (REPO_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert inline_install_command not in (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert inline_install_command not in (REPO_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    for workflow_name in ("audit.yml", "benchmarks.yml", "papers.yml"):
+        pull_request_paths, push_paths = workflow_trigger_paths(REPO_ROOT / ".github" / "workflows" / workflow_name)
+        assert ".github/actions/setup-just/**" in pull_request_paths
+        assert ".github/actions/setup-just/**" in push_paths
+
+
 def test_run_recipe_uses_the_repository_lockfile() -> None:
     """The companion CLI should never resolve a different dependency graph."""
     result = run_just("--dry-run", "run")
@@ -95,18 +129,31 @@ def test_check_code_includes_dependency_hygiene() -> None:
 
 
 def test_release_signal_benchmark_recipes_match_python_runner() -> None:
-    """Just and Python should select the same curated release benchmark targets."""
-    justfile_text = JUSTFILE.read_text(encoding="utf-8")
-    suite_match = RELEASE_SIGNAL_TARGETS.search(justfile_text)
-    assert suite_match is not None
-    saved_baseline_targets = tuple(suite_match.group(1).split())
-
+    """Just should delegate release measurements and baselines to the Python plan."""
     latest = run_just("--dry-run", "bench-latest")
-    latest_targets = tuple(re.findall(r"--bench ([A-Za-z0-9_-]+)", latest.stdout + latest.stderr))
-    expected = benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
+    latest_command = latest.stdout + latest.stderr
+    saved = run_just("--dry-run", "bench-save-baseline", "last")
+    saved_command = saved.stdout + saved.stderr
 
-    assert saved_baseline_targets == expected
-    assert latest_targets == expected
+    assert "uv run --locked benchmark-utils run-release-signal" in latest_command
+    assert "cargo bench --profile perf --bench" not in latest_command
+    assert 'uv run --locked benchmark-utils run-release-signal --save-baseline "$tag"' in saved_command
+
+
+def test_checkpoint_baseline_replacement_and_full_report_are_discoverable() -> None:
+    """Checkpoint payload identity and the active report should be unambiguous."""
+    benchmark_docs = (REPO_ROOT / "benches" / "README.md").read_text(encoding="utf-8")
+    normalized_benchmark_docs = re.sub(r"\s+", " ", benchmark_docs)
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "checkpoint-serialization/u32-payloads-v1" in normalized_benchmark_docs
+    assert "row * 8 + column" in normalized_benchmark_docs
+    assert "simplex vertex count" in normalized_benchmark_docs
+    assert "unit-payload timings and saved Criterion baselines must not be compared" in normalized_benchmark_docs
+    assert "[Performance Report](docs/PERFORMANCE.md)" in readme
+    assert "legacy [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) report" in readme
+    assert "provenance-limited release evidence" in readme
+    assert "full report retains every benchmark and confidence interval" not in readme
 
 
 def test_canonical_performance_recipes_share_the_cross_repository_contract() -> None:
@@ -195,6 +242,43 @@ def test_release_workflows_fail_closed_before_writes_or_tag_mutation() -> None:
     assert '--sync-changelog-date --previous-release "$previous_release"' in rendered
 
 
+def test_release_benchmark_summary_recipe_requires_strict_fresh_evidence() -> None:
+    """The release summary recipe must propagate both freshness and strictness."""
+    command = run_just("--dry-run", "bench-perf-summary")
+    rendered = command.stdout + command.stderr
+
+    assert "benchmark-utils generate-summary" in rendered
+    assert "--run-benchmarks" in rendered
+    assert "--profile perf" in rendered
+    assert "--strict" in rendered
+
+
+def test_local_and_sarif_semgrep_scans_share_target_enumeration() -> None:
+    """Hosted uploads must scan the same tracked Python and Rust tests as local CI."""
+    local = run_just("--dry-run", "semgrep")
+    local_rendered = local.stdout + local.stderr
+    sarif = run_just("--dry-run", "semgrep-scan", "semgrep-results.sarif")
+    sarif_rendered = sarif.stdout + sarif.stderr
+    workflow = (REPO_ROOT / ".github" / "workflows" / "semgrep-sarif.yml").read_text(encoding="utf-8")
+
+    assert "scripts/semgrep_targets.py --null" in local_rendered
+    assert "scripts/semgrep_targets.py --null" in sarif_rendered
+    assert "--sarif --output" in sarif_rendered
+    output_assignment = next(line for line in sarif_rendered.splitlines() if line.startswith("output="))
+    assert shlex.split(output_assignment) == ["output=semgrep-results.sarif"]
+    assert "just semgrep-scan semgrep-results.sarif" in workflow
+    assert "git ls-files" not in workflow
+
+
+def test_shared_semgrep_target_pathspecs_cover_both_test_languages_and_exclude_fixtures() -> None:
+    """The target owner keeps ignored tests visible without scanning annotated violations."""
+    target_source = (REPO_ROOT / "scripts" / "semgrep_targets.py").read_text(encoding="utf-8")
+
+    assert '"scripts/tests/*.py"' in target_source
+    assert '"tests/*.rs"' in target_source
+    assert '":(exclude)tests/semgrep/**"' in target_source
+
+
 def test_canonical_performance_recipes_reject_partial_tag_pairs_before_dispatch() -> None:
     """A lone explicit tag must not reach the Python workflow command."""
     executable = shutil.which("just")
@@ -275,9 +359,15 @@ def test_uv_backed_recipes_reuse_pinned_guard() -> None:
 
     assert "uv --version" in ensure_uv_body
     assert "uv_version" in ensure_uv_body
-    for name in ("_ensure-actionlint", "_ensure-shellcheck", "_ensure-shfmt", "_ensure-yamllint", "setup-tools", "update-cargo-tools"):
+    assert {dependency["recipe"] for dependency in recipes["_ensure-uv"]["dependencies"]} == {"_ensure-uv-available"}
+    for name in ("_ensure-actionlint", "_ensure-shellcheck", "_ensure-shfmt", "_ensure-yamllint", "setup-tools"):
         dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
         assert "_ensure-uv" in dependencies, name
+
+    for name in ("update-cargo-tools", "update-dependencies", "update-python-dependencies"):
+        dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
+        assert "_ensure-uv-available" in dependencies, name
+        assert "_ensure-uv" not in dependencies, name
 
 
 def test_setup_tools_closes_external_and_cargo_update_prerequisites() -> None:
@@ -337,20 +427,42 @@ def test_performance_workflow_tracks_every_harness_input() -> None:
 
 def test_paper_workflow_tracks_validation_figure_producers() -> None:
     """Paper checks should run when Rust or notebook figure producers change."""
-    pull_request_paths, push_paths = workflow_trigger_paths(REPO_ROOT / ".github" / "workflows" / "papers.yml")
+    workflow_path = REPO_ROOT / ".github" / "workflows" / "papers.yml"
+    pull_request_paths, push_paths = workflow_trigger_paths(workflow_path)
     required_paths = (
         ".python-version",
+        ".github/actions/setup-just/**",
         "Cargo.lock",
         "Cargo.toml",
         "just/**",
         "rust-toolchain.toml",
         "scripts/notebook_validation_rendering.py",
+        "scripts/subprocess_utils.py",
         "src/**",
     )
 
     for path in required_paths:
         assert path in pull_request_paths
         assert path in push_paths
+
+    workflow = workflow_path.read_text(encoding="utf-8")
+    assert "just validation-doc-figures-check" in workflow
+    assert "git status --porcelain -- docs/assets/validation" not in workflow
+
+
+def test_ci_composes_non_mutating_canonical_validation_figure_check() -> None:
+    """The local CI contract should catch stale tracked figures on canonical macOS."""
+    recipes = just_recipes()
+    ci_dependencies = [dependency["recipe"] for dependency in recipes["ci"]["dependencies"]]
+    assert ci_dependencies[0] == "_validation-doc-figures-check-if-canonical"
+
+    rendered_result = run_just("--dry-run", "validation-doc-figures-check")
+    rendered = rendered_result.stdout + rendered_result.stderr
+    assert 'check_root="target/docs/validation-figure-check"' in rendered
+    assert 'generated_dir="target/notebooks/01_validation/validation_figures"' in rendered
+    assert "DELAUNAY_VALIDATION_DOC_FIGURE_DIR" not in rendered
+    assert "python -m notebook_validation_rendering" in rendered
+    assert "docs/assets/validation" in rendered
 
 
 def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
@@ -367,11 +479,14 @@ def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
     dependency_result = run_just("--dry-run", "update-dependencies")
     dependency_update = dependency_result.stdout + dependency_result.stderr
     dependency_preflights = [dependency["recipe"] for dependency in recipes["update-dependencies"]["dependencies"]]
-    assert dependency_preflights[:2] == ["_ensure-cargo-edit", "_ensure-uv"]
+    assert dependency_preflights[:2] == ["_ensure-cargo-edit", "_ensure-uv-available"]
     assert dependency_update.index("cargo_tool_has_exact_version") < dependency_update.index("cargo upgrade --incompatible allow")
     assert dependency_update.index("uv --version") < dependency_update.index("cargo upgrade --incompatible allow")
     assert "cargo upgrade --incompatible allow" in dependency_update
-    assert "cargo update" in dependency_update
+    fixture_manifest = "tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml"
+    assert f"cargo upgrade --manifest-path {fixture_manifest} --incompatible allow" in dependency_update
+    assert re.search(r"^cargo update$", dependency_update, re.MULTILINE) is not None
+    assert f"cargo update --manifest-path {fixture_manifest}" in dependency_update
     assert "uv run --locked update-python-dev-pins" in dependency_update
     assert "uv lock --upgrade" in dependency_update
     assert dependency_update.index("uv run --locked update-python-dev-pins") < dependency_update.index("uv lock --upgrade")
@@ -383,7 +498,7 @@ def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
     tool_update = tool_result.stdout + tool_result.stderr
     assert "command -v cargo-install-update" in tool_update
     assert "cargo install-update --locked" in tool_update
-    assert "update-cargo-tool-pins" in tool_update
+    assert "update-tool-pins" in tool_update
     assert "cargo install-update --all" not in tool_update
     assert "uv tool upgrade" not in tool_update
     package_block = re.search(r"packages=\(\n(?P<packages>.*?)\n\)", tool_update, re.DOTALL)
@@ -392,11 +507,11 @@ def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
     assert updated_packages == set(update_cargo_tool_pins.PIN_TO_PACKAGE.values())
 
 
-def test_managed_cargo_tool_pins_exist_once_in_root_justfile() -> None:
-    """Every managed Cargo package should map to one real root Just pin."""
+def test_managed_tool_pins_exist_once_in_root_justfile() -> None:
+    """Every managed Cargo package and uv should map to one root Just pin."""
     justfile_text = JUSTFILE.read_text(encoding="utf-8")
 
-    for pin in update_cargo_tool_pins.PIN_TO_PACKAGE:
+    for pin in update_cargo_tool_pins.PIN_TO_TOOL:
         assignments = re.findall(rf"^{re.escape(pin)}\s*:=", justfile_text, re.MULTILINE)
         assert len(assignments) == 1, pin
 

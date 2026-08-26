@@ -122,12 +122,10 @@ impl<'tri, K, U, V, const D: usize> ConflictRegion<'tri, K, U, V, D> {
         let simplices = simplex_keys
             .into_iter()
             .map(|key| {
-                let simplex = triangulation.tds.simplex(key).ok_or_else(|| {
-                    ConflictError::SimplexDataAccessFailed {
-                        simplex_key: key,
-                        message: "conflict simplex disappeared before view publication".to_string(),
-                    }
-                })?;
+                let simplex = triangulation
+                    .tds
+                    .simplex(key)
+                    .ok_or(ConflictError::ConflictSimplexNotFound { simplex_key: key })?;
                 Ok::<_, ConflictError>(ConflictSimplexView { key, simplex })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -214,7 +212,7 @@ impl<'tri, K, U, V, const D: usize> ConflictRegion<'tri, K, U, V, D> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, query::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -526,7 +524,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -566,7 +564,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = [
@@ -600,7 +598,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use delaunay::prelude::tds::SimplexKey;
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -633,7 +631,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use uuid::Uuid;
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -666,7 +664,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use delaunay::prelude::tds::SimplexKey;
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -696,7 +694,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use delaunay::prelude::tds::SimplexKey;
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -728,7 +726,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -768,7 +766,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = [
@@ -802,7 +800,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use delaunay::prelude::tds::VertexKey;
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -835,7 +833,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use uuid::Uuid;
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -868,7 +866,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use delaunay::prelude::tds::VertexKey;
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -898,7 +896,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use delaunay::prelude::tds::VertexKey;
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -928,7 +926,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -952,7 +950,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// ```
     #[must_use]
-    pub fn number_of_vertices(&self) -> usize {
+    pub const fn number_of_vertices(&self) -> usize {
         self.tds.number_of_vertices()
     }
 
@@ -961,7 +959,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -985,7 +983,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// ```
     #[must_use]
-    pub fn number_of_simplices(&self) -> usize {
+    pub const fn number_of_simplices(&self) -> usize {
         self.tds.number_of_simplices()
     }
 
@@ -997,7 +995,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = [
@@ -1022,7 +1020,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = [
@@ -1047,8 +1045,11 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::*;
-    /// use delaunay::prelude::*;
-    /// use delaunay::prelude::triangulation::TriangulationBuilder;
+    /// use delaunay::prelude::{construction::*, query::*};
+    /// use delaunay::prelude::tds::Tds;
+    /// use delaunay::prelude::triangulation::{
+    ///     TriangulationBuildFailure, TriangulationBuilder,
+    /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1056,6 +1057,8 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// #     Source(#[from] DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     Triangulation(#[from] TriangulationBuildFailure<(), (), 3>),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Empty triangulation has dimension -1
@@ -1063,8 +1066,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     Tds::<(), (), 3>::empty(),
     ///     FastKernel::new(),
     /// )
-    /// .build()
-    /// .expect("the empty complex is a valid realization");
+    /// .build()?;
     /// assert_eq!(empty.dim(), -1);
     ///
     /// // 3D tetrahedron has dimension 3
@@ -1101,7 +1103,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1147,7 +1149,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = [
@@ -1187,7 +1189,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = [
@@ -1224,7 +1226,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = [
@@ -1258,7 +1260,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = [
@@ -1299,7 +1301,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1380,7 +1382,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1431,7 +1433,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = [
@@ -1473,7 +1475,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use delaunay::prelude::query::RidgeCandidate;
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -1512,7 +1514,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use delaunay::prelude::query::RidgeCandidate;
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -1555,7 +1557,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1628,7 +1630,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1668,7 +1670,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = [
@@ -1701,7 +1703,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = [
@@ -1732,7 +1734,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1801,7 +1803,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use delaunay::prelude::algorithms::{LocateError, LocateResult};
     ///
     /// # #[derive(Debug, thiserror::Error)]
@@ -1848,7 +1850,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use delaunay::prelude::algorithms::LocateError;
     ///
     /// # #[derive(Debug, thiserror::Error)]
@@ -1898,7 +1900,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use delaunay::prelude::algorithms::{ConflictError, LocateError, LocateResult};
     ///
     /// # #[derive(Debug, thiserror::Error)]
@@ -1994,7 +1996,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -2021,7 +2023,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// ```
     pub fn adjacency(&self) -> Result<TriangulationAdjacency<'_>, TopologyIndexBuildError> {
-        let incidence = self.incidence()?;
+        let incidence = self.incidence();
         let edges = self.build_edge_index()?;
         let simplex_neighbors = self.build_simplex_neighbor_index()?;
         Ok(TriangulationAdjacency::from_parts(
@@ -2036,18 +2038,13 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Use this for repeated adjacent-simplex queries without building derived
     /// edge or simplex-neighbor maps.
     ///
-    /// # Errors
-    ///
-    /// Returns [`TopologyIndexBuildError::InvalidVertexIncidenceIndex`] if the
-    /// maintained incidence relation is internally inconsistent.
-    pub fn incidence(&self) -> Result<IncidenceView<'_>, TopologyIndexBuildError> {
-        self.tds
-            .validate_vertex_to_simplices_index()
-            .map_err(|source| TopologyIndexBuildError::InvalidVertexIncidenceIndex { source })?;
-
-        Ok(IncidenceView::from_validated(
-            self.tds.vertex_to_simplices_index(),
-        ))
+    /// The public [`Triangulation`] owner already carries the Levels 1–2 proof
+    /// that includes this maintained relation. Explicit candidate, hydration,
+    /// and corruption checks continue to use the TDS incidence validator at
+    /// their publication boundary; constructing a borrowed view does not repeat
+    /// that global audit.
+    pub const fn incidence(&self) -> IncidenceView<'_> {
+        IncidenceView::from_validated(self.tds.vertex_to_simplices_index())
     }
 
     /// Builds only the derived vertex→edge index for this triangulation snapshot.
@@ -2273,7 +2270,7 @@ impl<K, U, V> Triangulation<K, U, V, 2> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use delaunay::prelude::tds::EdgeKey;
     ///
     /// # #[derive(Debug, thiserror::Error)]
@@ -2331,7 +2328,7 @@ impl<K, U, V> Triangulation<K, U, V, 2> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, query::*};
     /// use delaunay::prelude::tds::EdgeKey;
     ///
     /// # #[derive(Debug, thiserror::Error)]
@@ -2896,7 +2893,7 @@ mod tests {
             .unwrap();
         assert_eq!(tri.number_of_incident_edges(base_vertex_key), 4);
 
-        let incidence = tri.incidence().unwrap();
+        let incidence = tri.incidence();
         let edge_index = tri.build_edge_index().unwrap();
         let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
         assert_eq!(edge_index.number_of_edges(), 9);
@@ -2925,7 +2922,7 @@ mod tests {
         let base_vertex_key = shared_fixture_vertex(&tri);
         let expected_edges = expected_split_topology_fixture_edges::<D>();
 
-        let incidence = tri.incidence().unwrap();
+        let incidence = tri.incidence();
         assert_eq!(incidence.number_of_adjacent_simplices(base_vertex_key), 2);
         assert_eq!(incidence.adjacent_simplices(base_vertex_key).count(), 2);
 
@@ -2954,7 +2951,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt.as_triangulation();
-        let incidence = tri.incidence().unwrap();
+        let incidence = tri.incidence();
         let edge_index = tri.build_edge_index().unwrap();
         let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
 
@@ -3015,7 +3012,7 @@ mod tests {
 
     fn assert_split_topology_indexes_basic_invariants<const D: usize>() {
         let tri = split_topology_fixture::<D>();
-        let incidence = tri.incidence().unwrap();
+        let incidence = tri.incidence();
         let edge_index = tri.build_edge_index().unwrap();
         let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
 
@@ -3050,7 +3047,7 @@ mod tests {
 
     fn assert_split_topology_indexes_match_direct_queries<const D: usize>() {
         let tri = split_topology_fixture::<D>();
-        let incidence = tri.incidence().unwrap();
+        let incidence = tri.incidence();
         let edge_index = tri.build_edge_index().unwrap();
         let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
 
@@ -3160,7 +3157,7 @@ mod tests {
         let tri: Triangulation<FastKernel<f64>, (), (), 3> =
             Triangulation::new_empty(FastKernel::new());
 
-        let incidence = tri.incidence().unwrap();
+        let incidence = tri.incidence();
         let edge_index = tri.build_edge_index().unwrap();
         let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
         assert!(incidence.vertex_to_simplices().is_empty());
@@ -3184,7 +3181,7 @@ mod tests {
             .tds
             .insert_vertex_with_mapping(vertex!([10.0, 10.0]).unwrap())
             .unwrap();
-        let incidence = tri.incidence().unwrap();
+        let incidence = tri.incidence();
         let edge_index = tri.build_edge_index().unwrap();
 
         assert!(
@@ -3207,7 +3204,7 @@ mod tests {
     }
 
     #[test]
-    fn incidence_errors_on_stale_vertex_incidence_index() {
+    fn explicit_incidence_validation_rejects_stale_test_fixture() {
         let vertices = vec![
             vertex!([0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0]).unwrap(),
@@ -3221,12 +3218,10 @@ mod tests {
 
         tri.tds.clear_vertex_incidence_for_test(vertex_key);
 
-        match tri.incidence() {
-            Err(TopologyIndexBuildError::InvalidVertexIncidenceIndex { source }) => {
-                assert_matches!(source, TdsError::InconsistentDataStructure { .. });
-            }
-            other => panic!("Expected InvalidVertexIncidenceIndex, got {other:?}"),
-        }
+        assert_matches!(
+            tri.tds.validate_vertex_to_simplices_index(),
+            Err(TdsError::InconsistentDataStructure { .. })
+        );
     }
 
     #[test]

@@ -214,6 +214,8 @@ class BenchmarkTargetMeasurement:
     """One exact benchmark target invocation in a retained measurement plan."""
 
     target: str
+    report_section: str = ""
+    required_group_prefixes: tuple[str, ...] = ()
     sampling_mode: Literal["full", "reduced"] = "full"
     criterion_arguments: tuple[str, ...] = ()
 
@@ -268,31 +270,45 @@ PERF_NO_REGRESSIONS_RELEVANT_PATHS = (
     "scripts/benchmark_utils.py",
 )
 RELEASE_SIGNAL_MEASUREMENT_PLAN = (
-    BenchmarkTargetMeasurement("ci_performance_suite"),
-    BenchmarkTargetMeasurement("circumsphere_containment"),
-    BenchmarkTargetMeasurement("cold_path_predicates"),
-    BenchmarkTargetMeasurement("locate"),
-    BenchmarkTargetMeasurement("realization_validation"),
+    BenchmarkTargetMeasurement(
+        "ci_performance_suite",
+        "Public API performance",
+        (
+            "tds_new_",
+            "boundary_facets",
+            "convex_hull",
+            "convex_hull_queries",
+            "validation",
+            "incremental_insert",
+            "explicit_import",
+            "proof_boundaries",
+            "bistellar_flips_",
+        ),
+    ),
+    BenchmarkTargetMeasurement(
+        "circumsphere_containment",
+        "Circumsphere predicates",
+        ("random", "2d", "3d", "4d", "5d", "edge_cases_", "circumcenter"),
+    ),
+    BenchmarkTargetMeasurement(
+        "cold_path_predicates",
+        "Predicate hot and cold paths",
+        ("predicates",),
+    ),
+    BenchmarkTargetMeasurement(
+        "locate",
+        "Point location",
+        ("locate",),
+    ),
+    BenchmarkTargetMeasurement(
+        "realization_validation",
+        "Realization validation",
+        ("realization_",),
+    ),
 )
 RELEASE_SIGNAL_BENCH_TARGETS = tuple(measurement.target for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN)
-RELEASE_SIGNAL_GROUP_PREFIXES = (
-    "tds_new_",
-    "boundary_facets",
-    "convex_hull",
-    "convex_hull_queries",
-    "validation",
-    "incremental_insert",
-    "explicit_import",
-    "bistellar_flips_",
-    "random",
-    "2d",
-    "3d",
-    "4d",
-    "5d",
-    "edge_cases_",
-    "predicates",
-    "locate",
-    "realization_",
+RELEASE_SIGNAL_GROUP_PREFIXES = tuple(
+    dict.fromkeys(prefix for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN for prefix in measurement.required_group_prefixes)
 )
 RELEASE_ASSET_METADATA_SCHEMA_VERSION = 2
 RELEASE_ASSET_MEASUREMENT_COMMANDS = tuple(measurement.command for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN)
@@ -465,12 +481,89 @@ class PerformancePromotionPlan:
     mutation_paths: tuple[Path, ...]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PublishedRelease:
     """Stable GitHub release metadata used to infer release pairs."""
 
     tag: str
-    published_at: str
+    published_at: datetime
+
+    def __post_init__(self) -> None:
+        """Require normalized stable semver identity and an aware timestamp."""
+        if self.tag != normalize_release_tag(self.tag):
+            msg = f"published release tag must be normalized: {self.tag!r}"
+            raise ValueError(msg)
+        _stable_semver_sort_key(self.tag)
+        if not isinstance(self.published_at, datetime):
+            msg = f"published release timestamp must be a datetime: {self.published_at!r}"
+            raise TypeError(msg)
+        if self.published_at.tzinfo is None or self.published_at.utcoffset() is None:
+            msg = f"published release timestamp must include a timezone: {self.published_at!r}"
+            raise ValueError(msg)
+
+
+@dataclass(frozen=True, slots=True)
+class GitHubRelease:
+    """Strict immutable DTO for one ``gh release list`` JSON object."""
+
+    tag: str
+    is_draft: bool
+    is_prerelease: bool
+    published_at: datetime | None
+
+    @classmethod
+    def from_raw(cls, raw: object, *, index: int) -> GitHubRelease:
+        """Parse exactly the requested GitHub fields without truthy coercions."""
+        if not isinstance(raw, Mapping):
+            msg = f"GitHub release at index {index} must be a JSON object"
+            raise TypeError(msg)
+        expected_fields = {"tagName", "isDraft", "isPrerelease", "publishedAt"}
+        actual_fields = set(raw)
+        if actual_fields != expected_fields:
+            missing = sorted(expected_fields - actual_fields)
+            extra = sorted(str(field) for field in actual_fields - expected_fields)
+            msg = f"GitHub release at index {index} has unexpected fields: missing={missing}, extra={extra}"
+            raise ValueError(msg)
+
+        is_draft = raw["isDraft"]
+        is_prerelease = raw["isPrerelease"]
+        if type(is_draft) is not bool or type(is_prerelease) is not bool:
+            msg = f"GitHub release at index {index} requires exact boolean isDraft/isPrerelease fields"
+            raise TypeError(msg)
+
+        tag_name = raw["tagName"]
+        if not isinstance(tag_name, str):
+            msg = f"GitHub release at index {index} tagName must be a string"
+            raise TypeError(msg)
+        try:
+            tag = normalize_release_tag(tag_name)
+        except ValueError as exc:
+            msg = f"GitHub release at index {index} has invalid semantic-version tag {tag_name!r}"
+            raise ValueError(msg) from exc
+
+        published_raw = raw["publishedAt"]
+        published_at: datetime | None
+        if published_raw is None and is_draft:
+            published_at = None
+        elif isinstance(published_raw, str) and published_raw:
+            try:
+                published_at = datetime.fromisoformat(published_raw)
+            except ValueError as exc:
+                msg = f"GitHub release at index {index} has invalid publishedAt timestamp {published_raw!r}"
+                raise ValueError(msg) from exc
+            if published_at.tzinfo is None or published_at.utcoffset() is None:
+                msg = f"GitHub release at index {index} publishedAt must include a timezone"
+                raise ValueError(msg)
+            published_at = published_at.astimezone(UTC)
+        else:
+            msg = f"GitHub release at index {index} requires a publishedAt timestamp unless it is a draft"
+            raise TypeError(msg)
+        return cls(
+            tag=tag,
+            is_draft=is_draft,
+            is_prerelease=is_prerelease,
+            published_at=published_at,
+        )
 
 
 type BaselineSource = Literal["local", "github-assets"]
@@ -606,6 +699,38 @@ class ComparisonSummaryStats:
     individual_regressions: int
     compared_count: int
     failure_policy: ComparisonFailurePolicy
+
+
+@dataclass(frozen=True, slots=True)
+class BenchmarkComparisonCoverage:
+    """Exact keyset evidence required before aggregate timings are comparable."""
+
+    current_keys: frozenset[str]
+    baseline_keys: frozenset[str]
+    duplicate_current_keys: tuple[str, ...] = ()
+    invalid_current_timing_keys: tuple[str, ...] = ()
+    invalid_baseline_timing_keys: tuple[str, ...] = ()
+
+    @property
+    def missing_from_baseline(self) -> tuple[str, ...]:
+        """Return current benchmark keys absent from the baseline."""
+        return tuple(sorted(self.current_keys - self.baseline_keys))
+
+    @property
+    def missing_from_current(self) -> tuple[str, ...]:
+        """Return baseline benchmark keys absent from the current run."""
+        return tuple(sorted(self.baseline_keys - self.current_keys))
+
+    @property
+    def is_comparable(self) -> bool:
+        """Return whether coverage is nonempty, unique, and exactly symmetric."""
+        return (
+            bool(self.current_keys)
+            and not self.duplicate_current_keys
+            and not self.invalid_current_timing_keys
+            and not self.invalid_baseline_timing_keys
+            and self.current_keys == self.baseline_keys
+        )
 
 
 @dataclass(frozen=True)
@@ -985,6 +1110,106 @@ class CiPerformanceResult:
         return "well-conditioned"
 
 
+@dataclass(frozen=True)
+class CiPerformanceSummaryEvidence:
+    """Validated public-API benchmark rows and their completeness basis."""
+
+    results: tuple[CiPerformanceResult, ...]
+    missing_result_ids: tuple[str, ...]
+    completeness_basis: Literal["runtime-manifest", "group-contract"]
+
+    @property
+    def is_complete(self) -> bool:
+        """Return whether every structurally expected result was parsed."""
+        return not self.missing_result_ids
+
+
+@dataclass(frozen=True)
+class CircumsphereSummaryEvidence:
+    """Circumsphere rows with explicit measured-or-fallback provenance."""
+
+    test_cases: tuple[CircumsphereTestCase, ...]
+    provenance: Literal["criterion", "reference-fallback"]
+    missing_result_ids: tuple[str, ...]
+
+    @property
+    def is_complete(self) -> bool:
+        """Return whether all expected Criterion rows were parsed without fallback."""
+        return self.provenance == "criterion" and not self.missing_result_ids
+
+
+@dataclass(frozen=True)
+class BenchmarkPlanSectionEvidence:
+    """Criterion coverage for one report section owned by the release plan."""
+
+    target: str
+    report_section: str
+    result_ids: tuple[str, ...]
+    missing_group_prefixes: tuple[str, ...]
+
+    @property
+    def is_complete(self) -> bool:
+        """Return whether every required Criterion group produced a valid estimate."""
+        return bool(self.result_ids) and not self.missing_group_prefixes
+
+
+def _criterion_result_ids(criterion_dir: Path) -> tuple[str, ...]:
+    """Return valid Criterion result IDs, preferring ``new`` over ``base``."""
+    results: dict[str, str] = {}
+    for estimates_path in sorted(criterion_dir.glob("**/estimates.json")):
+        sample = estimates_path.parent.name
+        if sample not in {"base", "new"} or _load_criterion_estimate(estimates_path) is None:
+            continue
+        path_parts = estimates_path.relative_to(criterion_dir).parts[:-2]
+        if not path_parts:
+            continue
+        result_id = "/".join(path_parts)
+        previous = results.get(result_id)
+        if previous is None or (previous == "base" and sample == "new"):
+            results[result_id] = sample
+    return tuple(sorted(results))
+
+
+def _criterion_group_matches(result_id: str, group_prefix: str) -> bool:
+    """Return whether a Criterion result belongs to one planned top-level group."""
+    group = result_id.split("/", maxsplit=1)[0]
+    return group.startswith(group_prefix) if group_prefix.endswith("_") else group == group_prefix
+
+
+@dataclass(frozen=True)
+class PerformanceSummaryEvidence:
+    """Complete structured evidence consumed by one summary render."""
+
+    ci_performance: CiPerformanceSummaryEvidence
+    circumsphere: CircumsphereSummaryEvidence
+    release_signal_sections: tuple[BenchmarkPlanSectionEvidence, ...]
+
+    def validation_errors(self) -> tuple[str, ...]:
+        """Return actionable reasons this evidence is not release-complete."""
+        errors = []
+        if not self.ci_performance.is_complete:
+            missing = ", ".join(self.ci_performance.missing_result_ids)
+            errors.append(f"ci_performance_suite is incomplete ({self.ci_performance.completeness_basis}; missing: {missing})")
+        if self.circumsphere.provenance != "criterion":
+            errors.append("circumsphere evidence uses reference fallback timings")
+        if self.circumsphere.missing_result_ids:
+            missing = ", ".join(self.circumsphere.missing_result_ids)
+            errors.append(f"circumsphere Criterion evidence is incomplete (missing: {missing})")
+        planned_targets = RELEASE_SIGNAL_BENCH_TARGETS
+        evidence_targets = tuple(section.target for section in self.release_signal_sections)
+        if evidence_targets != planned_targets:
+            errors.append(
+                "release-signal report sections do not match the measurement plan "
+                f"(expected: {', '.join(planned_targets)}; found: {', '.join(evidence_targets)})",
+            )
+        for section in self.release_signal_sections:
+            if section.is_complete:
+                continue
+            missing = ", ".join(section.missing_group_prefixes) or "all results"
+            errors.append(f"{section.target} report section {section.report_section!r} is incomplete (missing groups: {missing})")
+        return tuple(errors)
+
+
 def _criterion_arg_value(args: list[str], flag: str) -> str:
     """Return the Criterion value that follows flag in args."""
     try:
@@ -1018,6 +1243,55 @@ def _sampling_metadata(dev_mode: bool) -> dict[str, str]:
         "criterion_measurement_time": _criterion_arg_value(DEV_MODE_BENCH_ARGS, "--measurement-time"),
         "criterion_warm_up_time": _criterion_arg_value(DEV_MODE_BENCH_ARGS, "--warm-up-time"),
     }
+
+
+def run_release_signal_measurement_plan(
+    project_root: Path,
+    *,
+    cargo_profile: str = BENCHMARK_BUILD_FLAVOR,
+    bench_timeout: int = 1800,
+    save_baseline: str | None = None,
+) -> dict[str, str]:
+    """Execute the maintained release-signal plan and return stdout by target."""
+    _require_positive_int_field("bench_timeout", bench_timeout)
+    outputs: dict[str, str] = {}
+    for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN:
+        cargo_args = ["bench", "--profile", cargo_profile, "--bench", measurement.target]
+        criterion_arguments = list(measurement.criterion_arguments)
+        if save_baseline is not None:
+            criterion_arguments.extend(["--save-baseline", save_baseline])
+        if criterion_arguments:
+            cargo_args.extend(["--", *criterion_arguments])
+
+        print(f"🔄 Running release-signal target {measurement.target}...")
+        result = run_cargo_command(
+            cargo_args,
+            cwd=project_root,
+            timeout=bench_timeout,
+            capture_output=True,
+            check=False,
+        )
+        if result.stdout:
+            print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+        if result.stderr:
+            print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
+        if result.returncode != 0:
+            msg = f"release-signal target {measurement.target} exited with status {result.returncode}"
+            raise RuntimeError(msg)
+        outputs[measurement.target] = result.stdout
+
+        if measurement.target == "ci_performance_suite":
+            completed_at = datetime.now(UTC)
+            _write_ci_performance_manifest_ids(project_root, result.stdout)
+            _write_ci_performance_metrics(project_root, result.stdout, require_metrics=True)
+            _write_ci_performance_run_metadata(
+                project_root,
+                completed_at=completed_at,
+                cargo_profile=cargo_profile,
+                use_dev_mode=False,
+            )
+
+    return outputs
 
 
 # Use the shared secure wrapper from subprocess_utils
@@ -1063,15 +1337,14 @@ class PerformanceSummaryGenerator:
 
         Args:
             output_path: Output file path (defaults to benches/PERFORMANCE_RESULTS.md)
-            run_benchmarks: Whether to run fresh public API and circumsphere benchmarks
+            run_benchmarks: Whether to run the fresh release-signal measurement plan
             cargo_profile: Optional Cargo profile for fresh benchmark runs.  When
                 ``run_benchmarks`` is True and no profile is specified, defaults
                 to :data:`BENCHMARK_BUILD_FLAVOR` so fresh runs match baseline
                 and comparison measurements.
-            bench_timeout: Timeout for the public API benchmark command in seconds.
-            strict: Fail instead of rendering from existing or fallback data
-                when fresh benchmark execution is requested and any benchmark
-                command fails.
+            bench_timeout: Per-target timeout for the release-signal plan in seconds.
+            strict: Reject fallback or incomplete benchmark evidence. Fresh
+                benchmark requests enforce the same completeness contract.
 
         Returns:
             True if successful, False otherwise
@@ -1086,32 +1359,35 @@ class PerformanceSummaryGenerator:
 
             # Optionally run fresh benchmarks
             if run_benchmarks:
-                # Default fresh runs to the trusted perf profile so numbers are
-                # comparable with baseline/compare output.
                 if cargo_profile is None:
                     cargo_profile = BENCHMARK_BUILD_FLAVOR
-                ci_success = self._run_ci_performance_suite(
-                    cargo_profile=cargo_profile,
-                    bench_timeout=bench_timeout,
-                )
-                circumsphere_success, accuracy_data = self._run_circumsphere_benchmarks(cargo_profile=cargo_profile)
-                if circumsphere_success:
-                    self.numerical_accuracy_data = accuracy_data
-                if not ci_success or not circumsphere_success:
-                    if strict:
-                        print("❌ Benchmark run failed; strict summary mode refuses fallback data", file=sys.stderr)
-                        return False
-                    print("⚠️ Benchmark run failed, using existing/fallback data")
+                try:
+                    outputs = run_release_signal_measurement_plan(
+                        self.project_root,
+                        cargo_profile=cargo_profile,
+                        bench_timeout=bench_timeout,
+                    )
+                    self.numerical_accuracy_data = self._parse_numerical_accuracy_output(
+                        outputs["circumsphere_containment"],
+                    )
+                except _RECOVERABLE_CLI_ERRORS as error:
+                    logger.debug("Fresh release-signal benchmark plan failed: %s", error)
+                    print("❌ Fresh benchmark run failed; summary publication was not attempted", file=sys.stderr)
+                    return False
 
-            # Generate markdown content
-            content = self._generate_markdown_content()
-            if strict and self._contains_fallback_summary_data(content):
-                print("❌ Strict summary mode detected fallback benchmark data", file=sys.stderr)
+            evidence = self._collect_summary_evidence()
+            validation_errors = evidence.validation_errors()
+            if (strict or run_benchmarks) and validation_errors:
+                print(
+                    "❌ Strict/fresh summary requires complete measured evidence: " + "; ".join(validation_errors),
+                    file=sys.stderr,
+                )
                 return False
 
-            # Write to output file
-            with output_path.open("w", encoding="utf-8") as f:
-                f.write(content)
+            # Render from the evidence that was validated above, then publish only
+            # after the complete content has been durably written beside the target.
+            content = self._generate_markdown_content(evidence=evidence)
+            _write_text_atomic(output_path, content)
 
             print(f"📊 Generated performance summary: {output_path}")
             return True
@@ -1120,18 +1396,120 @@ class PerformanceSummaryGenerator:
             print(f"❌ Failed to generate performance summary: {e}", file=sys.stderr)
             return False
 
-    @staticmethod
-    def _contains_fallback_summary_data(content: str) -> bool:
-        """Return whether generated summary content used fallback/reference data."""
-        fallback_markers = (
-            "reference data",
-            "No `ci_performance_suite` Criterion results available",
-            "No benchmark results available. Run benchmarks first",
-            "To get current numerical accuracy data",
+    def _collect_ci_performance_summary_evidence(self) -> CiPerformanceSummaryEvidence:
+        """Collect parsed CI-suite rows and structural completeness evidence."""
+        results = tuple(self._parse_ci_performance_suite_results())
+        manifest_ids = _load_ci_performance_manifest_ids(self.circumsphere_results_dir)
+        if manifest_ids is not None:
+            parsed_ids = {result.benchmark_id for result in results}
+            missing_result_ids = tuple(sorted(manifest_ids - parsed_ids))
+            completeness_basis: Literal["runtime-manifest", "group-contract"] = "runtime-manifest"
+        else:
+            parsed_groups = {result.group_key for result in results}
+            missing_result_ids = tuple(f"group:{group}" for group in CI_PERFORMANCE_SUITE_GROUP_ORDER if group not in parsed_groups)
+            completeness_basis = "group-contract"
+        return CiPerformanceSummaryEvidence(
+            results=results,
+            missing_result_ids=missing_result_ids,
+            completeness_basis=completeness_basis,
         )
-        return any(marker in content for marker in fallback_markers)
 
-    def _generate_markdown_content(self, generator_name: str | None = None) -> str:
+    def _circumsphere_expected_results(self) -> dict[tuple[str, str, str], str]:
+        """Return the fixed circumsphere case/method contract keyed by rendered identity."""
+        benchmark_mappings, edge_case_mappings, method_mappings, edge_method_mappings = self._get_benchmark_mappings()
+        expected = {
+            (test_name, dimension, method_name): f"{bench_key}_{method_suffix}"
+            for bench_key, (test_name, dimension) in benchmark_mappings.items()
+            for method_suffix, method_name in method_mappings.items()
+        }
+        expected.update(
+            {
+                (test_name, dimension, method_name): f"{bench_key}_{method_suffix}"
+                for bench_key, (test_name, dimension) in edge_case_mappings.items()
+                for method_suffix, method_name in edge_method_mappings.items()
+            },
+        )
+        return expected
+
+    def _collect_circumsphere_summary_evidence(self) -> CircumsphereSummaryEvidence:
+        """Collect measured circumsphere rows or an explicitly identified fallback."""
+        parsed_cases = tuple(self._parse_circumsphere_benchmark_results())
+        expected = self._circumsphere_expected_results()
+        parsed_keys = {(test_case.test_name, test_case.dimension, method_name) for test_case in parsed_cases for method_name in test_case.methods}
+        missing_result_ids = tuple(sorted(result_id for result_key, result_id in expected.items() if result_key not in parsed_keys))
+        if parsed_cases:
+            return CircumsphereSummaryEvidence(
+                test_cases=parsed_cases,
+                provenance="criterion",
+                missing_result_ids=missing_result_ids,
+            )
+        return CircumsphereSummaryEvidence(
+            test_cases=tuple(self._get_fallback_circumsphere_data()),
+            provenance="reference-fallback",
+            missing_result_ids=missing_result_ids,
+        )
+
+    def _collect_release_signal_section_evidence(self) -> tuple[BenchmarkPlanSectionEvidence, ...]:
+        """Collect report coverage directly from the executable release plan."""
+        result_ids = _criterion_result_ids(self.circumsphere_results_dir)
+        sections = []
+        for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN:
+            matching_ids = tuple(
+                result_id for result_id in result_ids if any(_criterion_group_matches(result_id, prefix) for prefix in measurement.required_group_prefixes)
+            )
+            missing_prefixes = tuple(
+                prefix for prefix in measurement.required_group_prefixes if not any(_criterion_group_matches(result_id, prefix) for result_id in matching_ids)
+            )
+            sections.append(
+                BenchmarkPlanSectionEvidence(
+                    target=measurement.target,
+                    report_section=measurement.report_section,
+                    result_ids=matching_ids,
+                    missing_group_prefixes=missing_prefixes,
+                ),
+            )
+        return tuple(sections)
+
+    def _collect_summary_evidence(self) -> PerformanceSummaryEvidence:
+        """Collect every dynamic result exactly once for validation and rendering."""
+        return PerformanceSummaryEvidence(
+            ci_performance=self._collect_ci_performance_summary_evidence(),
+            circumsphere=self._collect_circumsphere_summary_evidence(),
+            release_signal_sections=self._collect_release_signal_section_evidence(),
+        )
+
+    @staticmethod
+    def _release_signal_coverage_section(sections: tuple[BenchmarkPlanSectionEvidence, ...]) -> list[str]:
+        """Render exact report-section coverage from the executable measurement plan."""
+        lines = [
+            "## Release Signal Measurement Coverage",
+            "",
+            "| Benchmark target | Report section | Valid results | Status |",
+            "|------------------|----------------|--------------:|--------|",
+        ]
+        for section in sections:
+            if section.is_complete:
+                status = "complete"
+            else:
+                missing = ", ".join(section.missing_group_prefixes) or "all results"
+                status = f"incomplete: missing {missing}"
+            lines.append(f"| `{section.target}` | {section.report_section} | {len(section.result_ids)} | {status} |")
+        lines.extend(
+            [
+                "",
+                "The benchmark target, report section, and required Criterion groups are owned by the",
+                "same executable release-signal plan. Strict generation rejects every incomplete row.",
+                "",
+            ],
+        )
+        return lines
+
+    def _generate_markdown_content(
+        self,
+        generator_name: str | None = None,
+        *,
+        evidence: PerformanceSummaryEvidence | None = None,
+    ) -> str:
         """
         Generate the complete markdown content for performance results.
 
@@ -1141,6 +1519,9 @@ class PerformanceSummaryGenerator:
         Returns:
             Formatted markdown content as string
         """
+        if evidence is None:
+            evidence = self._collect_summary_evidence()
+
         # Determine the generator name for attribution
         if generator_name is None:
             generator_name = "benchmark_utils.py"
@@ -1195,13 +1576,15 @@ class PerformanceSummaryGenerator:
             ],
         )
 
+        lines.extend(self._release_signal_coverage_section(evidence.release_signal_sections))
+
         # Add public API performance results from the CI suite next. This is
         # the versioned benchmark contract used by baseline/comparison tooling.
-        lines.extend(self._get_ci_performance_suite_results())
+        lines.extend(self._get_ci_performance_suite_results(evidence.ci_performance))
 
         # Add circumsphere predicate results as a focused subsection. These
         # remain important because they exercise la-stack-backed predicates.
-        lines.extend(self._get_circumsphere_performance_results())
+        lines.extend(self._get_circumsphere_performance_results(evidence.circumsphere))
 
         # Add circumsphere-specific implementation notes next to the data they
         # explain.
@@ -1487,7 +1870,7 @@ class PerformanceSummaryGenerator:
         """
         if not self.circumsphere_results_dir.exists():
             print(f"⚠️ No criterion results found at {self.circumsphere_results_dir}")
-            return self._get_fallback_circumsphere_data()
+            return []
 
         benchmark_mappings, edge_case_mappings, method_mappings, edge_method_mappings = self._get_benchmark_mappings()
 
@@ -1495,10 +1878,8 @@ class PerformanceSummaryGenerator:
         test_cases.extend(self._parse_regular_benchmarks(benchmark_mappings, method_mappings))
         test_cases.extend(self._parse_edge_case_benchmarks(edge_case_mappings, edge_method_mappings))
 
-        # If no results were parsed, use fallback data
         if not test_cases:
-            print("⚠️ No benchmark results parsed, using fallback data")
-            return self._get_fallback_circumsphere_data()
+            print("⚠️ No circumsphere benchmark results parsed")
 
         return test_cases
 
@@ -1628,9 +2009,9 @@ class PerformanceSummaryGenerator:
         Returns:
             CircumspherePerformanceData object or None if parsing failed
         """
-        estimates_file = criterion_path / "base" / "estimates.json"
+        estimates_file = criterion_path / "new" / "estimates.json"
         if not estimates_file.exists():
-            estimates_file = criterion_path / "new" / "estimates.json"
+            estimates_file = criterion_path / "base" / "estimates.json"
 
         if estimates_file.exists():
             estimate = _load_criterion_estimate(estimates_file)
@@ -1641,7 +2022,7 @@ class PerformanceSummaryGenerator:
 
     def _get_fallback_circumsphere_data(self) -> list[CircumsphereTestCase]:
         """
-        Get fallback circumsphere performance data when live benchmarks aren't available.
+        Get explicitly labeled reference fallback data for permissive reports.
 
         Returns:
             List of CircumsphereTestCase objects with known performance data
@@ -1747,14 +2128,19 @@ class PerformanceSummaryGenerator:
         )
         return results
 
-    def _get_ci_performance_suite_results(self) -> list[str]:
+    def _get_ci_performance_suite_results(
+        self,
+        evidence: CiPerformanceSummaryEvidence | None = None,
+    ) -> list[str]:
         """
         Generate the public API performance summary from ci_performance_suite data.
 
         Returns:
             List of markdown lines with ci_performance_suite benchmark data.
         """
-        results = self._parse_ci_performance_suite_results()
+        if evidence is None:
+            evidence = self._collect_ci_performance_summary_evidence()
+        results = evidence.results
 
         lines = [
             "### Public API Performance Contract (`ci_performance_suite`)",
@@ -1764,6 +2150,14 @@ class PerformanceSummaryGenerator:
             "boundary traversal, and explicit bistellar flip roundtrips.",
             "",
         ]
+
+        if evidence.missing_result_ids and results:
+            lines.extend(
+                [
+                    "⚠️ This section is incomplete; some expected Criterion estimates were missing or malformed.",
+                    "",
+                ],
+            )
 
         if not results:
             lines.extend(
@@ -1809,15 +2203,19 @@ class PerformanceSummaryGenerator:
 
         return lines
 
-    def _get_circumsphere_performance_results(self) -> list[str]:
+    def _get_circumsphere_performance_results(
+        self,
+        evidence: CircumsphereSummaryEvidence | None = None,
+    ) -> list[str]:
         """
         Generate circumsphere containment performance results section with dynamic data.
 
         Returns:
             List of markdown lines with circumsphere performance data
         """
-        # Parse actual benchmark results
-        test_cases = self._parse_circumsphere_benchmark_results()
+        if evidence is None:
+            evidence = self._collect_circumsphere_summary_evidence()
+        test_cases = evidence.test_cases
 
         if not test_cases:
             return [
@@ -1827,7 +2225,7 @@ class PerformanceSummaryGenerator:
                 "",
                 "⚠️ No benchmark results available. Run benchmarks first:",
                 "```bash",
-                f"uv run benchmark-utils generate-summary --run-benchmarks --profile {BENCHMARK_BUILD_FLAVOR}",
+                f"uv run --locked benchmark-utils generate-summary --run-benchmarks --profile {BENCHMARK_BUILD_FLAVOR}",
                 "```",
                 "",
             ]
@@ -1838,9 +2236,8 @@ class PerformanceSummaryGenerator:
             "This focused predicate suite tracks `la-stack`-backed circumsphere and",
             "insphere query performance independently from full triangulation workflows.",
             "",
-            f"#### Version {self.current_version} Results ({self.current_date})",
-            "",
         ]
+        lines.extend(self._circumsphere_evidence_header(evidence))
 
         # Group test cases by dimension for better organization
         cases_by_dimension: dict[str, list[CircumsphereTestCase]] = {}
@@ -1895,6 +2292,32 @@ class PerformanceSummaryGenerator:
 
         # Historical version comparison has been moved to static sections
 
+        return lines
+
+    def _circumsphere_evidence_header(self, evidence: CircumsphereSummaryEvidence) -> list[str]:
+        """Render an honest heading for measured, partial, or fallback evidence."""
+        if evidence.provenance == "reference-fallback":
+            return [
+                "⚠️ Reference fallback timings are shown below; they are not measurements for the current version.",
+                "",
+                "#### Reference Fallback Timings",
+                "",
+            ]
+
+        lines = []
+        if evidence.missing_result_ids:
+            lines.extend(
+                [
+                    "⚠️ This section is incomplete; some expected Criterion estimates were missing or malformed.",
+                    "",
+                ],
+            )
+        lines.extend(
+            [
+                f"#### Version {self.current_version} Results ({self.current_date})",
+                "",
+            ],
+        )
         return lines
 
     def _parse_baseline_results(self) -> list[str]:
@@ -2333,13 +2756,13 @@ class PerformanceSummaryGenerator:
             "",
             "```bash",
             "# Re-render from currently available Criterion data",
-            "uv run benchmark-utils generate-summary",
+            "uv run --locked benchmark-utils generate-summary",
             "",
-            "# Run fresh perf-profile public API and circumsphere benchmarks",
-            f"uv run benchmark-utils generate-summary --run-benchmarks --profile {BENCHMARK_BUILD_FLAVOR}",
+            "# Run the fresh perf-profile release-signal plan",
+            f"uv run --locked benchmark-utils generate-summary --run-benchmarks --profile {BENCHMARK_BUILD_FLAVOR}",
             "",
             "# Package existing ci_performance_suite Criterion results for release-asset comparisons",
-            "uv run benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt",
+            "uv run --locked benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt",
             "```",
             "",
             "### Customization",
@@ -3664,24 +4087,30 @@ def _stable_published_releases(releases: object) -> list[PublishedRelease]:
         msg = "expected GitHub release list to be a JSON array"
         raise TypeError(msg)
 
-    stable_releases: dict[str, PublishedRelease] = {}
-    for release in releases:
-        if not isinstance(release, Mapping):
-            continue
-        if release.get("isDraft") or release.get("isPrerelease"):
-            continue
-        tag_name = release.get("tagName")
-        published_at = release.get("publishedAt")
-        if not isinstance(tag_name, str) or not isinstance(published_at, str) or not published_at:
+    parsed_releases: list[GitHubRelease] = []
+    seen_tags: set[str] = set()
+    for index, raw_release in enumerate(releases):
+        release = GitHubRelease.from_raw(raw_release, index=index)
+        if release.tag in seen_tags:
+            msg = f"duplicate GitHub release tag after normalization: {release.tag!r}"
+            raise ValueError(msg)
+        seen_tags.add(release.tag)
+        parsed_releases.append(release)
+
+    stable_releases: list[PublishedRelease] = []
+    for release in parsed_releases:
+        if release.is_draft or release.is_prerelease:
             continue
         try:
-            normalized = normalize_release_tag(tag_name)
-            _stable_semver_sort_key(normalized)
+            _stable_semver_sort_key(release.tag)
         except ValueError:
             continue
-        stable_releases[normalized] = PublishedRelease(tag=normalized, published_at=published_at)
+        if release.published_at is None:
+            msg = f"published GitHub release {release.tag!r} is missing publishedAt"
+            raise ValueError(msg)
+        stable_releases.append(PublishedRelease(tag=release.tag, published_at=release.published_at))
 
-    return list(stable_releases.values())
+    return stable_releases
 
 
 def _published_stable_releases(repo_root: Path) -> list[PublishedRelease]:
@@ -5989,18 +6418,13 @@ class PerformanceComparator:
 
     def _parse_baseline_file(self, baseline_content: str) -> dict[str, BenchmarkData]:
         """Parse baseline file content into benchmark data."""
-        results = {}
-        for benchmark in extract_benchmark_data(baseline_content):
-            if not benchmark.time_unit:
-                section_label = benchmark.benchmark_id or benchmark.header_line()
-                msg = f"Malformed baseline section {section_label!r}: missing or invalid Time line"
-                raise BaselineParseError(msg)
-            try:
-                results[benchmark.comparison_key] = benchmark
-            except ValueError as exc:
-                section_label = benchmark.benchmark_id or benchmark.header_line()
-                msg = f"Malformed baseline section {section_label!r}: {exc}"
-                raise BaselineParseError(msg) from exc
+        try:
+            benchmarks = extract_benchmark_data(baseline_content)
+        except ValueError as exc:
+            raise BaselineParseError(str(exc)) from exc
+        results: dict[str, BenchmarkData] = {}
+        for benchmark in benchmarks:
+            results[benchmark.comparison_key] = benchmark
         return results
 
     def parse_baseline_file(self, baseline_content: str) -> dict[str, BenchmarkData]:
@@ -6162,6 +6586,10 @@ class PerformanceComparator:
         failure_policy: ComparisonFailurePolicy = "strict",
     ) -> bool:
         """Write performance comparison section and return whether any regression exceeds threshold."""
+        coverage = self._comparison_coverage(current_results, baseline_results)
+        if not coverage.is_comparable:
+            self._write_non_comparable_coverage(f, coverage)
+
         time_changes: list[BenchmarkTimeChange] = []
         individual_regressions = 0
         individual_improvements = 0
@@ -6196,6 +6624,14 @@ class PerformanceComparator:
                 f.write("Baseline: N/A (no matching entry)\n")
 
             f.write("\n")
+
+        if not coverage.is_comparable:
+            self._write_failed_aggregate_summary(
+                f,
+                reason="benchmark coverage differs or is empty",
+                requirement="complete identical benchmark coverage is required",
+            )
+            return True
 
         if time_changes:
             total_current_us = sum(change.current_mean_us for change in time_changes)
@@ -6240,7 +6676,74 @@ class PerformanceComparator:
             f.write("\n")
             return regression_found
 
-        return False
+        self._write_failed_aggregate_summary(
+            f,
+            reason="no valid timing pairs",
+            requirement="every covered benchmark requires a valid timing pair",
+        )
+        return True
+
+    @staticmethod
+    def _write_failed_aggregate_summary(
+        f: TextIO,
+        *,
+        reason: str,
+        requirement: str,
+    ) -> None:
+        """Render a non-comparable enforcing-policy result."""
+        f.write("\n=== SUMMARY ===\n")
+        f.write(f"Aggregate timing comparison: NOT COMPARABLE ({reason})\n")
+        f.write(f"🚨 PERFORMANCE GUARD FAILED: {requirement}\n\n")
+
+    @staticmethod
+    def _comparison_coverage(
+        current_results: list[BenchmarkData],
+        baseline_results: Mapping[str, BenchmarkData],
+    ) -> BenchmarkComparisonCoverage:
+        """Build exact comparison-key evidence without silently collapsing duplicates."""
+        current_keys = [benchmark.comparison_key for benchmark in current_results]
+        counts: dict[str, int] = {}
+        for key in current_keys:
+            counts[key] = counts.get(key, 0) + 1
+        duplicates = tuple(sorted(key for key, count in counts.items() if count > 1))
+        invalid_current = tuple(sorted(benchmark.comparison_key for benchmark in current_results if not PerformanceComparator._has_valid_timing(benchmark)))
+        invalid_baseline = tuple(sorted(key for key, benchmark in baseline_results.items() if not PerformanceComparator._has_valid_timing(benchmark)))
+        return BenchmarkComparisonCoverage(
+            current_keys=frozenset(current_keys),
+            baseline_keys=frozenset(baseline_results),
+            duplicate_current_keys=duplicates,
+            invalid_current_timing_keys=invalid_current,
+            invalid_baseline_timing_keys=invalid_baseline,
+        )
+
+    @staticmethod
+    def _has_valid_timing(benchmark: BenchmarkData) -> bool:
+        """Return whether a reporting record has one supported physical timing."""
+        values = (benchmark.time_low, benchmark.time_mean, benchmark.time_high)
+        return (
+            benchmark.time_unit in TIME_UNIT_TO_MICROSECONDS
+            and all(math.isfinite(value) and value > 0.0 for value in values)
+            and benchmark.time_low <= benchmark.time_mean <= benchmark.time_high
+        )
+
+    @staticmethod
+    def _write_non_comparable_coverage(f: TextIO, coverage: BenchmarkComparisonCoverage) -> None:
+        """Render complete diagnostics for a non-comparable benchmark keyset."""
+        f.write("=== COVERAGE ===\n")
+        f.write("Comparison coverage: NON-COMPARABLE\n")
+        if not coverage.current_keys and not coverage.baseline_keys:
+            f.write("Reason: current and baseline benchmark keysets are empty\n")
+        if coverage.duplicate_current_keys:
+            f.write(f"Duplicate current benchmark keys: {', '.join(coverage.duplicate_current_keys)}\n")
+        if coverage.invalid_current_timing_keys:
+            f.write(f"Invalid current timings: {', '.join(coverage.invalid_current_timing_keys)}\n")
+        if coverage.invalid_baseline_timing_keys:
+            f.write(f"Invalid baseline timings: {', '.join(coverage.invalid_baseline_timing_keys)}\n")
+        if coverage.missing_from_baseline:
+            f.write(f"Missing from baseline: {', '.join(coverage.missing_from_baseline)}\n")
+        if coverage.missing_from_current:
+            f.write(f"Missing from current run: {', '.join(coverage.missing_from_current)}\n")
+        f.write("\n")
 
     @staticmethod
     def _geomean_time_change(time_changes: list[BenchmarkTimeChange]) -> float:
@@ -7471,6 +7974,22 @@ def _add_benchmark_subcommands(subparsers: argparse._SubParsersAction[argparse.A
     """Add benchmark-running subcommands."""
     _add_bench_compare_subcommand(subparsers)
 
+    release_signal_parser = subparsers.add_parser(
+        "run-release-signal",
+        help="Run the maintained release-signal benchmark measurement plan",
+    )
+    release_signal_parser.add_argument(
+        "--profile",
+        default=BENCHMARK_BUILD_FLAVOR,
+        help=f"Cargo profile for every planned target (default: {BENCHMARK_BUILD_FLAVOR})",
+    )
+    release_signal_parser.add_argument(
+        "--save-baseline",
+        help="Also save every planned Criterion result under this baseline name",
+    )
+    _add_bench_timeout_arg(release_signal_parser)
+    _add_project_root_arg(release_signal_parser)
+
     gen_parser = subparsers.add_parser("generate-baseline", help="Generate performance baseline")
     _add_dev_arg(gen_parser)
     gen_parser.add_argument("--output", type=Path, help="Output file path")
@@ -7668,7 +8187,7 @@ def _add_performance_summary_subcommands(subparsers: argparse._SubParsersAction[
     perf_summary_parser.add_argument(
         "--run-benchmarks",
         action="store_true",
-        help="Run fresh ci_performance_suite and circumsphere benchmarks before generating summary",
+        help="Run the maintained release-signal measurement plan before generating summary",
     )
     perf_summary_parser.add_argument(
         "--profile",
@@ -7678,7 +8197,7 @@ def _add_performance_summary_subcommands(subparsers: argparse._SubParsersAction[
     perf_summary_parser.add_argument(
         "--strict",
         action="store_true",
-        help="Fail instead of rendering from existing or fallback data when fresh benchmark execution fails",
+        help="Reject fallback or incomplete benchmark evidence before publishing the summary",
     )
     _add_bench_timeout_arg(perf_summary_parser)
 
@@ -7918,27 +8437,37 @@ def _baseline_fetch_options_from_args(args: argparse.Namespace) -> BaselineFetch
 
 
 def _cmd_compare_baselines(args: argparse.Namespace, project_root: Path) -> None:
-    if not args.old_baseline.exists():
-        print(f"❌ Baseline file not found: {args.old_baseline}", file=sys.stderr)
-        sys.exit(3)
-    if not args.new_baseline.exists():
-        print(f"❌ Baseline file not found: {args.new_baseline}", file=sys.stderr)
-        sys.exit(3)
+    command = "benchmark-utils compare-baselines"
+    for option, baseline_path in (("--old", args.old_baseline), ("--new", args.new_baseline)):
+        if not baseline_path.is_file():
+            print(f"{command}: error: {option} must name a regular file: {baseline_path}", file=sys.stderr)
+            sys.exit(3)
 
     try:
         report_text, regression_found = render_baseline_comparison(project_root, args.old_baseline, args.new_baseline)
     except FileNotFoundError as e:
-        print(f"❌ {e}", file=sys.stderr)
+        print(f"{command}: error: baseline input disappeared: {e}", file=sys.stderr)
         sys.exit(3)
+    except UnicodeDecodeError as e:
+        print(f"{command}: error: baseline input is not valid UTF-8: {e}", file=sys.stderr)
+        sys.exit(1)
+    except OSError as e:
+        print(f"{command}: error: could not read baseline input: {e}", file=sys.stderr)
+        sys.exit(1)
     except BaselineParseError as e:
-        print(f"❌ Failed to parse baseline file: {e}", file=sys.stderr)
+        print(f"{command}: error: failed to parse baseline file: {e}", file=sys.stderr)
         sys.exit(1)
     except RuntimeError as e:
-        print(f"❌ Failed to compare baseline files: {e}", file=sys.stderr)
+        print(f"{command}: error: failed to compare baseline files: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        _write_optional_report(args.output, report_text)
+    except OSError as e:
+        print(f"{command}: error: could not publish --output {args.output}: {e}", file=sys.stderr)
         sys.exit(1)
 
     print(report_text, end="" if report_text.endswith("\n") else "\n")
-    _write_optional_report(args.output, report_text)
     sys.exit(1 if regression_found else 0)
 
 
@@ -8144,6 +8673,21 @@ def _cmd_generate_summary(args: argparse.Namespace, project_root: Path) -> None:
         strict=args.strict,
     )
     sys.exit(0 if success else 1)
+
+
+def _cmd_run_release_signal(args: argparse.Namespace, project_root: Path) -> None:
+    """Execute the release-signal plan from its single Python owner."""
+    try:
+        run_release_signal_measurement_plan(
+            project_root,
+            cargo_profile=args.profile,
+            bench_timeout=args.bench_timeout,
+            save_baseline=args.save_baseline,
+        )
+    except _RECOVERABLE_CLI_ERRORS as error:
+        print(f"run-release-signal: {error}", file=sys.stderr)
+        sys.exit(1)
+    sys.exit(0)
 
 
 def _path_from_root(project_root: Path, path: Path) -> Path:
@@ -8367,6 +8911,7 @@ def execute_performance_summary_commands(args: argparse.Namespace, project_root:
     """Execute performance summary commands."""
     handlers = {
         "generate-summary": _cmd_generate_summary,
+        "run-release-signal": _cmd_run_release_signal,
     }
     handler = handlers.get(args.command)
     if handler is None:
@@ -8401,6 +8946,7 @@ def execute_command(args: argparse.Namespace, project_root: Path) -> None:
         "display-summary": _execute_workflow_commands_with_root,
         "sanitize-artifact-name": _execute_workflow_commands_with_root,
         "generate-summary": execute_performance_summary_commands,
+        "run-release-signal": execute_performance_summary_commands,
         "create-release-benchmark-metadata": execute_release_performance_commands,
         "prepare-baseline": _execute_regression_commands_with_root,
         "set-no-baseline": _execute_regression_commands_with_root,

@@ -14,6 +14,7 @@ use crate::core::collections::{
 };
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::vertex::Vertex;
+use crate::refinement::RefinementError;
 use std::collections::VecDeque;
 
 /// Topology validation mode for checked TDS simplex insertion.
@@ -209,15 +210,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         let mut facet_map: FastHashMap<u64, SmallBuffer<FacetInfo, 2>> =
             fast_hash_map_with_capacity(cap);
 
-        for (simplex_key, simplex) in &self.simplices {
-            let vertices = self.simplex_vertices(simplex_key).map_err(|err| {
-                TdsError::VertexKeyRetrievalFailed {
-                    simplex_id: simplex.uuid(),
-                    message: format!(
-                        "Failed to retrieve vertex keys for simplex during neighbor assignment: {err}"
-                    ),
-                }
-            })?;
+        for (simplex_key, simplex) in self.simplices.iter() {
+            let vertices = self.simplex_vertices(simplex_key)?;
 
             for i in 0..vertices.len() {
                 let facet_key =
@@ -226,13 +220,13 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                 // Detect degenerate case early: more than 2 simplices sharing a facet
                 // Note: Check happens before push, so len() reflects current sharing count
                 if facet_entry.len() >= 2 {
-                    return Err(TdsError::InconsistentDataStructure {
-                        message: format!(
-                            "Facet with key {} already shared by {} simplices; cannot add simplex {} (would violate 2-manifold property)",
-                            facet_key,
-                            facet_entry.len(),
-                            simplex.uuid()
-                        ),
+                    return Err(TdsError::FacetSharingViolation {
+                        facet_key,
+                        existing_incident_count: facet_entry.len(),
+                        attempted_incident_count: facet_entry.len().saturating_add(1),
+                        max_incident_count: 2,
+                        candidate_simplex_uuid: simplex.uuid(),
+                        candidate_facet_index: i,
                     });
                 }
                 facet_entry.push((simplex_key, i));
@@ -246,7 +240,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         > = fast_hash_map_with_capacity(self.simplices.len());
 
         // Initialize each simplex with a SmallBuffer of None values (one per vertex)
-        for (simplex_key, simplex) in &self.simplices {
+        for (simplex_key, simplex) in self.simplices.iter() {
             let vertex_count = simplex.number_of_vertices();
             if vertex_count > MAX_PRACTICAL_DIMENSION_SIZE {
                 return Err(TdsError::InconsistentDataStructure {
@@ -293,6 +287,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         // assigned boundary buffer so assigned-boundary and unassigned states
         // remain distinct.
         for (simplex_key, neighbors) in &simplex_neighbors {
+            self.journal_simplex_before_write(*simplex_key);
             if let Some(simplex) = self.simplices.get_mut(*simplex_key) {
                 let simplex_id = simplex.uuid();
                 simplex
@@ -356,11 +351,13 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         }
 
         let vertex_key = self.vertices.insert(vertex);
+        self.journal_incidence_before_write([vertex_key]);
         if let Err(source) = self.insert_empty_vertex_incidence(vertex_key) {
             self.vertices.remove(vertex_key);
             return Err(TdsConstructionError::ValidationError { source });
         }
         self.uuid_to_vertex_key.insert(vertex_uuid, vertex_key);
+        self.journal_inserted_vertex(vertex_key, vertex_uuid);
         self.refresh_incomplete_construction_state();
         // Topology changed; invalidate caches.
         self.bump_generation();
@@ -469,11 +466,13 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             simplex.vertices().iter().copied().collect();
         let simplex_key = self.simplices.insert(simplex);
         self.uuid_to_simplex_key.insert(simplex_uuid, simplex_key);
+        self.journal_incidence_before_write(simplex_vertices.iter().copied());
         if let Err(source) = self.add_simplex_to_vertex_incidence(simplex_key, &simplex_vertices) {
             self.simplices.remove(simplex_key);
             self.uuid_to_simplex_key.remove(&simplex_uuid);
             return Err(TdsConstructionError::ValidationError { source });
         }
+        self.journal_inserted_simplex(simplex_key, simplex_uuid);
         // Topology changed; invalidate caches.
         self.bump_generation();
         Ok(simplex_key)
@@ -536,7 +535,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ) -> Result<(), TdsError> {
         let candidate_identity = self.candidate_periodic_vertex_uuid_offsets(simplex)?;
 
-        for (existing_simplex_key, _existing_simplex) in &self.simplices {
+        for (existing_simplex_key, _existing_simplex) in self.simplices.iter() {
             let vertices = self.simplex_vertices(existing_simplex_key)?;
             let existing_identity =
                 self.build_periodic_vertex_uuid_offsets(existing_simplex_key, vertices)?;
@@ -565,7 +564,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             )?;
             let mut incident_count = 0_usize;
 
-            for (existing_simplex_key, existing_simplex) in &self.simplices {
+            for (existing_simplex_key, existing_simplex) in self.simplices.iter() {
                 let existing_vertices = self.simplex_vertices(existing_simplex_key)?;
                 for existing_facet_idx in 0..existing_vertices.len() {
                     let existing_facet_key = Self::periodic_facet_key_from_simplex_vertices(
@@ -788,7 +787,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     where
         F: FnMut(SimplexKey, &Simplex<V, D>) -> V,
     {
-        for (simplex_key, simplex) in &mut self.simplices {
+        for (simplex_key, simplex) in self.simplices.iter_mut() {
             let data = data_for(simplex_key, simplex);
             simplex.data = Some(data);
         }
@@ -891,8 +890,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         // planning fallback incident repairs. This lets fallback queries see
         // the post-removal incidence view while storage is still available for
         // stale-key validation.
-        let incidence_removals =
-            self.remove_simplices_from_vertex_incidence_transactionally(&simplex_removals)?;
+        let incidence_removals = {
+            self.journal_incidence_before_write(
+                simplex_removals
+                    .iter()
+                    .flat_map(|(_, vertices)| vertices.iter().copied()),
+            );
+            self.remove_simplices_from_vertex_incidence_transactionally(&simplex_removals)?
+        };
 
         let incident_updates = match self.plan_incident_simplex_repairs(
             &affected_vertices,
@@ -1069,6 +1074,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                     continue; // neighbor is also being removed
                 }
 
+                self.journal_simplex_before_write(neighbor_key);
                 let Some(neighbor_simplex) = self.simplices.get_mut(neighbor_key) else {
                     continue;
                 };
@@ -1098,8 +1104,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         let mut removed_count = 0;
 
         for (simplex_key, _) in simplex_removals {
-            if let Some(removed_simplex) = self.simplices.remove(*simplex_key) {
-                self.uuid_to_simplex_key.remove(&removed_simplex.uuid());
+            if let Some(removed_uuid) = self.remove_simplex_storage_transactionally(*simplex_key) {
+                self.uuid_to_simplex_key.remove(&removed_uuid);
                 removed_count += 1;
             }
         }
@@ -1139,6 +1145,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// so this write phase can remain small and infallible.
     fn apply_incident_simplex_updates(&mut self, incident_updates: IncidentSimplexUpdates) {
         for (vk, new_incident) in incident_updates {
+            self.journal_vertex_before_write(vk);
             if let Some(vertex) = self.vertices.get_mut(vk) {
                 vertex.set_incident_simplex(new_incident);
             }
@@ -1257,10 +1264,11 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         // incrementally repairs `incident_simplex` pointers for vertices that referenced removed simplices.
         let simplices_removed = self.remove_simplices_by_keys(&simplices_to_remove)?;
 
+        self.journal_incidence_before_write([vertex_key]);
         self.remove_vertex_incidence(vertex_key)?;
 
         // Remove the vertex itself.
-        self.vertices.remove(vertex_key);
+        self.remove_vertex_storage_transactionally(vertex_key);
         self.uuid_to_vertex_key.remove(&uuid);
         self.refresh_incomplete_construction_state();
         // Topology changed; invalidate caches
@@ -1289,8 +1297,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             return Ok(());
         }
         let uuid = vertex.uuid();
+        self.journal_incidence_before_write([vertex_key]);
         self.remove_vertex_incidence(vertex_key)?;
-        self.vertices.remove(vertex_key);
+        self.remove_vertex_storage_transactionally(vertex_key);
         self.uuid_to_vertex_key.remove(&uuid);
         self.refresh_incomplete_construction_state();
         self.bump_generation();
@@ -1682,6 +1691,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             }
         }
 
+        self.journal_simplex_before_write(simplex_key);
         let simplex = self
             .simplex_mut(simplex_key)
             .ok_or_else(|| TdsError::SimplexNotFound {
@@ -1780,6 +1790,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         let reciprocal_updates =
             self.reciprocal_neighbor_updates_for_neighbor_update(simplex_key, neighbors)?;
 
+        self.journal_simplex_before_write(simplex_key);
         let simplex_uuid = {
             let simplex =
                 self.simplex_mut(simplex_key)
@@ -1793,6 +1804,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         };
 
         for (neighbor_key, mirror_idx, back_reference) in reciprocal_updates {
+            self.journal_simplex_before_write(neighbor_key);
             let neighbor_simplex =
                 self.simplices
                     .get_mut(neighbor_key)
@@ -1821,6 +1833,10 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// removes any stale back-references that can still be resolved, and then
     /// installs the proven reciprocal links. All fallible checks happen before
     /// the first write so a rejected repair leaves the TDS unchanged.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "preflight and commit remain adjacent so neighbor repair cannot write before every facet check succeeds"
+    )]
     pub(in crate::core) fn repair_neighbors_by_key_from_facet_incidence(
         &mut self,
         simplex_key: SimplexKey,
@@ -1899,6 +1915,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             new_back_references.push((neighbor_key, mirror_idx));
         }
 
+        self.journal_simplex_before_write(simplex_key);
         let simplex = self
             .simplex_mut(simplex_key)
             .ok_or_else(|| TdsError::SimplexNotFound {
@@ -1907,6 +1924,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             })?;
         Self::set_simplex_neighbors_normalized(simplex, neighbors)?;
         for (neighbor_key, mirror_idx) in stale_back_references {
+            self.journal_simplex_before_write(neighbor_key);
             let neighbor =
                 self.simplices
                     .get_mut(neighbor_key)
@@ -1917,6 +1935,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             Self::set_neighbor_slot(neighbor, mirror_idx, None)?;
         }
         for (neighbor_key, mirror_idx) in new_back_references {
+            self.journal_simplex_before_write(neighbor_key);
             let neighbor =
                 self.simplices
                     .get_mut(neighbor_key)
@@ -2014,6 +2033,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             .collect();
 
         for (vertex_key, incident_simplex) in incident_updates {
+            self.journal_vertex_before_write(vertex_key);
             if let Some(vertex) = self.vertices.get_mut(vertex_key) {
                 vertex.set_incident_simplex(incident_simplex);
             }
@@ -2061,6 +2081,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             });
         }
 
+        self.journal_vertex_before_write(vertex_key);
         let vertex = self
             .vertices
             .get_mut(vertex_key)
@@ -2138,7 +2159,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             }
         }
 
-        for (simplex_key, simplex) in &mut self.simplices {
+        for (simplex_key, simplex) in self.simplices.iter_mut() {
             if targets.contains(&simplex_key) {
                 simplex.swap_vertex_slots(0, 1);
             }
@@ -2234,6 +2255,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             if !should_flip {
                 continue;
             }
+            self.journal_simplex_before_write(simplex_key);
             let simplex =
                 self.simplices
                     .get_mut(simplex_key)
@@ -2424,19 +2446,32 @@ impl<U, V, const D: usize> UnverifiedTds<U, V, D> {
     /// The compile-time state changes only after cumulative Levels 1–2
     /// validation succeeds, so an incomplete workspace can never escape as the
     /// proof-bearing [`Tds`] specialization.
-    pub(in crate::core::tds) fn publish(mut self) -> Result<Tds<U, V, D>, TdsError> {
+    pub(in crate::core::tds) fn publish(self) -> Result<Tds<U, V, D>, TdsError> {
+        self.publish_recoverable()
+            .map_err(|failure| (*failure).into_reason())
+    }
+
+    /// Publishes a verified TDS while retaining rejected storage for rollback.
+    pub(in crate::core::tds) fn publish_recoverable(
+        mut self,
+    ) -> Result<Tds<U, V, D>, Box<RefinementError<Self, TdsError>>> {
         let vertex_count = self.number_of_vertices();
         let simplex_count = self.number_of_simplices();
         let is_empty_complex = vertex_count == 0 && simplex_count == 0;
         if !is_empty_complex && simplex_count == 0 {
-            return Err(TdsError::IncompleteConstruction {
-                dimension: D,
-                vertex_count,
-                simplex_count,
-            });
+            return Err(Box::new(RefinementError::new(
+                self,
+                TdsError::IncompleteConstruction {
+                    dimension: D,
+                    vertex_count,
+                    simplex_count,
+                },
+            )));
         }
 
-        self.validate()?;
+        if let Err(error) = self.validate() {
+            return Err(Box::new(RefinementError::new(self, error)));
+        }
         self.construction_state = TriangulationConstructionState::Constructed;
         Ok(self.into_verified())
     }
@@ -2445,6 +2480,7 @@ impl<U, V, const D: usize> UnverifiedTds<U, V, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::facet::facet_key_from_vertices;
     use crate::core::simplex::Simplex;
     use crate::core::tds::TdsBuilder;
     use crate::core::tds::errors::TriangulationConstructionState;
@@ -2559,7 +2595,16 @@ mod tests {
             .push_vertex_key(invalid_vkey);
 
         let err = tds.assign_neighbors().unwrap_err();
-        assert_matches!(err, TdsError::VertexKeyRetrievalFailed { .. });
+        assert_eq!(
+            err,
+            TdsError::VertexNotFound {
+                vertex_key: invalid_vkey,
+                context: format!(
+                    "referenced by simplex {} (key {simplex_key:?}) at position 3",
+                    tds.simplex(simplex_key).unwrap().uuid()
+                ),
+            }
+        );
     }
 
     #[test]
@@ -2582,21 +2627,43 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([2.0, 0.0]).unwrap())
             .unwrap();
 
-        tds.insert_simplex_with_mapping(
-            Simplex::try_new_with_data(vec![v_a, v_b, v_c], None).unwrap(),
-        )
-        .unwrap();
-        tds.insert_simplex_with_mapping(
-            Simplex::try_new_with_data(vec![v_a, v_b, v_d], None).unwrap(),
-        )
-        .unwrap();
-        tds.insert_simplex_bypassing_topology_checks_for_test(
-            Simplex::try_new_with_data(vec![v_a, v_b, v_e], None).unwrap(),
-        )
-        .unwrap();
+        let first = tds
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v_a, v_b, v_c], None).unwrap(),
+            )
+            .unwrap();
+        let second = tds
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v_a, v_b, v_d], None).unwrap(),
+            )
+            .unwrap();
+        let candidate = tds
+            .insert_simplex_bypassing_topology_checks_for_test(
+                Simplex::try_new_with_data(vec![v_a, v_b, v_e], None).unwrap(),
+            )
+            .unwrap();
 
         let err = tds.assign_neighbors().unwrap_err();
-        assert_matches!(err, TdsError::InconsistentDataStructure { .. });
+        let candidate_simplex = tds.simplex(candidate).unwrap();
+        let candidate_facet_index = candidate_simplex
+            .vertices()
+            .iter()
+            .position(|&vertex_key| vertex_key == v_e)
+            .unwrap();
+        let facet_key = facet_key_from_vertices(&[v_a, v_b]);
+        assert_eq!(
+            err,
+            TdsError::FacetSharingViolation {
+                facet_key,
+                existing_incident_count: 2,
+                attempted_incident_count: 3,
+                max_incident_count: 2,
+                candidate_simplex_uuid: candidate_simplex.uuid(),
+                candidate_facet_index,
+            }
+        );
+        assert!(tds.contains_simplex(first));
+        assert!(tds.contains_simplex(second));
     }
 
     #[test]
@@ -3718,8 +3785,17 @@ mod tests {
             Simplex::try_new_with_data(vec![v0, v1, v3], None).unwrap(),
         )
         .unwrap();
-        tds.insert_simplex_bypassing_topology_checks_for_test(
-            Simplex::try_new_with_data(vec![v0, v1, v4], None).unwrap(),
+        let oversharing_candidate_key = tds
+            .insert_simplex_bypassing_topology_checks_for_test(
+                Simplex::try_new_with_data(vec![v0, v1, v4], None).unwrap(),
+            )
+            .unwrap();
+        let oversharing_candidate = tds.simplex(oversharing_candidate_key).unwrap();
+        let expected_candidate_uuid = oversharing_candidate.uuid();
+        let expected_facet_key = Tds::<(), (), 2>::periodic_facet_key_from_simplex_vertices(
+            oversharing_candidate,
+            oversharing_candidate.vertices(),
+            2,
         )
         .unwrap();
         let before = tds.clone();
@@ -3727,9 +3803,16 @@ mod tests {
 
         let error = tds.remove_duplicate_simplices().unwrap_err();
 
-        assert_matches!(
+        assert_eq!(
             error.into_inner(),
-            TdsError::InconsistentDataStructure { .. }
+            TdsError::FacetSharingViolation {
+                facet_key: expected_facet_key,
+                existing_incident_count: 2,
+                attempted_incident_count: 3,
+                max_incident_count: 2,
+                candidate_simplex_uuid: expected_candidate_uuid,
+                candidate_facet_index: 2,
+            }
         );
         assert_eq!(tds.number_of_simplices(), 4);
         assert_eq!(tds.generation(), generation_before);

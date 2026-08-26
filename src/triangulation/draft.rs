@@ -9,14 +9,16 @@ use crate::refinement::RefinementError;
 use crate::topology::traits::topological_space::GlobalTopology;
 use crate::triangulation::Triangulation;
 use crate::triangulation::builder::{
-    TriangulationBuildFailure, TriangulationBuildMode, TriangulationBuilderError,
+    TriangulationBuildFailure, TriangulationBuildMode, TriangulationBuildWithTopologyEvidence,
+    TriangulationBuilderError,
 };
 use crate::triangulation::model::UnverifiedTriangulation;
 use crate::triangulation::realization::{
     TriangulationCertificationError, TriangulationRealizationValidationError,
 };
 use crate::triangulation::validation::{
-    TopologyConstructionProvenance, TopologyGuarantee, ValidationPolicy,
+    TopologyCertificationEvidence, TopologyConstructionProvenance, TopologyGuarantee,
+    ValidationPolicy,
 };
 
 /// Crate-internal unpublished Levels 3–4 candidate for a [Triangulation].
@@ -83,24 +85,20 @@ where
     U: DataType,
     V: DataType,
 {
-    /// Publishes the staged workspace through canonicalizing Levels 3–4 validation.
-    pub(crate) fn finish_canonicalizing(
+    /// Publishes already-normalized TDS storage without a canonicalizing clone.
+    pub(crate) fn finish_strict(
         self,
     ) -> Result<Triangulation<K, U, V, D>, TriangulationBuildFailure<U, V, D>> {
-        self.finish(TriangulationBuildMode::Canonicalizing)
+        self.finish(TriangulationBuildMode::Strict)
     }
 
-    /// Consumes the candidate and publishes it only after Levels 1–4 validation.
+    /// Canonicalizes inside a caller-owned TDS rollback journal.
     ///
-    /// # Errors
-    ///
-    /// Returns [`TriangulationBuildFailure`] if configuration is incompatible,
-    /// orientation cannot be normalized, or any cumulative validation layer
-    /// through Level 4 rejects the candidate. The failure retains the original
-    /// TDS exactly as it was supplied to the draft.
-    pub(super) fn finish(
+    /// Failure returns the mutated TDS so the caller can restore its journal.
+    /// This avoids the detached full-TDS before-image required by the ordinary
+    /// canonicalizing builder boundary.
+    pub(crate) fn finish_canonicalizing_in_transaction(
         mut self,
-        build_mode: TriangulationBuildMode,
     ) -> Result<Triangulation<K, U, V, D>, TriangulationBuildFailure<U, V, D>> {
         let validation_policy = self.selected_validation_policy.unwrap_or_else(|| {
             self.triangulation
@@ -118,19 +116,7 @@ where
             ));
         }
 
-        if build_mode == TriangulationBuildMode::Strict {
-            if let Err(source) = self
-                .triangulation
-                .certify_levels_three_four()
-                .map_err(map_certification_error)
-            {
-                return Err(RefinementError::new(self.triangulation.into_tds(), source));
-            }
-            return Ok(self.triangulation.into_verified());
-        }
-
-        let original_tds = self.triangulation.tds.clone_for_rollback();
-        let publication: Result<(), TriangulationBuilderError> = (|| {
+        let publication = (|| {
             self.triangulation
                 .normalize_and_promote_positive_orientation()
                 .map_err(
@@ -150,10 +136,88 @@ where
         })();
 
         if let Err(source) = publication {
-            return Err(RefinementError::new(original_tds, source));
+            return Err(RefinementError::new(self.triangulation.into_tds(), source));
+        }
+        Ok(self.triangulation.into_verified())
+    }
+
+    /// Consumes the candidate and publishes it only after Levels 1–4 validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TriangulationBuildFailure`] if configuration is incompatible,
+    /// orientation cannot be normalized, or any cumulative validation layer
+    /// through Level 4 rejects the candidate. The failure retains the original
+    /// TDS exactly as it was supplied to the draft.
+    pub(super) fn finish(
+        self,
+        build_mode: TriangulationBuildMode,
+    ) -> Result<Triangulation<K, U, V, D>, TriangulationBuildFailure<U, V, D>> {
+        self.finish_with_topology_evidence(build_mode)
+            .map(|(triangulation, _evidence)| triangulation)
+    }
+
+    /// Publishes Levels 3–4 and retains owner-bound topology metrics.
+    pub(super) fn finish_with_topology_evidence(
+        mut self,
+        build_mode: TriangulationBuildMode,
+    ) -> TriangulationBuildWithTopologyEvidence<K, U, V, D> {
+        let validation_policy = self.selected_validation_policy.unwrap_or_else(|| {
+            self.triangulation
+                .topology_guarantee
+                .default_validation_policy()
+        });
+
+        if let Err(source) = self
+            .triangulation
+            .try_set_validation_policy(validation_policy)
+        {
+            return Err(RefinementError::new(
+                self.triangulation.into_tds(),
+                TriangulationBuilderError::ValidationConfiguration { source },
+            ));
         }
 
-        Ok(self.triangulation.into_verified())
+        if build_mode == TriangulationBuildMode::Strict {
+            let topology_evidence = match self
+                .triangulation
+                .certify_levels_three_four()
+                .map_err(map_certification_error)
+            {
+                Ok(evidence) => evidence,
+                Err(source) => {
+                    return Err(RefinementError::new(self.triangulation.into_tds(), source));
+                }
+            };
+            return Ok((self.triangulation.into_verified(), topology_evidence));
+        }
+
+        let original_tds = self.triangulation.tds.clone_for_rollback();
+        let publication: Result<TopologyCertificationEvidence, TriangulationBuilderError> =
+            (|| {
+                self.triangulation
+                    .normalize_and_promote_positive_orientation()
+                    .map_err(
+                        |source| TriangulationBuilderError::OrientationNormalization {
+                            source: Box::new(source),
+                        },
+                    )?;
+                self.triangulation
+                    .validate_geometric_nondegeneracy()
+                    .map_err(|source| TriangulationBuilderError::GeometricNondegeneracy {
+                        source: Box::new(source),
+                    })?;
+                let topology_evidence = self
+                    .triangulation
+                    .certify_levels_three_four()
+                    .map_err(map_certification_error)?;
+                Ok(topology_evidence)
+            })();
+
+        let topology_evidence =
+            publication.map_err(|source| RefinementError::new(original_tds, source))?;
+
+        Ok((self.triangulation.into_verified(), topology_evidence))
     }
 }
 
@@ -199,7 +263,7 @@ mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tds::{Tds, TdsBuilder};
+    use crate::core::tds::TdsBuilder;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::vertex;
 

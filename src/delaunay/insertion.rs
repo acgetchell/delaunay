@@ -63,7 +63,7 @@ where
     V: DataType,
 {
     /// Rejects a transition from the valid empty owner into unpublished bootstrap state.
-    fn ensure_insertion_preserves_owner(&self) -> Result<(), InsertionError> {
+    const fn ensure_insertion_preserves_owner(&self) -> Result<(), InsertionError> {
         if D > 0 && self.tri.tds.number_of_simplices() == 0 {
             return Err(InsertionError::PublishedOwnerBootstrapRequiresBuilder { dimension: D });
         }
@@ -111,7 +111,7 @@ where
     }
 
     /// Prepares derived geometry and rejects unchanged duplicates before any
-    /// owner-level rollback snapshot is allocated.
+    /// owner-level rollback journal is opened.
     fn prepare_insertion(
         &mut self,
         vertex: Vertex<U, D>,
@@ -128,7 +128,7 @@ where
     }
 
     /// Runs a prepared Levels 3–4 insertion against the Delaunay owner's
-    /// existing rollback snapshot while keeping its detached spatial index
+    /// existing rollback journal while keeping its detached spatial index
     /// synchronized.
     fn insert_prepared_in_rollback_window(
         transaction: &mut DelaunayRollbackTransaction<'_, K, U, V, D>,

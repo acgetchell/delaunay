@@ -771,11 +771,25 @@ pub enum DelaunayConstructionFailure {
         reason: TdsConstructionFailure,
     },
 
-    /// Failed to create a simplex during construction.
-    #[error("failed to create simplex during construction: {message}")]
+    /// Failed to create the initial simplex during construction.
+    #[error("failed to create initial simplex during construction: {source}")]
     FailedToCreateSimplex {
-        /// Simplex creation failure detail.
-        message: String,
+        /// Underlying simplex validation error.
+        #[source]
+        source: SimplexValidationError,
+    },
+
+    /// Initial-simplex orientation canonicalization lacked enough stored vertex keys.
+    #[error(
+        "cannot canonicalize orientation for {dimension}D initial simplex with {vertex_key_count} vertex key(s); at least {minimum_vertex_key_count} are required"
+    )]
+    InitialSimplexOrientationBookkeeping {
+        /// Dimension of the initial simplex.
+        dimension: usize,
+        /// Number of stored initial-simplex vertex keys.
+        vertex_key_count: usize,
+        /// Minimum number of keys needed to swap an orientation pair.
+        minimum_vertex_key_count: usize,
     },
 
     /// Failed to create a simplex while reconstructing a periodic quotient.
@@ -1293,9 +1307,18 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
             TriangulationConstructionError::Tds { source } => Self::Tds {
                 reason: source.into(),
             },
-            TriangulationConstructionError::FailedToCreateSimplex { message } => {
-                Self::FailedToCreateSimplex { message }
+            TriangulationConstructionError::FailedToCreateSimplex { source } => {
+                Self::FailedToCreateSimplex { source }
             }
+            TriangulationConstructionError::InitialSimplexOrientationBookkeeping {
+                dimension,
+                vertex_key_count,
+                minimum_vertex_key_count,
+            } => Self::InitialSimplexOrientationBookkeeping {
+                dimension,
+                vertex_key_count,
+                minimum_vertex_key_count,
+            },
             TriangulationConstructionError::PeriodicQuotientSimplexCreation { source } => {
                 Self::PeriodicQuotientSimplexCreation { source }
             }
@@ -2795,7 +2818,6 @@ fn dedup_vertices_epsilon_hash_grid<U, const D: usize>(
     grid.clear();
     let mut unique: Vec<Vertex<U, D>> = Vec::with_capacity(vertices.len());
 
-    let epsilon_sq = epsilon * epsilon;
     for v in vertices {
         let coords = *v.point().coords();
         let mut duplicate = false;
@@ -2803,12 +2825,7 @@ fn dedup_vertices_epsilon_hash_grid<U, const D: usize>(
         let used_index = grid.for_each_candidate_vertex_key(&coords, |idx| {
             candidate_count = candidate_count.saturating_add(1);
             let existing_coords = unique[idx].point().coords();
-            let mut dist_sq = 0.0;
-            for i in 0..D {
-                let diff = coords[i] - existing_coords[i];
-                dist_sq = diff.mul_add(diff, dist_sq);
-            }
-            if dist_sq < epsilon_sq {
+            if coords_within_epsilon(&coords, existing_coords, epsilon) {
                 duplicate = true;
                 return false;
             }
@@ -7147,6 +7164,20 @@ mod tests {
     }
 
     #[test]
+    fn epsilon_dedup_hash_grid_handles_extreme_finite_coordinates() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0e308, 1.0e308]).unwrap(),
+            vertex!([1.5e308, 0.0]).unwrap(),
+        ];
+        let mut grid = HashGridIndex::<2, usize>::try_new(1.5e308).unwrap();
+
+        let unique = dedup_vertices_epsilon_hash_grid(vertices, 1.5e308, &mut grid);
+
+        assert_eq!(unique.len(), 2);
+    }
+
+    #[test]
     fn preprocess_falls_back_when_grid_unusable() {
         init_tracing();
         let exact_vertices = vec![
@@ -8641,6 +8672,23 @@ mod tests {
 
     #[test]
     fn test_delaunay_construction_failure_preserves_typed_generic_sources() {
+        let simplex_source = SimplexValidationError::InsufficientVertices {
+            actual: 2,
+            expected: 3,
+            dimension: 2,
+        };
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::FailedToCreateSimplex {
+                source: simplex_source.clone(),
+            },
+        );
+        assert_eq!(
+            failure,
+            DelaunayConstructionFailure::FailedToCreateSimplex {
+                source: simplex_source,
+            }
+        );
+
         let conflict_source = ConflictError::OpenBoundary {
             facet_count: 2,
             ridge_vertex_count: 1,

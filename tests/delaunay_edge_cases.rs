@@ -16,7 +16,7 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::delaunayize::DelaunayRefinementBuilder;
 use delaunay::prelude::generators::{
     RandomPointCount, generate_random_points_in_ball_seeded,
-    try_generate_random_triangulation_with_topology_guarantee,
+    try_generate_random_triangulation_with_topology,
 };
 use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::validation::{
@@ -554,7 +554,7 @@ fn test_regression_non_manifold_3d_seed123_50pts() {
     // Exact configuration from CI failure (matches ci_performance_suite.rs)
     let n_points = nonzero(50);
     let raw_n_points = n_points.get();
-    let result = try_generate_random_triangulation_with_topology_guarantee::<(), (), 3>(
+    let result = try_generate_random_triangulation_with_topology::<(), (), 3>(
         n_points,        // Point count from CI benchmark
         (-100.0, 100.0), // Bounds from benchmark
         None,            // No vertex data
@@ -606,7 +606,7 @@ fn test_regression_non_manifold_nearby_seeds() {
     let min_vertices = (raw_n_points / 6).max(4);
 
     for seed in test_seeds {
-        let result = try_generate_random_triangulation_with_topology_guarantee::<(), (), 3>(
+        let result = try_generate_random_triangulation_with_topology::<(), (), 3>(
             n_points,
             (-100.0, 100.0),
             None,

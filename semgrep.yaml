@@ -92,6 +92,61 @@ rules:
       - pattern: $VALUE.unwrap_or_else(|| std::f64::INFINITY)
       - pattern: $VALUE.unwrap_or_else(|| std::f64::NEG_INFINITY)
 
+  - id: delaunay.rust.no-algebraic-f64-operations
+    languages:
+      - rust
+    severity: ERROR
+    message: "Use ordinary IEEE-754 operations or deliberate f64::mul_add; f64 algebraic operations are forbidden."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/583"
+      rationale: >-
+        Algebraic f64 operations permit real-number transformations with
+        unspecified precision. Reassociation or relaxed NaN, infinity, and
+        signed-zero behavior can invalidate predicate error bounds, exact
+        fallback decisions, deterministic topology, reproducibility, and
+        benchmark comparisons.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/examples/**/*.rs"
+        - "/benches/**/*.rs"
+        # Includes integration/property tests and the deliberate violation
+        # fixture. `just semgrep` excludes that fixture, while
+        # `just semgrep-test` scans it directly.
+        - "/tests/**/*.rs"
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: $VALUE.algebraic_add(...)
+              - pattern: $VALUE.algebraic_sub(...)
+              - pattern: $VALUE.algebraic_mul(...)
+              - pattern: $VALUE.algebraic_div(...)
+              - pattern: $VALUE.algebraic_rem(...)
+          - metavariable-type:
+              metavariable: $VALUE
+              type: f64
+      - patterns:
+          - pattern: <f64>::$METHOD(...)
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^algebraic_(?:add|sub|mul|div|rem)$
+      - patterns:
+          - pattern: <f64>::$METHOD
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^algebraic_(?:add|sub|mul|div|rem)$
+          - pattern-not-inside: <f64>::$METHOD(...)
+      - patterns:
+          - pattern: $FLOAT::$METHOD
+          - metavariable-regex:
+              metavariable: $FLOAT
+              regex: ^f64$
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^algebraic_(?:add|sub|mul|div|rem)$
+          - pattern-not-inside: $FLOAT::$METHOD(...)
+
   - id: delaunay.rust.no-std-hash-collections-in-hot-src
     languages:
       - rust
@@ -3014,7 +3069,7 @@ rules:
         - "/scripts/**/*.py"
       exclude:
         - "/tests/semgrep/**"
-    pattern-regex: '^\s*except\s+Exception(?:\s+as\s+\w+)?\s*:'
+    pattern-regex: '^\s*except\s+(?:Exception|\([^)]*\bException\b[^)]*\))(?:\s+as\s+\w+)?\s*:'
 
   - id: delaunay.python.no-future-annotations-on-python314
     languages:
@@ -3334,6 +3389,8 @@ rules:
       - pattern: subprocess.check_output(...)
       - pattern: subprocess.getoutput(...)
       - pattern: subprocess.getstatusoutput(...)
+      - pattern: asyncio.create_subprocess_exec(...)
+      - pattern: asyncio.create_subprocess_shell(...)
       - pattern: os.system(...)
 
   - id: delaunay.python.safe-tar-extraction
@@ -3384,27 +3441,27 @@ rules:
           - pattern: $PATH.open($MODE, ...)
           - metavariable-regex:
               metavariable: $MODE
-              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+              regex: '^[''\"][rwaxtb+]*[wax+][rwaxtb+]*[''\"]$'
       - patterns:
           - pattern: $PATH.open(mode=$MODE, ...)
           - metavariable-regex:
               metavariable: $MODE
-              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+              regex: '^[''\"][rwaxtb+]*[wax+][rwaxtb+]*[''\"]$'
       - patterns:
           - pattern: open($PATH, $MODE, ...)
           - metavariable-regex:
               metavariable: $MODE
-              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+              regex: '^[''\"][rwaxtb+]*[wax+][rwaxtb+]*[''\"]$'
       - patterns:
           - pattern: open($PATH, mode=$MODE, ...)
           - metavariable-regex:
               metavariable: $MODE
-              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+              regex: '^[''\"][rwaxtb+]*[wax+][rwaxtb+]*[''\"]$'
       - patterns:
           - pattern: open(file=$PATH, mode=$MODE, ...)
           - metavariable-regex:
               metavariable: $MODE
-              regex: '^[''\"][rwaxtb+]*[wax][rwaxtb+]*[''\"]$'
+              regex: '^[''\"][rwaxtb+]*[wax+][rwaxtb+]*[''\"]$'
 
   - id: delaunay.python.performance-promotion-is-csv-only
     languages:

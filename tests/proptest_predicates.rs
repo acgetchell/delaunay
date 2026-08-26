@@ -23,6 +23,25 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
     (-1000.0..1000.0).prop_filter("must be finite", |x: &f64| x.is_finite())
 }
 
+/// Generates non-degenerate simplex edges by construction for properties that
+/// require a circumcenter or circumradius.
+fn well_conditioned_edge_length() -> impl Strategy<Value = f64> {
+    0.25_f64..50.0
+}
+
+/// Builds a full-dimensional simplex whose domain validity follows directly
+/// from the positive generated side lengths.
+fn axis_aligned_simplex<const D: usize>(base: [f64; D], side_lengths: [f64; D]) -> Vec<Point<D>> {
+    let mut simplex = Vec::with_capacity(D + 1);
+    simplex.push(Point::try_new(base).expect("finite point coordinates"));
+    for (axis, side_length) in side_lengths.iter().copied().enumerate() {
+        let mut coords = base;
+        coords[axis] += side_length;
+        simplex.push(Point::try_new(coords).expect("finite point coordinates"));
+    }
+    simplex
+}
+
 /// Strategy for generating 2D points
 fn point_2d() -> impl Strategy<Value = Point<2>> {
     prop::array::uniform2(finite_coordinate())
@@ -65,24 +84,30 @@ macro_rules! gen_orientation_sign_flip {
                     let len = simplex2.len();
                     simplex2.swap(len - 1, len - 2);
 
-                    let orient1 = simplex_orientation(&simplex1);
-                    let orient2 = simplex_orientation(&simplex2);
+                    let orient1 = simplex_orientation(&simplex1).map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D source orientation predicate failed: {error:?}",
+                            $dim,
+                        ))
+                    })?;
+                    let orient2 = simplex_orientation(&simplex2).map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "{}D swapped orientation predicate failed: {error:?}",
+                            $dim,
+                        ))
+                    })?;
 
-                    match (orient1, orient2) {
-                        (Ok(o1), Ok(o2)) => {
-                            if o1 == Orientation::DEGENERATE || o2 == Orientation::DEGENERATE {
-                                prop_assert_eq!(o1, Orientation::DEGENERATE);
-                                prop_assert_eq!(o2, Orientation::DEGENERATE);
-                            } else {
-                                match (o1, o2) {
-                                    (Orientation::POSITIVE, Orientation::NEGATIVE)
-                                    | (Orientation::NEGATIVE, Orientation::POSITIVE) => {}
-                                    _ => prop_assert!(false, "Expected opposite orientations, got {:?} and {:?}", o1, o2),
-                                }
+                    if orient1 == Orientation::DEGENERATE || orient2 == Orientation::DEGENERATE {
+                        prop_assert_eq!(orient1, Orientation::DEGENERATE);
+                        prop_assert_eq!(orient2, Orientation::DEGENERATE);
+                    } else {
+                        match (orient1, orient2) {
+                            (Orientation::POSITIVE, Orientation::NEGATIVE)
+                            | (Orientation::NEGATIVE, Orientation::POSITIVE) => {}
+                            _ => {
+                                prop_assert!(false, "Expected opposite orientations, got {:?} and {:?}", orient1, orient2);
                             }
                         }
-                        (Err(_), Err(_)) => {}
-                        _ => prop_assert!(false, "One orientation succeeded while the other failed"),
                     }
                 }
             }
@@ -104,14 +129,17 @@ macro_rules! gen_orientation_cyclic_invariance {
                     let simplex2 = [simplex1[1], simplex1[2], simplex1[0]];
                     let simplex3 = [simplex1[2], simplex1[0], simplex1[1]];
 
-                    if let (Ok(o1), Ok(o2), Ok(o3)) = (
-                        simplex_orientation(&simplex1),
-                        simplex_orientation(&simplex2),
-                        simplex_orientation(&simplex3),
-                    ) {
-                        prop_assert_eq!(o1, o2, "First cyclic permutation changed orientation");
-                        prop_assert_eq!(o2, o3, "Second cyclic permutation changed orientation");
-                    }
+                    let o1 = simplex_orientation(&simplex1).map_err(|error| {
+                        TestCaseError::fail(format!("2D source orientation failed: {error:?}"))
+                    })?;
+                    let o2 = simplex_orientation(&simplex2).map_err(|error| {
+                        TestCaseError::fail(format!("2D first cyclic orientation failed: {error:?}"))
+                    })?;
+                    let o3 = simplex_orientation(&simplex3).map_err(|error| {
+                        TestCaseError::fail(format!("2D second cyclic orientation failed: {error:?}"))
+                    })?;
+                    prop_assert_eq!(o1, o2, "First cyclic permutation changed orientation");
+                    prop_assert_eq!(o2, o3, "Second cyclic permutation changed orientation");
                 }
             }
         }
@@ -128,13 +156,17 @@ macro_rules! gen_insphere_simplex_vertices_on_boundary {
                     simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
                 ) {
                     for vertex in &simplex {
-                        if let Ok(result) = insphere(&simplex, *vertex) {
-                            prop_assert!(
-                                result == InSphere::BOUNDARY || result == InSphere::OUTSIDE,
-                                "Simplex vertex is {:?}, expected BOUNDARY or OUTSIDE",
-                                result
-                            );
-                        }
+                        let result = insphere(&simplex, *vertex).map_err(|error| {
+                            TestCaseError::fail(format!(
+                                "{}D simplex-vertex in-sphere predicate failed: {error:?}",
+                                $dim,
+                            ))
+                        })?;
+                        prop_assert!(
+                            result == InSphere::BOUNDARY || result == InSphere::OUTSIDE,
+                            "Simplex vertex is {:?}, expected BOUNDARY or OUTSIDE",
+                            result
+                        );
                     }
                 }
             }
@@ -149,9 +181,16 @@ macro_rules! gen_insphere_inward_scaling_inside {
             repo_proptest! {
                 #[test]
                 fn [<prop_insphere_inward_scaling_makes_point_inside_ $dim d>](
-                    simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
+                    base in prop::array::[<uniform $dim>](finite_coordinate()),
+                    side_lengths in prop::array::[<uniform $dim>](well_conditioned_edge_length())
                 ) {
-                    if let Ok(center) = circumcenter(&simplex) {
+                        let simplex = axis_aligned_simplex::<$dim>(base, side_lengths);
+                        let center = circumcenter(&simplex).map_err(|error| {
+                            TestCaseError::fail(format!(
+                                "{}D inward-scaling circumcenter failed: {error:?}",
+                                $dim,
+                            ))
+                        })?;
                         let center_coords = *center.coords();
 
                         // Compute centroid
@@ -166,7 +205,12 @@ macro_rules! gen_insphere_inward_scaling_inside {
                         // Use centroid, which is guaranteed to lie inside the simplex
                         let interior_point = Point::try_new(centroid).expect("finite point coordinates");
 
-                        if let Ok(result) = insphere(&simplex, interior_point) {
+                        let result = insphere(&simplex, interior_point).map_err(|error| {
+                            TestCaseError::fail(format!(
+                                "{}D inward-scaling in-sphere predicate failed: {error:?}",
+                                $dim,
+                            ))
+                        })?;
                             // Check separation to avoid degenerate case
                             let mut dist_sq = 0.0;
                             for i in 0..$dim { let d = center_coords[i] - centroid[i]; dist_sq = d.mul_add(d, dist_sq); }
@@ -177,8 +221,6 @@ macro_rules! gen_insphere_inward_scaling_inside {
                                     result
                                 );
                             }
-                        }
-                    }
                 }
             }
         }
@@ -192,12 +234,22 @@ macro_rules! gen_insphere_distant_point_outside_by_radius {
             repo_proptest! {
                 #[test]
                 fn [<prop_insphere_distant_point_is_outside_ $dim d>](
-                    simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
+                    base in prop::array::[<uniform $dim>](finite_coordinate()),
+                    side_lengths in prop::array::[<uniform $dim>](well_conditioned_edge_length())
                 ) {
-                    if let (Ok(center), Ok(radius)) = (circumcenter(&simplex), circumradius(&simplex)) {
-                        if radius < 1e-6 || !radius.is_finite() {
-                            return Ok(());
-                        }
+                        let simplex = axis_aligned_simplex::<$dim>(base, side_lengths);
+                        let center = circumcenter(&simplex).map_err(|error| {
+                            TestCaseError::fail(format!(
+                                "{}D distant-point circumcenter failed: {error:?}",
+                                $dim,
+                            ))
+                        })?;
+                        let radius = circumradius(&simplex).map_err(|error| {
+                            TestCaseError::fail(format!(
+                                "{}D distant-point circumradius failed: {error:?}",
+                                $dim,
+                            ))
+                        })?;
                         let center_coords = *center.coords();
                         // Build a direction: normalize center if nonzero; else use e0
                         let mut norm_sq = 0.0;
@@ -215,10 +267,13 @@ macro_rules! gen_insphere_distant_point_outside_by_radius {
                             far[i] = dir[i].mul_add(distance, center_coords[i]);
                         }
                         let far_point = Point::try_new(far).expect("finite point coordinates");
-                        if let Ok(result) = insphere(&simplex, far_point) {
-                            prop_assert!(result == InSphere::OUTSIDE, "Point at 10x circumradius from center should be OUTSIDE, got {:?}", result);
-                        }
-                    }
+                        let result = insphere(&simplex, far_point).map_err(|error| {
+                            TestCaseError::fail(format!(
+                                "{}D distant-point in-sphere predicate failed: {error:?}",
+                                $dim,
+                            ))
+                        })?;
+                        prop_assert!(result == InSphere::OUTSIDE, "Point at 10x circumradius from center should be OUTSIDE, got {:?}", result);
                 }
             }
         }
@@ -232,20 +287,30 @@ macro_rules! gen_insphere_scale_center_outside {
             repo_proptest! {
                 #[test]
                 fn [<prop_insphere_scaling_makes_point_outside_ $dim d>](
-                    simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
+                    base in prop::array::[<uniform $dim>](finite_coordinate()),
+                    side_lengths in prop::array::[<uniform $dim>](well_conditioned_edge_length())
                 ) {
-                    if let Ok(center) = circumcenter(&simplex) {
+                        let simplex = axis_aligned_simplex::<$dim>(base, side_lengths);
+                        let center = circumcenter(&simplex).map_err(|error| {
+                            TestCaseError::fail(format!(
+                                "{}D scaled-center circumcenter failed: {error:?}",
+                                $dim,
+                            ))
+                        })?;
                         let center_coords = *center.coords();
                         let scale = 10000.0;
                         let mut far = [0.0_f64; $dim];
                         for i in 0..$dim { far[i] = center_coords[i] * scale; }
                         let far_point = Point::try_new(far).expect("finite point coordinates");
-                        if let Ok(result) = insphere(&simplex, far_point) {
-                            if center_coords.iter().any(|&c| c.abs() > 0.01) {
-                                prop_assert!(result == InSphere::OUTSIDE, "Point scaled away from circumcenter should be OUTSIDE, got {:?}", result);
-                            }
+                        let result = insphere(&simplex, far_point).map_err(|error| {
+                            TestCaseError::fail(format!(
+                                "{}D scaled-center in-sphere predicate failed: {error:?}",
+                                $dim,
+                            ))
+                        })?;
+                        if center_coords.iter().any(|&c| c.abs() > 0.01) {
+                            prop_assert!(result == InSphere::OUTSIDE, "Point scaled away from circumcenter should be OUTSIDE, got {:?}", result);
                         }
-                    }
                 }
             }
         }
@@ -342,8 +407,8 @@ repo_proptest! {
 // =============================================================================
 
 repo_proptest! {
-    /// Property: If a simplex has DEGENERATE orientation, insphere tests
-    /// on that simplex may fail or return inconsistent results.
+    /// Property: A simplex vertex remains on the in-sphere boundary even when
+    /// the simplex approaches or reaches degenerate orientation.
     ///
     /// This test verifies that we handle degenerate cases gracefully.
     #[test]
@@ -358,15 +423,16 @@ repo_proptest! {
 
         let simplex = [p0, p1, p2];
 
-        // Check orientation
-        if let Ok(orientation) = simplex_orientation(&simplex) {
-            if orientation == Orientation::DEGENERATE {
-                // If degenerate, insphere might fail - that's acceptable
-                let _ = insphere(&simplex, p0);
-            } else {
-                // If not degenerate, insphere should succeed
-                prop_assert!(insphere(&simplex, p0).is_ok(), "Insphere failed on non-degenerate simplex");
-            }
-        }
+        let orientation = simplex_orientation(&simplex).map_err(|error| {
+            TestCaseError::fail(format!(
+                "2D near-degenerate orientation predicate failed: {error:?}"
+            ))
+        })?;
+        let in_sphere = insphere(&simplex, p0).map_err(|error| {
+            TestCaseError::fail(format!(
+                "2D simplex-vertex in-sphere predicate failed for {orientation:?} orientation: {error:?}"
+            ))
+        })?;
+        prop_assert_eq!(in_sphere, InSphere::BOUNDARY);
     }
 }

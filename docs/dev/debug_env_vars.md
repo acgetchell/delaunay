@@ -134,13 +134,14 @@ and release builds.
 | `DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED` | **value** | Vertex shuffle seed |
 | `DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY` | **value** | Incremental progress interval; batch fallback if the canonical knob is unset |
 | `DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY` | **value** | Validation interval |
-| `DELAUNAY_LARGE_DEBUG_VALIDATION` | **value** | Validation scope: `full` (Levels 1-5, default) or `construction` (Levels 1-3 + Level 5, skips Level 4) |
+| `DELAUNAY_LARGE_DEBUG_VALIDATION` | **value** | Scope: `full` (Levels 1-5), `realization` (Level 4), or `construction` (Levels 1-3 + 5) |
 | `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY` | **value** | Batch/incremental repair interval (default: 1) |
 | `DELAUNAY_LARGE_DEBUG_REPAIR_MAX_FLIPS` | **value** | Flip budget override |
 | `DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS` | **value** | Timeout (0 = no cap) |
 | `DELAUNAY_LARGE_DEBUG_MAX_SKIP_PCT` | **value** | Maximum skipped-vertex percentage before failing (default: 5.0) |
 | `DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS` | presence | Allow any number of vertex insertion skips |
 | `DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR` | presence | Skip final global repair pass |
+| `DELAUNAY_LARGE_DEBUG_FALLBACK_REBUILD` | presence | Allow final conversion to rebuild after bounded flip repair fails (disabled by default) |
 | `DELAUNAY_BATCH_REPAIR_TRACE` | presence | Trace cadenced batch-repair seed counts, flips, queues, and elapsed time |
 | `DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL` | **value** | Total prefix probes for bisect mode |
 | `DELAUNAY_LARGE_DEBUG_PREFIX_MAX_PROBES` | **value** | Max probes per bisect run |
@@ -152,12 +153,8 @@ These variables configure property tests in `tests/proptest_*.rs`.
 
 | Variable | Activation | Description |
 |---|---|---|
-| `DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS` | presence | Log construction errors during proptests |
-| `DELAUNAY_PROPTEST_INSERT_ERRORS` | presence | Log insertion errors during proptests |
 | `DELAUNAY_PROPTEST_REJECT_STATS` | presence | Log rejection statistics |
 | `DELAUNAY_PROPTEST_COVERAGE_LOGS` | presence | Log coverage statistics |
-| `DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT` | **value** | Minimum acceptance percentage |
-| `DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT_{D}D` | **value** | Per-dimension acceptance override |
 | `DELAUNAY_ALLOW_SLOW_COSPHERICAL_FILTER` | presence | Allow slow cospherical point filtering |
 
 ## Benchmarks
@@ -169,10 +166,18 @@ release builds only.
 
 | Variable | Activation | Description |
 |---|---|---|
-| `DELAUNAY_BENCH_LOG` | presence | Enable error logging inside Criterion measurement loops |
 | `DELAUNAY_BENCH_DISCOVER_SEEDS` | presence | Seed-discovery mode: find and print stable seeds instead of running benchmarks |
 | `DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT` | **value** (integer) | Maximum seeds to try per (dim, count) pair during discovery or fallback (default: 2000) |
 | `DELAUNAY_BENCH_EXPORT_METRICS` | presence | Metric-only mode: print `api_benchmark_metric` vertex/simplex counts; optional `tds_new` filter |
+
+### Profiling Suite
+
+These variables configure `benches/profiling_suite.rs`.
+
+| Variable | Activation | Description |
+|---|---|---|
+| `DELAUNAY_BENCH_SEED` | **value** (decimal or hexadecimal integer) | Deterministic base seed for random point generation |
+| `DELAUNAY_BENCH_RETRY_ATTEMPTS` | **value** (positive integer) | Shuffled construction retry count (default: 6; zero is clamped to 1) |
 
 ### Pachner Stress Diagnostics and Benchmarks
 

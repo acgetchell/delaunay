@@ -7,8 +7,8 @@
 #![forbid(unsafe_code)]
 
 use crate::core::algorithms::insertion::{
-    CavityFillingError, CavityRepairStage, HullExtensionReason, InsertionError, extend_hull,
-    external_facets_for_boundary, fill_cavity_replacing_simplices,
+    CavityFillingError, CavityRepairStage, HullExtensionReason, InitialSimplexConstructionError,
+    InsertionError, extend_hull, external_facets_for_boundary, fill_cavity_replacing_simplices,
     split_2d_boundary_edge_in_simplex_if_needed, wire_cavity_neighbors,
 };
 #[cfg(debug_assertions)]
@@ -28,10 +28,10 @@ use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, InsertionTelemetry,
     InsertionTelemetryMode, SuspicionFlags,
 };
-#[cfg(debug_assertions)]
 use crate::core::simplex::Simplex;
 use crate::core::tds::{InvariantError, SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
+use crate::core::util::coords_within_epsilon_inclusive;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
@@ -45,6 +45,10 @@ use crate::triangulation::realization::TriangulationRealizationValidationError;
 use crate::triangulation::rollback::{
     TriangulationRollbackTransaction, TriangulationRollbackWindow,
 };
+use crate::triangulation::validation::TopologyConstructionProvenance;
+
+use uuid::Uuid;
+
 use core::fmt::NumBuffer;
 use std::borrow::Cow;
 use std::env;
@@ -53,7 +57,6 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::time::{Duration, Instant};
-use uuid::Uuid;
 
 /// Maximum number of repair iterations for fixing non-manifold topology after insertion.
 ///
@@ -239,11 +242,28 @@ fn cavity_conflict_error_summary(error: &ConflictError) -> String {
         ConflictError::PredicateError { source } => {
             format!("predicate_error source={source}")
         }
-        ConflictError::SimplexDataAccessFailed {
+        ConflictError::ConflictSimplexNotFound { simplex_key } => {
+            format!("conflict_simplex_not_found simplex_key={simplex_key:?}")
+        }
+        ConflictError::FacetIndexOutOfBounds {
             simplex_key,
-            message,
+            facet_index,
+            exclusive_upper_bound,
         } => {
-            format!("simplex_data_access_failed simplex_key={simplex_key:?} message={message}")
+            format!(
+                "facet_index_out_of_bounds simplex_key={simplex_key:?} facet_index={facet_index} \
+                 exclusive_upper_bound={exclusive_upper_bound}"
+            )
+        }
+        ConflictError::CanonicalFacetCacheEntryMissing {
+            simplex_key,
+            facet_index,
+            facet_hash,
+        } => {
+            format!(
+                "canonical_facet_cache_entry_missing simplex_key={simplex_key:?} \
+                 facet_index={facet_index} facet_hash={facet_hash:#x}"
+            )
         }
         ConflictError::InvalidSimplexArity {
             simplex_key,
@@ -630,7 +650,7 @@ where
     ) -> Result<DetailedInsertionResult, InsertionError> {
         let mut prepared = self.prepare_insertion(vertex, hint, index.as_deref_mut());
 
-        // Rejecting an unchanged duplicate does not need a rollback snapshot.
+        // Rejecting an unchanged duplicate does not need a rollback journal.
         if let Some(skipped) = self.duplicate_skip(&mut prepared, index.as_deref()) {
             return Ok(skipped);
         }
@@ -718,7 +738,7 @@ where
         })
     }
 
-    /// Executes every perturbation attempt against one rollback snapshot.
+    /// Executes every perturbation attempt against one rollback journal.
     ///
     /// Failed attempts restore the TDS in place before retrying. Every skipped
     /// or error return also leaves the window restored, while success leaves the
@@ -1064,17 +1084,6 @@ where
         }
     }
 
-    /// Compares a squared distance against the duplicate tolerance without
-    /// overflowing the tolerance square on extreme coordinate scales.
-    fn duplicate_distance_within_tolerance(dist_sq: f64, tolerance: f64) -> bool {
-        let tolerance_sq = tolerance * tolerance;
-        if tolerance_sq.is_finite() {
-            dist_sq <= tolerance_sq
-        } else {
-            dist_sq.sqrt() <= tolerance
-        }
-    }
-
     /// Check for near-duplicate coordinates using the hash grid when available, with a
     /// linear-scan fallback (O(n·D) per insertion) if the index is unavailable/unusable.
     fn duplicate_coordinates_error(
@@ -1100,13 +1109,7 @@ where
                 };
 
                 let vcoords = vertex.point().coords();
-                let mut dist_sq = 0.0;
-                for i in 0..D {
-                    let diff = vcoords[i] - coords[i];
-                    dist_sq = diff.mul_add(diff, dist_sq);
-                }
-
-                if Self::duplicate_distance_within_tolerance(dist_sq, tolerance) {
+                if coords_within_epsilon_inclusive(vcoords, coords, tolerance) {
                     duplicate_found = true;
                     return false;
                 }
@@ -1128,13 +1131,7 @@ where
 
         for (_, existing_vertex) in self.tds.vertices() {
             let existing_coords = existing_vertex.point().coords();
-            let mut dist_sq = 0.0;
-            for i in 0..D {
-                let diff = coords[i] - existing_coords[i];
-                dist_sq = diff.mul_add(diff, dist_sq);
-            }
-
-            if Self::duplicate_distance_within_tolerance(dist_sq, tolerance) {
+            if coords_within_epsilon_inclusive(coords, existing_coords, tolerance) {
                 duplicate_found = true;
                 break;
             }
@@ -1484,8 +1481,7 @@ where
         // conflict region and a one-simplex stellar split carry construction
         // proofs; the heuristic expand/shrink rules below do not.
         if D >= 4
-            && self.topology_construction_provenance
-                != crate::triangulation::validation::TopologyConstructionProvenance::Unproven
+            && self.topology_construction_provenance != TopologyConstructionProvenance::Unproven
             && extraction_result.is_err()
         {
             return extraction_result;
@@ -2240,14 +2236,7 @@ where
     ) -> Result<TryInsertImplOk, InsertionError> {
         let mut suspicion = SuspicionFlags::default();
 
-        // CRITICAL: Capture UUID and point BEFORE inserting into TDS
-        // Rationale:
-        // - inserted_uuid: Needed to remap v_key after TDS rebuild (lines 736-744)
-        //   when building initial simplex. The rebuild replaces self.tds entirely,
-        //   invalidating all previous VertexKeys.
-        // - point: Needed for locate(), find_conflict_region(), and extend_hull() calls
-        //   (lines 752, 760, 879, 895). After TDS rebuild, we cannot access the vertex
-        //   via the old v_key, so we must have the point value captured.
+        // Capture geometry before insertion for the later locate/cavity paths.
         let inserted_uuid = vertex.uuid();
         let point = *vertex.point();
 
@@ -2267,14 +2256,14 @@ where
         // remains unproven and is never promoted here.
         if D >= 4
             && self.tds.number_of_simplices() == 1
-            && self.topology_construction_provenance
-                == crate::triangulation::validation::TopologyConstructionProvenance::Unproven
+            && self.topology_construction_provenance == TopologyConstructionProvenance::Unproven
         {
-            self.topology_construction_provenance = crate::triangulation::validation::TopologyConstructionProvenance::EuclideanDelaunayInsertion;
+            self.topology_construction_provenance =
+                TopologyConstructionProvenance::EuclideanDelaunayInsertion;
         }
 
         // 1. Insert vertex into Tds
-        let mut v_key = self
+        let v_key = self
             .tds
             .insert_vertex_with_mapping(vertex)
             .map_err(InsertionError::from)?;
@@ -2301,22 +2290,65 @@ where
                 }
             })?;
 
-            // Replace empty TDS with simplex TDS (preserve kernel)
-            self.tds = new_tds;
-            self.topology_construction_provenance = crate::triangulation::validation::TopologyConstructionProvenance::EuclideanDelaunayInsertion;
-
-            // Re-map vertex key to the rebuilt TDS
-            v_key = self.vertex_key_from_uuid(&inserted_uuid).ok_or(
-                CavityFillingError::RebuiltVertexMissing {
-                    uuid: inserted_uuid,
-                },
-            )?;
+            // Transfer the validated orientation order to the existing owner.
+            // Keeping canonical storage in place preserves every previously
+            // returned vertex key and lets the touched-record transaction undo
+            // only this simplex plus its incident hints.
+            let (_, template_simplex) = new_tds.simplices().next().ok_or_else(|| {
+                CavityFillingError::InitialSimplexConstruction {
+                    reason: InitialSimplexConstructionError::InternalInconsistency {
+                        message: "validated bootstrap TDS contained no simplex".to_string(),
+                    },
+                }
+            })?;
+            let mut oriented_keys = SmallBuffer::new();
+            for &template_key in template_simplex.vertices() {
+                let template_vertex = new_tds.vertex(template_key).ok_or_else(|| {
+                    CavityFillingError::InitialSimplexConstruction {
+                        reason: InitialSimplexConstructionError::InternalInconsistency {
+                            message: format!(
+                                "validated bootstrap simplex referenced missing vertex {template_key:?}"
+                            ),
+                        },
+                    }
+                })?;
+                let current_key = self.vertex_key_from_uuid(&template_vertex.uuid()).ok_or(
+                    CavityFillingError::RebuiltVertexMissing {
+                        uuid: template_vertex.uuid(),
+                    },
+                )?;
+                oriented_keys.push(current_key);
+            }
+            let simplex = Simplex::try_new(oriented_keys).map_err(CavityFillingError::from)?;
+            let first_simplex = self
+                .tds
+                .insert_simplex_with_mapping_prechecked_topology(simplex)
+                .map_err(InsertionError::from)?;
+            self.tds
+                .assign_neighbors()
+                .map_err(|source| InsertionError::TopologyValidation { source })?;
+            let bootstrap_vertices: SmallBuffer<VertexKey, CLEANUP_OPERATION_BUFFER_SIZE> = self
+                .tds
+                .simplex(first_simplex)
+                .ok_or(CavityFillingError::MissingBoundarySimplex {
+                    simplex_key: first_simplex,
+                })?
+                .vertices()
+                .iter()
+                .copied()
+                .collect();
+            for vertex_key in bootstrap_vertices {
+                self.tds
+                    .set_incident_simplex_hint(vertex_key, first_simplex)
+                    .map_err(|source| InsertionError::TopologyValidation { source })?;
+            }
+            self.topology_construction_provenance =
+                TopologyConstructionProvenance::EuclideanDelaunayInsertion;
 
             // Return first simplex key for hint caching
-            let first_simplex = self.tds.simplex_keys().next();
-            let realization_validation_simplices = first_simplex.into_iter().collect();
+            let realization_validation_simplices = std::iter::once(first_simplex).collect();
             return Ok(TryInsertImplOk {
-                inserted: (v_key, first_simplex),
+                inserted: (v_key, Some(first_simplex)),
                 simplices_removed: 0,
                 suspicion,
                 repair_seed_simplices: SimplexKeyBuffer::new(),
@@ -3175,13 +3207,8 @@ mod tests {
                 format!("invalid_start_simplex simplex_key={simplex_key:?}"),
             ),
             (
-                ConflictError::SimplexDataAccessFailed {
-                    simplex_key,
-                    message: "missing vertices".to_string(),
-                },
-                format!(
-                    "simplex_data_access_failed simplex_key={simplex_key:?} message=missing vertices"
-                ),
+                ConflictError::ConflictSimplexNotFound { simplex_key },
+                format!("conflict_simplex_not_found simplex_key={simplex_key:?}"),
             ),
         ];
 
@@ -3492,18 +3519,27 @@ mod tests {
     }
 
     #[test]
-    fn test_duplicate_distance_within_tolerance_handles_overflowed_tolerance_square() {
-        assert!(
-            Triangulation::<FastKernel<f64>, (), (), 2>::duplicate_distance_within_tolerance(
-                f64::MAX,
-                f64::MAX
-            )
+    fn test_duplicate_coordinates_error_handles_extreme_finite_coordinates() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+        let _ = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+            .unwrap();
+
+        assert_matches!(
+            tri.duplicate_coordinates_error(&[1.0e308, 1.0e308], 1.5e308, None),
+            Some(InsertionError::DuplicateCoordinates { .. })
         );
         assert!(
-            !Triangulation::<FastKernel<f64>, (), (), 2>::duplicate_distance_within_tolerance(
-                f64::MAX,
-                1.0
-            )
+            tri.duplicate_coordinates_error(&[1.0e308, 1.0e308], 1.3e308, None)
+                .is_none()
+        );
+
+        let boundary = [1.5e308, 0.0];
+        assert_matches!(
+            tri.duplicate_coordinates_error(&boundary, 1.5e308, None),
+            Some(InsertionError::DuplicateCoordinates { .. })
         );
     }
 

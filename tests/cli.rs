@@ -4,6 +4,14 @@
 
 #[cfg(feature = "cli")]
 mod cli_tests {
+    use approx::assert_abs_diff_eq;
+    use ciborium::value::Value as CborValue;
+    use delaunay::prelude::checkpoint::{
+        DELAUNAY_CHECKPOINT_SCHEMA_VERSION, DelaunayCheckpointManifest,
+    };
+    use delaunay::prelude::construction::DelaunayTriangulation;
+    use delaunay::prelude::geometry::RobustKernel;
+    use serde_json::{Value, from_slice, from_value};
     use std::{
         collections::HashSet,
         fs,
@@ -11,8 +19,6 @@ mod cli_tests {
         process::{Command, Output},
         time::{SystemTime, UNIX_EPOCH},
     };
-
-    use serde_json::Value;
 
     fn delaunay_command() -> Command {
         Command::new(env!("CARGO_BIN_EXE_delaunay"))
@@ -60,7 +66,7 @@ mod cli_tests {
     }
 
     fn stdout_json(output: &Output) -> Value {
-        serde_json::from_slice(&output.stdout).expect("stdout should contain JSON")
+        from_slice(&output.stdout).expect("stdout should contain JSON")
     }
 
     fn assert_stderr_contains(output: &Output, expected: &str) {
@@ -71,15 +77,50 @@ mod cli_tests {
         );
     }
 
-    fn generated_triangulation_tds(json: &Value) -> &Value {
-        assert_eq!(json["schema_version"], 1);
-        json.get("tds")
-            .expect("triangulation JSON should include the proof owner's TDS")
+    fn generated_triangulation_tds(json: &Value) -> CborValue {
+        assert_eq!(json["schema_version"], DELAUNAY_CHECKPOINT_SCHEMA_VERSION);
+        assert_eq!(json["manifest"]["manifest_version"], 1);
+        assert_eq!(json["manifest"]["digest"]["version"], 1);
+        assert_eq!(json["manifest"]["digest"]["algorithm"], "sha256");
+        assert_eq!(
+            json["manifest"]["digest"]["value"]
+                .as_str()
+                .expect("triangulation manifest should include a digest")
+                .len(),
+            64
+        );
+        let bytes = json["tds"]
+            .as_array()
+            .expect("triangulation JSON should include embedded TDS bytes")
+            .iter()
+            .map(|value| {
+                u8::try_from(value.as_u64().expect("TDS byte should be unsigned"))
+                    .expect("TDS byte should fit u8")
+            })
+            .collect::<Vec<_>>();
+        ciborium::de::from_reader(bytes.as_slice()).expect("embedded TDS should decode")
+    }
+
+    fn cbor_field<'a>(value: &'a CborValue, name: &str) -> &'a CborValue {
+        value
+            .as_map()
+            .expect("embedded TDS record should be a map")
+            .iter()
+            .find_map(|(key, value)| (key.as_text() == Some(name)).then_some(value))
+            .unwrap_or_else(|| panic!("embedded TDS record should contain {name}"))
     }
 
     fn assert_generated_triangulation_json(json: &Value, dimension: usize, vertex_count: usize) {
         let tds = generated_triangulation_tds(json);
-        let vertices = tds["vertices"]
+        assert_eq!(json["manifest"]["dimension"], dimension);
+        assert_eq!(
+            json["manifest"]["f_vector"]
+                .as_array()
+                .expect("triangulation manifest should include an f-vector")
+                .len(),
+            dimension + 1
+        );
+        let vertices = cbor_field(&tds, "vertices")
             .as_array()
             .expect("triangulation JSON should include vertices");
         assert_eq!(vertices.len(), vertex_count);
@@ -87,27 +128,28 @@ mod cli_tests {
         let vertex_ids: HashSet<_> = vertices
             .iter()
             .map(|vertex| {
-                let coordinates = vertex["point"]
+                let coordinates = cbor_field(vertex, "point")
                     .as_array()
                     .expect("vertex JSON should include coordinates");
                 assert_eq!(coordinates.len(), dimension);
                 assert!(
                     coordinates
                         .iter()
-                        .all(|coordinate| coordinate.as_f64().is_some_and(f64::is_finite))
+                        .all(|coordinate| coordinate.as_float().is_some_and(f64::is_finite))
                 );
-                vertex["uuid"]
-                    .as_str()
-                    .expect("vertex JSON should include a UUID string")
+                cbor_field(vertex, "uuid")
+                    .as_bytes()
+                    .expect("vertex CBOR should include UUID bytes")
+                    .clone()
             })
             .collect();
         assert_eq!(vertex_ids.len(), vertex_count);
 
-        let simplex_vertices = tds["simplex_vertices"]
-            .as_object()
+        let simplex_vertices = cbor_field(&tds, "simplex_vertices")
+            .as_map()
             .expect("triangulation JSON should include simplex vertex references");
         assert!(!simplex_vertices.is_empty());
-        for references in simplex_vertices.values() {
+        for (_, references) in simplex_vertices {
             let references = references
                 .as_array()
                 .expect("simplex vertex references should be an array");
@@ -116,8 +158,9 @@ mod cli_tests {
                 .iter()
                 .map(|reference| {
                     reference
-                        .as_str()
-                        .expect("simplex vertex reference should be a UUID string")
+                        .as_bytes()
+                        .expect("simplex vertex reference should be UUID bytes")
+                        .clone()
                 })
                 .collect();
             assert_eq!(referenced_ids.len(), dimension + 1);
@@ -141,7 +184,7 @@ mod cli_tests {
 
     fn file_json(path: &Path) -> Value {
         let bytes = fs::read(path).expect("JSON output file should be readable");
-        serde_json::from_slice(&bytes).expect("output file should contain JSON")
+        from_slice(&bytes).expect("output file should contain JSON")
     }
 
     #[test]
@@ -159,6 +202,9 @@ mod cli_tests {
         let diagnostic_help = output_text(&diagnostic_help.stdout);
         assert!(diagnostic_help.contains("Run validated Pachner-move stress diagnostics"));
         assert!(diagnostic_help.contains("--dimension"));
+        assert!(diagnostic_help.contains("Workload steps"));
+        assert!(diagnostic_help.contains("round-trip mode"));
+        assert!(!diagnostic_help.contains("Attempted Pachner moves"));
     }
 
     #[test]
@@ -205,12 +251,13 @@ mod cli_tests {
         assert_success(&output);
 
         let json = stdout_json(&output);
-        let vertices = generated_triangulation_tds(&json)["vertices"]
+        let tds = generated_triangulation_tds(&json);
+        let vertices = cbor_field(&tds, "vertices")
             .as_array()
             .expect("triangulation JSON should include vertices");
         assert_eq!(vertices.len(), 8);
         for vertex in vertices {
-            let point = vertex["point"]
+            let point = cbor_field(vertex, "point")
                 .as_array()
                 .expect("vertex JSON should include coordinates");
             assert_eq!(point.len(), 3);
@@ -219,8 +266,8 @@ mod cli_tests {
                 .iter()
                 .map(|coordinate| {
                     let coordinate = coordinate
-                        .as_f64()
-                        .expect("coordinate should be a JSON number");
+                        .as_float()
+                        .expect("coordinate should be a CBOR float");
                     coordinate * coordinate
                 })
                 .sum();
@@ -446,14 +493,23 @@ mod cli_tests {
             "--dimension",
             "4",
             "--vertices",
-            "5",
+            "6",
             "--seed",
             "4",
             "--output",
             path.to_str().expect("target path should be UTF-8"),
         ]);
         assert_success(&output);
-        assert_generated_triangulation_json(&file_json(&path), 4, 5);
+        let json = file_json(&path);
+        assert_generated_triangulation_json(&json, 4, 6);
+        let expected_manifest: DelaunayCheckpointManifest =
+            from_value(json["manifest"].clone()).unwrap();
+        let restored: DelaunayTriangulation<RobustKernel<f64>, (), (), 4> =
+            from_slice(&fs::read(&path).expect("4D checkpoint should be readable")).unwrap();
+        assert_eq!(restored.number_of_vertices(), 6);
+        assert!(restored.number_of_simplices() > 1);
+        assert_eq!(restored.checkpoint_manifest().unwrap(), expected_manifest);
+        restored.validate().unwrap();
     }
 
     #[test]
@@ -465,14 +521,23 @@ mod cli_tests {
             "--dimension",
             "5",
             "--vertices",
-            "6",
+            "7",
             "--seed",
             "5",
             "--output",
             path.to_str().expect("target path should be UTF-8"),
         ]);
         assert_success(&output);
-        assert_generated_triangulation_json(&file_json(&path), 5, 6);
+        let json = file_json(&path);
+        assert_generated_triangulation_json(&json, 5, 7);
+        let expected_manifest: DelaunayCheckpointManifest =
+            from_value(json["manifest"].clone()).unwrap();
+        let restored: DelaunayTriangulation<RobustKernel<f64>, (), (), 5> =
+            from_slice(&fs::read(&path).expect("5D checkpoint should be readable")).unwrap();
+        assert_eq!(restored.number_of_vertices(), 7);
+        assert!(restored.number_of_simplices() > 1);
+        assert_eq!(restored.checkpoint_manifest().unwrap(), expected_manifest);
+        restored.validate().unwrap();
     }
 
     #[test]
@@ -533,7 +598,7 @@ mod cli_tests {
             "--vertices",
             "5",
             "--attempts",
-            "1",
+            "2",
             "--validate-every",
             "1",
             "--key-refresh-every",
@@ -556,43 +621,73 @@ mod cli_tests {
 
         let json = file_json(&summary_path);
         assert_eq!(json["schema"], "delaunay.pachner_stress");
-        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["schema_version"], 2);
         assert_eq!(json["dimension"], 3);
         assert_eq!(json["label"], "3d");
         assert_eq!(json["mode"], "round-trip");
         assert_eq!(json["validation_scope"], "topology");
         assert_eq!(json["configured_vertices"], 5);
-        assert_eq!(json["attempts"], 1);
+        assert_eq!(json["configured_steps"], 2);
         assert_eq!(json["validate_every"], 1);
         assert_eq!(json["key_refresh_every"], 1);
         assert_eq!(json["retry_attempts"], 4);
         assert_eq!(json["seed"], 7);
         assert_eq!(json["source"]["mode"], "round-trip");
         assert_eq!(json["source"]["validation_scope"], "topology");
-        assert_eq!(json["report"]["attempts"], 1);
+        assert_eq!(json["report"]["completed_steps"], 2);
+        let proposal_attempts = json["report"]["proposal_attempts"]
+            .as_u64()
+            .expect("proposal attempts should be an unsigned count");
+        let accepted_mutations = json["report"]["accepted_mutations"]
+            .as_u64()
+            .expect("accepted mutations should be an unsigned count");
+        let proposal_rejections = json["report"]["proposal_rejections"]
+            .as_u64()
+            .expect("proposal rejections should be an unsigned count");
+        assert_eq!(proposal_attempts, accepted_mutations + proposal_rejections);
+        assert!(proposal_attempts <= 4);
+        assert!(json.get("attempts").is_none());
+        assert!(json["report"].get("accepted").is_none());
 
         let progress = fs::read_to_string(progress_path).expect("progress CSV should be readable");
         let rows: Vec<_> = progress.lines().collect();
         assert_eq!(
             rows.len(),
-            2,
-            "expected one CSV header and one progress row"
+            3,
+            "expected one CSV header and two progress rows"
         );
         assert_eq!(
             rows[0],
-            "dimension,label,mode,validation_scope,sequence,step,attempts,accepted,rejected,candidate_misses,\
-             proposal_rejections,validations,validation_nanos,acceptance_rate,vertices,simplices"
+            "schema_version,dimension,label,mode,validation_scope,sequence,completed_steps,configured_steps,\
+             proposal_attempts,accepted_mutations,candidate_misses,proposal_rejections,validations,\
+             validation_nanos,acceptance_rate,vertices,simplices"
         );
         let fields: Vec<_> = rows[1].split(',').collect();
-        assert_eq!(fields.len(), 16);
-        assert_eq!(fields[0], "3");
-        assert_eq!(fields[1], "3d");
-        assert_eq!(fields[2], "round-trip");
-        assert_eq!(fields[3], "topology");
-        assert_eq!(fields[4], "1");
+        assert_eq!(fields.len(), 17);
+        assert_eq!(fields[0], "2");
+        assert_eq!(fields[1], "3");
+        assert_eq!(fields[2], "3d");
+        assert_eq!(fields[3], "round-trip");
+        assert_eq!(fields[4], "topology");
         assert_eq!(fields[5], "1");
         assert_eq!(fields[6], "1");
-        assert_eq!(fields[11], "1");
+        assert_eq!(fields[7], "2");
+        assert_eq!(fields[12], "1");
+        let completed_proposals = fields[8]
+            .parse::<u32>()
+            .expect("progress proposal attempts should parse");
+        let accepted = fields[9]
+            .parse::<u32>()
+            .expect("progress accepted mutations should parse");
+        let acceptance_rate = fields[14]
+            .parse::<f64>()
+            .expect("progress acceptance rate should parse");
+        assert!(completed_proposals > 0);
+        assert_abs_diff_eq!(
+            acceptance_rate,
+            f64::from(accepted) / f64::from(completed_proposals),
+            epsilon = 1.0e-6
+        );
     }
 
     #[test]
@@ -631,12 +726,24 @@ mod cli_tests {
         assert_eq!(json["mode"], "random-walk");
         assert_eq!(json["validation_scope"], "topology");
         assert_eq!(json["configured_vertices"], 5);
-        assert_eq!(json["attempts"], 2);
+        assert_eq!(json["schema_version"], 2);
+        assert_eq!(json["configured_steps"], 2);
         assert_eq!(json["validate_every"], 1);
         assert_eq!(json["source"]["mode"], "random-walk");
         assert_eq!(json["source"]["validation_scope"], "topology");
-        assert_eq!(json["report"]["attempts"], 2);
+        assert_eq!(json["report"]["completed_steps"], 2);
         assert_eq!(json["report"]["validations"], 2);
+        let proposal_attempts = json["report"]["proposal_attempts"]
+            .as_u64()
+            .expect("proposal attempts should be an unsigned count");
+        let accepted_mutations = json["report"]["accepted_mutations"]
+            .as_u64()
+            .expect("accepted mutations should be an unsigned count");
+        let proposal_rejections = json["report"]["proposal_rejections"]
+            .as_u64()
+            .expect("proposal rejections should be an unsigned count");
+        assert_eq!(proposal_attempts, accepted_mutations + proposal_rejections);
+        assert!(proposal_attempts <= 2);
     }
 
     #[test]
@@ -670,6 +777,12 @@ mod cli_tests {
         assert!(stdout.contains("pachner_stress_source"));
         assert!(stdout.contains("pachner_stress_progress"));
         assert!(stdout.contains("pachner_stress_metric"));
+        assert!(stdout.contains("schema_version=2"));
+        assert!(stdout.contains("completed_steps=1 configured_steps=1"));
+        assert!(stdout.contains("proposal_attempts="));
+        assert!(stdout.contains("accepted_mutations="));
+        assert!(!stdout.contains(" attempts="));
+        assert!(!stdout.contains(" accepted="));
     }
 
     #[test]

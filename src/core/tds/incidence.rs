@@ -28,6 +28,12 @@ pub(super) struct SimplexIncidenceRemoval {
     removed_vertices: SmallBuffer<RemovedVertexIncidence, MAX_PRACTICAL_DIMENSION_SIZE>,
 }
 
+/// Before-image of one vertex's canonical incidence buffer.
+pub(super) type VertexIncidenceSnapshot = (
+    VertexKey,
+    Option<SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+);
+
 /// Position of one removed simplex key inside one vertex incidence buffer.
 ///
 /// `remove_simplex` uses `swap_remove` on the success path, so rollback needs
@@ -39,6 +45,21 @@ struct RemovedVertexIncidence {
 }
 
 impl VertexIncidenceIndex {
+    /// Captures one incidence entry for a proportional rollback journal.
+    pub(super) fn snapshot_entry(&self, vertex_key: VertexKey) -> VertexIncidenceSnapshot {
+        (vertex_key, self.map.get(&vertex_key).cloned())
+    }
+
+    /// Restores one incidence entry from a proportional rollback journal.
+    pub(super) fn restore_entry(&mut self, snapshot: VertexIncidenceSnapshot) {
+        let (vertex_key, incident_simplices) = snapshot;
+        if let Some(incident_simplices) = incident_simplices {
+            self.map.insert(vertex_key, incident_simplices);
+        } else {
+            self.map.remove(&vertex_key);
+        }
+    }
+
     /// Creates an empty incidence index with capacity for `vertex_capacity` vertices.
     #[must_use]
     pub(super) fn with_vertex_capacity(vertex_capacity: usize) -> Self {

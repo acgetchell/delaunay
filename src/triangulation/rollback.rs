@@ -7,10 +7,6 @@ use crate::triangulation::Triangulation;
 use crate::triangulation::validation::TopologyConstructionProvenance;
 
 impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for Triangulation<K, U, V, D> {
-    fn rollback_tds(&self) -> &Tds<U, V, D> {
-        &self.tds
-    }
-
     fn rollback_tds_mut(&mut self) -> &mut Tds<U, V, D> {
         &mut self.tds
     }
@@ -20,8 +16,8 @@ impl<K, U, V, const D: usize> TdsRollbackOwner<U, V, D> for Triangulation<K, U, 
 /// inside an owner-selected TDS rollback transaction.
 ///
 /// Higher proof owners implement this trait so Levels 3–4 algorithms can reuse
-/// the higher owner's rollback snapshot instead of nesting another full TDS
-/// snapshot. The higher owner remains responsible for commit versus rollback
+/// the higher owner's rollback journal instead of opening a separate savepoint.
+/// The higher owner remains responsible for commit versus rollback
 /// and for restoring any state coupled to the TDS.
 #[expect(
     clippy::redundant_pub_crate,
@@ -34,8 +30,8 @@ pub(crate) trait TriangulationRollbackWindow<K, U, V, const D: usize>:
     fn triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D>;
 }
 
-/// Scoped rollback guard for a `Triangulation` mutation that snapshots only
-/// the owned TDS while allowing method-level mutation through the owner.
+/// Scoped rollback guard for a `Triangulation` mutation that journals the owned
+/// TDS while allowing method-level mutation through the owner.
 #[must_use = "rollback transactions restore on drop unless explicitly committed or rolled back"]
 pub struct TriangulationRollbackTransaction<'tri, K, U, V, const D: usize>
 where
@@ -52,7 +48,7 @@ where
     U: Clone,
     V: Clone,
 {
-    /// Begins a rollback window by snapshotting the canonical TDS owner.
+    /// Begins a touched-record rollback window on the canonical TDS owner.
     pub(crate) fn begin(owner: &'tri mut Triangulation<K, U, V, D>) -> Self {
         let topology_construction_provenance_snapshot = owner.topology_construction_provenance;
         Self {
@@ -131,7 +127,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tds::Tds;
     use crate::geometry::kernel::FastKernel;
     use crate::vertex;
     use std::sync::Arc;
@@ -181,19 +176,14 @@ mod tests {
         assert_eq!(triangulation.tds.number_of_vertices(), 1);
     }
 
-    fn assert_restore_allows_tds_field_replacement<const D: usize>() {
+    fn assert_restore_preserves_tds_owner_identity<const D: usize>() {
         let mut triangulation: Triangulation<FastKernel<f64>, (), (), D> =
             Triangulation::new_empty(FastKernel::new());
         insert_test_vertex(&mut triangulation, 1.0);
         let original_identity = Arc::clone(triangulation.tds.identity());
 
         let mut transaction = TriangulationRollbackTransaction::begin(&mut triangulation);
-        {
-            let owner = transaction.triangulation_mut();
-            owner.tds = Tds::empty();
-            assert_eq!(owner.tds.number_of_vertices(), 0);
-            assert!(!Arc::ptr_eq(&original_identity, owner.tds.identity()));
-        }
+        insert_test_vertex(transaction.triangulation_mut(), 2.0);
 
         transaction.restore();
         {
@@ -270,8 +260,8 @@ mod tests {
     }
 
     #[test]
-    fn triangulation_transaction_restore_allows_tds_field_replacement() {
-        assert_rollback_dimensions!(assert_restore_allows_tds_field_replacement);
+    fn triangulation_transaction_restore_preserves_tds_owner_identity() {
+        assert_rollback_dimensions!(assert_restore_preserves_tds_owner_identity);
     }
 
     #[test]

@@ -245,20 +245,31 @@ loose `(snapshot, restore)` pairs. Use the TDS rollback primitives in
 `core::tds::rollback` for free functions that already own a `&mut Tds`, and use
 `TriangulationRollbackTransaction` from `core::rollback` for `Triangulation`
 methods that need to call back into `self` during the rollback window. Both
-compose through the same TDS snapshot primitive, restore on drop unless
-committed explicitly, and use rollback-preserving clone semantics for retries.
+compose through the same touched-record TDS journal, restore on drop unless
+committed explicitly, and preserve exact generational keys across retries.
 Higher-level
 `DelaunayTriangulation` operations must use the Delaunay-level rollback guard
 when they also mutate insertion hints, spatial indexes, or repair bookkeeping;
 the guard must restore or intentionally invalidate that auxiliary state
 alongside the TDS. Do not wrap only the TDS when owner-coupled state can change.
+
+Treat every fallible topology move, mutation, and repair as a two-outcome
+transaction whose input owner is already valid through the operation's promised
+validation layers. A successful operation validates the candidate through those
+layers before commit. A failed operation restores the complete pre-operation
+owner state and leaves it valid through the same layers; it must never return an
+error with a partially applied edit. Complete restoration includes canonical
+storage, reverse maps and indexes, caches and hints, owner identity, generation,
+and validation or provenance evidence unless the API explicitly documents safe
+invalidation of a derived value.
+
 Issue #364 completed the rollback-infrastructure audit; the separate
 `remove_vertex` orientation-correctness work was resolved in #448.
 
-Detached trial/scratch workspaces are a separate pattern: they may use
-`clone_for_rollback`/`clone_from_for_rollback` directly when the canonical owner
-is not mutated until the detached trial has validated and is swapped into place.
-Examples include flip trial workspaces and copy-on-success cleanup operations.
+Detached trial/scratch workspaces are a separate pattern: they may clone when
+the canonical owner is not mutated until the detached trial has validated and
+is swapped into place. Canonical-owner mutation must use the journal guards;
+whole-owner clones are not a rollback mechanism for insertion or flip repair.
 
 Keep runtime identity or generation checks for detached handles, separately
 supplied indexes, serialization boundaries, and tests that intentionally corrupt
@@ -863,8 +874,10 @@ Keep raw bistellar flip primitives out of preludes. Downstream examples should
 use `delaunay::prelude::pachner` for local move workflows, the construction
 prelude for `DelaunayTriangulation::insert_vertex`, and
 `delaunay::prelude::deletion` when matching typed `delete_vertex` failures.
-Import `delaunay::flips` directly only when testing, benchmarking, or
-documenting the primitive flip layer itself.
+The public primitive layer remains available for expert callers through a
+direct `delaunay::flips` import, but it is intentionally excluded from every
+prelude. Tests, benchmarks, and primitive-layer documentation should use that
+same direct import.
 
 The root `delaunay::prelude::*` is intentionally available as the
 kitchen-sink prelude for new users, quick experiments, and exploratory tests.

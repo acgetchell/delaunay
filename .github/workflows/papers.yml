@@ -18,7 +18,7 @@ on:
       - main
     paths:
       - ".github/workflows/papers.yml"
-      - ".github/actions/setup-just/action.yml"
+      - ".github/actions/setup-just/**"
       - ".python-version"
       - "Cargo.lock"
       - "Cargo.toml"
@@ -32,6 +32,7 @@ on:
       - "scripts/paper_check.py"
       - "scripts/paper_pdf_normalize.py"
       - "scripts/paper_source_date.py"
+      - "scripts/subprocess_utils.py"
       - "scripts/notebook_utils.py"
       - "scripts/notebook_validation.py"
       - "scripts/notebook_validation_rendering.py"
@@ -46,7 +47,7 @@ on:
       - main
     paths:
       - ".github/workflows/papers.yml"
-      - ".github/actions/setup-just/action.yml"
+      - ".github/actions/setup-just/**"
       - ".python-version"
       - "Cargo.lock"
       - "Cargo.toml"
@@ -60,6 +61,7 @@ on:
       - "scripts/paper_check.py"
       - "scripts/paper_pdf_normalize.py"
       - "scripts/paper_source_date.py"
+      - "scripts/subprocess_utils.py"
       - "scripts/notebook_utils.py"
       - "scripts/notebook_validation.py"
       - "scripts/notebook_validation_rendering.py"
@@ -223,14 +225,5 @@ jobs:
 
       - name: Build and compare papers
         run: |
-          just validation-doc-figures
+          just validation-doc-figures-check
           just paper-artifact-check
-
-      - name: Verify paper figures are current
-        run: |
-          if [[ -n "$(git status --porcelain -- docs/assets/validation)" ]]; then
-            git status --short -- docs/assets/validation
-            echo "::error::Paper figures changed after 'just validation-doc-figures'."
-            echo "Run 'just validation-doc-figures' and commit the regenerated PNG outputs."
-            exit 1
-          fi

@@ -4,7 +4,6 @@
 
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::facet::FacetError;
-use crate::core::traits::data_type::DataType;
 use crate::core::util::stable_facet_identifier_from_vertex_uuids;
 use crate::core::vertex::Vertex;
 use crate::geometry::algorithms::convex_hull::ConvexHull;
@@ -204,7 +203,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, query::*};
 /// use delaunay::prelude::query::extract_vertex_coordinate_set;
 ///
 /// # #[derive(Debug, thiserror::Error)]
@@ -230,11 +229,7 @@ where
 #[must_use]
 pub fn extract_vertex_coordinate_set<K, U, V, const D: usize>(
     tri: &Triangulation<K, U, V, D>,
-) -> HashSet<Point<D>>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> HashSet<Point<D>> {
     tri.vertices().map(|(_, vertex)| *vertex.point()).collect()
 }
 
@@ -268,7 +263,7 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, query::*};
 /// use delaunay::prelude::query::extract_edge_set;
 ///
 /// # #[derive(Debug, thiserror::Error)]
@@ -296,11 +291,7 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 /// ```
 pub fn extract_edge_set<K, U, V, const D: usize>(
     tri: &Triangulation<K, U, V, D>,
-) -> Result<HashSet<(u128, u128)>, FacetError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<HashSet<(u128, u128)>, FacetError> {
     let mut edges = HashSet::new();
 
     for (_, simplex) in tri.simplices() {
@@ -350,7 +341,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, query::*};
 /// use delaunay::prelude::query::extract_facet_identifier_set;
 ///
 /// # #[derive(Debug, thiserror::Error)]
@@ -378,11 +369,7 @@ where
 /// ```
 pub fn extract_facet_identifier_set<K, U, V, const D: usize>(
     tri: &Triangulation<K, U, V, D>,
-) -> Result<HashSet<u64>, FacetError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<HashSet<u64>, FacetError> {
     let mut facet_ids = HashSet::new();
 
     let facet_index =
@@ -423,7 +410,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, query::*};
 /// use delaunay::prelude::query::{ConvexHull, extract_hull_facet_set};
 ///
 /// # #[derive(Debug, thiserror::Error)]

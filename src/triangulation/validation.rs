@@ -114,11 +114,9 @@ use crate::core::collections::{
 };
 use crate::core::operations::{InsertionTelemetry, InsertionTelemetryMode, SuspicionFlags};
 use crate::core::tds::{
-    InvariantError, InvariantKind, InvariantViolation, SimplexKey, Tds, TdsError,
+    InvariantError, InvariantKind, InvariantViolation, SimplexKey, Tds, TdsError, TopologyOwnerId,
     TriangulationValidationReport, VertexKey,
 };
-use crate::core::traits::data_type::DataType;
-use crate::geometry::kernel::Kernel;
 use crate::topology::characteristics::euler::{
     FVector, TopologyClassification, count_boundary_simplices, count_simplices,
 };
@@ -141,32 +139,6 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use uuid::Uuid;
 
-/// Convert an [`InsertionError`] into the appropriate [`InvariantError`], preserving
-/// structured error information across all layers.
-///
-/// - `TopologyValidation { source }` → `InvariantError::Tds { source }` (Level 1–2 preserved)
-/// - `TopologyValidationFailed { source }` → `InvariantError::Triangulation { source }` (Level 3 preserved)
-/// - `RealizationValidationFailed { source }` → `InvariantError::Realization { source }` (Level 4 preserved)
-/// - `DelaunayValidationFailed { source }` → `InvariantError::Delaunay { source }` (Level 5 preserved)
-/// - All other variants → `InvariantError::Tds { source: InconsistentDataStructure { .. } }` with `context`
-pub fn insertion_error_to_invariant_error(error: InsertionError, context: &str) -> InvariantError {
-    match error {
-        InsertionError::TopologyValidation { source } => InvariantError::Tds { source },
-        InsertionError::TopologyValidationFailed { source, .. } => {
-            InvariantError::Triangulation { source }
-        }
-        InsertionError::RealizationValidationFailed { source } => {
-            InvariantError::Realization { source }
-        }
-        InsertionError::DelaunayValidationFailed { source } => InvariantError::Delaunay { source },
-        other => InvariantError::Tds {
-            source: TdsError::InconsistentDataStructure {
-                message: format!("{context}: {other}"),
-            },
-        },
-    }
-}
-
 /// Errors that can occur during Level 3 Intrinsic PL Topology validation.
 ///
 /// This type represents **only** Level 3 Intrinsic PL Topology errors. It does not contain
@@ -177,7 +149,7 @@ pub fn insertion_error_to_invariant_error(error: InsertionError, context: &str) 
 ///
 /// ```rust
 /// use delaunay::prelude::tds::InvariantError;
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, validation::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -691,7 +663,7 @@ impl Default for ValidationPolicy {
 /// # Example
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::{construction::*, validation::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -774,6 +746,45 @@ impl TopologyConstructionProvenance {
             }
             _ => EulerClassificationEvidence::Unproven,
         }
+    }
+}
+
+/// Owner-bound Level-3 evidence retained across an unchanged publication path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TopologyCertificationEvidence {
+    owner: TopologyOwnerId,
+    generation: u64,
+    result: TopologyCheckResult,
+}
+
+impl TopologyCertificationEvidence {
+    /// Captures one successful Level-3 result for the exact TDS owner state.
+    fn new<U, V, const D: usize>(tds: &Tds<U, V, D>, result: TopologyCheckResult) -> Self {
+        Self {
+            owner: tds.topology_owner_id(),
+            generation: tds.generation(),
+            result,
+        }
+    }
+
+    /// Returns the f-vector only while this evidence still matches the owner.
+    ///
+    /// The result borrows both the evidence and the checked TDS, preventing
+    /// mutation of that owner while the retained metrics remain observable.
+    pub(crate) fn simplex_counts<'owner, U, V, const D: usize>(
+        &'owner self,
+        tds: &'owner Tds<U, V, D>,
+    ) -> Option<&'owner FVector> {
+        (self.owner == tds.topology_owner_id() && self.generation == tds.generation())
+            .then_some(&self.result.counts)
+    }
+
+    /// Returns the Euler characteristic only while this evidence matches the owner.
+    pub(crate) fn euler_characteristic<U, V, const D: usize>(
+        &self,
+        tds: &Tds<U, V, D>,
+    ) -> Option<isize> {
+        self.simplex_counts(tds).map(|_| self.result.chi)
     }
 }
 
@@ -885,12 +896,14 @@ impl TopologyGuarantee {
 /// use delaunay::prelude::{
 ///     TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
 /// };
-/// use delaunay::prelude::triangulation::TriangulationBuilder;
+/// use delaunay::prelude::triangulation::{
+///     TriangulationBuildFailure, TriangulationBuilder,
+/// };
 /// use delaunay::prelude::tds::Tds;
 ///
+/// # fn main() -> Result<(), TriangulationBuildFailure<(), (), 2>> {
 /// let mut tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
-///     .build()
-///     .expect("the empty complex is a valid realization");
+///     .build()?;
 ///
 /// std::assert_matches!(
 ///     tri.try_set_validation_policy(ValidationPolicy::Never),
@@ -899,6 +912,8 @@ impl TopologyGuarantee {
 ///         validation_policy: ValidationPolicy::Never,
 ///     })
 /// );
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
@@ -1279,15 +1294,23 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::TriangulationBuilder;
+    /// use delaunay::prelude::triangulation::{
+    ///     TriangulationBuildFailure, TriangulationBuilder,
+    /// };
     /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::tds::{InvariantError, Tds};
     /// use delaunay::prelude::topology::spaces::GlobalTopology;
     ///
-    /// # fn main() -> Result<(), InvariantError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Build(#[from] TriangulationBuildFailure<(), (), 2>),
+    /// #     #[error(transparent)]
+    /// #     Invariant(#[from] InvariantError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let mut tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
-    ///     .build()
-    ///     .expect("the empty complex is a valid realization");
+    ///     .build()?;
     ///
     /// tri.try_set_global_topology(GlobalTopology::Euclidean)?;
     /// assert_eq!(tri.global_topology(), GlobalTopology::Euclidean);
@@ -1320,6 +1343,11 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// links (when required by the topology guarantee), isolated vertices, and
     /// Euler characteristic.
     fn validate_topology_core(&self) -> Result<(), InvariantError> {
+        self.certify_topology().map(|_| ())
+    }
+
+    /// Runs Level 3 once and binds its topology metrics to this TDS generation.
+    pub(super) fn certify_topology(&self) -> Result<TopologyCertificationEvidence, InvariantError> {
         // 1. Connectedness
         //
         // Checked first because it is cheaper than building the facet-to-simplices map
@@ -1333,13 +1361,22 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
         let facet_to_simplices =
             ValidatedFacetDegreeMap::try_from_facet_map(&self.tds, &facet_to_simplices)?;
-        self.validate_topology_core_from_validated_facet_map(facet_to_simplices)
+        let result = self.certify_topology_from_facets(facet_to_simplices)?;
+        Ok(TopologyCertificationEvidence::new(&self.tds, result))
     }
 
     fn validate_topology_core_from_validated_facet_map(
         &self,
         facet_to_simplices: ValidatedFacetDegreeMap<'_, U, V, D>,
     ) -> Result<(), InvariantError> {
+        self.certify_topology_from_facets(facet_to_simplices)
+            .map(|_| ())
+    }
+
+    fn certify_topology_from_facets(
+        &self,
+        facet_to_simplices: ValidatedFacetDegreeMap<'_, U, V, D>,
+    ) -> Result<TopologyCheckResult, InvariantError> {
         // 2b. Boundary manifoldness in codimension 2: the boundary must be "closed"
         // (i.e., its ridges must have degree 2 within boundary facets).
         validate_closed_boundary_from_validated_facet_map(
@@ -1396,7 +1433,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             .into());
         }
 
-        Ok(())
+        Ok(topology_result)
     }
 
     /// Computes a coherent intrinsic orientation witness for a pure 2D or 3D complex.
@@ -1545,15 +1582,19 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::ValidationPolicy;
-    /// use delaunay::prelude::triangulation::TriangulationBuilder;
+    /// use delaunay::prelude::triangulation::{
+    ///     TriangulationBuildFailure, TriangulationBuilder,
+    /// };
     /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::tds::Tds;
     ///
+    /// # fn main() -> Result<(), TriangulationBuildFailure<(), (), 2>> {
     /// let tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
-    ///     .build()
-    ///     .expect("the empty complex is a valid realization");
+    ///     .build()?;
     ///
     /// assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -1575,14 +1616,22 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::ValidationPolicy;
-    /// use delaunay::prelude::triangulation::TriangulationBuilder;
+    /// use delaunay::prelude::triangulation::{
+    ///     TriangulationBuildFailure, TriangulationBuilder,
+    /// };
     /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::tds::Tds;
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::ValidationConfigurationError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Build(#[from] TriangulationBuildFailure<(), (), 2>),
+    /// #     #[error(transparent)]
+    /// #     Validation(#[from] delaunay::prelude::ValidationConfigurationError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let mut tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
-    ///     .build()
-    ///     .expect("the empty complex is a valid realization");
+    ///     .build()?;
     ///
     /// tri.try_set_validation_policy(ValidationPolicy::Always)?;
     /// assert_eq!(tri.validation_policy(), ValidationPolicy::Always);
@@ -1612,14 +1661,22 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::TopologyGuarantee;
-    /// use delaunay::prelude::triangulation::TriangulationBuilder;
+    /// use delaunay::prelude::triangulation::{
+    ///     TriangulationBuildFailure, TriangulationBuilder,
+    /// };
     /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::tds::Tds;
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::ValidationConfigurationError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Build(#[from] TriangulationBuildFailure<(), (), 2>),
+    /// #     #[error(transparent)]
+    /// #     Validation(#[from] delaunay::prelude::ValidationConfigurationError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let mut tri = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), FastKernel::new())
-    ///     .build()
-    ///     .expect("the empty complex is a valid realization");
+    ///     .build()?;
     /// tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)?;
     /// assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
     /// # Ok(())
@@ -1629,10 +1686,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     pub fn try_set_topology_guarantee(
         &mut self,
         guarantee: TopologyGuarantee,
-    ) -> Result<(), ValidationConfigurationError>
-    where
-        K: Kernel<D, Scalar = f64>,
-    {
+    ) -> Result<(), ValidationConfigurationError> {
         validate_configuration(guarantee, self.validation_policy)?;
         let previous = self.topology_guarantee;
         if previous == guarantee {
@@ -1653,10 +1707,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     }
 }
 
-impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
-where
-    K: Kernel<D, Scalar = f64>,
-{
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Traverses the simplex neighbor graph for validation without assuming global connectivity.
     ///
     /// If `allowed` is `Some`, traversal is restricted to that set. Neighbors
@@ -1903,7 +1954,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::{construction::*, validation::*};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1928,11 +1979,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub fn validate(&self) -> Result<(), InvariantError>
-    where
-        U: DataType,
-        V: DataType,
-    {
+    pub fn validate(&self) -> Result<(), InvariantError> {
         self.tds.validate()?;
         self.validate_global_connectedness()?;
         let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
@@ -1974,11 +2021,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub fn validation_report(&self) -> Result<(), TriangulationValidationReport>
-    where
-        U: DataType,
-        V: DataType,
-    {
+    pub fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
         let mut violations: Vec<InvariantViolation> = Vec::new();
 
         // Levels 1-2: reuse the TDS cumulative report.
@@ -2215,7 +2258,7 @@ where
         Ok(())
     }
 
-    pub(crate) fn validation_after_insertion_work(
+    pub(crate) const fn validation_after_insertion_work(
         &self,
         suspicion: SuspicionFlags,
     ) -> Option<InsertionValidationWork> {
@@ -2235,11 +2278,7 @@ where
         &self,
         suspicion: SuspicionFlags,
         local_simplices: Option<&[SimplexKey]>,
-    ) -> Result<(), InvariantError>
-    where
-        U: DataType,
-        V: DataType,
-    {
+    ) -> Result<(), InvariantError> {
         let Some(work) = self.validation_after_insertion_work(suspicion) else {
             return Ok(());
         };
@@ -2268,11 +2307,7 @@ where
         local_simplices: &[SimplexKey],
         telemetry: &mut InsertionTelemetry,
         telemetry_mode: InsertionTelemetryMode,
-    ) -> Result<(), InvariantError>
-    where
-        U: DataType,
-        V: DataType,
-    {
+    ) -> Result<(), InvariantError> {
         let validation_work = self.validation_after_insertion_work(suspicion);
         let validation_started =
             validation_work.and_then(|_| start_insertion_timing(telemetry_mode));
@@ -2339,13 +2374,12 @@ fn start_insertion_timing(telemetry_mode: InsertionTelemetryMode) -> Option<Inst
 mod tests {
     use super::*;
     use crate::core::algorithms::flips::{DelaunayRepairError, DelaunayRepairPostconditionFailure};
-    use crate::core::algorithms::insertion::CavityFillingError;
     use crate::core::algorithms::insertion::repair_neighbor_pointers;
     use crate::core::collections::{NeighborBuffer, SimplexVertexKeyBuffer};
     use crate::core::facet::FacetError;
     use crate::core::operations::InsertionOutcome;
     use crate::core::simplex::Simplex;
-    use crate::core::tds::{GeometricError, NeighborValidationError, Tds};
+    use crate::core::tds::NeighborValidationError;
     use crate::core::vertex::Vertex;
     use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::coordinate_range::CoordinateRange;
@@ -3418,70 +3452,6 @@ mod tests {
             Err(InvariantError::Triangulation {
                 source: TriangulationValidationError::HighDimensionalVertexLinkUnproven { .. }
             })
-        );
-    }
-
-    #[test]
-    fn insertion_error_to_invariant_error_maps_all_arms() {
-        let source = TdsError::Geometric {
-            source: GeometricError::DegenerateOrientation {
-                message: "det=0".to_string(),
-            },
-        };
-        let error = InsertionError::TopologyValidation {
-            source: source.clone(),
-        };
-        assert_eq!(
-            insertion_error_to_invariant_error(error, "ctx"),
-            InvariantError::Tds { source }
-        );
-
-        let inner = TriangulationValidationError::IsolatedVertex {
-            vertex_key: VertexKey::from(KeyData::from_ffi(1)),
-            vertex_uuid: Uuid::nil(),
-        };
-        let error = InsertionError::TopologyValidationFailed {
-            context: InsertionTopologyValidationContext::InvariantConversion,
-            source: inner.clone(),
-        };
-        assert_eq!(
-            insertion_error_to_invariant_error(error, "ctx"),
-            InvariantError::Triangulation { source: inner }
-        );
-
-        let realization_source = synthetic_realization_error();
-        let error = InsertionError::RealizationValidationFailed {
-            source: realization_source.clone(),
-        };
-        assert_eq!(
-            insertion_error_to_invariant_error(error, "ctx"),
-            InvariantError::Realization {
-                source: realization_source
-            }
-        );
-
-        let delaunay_source = synthetic_delaunay_verification_error("delaunay");
-        let error = InsertionError::DelaunayValidationFailed {
-            source: delaunay_source.clone(),
-        };
-        assert_eq!(
-            insertion_error_to_invariant_error(error, "ctx"),
-            InvariantError::Delaunay {
-                source: delaunay_source
-            }
-        );
-
-        let error = InsertionError::CavityFilling {
-            reason: CavityFillingError::EmptyFanTriangulation,
-        };
-        let result = insertion_error_to_invariant_error(error, "ctx");
-        assert!(
-            matches!(
-                result,
-                InvariantError::Tds { source: TdsError::InconsistentDataStructure { ref message } }
-                    if message.contains("ctx") && message.contains("fan triangulation produced no simplices")
-            ),
-            "CavityFilling should wrap to InconsistentDataStructure: {result:?}"
         );
     }
 

@@ -94,8 +94,8 @@ should cover 2D through 5D.
   serialization behavior.
 - `facet.rs` centers codimension-1 face relationships, key derivation, and
   adjacency behavior.
-- `facet_incidence.rs` is trait-implementation focused and supports TDS
-  one-sided/two-sided incidence analysis.
+- `facet_incidence.rs` owns inherent TDS one-sided/two-sided incidence
+  analysis.
 - `src/core/util/` modules are function-focused. Keep utility concerns split by
   purpose rather than recreating a single broad `util.rs`.
 

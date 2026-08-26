@@ -935,11 +935,9 @@ fn benchmark_query_latency(c: &mut Criterion) {
                 // Setup: Create triangulation and query points
                 let points = gen_points::<3>(count, PointDistribution::Random, DEFAULT_SEED);
                 let vertices = benchmark_vertices_from_generated_points(&points);
-                let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices).build() else {
-                    // Construction hit a geometric degeneracy; skip this benchmark entry
-                    b.iter(|| {});
-                    return;
-                };
+                let dt = DelaunayTriangulationBuilder::new(&vertices)
+                    .build()
+                    .or_abort();
 
                 // Generate query points
                 let query_points = gen_points::<3>(100, PointDistribution::Random, QUERY_SEED);

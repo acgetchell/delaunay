@@ -34,17 +34,19 @@ algorithm machinery that operates on it:
   completion, orientation repair, incidence updates, and neighbor maintenance.
   Higher proof owners delegate storage edits here.
 - `tds/snapshot.rs` - persistence boundary from raw codec records into
-  validated UUID snapshots before hydration allocates fresh slotmap keys.
+  validated UUID snapshots before hydration allocates fresh slotmap keys, plus
+  the owner-borrowed Levels 1–2 evidence required for unchecked snapshot
+  encoding.
 - `tds/validation.rs` - Level 2 Combinatorial Consistency validation and adjacency checks.
-- `tds/rollback.rs` - canonical TDS snapshot ownership plus the shared
-  transaction window used by nested proof refinements without duplicate
-  snapshots.
+- `tds/rollback.rs` - touched-record rollback journals plus the shared
+  transaction window used by nested proof refinements without duplicating
+  rollback state.
 - `vertex.rs`, `simplex.rs`, and `facet.rs` - core geometric primitives.
 - `edge.rs` - canonical `EdgeKey` for topology traversal.
 - `adjacency.rs` - optional lifetime-bound topology indexes:
   `IncidenceView`, `EdgeIndex`, `SimplexNeighborIndex`, and
   `TriangulationAdjacency`.
-- `facet_incidence.rs` - TDS-level one-sided/two-sided facet incidence
+- `facet_incidence.rs` - inherent TDS-level one-sided/two-sided facet incidence
   analysis; topology-aware boundary classification lives in the
   `Triangulation`/manifold layer.
 - `collections/` - optimized collection aliases, key maps, buffers, and
@@ -58,7 +60,7 @@ algorithm machinery that operates on it:
   does not own a construction workflow.
 - `algorithms/` also owns point location and PL-manifold repair algorithms
   alongside the focused flip module.
-- `traits/` - core boundary/data trait definitions and facet-incidence analysis.
+- `traits/` - core boundary and data trait definitions.
 - `util/` - shared helpers for UUIDs, hashing, deduplication, allocation
   measurement, facet keys, Jaccard diagnostics, Hilbert ordering, and
   canonical point order.
@@ -172,8 +174,12 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
   an orthogonal core transformation before Levels 1–4 restoration.
 - `repair.rs` - Delaunay repair policies, rebuild config, and repair outcomes.
 - `serialization.rs` - versioned owner-level persistence that stores the
-  canonical `Tds` plus topology guarantee, global topology, and validation
-  policy, then re-proves Levels 3–5 during restoration.
+  canonical `Tds` as an embedded CBOR byte image plus topology
+  guarantee, global topology, validation policy, and a versioned scientific
+  integrity manifest. It owns bounded envelope parsing, typed load/migration
+  APIs, canonical UUID-ordered streaming hashes with map-only buffering,
+  owner-bound reuse of Level-3 f-vector/Euler evidence, and independently
+  replayed 4D/5D Euclidean construction proof before Levels 3–5 restoration.
 - `spherical.rs` - bounded `S^2`/`S^3` construction,
   realization-validation, and empty-cap Delaunay backend using the topology
   space coordinate/metric backend.
@@ -186,8 +192,8 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
 `src/lib.rs` wires public modules, root re-exports, focused preludes, and the
 crate-level documentation map. Public workflow modules are exposed directly as
 `delaunay::builder`, `delaunay::construction`, `delaunay::flips`,
-`delaunay::incremental_builder`, `delaunay::pachner`, `delaunay::repair`,
-`delaunay::validation`, and focused preludes rather than through a nested
+`delaunay::checkpoint`, `delaunay::incremental_builder`, `delaunay::pachner`,
+`delaunay::repair`, `delaunay::validation`, and focused preludes rather than through a nested
 `delaunay::delaunay` facade. The physical
 location of `flips` and `pachner` under `src/triangulation/` records that these
 operations require only the Levels 1–4 owner.

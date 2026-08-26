@@ -29,6 +29,30 @@ def catches_specific_exception() -> None:
         pass
 
 
+def catches_broad_exception_in_tuple() -> None:
+    try:
+        pass
+    # ruleid: delaunay.python.no-broad-exception
+    except (OSError, Exception):
+        pass
+
+
+def catches_broad_exception_in_tuple_with_binding() -> None:
+    try:
+        pass
+    # ruleid: delaunay.python.no-broad-exception
+    except (Exception, RuntimeError) as exc:
+        raise RuntimeError("wrapped") from exc
+
+
+def catches_specific_exception_tuple() -> None:
+    try:
+        pass
+    # ok: delaunay.python.no-broad-exception
+    except (OSError, RuntimeError):
+        pass
+
+
 def raises_raw_exception() -> None:
     # ruleid: delaunay.python.no-raw-exception-in-tests
     raise Exception("too broad")

@@ -189,11 +189,25 @@ pub enum TriangulationConstructionError {
         source: TdsConstructionError,
     },
 
-    /// Failed to create a simplex during triangulation construction.
-    #[error("Failed to create simplex during construction: {message}")]
+    /// Failed to create the initial simplex during triangulation construction.
+    #[error("Failed to create initial simplex during construction: {source}")]
     FailedToCreateSimplex {
-        /// Description of the simplex creation failure.
-        message: String,
+        /// Underlying simplex validation error.
+        #[source]
+        source: SimplexValidationError,
+    },
+
+    /// Initial-simplex orientation canonicalization lacked enough stored vertex keys.
+    #[error(
+        "Cannot canonicalize orientation for {dimension}D initial simplex with {vertex_key_count} vertex key(s); at least {minimum_vertex_key_count} are required"
+    )]
+    InitialSimplexOrientationBookkeeping {
+        /// Dimension of the initial simplex being canonicalized.
+        dimension: usize,
+        /// Number of vertex keys present in the construction draft.
+        vertex_key_count: usize,
+        /// Minimum number of keys needed to swap an orientation pair.
+        minimum_vertex_key_count: usize,
     },
 
     /// Failed to create a simplex while reconstructing a periodic quotient.
@@ -749,13 +763,13 @@ where
             if vertex_keys.len() >= 2 {
                 vertex_keys.swap(0, 1);
             } else {
-                return Err(TriangulationConstructionError::FailedToCreateSimplex {
-                    message: format!(
-                        "Cannot canonicalize orientation for {}D simplex with {} vertex key(s)",
-                        D,
-                        vertex_keys.len(),
-                    ),
-                });
+                return Err(
+                    TriangulationConstructionError::InitialSimplexOrientationBookkeeping {
+                        dimension: D,
+                        vertex_key_count: vertex_keys.len(),
+                        minimum_vertex_key_count: 2,
+                    },
+                );
             }
         }
 
@@ -763,9 +777,7 @@ where
             .insert_simplex(vertex_keys)
             .map_err(|source| match source {
                 TdsDraftInsertionError::SimplexCreation { source } => {
-                    TriangulationConstructionError::FailedToCreateSimplex {
-                        message: format!("Failed to create initial simplex: {source}"),
-                    }
+                    TriangulationConstructionError::FailedToCreateSimplex { source }
                 }
                 TdsDraftInsertionError::SimplexInsertion { source } => {
                     TriangulationConstructionError::Tds { source: *source }
@@ -875,6 +887,24 @@ mod tests {
                 expected: 4,
                 dimension: 3,
             })
+        );
+    }
+
+    #[test]
+    fn failed_initial_simplex_creation_exposes_typed_source() {
+        let simplex_source = SimplexValidationError::InsufficientVertices {
+            actual: 2,
+            expected: 3,
+            dimension: 2,
+        };
+        let error = TriangulationConstructionError::FailedToCreateSimplex {
+            source: simplex_source.clone(),
+        };
+
+        assert_eq!(
+            std::error::Error::source(&error)
+                .and_then(|source| source.downcast_ref::<SimplexValidationError>()),
+            Some(&simplex_source)
         );
     }
 

@@ -1916,9 +1916,7 @@ fn rational_one() -> BigRational {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::realization::{
-        SimplexIntersectionFailure, validate_simplex_realizations_intersect_only_in_shared_faces,
-    };
+    use crate::geometry::realization::{SimplexIntersectionFailure, validate_simplex_intersection};
     use proptest::prelude::*;
     use std::assert_matches;
 
@@ -1984,7 +1982,7 @@ mod tests {
     where
         L: Clone + Eq,
     {
-        match validate_simplex_realizations_intersect_only_in_shared_faces(first, second) {
+        match validate_simplex_intersection(first, second) {
             Ok(()) => IntersectionClassification::Valid,
             Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { .. }) => {
                 IntersectionClassification::Invalid

@@ -234,7 +234,7 @@ impl TryFrom<[VertexKey; 3]> for TriangleHandle {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::*;
+/// use delaunay::prelude::construction::*;
 /// use delaunay::flips::RidgeHandle;
 ///
 /// # #[derive(Debug, thiserror::Error)]

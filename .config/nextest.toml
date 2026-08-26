@@ -71,6 +71,16 @@ binary(=proptest_delaunay_triangulation)
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.ci.overrides]]
+# The 5D local-neighbor repair guardrail can cross the integration-suite
+# watchdog on Windows runners. Keep the normal budget for every other case.
+platform = 'cfg(windows)'
+filter = '''
+binary(=delaunay_incremental_insertion)
+& test(=test_local_neighbor_repair_guardrails_5d)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
 # This cospherical 3D OnSuspicion property can cross the integration-suite
 # watchdog on hosted runners.
 filter = '''
@@ -78,6 +88,17 @@ binary(=proptest_delaunay_triangulation)
 & test(=prop_on_suspicion_validates_cospherical_3d_sequences)
 '''
 slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
+# This regression deliberately compiles and runs a standalone downstream crate
+# in a separate target directory so Cargo feature unification cannot mask the
+# serde_json configuration under test. A clean dependency build can cross the
+# normal per-test watchdog even though the fixture itself is small.
+filter = '''
+binary(=checkpoint_downstream)
+& test(=downstream_json_without_float_roundtrip_preserves_checkpoint_bits)
+'''
+slow-timeout = { period = "120s", terminate-after = 1 }
 
 [[profile.ci.overrides]]
 # Complete 5D exact SoS expansion can cross the default budget on hosted

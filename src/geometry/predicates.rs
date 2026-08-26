@@ -13,10 +13,12 @@ use crate::geometry::matrix::{
 };
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
-    CoordinateConversionError, DEFAULT_TOLERANCE_F64, DegenerateSimplexReason,
-    InvalidCoordinateValue,
+    CoordinateConversionError, CoordinateConversionValue, DEFAULT_TOLERANCE_F64,
+    DegenerateSimplexReason, InvalidCoordinateValue,
 };
-use crate::geometry::util::{circumcenter, circumradius_with_center, hypot};
+use crate::geometry::util::{
+    CircumcenterFailureReason, DegenerateMeasure, circumcenter, circumradius_with_center, hypot,
+};
 use crate::prelude::CircumcenterError;
 use core::hint::cold_path;
 
@@ -576,7 +578,9 @@ pub fn simplex_orientation<const D: usize>(
 ///
 /// # Errors
 ///
-/// Returns an error if the circumcenter calculation fails. See [`circumcenter`] for details.
+/// Returns an error if the circumcenter or circumradius calculation fails, or
+/// if the point-to-center distance is not representable as a finite `f64`.
+/// See [`circumcenter`] for details.
 ///
 /// # Example
 ///
@@ -615,6 +619,14 @@ pub fn insphere_distance<const D: usize>(
         *dst = *p - *c;
     }
     let radius = hypot(&diff_coords);
+    if !radius.is_finite() {
+        return Err(CircumcenterError::MatrixInversionFailed {
+            reason: CircumcenterFailureReason::NonFiniteMeasure {
+                measure: DegenerateMeasure::Length,
+                value: CoordinateConversionValue::from_numeric_debug(&radius),
+            },
+        });
+    }
 
     // Scale tolerance with geometric magnitude to avoid absolute-epsilon
     // misclassification for large circumradii in near-degenerate simplices.
@@ -1348,6 +1360,50 @@ mod tests {
         // At minimum, both methods should give the same result for the same input
         let far_point = Point::try_new([100.0, 100.0]).expect("finite point coordinates");
         assert!(insphere_distance(&simplex_points, far_point).is_ok());
+    }
+
+    #[test]
+    fn insphere_distance_rejects_unrepresentable_finite_radius() {
+        let magnitude = 1.1e308;
+        let simplex_points = vec![
+            Point::try_new([-magnitude, -magnitude, -magnitude]).expect("finite point coordinates"),
+            Point::try_new([magnitude, -magnitude, -magnitude]).expect("finite point coordinates"),
+            Point::try_new([-magnitude, magnitude, -magnitude]).expect("finite point coordinates"),
+            Point::try_new([-magnitude, -magnitude, magnitude]).expect("finite point coordinates"),
+        ];
+        let center = Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates");
+
+        assert_matches!(
+            insphere_distance(&simplex_points, center),
+            Err(CircumcenterError::MatrixInversionFailed {
+                reason: CircumcenterFailureReason::NonFiniteMeasure {
+                    measure: DegenerateMeasure::Length,
+                    ..
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn insphere_distance_rejects_unrepresentable_finite_point_distance() {
+        let simplex_points = vec![
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
+        ];
+        let far_point =
+            Point::try_new([f64::MAX, f64::MAX, f64::MAX]).expect("finite point coordinates");
+
+        assert_matches!(
+            insphere_distance(&simplex_points, far_point),
+            Err(CircumcenterError::MatrixInversionFailed {
+                reason: CircumcenterFailureReason::NonFiniteMeasure {
+                    measure: DegenerateMeasure::Length,
+                    ..
+                },
+            })
+        );
     }
 
     #[test]

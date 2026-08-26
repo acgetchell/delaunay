@@ -43,6 +43,10 @@ the corresponding bibliography entries in this file:
   regular triangulations.
 - [5] Edelsbrunner, H. (2001), mesh generation, cavity-based construction, and
   triangulation repair background.
+- [6] Bareiss, E. H. (1968), fraction-free exact determinant elimination.
+- [7] Edelsbrunner, H., and Mücke, E. P. (1990), Simulation of Simplicity.
+- [8] Moon, B., et al. (2001), locality properties of Hilbert ordering.
+- [9] Skilling, J. (2004), the Hilbert-index algorithm used by the crate.
 
 ## Advanced Computational Geometry Topics
 
@@ -93,7 +97,10 @@ decompositions used in topology, numerical methods, and periodic triangulations 
 
 ## Convex Hull Algorithms
 
-The library includes d-dimensional convex hull functionality, based on these algorithmic foundations.
+The library constructs an owned convex-hull snapshot by extracting and
+certifying a triangulation's boundary facets. Brown is the closest provenance
+for that Delaunay-to-hull relationship; the incremental convex-hull references
+below are related background, not the algorithm implemented by this crate.
 
 Some foundational background (lifted paraboloid / Delaunay–convex hull duality and randomized incremental methods)
 is listed under [Lifted Paraboloid Method](#lifted-paraboloid-method) and
@@ -105,7 +112,7 @@ High-dimensional convex hull bounds are covered under [High-Dimensional Computat
 - Brown, K.Q. "Voronoi Diagrams from Convex Hulls." *Information Processing Letters* 9, no. 5 (1979): 223-228.
   DOI: [10.1016/0020-0190(79)90074-7](https://doi.org/10.1016/0020-0190(79)90074-7)
 
-### Incremental Convex Hull Construction
+### Related Incremental Convex Hull Construction
 
 - Barber, C.B., Dobkin, D.P., and Huhdanpaa, H. "The Quickhull Algorithm for Convex Hulls."
   *ACM Transactions on Mathematical Software* 22, no. 4 (1996): 469-483. DOI: [10.1145/235815.235821](https://doi.org/10.1145/235815.235821)
@@ -179,7 +186,9 @@ unconditional convergence bound for every supported local repair schedule.
 
 - Caroli, M., and Teillaud, M. "Computing 3D Periodic Triangulations."
   In *Algorithms - ESA 2009*, Lecture Notes in Computer Science 5757,
-  Springer, 2009, pp. 37-48. Full version: INRIA Research Report RR-6823,
+  Springer, 2009, pp. 59–70.
+  DOI: [10.1007/978-3-642-04128-0_6](https://doi.org/10.1007/978-3-642-04128-0_6)
+  Full version: INRIA Research Report RR-6823,
   <https://inria.hal.science/inria-00356871>
 - The CGAL Project. "3D Periodic Triangulations." *CGAL User and Reference Manual*.
   Available at: <https://doc.cgal.org/latest/Periodic_3_triangulation_3/>
@@ -195,10 +204,10 @@ unconditional convergence bound for every supported local repair schedule.
 
 ### Scoped Local Validation and Flips
 
-1. Edelsbrunner, H., and Shah, N. R. "Incremental Topological Flipping Works for Regular Triangulations."
-   *Algorithmica* 15, no. 3 (1996): 223-241. DOI: [10.1007/BF01975867](https://doi.org/10.1007/BF01975867)
-   Local flip neighborhoods support scoped validation when the mutation frontier is complete; global
-   PL vertex-link obligations still require full-link validation.
+- Edelsbrunner, H., and Shah, N. R. "Incremental Topological Flipping Works for Regular Triangulations."
+  *Algorithmica* 15, no. 3 (1996): 223-241. DOI: [10.1007/BF01975867](https://doi.org/10.1007/BF01975867)
+  Local flip neighborhoods support scoped validation when the mutation frontier is complete; global
+  PL vertex-link obligations still require full-link validation.
 
 ### Spatial Ordering and Hilbert Curves
 

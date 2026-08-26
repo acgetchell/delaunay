@@ -1,12 +1,10 @@
 #![forbid(unsafe_code)]
 
-//! Benchmark: public triangulation clone snapshot cost vs triangulation size (2D-5D)
+//! Benchmark: full clone cost and borrowed topology-view construction (2D-5D)
 //!
-//! This benchmark measures the full owner snapshot cost that currently
-//! dominates transactional rollback designs based on whole-topology cloning. It
-//! is intended as a baseline for comparing future journaled or localized
-//! rollback designs without exposing the raw topology container through the
-//! public API.
+//! The clone cases retain the historical whole-owner baseline. The topology
+//! view cases verify that proof-bearing incidence borrowing remains constant
+//! cost while adjacency construction keeps its separately measured index cost.
 //!
 //! Intended for **manual** runs (not part of the CI performance suite).
 //!
@@ -121,24 +119,53 @@ fn bench_dimension<const D: usize>(
     group.finish();
 }
 
+/// Register incidence and adjacency construction costs for one dimension.
+fn bench_topology_views<const D: usize>(
+    c: &mut Criterion,
+    dim_label: &str,
+    requested_vertices: usize,
+    seed_base: u64,
+) where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
+    let source = build_clone_source::<D>(requested_vertices, seed_base);
+    let mut group = c.benchmark_group(format!("topology_view_construction/{dim_label}"));
+    group.sample_size(SAMPLE_SIZE);
+    group.warm_up_time(WARM_UP_TIME);
+    group.measurement_time(MEASUREMENT_TIME);
+    group.throughput(Throughput::Elements(tds_element_count(&source)));
+
+    group.bench_function("incidence_borrow", |b| {
+        b.iter(|| black_box(source.triangulation.incidence()));
+    });
+    group.bench_function("adjacency_index", |b| {
+        b.iter(|| black_box(source.triangulation.adjacency().or_abort()));
+    });
+    group.finish();
+}
+
 /// Benchmark `Tds::clone` for representative 2D triangulations.
 fn bench_tds_clone_2d(c: &mut Criterion) {
     bench_dimension::<2>(c, "2d", &[25, 100, 500], 0xD2C1_0000_0000_0001);
+    bench_topology_views::<2>(c, "2d", 500, 0xD2C1_0000_0000_1001);
 }
 
 /// Benchmark `Tds::clone` for representative 3D triangulations.
 fn bench_tds_clone_3d(c: &mut Criterion) {
     bench_dimension::<3>(c, "3d", &[25, 75, 150], 0xD3C1_0000_0000_0002);
+    bench_topology_views::<3>(c, "3d", 150, 0xD3C1_0000_0000_1002);
 }
 
 /// Benchmark `Tds::clone` for representative 4D triangulations.
 fn bench_tds_clone_4d(c: &mut Criterion) {
     bench_dimension::<4>(c, "4d", &[15, 30, 60], 0xD4C1_0000_0000_0003);
+    bench_topology_views::<4>(c, "4d", 60, 0xD4C1_0000_0000_1003);
 }
 
 /// Benchmark `Tds::clone` for representative 5D triangulations.
 fn bench_tds_clone_5d(c: &mut Criterion) {
     bench_dimension::<5>(c, "5d", &[10, 20, 35], 0xD5C1_0000_0000_0004);
+    bench_topology_views::<5>(c, "5d", 35, 0xD5C1_0000_0000_1004);
 }
 
 criterion_group!(

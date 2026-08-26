@@ -2,10 +2,11 @@
 
 //! Parsing, validation, typed errors, and dispatch for the artifact CLI.
 
-use std::{
-    fmt::{self, Display},
-    io::{self, Write},
-    process::ExitCode,
+use crate::{
+    cli_output::ArtifactOutputError,
+    generate::{self, GenerateArgs, GenerateCommand},
+    spherical_hero::{self, SphericalHeroArgs, SphericalHeroConfig},
+    validation_demo::{self, ValidationDemoArgs, ValidationDemoConfig, ValidationDemoError},
 };
 
 use clap::{Parser, Subcommand};
@@ -21,12 +22,12 @@ use delaunay::{
         tds::FacetError,
     },
 };
+use thiserror::Error;
 
-use crate::{
-    cli_output::ArtifactOutputError,
-    generate::{self, GenerateArgs, GenerateCommand},
-    spherical_hero::{self, SphericalHeroArgs, SphericalHeroConfig},
-    validation_demo::{self, ValidationDemoArgs, ValidationDemoConfig, ValidationDemoError},
+use std::{
+    fmt::{self, Display},
+    io::{self, Write},
+    process::ExitCode,
 };
 
 /// Top-level command-line parser for the opt-in binary.
@@ -151,7 +152,7 @@ impl fmt::Display for VertexCountTarget {
 }
 
 /// Command-line execution errors.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum CliError {
     /// Unsupported dimension slipped past CLI parsing.
@@ -311,7 +312,7 @@ mod tests {
             "4",
         ]);
 
-        assert_eq!(config.distribution, GenerateDistribution::Cube);
+        assert_eq!(config.distribution(), GenerateDistribution::Cube);
     }
 
     #[test]
@@ -328,11 +329,11 @@ mod tests {
             "ball",
         ]);
 
-        assert_eq!(config.distribution, GenerateDistribution::Ball);
+        assert_eq!(config.distribution(), GenerateDistribution::Ball);
     }
 
     #[test]
-    fn generate_config_carries_validated_nonzero_vertex_count() {
+    fn generate_config_carries_dimension_sufficient_vertex_count() {
         let config = validated_generate_3d(&[
             "delaunay",
             "generate",
@@ -343,7 +344,7 @@ mod tests {
             "4",
         ]);
 
-        assert_eq!(config.vertices.get(), 4);
+        assert_eq!(config.vertex_count().get(), 4);
     }
 
     #[test]

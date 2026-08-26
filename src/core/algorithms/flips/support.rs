@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 use super::{
-    Cow, DataType, FlipContextError, FlipError, FlipPredicateError, GlobalTopologyModel,
+    Cow, FlipContextError, FlipError, FlipPredicateError, GlobalTopologyModel,
     GlobalTopologyModelAdapter, Key, MAX_PRACTICAL_DIMENSION_SIZE, Point, Simplex, SimplexKey,
     SimplexKeyBuffer, SmallBuffer, Tds, VertexKey, env, repair_trace_enabled,
     stable_hash_u64_slice,
@@ -86,11 +86,7 @@ pub(super) fn collect_simplices_around_ridge<U, V, const D: usize>(
     start_simplex: SimplexKey,
     ridge: &SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     max_simplices: Option<usize>,
-) -> Result<SimplexKeyBuffer, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<SimplexKeyBuffer, FlipError> {
     let mut queue: SimplexKeyBuffer = SimplexKeyBuffer::new();
     let mut visited: SimplexKeyBuffer = SimplexKeyBuffer::new();
     let mut simplices: SimplexKeyBuffer = SimplexKeyBuffer::new();
@@ -154,11 +150,7 @@ where
 pub(super) fn vertex_point<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     vertex_key: VertexKey,
-) -> Result<Point<D>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<Point<D>, FlipError> {
     let vertex = tds
         .vertex(vertex_key)
         .ok_or(FlipError::MissingVertex { vertex_key })?;
@@ -185,11 +177,7 @@ impl<const D: usize> EuclideanPointCache<D> {
         &mut self,
         tds: &Tds<U, V, D>,
         vertex_key: VertexKey,
-    ) -> Result<Point<D>, FlipError>
-    where
-        U: DataType,
-        V: DataType,
-    {
+    ) -> Result<Point<D>, FlipError> {
         if let Some((_key, point)) = self.points.iter().find(|(key, _point)| *key == vertex_key) {
             return Ok(*point);
         }
@@ -204,11 +192,7 @@ impl<const D: usize> EuclideanPointCache<D> {
         &mut self,
         tds: &Tds<U, V, D>,
         vertices: &[VertexKey],
-    ) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError>
-    where
-        U: DataType,
-        V: DataType,
-    {
+    ) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError> {
         let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::with_capacity(vertices.len());
         for &vertex_key in vertices {
@@ -223,11 +207,7 @@ impl<const D: usize> EuclideanPointCache<D> {
 pub(super) fn vertices_to_points<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     vertices: &[VertexKey],
-) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError> {
     let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(vertices.len());
     for &vkey in vertices {
@@ -244,11 +224,7 @@ pub(super) fn vertices_to_points_with_optional_lift<U, V, const D: usize>(
     vertices: &[VertexKey],
     source_simplex: Option<SimplexKey>,
     source_simplices: &[SimplexKey],
-) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError> {
     let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(vertices.len());
     for &vkey in vertices {
@@ -270,11 +246,7 @@ pub(super) fn vertex_point_with_optional_lift<U, V, const D: usize>(
     topology_model: &GlobalTopologyModelAdapter<D>,
     vertex_key: VertexKey,
     source_simplex: Option<SimplexKey>,
-) -> Result<Point<D>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<Point<D>, FlipError> {
     let periodic_offset = if topology_model.supports_periodic_orientation_offsets() {
         match source_simplex {
             Some(simplex_key) => periodic_offset_for_simplex_vertex(tds, simplex_key, vertex_key)?,
@@ -294,11 +266,7 @@ pub(super) fn vertex_point_lifted_into_simplex<U, V, const D: usize>(
     vertex_key: VertexKey,
     target_simplex: Option<SimplexKey>,
     source_simplices: &[SimplexKey],
-) -> Result<Point<D>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<Point<D>, FlipError> {
     let Some(target_simplex_key) = target_simplex else {
         return vertex_point_with_optional_lift(tds, topology_model, vertex_key, None);
     };
@@ -392,11 +360,7 @@ pub(super) fn lift_vertex_point<U, V, const D: usize>(
     topology_model: &GlobalTopologyModelAdapter<D>,
     vertex_key: VertexKey,
     periodic_offset: Option<[i8; D]>,
-) -> Result<Point<D>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<Point<D>, FlipError> {
     let vertex = tds
         .vertex(vertex_key)
         .ok_or(FlipError::MissingVertex { vertex_key })?;
@@ -535,11 +499,7 @@ pub(super) fn matching_source_simplex<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     vertices: &[VertexKey],
     source_simplices: &[SimplexKey],
-) -> Option<SimplexKey>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Option<SimplexKey> {
     source_simplices.iter().copied().find(|&simplex_key| {
         tds.simplex(simplex_key).is_some_and(|simplex| {
             simplex.number_of_vertices() == vertices.len()
@@ -610,11 +570,7 @@ pub(super) fn build_flip_topology_index<U, V, const D: usize>(
     new_simplex_vertices: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
     removed_simplices: &[SimplexKey],
     inserted_face_vertices: &[VertexKey],
-) -> FlipTopologyIndex
-where
-    U: DataType,
-    V: DataType,
-{
+) -> FlipTopologyIndex {
     let inserted_values = sorted_vertex_key_values(inserted_face_vertices);
 
     let mut candidate_simplex_signatures: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -752,11 +708,7 @@ pub(super) fn flip_would_duplicate_simplex_any<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     vertices: &[VertexKey],
     topology: &FlipTopologyIndex,
-) -> bool
-where
-    U: DataType,
-    V: DataType,
-{
+) -> bool {
     let signature = simplex_signature(vertices);
     let Some(simplex_key) = topology
         .duplicate_signature_to_simplex

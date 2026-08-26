@@ -21,7 +21,7 @@
 mod proptest_config;
 
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
-use delaunay::prelude::generators::try_generate_random_triangulation_with_topology_guarantee;
+use delaunay::prelude::generators::try_generate_random_triangulation_with_topology;
 use delaunay::vertex;
 use proptest::prelude::*;
 use std::num::NonZeroUsize;
@@ -175,7 +175,7 @@ macro_rules! test_euler_properties {
 
 #[test]
 fn test_seeded_random_generator_euler_consistent() {
-    let dt_2d = try_generate_random_triangulation_with_topology_guarantee::<(), (), 2>(
+    let dt_2d = try_generate_random_triangulation_with_topology::<(), (), 2>(
         nonzero(15),
         (0.0, 10.0),
         None,
@@ -194,7 +194,7 @@ fn test_seeded_random_generator_euler_consistent() {
         result_2d.counts.count(2),
     );
 
-    let dt_3d = try_generate_random_triangulation_with_topology_guarantee::<(), (), 3>(
+    let dt_3d = try_generate_random_triangulation_with_topology::<(), (), 3>(
         nonzero(20),
         (-3.0, 3.0),
         None,

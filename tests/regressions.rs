@@ -707,6 +707,51 @@ fn regression_insertion_error_preserves_top_level_retryability() {
     assert!(source.is_retryable());
 }
 
+#[test]
+fn regression_4d_insertion_ignores_topologically_unavailable_inverse_k2_flip() {
+    let initial_vertices = [
+        vertex!([1e-6, -1e-6, -1e-6, 1e-6]).unwrap(),
+        vertex!([44.968_538_276_135_58, -1e-6, 1e-6, -1e-6]).unwrap(),
+        vertex!([-1e-6, -1e-6, -1e-6, -69.561_408_413_802_78]).unwrap(),
+        vertex!([
+            1e-6,
+            -94.242_383_980_695_07,
+            -40.728_054_129_637_29,
+            -46.750_471_675_341_814,
+        ])
+        .unwrap(),
+        vertex!([
+            -0.107_512_151_111_967_27,
+            -43.033_562_842_330_35,
+            -14.593_172_646_990_334,
+            -22.314_067_092_344_86,
+        ])
+        .unwrap(),
+    ];
+    let additional_vertex = vertex!([
+        -44.648_127_283_254_624,
+        -89.217_200_892_474_4,
+        91.291_232_010_327_33,
+        42.971_903_095_234_275,
+    ])
+    .unwrap();
+
+    let mut dt: DelaunayTriangulation<_, (), (), 4> =
+        DelaunayTriangulationBuilder::new(&initial_vertices)
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .build()
+            .expect("the minimized initial 4D simplex should construct");
+
+    dt.insert_vertex(additional_vertex)
+        .expect("an illegal inverse k=2 candidate must not fail incremental insertion");
+
+    assert_eq!(dt.number_of_vertices(), 6);
+    dt.verify_via_flip_predicates()
+        .expect("only legally applicable inverse moves belong to the local normal form");
+    dt.validate()
+        .expect("the inserted 4D triangulation must retain the Levels 1-5 proof");
+}
+
 /// Builds the deterministic periodic T² fixture shared by regressions #536 and #551.
 fn periodic_regression_fixture_t2() -> DelaunayTriangulation<RobustKernel<f64>, (), (), 2> {
     let vertices: Vec<Vertex<(), 2>> = (0..7)

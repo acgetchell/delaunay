@@ -119,13 +119,13 @@ Override the case count locally with environment variables:
 
 ```bash
 PROPTEST_CASES=128 cargo test --release --test proptest_point
-PROPTEST_SEED=12345 cargo test --release --test proptest_triangulation -- --nocapture
+PROPTEST_RNG_SEED=12345 cargo test --release --test proptest_triangulation -- --nocapture
 ```
 
 Common knobs:
 
 - `PROPTEST_CASES`: number of randomized cases per property.
-- `PROPTEST_SEED`: reproduce a specific random run from failure output.
+- `PROPTEST_RNG_SEED`: reproduce a specific random run from failure output.
 - `-- --nocapture`: show tracing/diagnostic output emitted by the test.
 - `-- --test-threads=1`: remove cross-test interleaving while debugging.
 
@@ -134,7 +134,7 @@ Common knobs:
 When a property fails, `proptest` prints a minimized counterexample and a
 reproduction seed. A good debugging pass is:
 
-1. Re-run the exact failing module with `PROPTEST_SEED=...`.
+1. Re-run the exact failing module with `PROPTEST_RNG_SEED=...`.
 2. Add `-- --nocapture` if the test emits useful tracing.
 3. Narrow the property or promote the minimized case into a fixed regression
    test when it represents a real bug.

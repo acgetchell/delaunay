@@ -16,7 +16,7 @@
 //! ```rust
 //! use delaunay::prelude::geometry::{
 //!     LabeledSimplexRealization, LabeledSimplexRealizationError, SimplexIntersectionFailure,
-//!     validate_simplex_realizations_intersect_only_in_shared_faces,
+//!     validate_simplex_intersection,
 //! };
 //!
 //! # fn main() -> Result<(), LabeledSimplexRealizationError> {
@@ -30,7 +30,7 @@
 //! )?;
 //!
 //! std::assert_matches!(
-//!     validate_simplex_realizations_intersect_only_in_shared_faces(&first, &second),
+//!     validate_simplex_intersection(&first, &second),
 //!     Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { .. })
 //! );
 //! # Ok(())
@@ -586,7 +586,7 @@ fn validate_periods<const D: usize>(periods: &[f64; D]) -> Result<(), PeriodicSi
 /// ```rust
 /// use delaunay::prelude::geometry::{
 ///     LabeledSimplexRealization, LabeledSimplexRealizationError, SimplexIntersectionFailure,
-///     validate_simplex_realizations_intersect_only_in_shared_faces,
+///     validate_simplex_intersection,
 /// };
 ///
 /// # fn main() -> Result<(), LabeledSimplexRealizationError> {
@@ -600,13 +600,13 @@ fn validate_periods<const D: usize>(periods: &[f64; D]) -> Result<(), PeriodicSi
 /// )?;
 ///
 /// std::assert_matches!(
-///     validate_simplex_realizations_intersect_only_in_shared_faces(&first, &second),
+///     validate_simplex_intersection(&first, &second),
 ///     Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { .. })
 /// );
 /// # Ok(())
 /// # }
 /// ```
-pub fn validate_simplex_realizations_intersect_only_in_shared_faces<L, const D: usize>(
+pub fn validate_simplex_intersection<L, const D: usize>(
     first: &LabeledSimplexRealization<L, D>,
     second: &LabeledSimplexRealization<L, D>,
 ) -> Result<(), SimplexIntersectionFailure<L>>
@@ -863,9 +863,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(
-            validate_simplex_realizations_intersect_only_in_shared_faces(&first, &second).is_ok()
-        );
+        assert!(validate_simplex_intersection(&first, &second).is_ok());
     }
 
     #[test]
@@ -996,8 +994,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = validate_simplex_realizations_intersect_only_in_shared_faces(&first, &second)
-            .unwrap_err();
+        let err = validate_simplex_intersection(&first, &second).unwrap_err();
         assert_matches!(
             err,
             SimplexIntersectionFailure::IntersectionOutsideSharedFace { witness, .. }
