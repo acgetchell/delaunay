@@ -200,9 +200,12 @@ fn delaunay_query_wrappers_accept_non_datatype_payloads() {
         let _ = dt.simplex_neighbors(SimplexKey::default());
         let _ = dt.simplex_vertices(SimplexKey::default());
         let _ = dt.vertex_coords(VertexKey::default());
-        let _ = dt.incidence()?;
-        let _ = dt.build_edge_index()?;
-        let _ = dt.build_simplex_neighbor_index()?;
+        let incidence = dt.incidence()?;
+        let edge_index = dt.build_edge_index()?;
+        let neighbor_index = dt.build_simplex_neighbor_index()?;
+        std::hint::black_box(incidence.number_of_adjacent_simplices(VertexKey::default()));
+        std::hint::black_box(edge_index.number_of_edges());
+        std::hint::black_box(neighbor_index.number_of_simplex_neighbors(SimplexKey::default()));
         Ok(())
     }
     type QueriesCompileFn = fn(

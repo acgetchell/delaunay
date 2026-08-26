@@ -112,6 +112,11 @@ When in doubt, favor the invariant over the convenient edit.
   `Orientation::DEGENERATE`.
 - No f64 operation may silently lose sign information. Avoid patterns such as
   `unwrap_or(NaN)`, `unwrap_or(f64::INFINITY)`, or "return `true` on error."
+- Repository-owned Rust must not use `f64::algebraic_add`,
+  `f64::algebraic_sub`, `f64::algebraic_mul`, `f64::algebraic_div`, or
+  `f64::algebraic_rem`. Ordinary IEEE-754 operators and deliberate
+  `f64::mul_add` remain allowed. Any other relaxed or fast-math facility
+  requires a separate tracked scientific review before adoption.
 - Algorithms cite their source in `REFERENCES.md` and document conditioning
   behavior.
 - When two predicate implementations answer the same question, property tests

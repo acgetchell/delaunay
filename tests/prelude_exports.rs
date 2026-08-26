@@ -172,8 +172,8 @@ use delaunay::prelude::tds::{
     EdgeView, FacetError, FacetIncidenceView as TdsFacetIncidenceView, FacetView, InvariantError,
     NeighborSlot, OneSidedFacetsIter as TdsOneSidedFacetsIter,
     SimplexFacetsIter as TdsSimplexFacetsIter, SimplexKey, Tds, TdsConstructionError, TdsDraft,
-    TdsError, TdsMutationError, TopologyOwner as TdsTopologyOwner,
-    TopologyOwnerId as TdsTopologyOwnerId, VertexKey,
+    TdsDraftError, TdsDraftInsertionError, TdsError, TdsMutationError,
+    TopologyOwner as TdsTopologyOwner, TopologyOwnerId as TdsTopologyOwnerId, VertexKey,
 };
 use delaunay::prelude::topology::spaces::{
     GlobalTopology, GlobalTopologyModelError, LiftedLinkEdge, LiftedVertexId, SphericalMetric,
@@ -375,11 +375,49 @@ enum PreludeExportTestError {
     ToroidalDomain(#[from] ToroidalDomainError),
     #[error(transparent)]
     GenericTriangulationConstruction(#[from] GenericTriangulationConstructionError),
+    #[error(transparent)]
+    Deduplication(#[from] DeduplicationError),
+    #[error(transparent)]
+    ExplicitConstruction(#[from] ExplicitConstructionError),
+    #[error(transparent)]
+    Hilbert(#[from] HilbertError),
+    #[error("invalid coordinate value: {0}")]
+    InvalidCoordinateValue(InvalidCoordinateValue),
+    #[error(transparent)]
+    LabeledSimplexRealization(#[from] LabeledSimplexRealizationError),
+    #[error(transparent)]
+    PeriodicSimplexSpan(#[from] PeriodicSimplexSpanError),
+    #[error(transparent)]
+    SimplexIntersection(#[from] SimplexIntersectionFailure<usize>),
+    #[error(transparent)]
+    SphericalConstruction(#[from] SphericalDelaunayConstructionError),
+    #[error(transparent)]
+    SphericalPoint(#[from] SphericalPointError),
+    #[error(transparent)]
+    SphericalSimplex(#[from] SphericalSimplexError),
+    #[error(transparent)]
+    TdsDraft(#[from] TdsDraftError),
+    #[error(transparent)]
+    TdsDraftInsertion(#[from] TdsDraftInsertionError),
+    #[error(transparent)]
+    TdsConstruction(#[from] TdsConstructionError),
+    #[error(transparent)]
+    GenericTriangulationBuild(#[from] GenericTriangulationBuildFailure<(), (), 2>),
+    #[error(transparent)]
+    Invariant(#[from] InvariantError),
+    #[error("expected fixture state was missing: {context}")]
+    MissingFixture { context: &'static str },
 }
 
 impl From<DelaunayTriangulationConstructionErrorWithStatistics> for PreludeExportTestError {
     fn from(source: DelaunayTriangulationConstructionErrorWithStatistics) -> Self {
         Self::ConstructionWithStatistics(Box::new(source))
+    }
+}
+
+impl From<InvalidCoordinateValue> for PreludeExportTestError {
+    fn from(source: InvalidCoordinateValue) -> Self {
+        Self::InvalidCoordinateValue(source)
     }
 }
 
@@ -700,10 +738,9 @@ fn construction_prelude_exports_builder_statistics_terminal() -> Result<(), Prel
 
     let no_vertices: [Vertex<(), 2>; 0] = [];
     let focused_error: DelaunayTriangulationConstructionErrorWithStatistics =
-        match DelaunayTriangulationBuilder::new(&no_vertices).build_with_statistics() {
-            Ok(_) => panic!("empty construction should fail"),
-            Err(error) => error,
-        };
+        DelaunayTriangulationBuilder::new(&no_vertices)
+            .build_with_statistics()
+            .expect_err("empty construction should fail");
     let root_prelude_error: RootPreludeConstructionErrorWithStatistics = focused_error;
     assert_matches!(
         root_prelude_error.error,
@@ -879,13 +916,14 @@ fn deletion_prelude_exports_delete_vertex_error_and_key() {
 }
 
 #[test]
-fn construction_prelude_covers_dedup_policy() {
+fn construction_prelude_covers_dedup_policy() -> Result<(), PreludeExportTestError> {
     assert_eq!(
         DedupTolerance::try_new(-1.0),
         Err(DeduplicationError::NegativeEpsilon)
     );
-    let dedup_policy = DedupPolicy::epsilon(DedupTolerance::try_new(0.0).unwrap());
+    let dedup_policy = DedupPolicy::epsilon(DedupTolerance::try_new(0.0)?);
     assert_matches!(dedup_policy, DedupPolicy::Epsilon { .. });
+    Ok(())
 }
 
 #[test]
@@ -921,9 +959,8 @@ fn construction_prelude_covers_vertex_macro() -> Result<(), PreludeExportTestErr
 }
 
 #[test]
-fn construction_prelude_covers_spherical_delaunay_exports() {
-    let simplex = SphericalSimplex::<2>::try_new(vec![0, 1, 2], 4)
-        .expect("valid spherical simplex should construct");
+fn construction_prelude_covers_spherical_delaunay_exports() -> Result<(), PreludeExportTestError> {
+    let simplex = SphericalSimplex::<2>::try_new(vec![0, 1, 2], 4)?;
     assert_eq!(simplex.vertex_indices(), &[0, 1, 2]);
     assert_matches!(
         SphericalSimplex::<2>::try_new(vec![0, 1], 4),
@@ -941,10 +978,7 @@ fn construction_prelude_covers_spherical_delaunay_exports() {
         [-1.0, -1.0, 1.0],
     ];
     let triangulation: SphericalDelaunayTriangulation<2> =
-        SphericalDelaunayBuilder::<2>::try_new(points)
-            .expect("tetrahedron points should canonicalize")
-            .build()
-            .expect("tetrahedron hull should construct");
+        SphericalDelaunayBuilder::<2>::try_new(points)?.build()?;
     assert_eq!(triangulation.number_of_simplices(), 4);
 
     assert_eq!(
@@ -953,6 +987,7 @@ fn construction_prelude_covers_spherical_delaunay_exports() {
     );
     let _construction_error_size = size_of::<SphericalDelaunayConstructionError>();
     let _validation_error_size = size_of::<SphericalDelaunayValidationError>();
+    Ok(())
 }
 
 #[test]
@@ -1246,9 +1281,12 @@ fn assert_facet_incidence_exports<K>(
     assert_eq!(query_facade_facet_handle, facet_handle);
 
     let facet_index = dt.facet_incidence_index()?;
-    let incidence = facet_index
-        .get(&facet_view.key())
-        .expect("fresh index should contain the facet view key");
+    let incidence =
+        facet_index
+            .get(&facet_view.key())
+            .ok_or(PreludeExportTestError::MissingFixture {
+                context: "fresh facet-incidence entry",
+            })?;
     let root_incidence: RootFacetIncidenceView<'_, '_, (), (), 3> = incidence;
     let query_incidence: QueryFacetIncidenceView<'_, '_, (), (), 3> = incidence;
     let tds_incidence: TdsFacetIncidenceView<'_, '_, (), (), 3> = incidence;
@@ -1297,11 +1335,13 @@ fn assert_ridge_handle_exports<K>(
     assert_eq!(root_ridge, ridge);
     assert_eq!(triangulation_ridge, ridge);
 
-    let iter_ridge = dt
-        .ridge_handles()
-        .next()
-        .transpose()?
-        .expect("constructed tetrahedron should expose at least one ridge");
+    let iter_ridge =
+        dt.ridge_handles()
+            .next()
+            .transpose()?
+            .ok_or(PreludeExportTestError::MissingFixture {
+                context: "ridge in a constructed tetrahedron",
+            })?;
     let query_iter_ridge: QueryRidgeHandle = iter_ridge;
     assert_eq!(query_iter_ridge.simplex_key(), iter_ridge.simplex_key());
     Ok(())
@@ -1427,22 +1467,28 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     let _query_prelude_all_facets: QueryAllFacetsIter<'_, (), (), 3> = dt.facets();
     let _query_prelude_boundary_facets: QueryBoundaryFacetsIter<'_, (), (), 3> =
         dt.boundary_facets()?;
-    let (simplex_key, simplex) = dt
-        .simplices()
-        .next()
-        .expect("constructed tetrahedron should contain a simplex");
-    let simplex_uuid = dt
-        .simplex_uuid_from_key(simplex_key)
-        .expect("simplex key should resolve to a UUID");
+    let (simplex_key, simplex) =
+        dt.simplices()
+            .next()
+            .ok_or(PreludeExportTestError::MissingFixture {
+                context: "simplex in a constructed tetrahedron",
+            })?;
+    let simplex_uuid =
+        dt.simplex_uuid_from_key(simplex_key)
+            .ok_or(PreludeExportTestError::MissingFixture {
+                context: "UUID for a live simplex key",
+            })?;
     assert_eq!(dt.simplex_key_from_uuid(&simplex_uuid), Some(simplex_key));
     assert!(
         dt.simplex_uuids()
             .any(|(key, uuid)| key == simplex_key && uuid == simplex_uuid)
     );
     let vertex_key = simplex.vertices()[0];
-    let vertex_uuid = dt
-        .vertex_uuid_from_key(vertex_key)
-        .expect("simplex vertex key should resolve to a UUID");
+    let vertex_uuid =
+        dt.vertex_uuid_from_key(vertex_key)
+            .ok_or(PreludeExportTestError::MissingFixture {
+                context: "UUID for a live vertex key",
+            })?;
     assert_eq!(dt.vertex_key_from_uuid(&vertex_uuid), Some(vertex_key));
     assert!(
         dt.vertex_uuids()
@@ -1596,8 +1642,8 @@ fn insertion_prelude_covers_initial_simplex_stage_errors() {
 }
 
 #[test]
-fn geometry_prelude_covers_typed_error_variants() {
-    let finite = FiniteCoordinateValue::try_new(1.5).expect("1.5 is finite");
+fn geometry_prelude_covers_typed_error_variants() -> Result<(), PreludeExportTestError> {
+    let finite = FiniteCoordinateValue::try_new(1.5)?;
     assert_relative_eq!(finite.get(), 1.5, epsilon = f64::EPSILON);
     assert_eq!(
         CoordinateConversionValue::from_f64(f64::NAN),
@@ -1672,16 +1718,17 @@ fn geometry_prelude_covers_typed_error_variants() {
             source: FacetError::SimplexNotFoundInTriangulation
         }
     );
+    Ok(())
 }
 
 #[test]
-fn geometry_prelude_covers_simplex_realization_validation() {
+fn geometry_prelude_covers_simplex_realization_validation() -> Result<(), PreludeExportTestError> {
     let first =
-        LabeledSimplexRealization::try_new([0_usize, 1, 2], [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
-            .expect("valid labeled simplex realization");
-    let second =
-        LabeledSimplexRealization::try_new([0_usize, 1, 3], [[0.0, 0.0], [1.0, 0.0], [0.25, 0.25]])
-            .expect("valid labeled simplex realization");
+        LabeledSimplexRealization::try_new([0_usize, 1, 2], [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])?;
+    let second = LabeledSimplexRealization::try_new(
+        [0_usize, 1, 3],
+        [[0.0, 0.0], [1.0, 0.0], [0.25, 0.25]],
+    )?;
 
     assert_matches!(
         coordinate_range_for_axis(&first, 0),
@@ -1706,20 +1753,19 @@ fn geometry_prelude_covers_simplex_realization_validation() {
     let module_root_simplex = GeometryModuleLabeledSimplexRealization::try_new(
         [10_usize, 11, 12],
         [[2.0, 2.0], [3.0, 2.0], [2.0, 3.0]],
-    )
-    .expect("geometry module root re-exports labeled simplex realization");
+    )?;
     geometry_module_validate_simplex_realizations_intersect_only_in_shared_faces(
         &first,
         &module_root_simplex,
-    )
-    .expect("geometry module root re-exports simplex-intersection validation");
+    )?;
 
     let spanning_simplex =
-        LabeledSimplexRealization::try_new([4_usize, 5, 6], [[0.0, 0.0], [1.0, 0.0], [0.0, 0.25]])
-            .expect("valid labeled simplex realization");
-    let span = try_periodic_simplex_span(&spanning_simplex, &[1.0, 2.0])
-        .expect("prelude re-exports periodic span validation")
-        .expect("spanning simplex crosses the first periodic domain");
+        LabeledSimplexRealization::try_new([4_usize, 5, 6], [[0.0, 0.0], [1.0, 0.0], [0.0, 0.25]])?;
+    let span = try_periodic_simplex_span(&spanning_simplex, &[1.0, 2.0])?.ok_or(
+        PreludeExportTestError::MissingFixture {
+            context: "periodic span for a domain-crossing simplex",
+        },
+    )?;
     assert_eq!(span.axis(), 0);
     assert!(abs_diff_eq!(span.span(), 1.0, epsilon = f64::EPSILON));
     assert!(abs_diff_eq!(span.period(), 1.0, epsilon = f64::EPSILON));
@@ -1749,6 +1795,7 @@ fn geometry_prelude_covers_simplex_realization_validation() {
     assert_send_sync_unpin::<PeriodicSimplexSpanError>();
     assert_send_sync_unpin::<SimplexIntersectionFailure<usize>>();
     assert_error::<SimplexIntersectionFailure<usize>>();
+    Ok(())
 }
 
 #[test]
@@ -1788,18 +1835,18 @@ fn generator_prelude_covers_validated_coordinate_ranges() -> Result<(), PreludeE
 }
 
 #[test]
-fn construction_prelude_covers_explicit_tds_preflight_errors() {
+fn construction_prelude_covers_explicit_tds_preflight_errors() -> Result<(), PreludeExportTestError>
+{
     let duplicate_vertices = vec![
-        vertex!([0.0_f64, 0.0]).unwrap(),
-        vertex!([1.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0])?,
+        vertex!([1.0, 0.0])?,
+        vertex!([0.0, 1.0])?,
     ];
     let duplicate_simplices = vec![vec![0, 1, 2], vec![0, 2, 1]];
     let duplicate_error = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(
         &duplicate_vertices,
         &duplicate_simplices,
-    )
-    .expect("explicit duplicate specs should parse")
+    )?
     .build()
     .expect_err("duplicate explicit topology should fail TDS assembly");
     let DelaunayTriangulationConstructionError::ExplicitConstruction {
@@ -1828,18 +1875,17 @@ fn construction_prelude_covers_explicit_tds_preflight_errors() {
     );
 
     let overshared_vertices = vec![
-        vertex!([0.0_f64, 0.0]).unwrap(),
-        vertex!([1.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0]).unwrap(),
-        vertex!([1.0, 1.0]).unwrap(),
-        vertex!([0.5, -1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0])?,
+        vertex!([1.0, 0.0])?,
+        vertex!([0.0, 1.0])?,
+        vertex!([1.0, 1.0])?,
+        vertex!([0.5, -1.0])?,
     ];
     let overshared_simplices = vec![vec![0, 1, 2], vec![0, 1, 3], vec![0, 1, 4]];
     let overshared_error = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(
         &overshared_vertices,
         &overshared_simplices,
-    )
-    .expect("explicit overshared-facet specs should parse")
+    )?
     .build()
     .expect_err("overshared explicit topology should fail TDS assembly");
     let DelaunayTriangulationConstructionError::ExplicitConstruction {
@@ -1866,6 +1912,7 @@ fn construction_prelude_covers_explicit_tds_preflight_errors() {
             ..
         } if facet_vertex_indices == [0, 1]
     );
+    Ok(())
 }
 
 #[test]
@@ -2175,17 +2222,23 @@ where
     let view_star = ridge_view.incident_simplices();
     let ridge_vertices = ridge_view.vertices();
     let ridge_links = ridge_view.links()?;
-    let ridge_link: &RidgeLinkView<'_, (), (), D> = ridge_links
-        .first()
-        .expect("simplex ridge should have a link");
+    let ridge_link: &RidgeLinkView<'_, (), (), D> =
+        ridge_links
+            .first()
+            .ok_or(PreludeExportTestError::MissingFixture {
+                context: "link for a simplex ridge",
+            })?;
     let query_ridge_link: &QueryRidgeLinkView<'_, (), (), D> = ridge_link;
     let query_facade_ridge_link: &QueryFacadeRidgeLinkView<'_, (), (), D> = ridge_link;
     let root_ridge_link: &RootRidgeLinkView<'_, (), (), D> = ridge_link;
     let triangulation_ridge_link: &TriangulationRidgeLinkView<'_, (), (), D> = ridge_link;
     let link_edges = ridge_link.edges();
-    let link_edge: &LiftedLinkEdge = link_edges
-        .first()
-        .expect("single simplex ridge link should have an edge");
+    let link_edge: &LiftedLinkEdge =
+        link_edges
+            .first()
+            .ok_or(PreludeExportTestError::MissingFixture {
+                context: "edge for a single-simplex ridge link",
+            })?;
     let (first_endpoint, _second_endpoint): (&LiftedVertexId, &LiftedVertexId) =
         link_edge.endpoints();
 
@@ -2239,7 +2292,9 @@ where
     let (_, simplex) = dt
         .simplices()
         .next()
-        .expect("multi-simplex fixture should contain a simplex");
+        .ok_or(PreludeExportTestError::MissingFixture {
+            context: "simplex in a multi-simplex ridge-star fixture",
+        })?;
     let ridge =
         RidgeCandidate::<D>::try_from_vertices(simplex.vertices().iter().copied().take(D - 1))?;
     let ridge_query = dt.ridge_query(&ridge)?;
@@ -2340,18 +2395,14 @@ fn topology_spaces_prelude_covers_toroidal_domain_api() -> Result<(), PreludeExp
 }
 
 #[test]
-fn topology_spaces_prelude_covers_spherical_backend_api() {
+fn topology_spaces_prelude_covers_spherical_backend_api() -> Result<(), PreludeExportTestError> {
     let zero_norm = GlobalTopologyModelError::ZeroSphericalPointNorm;
     assert!(zero_norm.to_string().contains("unit sphere"));
     let metric = SphericalMetric::<2>::unit();
-    let x = SphericalPoint::<2>::try_new([1.0, 0.0, 0.0])
-        .expect("unit x-axis point should canonicalize");
-    let y = SphericalPoint::<2>::try_new([0.0, 1.0, 0.0])
-        .expect("unit y-axis point should canonicalize");
+    let x = SphericalPoint::<2>::try_new([1.0, 0.0, 0.0])?;
+    let y = SphericalPoint::<2>::try_new([0.0, 1.0, 0.0])?;
     assert_relative_eq!(
-        metric
-            .try_distance(&x, &y)
-            .expect("matching metric and point radii should produce a distance"),
+        metric.try_distance(&x, &y)?,
         std::f64::consts::FRAC_PI_2,
         epsilon = 1.0e-12
     );
@@ -2361,6 +2412,7 @@ fn topology_spaces_prelude_covers_spherical_backend_api() {
     );
     assert_send_sync_unpin::<SphericalMetric<3>>();
     assert_send_sync_unpin::<SphericalPoint<3>>();
+    Ok(())
 }
 
 #[test]
@@ -2375,10 +2427,10 @@ fn triangulation_prelude_covers_generic_layer() -> Result<(), PreludeExportTestE
     let vertex_keys: Vec<_> = vertices
         .iter()
         .copied()
-        .map(|vertex| tds_draft.insert_vertex(vertex).unwrap())
-        .collect();
-    tds_draft.insert_simplex(vertex_keys).unwrap();
-    let tds = tds_draft.finish().unwrap();
+        .map(|vertex| tds_draft.insert_vertex(vertex))
+        .collect::<Result<_, _>>()?;
+    tds_draft.insert_simplex(vertex_keys)?;
+    let tds = tds_draft.finish()?;
     assert_eq!(tds.number_of_vertices(), 3);
     assert_eq!(tds.number_of_simplices(), 1);
 
@@ -2386,22 +2438,18 @@ fn triangulation_prelude_covers_generic_layer() -> Result<(), PreludeExportTestE
         GenericTriangulationBuilder::new(tds, TriangulationFastKernel::new())
             .topology_guarantee(TriangulationTopologyGuarantee::Pseudomanifold)
             .validation_policy(TriangulationValidationPolicy::Never)
-            .build()
-            .unwrap();
-    tri.validate().unwrap();
+            .build()?;
+    tri.validate()?;
     let _triangulation_all_facets: TriangulationAllFacetsIter<'_, (), (), 2> = tri.facets();
     let _triangulation_boundary_facets: TriangulationBoundaryFacetsIter<'_, (), (), 2> =
-        tri.boundary_facets().unwrap();
+        tri.boundary_facets()?;
 
     let simplex_keys: Vec<_> = tri.simplices().map(|(key, _)| key).collect();
-    assert!(tri.local_facet_repair(&simplex_keys).unwrap().is_none());
-    assert_eq!(
-        tri.boundary_facets()
-            .unwrap()
-            .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
-            .unwrap(),
-        3
-    );
+    assert!(tri.local_facet_repair(&simplex_keys)?.is_none());
+    let boundary_facet_count = tri
+        .boundary_facets()?
+        .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
+    assert_eq!(boundary_facet_count, 3);
 
     assert_send_sync_unpin::<TriangulationInsertionError>();
     assert_send_sync_unpin::<TriangulationQueryError>();
@@ -2638,13 +2686,13 @@ fn diagnostics_prelude_covers_opt_in_helpers() -> Result<(), PreludeExportTestEr
 }
 
 #[test]
-fn ordering_prelude_covers_hilbert_apis() -> Result<(), HilbertError> {
+fn ordering_prelude_covers_hilbert_apis() -> Result<(), PreludeExportTestError> {
     let coords = [[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
     assert_eq!(MAX_HILBERT_BITS, 31);
     let bits = HilbertBitDepth::try_new(8)?;
     let order = try_hilbert_sorted_indices(&coords, (0.0, 1.0), bits)?;
     assert_eq!(order.len(), coords.len());
-    let bounds = CoordinateRange::try_new(0.0_f64, 1.0).expect("test bounds should be valid");
+    let bounds = CoordinateRange::try_new(0.0_f64, 1.0)?;
     let range_order = hilbert_sorted_indices_in_range(&coords, bounds, bits)?;
     assert_eq!(range_order, order);
 

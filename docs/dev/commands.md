@@ -308,6 +308,13 @@ Routine notebook checks are lint-only. Execute one notebook deliberately with
 `just notebook-execute` or use its named artifact-refresh recipe. There is no
 aggregate recipe that executes every notebook.
 
+`just semgrep` scans repository-owned Rust under `src/`, `examples/`, and
+`benches/`. Because Semgrep's default ignore policy excludes test directories,
+the recipe also scans tracked Python tests with the shared configuration and
+tracked Rust tests with every repository rule that explicitly owns those
+surfaces. Deliberate violations under `tests/semgrep/` remain excluded from
+that repository scan and are exercised only by `just semgrep-test`.
+
 `just test` is tests-only. `test-integration-compile` is an explicit no-run
 smoke recipe for cases where a compile-only check is the desired validator; do
 not run it before `test-integration` unless you intentionally want a separate

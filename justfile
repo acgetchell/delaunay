@@ -1156,6 +1156,16 @@ semgrep: _ensure-uv
         uv run --locked semgrep --error --strict --timeout 120 --jobs 1 --config semgrep.yaml "${python_test_files[@]}"
     fi
 
+    # Apply every repository rule that owns tracked Rust test paths. Deliberate
+    # fixture violations remain excluded and run only under `semgrep-test`.
+    rust_test_files=()
+    while IFS= read -r -d '' file; do
+        rust_test_files+=("$file")
+    done < <(git ls-files -z 'tests/*.rs' ':(exclude)tests/semgrep/**')
+    if [[ "${#rust_test_files[@]}" -gt 0 ]]; then
+        uv run --locked semgrep --error --strict --timeout 120 --jobs 1 --config semgrep.yaml "${rust_test_files[@]}"
+    fi
+
 # Test the repository-owned Semgrep rules against their fixtures.
 [group('validation')]
 semgrep-test: _ensure-uv

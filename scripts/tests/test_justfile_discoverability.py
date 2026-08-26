@@ -373,7 +373,7 @@ def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
     assert "cargo upgrade --incompatible allow" in dependency_update
     fixture_manifest = "tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml"
     assert f"cargo upgrade --manifest-path {fixture_manifest} --incompatible allow" in dependency_update
-    assert "cargo update" in dependency_update
+    assert re.search(r"^cargo update$", dependency_update, re.MULTILINE) is not None
     assert f"cargo update --manifest-path {fixture_manifest}" in dependency_update
     assert "uv run --locked update-python-dev-pins" in dependency_update
     assert "uv lock --upgrade" in dependency_update

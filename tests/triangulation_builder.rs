@@ -652,16 +652,15 @@ fn shared_facet_vertices<const D: usize>(apex_coordinate_sum: f64) -> Vec<Vertex
     let dim = u32::try_from(D).expect("test dimension fits in u32");
     let high_apex_coord = apex_coordinate_sum / f64::from(dim);
     let mut vertices = Vec::with_capacity(D + 2);
-    vertices.push(Vertex::try_new([0.0; D]).expect("origin vertex should be valid"));
+    vertices.push(vertex!([0.0; D]).expect("origin vertex should be valid"));
 
     for axis in 0..D {
         let mut coords = [0.0; D];
         coords[axis] = 1.0;
-        vertices.push(Vertex::try_new(coords).expect("basis vertex should be valid"));
+        vertices.push(vertex!(coords).expect("basis vertex should be valid"));
     }
 
-    vertices
-        .push(Vertex::try_new([high_apex_coord; D]).expect("opposite apex vertex should be valid"));
+    vertices.push(vertex!([high_apex_coord; D]).expect("opposite apex vertex should be valid"));
     vertices
 }
 
@@ -691,13 +690,13 @@ fn crossing_cone_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
         let mut coords = [0.0; D];
         coords[0] = x;
         coords[1] = y;
-        vertices.push(Vertex::try_new(coords).expect("base crossing vertex should be valid"));
+        vertices.push(vertex!(coords).expect("base crossing vertex should be valid"));
     }
 
     for axis in 2..D {
         let mut coords = [0.0; D];
         coords[axis] = 1.0;
-        vertices.push(Vertex::try_new(coords).expect("cone vertex should be valid"));
+        vertices.push(vertex!(coords).expect("cone vertex should be valid"));
     }
 
     vertices
