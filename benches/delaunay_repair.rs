@@ -273,7 +273,7 @@ fn bench_repair_dimension<const D: usize>(
     group.finish();
 }
 
-/// Register the public repair case selected to exercise transactional rollback snapshots.
+/// Register the public repair case selected to exercise transactional rollback journals.
 fn bench_transaction_pressure_case<const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     requested_vertices: usize,

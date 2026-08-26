@@ -269,9 +269,9 @@
 //! so the owner returned on failure identifies the failed stage directly.
 //!
 //! Strict promotions move canonical storage without cloning it. Repair mode on
-//! [`DelaunayRefinementBuilder`] keeps one rollback snapshot through flips,
-//! orientation normalization, and final Level 5 certification; any failure
-//! restores and returns the original Levels 1–4 triangulation.
+//! [`DelaunayRefinementBuilder`] keeps one touched-record rollback journal open
+//! through flips, orientation normalization, and final Level 5 certification;
+//! any failure restores and returns the original Levels 1–4 triangulation.
 //!
 //! ## Validation
 //!

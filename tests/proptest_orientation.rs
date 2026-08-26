@@ -159,7 +159,7 @@ macro_rules! gen_orientation_incremental_props {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             repo_proptest! {
-                /// Property: after each successful insertion, orientation remains coherent.
+                /// Property: every insertion attempt preserves coherent orientation.
                 $(#[$attr])*
                 #[test]
                 fn [<prop_orientation_coherent_after_each_successful_insert_ $dim d>](
@@ -173,25 +173,47 @@ macro_rules! gen_orientation_incremental_props {
                     let mut dt: DelaunayIncrementalBuilder<_, (), (), $dim> =
                         DelaunayIncrementalBuilder::with_topology_guarantee(
                             TopologyGuarantee::PLManifold,
-                        );
+                    );
 
                     for vertex in vertices {
+                        let vertex_count_before = dt.number_of_vertices();
+                        let simplex_count_before = dt.number_of_simplices();
                         let result = dt.insert_best_effort_with_statistics(vertex);
-                        match result {
-                            Ok((InsertionOutcome::Inserted { .. }, _stats)) => {
-                                prop_assert!(
-                                    dt.is_coherently_oriented(),
-                                    "{}D: orientation must remain coherent after successful insertion",
-                                    $dim
-                                );
-                            }
-                            Ok((InsertionOutcome::Skipped { .. }, _stats)) => {}
-                            Err(error) => {
-                                return Err(TestCaseError::fail(format!(
-                                    "{}D incremental orientation insertion failed: {error:?}",
-                                    $dim,
-                                )));
-                            }
+                        let inserted = matches!(
+                            result,
+                            Ok((InsertionOutcome::Inserted { .. }, _))
+                        );
+
+                        prop_assert!(
+                            dt.is_coherently_oriented(),
+                            "{}D: orientation must remain coherent after insertion attempt: {:?}",
+                            $dim,
+                            result
+                        );
+                        let structure_validation = dt.validate_structure();
+                        prop_assert!(
+                            structure_validation.is_ok(),
+                            "{}D: structure must remain valid after insertion attempt: result={:?}, validation={:?}",
+                            $dim,
+                            result,
+                            structure_validation.err()
+                        );
+
+                        if !inserted {
+                            prop_assert_eq!(
+                                dt.number_of_vertices(),
+                                vertex_count_before,
+                                "{}D: rejected or skipped insertion must preserve the vertex count: {:?}",
+                                $dim,
+                                result
+                            );
+                            prop_assert_eq!(
+                                dt.number_of_simplices(),
+                                simplex_count_before,
+                                "{}D: rejected or skipped insertion must preserve the simplex count: {:?}",
+                                $dim,
+                                result
+                            );
                         }
                     }
                 }

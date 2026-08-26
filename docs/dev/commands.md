@@ -284,6 +284,7 @@ This runs:
 - JSON/TOML/YAML/CFF checks
 - Python lint/typecheck
 - notebook hygiene and extracted-code checks
+- canonical validation-figure currentness on macOS
 - shell script formatting and lint checks
 - Rust core lint, documentation, and Semgrep checks
 - benchmark harness compile checks
@@ -310,9 +311,12 @@ Actions. It composes `just check`, `just test`, `just bench-compile`, and
 formatting, all-targets Clippy, rustdoc, and Semgrep; `unused-deps` checks direct
 Cargo dependency hygiene; `test-rust` composes unit, integration, CLI, and
 doctest buckets; `notebook-check` validates notebooks without executing them.
-Routine notebook checks are lint-only. Execute one notebook deliberately with
-`just notebook-execute` or use its named artifact-refresh recipe. There is no
-aggregate recipe that executes every notebook.
+Routine notebook checks are lint-only. On macOS, `just ci` also executes only
+the validation notebook through `validation-doc-figures-check`, regenerating
+under `target/` and failing when tracked canonical figures are stale. Execute
+other notebooks deliberately with `just notebook-execute` or use a named
+artifact-refresh recipe. There is no aggregate recipe that executes every
+notebook.
 
 `just semgrep` scans repository-owned Rust under `src/`, `examples/`, and
 `benches/`. Because Semgrep's default ignore policy excludes test directories,
@@ -724,6 +728,7 @@ Commands:
 ```bash
 just paper-cli
 just validation-doc-figures
+just validation-doc-figures-check
 just paper-tex-fmt-check
 just paper-tex-lint
 just paper-build
@@ -739,8 +744,11 @@ before nbconvert starts its execution timeout. `just validation-doc-figures`
 refreshes the canonical PNG files under `docs/assets/validation/`, which are
 reused directly by `papers/validation.tex`. It validates the complete six-file
 set in staging and publishes it transactionally, preserving the prior complete
-set if rendering or publication fails. Ordinary notebook validation and direct
-interactive execution do not refresh tracked figures. `just paper-tex-fmt-check` runs `tex-fmt --check`,
+set if rendering or publication fails. `just validation-doc-figures-check`
+uses the same generator under `target/` and compares the complete set without
+modifying tracked files. `just ci` composes that check on macOS, the canonical
+paper-artifact platform. Ordinary notebook validation and direct interactive
+execution do not refresh tracked figures. `just paper-tex-fmt-check` runs `tex-fmt --check`,
 and `just paper-tex-lint` runs `chktex` over `papers/*.tex`. `just paper-build`
 compiles
 `papers/validation.tex` with Tectonic in `target/papers/validation/` without
@@ -780,10 +788,12 @@ same deterministic notebook with a separate explicit output switch:
 
 ```bash
 just validation-doc-figures
+just validation-doc-figures-check
 ```
 
-Routine notebook checks keep writing only under `target/`; neither tracked
-documentation nor paper figures are refreshed implicitly.
+Routine notebook checks and the non-mutating currentness check write only under
+`target/`; neither tracked documentation nor paper figures are refreshed
+implicitly.
 
 ---
 
@@ -907,6 +917,7 @@ just action-lint
 | Validate configuration-only changes | `just check-config` |
 | Validate Python scripts/tests | `just python-check` and `just test-python` |
 | Validate notebook changes | `just notebook-check` |
+| Verify tracked validation figures are current | `just validation-doc-figures-check` |
 | Validate shell script changes | `just shell-check` |
 | Validate core Rust checks | `just rust-core-check` |
 | Run all default test buckets | `just test` |

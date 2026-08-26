@@ -451,8 +451,8 @@ boundaries:
 All consuming promotions are recoverable. `RefinementError<T, E>` couples the
 still-valid lower-layer owner `T` to the typed rejection reason `E`; callers can
 borrow either part or consume the carrier with `into_parts()`. Repair mode keeps
-one rollback snapshot alive through flips and final Level 5 certification, and
-returns the restored Levels 1–4 owner on every failure.
+one touched-record rollback journal open through flips and final Level 5
+certification, and returns the restored Levels 1–4 owner on every failure.
 
 Use the realized-state boundary for checkpoints created after valid local moves
 when Delaunay optimality is not an invariant of the evolved model. Use

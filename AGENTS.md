@@ -68,8 +68,10 @@ workflow references do not need to be loaded preemptively.
 - **Treat paper prose as author-owned.** Agents must not add substantive
   publication prose to `papers/`; local paper maintenance rules live in
   `docs/dev/docs.md`.
-- **Keep notebook execution deliberate.** Routine notebook validation is
-  lint-only. Execute one notebook only when the task requires it; refresh
+- **Keep notebook execution deliberate.** `just notebook-check` is lint-only.
+  The canonical macOS leg of `just ci` may execute the validation notebook only
+  to compare regenerated figures with tracked artifacts; it must not publish
+  them. Execute other notebooks only when the task requires it, and refresh
   tracked notebook artifacts only through named recipes when the task includes
   that refresh. Every cell must have a unique, stable, descriptive lowercase
   kebab-case ID. Detailed policy lives in `docs/dev/notebooks.md`.

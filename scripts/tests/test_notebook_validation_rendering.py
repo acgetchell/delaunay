@@ -11,11 +11,13 @@ from notebook_validation import CircumcircleWitness, ValidationCase, ValidationP
 from notebook_validation_rendering import (
     EXPECTED_VALIDATION_FIGURE_NAMES,
     PNG_SIGNATURE,
+    main,
     publish_validation_figure_set,
     render_validation_figure_set,
     save_figure_png,
     validate_case_visual_invariants,
     validate_validation_figure_set,
+    validation_figure_set_mismatches,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -270,6 +272,51 @@ def test_validation_figure_set_rejects_missing_or_non_png_output(tmp_path: Path)
     (staged / EXPECTED_VALIDATION_FIGURE_NAMES[-1]).write_bytes(b"not-png")
     with pytest.raises(ValueError, match="is not a PNG"):
         validate_validation_figure_set(staged)
+
+
+def test_validation_figure_set_mismatches_names_only_stale_canonical_files(tmp_path: Path) -> None:
+    """The currentness check reports exact canonical names without mutating either set."""
+    generated = tmp_path / "generated"
+    tracked = tmp_path / "tracked"
+    write_validation_figure_set(generated, b"current")
+    write_validation_figure_set(tracked, b"current")
+    stale_name = EXPECTED_VALIDATION_FIGURE_NAMES[2]
+    (tracked / stale_name).write_bytes(PNG_SIGNATURE + b"stale")
+
+    assert validation_figure_set_mismatches(generated, tracked) == (stale_name,)
+    assert (tracked / stale_name).read_bytes() == PNG_SIGNATURE + b"stale"
+
+
+def test_validation_figure_currentness_cli_fails_closed_with_refresh_guidance(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A stale tracked set fails with the named refresh command."""
+    generated = tmp_path / "generated"
+    tracked = tmp_path / "tracked"
+    write_validation_figure_set(generated, b"current")
+    write_validation_figure_set(tracked, b"stale")
+
+    assert main([str(generated), str(tracked)]) == 1
+    captured = capsys.readouterr()
+    assert "tracked validation figures are stale" in captured.err
+    assert "just validation-doc-figures" in captured.err
+
+
+def test_validation_figure_currentness_cli_accepts_matching_sets(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A matching complete set succeeds without diagnostics on stderr."""
+    generated = tmp_path / "generated"
+    tracked = tmp_path / "tracked"
+    write_validation_figure_set(generated, b"current")
+    write_validation_figure_set(tracked, b"current")
+
+    assert main([str(generated), str(tracked)]) == 0
+    captured = capsys.readouterr()
+    assert "match the canonical generated set" in captured.out
+    assert captured.err == ""
 
 
 def test_render_serialization_failure_preserves_previous_complete_sets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

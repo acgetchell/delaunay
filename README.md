@@ -279,7 +279,7 @@ exposition, see [`papers/validation.tex`](papers/validation.tex) and the compile
 - [Mesh Export](docs/mesh_export.md) - Stable UUID-based simplicial-complex export for notebooks and downstream tools.
 - [Numerical Robustness Guide](docs/numerical_robustness_guide.md) - Predicate kernels, SoS, retry, and repair behavior.
 - [Orientation Spec](docs/ORIENTATION_SPEC.md) - Coherent combinatorial and geometric orientation rules.
-- [Performance Report](docs/PERFORMANCE.md) - Active full release-to-release benchmark evidence and confidence intervals.
+- [Performance Report](docs/PERFORMANCE.md) - Legacy release-to-release benchmark evidence without a retained artifact bundle.
 - [Property Testing Summary](docs/property_testing_summary.md) - Property-test layout and coverage summary.
 - [Releasing](docs/RELEASING.md) - Changelog, benchmark, and publish workflow.
 - [Roadmap](docs/roadmap.md) - Current release sequence and deferred feature tracks.
@@ -330,13 +330,15 @@ just bench-ci
 just bench-perf-summary
 ```
 
-See the active full [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) report for retained release evidence
-and [`benches/README.md`](benches/README.md) for benchmark selection, fixture sizes, baseline workflows,
-and large-scale profiling guidance.
+See the legacy [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) report for historical,
+provenance-limited release evidence and [`benches/README.md`](benches/README.md)
+for benchmark selection, fixture sizes, baseline workflows, and large-scale
+profiling guidance.
 
 Release PRs publish a compact group-level snapshot from the validated retained
 CSV/provenance bundle. The geometric-mean ratios are descriptive summaries;
-the full report retains every benchmark and confidence interval.
+the generated full report retains every benchmark result represented in that
+bundle.
 
 <!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->
 

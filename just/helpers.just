@@ -204,3 +204,12 @@ _performance-tag-pair-state current_tag baseline_tag:
     else
         echo "inferred"
     fi
+
+_validation-doc-figures-check-if-canonical:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        just validation-doc-figures-check
+    else
+        echo "Skipping canonical validation-figure byte comparison outside macOS."
+    fi

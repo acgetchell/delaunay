@@ -151,7 +151,9 @@ def test_checkpoint_baseline_replacement_and_full_report_are_discoverable() -> N
     assert "simplex vertex count" in normalized_benchmark_docs
     assert "unit-payload timings and saved Criterion baselines must not be compared" in normalized_benchmark_docs
     assert "[Performance Report](docs/PERFORMANCE.md)" in readme
-    assert "active full [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) report" in readme
+    assert "legacy [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) report" in readme
+    assert "provenance-limited release evidence" in readme
+    assert "full report retains every benchmark and confidence interval" not in readme
 
 
 def test_canonical_performance_recipes_share_the_cross_repository_contract() -> None:
@@ -425,7 +427,8 @@ def test_performance_workflow_tracks_every_harness_input() -> None:
 
 def test_paper_workflow_tracks_validation_figure_producers() -> None:
     """Paper checks should run when Rust or notebook figure producers change."""
-    pull_request_paths, push_paths = workflow_trigger_paths(REPO_ROOT / ".github" / "workflows" / "papers.yml")
+    workflow_path = REPO_ROOT / ".github" / "workflows" / "papers.yml"
+    pull_request_paths, push_paths = workflow_trigger_paths(workflow_path)
     required_paths = (
         ".python-version",
         ".github/actions/setup-just/**",
@@ -441,6 +444,25 @@ def test_paper_workflow_tracks_validation_figure_producers() -> None:
     for path in required_paths:
         assert path in pull_request_paths
         assert path in push_paths
+
+    workflow = workflow_path.read_text(encoding="utf-8")
+    assert "just validation-doc-figures-check" in workflow
+    assert "git status --porcelain -- docs/assets/validation" not in workflow
+
+
+def test_ci_composes_non_mutating_canonical_validation_figure_check() -> None:
+    """The local CI contract should catch stale tracked figures on canonical macOS."""
+    recipes = just_recipes()
+    ci_dependencies = [dependency["recipe"] for dependency in recipes["ci"]["dependencies"]]
+    assert ci_dependencies[0] == "_validation-doc-figures-check-if-canonical"
+
+    rendered_result = run_just("--dry-run", "validation-doc-figures-check")
+    rendered = rendered_result.stdout + rendered_result.stderr
+    assert 'check_root="target/docs/validation-figure-check"' in rendered
+    assert 'generated_dir="target/notebooks/01_validation/validation_figures"' in rendered
+    assert "DELAUNAY_VALIDATION_DOC_FIGURE_DIR" not in rendered
+    assert "python -m notebook_validation_rendering" in rendered
+    assert "docs/assets/validation" in rendered
 
 
 def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:

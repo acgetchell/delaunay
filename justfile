@@ -216,7 +216,7 @@ check-fast:
 
 # CI simulation: comprehensive validation.
 [group('workflows')]
-ci: check test bench-compile examples
+ci: _validation-doc-figures-check-if-canonical check test bench-compile examples
     @echo "🎯 CI checks complete!"
 
 # CI followed by an explicit persistent local baseline refresh.
@@ -358,6 +358,7 @@ help-workflows:
     @echo "  just notebook           # Launch the default source notebook"
     @echo "  just notebook-execute   # Execute one notebook under target/notebooks"
     @echo "  just validation-doc-figures # Refresh canonical validation figures"
+    @echo "  just validation-doc-figures-check # Verify canonical figures without publishing"
     @echo "  just paper-check        # Lint, build, and check without tracked changes"
     @echo "  just paper-artifact-check # Compare the build with the reviewer PDF"
     @echo "  just paper-refresh      # Check, then refresh one tracked reviewer PDF"
@@ -1670,6 +1671,17 @@ validation-doc-figures: _ensure-uv paper-cli
     set -euo pipefail
     mkdir -p docs/assets/validation
     DELAUNAY_BINARY="{{ perf_delaunay_binary }}" DELAUNAY_VALIDATION_DOC_FIGURE_DIR="docs/assets/validation" just notebook-execute notebooks/01_validation.ipynb target/docs/notebooks
+
+# Regenerate validation diagrams under target/ and compare them with tracked artifacts.
+[group('notebooks and papers')]
+validation-doc-figures-check: _ensure-uv paper-cli
+    #!/usr/bin/env bash
+    set -euo pipefail
+    check_root="target/docs/validation-figure-check"
+    generated_dir="target/notebooks/01_validation/validation_figures"
+    rm -rf "$check_root"
+    DELAUNAY_BINARY="{{ perf_delaunay_binary }}" just notebook-execute notebooks/01_validation.ipynb "$check_root/notebook"
+    uv run --locked --group notebooks python -m notebook_validation_rendering "$generated_dir" docs/assets/validation
 
 # Verify repository-owned source-pattern count invariants.
 [group('validation')]

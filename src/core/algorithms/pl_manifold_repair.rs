@@ -637,8 +637,8 @@ where
 
 /// Attempts bounded, deterministic PL-manifold repair on a Levels 1–2 [`Tds`].
 ///
-/// This transformation consumes the input and keeps one rollback snapshot
-/// through all repair stages. Success does not itself certify Levels 3-4;
+/// This transformation consumes the input and keeps one touched-record rollback
+/// journal open through all repair stages. Success does not itself certify Levels 3-4;
 /// compose the returned TDS with
 /// strict [`TriangulationBuilder`](crate::TriangulationBuilder)
 /// to obtain that proof-bearing domain type.

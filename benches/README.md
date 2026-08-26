@@ -624,8 +624,8 @@ cargo bench --profile perf --bench tds_clone -- --noplot
 
 This benchmark prebuilds deterministic 2D-5D triangulations and measures only
 `Tds::clone()` on the resulting topology snapshots. Use it when comparing
-rollback snapshot behavior against future journaled or localized rollback
-implementations.
+full-topology clone cost with the current touched-record rollback journals and
+any future localized rollback implementation.
 
 ## PL-Manifold Repair
 

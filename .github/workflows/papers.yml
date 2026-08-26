@@ -225,14 +225,5 @@ jobs:
 
       - name: Build and compare papers
         run: |
-          just validation-doc-figures
+          just validation-doc-figures-check
           just paper-artifact-check
-
-      - name: Verify paper figures are current
-        run: |
-          if [[ -n "$(git status --porcelain -- docs/assets/validation)" ]]; then
-            git status --short -- docs/assets/validation
-            echo "::error::Paper figures changed after 'just validation-doc-figures'."
-            echo "Run 'just validation-doc-figures' and commit the regenerated PNG outputs."
-            exit 1
-          fi

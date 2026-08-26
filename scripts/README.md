@@ -69,6 +69,7 @@ current-version changelog heading whose date matches `CITATION.cff`.
 just notebook-check
 just notebook-execute notebooks/00_quickstart.ipynb
 just notebook-reset-from-git
+just validation-doc-figures-check
 uv run --locked --group dev --group notebooks notebook-check --help
 ```
 
@@ -80,6 +81,11 @@ executed notebook and generated artifacts under
 `just notebook-reset-from-git` restores tracked source notebooks from the Git
 index, or from an explicit source such as `HEAD`, and removes generated
 notebook artifacts and Jupyter checkpoints.
+
+`just validation-doc-figures-check` executes the validation notebook into
+`target/` and compares its complete generated PNG set with the tracked
+documentation artifacts without publishing changes. The canonical byte check
+is composed into `just ci` on macOS.
 
 `delaunay-scripts` is repository-internal and is not distributed as a PyPI
 tool. Run `notebook-check` through the locked project environment or the `just`

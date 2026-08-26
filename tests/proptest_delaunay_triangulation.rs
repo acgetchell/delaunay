@@ -52,6 +52,18 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::time::Instant;
 
+/// Captures the exact serialized TDS plus its runtime topology generation.
+fn rollback_state<K, const D: usize>(
+    triangulation: &DelaunayTriangulation<K, (), (), D>,
+) -> Result<(u64, serde_json::Value), serde_json::Error>
+where
+    K: Clone,
+{
+    let generation = triangulation.as_triangulation().topology_generation();
+    let tds = triangulation.clone().into_triangulation().into_tds();
+    serde_json::to_value(tds).map(|snapshot| (generation, snapshot))
+}
+
 fn init_tracing() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
@@ -725,13 +737,46 @@ macro_rules! gen_incremental_insertion_validity {
                         )))?;
                     prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
 
-                    dt.insert_vertex(additional_vertex).map_err(|error| {
+                    let vertex_count_before = dt.number_of_vertices();
+                    let simplex_count_before = dt.number_of_simplices();
+                    let rollback_state_before = rollback_state(&dt).map_err(|error| {
                         TestCaseError::fail(format!(
-                            "{}D incremental insertion failed after input admission: {error:?}",
+                            "{}D failed-insertion rollback snapshot could not be encoded: {error:?}",
                             $dim,
                         ))
                     })?;
-                    prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion");
+                    let result = dt.insert_vertex(additional_vertex);
+
+                    prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion attempt");
+                    if result.is_err() {
+                        prop_assert_eq!(
+                            dt.number_of_vertices(),
+                            vertex_count_before,
+                            "{}D failed insertion must preserve the vertex count: {:?}",
+                            $dim,
+                            result
+                        );
+                        prop_assert_eq!(
+                            dt.number_of_simplices(),
+                            simplex_count_before,
+                            "{}D failed insertion must preserve the simplex count: {:?}",
+                            $dim,
+                            result
+                        );
+                        let rollback_state_after = rollback_state(&dt).map_err(|error| {
+                            TestCaseError::fail(format!(
+                                "{}D failed-insertion rollback result could not be encoded: {error:?}",
+                                $dim,
+                            ))
+                        })?;
+                        prop_assert_eq!(
+                            rollback_state_after,
+                            rollback_state_before,
+                            "{}D failed insertion must restore the exact TDS and topology generation: {:?}",
+                            $dim,
+                            result
+                        );
+                    }
                 }
             }
         }

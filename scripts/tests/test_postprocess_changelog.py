@@ -1154,7 +1154,7 @@ class TestIntegration:
     def test_failed_atomic_replace_preserves_original(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         changelog = tmp_path / "CHANGELOG.md"
         original = "# Changelog\n\n* Original entry\n"
-        changelog.write_text(original, encoding="utf-8")
+        changelog.write_bytes(original.encode("utf-8"))
 
         def fail_replace(_source: Path, _target: Path) -> Path:
             message = "simulated replacement failure"
@@ -1191,7 +1191,7 @@ class TestIntegration:
     ) -> None:
         changelog = tmp_path / "CHANGELOG.md"
         original = "# Changelog\n\n* Original entry\n"
-        changelog.write_text(original, encoding="utf-8")
+        changelog.write_bytes(original.encode("utf-8"))
         message = f"simulated {operation} failure"
 
         def fail_path_operation(*_args: object, **_kwargs: object) -> None:

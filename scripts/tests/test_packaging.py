@@ -4,7 +4,6 @@ import ast
 import json
 import os
 import shutil
-import site
 import subprocess
 import sys
 import tomllib
@@ -160,20 +159,12 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
     )
     python = _venv_executable(venv, "python")
     subprocess.run(  # noqa: S603 - executable is resolved and the wheel is a test-built local artifact.
-        [uv, "pip", "install", "--no-cache", "--no-deps", "--python", str(python), str(wheel_path)],
+        [uv, "pip", "install", "--no-cache", "--python", str(python), f"{wheel_path}[notebooks]"],
         check=True,
         capture_output=True,
         text=True,
         timeout=120,
     )
-    installed_site = subprocess.run(  # noqa: S603 - interpreter is the isolated test environment.
-        [str(python), "-c", "import site; print(site.getsitepackages()[0])"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    ).stdout.strip()
-    Path(installed_site, "declared-test-dependencies.pth").write_text(f"{site.getsitepackages()[0]}\n", encoding="utf-8")
 
     consumer = tmp_path / "consumer"
     consumer.mkdir()

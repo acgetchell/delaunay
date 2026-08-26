@@ -38,9 +38,9 @@ algorithm machinery that operates on it:
   the owner-borrowed Levels 1–2 evidence required for unchecked snapshot
   encoding.
 - `tds/validation.rs` - Level 2 Combinatorial Consistency validation and adjacency checks.
-- `tds/rollback.rs` - canonical TDS snapshot ownership plus the shared
-  transaction window used by nested proof refinements without duplicate
-  snapshots.
+- `tds/rollback.rs` - touched-record rollback journals plus the shared
+  transaction window used by nested proof refinements without duplicating
+  rollback state.
 - `vertex.rs`, `simplex.rs`, and `facet.rs` - core geometric primitives.
 - `edge.rs` - canonical `EdgeKey` for topology traversal.
 - `adjacency.rs` - optional lifetime-bound topology indexes:

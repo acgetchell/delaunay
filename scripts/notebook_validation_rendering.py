@@ -1,7 +1,9 @@
 """Render and independently validate validation-demo notebook figures."""
 
+import argparse
 import math
 import shutil
+import sys
 import tempfile
 from dataclasses import dataclass
 from functools import cache
@@ -9,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from notebook_validation import CircumcircleWitness, Point2, ValidationCase, ValidationVisual
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -82,6 +86,33 @@ def validate_validation_figure_set(directory: Path) -> tuple[Path, ...]:
         if signature != PNG_SIGNATURE:
             raise ValueError(f"validation figure is not a PNG file: {path}")
     return tuple(directory / name for name in EXPECTED_VALIDATION_FIGURE_NAMES)
+
+
+def validation_figure_set_mismatches(generated_directory: Path, tracked_directory: Path) -> tuple[str, ...]:
+    """Return canonical figure names whose generated and tracked bytes differ."""
+    generated_paths = validate_validation_figure_set(generated_directory)
+    tracked_paths = validate_validation_figure_set(tracked_directory)
+    return tuple(generated.name for generated, tracked in zip(generated_paths, tracked_paths, strict=True) if generated.read_bytes() != tracked.read_bytes())
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Check that a generated validation figure set matches tracked artifacts."""
+    parser = argparse.ArgumentParser(description=main.__doc__)
+    parser.add_argument("generated_directory", type=Path)
+    parser.add_argument("tracked_directory", type=Path)
+    args = parser.parse_args(argv)
+
+    try:
+        mismatches = validation_figure_set_mismatches(args.generated_directory, args.tracked_directory)
+    except (OSError, ValueError) as error:
+        print(f"ERROR: unable to compare validation figures: {error}", file=sys.stderr)
+        return 1
+    if mismatches:
+        print(f"ERROR: tracked validation figures are stale: {', '.join(mismatches)}", file=sys.stderr)
+        print("Run 'just validation-doc-figures' and commit the regenerated PNG files.", file=sys.stderr)
+        return 1
+    print("OK tracked validation figures match the canonical generated set")
+    return 0
 
 
 def _copy_file(source: Path, destination: Path) -> None:
@@ -917,3 +948,7 @@ def render_validation_figure_set(
         if tracked_directory is not None:
             publish_validation_figure_set(staged_directory, tracked_directory)
     return scratch_paths
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
