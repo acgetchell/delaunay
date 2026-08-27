@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "delaunay-scripts"
-version = "0.8.0"
+version = "0.8.1"
 description = "Python utility scripts for the delaunay Rust library"
 readme = "scripts/README.md"
 requires-python = ">=3.14"

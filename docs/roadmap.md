@@ -62,14 +62,14 @@ surface.
 
 ### v0.8.1 validation evidence and performance follow-up
 
-- **Level 4 realization validation (#482):** complete the independent
+- **Level 4 realization validation (#482/#559):** completed the independent
   randomized and degenerate 2D–5D agreement campaign for the revised
-  simplex-intersection narrow phase and record representative before/after
-  benchmarks.
-- **Level 5 Delaunay reporting (#483):** replace the Euclidean
-  all-vertices/all-simplices report bottleneck while preserving its violation
-  set, with 2D–5D agreement tests and before/after benchmarks. This work is
-  blocked by issue #482.
+  simplex-intersection narrow phase and added focused narrow-phase and
+  whole-realization benchmarks.
+- **Level 5 Delaunay reporting (#483/#560):** replaced the certified Euclidean
+  all-vertices/all-simplices report bottleneck with an O(simplices) local-flip
+  path while preserving exhaustive fallback diagnostics, with 2D–5D agreement
+  tests and performance canaries.
 
 ### v0.9.0 and later horizon
 

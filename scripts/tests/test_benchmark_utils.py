@@ -740,15 +740,48 @@ def test_run_latest_release_signal_streams_without_false_completion(
 
     run_tool.assert_called_once_with(
         "just",
-        ["bench-latest"],
+        ["bench-latest", str(benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS)],
         cwd=tmp_path,
         options=benchmark_utils.ToolRunOptions(
-            timeout=benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS,
+            timeout=benchmark_utils.RELEASE_SIGNAL_TIMEOUT_SECONDS,
             env=environment,
             stream_output=True,
         ),
     )
     assert capsys.readouterr().err.splitlines() == ["[performance] running current release-signal benchmarks"]
+
+
+def test_run_latest_release_signal_forwards_timeout_and_records_command(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Release orchestration should forward its per-target timeout through Just."""
+    (tmp_path / "justfile").write_text("", encoding=UTF8)
+    environment = {"CARGO_TARGET_DIR": str(tmp_path / "criterion-target")}
+    expected_command = ("just", "bench-latest", str(benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS))
+
+    with patch("benchmark_utils._run_tool") as run_tool:
+        commands = benchmark_utils._run_latest_for_suite(
+            worktree=tmp_path,
+            suite="release-signal",
+            env=environment,
+        )
+
+    assert commands == (expected_command,)
+    run_tool.assert_called_once_with(
+        "just",
+        list(expected_command[1:]),
+        cwd=tmp_path,
+        options=benchmark_utils.ToolRunOptions(
+            timeout=benchmark_utils.RELEASE_SIGNAL_TIMEOUT_SECONDS,
+            env=environment,
+            stream_output=True,
+        ),
+    )
+    assert capsys.readouterr().err.splitlines() == [
+        "[performance] running current release-signal benchmarks",
+        "[performance] completed current release-signal benchmarks",
+    ]
 
 
 def test_run_tool_can_stream_long_running_command_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

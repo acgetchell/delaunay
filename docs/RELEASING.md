@@ -141,15 +141,23 @@ the CSV/provenance pair after reloading it, promotes `docs/PERFORMANCE.md`, and
 archives the prior report plus the exact promoted evidence under
 `docs/archive/performance/`.
 
+The release workflow gives each of the five curated benchmark targets a
+two-hour failure ceiling and derives an outer ceiling for the complete plan
+(currently up to ten hours). These ceilings accommodate slow higher-dimensional
+measurements; they are not expected runtimes. A timeout in any target means the
+measurement failed: rerun the complete `just performance-release` command
+instead of promoting a partial run.
+
 The temporary current worktree includes staged and unstaged changes to tracked
 files but excludes untracked files. Stage any new benchmark-relevant file
 before running the comparison. Do not run `just clean` or `cargo clean` until
 the retained inputs have been reviewed and the README publication succeeds.
 
-If measurement succeeded and only report promotion must be retried, use
-`just performance-doc`. It reads the retained CSV/provenance pair and runs no
-Cargo benchmarks or measurement worktrees. Explicit current/baseline tag pairs
-are reserved for repair paths and must always be supplied together.
+If measurement succeeded, the retained CSV/provenance pair reload-validates,
+and only report promotion must be retried, use `just performance-doc`. It reads
+that pair and runs no Cargo benchmarks or measurement worktrees. Explicit
+current/baseline tag pairs are reserved for repair paths and must always be
+supplied together.
 
 Treat performance output as release evidence only when the measured workflow
 preserves Delaunay's numerical and topological invariants. A faster

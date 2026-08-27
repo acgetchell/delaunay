@@ -61,7 +61,7 @@ In downstream application code:
 
 ```toml
 [dependencies]
-delaunay = { version = "0.8.0", features = ["diagnostics"] }
+delaunay = { version = "0.8.1", features = ["diagnostics"] }
 ```
 
 ## Validation Reports

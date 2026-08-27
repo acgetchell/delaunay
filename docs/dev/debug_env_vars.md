@@ -143,9 +143,6 @@ and release builds.
 | `DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR` | presence | Skip final global repair pass |
 | `DELAUNAY_LARGE_DEBUG_FALLBACK_REBUILD` | presence | Allow final conversion to rebuild after bounded flip repair fails (disabled by default) |
 | `DELAUNAY_BATCH_REPAIR_TRACE` | presence | Trace cadenced batch-repair seed counts, flips, queues, and elapsed time |
-| `DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL` | **value** | Total prefix probes for bisect mode |
-| `DELAUNAY_LARGE_DEBUG_PREFIX_MAX_PROBES` | **value** | Max probes per bisect run |
-| `DELAUNAY_LARGE_DEBUG_PREFIX_MAX_RUNTIME_SECS` | **value** | Bisect probe timeout |
 
 ## Proptest Configuration
 
@@ -156,6 +153,7 @@ These variables configure property tests in `tests/proptest_*.rs`.
 | `DELAUNAY_PROPTEST_REJECT_STATS` | presence | Log rejection statistics |
 | `DELAUNAY_PROPTEST_COVERAGE_LOGS` | presence | Log coverage statistics |
 | `DELAUNAY_ALLOW_SLOW_COSPHERICAL_FILTER` | presence | Allow slow cospherical point filtering |
+| `DELAUNAY_EMPTY_CIRCUMSPHERE_MAX_VERTICES_{D}D` | **value** | Cap 4D or 5D vertices in empty-circumsphere properties |
 
 ## Benchmarks
 

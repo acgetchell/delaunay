@@ -45,8 +45,9 @@ independent consumer:
   runs with `--offline --locked`, so dependency resolution is deterministic and
   cannot change during a test run. `just update-cargo-dependencies` refreshes
   this lockfile together with the repository root's Cargo dependencies.
-- `src/main.rs` performs the downstream checkpoint round trip and compares the
-  exact coordinate bits before running cumulative validation.
+- [`fixtures/checkpoint_no_float_roundtrip/src/main.rs`](./fixtures/checkpoint_no_float_roundtrip/src/main.rs)
+  performs the downstream checkpoint round trip and compares the exact
+  coordinate bits before running cumulative validation.
 - [`checkpoint_downstream.rs`](./checkpoint_downstream.rs) launches the fixture
   through its own manifest and redirects `CARGO_TARGET_DIR` to the repository's
   ignored `target/checkpoint-no-float-roundtrip/` directory. Cargo build output
@@ -788,10 +789,10 @@ assert_jaccard_gte!(
 
 **Why Jaccard similarity?**
 
-- Handles floating-point precision variations gracefully
-- Provides meaningful similarity metric (0.0 to 1.0)
-- Better than exact equality for numeric/geometric computations
-- Rich diagnostics on failure (shows what differs)
+- Quantifies overlap between finite topology or coordinate sets on a 0.0–1.0
+  scale
+- Produces useful mismatch diagnostics without relaxing strict invariants
+- Identifies missing and unexpected elements when an exact-match assertion fails
 
 **Safety guarantees:**
 
@@ -809,12 +810,14 @@ assert_jaccard_gte!(
 
 **Currently using Jaccard similarity:**
 
-- ✅ `serialization_vertex_preservation.rs` - 3 tests with vertex coordinate comparison
-- ✅ `proptest_convex_hull.rs` - 24 property tests (2D-5D) with hull facet topology comparison
-- ✅ `proptest_triangulation.rs` - 4 neighbor symmetry tests (2D-5D) with enhanced failure diagnostics
-  - Strict invariants maintained (no relaxation)
-  - On failure: reports Jaccard similarity, set sizes, and common neighbors
-  - Helps debug "near-miss" failures by quantifying similarity
+- [`proptest_convex_hull.rs`](./proptest_convex_hull.rs) compares reconstructed
+  hull-facet topology across generated 2D–5D cases.
+- [`proptest_tds.rs`](./proptest_tds.rs) reports neighbor-set similarity when a
+  strict TDS invariant fails.
+- [`benchmark_flip_fixtures.rs`](./benchmark_flip_fixtures.rs) adds Jaccard
+  diagnostics to topology-mismatch failures.
+- [`trait_bound_ergonomics.rs`](./trait_bound_ergonomics.rs) checks the public
+  extractor trait bounds at compile time.
 
 ### Related Documentation
 
@@ -826,6 +829,8 @@ assert_jaccard_gte!(
 
 - **[Examples](../examples/README.md)**: Usage demonstrations and library examples
 - **[Benchmarks](../benches/README.md)**: Performance benchmarks and analysis
+- **[Coverage Guide](./COVERAGE.md)**: Coverage workflow, interpretation, and
+  current risk areas
 - **[Code Organization](../docs/code_organization.md)**: Complete project structure overview
 - **[Numerical Robustness Guide](../docs/numerical_robustness_guide.md)**: Numerical stability documentation
 - **[Jaccard Similarity Guide](../docs/archive/jaccard.md)**: Set similarity testing framework (archived - completed)
