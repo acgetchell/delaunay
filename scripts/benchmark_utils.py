@@ -358,6 +358,7 @@ DOCS_PERFORMANCE_REPORT = Path("docs") / "PERFORMANCE.md"
 PERFORMANCE_ARCHIVE_DIR = Path("docs") / "archive" / "performance"
 RELEASE_BENCH_TIMEOUT_SECONDS = 7200
 RELEASE_COMMAND_TIMEOUT_SECONDS = 600
+RELEASE_SIGNAL_TIMEOUT_SECONDS = RELEASE_BENCH_TIMEOUT_SECONDS * len(RELEASE_SIGNAL_MEASUREMENT_PLAN)
 DELAUNAY_REPORT_VERSION_RE = re.compile(r"^\*\*delaunay\*\* v(?P<version>[^\s`]+)", re.MULTILINE)
 DELAUNAY_REPORT_BASELINE_RE = re.compile(r"^Comparison against baseline \*\*(?P<baseline>[^*]+)\*\*:", re.MULTILINE)
 SEMVER_IDENTIFIER_RE = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -4649,19 +4650,20 @@ def _run_saved_baseline_for_suite(
 def _run_latest_for_suite(*, worktree: Path, suite: str, env: dict[str, str] | None) -> tuple[tuple[str, ...], ...]:
     """Run current benchmarks for a suite."""
     if suite == "release-signal" and (worktree / "justfile").exists():
+        command = ("just", "bench-latest", str(RELEASE_BENCH_TIMEOUT_SECONDS))
         _progress("running current release-signal benchmarks")
         _run_tool(
-            "just",
-            ["bench-latest"],
+            command[0],
+            list(command[1:]),
             cwd=worktree,
             options=ToolRunOptions(
-                timeout=RELEASE_BENCH_TIMEOUT_SECONDS,
+                timeout=RELEASE_SIGNAL_TIMEOUT_SECONDS,
                 env=env,
                 stream_output=True,
             ),
         )
         _progress("completed current release-signal benchmarks")
-        return (("just", "bench-latest"),)
+        return (command,)
     commands: list[tuple[str, ...]] = []
     for target in _bench_targets_for_suite(worktree, suite):
         command = ("cargo", "bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", target)

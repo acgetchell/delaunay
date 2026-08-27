@@ -460,6 +460,13 @@ checkout, or save an explicit baseline name with the same recipe. Use
 `just performance-local` when you want the tool to manage isolated
 baseline/current worktrees.
 
+Manual `just bench-latest` runs use a 30-minute timeout for each target unless
+an override is supplied. The release workflow uses a two-hour failure ceiling
+per target and derives its outer ceiling from all five curated targets
+(currently up to ten hours). A target timeout invalidates the measurement; rerun
+the complete release workflow rather than treating partial Criterion output as
+release evidence.
+
 ```bash
 # In the baseline checkout, usually the previous release:
 just bench-save-baseline last

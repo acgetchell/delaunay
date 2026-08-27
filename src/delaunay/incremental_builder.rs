@@ -709,6 +709,12 @@ impl<K, U, V, const D: usize> DelaunayIncrementalBuilder<K, U, V, D> {
     /// Call [`validate_structure`](Self::validate_structure) independently when
     /// checking that partial state.
     ///
+    /// # Errors
+    ///
+    /// Returns `Some(Err(report))` when cumulative Levels 1–3 validation finds
+    /// one or more violations in the published owner. Bootstrap state returns
+    /// `None`, and a valid published owner returns `Some(Ok(()))`.
+    ///
     /// # Examples
     ///
     /// ```rust

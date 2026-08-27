@@ -3,7 +3,7 @@
 [![DOI](https://badgen.net/badge/DOI/10.5281%2Fzenodo.16931097/blue)](https://doi.org/10.5281/zenodo.16931097)
 [![Crates.io](https://badgen.net/crates/v/delaunay)](https://crates.io/crates/delaunay)
 [![Downloads](https://badgen.net/crates/d/delaunay)](https://crates.io/crates/delaunay)
-[![License](https://badgen.net/github/license/acgetchell/delaunay)](https://github.com/acgetchell/delaunay/blob/v0.8.0/LICENSE)
+[![License](https://badgen.net/github/license/acgetchell/delaunay)](https://github.com/acgetchell/delaunay/blob/v0.8.1/LICENSE)
 [![Docs.rs](https://docs.rs/delaunay/badge.svg)](https://docs.rs/delaunay)
 [![CI][ci-badge]][ci-workflow]
 [![CodeQL][codeql-badge]][codeql-workflow]
@@ -119,7 +119,7 @@ Choose the path that matches your use case:
 Add the crate to your project:
 
 ```bash
-cargo add delaunay@0.8.0
+cargo add delaunay@0.8.1
 ```
 
 Use `cargo add delaunay` instead if you want Cargo to select the newest published release.
@@ -428,7 +428,7 @@ section of [REFERENCES.md](REFERENCES.md).
 
 ## 📜 License
 
-This project is licensed under the [BSD 3-Clause License](https://github.com/acgetchell/delaunay/blob/v0.8.0/LICENSE).
+This project is licensed under the [BSD 3-Clause License](https://github.com/acgetchell/delaunay/blob/v0.8.1/LICENSE).
 
 ---
 
@@ -460,5 +460,5 @@ This project is licensed under the [BSD 3-Clause License](https://github.com/acg
 [Pseudomanifold]: https://en.wikipedia.org/wiki/Pseudomanifold
 [readme-hero]: https://raw.githubusercontent.com/acgetchell/delaunay/main/docs/assets/readme/delaunay_spherical_readme.png
 [Secondary maps]: docs/workflows.md#builder-api-auxiliary-vertex-and-simplex-data
-[Simulation of Simplicity]: docs/numerical_robustness_guide.md#simulation-of-simplicity-sos
+[Simulation of Simplicity]: docs/numerical_robustness_guide.md#identity-based-sos-perturbation-via-canonical-vertex-ordering
 [Construction and Validation Guide]: docs/construction_and_validation.md

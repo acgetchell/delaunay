@@ -5,6 +5,281 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-08-27
+
+### ⚠️ Breaking Changes
+
+- Automate transactional release preparation [#584](https://github.com/acgetchell/delaunay/pull/584)
+- Add verified scientific checkpoint manifests [#587](https://github.com/acgetchell/delaunay/pull/587)
+- Name public error variant fields [#567](https://github.com/acgetchell/delaunay/pull/567)
+- Separate Level 4 and Delaunay owners [#557](https://github.com/acgetchell/delaunay/pull/557) [#569](https://github.com/acgetchell/delaunay/pull/569)
+- Unify proof-bearing builder transitions [#574](https://github.com/acgetchell/delaunay/pull/574)
+
+### Merged Pull Requests
+
+- Add verified scientific checkpoint manifests [#587](https://github.com/acgetchell/delaunay/pull/587)
+- Bump the github-actions group with 4 updates [#586](https://github.com/acgetchell/delaunay/pull/586)
+- Automate transactional release preparation [#584](https://github.com/acgetchell/delaunay/pull/584)
+- Harden release and performance preflight [#582](https://github.com/acgetchell/delaunay/pull/582)
+- Feat/550 performance artifacts [#581](https://github.com/acgetchell/delaunay/pull/581)
+- Unify proof-bearing builder transitions [#574](https://github.com/acgetchell/delaunay/pull/574)
+- Align module ownership with proof layers [#572](https://github.com/acgetchell/delaunay/pull/572)
+- Automate repository dependency updates [#571](https://github.com/acgetchell/delaunay/pull/571)
+- Separate Level 4 and Delaunay owners [#557](https://github.com/acgetchell/delaunay/pull/557) [#569](https://github.com/acgetchell/delaunay/pull/569)
+- Name public error variant fields [#567](https://github.com/acgetchell/delaunay/pull/567)
+- Split bistellar flips into focused modules [#565](https://github.com/acgetchell/delaunay/pull/565)
+- Align k=1 preflight with periodic realization [#564](https://github.com/acgetchell/delaunay/pull/564)
+- Enforce Proptest case-count precedence [#563](https://github.com/acgetchell/delaunay/pull/563)
+- Rebalance default and slow test coverage [#562](https://github.com/acgetchell/delaunay/pull/562)
+- Restore topology construction repair policy [#561](https://github.com/acgetchell/delaunay/pull/561)
+- Accelerate full Delaunay reports [#560](https://github.com/acgetchell/delaunay/pull/560)
+- Certify Level 4 realization fast paths [#559](https://github.com/acgetchell/delaunay/pull/559)
+- Refresh pins and extend the auto-merge wait [#556](https://github.com/acgetchell/delaunay/pull/556)
+- Bump the dependencies group with 2 updates [#555](https://github.com/acgetchell/delaunay/pull/555)
+- Reject malformed notebook schema values [#549](https://github.com/acgetchell/delaunay/pull/549)
+- Harden version resolution and refresh tool pins [#547](https://github.com/acgetchell/delaunay/pull/547)
+- Update setuptools requirement in the dependencies group [#545](https://github.com/acgetchell/delaunay/pull/545)
+- Refresh dependencies and update automation [#544](https://github.com/acgetchell/delaunay/pull/544)
+- Harden dependency and release automation [#543](https://github.com/acgetchell/delaunay/pull/543)
+
+### Added
+
+- [**breaking**] Automate transactional release preparation [#584](https://github.com/acgetchell/delaunay/pull/584)
+  [`484f263`](https://github.com/acgetchell/delaunay/commit/484f2635e5cacb5cdf1aff4f812cdbdcc1ee7966)
+
+  - Synchronize package, lockfile, citation, changelog, and documentation versions through rollback-safe release commands.
+  - Update exact Python development pins before lock regeneration and verify release identity against published stable history.
+  - Promote validated performance evidence into curated reports and an atomic README snapshot with durable provenance.
+  - Fail closed on stale dates, mismatched metadata, unsafe tag input, and partial artifact publication.
+- [**breaking**] Add verified scientific checkpoint manifests [#587](https://github.com/acgetchell/delaunay/pull/587)
+  [`3ef8e4d`](https://github.com/acgetchell/delaunay/commit/3ef8e4d22439829fea4e6ea028501cc05a4b0387)
+
+  - Add schema-v2 owner checkpoints with versioned SHA-256 digests, complete f-vectors, and derived Euler characteristics.
+  - Canonicalize exact coordinate bits, UUID topology, proof context, periodic offsets, and supported user payloads independently of codec ordering.
+  - Reject malformed or tampered evidence with typed errors, then rebuild storage and re-establish validation Levels 1–5.
+  - Expose focused APIs for manifest inspection, verification, custom-kernel restoration, and explicit schema-v1 migration.
+
+### Changed
+
+- Rebalance default and slow test coverage [#562](https://github.com/acgetchell/delaunay/pull/562)
+  [`b318142`](https://github.com/acgetchell/delaunay/commit/b3181424b3d909bc1dbd5c0a077e112737e5ce0d)
+
+  - Promote bounded 3D and 4D invariant coverage into the default suite.
+  - Limit debug timeout relief to two platform-sensitive periodic builder tests.
+  - Document catalog-based ownership for remaining slow-test cases.
+- Split bistellar flips into focused modules [#565](https://github.com/acgetchell/delaunay/pull/565)
+  [`e2fc731`](https://github.com/acgetchell/delaunay/commit/e2fc73189a5e4ace4055490843f44c3ea997e52e)
+
+  - Separate move types, contexts, mutation and orientation engines, typed errors, repair queues, and shared support.
+  - Keep unit tests with their owning modules and preserve existing public re-export paths.
+  - Update documentation and Semgrep coverage for the directory-backed layout.
+- [**breaking**] Name public error variant fields [#567](https://github.com/acgetchell/delaunay/pull/567)
+  [`eb80aad`](https://github.com/acgetchell/delaunay/commit/eb80aad2d53d91da7f6162c54ad0669f7172743d)
+
+  - Replace positional error payloads with named source fields and typed convex-hull insufficiency reasons.
+  - Enforce named public error fields and positive Semgrep rule coverage.
+  - Extend release benchmark timeouts and reconcile v0.8.0 artifact metadata.
+- [**breaking**] Separate Level 4 and Delaunay owners [#557](https://github.com/acgetchell/delaunay/pull/557)
+  [#569](https://github.com/acgetchell/delaunay/pull/569) [`40ae56d`](https://github.com/acgetchell/delaunay/commit/40ae56dfbb6ff1e4b1d8b265901f6915387c1fea)
+
+  - Promote Triangulation to the proof-bearing Levels 1–4 domain owner, with checked TDS restoration and dedicated builder terminals.
+  - Reserve DelaunayTriangulation for cumulative Levels 1–5 values, using strict certification or consuming delaunayize conversion from Triangulation.
+  - Move bistellar and Pachner mutation workflows onto Triangulation and require explicit demotion before editing a Delaunay value.
+  - Split consuming PL-manifold TDS repair from proof-bearing reconstruction and preserve typed boundary failures throughout the composed workflows.
+- Align module ownership with proof layers [#572](https://github.com/acgetchell/delaunay/pull/572)
+  [`8b10278`](https://github.com/acgetchell/delaunay/commit/8b10278ce7edbaae762a9bf035d89dfa6341c588)
+
+  - Keep Levels 1–2 TDS ownership and validation under core.
+  - Move Levels 3–4 triangulation workflows into a dedicated module tree.
+  - Isolate the Level 5 Delaunay model and enforce one-way proof-layer dependencies.
+  - Codify owner-local unit-test placement and retire duplicate integration coverage.
+
+#### Fixed: Restore validated EdgeIndex construction
+
+- Restrict raw edge-index state to the core layer.
+- Route triangulation queries through controlled construction and read-only accessors.
+- Align Level 2 evidence and custom-kernel coverage with the intended APIs.
+
+#### Fixed: Make benchmark and notebook evidence trustworthy
+
+- Fail benchmark preflights on predicate errors, disagreements, or invalid topology.
+- Keep certification outside timed loops and restrict topology comparisons to valid PL-manifold policies.
+- Extract and test notebook rendering with independent validation of visual witnesses.
+- Lock workflow tool execution and track all benchmark and paper-producing inputs.
+- Preserve core ownership of adjacency internals through validated constructors and read-only accessors.
+- Archive the completed production review remediation checklist.
+
+#### Fixed: Harden benchmark and notebook evidence [#568](https://github.com/acgetchell/delaunay/pull/568)
+
+- Publish benchmark results and metadata as a rollback-safe pair so failures preserve the previous baseline.
+- Validate notebook witnesses before rendering and report invalid simplex references with contextual diagnostics.
+- Parse workflow trigger paths structurally and align their Python dependencies.
+- Correct validation documentation and colocate test-only Rust support with its owning module tests.
+- [**breaking**] Unify proof-bearing builder transitions [#574](https://github.com/acgetchell/delaunay/pull/574)
+  [`d0d5abd`](https://github.com/acgetchell/delaunay/commit/d0d5abdd9a67411a677cdd3c3f8abd5bc83ffdff)
+
+  - Add public drafts for unpublished TDS and Delaunay construction.
+  - Publish each invariant-bearing owner through a layer-specific, failure-atomic builder.
+  - Separate snapshot-free strict certification from transactional canonicalization and flip repair.
+  - Remove redundant conversion paths and encapsulate lower-layer storage.
+- Feat/550 performance artifacts [#581](https://github.com/acgetchell/delaunay/pull/581)
+  [`c55db1f`](https://github.com/acgetchell/delaunay/commit/c55db1f2a197bedbab33ba0c37f4b1b9f5811968)
+
+### Fixed
+
+- Harden dependency and release automation [#543](https://github.com/acgetchell/delaunay/pull/543)
+  [`39d0993`](https://github.com/acgetchell/delaunay/commit/39d09932e1150ae6766cc39ae3406ab4916cb97b)
+
+  - Authenticate CodeRabbit review requests as acgetchell and deduplicate them per PR head.
+  - Cancel superseded runs and queue squash auto-merge only for the triggering commit.
+  - Include the version title in the suggested GitHub release command.
+- Harden version resolution and refresh tool pins [#547](https://github.com/acgetchell/delaunay/pull/547)
+  [`a6786b7`](https://github.com/acgetchell/delaunay/commit/a6786b76b95567ab2704aa12ecc64b2a198d4a5d)
+
+  - Fail workflow setup when justfile pins cannot be resolved or are empty.
+  - Stagger weekly Dependabot updates for Actions, Cargo, and uv dependencies.
+  - Update rumdl, uv, zizmor, and the pinned zizmor action.
+- Reject malformed notebook schema values [#549](https://github.com/acgetchell/delaunay/pull/549)
+  [`4af5e20`](https://github.com/acgetchell/delaunay/commit/4af5e200df00c9802081b5bf49ca52ce9446bfc9)
+
+  - Reject non-object cell metadata with notebook and cell context.
+  - Require nbformat to use the JSON integer 4 rather than numeric-equivalent values.
+- Queue approved Dependabot updates for auto-merge [`14c7f36`](https://github.com/acgetchell/delaunay/commit/14c7f36776037c032d6adde977228b584610d3cb)
+- Restore topology construction repair policy [#561](https://github.com/acgetchell/delaunay/pull/561)
+  [`d1d2f7f`](https://github.com/acgetchell/delaunay/commit/d1d2f7fc95291b1d2d583d0412f660cba774a5dc)
+
+  - Use the default Delaunay repair cadence during construction measurements.
+  - Require insertion and completion validation to succeed for every sample.
+  - Update the manual suite runtime estimate for the repaired workload.
+- Enforce Proptest case-count precedence [#563](https://github.com/acgetchell/delaunay/pull/563)
+  [`feeedca`](https://github.com/acgetchell/delaunay/commit/feeedca7332adbb3f18bd219dbd646891c852496)
+
+  - Apply the 32-case repository fallback while preserving suite-specific budgets.
+  - Let PROPTEST_CASES override repository and suite fallbacks, including manual runners.
+  - Synchronize packaged test support, configuration declarations, and guidance.
+  - Refresh the locked UUID dependency and uv tool pin.
+- Align k=1 preflight with periodic realization [#564](https://github.com/acgetchell/delaunay/pull/564)
+  [`3a66fca`](https://github.com/acgetchell/delaunay/commit/3a66fca44fdbebd61e45b1ccedea6c5aeaeb3738)
+
+  - Evaluate insertion containment in the simplex's lifted periodic frame.
+  - Share deterministic validation between feasibility checks and mutation.
+  - Report typed exterior-facet and slot diagnostics without mutating topology.
+- Harden release and performance preflight [#582](https://github.com/acgetchell/delaunay/pull/582)
+  [`c310023`](https://github.com/acgetchell/delaunay/commit/c310023715c3d5631943c0866cfd4cec9ba55626)
+
+  - reject release tags, citation dates, and DOI metadata that diverge from authoritative release metadata
+  - fail identical release comparisons before setup and stream progress from long benchmark phases
+  - preserve concrete CPU provenance and accept valid ordered Criterion confidence intervals
+  - package the Python support tools with their dedicated documentation
+
+### Maintenance
+
+- Refresh dependencies and update automation [#544](https://github.com/acgetchell/delaunay/pull/544)
+  [`d3072a4`](https://github.com/acgetchell/delaunay/commit/d3072a447a9630d642f0494957eb52420fcb6d5e)
+
+  - Update Rust, Python, and repository tool pins to compatible releases.
+  - Refresh setup-uv, CodeQL, and zizmor action revisions while preserving cache pruning.
+  - Add grouped uv Dependabot updates and publish the ruleset-required CodeRabbit status.
+- Update setuptools requirement in the dependencies group [#545](https://github.com/acgetchell/delaunay/pull/545)
+  [`497e162`](https://github.com/acgetchell/delaunay/commit/497e1627bdbbf8c88327e69dd00ee09b9dd3d00f)
+
+  Updates the requirements on [setuptools](https://github.com/pypa/setuptools) to permit the latest version.
+
+  Updates `setuptools` to 83.0.0
+
+  - [Release notes](https://github.com/pypa/setuptools/releases)
+  - [Changelog](https://github.com/pypa/setuptools/blob/main/NEWS.rst)
+  - [Commits](https://github.com/pypa/setuptools/compare/v77.0.0...v83.0.0)
+- Update tooling pins and Dependabot groups [`24f52ae`](https://github.com/acgetchell/delaunay/commit/24f52ae4c0b26b4b64a30ed91af994dd6bb721ad)
+- Bump the dependencies group with 2 updates [#555](https://github.com/acgetchell/delaunay/pull/555)
+  [`ac1a1de`](https://github.com/acgetchell/delaunay/commit/ac1a1de9952d0c838b413d5a8ebb17a5e32c83ad)
+
+  Bumps the dependencies group with 2 updates: [ty](https://github.com/astral-sh/ty) and [polars](https://github.com/pola-rs/polars).
+
+  Updates `ty` from 0.0.65 to 0.0.66
+
+  - [Release notes](https://github.com/astral-sh/ty/releases)
+  - [Changelog](https://github.com/astral-sh/ty/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/astral-sh/ty/compare/0.0.65...0.0.66)
+
+  Updates `polars` from 1.43.1 to 1.43.2
+  - [Release notes](https://github.com/pola-rs/polars/releases)
+  - [Commits](https://github.com/pola-rs/polars/compare/py-1.43.1...py-1.43.2)
+- Refresh pins and extend the auto-merge wait [#556](https://github.com/acgetchell/delaunay/pull/556)
+  [`c76f826`](https://github.com/acgetchell/delaunay/commit/c76f82689c88fa59908c0a11c0158c9e0a18961c)
+
+  - Update cache-cargo-install-action, CodeQL, rumdl, and uv pins.
+  - Give required checks 90 minutes to complete before auto-merge times out.
+- Automate repository dependency updates [#571](https://github.com/acgetchell/delaunay/pull/571)
+  [`36d04a9`](https://github.com/acgetchell/delaunay/commit/36d04a91266925f59dc6b95ee5fe8b7a46b3c0c5)
+
+  - Advance Cargo requirements and every uv lock group through `just update`.
+  - Reconcile setup-owned Cargo tool versions into the root justfile atomically.
+  - Refresh Rust and Python dependencies and adapt support scripts to stricter type checking.
+- Bump the github-actions group with 4 updates [#586](https://github.com/acgetchell/delaunay/pull/586)
+  [`b99c3b9`](https://github.com/acgetchell/delaunay/commit/b99c3b93f3c68a7d7b526f8ca9de26355e4e60b0)
+
+  Bumps the github-actions group with 4 updates: [github/codeql-action/upload-sarif](https://github.com/github/codeql-action),
+  [astral-sh/setup-uv](https://github.com/astral-sh/setup-uv), [github/codeql-action/init](https://github.com/github/codeql-action) and
+  [github/codeql-action/analyze](https://github.com/github/codeql-action).
+
+  Updates `github/codeql-action/upload-sarif` from 4.37.6 to 4.37.7
+
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/5595ccaf912efad79be6eef63a5619ff05969be3...ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd)
+
+  Updates `astral-sh/setup-uv` from 9.0.0 to 10.0.1
+  - [Release notes](https://github.com/astral-sh/setup-uv/releases)
+  - [Commits](https://github.com/astral-sh/setup-uv/compare/c771a70e6277c0a99b617c7a806ffedaca235ff9...20cfd1bf945f4377ade1205e4dbc17946fc9a30d)
+
+  Updates `github/codeql-action/init` from 4.37.6 to 4.37.7
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/5595ccaf912efad79be6eef63a5619ff05969be3...ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd)
+
+  Updates `github/codeql-action/analyze` from 4.37.6 to 4.37.7
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/5595ccaf912efad79be6eef63a5619ff05969be3...ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd)
+
+### Performance
+
+- Certify Level 4 realization fast paths [#559](https://github.com/acgetchell/delaunay/pull/559)
+  [`3d3b7b0`](https://github.com/acgetchell/delaunay/commit/3d3b7b013312b972ec8c5b891a0b47b44cc9f8ee)
+
+  - Preserve exact active-set classification for degenerate simplex pairs and
+    verify optimized agreement across random and boundary cases in 2D–5D.
+  - Add focused narrow-phase and whole-realization benchmarks with stable IDs
+    to local and release comparison workflows.
+  - Add an isolated large-scale Level 4 validation mode.
+  - Add scoped Cargo and uv update recipes, refresh dependency locks, and pin
+    rumdl 0.2.55.
+- Accelerate full Delaunay reports [#560](https://github.com/acgetchell/delaunay/pull/560)
+  [`e7fd9b8`](https://github.com/acgetchell/delaunay/commit/e7fd9b8b0050b98abfe3e6c949a406a90d84dde9)
+
+  - Certify complete Euclidean point-set triangulations with robust local flip predicates in O(simplices).
+  - Preserve exhaustive empty-sphere diagnostics for unproven connectivity, subset reports, and inconclusive certificates.
+  - Add Level 5 performance canaries for well-conditioned and adversarial inputs from 2D through 5D.
+
+#### Fixed: Preserve sound Delaunay report certificates
+
+- Invalidate complete-point-set provenance after deletion, repair access, topology edits, and actual topology changes.
+- Preserve certified fast paths across rejected or idempotent topology updates.
+- Keep certificate provenance internal and retain exhaustive reporting for unproven connectivity.
+- Cover cumulative 2D validation benchmarks and document fast-path and fallback complexity.
+
+#### Changed: Cover report certificate invalidation paths
+
+- Exercise certificate invalidation across topology-scope Pachner moves.
+- Verify global topology changes revoke Euclidean report provenance.
+- Clarify the complexity difference between Level 5 and cumulative reports.
+
+#### Maintenance: Update uv and build dependency pins
+
+- Pin uv 0.12.4 for local and CI tooling.
+- Update cc to 1.4.3 and find-msvc-tools to 0.1.11.
+
 ## [0.8.0] - 2026-07-28
 
 ### ⚠️ Breaking Changes
@@ -453,10 +728,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Synchronize validation APIs, layered errors, and backend-specific
     realization guarantees.
   - Refresh the mechanical paper table and author TODO scaffolding without replacing manuscript prose.
-- Condition benchmark bullet on staged summary [`d0e3af1`](https://github.com/acgetchell/delaunay/commit/d0e3af12750b508fe788144195ee5af4c8c87cab)
-
-  - Add the benchmark commit bullet only when PERFORMANCE_RESULTS.md is staged.
-  - Omit both the summary file and its bullet when no benchmark summary changed.
 
 ### Fixed
 
@@ -549,11 +820,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Lock uv-backed workflows and include the complete console-script module closure in Python packages.
   - Consolidate durable tooling guidance, correct documented predicate and validation limits, and archive historical performance observations.
   - Refresh validation-paper metadata and clarify reviewer-artifact comparisons.
-- Prevent wildcard changelog prose from parsing as emphasis [`291439d`](https://github.com/acgetchell/delaunay/commit/291439d2786eb6a88fb272bff1e69106adedefcf)
-
-  - Code-span wildcard Rust API paths and filename globs throughout generated prose.
-  - Preserve Markdown emphasis and existing code spans during normalization.
-  - Regenerate the v0.8.0 changelog and completed-series archives.
 
 ### Maintenance
 
@@ -810,4 +1076,5 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archive/changelog/0.3.md)
 - [0.2.x](docs/archive/changelog/0.2.md)
 
+[0.8.1]: https://github.com/acgetchell/delaunay/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/acgetchell/delaunay/compare/v0.7.8...v0.8.0
