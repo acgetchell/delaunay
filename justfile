@@ -30,7 +30,7 @@ tectonic_version := "0.17.0"
 tex_fmt_version := "0.5.7"
 typos_version := "1.50.1"
 uv_version := "0.12.10"
-zizmor_version := "1.30.0"
+zizmor_version := "1.30.1"
 
 # Common cargo-llvm-cov arguments for all coverage runs.
 # Excludes benches/examples from reports while allowing integration tests to
@@ -1617,7 +1617,7 @@ unused-deps: _ensure-cargo-machete
 
 # Update dependency requirements, locks, managed Cargo tools, and the active uv pin.
 [group('build and setup')]
-update: _ensure-cargo-install-update update-dependencies update-cargo-tools
+update: _ensure-cargo-install-update _ensure-uv-stable update-dependencies update-cargo-tools
     @echo "✅ Repository dependencies and tools updated."
 
 # Advance Cargo dependency declarations and lockfile entries for every resolution root.
@@ -1632,7 +1632,7 @@ update-cargo-dependencies: _ensure-cargo-edit
 # Update locally installed Cargo CLI tools and reconcile their pins plus the active uv version.
 [doc('Update managed Cargo CLI tools and reconcile all root justfile tool pins.')]
 [group('build and setup')]
-update-cargo-tools: _ensure-cargo-install-update _ensure-uv-available
+update-cargo-tools: _ensure-cargo-install-update _ensure-uv-stable
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -1776,4 +1776,20 @@ yaml-lint: _ensure-yamllint
 # Audit GitHub Actions workflows with zizmor.
 [group('validation')]
 zizmor: _ensure-zizmor
-    zizmor .github
+    #!/usr/bin/env bash
+    set +x
+    set -euo pipefail
+    zizmor_token="${ZIZMOR_GITHUB_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
+    if [[ -z "$zizmor_token" ]] && command -v gh >/dev/null; then
+        if resolved_token="$(gh auth token --hostname "${GH_HOST:-github.com}" 2>/dev/null)"; then
+            zizmor_token="$resolved_token"
+        fi
+    fi
+    if [[ -n "$zizmor_token" ]]; then
+        # Honor our token precedence regardless of zizmor's environment lookup order.
+        unset GH_TOKEN GITHUB_TOKEN
+        ZIZMOR_GITHUB_TOKEN="$zizmor_token" zizmor --persona regular .github
+    else
+        echo "No GitHub token available; running zizmor offline (online audits disabled)." >&2
+        zizmor --offline --persona regular .github
+    fi

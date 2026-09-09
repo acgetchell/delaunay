@@ -1,0 +1,72 @@
+name: Release uv cache fixtures
+on: workflow_dispatch
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release cache explicitly disabled
+        # ok: delaunay.github-actions.release-setup-uv-cache-disabled
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ steps.uv_version.outputs.version }}
+          enable-cache: false
+
+      - name: Release cache defaults are forbidden
+        # ruleid: delaunay.github-actions.release-setup-uv-cache-disabled
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ steps.uv_version.outputs.version }}
+
+      # ok: delaunay.github-actions.release-setup-uv-cache-disabled
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+
+      # ruleid: delaunay.github-actions.release-setup-uv-cache-disabled
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Inputs before uses
+        with:
+          enable-cache: false
+        # ok: delaunay.github-actions.release-setup-uv-cache-disabled
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Enabled cache before uses
+        with:
+          enable-cache: true
+        # ruleid: delaunay.github-actions.release-setup-uv-cache-disabled
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Cache setting on another step does not apply
+        # ruleid: delaunay.github-actions.release-setup-uv-cache-disabled
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Quoted false is also an explicit cache disablement
+        # ok: delaunay.github-actions.release-setup-uv-cache-disabled
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: "false"
+
+      - name: Quoted true still enables the release cache
+        # ruleid: delaunay.github-actions.release-setup-uv-cache-disabled
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: "true"
+
+      - name: An unrelated release action needs no uv cache setting
+        # ok: delaunay.github-actions.release-setup-uv-cache-disabled
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          enable-cache: false
+
+      - name: Quoted action with release cache disabled
+        # ok: delaunay.github-actions.release-setup-uv-cache-disabled
+        uses: "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d" # v10.0.1
+        with:
+          enable-cache: false
+
+      - name: Quoted action missing release cache setting
+        # ruleid: delaunay.github-actions.release-setup-uv-cache-disabled
+        uses: "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d" # v10.0.1
