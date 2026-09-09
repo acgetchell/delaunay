@@ -36,9 +36,11 @@ under `benches/`. These commands are intentionally cheaper and less formal than
 the release-signal workflow.
 
 Use release-signal benchmarks for release evidence. They are slower, more
-formal, and tied to release artifacts and report metadata. Publishing a GitHub
-Release triggers `.github/workflows/release-benchmarks.yml`, which attaches
-`delaunay-vX.Y.Z-criterion-baseline.tar.gz` to the release. That archive
+formal, and tied to release artifacts and report metadata. Create a draft GitHub
+Release for an existing stable tag, then dispatch
+`.github/workflows/release-benchmarks.yml` with that `tag`. It validates the
+mutable draft, benchmarks the exact tag commit, attaches and digest-verifies
+`delaunay-vX.Y.Z-criterion-baseline.tar.gz`, and publishes only after success. That archive
 contains `PERFORMANCE_RESULTS.md`, `baseline_results.txt`, raw Criterion data
 under `criterion/`, and `metadata.json`.
 
@@ -51,8 +53,8 @@ Common maintainer flows:
 - During release PR preparation: run `just performance-release`, then
   `just performance-readme`, to update the curated report, archive its
   predecessor, and publish the matching README snapshot.
-- After a GitHub Release publishes: confirm the release benchmark workflow
-  attached `delaunay-vX.Y.Z-criterion-baseline.tar.gz`; use
+- After the draft benchmark workflow publishes: confirm the release contains
+  `delaunay-vX.Y.Z-criterion-baseline.tar.gz`; use
   `just performance-github-assets 'current-tag' 'baseline-tag'` when you need a
   report from stored release assets.
 
@@ -64,6 +66,24 @@ and render a Markdown comparison with `just bench-compare <baseline>`.
 `just bench-latest-vs-last` combines the fresh measurement and report rendering
 for the common local saved-baseline case. Use `just performance-local` when you
 want the tool to manage isolated baseline/current worktrees for you.
+
+`just bench-preflight` executes every curated target with Criterion `--test`:
+fixture setup and one operation per case, with a ten-minute ceiling per target
+including compilation. It writes no timing evidence or measurement sidecars.
+`just bench-latest` runs that entire preflight before any full sampling. Fatal
+setup and operation errors always print to stderr, including with
+`bench-logging` disabled or `RUST_LOG=off`.
+
+Draft workflow reruns never overwrite existing evidence. Failures before upload
+can be retried with the same tag. If an archive is already attached, inspect it
+and remove it from the mutable draft before rerunning; published releases are
+always rejected. Follow the full [draft-run-publish sequence](../docs/RELEASING.md).
+
+The corrected proof-aware contract begins at v0.8.2. Establish that release's
+absolute baseline with `just bench-perf-summary` after updating release
+metadata; begin release-to-release comparisons once two comparable releases
+under the new contract exist. Historical reports keep their original version
+labels and are not converted into new-contract evidence.
 
 The canonical `performance-*` release recipes consume local worktrees,
 published release assets, or retained inputs:
@@ -391,15 +411,25 @@ cargo bench --profile perf --bench ci_performance_suite
   topology, Level 4 realization, and Level 5 Delaunay predicate checks
 - incremental vertex insertion into prepared triangulations
 - explicit 2D-5D bistellar flip roundtrips
+- explicit connectivity import and raw-TDS promotion under `Pseudomanifold`
+- Level 5 certification of a `PLManifold` owner retaining construction provenance
+
+The `explicit_import/import_pseudomanifold_*` and
+`proof_boundaries/promote_pseudomanifold_*` cases intentionally measure the
+incidence contract in every dimension. Arbitrary connectivity cannot recover
+high-dimensional PL-manifold construction provenance. The independent
+`proof_boundaries/certify_pl_manifold_*` cases retain their proof-bearing owner
+from point construction. These names distinguish the corrected contracts from
+historical timings; do not relabel old evidence as the new cases.
 
 The current calibrated fixture sizes are:
 
 | Dimension | Fixture vertices | Insert batch |
 |-----------|------------------|--------------|
-| 2D | 4,000 | 10 |
-| 3D | 750 | 10 |
-| 4D | 75 | 6 |
-| 5D | 25 | 4 |
+| 2D | 500 | 10 |
+| 3D | 100 | 10 |
+| 4D | 30 | 6 |
+| 5D | 12 | 4 |
 
 The same fixture sizes are reused for construction, adversarial construction,
 validation, hull extraction, boundary traversal, and insertion bases. This keeps
@@ -421,7 +451,7 @@ benchmark emits only the selected construction metric and exits before sampling:
 ```bash
 DELAUNAY_BENCH_EXPORT_METRICS=1 \
   cargo bench --profile perf --bench ci_performance_suite -- \
-  "tds_new_3d/tds_new/750"
+  "tds_new_3d/tds_new/100"
 ```
 
 Use `just bench-perf-summary` for release summaries; it runs the full perf
@@ -669,8 +699,8 @@ these large random construction fixtures.
 
 Each mode is validated once as an untimed preflight; Criterion measures only
 construction and the selected insertion-time audit cadence. The suite is
-excluded from the pull-request regression set, remains available for manual
-topology-policy work, and is also archived by the release benchmark workflow.
+excluded from the pull-request and curated release-signal sets and remains
+available for manual topology-policy work.
 
 ## Generated Summaries
 

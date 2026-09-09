@@ -6,38 +6,9 @@
 
 use std::{fmt::Display, process};
 
-#[cfg(feature = "bench-logging")]
-use std::sync::Once;
-#[cfg(feature = "bench-logging")]
-use tracing_subscriber::EnvFilter;
-
-/// Installs a default error-level tracing subscriber for fatal setup diagnostics.
-#[cfg(feature = "bench-logging")]
-fn init_tracing() {
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("error"));
-        let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
-    });
-}
-
-/// Leaves benchmark tracing disabled when the `bench-logging` feature is off.
-#[cfg(not(feature = "bench-logging"))]
-#[expect(
-    dead_code,
-    reason = "no-op cfg counterpart documents that tracing setup is intentionally disabled"
-)]
-const fn init_tracing() {}
-
-/// Emits a benchmark setup failure through tracing when `bench-logging` is enabled, then exits.
+/// Prints fatal setup or measured-operation failures regardless of logging configuration.
 pub fn abort_benchmark(message: impl Display) -> ! {
-    #[cfg(feature = "bench-logging")]
-    {
-        init_tracing();
-        tracing::error!("{message}");
-    }
-    #[cfg(not(feature = "bench-logging"))]
-    let _ = message;
+    eprintln!("benchmark failed: {message}");
     process::exit(1);
 }
 

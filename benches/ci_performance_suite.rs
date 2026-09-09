@@ -86,10 +86,10 @@ use flip_workflows::{CandidateFilter, FlipTriangulation};
 /// keeping each normal construction benchmark around one second on release
 /// hardware. The adversarial variants use the same vertex counts and may take
 /// longer.
-const CANARY_COUNT_2D: usize = 4_000;
-const CANARY_COUNT_3D: usize = 750;
-const CANARY_COUNT_4D: usize = 75;
-const CANARY_COUNT_5D: usize = 25;
+const CANARY_COUNT_2D: usize = 500;
+const CANARY_COUNT_3D: usize = 100;
+const CANARY_COUNT_4D: usize = 30;
+const CANARY_COUNT_5D: usize = 12;
 /// Incremental insertion batch sizes are deliberately separate from fixture
 /// sizes: these benchmarks measure adding a small batch into an existing
 /// calibrated triangulation, not rebuilding the full fixture.
@@ -107,6 +107,7 @@ type BenchGenericTriangulation<const D: usize> = Triangulation<AdaptiveKernel<f6
 struct ExplicitImportFixture<const D: usize> {
     vertices: Vec<Vertex<(), D>>,
     simplices: Vec<Vec<usize>>,
+    source: BenchGenericTriangulation<D>,
 }
 
 struct ProofBoundaryFixture<const D: usize> {
@@ -220,26 +221,6 @@ fn insert_benchmark_ids() -> String {
     .join(";")
 }
 
-fn explicit_import_benchmark_ids() -> String {
-    [
-        format!("explicit_import/import_2d/{EXPLICIT_IMPORT_COUNT_2D}"),
-        format!("explicit_import/import_3d/{EXPLICIT_IMPORT_COUNT_3D}"),
-        format!("explicit_import/import_4d/{EXPLICIT_IMPORT_COUNT_4D}"),
-        format!("explicit_import/import_5d/{EXPLICIT_IMPORT_COUNT_5D}"),
-    ]
-    .join(";")
-}
-
-fn proof_boundary_benchmark_ids() -> String {
-    [
-        "proof_boundaries/{promote_default_strict_2d,promote_canonicalizing_2d,certify_2d}",
-        "proof_boundaries/{promote_default_strict_3d,promote_canonicalizing_3d,certify_3d}",
-        "proof_boundaries/{promote_default_strict_4d,promote_canonicalizing_4d,certify_4d}",
-        "proof_boundaries/{promote_default_strict_5d,promote_canonicalizing_5d,certify_5d}",
-    ]
-    .join(";")
-}
-
 fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
     vec![
         ApiBenchmarkEntry {
@@ -288,15 +269,16 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
             group: "explicit_import",
             public_api: "DelaunayTriangulationBuilder::try_from_vertices_and_simplices(...).build_triangulation",
             dimensions: "2,3,4,5",
-            benchmark_ids: explicit_import_benchmark_ids(),
-            note: "reimport_valid_levels_1_through_4_connectivity_from_public_vertex_and_simplex_iterators",
+            // Exact IDs include simplex counts and are emitted with each fixture.
+            benchmark_ids: String::new(),
+            note: "reimport_levels_1_through_4_connectivity_with_explicit_pseudomanifold_guarantee",
         },
         ApiBenchmarkEntry {
             group: "proof_boundaries",
             public_api: "TriangulationBuilder::new(...).build();DelaunayRefinementBuilder::new(...).build()",
             dimensions: "2,3,4,5",
-            benchmark_ids: proof_boundary_benchmark_ids(),
-            note: "compare_default_strict_and_canonicalizing_level_3_4_promotion_then_measure_strict_level_5_certification_independently",
+            benchmark_ids: String::new(),
+            note: "raw_tds_pseudomanifold_promotion_and_independent_level_5_certification_of_proof_bearing_pl_manifold_owner",
         },
         ApiBenchmarkEntry {
             group: "bistellar_flips",
@@ -344,7 +326,7 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
 /// ```
 ///
 /// (Use a Criterion filter for individual cases, e.g.
-///  `-- "tds_new_5d/tds_new/25"`)
+///  `-- "tds_new_5d/tds_new/12"`)
 const KNOWN_SEEDS: &[(usize, usize, u64)] = &[
     (2, CANARY_COUNT_2D, 4042),
     (3, CANARY_COUNT_3D, 873),
@@ -515,6 +497,7 @@ where
     ExplicitImportFixture {
         vertices,
         simplices,
+        source: dt.into_triangulation(),
     }
 }
 
@@ -526,16 +509,12 @@ fn prepare_proof_boundary_fixture<const D: usize>(
 where
     AdaptiveKernel<f64>: ExactPredicates<D>,
 {
-    let import = prepare_explicit_import_fixture::<D>(dim_seed, count);
-    let triangulation: BenchGenericTriangulation<D> =
-        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(
-            &import.vertices,
-            &import.simplices,
-        )
-        .or_abort()
-        .build_triangulation()
-        .or_abort();
-    let topology_guarantee = triangulation.topology_guarantee();
+    // Retain construction provenance for Level 5 certification. Raw TDS
+    // promotion cannot recover that provenance, so it measures the explicit
+    // pseudomanifold contract in every dimension instead.
+    let triangulation = prepare_explicit_import_fixture::<D>(dim_seed, count).source;
+    triangulation.validate_realization().or_abort();
+    let topology_guarantee = TopologyGuarantee::Pseudomanifold;
     let global_topology = triangulation.global_topology();
     let simplex_count = triangulation.number_of_simplices();
     let tds = triangulation.clone().into_tds();
@@ -1494,15 +1473,16 @@ fn bench_explicit_import_case<const D: usize>(
     AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     group.throughput(Throughput::Elements(fixture.simplices.len() as u64));
+    let parameter = format!(
+        "vertices_{}_simplices_{}",
+        fixture.vertices.len(),
+        fixture.simplices.len()
+    );
+    println!(
+        "api_benchmark group=explicit_import benchmark_ids=explicit_import/import_pseudomanifold_{D}d/{parameter}"
+    );
     group.bench_function(
-        BenchmarkId::new(
-            format!("import_{D}d"),
-            format!(
-                "vertices_{}_simplices_{}",
-                fixture.vertices.len(),
-                fixture.simplices.len()
-            ),
-        ),
+        BenchmarkId::new(format!("import_pseudomanifold_{D}d"), parameter),
         |b| {
             b.iter(|| {
                 let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(
@@ -1510,6 +1490,7 @@ fn bench_explicit_import_case<const D: usize>(
                     &fixture.simplices,
                 )
                 .or_abort()
+                .topology_guarantee(TopologyGuarantee::Pseudomanifold)
                 .build_triangulation()
                 .or_abort();
                 black_box(dt);
@@ -1523,9 +1504,12 @@ fn bench_proof_boundary_case<const D: usize>(
     fixture: &ProofBoundaryFixture<D>,
 ) {
     let parameter = format!("simplices_{}", fixture.simplex_count);
+    println!(
+        "api_benchmark group=proof_boundaries benchmark_ids=proof_boundaries/{{promote_pseudomanifold_strict_{D}d,promote_pseudomanifold_canonicalizing_{D}d,certify_pl_manifold_{D}d}}/{parameter}"
+    );
     group.throughput(Throughput::Elements(fixture.simplex_count as u64));
     group.bench_function(
-        BenchmarkId::new(format!("promote_default_strict_{D}d"), &parameter),
+        BenchmarkId::new(format!("promote_pseudomanifold_strict_{D}d"), &parameter),
         |b| {
             b.iter_batched(
                 || (fixture.tds.clone(), AdaptiveKernel::new()),
@@ -1543,7 +1527,10 @@ fn bench_proof_boundary_case<const D: usize>(
         },
     );
     group.bench_function(
-        BenchmarkId::new(format!("promote_canonicalizing_{D}d"), &parameter),
+        BenchmarkId::new(
+            format!("promote_pseudomanifold_canonicalizing_{D}d"),
+            &parameter,
+        ),
         |b| {
             b.iter_batched(
                 || (fixture.tds.clone(), AdaptiveKernel::new()),
@@ -1561,19 +1548,22 @@ fn bench_proof_boundary_case<const D: usize>(
             );
         },
     );
-    group.bench_function(BenchmarkId::new(format!("certify_{D}d"), parameter), |b| {
-        b.iter_batched(
-            || fixture.triangulation.clone(),
-            |triangulation| {
-                black_box(
-                    DelaunayRefinementBuilder::new(triangulation)
-                        .build()
-                        .or_abort(),
-                );
-            },
-            BatchSize::LargeInput,
-        );
-    });
+    group.bench_function(
+        BenchmarkId::new(format!("certify_pl_manifold_{D}d"), parameter),
+        |b| {
+            b.iter_batched(
+                || fixture.triangulation.clone(),
+                |triangulation| {
+                    black_box(
+                        DelaunayRefinementBuilder::new(triangulation)
+                            .build()
+                            .or_abort(),
+                    );
+                },
+                BatchSize::LargeInput,
+            );
+        },
+    );
 }
 
 fn benchmark_boundary_facets(c: &mut Criterion) {
@@ -1920,22 +1910,22 @@ fn benchmark_explicit_import(c: &mut Criterion) {
     let mut group = c.benchmark_group("explicit_import");
     group.sample_size(10);
 
-    if benchmark_selected(&filters, "explicit_import/import_2d") {
+    if benchmark_selected(&filters, "explicit_import/import_pseudomanifold_2d") {
         let fixture_2d = prepare_explicit_import_fixture::<2>(42, EXPLICIT_IMPORT_COUNT_2D);
         bench_explicit_import_case(&mut group, &fixture_2d);
     }
 
-    if benchmark_selected(&filters, "explicit_import/import_3d") {
+    if benchmark_selected(&filters, "explicit_import/import_pseudomanifold_3d") {
         let fixture_3d = prepare_explicit_import_fixture::<3>(123, EXPLICIT_IMPORT_COUNT_3D);
         bench_explicit_import_case(&mut group, &fixture_3d);
     }
 
-    if benchmark_selected(&filters, "explicit_import/import_4d") {
+    if benchmark_selected(&filters, "explicit_import/import_pseudomanifold_4d") {
         let fixture_4d = prepare_explicit_import_fixture::<4>(456, EXPLICIT_IMPORT_COUNT_4D);
         bench_explicit_import_case(&mut group, &fixture_4d);
     }
 
-    if benchmark_selected(&filters, "explicit_import/import_5d") {
+    if benchmark_selected(&filters, "explicit_import/import_pseudomanifold_5d") {
         let fixture_5d = prepare_explicit_import_fixture::<5>(789, EXPLICIT_IMPORT_COUNT_5D);
         bench_explicit_import_case(&mut group, &fixture_5d);
     }
@@ -1952,30 +1942,46 @@ fn benchmark_proof_boundaries(c: &mut Criterion) {
     let mut group = c.benchmark_group("proof_boundaries");
     group.sample_size(10);
 
-    if benchmark_selected(&filters, "proof_boundaries/promote_default_strict_2d")
-        || benchmark_selected(&filters, "proof_boundaries/promote_canonicalizing_2d")
-        || benchmark_selected(&filters, "proof_boundaries/certify_2d")
+    if benchmark_selected(
+        &filters,
+        "proof_boundaries/promote_pseudomanifold_strict_2d",
+    ) || benchmark_selected(
+        &filters,
+        "proof_boundaries/promote_pseudomanifold_canonicalizing_2d",
+    ) || benchmark_selected(&filters, "proof_boundaries/certify_pl_manifold_2d")
     {
         let fixture = prepare_proof_boundary_fixture::<2>(42, EXPLICIT_IMPORT_COUNT_2D);
         bench_proof_boundary_case(&mut group, &fixture);
     }
-    if benchmark_selected(&filters, "proof_boundaries/promote_default_strict_3d")
-        || benchmark_selected(&filters, "proof_boundaries/promote_canonicalizing_3d")
-        || benchmark_selected(&filters, "proof_boundaries/certify_3d")
+    if benchmark_selected(
+        &filters,
+        "proof_boundaries/promote_pseudomanifold_strict_3d",
+    ) || benchmark_selected(
+        &filters,
+        "proof_boundaries/promote_pseudomanifold_canonicalizing_3d",
+    ) || benchmark_selected(&filters, "proof_boundaries/certify_pl_manifold_3d")
     {
         let fixture = prepare_proof_boundary_fixture::<3>(123, EXPLICIT_IMPORT_COUNT_3D);
         bench_proof_boundary_case(&mut group, &fixture);
     }
-    if benchmark_selected(&filters, "proof_boundaries/promote_default_strict_4d")
-        || benchmark_selected(&filters, "proof_boundaries/promote_canonicalizing_4d")
-        || benchmark_selected(&filters, "proof_boundaries/certify_4d")
+    if benchmark_selected(
+        &filters,
+        "proof_boundaries/promote_pseudomanifold_strict_4d",
+    ) || benchmark_selected(
+        &filters,
+        "proof_boundaries/promote_pseudomanifold_canonicalizing_4d",
+    ) || benchmark_selected(&filters, "proof_boundaries/certify_pl_manifold_4d")
     {
         let fixture = prepare_proof_boundary_fixture::<4>(456, EXPLICIT_IMPORT_COUNT_4D);
         bench_proof_boundary_case(&mut group, &fixture);
     }
-    if benchmark_selected(&filters, "proof_boundaries/promote_default_strict_5d")
-        || benchmark_selected(&filters, "proof_boundaries/promote_canonicalizing_5d")
-        || benchmark_selected(&filters, "proof_boundaries/certify_5d")
+    if benchmark_selected(
+        &filters,
+        "proof_boundaries/promote_pseudomanifold_strict_5d",
+    ) || benchmark_selected(
+        &filters,
+        "proof_boundaries/promote_pseudomanifold_canonicalizing_5d",
+    ) || benchmark_selected(&filters, "proof_boundaries/certify_pl_manifold_5d")
     {
         let fixture = prepare_proof_boundary_fixture::<5>(789, EXPLICIT_IMPORT_COUNT_5D);
         bench_proof_boundary_case(&mut group, &fixture);
