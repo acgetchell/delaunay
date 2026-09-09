@@ -101,6 +101,11 @@ bench-pachner-stress samples="10": (_bench-pachner-stress samples)
 bench-perf-summary: _ensure-uv
     uv run --locked benchmark-utils generate-summary --run-benchmarks --profile perf --strict
 
+# Execute every curated release fixture once without producing timing evidence.
+[group('benchmarks and performance')]
+bench-preflight bench_timeout="600": _ensure-uv
+    uv run --locked benchmark-utils run-release-signal --preflight-only --bench-timeout {{ bench_timeout }}
+
 # Save a Criterion baseline for a Delaunay benchmark suite.
 [group('benchmarks and performance')]
 bench-save-baseline tag suite="release-signal": _ensure-uv
@@ -1389,15 +1394,16 @@ setup-tools: _ensure-cargo _ensure-chktex _ensure-gh _ensure-jq _ensure-rustup _
 shell-check: shell-lint shell-fmt-check
     @echo "✅ Shell checks complete!"
 
-# Format tracked shell scripts with shfmt.
+# Format tracked and new shell scripts with shfmt.
 [group('validation')]
 shell-fix: _ensure-shfmt
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
+        [ -e "$file" ] || continue
         files+=("$file")
-    done < <(git ls-files -z '*.sh')
+    done < <(git --no-pager ls-files --cached --others --exclude-standard -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
         echo "🧹 shfmt -w (${#files[@]} files)"
         printf '%s\0' "${files[@]}" | xargs -0 uv run --locked shfmt -w
@@ -1406,30 +1412,32 @@ shell-fix: _ensure-shfmt
     fi
     # Note: justfiles are not shell scripts and are excluded from shellcheck
 
-# Check tracked shell-script formatting with shfmt.
+# Check tracked and new shell-script formatting with shfmt.
 [group('validation')]
 shell-fmt-check: _ensure-shfmt
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
+        [ -e "$file" ] || continue
         files+=("$file")
-    done < <(git ls-files -z '*.sh')
+    done < <(git --no-pager ls-files --cached --others --exclude-standard -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
         printf '%s\0' "${files[@]}" | xargs -0 uv run --locked shfmt -d
     else
         echo "No shell files found to check."
     fi
 
-# Lint tracked shell scripts with ShellCheck.
+# Lint tracked and new shell scripts with ShellCheck.
 [group('validation')]
 shell-lint: _ensure-shellcheck
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
+        [ -e "$file" ] || continue
         files+=("$file")
-    done < <(git ls-files -z '*.sh')
+    done < <(git --no-pager ls-files --cached --others --exclude-standard -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
         printf '%s\0' "${files[@]}" | xargs -0 -n4 uv run --locked shellcheck -x
     else

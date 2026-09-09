@@ -128,6 +128,19 @@ changes. Do not edit generated changelog files manually.
 
 ### 4. Generate the release performance comparison
 
+The corrected proof-aware benchmark contract starts with **v0.8.2**. For that
+first release, after updating package metadata, run `just bench-perf-summary`,
+which preflights the curated fixtures before sampling, to establish fresh
+absolute measurements. Skip the
+release-to-release comparison and README comparison publication in steps 4–5:
+v0.8.1's failed fixtures and earlier case names are not a valid baseline for
+this contract. Keep historical reports labeled with their original versions;
+do not relabel them as v0.8.2 evidence. The draft-run-publish workflow below
+attaches the first complete corrected archive to v0.8.2.
+
+From the following release onward, use two comparable releases under the new
+contract for the comparison and README publication steps.
+
 Run this after the package version has been updated:
 
 ```bash
@@ -141,9 +154,10 @@ the CSV/provenance pair after reloading it, promotes `docs/PERFORMANCE.md`, and
 archives the prior report plus the exact promoted evidence under
 `docs/archive/performance/`.
 
-The release workflow gives each of the five curated benchmark targets a
-two-hour failure ceiling and derives an outer ceiling for the complete plan
-(currently up to ten hours). These ceilings accommodate slow higher-dimensional
+The local comparison workflow gives each of the five curated benchmark targets
+a two-hour sampling ceiling plus a ten-minute preflight ceiling and derives
+an outer ceiling for the complete plan (up to ten hours and fifty minutes).
+These ceilings accommodate slow higher-dimensional
 measurements; they are not expected runtimes. A timeout in any target means the
 measurement failed: rerun the complete `just performance-release` command
 instead of promoting a partial run.
@@ -284,26 +298,44 @@ git push origin "$TAG"
 cargo publish --locked
 ```
 
-### 5. Create the GitHub release
+### 5. Create a draft GitHub release and run benchmarks
 
 ```bash
-gh release create "$TAG" --title "$TAG" --notes-from-tag
+gh release create "$TAG" --title "$TAG" --notes-from-tag --draft --verify-tag
+gh workflow run release-benchmarks.yml --ref main -f tag="$TAG"
 ```
 
-Keep the release title identical to the tag, including its leading `v`.
+Keep the release title identical to the tag, including its leading `v`. The
+workflow must already be merged to `main`. It rejects missing, prerelease,
+published, immutable, or mismatched targets before benchmarking, binds the
+draft release ID and tag commit, and checks out that exact commit.
+
+The workflow preflights every curated benchmark before full sampling, uploads
+`delaunay-$TAG-criterion-baseline.tar.gz` to the draft, verifies its SHA-256
+digest, and only then publishes the release. This ordering is required by
+[GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases).
+Do not publish the draft manually while the workflow is running.
+
+Failures before publication leave a draft. Rerun the workflow with the same
+tag after fixing the cause when no baseline asset was uploaded. If the baseline asset already
+exists, the workflow fails before measurement and never overwrites it. Inspect
+the retained Actions archive and draft asset; after resolving the failure,
+remove that asset from the still-mutable draft before rerunning. A published
+release is rejected even on a rerun; use a new release version for corrections.
 
 ### 6. Verify the durable Criterion baseline
 
-Publishing the GitHub release triggers the `Release Benchmarks` workflow.
-After it completes, verify that the release contains its long-lived baseline
-archive:
+After the explicitly dispatched `Release Benchmarks` workflow completes,
+verify that it published the release with its long-lived baseline archive:
 
 ```bash
 gh release view "$TAG" --json assets \
   --jq ".assets[] | select(.name == \"delaunay-$TAG-criterion-baseline.tar.gz\") | .name" | cat
+gh release view "$TAG" --json isDraft --jq '.isDraft' | cat
 ```
 
-The command must print `delaunay-$TAG-criterion-baseline.tar.gz`. A short-lived
+The commands must print `delaunay-$TAG-criterion-baseline.tar.gz` and `false`.
+A short-lived
 Actions artifact is not a substitute for this release asset. The archive binds
 the requested clean release tag to its source revision, measurement commands,
 toolchain, host, normalized measurement plan, completed benchmark targets,

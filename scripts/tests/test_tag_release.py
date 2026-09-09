@@ -229,7 +229,9 @@ class TestCreateTag:
         ):
             create_tag("v1.2.3")
 
-        assert "gh release create v1.2.3 --title v1.2.3 --notes-from-tag" in capsys.readouterr().out
+        output = capsys.readouterr().out
+        assert "gh release create v1.2.3 --title v1.2.3 --notes-from-tag --draft --verify-tag" in output
+        assert "gh workflow run release-benchmarks.yml --ref main -f tag=v1.2.3" in output
 
     def test_truncated_message_uses_posix_source_url(
         self,

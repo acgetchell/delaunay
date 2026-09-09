@@ -1127,9 +1127,10 @@ This ensures all diagnostic output is:
 - structured and machine-parseable
 - suppressible in production builds
 
-`eprintln!` is acceptable only for short-lived local debugging while
-investigating an issue. Do not leave it in committed code when `tracing`
-or a typed error path is more appropriate.
+`eprintln!` is acceptable for short-lived local debugging and the shared fatal
+benchmark adapter, which must report the underlying error even without an
+optional subscriber or with `RUST_LOG=off`. Other committed diagnostics use
+`tracing` or typed error propagation.
 
 Debug hooks gated on environment variables should still use `tracing`:
 

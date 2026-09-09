@@ -86,6 +86,7 @@ from benchmark_utils import (
     resolve_performance_request,
     write_criterion_comparison_report,
 )
+from subprocess_utils import run_safe_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -397,7 +398,7 @@ def write_ci_performance_metrics(target_dir: Path, metrics: dict[str, dict[str, 
     )
 
 
-def cached_ref_baseline_content(*, commit: str = "abc123def456", benchmark_id: str = "tds_new_2d/tds_new/4000") -> str:
+def cached_ref_baseline_content(*, commit: str = "abc123def456", benchmark_id: str = "tds_new_2d/tds_new/500") -> str:
     """Return a minimal parseable local ref baseline fixture."""
     return f"""Date: 2026-05-14 10:00:00 UTC
 Git commit: {commit}
@@ -407,7 +408,7 @@ Hardware Information:
   CPU: Apple M4 Max
   Memory: 64.0 GB
 
-=== 4000 Points (2D) ===
+=== 500 Points (2D) ===
 Benchmark ID: {benchmark_id}
 Time: [100.0, 110.0, 120.0] µs
 Throughput: [18.0, 19.0, 20.0] Kelem/s
@@ -568,20 +569,78 @@ def test_release_measurement_plan_runner_executes_exact_target_order(mock_cargo:
 
     assert tuple(outputs) == benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
     assert [call.args[0] for call in mock_cargo.call_args_list] == [
-        list(measurement.command[1:]) for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN
-    ]
-    assert all(call.kwargs["timeout"] == 3600 for call in mock_cargo.call_args_list)
+        [*measurement.command[1:], "--", "--test"] for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN
+    ] + [list(measurement.command[1:]) for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN]
+    preflight_calls = mock_cargo.call_args_list[: len(benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN)]
+    sampling_calls = mock_cargo.call_args_list[len(benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN) :]
+    assert all(call.kwargs["timeout"] == benchmark_utils.RELEASE_PREFLIGHT_TIMEOUT_SECONDS for call in preflight_calls)
+    assert all(call.kwargs["timeout"] == 3600 for call in sampling_calls)
 
 
 @patch("benchmark_utils.run_cargo_command")
 def test_release_measurement_plan_runner_stops_at_first_failed_target(mock_cargo: MagicMock, tmp_path: Path) -> None:
     """A failed planned target must prevent later measurements from running."""
-    mock_cargo.return_value = completed_process(returncode=101, stderr="benchmark failed")
+    mock_cargo.side_effect = [
+        *[completed_process() for _ in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN],
+        completed_process(returncode=101, stderr="benchmark failed"),
+    ]
 
     with pytest.raises(RuntimeError, match="ci_performance_suite exited with status 101"):
         benchmark_utils.run_release_signal_measurement_plan(tmp_path)
 
-    assert mock_cargo.call_count == 1
+    assert mock_cargo.call_count == len(benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN) + 1
+
+
+@patch("benchmark_utils.run_cargo_command")
+def test_release_preflight_runs_every_target_without_writing_evidence(mock_cargo: MagicMock, tmp_path: Path) -> None:
+    mock_cargo.return_value = completed_process(stdout=CI_MANIFEST_STDOUT)
+    assert benchmark_utils.run_release_signal_measurement_plan(tmp_path, preflight_only=True) == {}
+    assert [call.args[0] for call in mock_cargo.call_args_list] == [
+        [*measurement.command[1:], "--", "--test"] for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN
+    ]
+    assert list(tmp_path.iterdir()) == []
+
+
+@patch("benchmark_utils.run_cargo_command")
+def test_failed_preflight_prevents_all_sampling(mock_cargo: MagicMock, tmp_path: Path) -> None:
+    mock_cargo.side_effect = [completed_process(), subprocess.CalledProcessError(1, ["cargo", "bench"])]
+    with pytest.raises(subprocess.CalledProcessError):
+        benchmark_utils.run_release_signal_measurement_plan(tmp_path)
+    assert mock_cargo.call_count == 2
+    assert all(call.args[0][-1] == "--test" for call in mock_cargo.call_args_list)
+    assert list(tmp_path.iterdir()) == []
+
+
+@patch("benchmark_utils.run_cargo_command")
+def test_preflight_cannot_be_saved_as_baseline(mock_cargo: MagicMock, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="preflight cannot save"):
+        benchmark_utils.run_release_signal_measurement_plan(tmp_path, preflight_only=True, save_baseline="last")
+    mock_cargo.assert_not_called()
+
+
+@pytest.mark.parametrize("logging_enabled", [False, True])
+def test_benchmark_abort_prints_underlying_error_without_subscriber(tmp_path: Path, logging_enabled: bool) -> None:
+    """Run the actual shared fatal adapter, including with tracing filtered off."""
+    adapter = Path(__file__).resolve().parents[2] / "benches" / "common" / "bench_utils.rs"
+    source = tmp_path / "abort.rs"
+    source.write_text(
+        f'#[path = "{adapter.as_posix()}"] mod bench_utils;\n'
+        "use bench_utils::OrAbort;\n"
+        "fn main() {\n"
+        '    let result: Result<(), std::io::Error> = Err(std::io::Error::other("fixture contract failed"));\n'
+        "    result.or_abort();\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    binary = tmp_path / ("abort.exe" if os.name == "nt" else "abort")
+    args = [str(source), "--edition", "2024", "-o", str(binary)]
+    if logging_enabled:
+        args.extend(["--cfg", 'feature="bench-logging"'])
+    run_safe_command("rustc", args, timeout=60)
+    result = run_safe_command(str(binary), [], env={**os.environ, "RUST_LOG": "off"}, check=False, timeout=10)
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == "benchmark failed: fixture contract failed\n"
 
 
 def test_release_measurement_plan_digest_binds_per_target_sampling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2412,6 +2471,30 @@ malformed api_benchmark_metric benchmark_id=ignored vertices=x simplices=y
             assert roundtrip.points is None
             assert roundtrip.dimension == "4D"
             assert roundtrip.throughput_mean is None
+
+    def test_summary_retains_exact_import_proof_and_query_manifest_ids(self, tmp_path: Path) -> None:
+        """Dynamic simplex-count parameters must survive strict summary validation."""
+        target_dir = tmp_path / "target"
+        benchmark_ids = (
+            "explicit_import/import_pseudomanifold_4d/vertices_16_simplices_68",
+            "proof_boundaries/promote_pseudomanifold_strict_4d/simplices_68",
+            "proof_boundaries/promote_pseudomanifold_canonicalizing_4d/simplices_68",
+            "proof_boundaries/certify_pl_manifold_4d/simplices_68",
+            "convex_hull_queries/is_point_outside_3d/100",
+        )
+        for benchmark_id in benchmark_ids:
+            write_estimate(target_dir, tuple(benchmark_id.split("/")), 10_000.0)
+        benchmark_utils._write_ci_performance_manifest_ids(
+            tmp_path,
+            "\n".join(f"api_benchmark benchmark_ids={benchmark_id}" for benchmark_id in benchmark_ids),
+        )
+        generator = PerformanceSummaryGenerator(tmp_path)
+        evidence = generator._collect_ci_performance_summary_evidence()
+        assert evidence.missing_result_ids == ()
+        assert {result.benchmark_id for result in evidence.results} == set(benchmark_ids)
+        assert {result.benchmark_id: result.input_size for result in evidence.results} == {
+            benchmark_id: benchmark_id.rsplit("/", maxsplit=1)[1] for benchmark_id in benchmark_ids
+        }
 
     def test_find_criterion_results_skips_stale_ci_suite_metrics(self) -> None:
         """Test ci_performance_suite simplex counts require matching current inputs."""
@@ -5684,7 +5767,7 @@ OK: Time change -1.8% within acceptable range
 
             assert PUBLIC_API_TITLE in content
             assert "#### Construction" in content
-            assert "Public API: `DelaunayTriangulation::new_with_options`" in content
+            assert "Public API: `DelaunayTriangulationBuilder::build`" in content
             assert "`tds_new_2d/tds_new/10`" in content
             assert "well-conditioned" in content
             assert "#### Boundary facets" in content
@@ -5693,6 +5776,7 @@ OK: Time change -1.8% within acceptable range
             assert "adversarial" in content
             assert "#### Bistellar flips" in content
             assert "`bistellar_flips_4d/k2_roundtrip`" in content
+            assert "| `bistellar_flips_4d/k2_roundtrip` | 4D | fixed fixture |" in content
 
     def test_get_circumsphere_performance_results(self) -> None:
         """Test getting circumsphere performance results."""
@@ -6222,6 +6306,91 @@ Benchmark completed.""",
         assert all(section.is_complete for section in sections)
         for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN:
             assert f"| `{measurement.target}` | {measurement.report_section} |" in rendered
+
+    @pytest.mark.parametrize(
+        ("target", "path_parts", "full_id", "group_id"),
+        [
+            ("circumsphere_containment", ("random_insphere_1000_queries",), "random/insphere_1000_queries", "random/insphere_1000_queries"),
+            ("circumsphere_containment", ("3d_insphere",), "3d/insphere", "3d/insphere"),
+            ("circumsphere_containment", ("circumcenter_solve_path", "regular_lu_3d"), "circumcenter/solve_path/regular_lu_3d", "circumcenter/solve_path"),
+            ("cold_path_predicates", ("predicates_hot", "insphere_3d", "10000"), "predicates/hot/insphere_3d/10000", "predicates/hot"),
+            (
+                "locate",
+                ("locate_no_hint_2d", "locate", "vertices_500_simplices_983"),
+                "locate/no_hint/2d/locate/vertices_500_simplices_983",
+                "locate/no_hint/2d",
+            ),
+        ],
+    )
+    def test_release_signal_coverage_uses_canonical_metadata_ids(
+        self,
+        tmp_path: Path,
+        target: str,
+        path_parts: tuple[str, ...],
+        full_id: str,
+        group_id: str,
+    ) -> None:
+        """Criterion's escaped disk paths must not hide measured release groups."""
+        write_named_estimate(tmp_path / "target", path_parts, "new", 1_000.0, stat="mean", full_id=full_id, group_id=group_id)
+        sections = PerformanceSummaryGenerator(tmp_path)._collect_release_signal_section_evidence()
+        section = next(section for section in sections if section.target == target)
+
+        assert section.result_ids == (full_id,)
+        assert full_id.split("/", maxsplit=1)[0] not in section.missing_group_prefixes
+
+    def test_release_signal_coverage_requires_identity_metadata(self, tmp_path: Path) -> None:
+        """A plausible directory name cannot substitute for missing benchmark identity."""
+        write_estimate(tmp_path / "target", ("validation", "validate_2d"), 1_000.0)
+        (tmp_path / "target/criterion/validation/validate_2d/base/benchmark.json").unlink()
+
+        sections = PerformanceSummaryGenerator(tmp_path)._collect_release_signal_section_evidence()
+        section = next(section for section in sections if section.target == "ci_performance_suite")
+        assert section.result_ids == ()
+        assert "validation" in section.missing_group_prefixes
+        assert not section.is_complete
+
+    @pytest.mark.parametrize("sample", ["base", "new"])
+    @pytest.mark.parametrize("metadata", [None, "{", "[]", '{"full_id":"","group_id":"obsolete"}', '{"full_id":"standalone","group_id":"standalone"}'])
+    def test_release_signal_coverage_skips_unusable_metadata(self, tmp_path: Path, sample: str, metadata: str | None) -> None:
+        """Unusable cached samples must not hide valid measured report groups."""
+        write_complete_release_signal_coverage(tmp_path)
+        write_named_estimate(tmp_path / "target", ("obsolete", "fixture"), sample, 1_000.0, stat="mean")
+        criterion_dir = tmp_path / "target/criterion"
+        metadata_path = criterion_dir / "obsolete/fixture" / sample / "benchmark.json"
+        if metadata is None:
+            metadata_path.unlink()
+        else:
+            metadata_path.write_text(metadata, encoding=UTF8)
+
+        sections = PerformanceSummaryGenerator(tmp_path)._collect_release_signal_section_evidence()
+        assert all(section.is_complete for section in sections)
+        assert "obsolete/fixture" not in benchmark_utils._criterion_result_ids(criterion_dir)
+        # Comparison and artifact consumers retain the strict default.
+        with pytest.raises((TypeError, ValueError)):
+            benchmark_utils._criterion_estimates_by_id(criterion_dir, sample)
+
+    def test_release_signal_result_ids_preserve_samples_and_sorting(self, tmp_path: Path) -> None:
+        """Collect valid base/new IDs once, with new estimates taking precedence."""
+        write_named_estimate(tmp_path, ("validation", "z_base"), "base", 1_000.0, stat="mean")
+        write_named_estimate(tmp_path, ("validation", "a_new"), "new", 1_000.0, stat="mean")
+        write_named_estimate(tmp_path, ("validation", "shared"), "base", 1_000.0, stat="mean")
+        write_named_estimate(tmp_path, ("validation", "shared"), "new", 2_000.0, stat="mean")
+        write_named_estimate(tmp_path, ("validation", "invalid_new"), "base", 1_000.0, stat="mean")
+        write_named_estimate(tmp_path, ("validation", "invalid_new"), "new", -1.0, stat="mean")
+
+        assert benchmark_utils._criterion_result_ids(tmp_path / "criterion") == (
+            "validation/a_new",
+            "validation/shared",
+            "validation/z_base",
+        )
+
+    def test_release_signal_coverage_still_rejects_duplicate_ids(self, tmp_path: Path) -> None:
+        """Skipping unreadable metadata must not hide ambiguous valid identities."""
+        for directory in ("first", "second"):
+            write_named_estimate(tmp_path, (directory,), "new", 1_000.0, stat="mean", full_id="validation/duplicate", group_id="validation")
+
+        with pytest.raises(ValueError, match="duplicate Criterion full_id"):
+            benchmark_utils._criterion_result_ids(tmp_path / "criterion")
 
     def test_generate_summary_strict_rejects_missing_planned_report_section(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A planned target without Criterion groups must block strict publication."""

@@ -504,7 +504,8 @@ def create_tag(tag_version: str, *, force: bool = False) -> None:
         print(f"  1. Force-push the tag: {_BLUE}git push --force origin {tag_version}{_RESET}")
     else:
         print(f"  1. Push the tag: {_BLUE}git push origin {tag_version}{_RESET}")
-    print(f"  2. Create GitHub release: {_BLUE}gh release create {tag_version} --title {tag_version} --notes-from-tag{_RESET}")
+    print(f"  2. Create draft release: {_BLUE}gh release create {tag_version} --title {tag_version} --notes-from-tag --draft --verify-tag{_RESET}")
+    print(f"  3. Benchmark and publish: {_BLUE}gh workflow run release-benchmarks.yml --ref main -f tag={tag_version}{_RESET}")
     if is_truncated:
         print(f"\n{_YELLOW}Note: Tag annotation references CHANGELOG.md due to size (>125KB).{_RESET}")
 

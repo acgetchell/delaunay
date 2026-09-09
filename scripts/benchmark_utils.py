@@ -231,7 +231,7 @@ class BenchmarkTargetMeasurement:
 CI_PERFORMANCE_SUITE_GROUPS = {
     "construction": (
         "Construction",
-        "DelaunayTriangulation::new_with_options",
+        "DelaunayTriangulationBuilder::build",
     ),
     "boundary_facets": (
         "Boundary facets",
@@ -239,7 +239,11 @@ CI_PERFORMANCE_SUITE_GROUPS = {
     ),
     "convex_hull": (
         "Convex hull",
-        "ConvexHull::from_triangulation",
+        "ConvexHull::try_from_triangulation",
+    ),
+    "convex_hull_queries": (
+        "Convex hull queries",
+        "ConvexHull::{is_point_outside,find_visible_facets,find_nearest_visible_facet}",
     ),
     "validation": (
         "Validation",
@@ -247,7 +251,15 @@ CI_PERFORMANCE_SUITE_GROUPS = {
     ),
     "incremental_insert": (
         "Incremental insert",
-        "DelaunayTriangulation::insert",
+        "DelaunayTriangulation::insert_vertex",
+    ),
+    "explicit_import": (
+        "Explicit pseudomanifold import",
+        "DelaunayTriangulationBuilder::try_from_vertices_and_simplices",
+    ),
+    "proof_boundaries": (
+        "Proof boundaries",
+        "TriangulationBuilder::build;DelaunayRefinementBuilder::build",
     ),
     "bistellar_flips": (
         "Bistellar flips",
@@ -259,7 +271,7 @@ CI_PERFORMANCE_SUITE_GROUP_ORDER = tuple(CI_PERFORMANCE_SUITE_GROUPS)
 _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE = "ci_performance_suite_manifest_ids.txt"
 _CI_PERFORMANCE_SUITE_METRICS_FILE = "ci_performance_suite_metrics.json"
 _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE = "ci_performance_suite_run_metadata.json"
-PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID = "tds_new_2d/tds_new/4000"
+PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID = "tds_new_2d/tds_new/500"
 MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE = "main_vs_release_compare_results.txt"
 WORKTREE_VS_REF_COMPARISON_RESULTS_TEMPLATE = "worktree_vs_{ref}_compare_results.txt"
 PERF_NO_REGRESSIONS_RELEVANT_PATHS = (
@@ -357,8 +369,9 @@ GITHUB_ASSETS_PERFORMANCE_REPORT = Path("target") / "bench-reports" / "github-as
 DOCS_PERFORMANCE_REPORT = Path("docs") / "PERFORMANCE.md"
 PERFORMANCE_ARCHIVE_DIR = Path("docs") / "archive" / "performance"
 RELEASE_BENCH_TIMEOUT_SECONDS = 7200
+RELEASE_PREFLIGHT_TIMEOUT_SECONDS = 600
 RELEASE_COMMAND_TIMEOUT_SECONDS = 600
-RELEASE_SIGNAL_TIMEOUT_SECONDS = RELEASE_BENCH_TIMEOUT_SECONDS * len(RELEASE_SIGNAL_MEASUREMENT_PLAN)
+RELEASE_SIGNAL_TIMEOUT_SECONDS = (RELEASE_BENCH_TIMEOUT_SECONDS + RELEASE_PREFLIGHT_TIMEOUT_SECONDS) * len(RELEASE_SIGNAL_MEASUREMENT_PLAN)
 DELAUNAY_REPORT_VERSION_RE = re.compile(r"^\*\*delaunay\*\* v(?P<version>[^\s`]+)", re.MULTILINE)
 DELAUNAY_REPORT_BASELINE_RE = re.compile(r"^Comparison against baseline \*\*(?P<baseline>[^*]+)\*\*:", re.MULTILINE)
 SEMVER_IDENTIFIER_RE = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -1156,19 +1169,12 @@ class BenchmarkPlanSectionEvidence:
 
 def _criterion_result_ids(criterion_dir: Path) -> tuple[str, ...]:
     """Return valid Criterion result IDs, preferring ``new`` over ``base``."""
-    results: dict[str, str] = {}
-    for estimates_path in sorted(criterion_dir.glob("**/estimates.json")):
-        sample = estimates_path.parent.name
-        if sample not in {"base", "new"} or _load_criterion_estimate(estimates_path) is None:
-            continue
-        path_parts = estimates_path.relative_to(criterion_dir).parts[:-2]
-        if not path_parts:
-            continue
-        result_id = "/".join(path_parts)
-        previous = results.get(result_id)
-        if previous is None or (previous == "base" and sample == "new"):
-            results[result_id] = sample
-    return tuple(sorted(results))
+    # Directory names escape slashes in group/function IDs. Reuse the canonical
+    # metadata reader so report coverage and release comparisons agree.
+    # Stale samples without usable identity metadata cannot contribute coverage.
+    samples = _criterion_estimates_by_id(criterion_dir, "base", skip_invalid_metadata=True)
+    samples.update(_criterion_estimates_by_id(criterion_dir, "new", skip_invalid_metadata=True))
+    return tuple(sorted(result_id for result_id, sample in samples.items() if _load_criterion_estimate(sample.estimates) is not None))
 
 
 def _criterion_group_matches(result_id: str, group_prefix: str) -> bool:
@@ -1246,15 +1252,34 @@ def _sampling_metadata(dev_mode: bool) -> dict[str, str]:
     }
 
 
+def preflight_release_signal(project_root: Path, *, cargo_profile: str, bench_timeout: int) -> None:
+    """Execute every fixture once; do not publish timing or measurement metadata."""
+    for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN:
+        print(f"🔎 Preflight release-signal target {measurement.target}...", flush=True)
+        run_cargo_command(
+            ["bench", "--profile", cargo_profile, "--bench", measurement.target, "--", "--test"],
+            cwd=project_root,
+            timeout=min(bench_timeout, RELEASE_PREFLIGHT_TIMEOUT_SECONDS),
+            capture_output=False,
+        )
+
+
 def run_release_signal_measurement_plan(
     project_root: Path,
     *,
     cargo_profile: str = BENCHMARK_BUILD_FLAVOR,
     bench_timeout: int = 1800,
     save_baseline: str | None = None,
+    preflight_only: bool = False,
 ) -> dict[str, str]:
-    """Execute the maintained release-signal plan and return stdout by target."""
+    """Preflight every curated fixture before sampling; smoke output is never evidence."""
     _require_positive_int_field("bench_timeout", bench_timeout)
+    if preflight_only and save_baseline is not None:
+        msg = "preflight cannot save a measurement baseline"
+        raise ValueError(msg)
+    preflight_release_signal(project_root, cargo_profile=cargo_profile, bench_timeout=bench_timeout)
+    if preflight_only:
+        return {}
     outputs: dict[str, str] = {}
     for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN:
         cargo_args = ["bench", "--profile", cargo_profile, "--bench", measurement.target]
@@ -2070,9 +2095,7 @@ class PerformanceSummaryGenerator:
     @staticmethod
     def _ci_suite_input_size(path_parts: tuple[str, ...]) -> str:
         """Extract a human-readable input size from Criterion benchmark path parts."""
-        if path_parts and path_parts[-1].isdigit():
-            return path_parts[-1]
-        return "roundtrip"
+        return path_parts[-1] if len(path_parts) > 2 else "fixed fixture"
 
     @staticmethod
     def _load_criterion_estimate(estimates_path: Path) -> tuple[float, float, float] | None:
@@ -3248,15 +3271,20 @@ def _criterion_sample(estimates_json: Path, criterion_dir: Path) -> CriterionSam
     return CriterionSample(benchmark_id=full_id, group=group, benchmark=benchmark, estimates=estimates_json)
 
 
-def _criterion_estimates_by_id(criterion_dir: Path, sample: str) -> dict[str, CriterionSample]:
-    """Map Criterion benchmark IDs to estimates files for one sample name."""
+def _criterion_estimates_by_id(criterion_dir: Path, sample: str, *, skip_invalid_metadata: bool = False) -> dict[str, CriterionSample]:
+    """Map sample IDs to estimates, optionally skipping unusable identity metadata."""
     results: dict[str, CriterionSample] = {}
     if not criterion_dir.is_dir():
         return results
     for estimates_json in sorted(criterion_dir.rglob("estimates.json")):
         if estimates_json.parent.name != sample:
             continue
-        criterion_sample = _criterion_sample(estimates_json, criterion_dir)
+        try:
+            criterion_sample = _criterion_sample(estimates_json, criterion_dir)
+        except TypeError, ValueError:
+            if not skip_invalid_metadata:
+                raise
+            continue
         if criterion_sample is not None:
             prior = results.get(criterion_sample.benchmark_id)
             if prior is not None and prior.estimates != criterion_sample.estimates:
@@ -7966,10 +7994,8 @@ def _add_bench_compare_subcommand(subparsers: argparse._SubParsersAction[argpars
     _add_project_root_arg(bench_compare_parser)
 
 
-def _add_benchmark_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Add benchmark-running subcommands."""
-    _add_bench_compare_subcommand(subparsers)
-
+def _add_release_signal_subcommand(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """Expose measurement and preflight modes of the shared curated plan."""
     release_signal_parser = subparsers.add_parser(
         "run-release-signal",
         help="Run the maintained release-signal benchmark measurement plan",
@@ -7983,8 +8009,19 @@ def _add_benchmark_subcommands(subparsers: argparse._SubParsersAction[argparse.A
         "--save-baseline",
         help="Also save every planned Criterion result under this baseline name",
     )
+    release_signal_parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="Execute every fixture and one operation per case without Criterion sampling or evidence writes",
+    )
     _add_bench_timeout_arg(release_signal_parser)
     _add_project_root_arg(release_signal_parser)
+
+
+def _add_benchmark_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """Add benchmark-running subcommands."""
+    _add_bench_compare_subcommand(subparsers)
+    _add_release_signal_subcommand(subparsers)
 
     gen_parser = subparsers.add_parser("generate-baseline", help="Generate performance baseline")
     _add_dev_arg(gen_parser)
@@ -8679,6 +8716,7 @@ def _cmd_run_release_signal(args: argparse.Namespace, project_root: Path) -> Non
             cargo_profile=args.profile,
             bench_timeout=args.bench_timeout,
             save_baseline=args.save_baseline,
+            preflight_only=args.preflight_only,
         )
     except _RECOVERABLE_CLI_ERRORS as error:
         print(f"run-release-signal: {error}", file=sys.stderr)

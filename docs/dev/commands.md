@@ -436,6 +436,7 @@ measurements use the `perf` profile; `performance-doc` and
 just bench
 just bench-ci
 just bench-latest
+just bench-preflight
 just bench-latest-vs-last
 just bench-compare [baseline] [suite] [scope]
 just bench-save-baseline v0.7.8
@@ -522,10 +523,26 @@ checkout, or save an explicit baseline name with the same recipe. Use
 `just performance-local` when you want the tool to manage isolated
 baseline/current worktrees.
 
+`just bench-preflight [bench_timeout]` executes fixture setup and one operation
+for every case in every curated target using Criterion `--test`, without
+sampling, saved baselines, or measurement sidecars. Its default and maximum
+per-target ceiling is 600 seconds including compilation. `bench-latest` and
+other callers of the release plan complete all preflights before sampling the
+first target. Fatal benchmark errors always print to stderr without requiring
+`bench-logging` or an enabled tracing subscriber.
+
+The GitHub release baseline workflow is dispatched explicitly with a stable
+tag after creating its mutable draft release. It validates the target before
+benchmarking, uploads and verifies the archive, then publishes. It refuses
+existing baseline assets and published releases; see the recovery sequence in
+[`../RELEASING.md`](../RELEASING.md).
+
 Manual `just bench-latest` runs use a 30-minute timeout for each target unless
-an override is supplied. The release workflow uses a two-hour failure ceiling
-per target and derives its outer ceiling from all five curated targets
-(currently up to ten hours). A target timeout invalidates the measurement; rerun
+an override is supplied. The local `performance-release` workflow uses a
+two-hour sampling ceiling plus a ten-minute preflight ceiling per target and
+derives its outer ceiling from all five curated targets (up to ten hours and
+fifty minutes). The hosted draft workflow has a 150-minute job ceiling and a
+one-hour sampling ceiling per target. A target timeout invalidates the measurement; rerun
 the complete release workflow rather than treating partial Criterion output as
 release evidence.
 
