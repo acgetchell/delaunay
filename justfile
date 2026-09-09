@@ -1663,7 +1663,7 @@ update-dependencies: _ensure-cargo-edit _ensure-uv-stable update-cargo-dependenc
 # Resolve latest exact Python development tools, retain ranged requirements, and sync.
 [doc('Update exact dependency-groups.dev pins and uv.lock through uv.')]
 [group('build and setup')]
-update-python-dependencies: _ensure-uv-available
+update-python-dependencies: _ensure-uv-stable
     uv run --locked update-python-dev-pins
     uv lock --upgrade
     uv sync --locked --group dev

@@ -208,12 +208,12 @@ leaves ranged development requirements, project/runtime dependencies, optional
 dependencies, build requirements, and intentional uv overrides unchanged.
 The aggregate `just update` runs its `cargo-install-update` and stable-uv
 preflights before either dependency updater can change declarations or
-lockfiles. Direct `just update-dependencies` and `just update-cargo-tools` also
-check stable uv before their updates. These entry points reuse the pin
-reconciler's version parser without requiring uv to match the tracked pin.
-This check uses an already installed Python interpreter with dependency
-syncing and Python downloads disabled; invalid uv output fails before updates
-begin.
+lockfiles. Direct `just update-dependencies`, `just update-python-dependencies`,
+and `just update-cargo-tools` also check stable uv before their updates.
+These entry points reuse the pin reconciler's version parser without requiring
+uv to match the tracked pin. This check uses an already installed Python
+interpreter with dependency syncing and Python downloads disabled; invalid uv
+output fails before updates begin.
 
 Agents should **prefer running `just` commands instead of invoking the
 underlying tools directly**. The justfile ensures the correct flags,

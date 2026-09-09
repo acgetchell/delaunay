@@ -573,13 +573,11 @@ def test_uv_backed_recipes_reuse_pinned_guard() -> None:
         dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
         assert "_ensure-uv" in dependencies, name
 
-    for name in ("_ensure-uv-stable", "update-python-dependencies"):
-        dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
-        assert "_ensure-uv-available" in dependencies, name
-        assert "_ensure-uv" not in dependencies, name
+    stable_dependencies = {dependency["recipe"] for dependency in recipes["_ensure-uv-stable"]["dependencies"]}
+    assert stable_dependencies == {"_ensure-uv-available"}
 
 
-@pytest.mark.parametrize("recipe", ["update", "update-cargo-tools", "update-dependencies"])
+@pytest.mark.parametrize("recipe", ["update", "update-cargo-tools", "update-dependencies", "update-python-dependencies"])
 def test_update_preflights_stable_uv_before_mutations(recipe: str) -> None:
     """Reject unsupported uv output before dependency or installed-tool updates."""
     rendered_result = run_just("--dry-run", recipe)
@@ -592,6 +590,7 @@ def test_update_preflights_stable_uv_before_mutations(recipe: str) -> None:
         assert rendered.index(preflight) < rendered.index("cargo install-update --locked")
     if recipe in {"update", "update-dependencies"}:
         assert rendered.index(preflight) < rendered.index("cargo upgrade --incompatible allow")
+    if recipe in {"update", "update-dependencies", "update-python-dependencies"}:
         assert rendered.index(preflight) < rendered.index("uv run --locked update-python-dev-pins")
         assert rendered.index(preflight) < rendered.index("uv lock --upgrade")
         assert rendered.index(preflight) < rendered.index("uv sync --locked --group dev")
