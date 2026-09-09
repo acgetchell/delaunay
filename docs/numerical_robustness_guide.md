@@ -43,10 +43,10 @@ Orientation and insphere predicates use staged evaluation:
 2. **Exact sign** — ordinary finite matrices use
    `la_stack::Matrix::det_sign_exact`. Relative in-sphere construction instead
    converts the original binary64 coordinates to `la-stack`'s re-exported
-   `BigRational` before subtracting or squaring, then eliminates that exact
-   derived matrix. This distinction matters: sending already-rounded `f64`
-   differences or squared norms to an exact determinant would only compute the
-   exact sign of the wrong matrix.
+   `BigRational` before subtracting or squaring, then passes that exact derived
+   matrix to `la_stack::RationalMatrix::det_sign`. This distinction matters:
+   sending already-rounded `f64` differences or squared norms to an exact
+   determinant would only compute the exact sign of the wrong matrix.
 3. **Indeterminate or symbolic fallback** — if exact arithmetic cannot run
    (for example due to non-finite entries or unsupported insphere matrix size),
    robust predicates return `BOUNDARY` / `DEGENERATE` where appropriate, while
@@ -270,11 +270,23 @@ see `docs/construction_and_validation.md`.
 Circumcenter computation keeps ordinary well-conditioned systems on the
 allocation-free `f64` LU path. When that solve is near singular, the cold path
 converts the original point coordinates to `la-stack`'s re-exported
-`BigRational`, forms every difference and squared-norm term rationally, solves
-the exact derived system, and only then rounds the center to finite `f64`.
+`BigRational`, forms every difference and squared-norm term rationally, and uses
+`RationalMatrix::solve` with a `RationalVector` right-hand side. Only the final
+center, including its exact translation back to the original frame, is rounded
+to finite `f64` through `ExactF64Conversion::to_rounded_f64`. Unrepresentable
+coordinates preserve the backend's typed error and failing component index.
 Forming the system first in `f64` and passing it to an exact solver is
 insufficient because cancellation may already have erased the affine offset the
 solver is meant to recover.
+
+`la-stack` owns denominator clearing, fraction-free Bareiss elimination,
+pivoting, and exact singularity diagnostics. Delaunay owns geometric matrix
+construction and semantic predicate interpretation. Runtime-selected exact LP
+bases use the same rational-input backend through matrix dimension 8, covering
+the `D + 2` systems needed through geometric dimension 6. Provisional LP basis
+navigation may use rounded floating-point values; certification always solves
+the original rational system. Exact arithmetic remains temporary geometric or
+LP state and is not stored in triangulation owners or public certificates.
 
 ## Duplicate vertex handling
 

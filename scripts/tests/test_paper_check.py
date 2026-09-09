@@ -287,7 +287,8 @@ def test_check_options_reject_raw_min_pages(tmp_path: Path) -> None:
     pdf = write_pdf_stub(tmp_path)
 
     with pytest.raises(PdfInspectionError, match="min_pages must be a PositivePageCount"):
-        PdfCheckOptions(pdf=pdf, min_pages=cast("PositivePageCount", 0), required_text=(), forbidden_text=())
+        # Deliberately bypass the type contract to test runtime rejection.
+        PdfCheckOptions(pdf=pdf, min_pages=0, required_text=(), forbidden_text=())  # ty: ignore[invalid-argument-type]
 
 
 def test_main_reports_missing_pdf(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:

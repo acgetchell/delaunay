@@ -37,7 +37,7 @@ jobs:
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
       - name: Set up just
-        uses: ./.github/actions/setup-just
+        uses: $/.github/actions/setup-just
 
       - name: Resolve Clippy SARIF tool versions
         id: tool_versions

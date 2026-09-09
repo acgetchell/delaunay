@@ -1,4 +1,4 @@
-//! Stack-allocated matrix operations.
+//! Finite binary64 and exact rational matrix operations.
 //!
 //! This module is Delaunay's boundary around the stack-allocated linear algebra
 //! functionality provided by `la-stack`.  Geometry code should depend on the
@@ -11,6 +11,11 @@
 //! and diagnostic variants while the rest of Delaunay keeps speaking in
 //! geometry-level concepts such as predicate matrices, checked active blocks,
 //! and public construction errors.
+//!
+//! Delaunay assembles geometric coefficients and interprets predicate signs;
+//! `la-stack` owns exact matrix elimination. Already-derived rational inputs
+//! stay exact through `RationalMatrix` and `RationalVector`, with explicit
+//! rounding only at a public coordinate boundary.
 
 #![forbid(unsafe_code)]
 
@@ -22,9 +27,9 @@
 pub use la_stack::LaError;
 use la_stack::Matrix as LaMatrix;
 pub(crate) use la_stack::{
-    BigRational, DEFAULT_SINGULAR_TOL, FromPrimitive, Signed, SingularityReason, Vector as LaVector,
+    BigRational, DEFAULT_SINGULAR_TOL, ExactF64Conversion, FromPrimitive, RationalMatrix,
+    RationalVector, Signed, SingularityReason, Vector as LaVector,
 };
-use num_traits::Zero;
 use thiserror::Error;
 
 /// Stack-matrix dispatch limit.
@@ -189,7 +194,7 @@ pub(crate) fn solve_exact_runtime_system(
         let rhs_vector = LaVector::try_new(std::array::from_fn(|index| rhs[index]))?;
         stack_matrix
             .solve_exact(rhs_vector)
-            .map(|solution| solution.into_iter().collect())
+            .map(|solution| solution.into_array().into_iter().collect())
             .map_err(Into::into)
     }))
 }
@@ -201,104 +206,6 @@ pub(crate) fn rational_from_f64(value: f64) -> Option<BigRational> {
         .is_finite()
         .then(|| BigRational::from_f64(value))
         .flatten()
-}
-
-/// Solves a square system whose coefficients were formed in exact arithmetic.
-///
-/// Unlike [`solve_exact_runtime_system`], this entry point does not round an
-/// already-derived coefficient back through `f64`. It is the shared cold path
-/// for geometry whose matrix entries themselves require exact construction.
-#[expect(
-    clippy::needless_range_loop,
-    reason = "index-based elimination keeps pivot row and column operations explicit"
-)]
-pub(crate) fn solve_rational_system(
-    mut matrix: Vec<Vec<BigRational>>,
-    mut rhs: Vec<BigRational>,
-) -> Option<Vec<BigRational>> {
-    let dimension = rhs.len();
-    if matrix.len() != dimension || matrix.iter().any(|row| row.len() != dimension) {
-        return None;
-    }
-
-    for pivot_col in 0..dimension {
-        let pivot_row = (pivot_col..dimension).find(|&row| !matrix[row][pivot_col].is_zero())?;
-        if pivot_row != pivot_col {
-            matrix.swap(pivot_col, pivot_row);
-            rhs.swap(pivot_col, pivot_row);
-        }
-
-        let pivot = matrix[pivot_col][pivot_col].clone();
-        for row in pivot_col + 1..dimension {
-            if matrix[row][pivot_col].is_zero() {
-                continue;
-            }
-            let factor = matrix[row][pivot_col].clone() / pivot.clone();
-            matrix[row][pivot_col] = BigRational::from_integer(0.into());
-            for column in pivot_col + 1..dimension {
-                matrix[row][column] = matrix[row][column].clone()
-                    - factor.clone() * matrix[pivot_col][column].clone();
-            }
-            rhs[row] = rhs[row].clone() - factor * rhs[pivot_col].clone();
-        }
-    }
-
-    let zero = BigRational::from_integer(0.into());
-    let mut solution = vec![zero; dimension];
-    for row in (0..dimension).rev() {
-        let mut value = rhs[row].clone();
-        for column in row + 1..dimension {
-            value -= matrix[row][column].clone() * solution[column].clone();
-        }
-        solution[row] = value / matrix[row][row].clone();
-    }
-    Some(solution)
-}
-
-/// Returns the sign of a square rational determinant.
-///
-/// The elimination is used only after a floating-point interval filter is
-/// inconclusive, so allocation and rational growth remain on the cold path.
-#[expect(
-    clippy::needless_range_loop,
-    reason = "index-based elimination keeps determinant row operations explicit"
-)]
-pub(crate) fn rational_determinant_sign(mut matrix: Vec<Vec<BigRational>>) -> Option<i32> {
-    let dimension = matrix.len();
-    if matrix.iter().any(|row| row.len() != dimension) {
-        return None;
-    }
-    if dimension == 0 {
-        return Some(1);
-    }
-
-    let mut sign = 1;
-    for pivot_col in 0..dimension {
-        let Some(pivot_row) = (pivot_col..dimension).find(|&row| !matrix[row][pivot_col].is_zero())
-        else {
-            return Some(0);
-        };
-        if pivot_row != pivot_col {
-            matrix.swap(pivot_col, pivot_row);
-            sign = -sign;
-        }
-
-        let pivot = matrix[pivot_col][pivot_col].clone();
-        if pivot.is_negative() {
-            sign = -sign;
-        }
-        for row in pivot_col + 1..dimension {
-            if matrix[row][pivot_col].is_zero() {
-                continue;
-            }
-            let factor = matrix[row][pivot_col].clone() / pivot.clone();
-            for column in pivot_col + 1..dimension {
-                matrix[row][column] = matrix[row][column].clone()
-                    - factor.clone() * matrix[pivot_col][column].clone();
-            }
-        }
-    }
-    Some(sign)
 }
 
 /// Return a determinant and its certified error bound when the f64 fast filter supports the matrix size.

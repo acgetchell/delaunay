@@ -28,7 +28,7 @@ import tempfile
 import time
 import tomllib
 from collections.abc import Mapping
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import product
@@ -859,7 +859,7 @@ def _write_ci_performance_manifest_ids(project_root: Path, stdout: str) -> None:
     )
 
 
-def _write_ci_performance_metrics(project_root: Path, stdout: str, *, require_metrics: bool = False) -> None:
+def _write_ci_performance_metrics(project_root: Path, stdout: object, *, require_metrics: bool = False) -> None:
     """Persist ci_performance_suite construction metrics beside Criterion results."""
     criterion_dir = project_root / "target" / "criterion"
     metrics_path = _ci_performance_metrics_path(criterion_dir)
@@ -3045,8 +3045,7 @@ def _read_text(path: Path) -> str:
 def _write_text_atomic(path: Path, text: str) -> None:
     """Write UTF-8 text through a same-directory temporary file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path: Path | None = None
-    try:
+    with ExitStack() as cleanup:
         with tempfile.NamedTemporaryFile(
             "w",
             encoding="utf-8",
@@ -3056,29 +3055,24 @@ def _write_text_atomic(path: Path, text: str) -> None:
             delete=False,
         ) as tmp:
             tmp_path = Path(tmp.name)
+            cleanup.callback(tmp_path.unlink, missing_ok=True)
             tmp.write(text)
             tmp.flush()
             os.fsync(tmp.fileno())
         tmp_path.replace(path)
-    finally:
-        if tmp_path is not None and tmp_path.exists():
-            tmp_path.unlink()
 
 
 def _write_bytes_atomic(path: Path, payload: bytes) -> None:
     """Write bytes through a durable same-directory temporary file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path: Path | None = None
-    try:
+    with ExitStack() as cleanup:
         with tempfile.NamedTemporaryFile("wb", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as tmp:
             tmp_path = Path(tmp.name)
+            cleanup.callback(tmp_path.unlink, missing_ok=True)
             tmp.write(payload)
             tmp.flush()
             os.fsync(tmp.fileno())
         tmp_path.replace(path)
-    finally:
-        if tmp_path is not None:
-            tmp_path.unlink(missing_ok=True)
 
 
 def _restore_file_snapshot(path: Path, payload: bytes | None) -> None:

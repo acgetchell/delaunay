@@ -1970,6 +1970,37 @@ def sample_benchmark_data() -> dict[str, BenchmarkData]:
     }
 
 
+@pytest.mark.parametrize("binary", [False, True])
+@pytest.mark.parametrize("operation", ["temporary-file", "fsync", "replace"])
+def test_atomic_write_failure_preserves_original_and_cleans_temporary_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, binary: bool, operation: str
+) -> None:
+    """Cleanup must remain valid both before and after a temporary path exists."""
+    destination = tmp_path / "artifact.txt"
+    destination.write_bytes(b"original")
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        message = "simulated atomic write failure"
+        raise OSError(message)
+
+    if operation == "temporary-file":
+        monkeypatch.setattr(benchmark_utils.tempfile, "NamedTemporaryFile", fail)
+    elif operation == "fsync":
+        monkeypatch.setattr(benchmark_utils.os, "fsync", fail)
+    else:
+        monkeypatch.setattr(Path, "replace", fail)
+
+    if binary:
+        with pytest.raises(OSError, match="simulated atomic write failure"):
+            benchmark_utils._write_bytes_atomic(destination, b"replacement")
+    else:
+        with pytest.raises(OSError, match="simulated atomic write failure"):
+            benchmark_utils._write_text_atomic(destination, "replacement")
+
+    assert destination.read_bytes() == b"original"
+    assert list(tmp_path.glob(".artifact.txt.*.tmp")) == []
+
+
 class TestCriterionParser:
     """Test cases for CriterionParser class."""
 
@@ -2269,6 +2300,21 @@ malformed api_benchmark_metric benchmark_id=ignored vertices=x simplices=y
                 _write_ci_performance_metrics(project_root, CI_MANIFEST_STDOUT.splitlines()[0], require_metrics=True)
 
             assert metrics_path.read_text(encoding="utf-8") == "{}\n"
+
+    @pytest.mark.parametrize("require_metrics", [False, True])
+    def test_nontext_metrics_clear_stale_file(self, tmp_path: Path, require_metrics: bool) -> None:
+        """Raw subprocess output is admitted before parsing construction metrics."""
+        metrics_path = tmp_path / "target" / "criterion" / _CI_PERFORMANCE_SUITE_METRICS_FILE
+        metrics_path.parent.mkdir(parents=True)
+        metrics_path.write_text('{"stale": true}', encoding="utf-8")
+
+        if require_metrics:
+            with pytest.raises(TypeError, match="stdout was not text"):
+                _write_ci_performance_metrics(tmp_path, None, require_metrics=True)
+        else:
+            _write_ci_performance_metrics(tmp_path, None)
+
+        assert metrics_path.read_text(encoding="utf-8") == "{}\n"
 
     def test_load_ci_performance_metrics_rejects_malformed_json_with_path(self) -> None:
         """Test corrupt metrics sidecars fail with the offending path."""

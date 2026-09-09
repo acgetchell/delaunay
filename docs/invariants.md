@@ -546,8 +546,9 @@ experiments may still be useful, but they are outside the strongest predicate an
 
 "Exact" applies to construction as well as elimination. The relative in-sphere
 cold path converts each original finite binary64 coordinate to the
-`BigRational` type re-exported by `la-stack`, then performs subtraction,
-squaring, and determinant elimination without an intermediate `f64` rounding.
+`BigRational` type re-exported by `la-stack`, then performs subtraction and
+squaring locally. `la-stack`'s `RationalMatrix` owns determinant elimination
+without an intermediate `f64` rounding.
 The near-singular circumcenter cold path applies the same rule to its linear
 system and rounds only the final solution. The fast paths remain
 allocation-free: outward-rounded interval bounds certify ordinary in-sphere

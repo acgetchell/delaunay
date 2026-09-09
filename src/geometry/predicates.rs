@@ -8,8 +8,8 @@
 
 use crate::core::simplex::SimplexValidationError;
 use crate::geometry::matrix::{
-    BigRational, Matrix, StackMatrixDispatchError, matrix_fast_filter, matrix_set,
-    rational_determinant_sign, rational_from_f64,
+    Matrix, RationalMatrix, StackMatrixDispatchError, matrix_fast_filter, matrix_set,
+    rational_from_f64,
 };
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
@@ -231,11 +231,13 @@ fn relative_insphere_interval_sign<const D: usize>(
     }
 }
 
-/// Builds the relative lifted matrix directly from exact IEEE-754 rationals.
-fn exact_relative_insphere_matrix<const D: usize>(
+/// Fills the dispatched relative lifted matrix from exact IEEE-754 rationals.
+/// Callers admit D+1 simplex points and dispatch N=D+1 before assembly.
+fn fill_exact_relative_insphere_matrix<const D: usize, const N: usize>(
+    matrix: &mut RationalMatrix<N>,
     simplex_points: &[Point<D>],
     test_point: &Point<D>,
-) -> Result<Vec<Vec<BigRational>>, CoordinateConversionError> {
+) -> Result<(), CoordinateConversionError> {
     let reference: Vec<_> = simplex_points[0]
         .coords()
         .iter()
@@ -247,29 +249,29 @@ fn exact_relative_insphere_matrix<const D: usize>(
             coordinate_value: InvalidCoordinateValue::from_debug(&simplex_points[0].coords()[0]),
         })?;
     let zero = rational_from_f64(0.0).expect("zero is a finite IEEE-754 value");
-    let mut matrix = Vec::with_capacity(D + 1);
-    for point in simplex_points
+    for (row, point) in simplex_points
         .iter()
         .skip(1)
         .chain(core::iter::once(test_point))
+        .enumerate()
     {
-        let mut row = Vec::with_capacity(D + 1);
         let mut lifted = zero.clone();
-        for (coordinate, reference_coordinate) in point.coords().iter().zip(&reference) {
+        for (column, (coordinate, reference_coordinate)) in
+            point.coords().iter().zip(&reference).enumerate()
+        {
             let exact_coordinate = rational_from_f64(*coordinate).ok_or_else(|| {
                 CoordinateConversionError::NonFiniteValue {
-                    coordinate_index: row.len(),
+                    coordinate_index: column,
                     coordinate_value: InvalidCoordinateValue::from_debug(coordinate),
                 }
             })?;
             let relative = exact_coordinate - reference_coordinate.clone();
             lifted += relative.clone() * relative.clone();
-            row.push(relative);
+            matrix.set(row, column, relative)?;
         }
-        row.push(lifted);
-        matrix.push(row);
+        matrix.set(row, D, lifted)?;
     }
-    Ok(matrix)
+    Ok(())
 }
 
 /// Compute exact signs for the relative-coordinate lifted insphere formulation.
@@ -339,11 +341,12 @@ pub(crate) fn relative_insphere_determinant_sign<const D: usize>(
     }
 
     cold_path();
-    rational_determinant_sign(exact_relative_insphere_matrix(simplex_points, test_point)?).ok_or(
-        CoordinateConversionError::UnsupportedMatrixDimension {
-            requested: D + 1,
-            max: 7,
-        },
+    la_stack::try_with_rational_matrix!(
+        D + 1,
+        |mut matrix| -> Result<_, CoordinateConversionError> {
+            fill_exact_relative_insphere_matrix(&mut matrix, simplex_points, test_point)?;
+            Ok(i32::from(matrix.det_sign().as_i8()))
+        }
     )
 }
 
@@ -451,7 +454,7 @@ impl std::fmt::Display for Orientation {
 /// This predicate uses adaptive-precision arithmetic to return a provably correct
 /// sign. For D ≤ 4, a fast f64 filter resolves the sign without allocating in
 /// well-conditioned cases. For nearly-degenerate configurations (and always for
-/// D ≥ 5), the Bareiss algorithm runs in exact `BigRational` arithmetic.
+/// D ≥ 5), the Bareiss algorithm runs in exact integer arithmetic in `la-stack`.
 ///
 /// # Arguments
 ///
@@ -938,6 +941,80 @@ mod tests {
     ) {
         try_matrix_set(matrix, row, column, value).unwrap();
     }
+
+    /// Compare relative rational construction with the absolute lifted exact
+    /// reference. Small dyadic coordinates make every absolute square exact in
+    /// binary64; the two formulations share elimination but not matrix assembly.
+    fn assert_rational_insphere_agreement<const D: usize, const N: usize>() {
+        assert_eq!(N, D + 2);
+        let mut simplex = vec![Point::try_new([-2.0; D]).unwrap()];
+        for axis in 0..D {
+            let mut coords = [-2.0; D];
+            coords[axis] = 2.0;
+            simplex.push(Point::try_new(coords).unwrap());
+        }
+        for (query, expected) in [
+            ([0.0; D], InSphere::INSIDE),
+            ([2.0; D], InSphere::BOUNDARY),
+            ([4.0; D], InSphere::OUTSIDE),
+        ] {
+            let query = Point::try_new(query).unwrap();
+            for swapped in [false, true] {
+                if swapped {
+                    simplex.swap(0, 1);
+                }
+                let points: Vec<_> = simplex.iter().chain(core::iter::once(&query)).collect();
+                let absolute = Matrix::<N>::try_from_rows(std::array::from_fn(|row| {
+                    std::array::from_fn(|column| match column {
+                        column if column < D => points[row].coords()[column],
+                        column if column == D => points[row].coords().iter().map(|x| x * x).sum(),
+                        _ => 1.0,
+                    })
+                }))
+                .unwrap();
+                let rational_sign = la_stack::try_with_rational_matrix!(
+                    D + 1,
+                    |mut matrix| -> Result<_, LaError> {
+                        fill_exact_relative_insphere_matrix(&mut matrix, &simplex, &query).unwrap();
+                        Ok(i32::from(matrix.det_sign().as_i8()))
+                    }
+                )
+                .unwrap();
+                // Expanding the translated homogeneous matrix in its first row
+                // contributes (-1)^(D+1).
+                let parity = if D.is_multiple_of(2) { -1 } else { 1 };
+                assert_eq!(
+                    rational_sign,
+                    parity * i32::from(absolute.det_sign_exact().as_i8())
+                );
+                assert_eq!(
+                    relative_insphere_determinant_sign(&simplex, &query).unwrap(),
+                    rational_sign
+                );
+                assert_eq!(insphere_lifted(&simplex, query).unwrap(), expected);
+                if swapped {
+                    simplex.swap(0, 1);
+                }
+            }
+        }
+    }
+
+    macro_rules! rational_insphere_agreement_test {
+        ($dimension:literal, $matrix_dimension:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<rational_insphere_matches_absolute_reference_ $dimension d>]() {
+                    assert_rational_insphere_agreement::<$dimension, $matrix_dimension>();
+                }
+            }
+        };
+    }
+
+    rational_insphere_agreement_test!(2, 4);
+    rational_insphere_agreement_test!(3, 5);
+    rational_insphere_agreement_test!(4, 6);
+    rational_insphere_agreement_test!(5, 7);
+    rational_insphere_agreement_test!(6, 8);
 
     #[test]
     fn test_enum_display_and_debug_implementations() {

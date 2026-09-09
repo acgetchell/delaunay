@@ -979,7 +979,8 @@ isolation.
 
 ## Testing Expectations
 
-Use focused tests while iterating on Rust changes, for example:
+Use `just check` during iterative review and fixes, alongside targeted tests
+for changed behavior. Focused test buckets include:
 
 ```bash
 just test-unit
@@ -987,7 +988,9 @@ just test-doc
 just test-integration
 ```
 
-For final handoff validation, core Rust/Cargo changes require `just ci`.
+Reserve `just ci` for final validation once those iterations are complete.
+Core Rust/Cargo or public-behavior changes require that comprehensive pass
+before a PR is ready or the changes are pushed.
 Doctest-only, unit-test-only, integration-test-only, benchmark-only, and
 example-only changes use the focused validators in
 [`commands.md`](../commands.md).
