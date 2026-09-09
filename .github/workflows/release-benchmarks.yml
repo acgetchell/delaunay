@@ -40,7 +40,7 @@ jobs:
 
       - name: Set up just
         id: setup_just
-        uses: ./.github/actions/setup-just
+        uses: $/.github/actions/setup-just
 
       - name: Resolve uv version
         id: uv_version

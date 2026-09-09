@@ -584,15 +584,19 @@ Large-scale performance validation belongs in **benchmarks**, not tests.
 
 All tests must pass under CI.
 
-For final handoff validation after Rust test changes, run:
+During iterative review and fixes, use `just check` alongside targeted tests
+for changed behavior. Once those iterations are complete, core Rust/Cargo or
+public-behavior changes require the comprehensive check before a PR is ready
+or the changes are pushed:
 
 ```bash
 just ci
 ```
 
-For documentation-only, configuration-only, or Python-only edits, follow the
-validation command selection matrix in [`commands.md`](commands.md) instead of
-defaulting to full CI.
+Test-only changes use the matching unit, doctest, integration, or CLI test
+bucket. Other non-core changes use their focused validators. Follow the
+validation command selection matrix in [`commands.md`](commands.md), composing
+each affected surface once.
 
 CI enforces:
 

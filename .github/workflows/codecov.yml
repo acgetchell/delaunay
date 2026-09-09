@@ -36,7 +36,7 @@ jobs:
 
       - name: Set up just
         id: setup_just
-        uses: ./.github/actions/setup-just
+        uses: $/.github/actions/setup-just
 
       - name: Export coverage tool versions
         id: tool_versions

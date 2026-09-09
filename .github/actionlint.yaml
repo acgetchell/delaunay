@@ -1,0 +1,6 @@
+# Remove this compatibility exception when actionlint supports self-repository
+# references: https://github.com/rhysd/actionlint/issues/711.
+paths:
+  .github/workflows/*.yml:
+    ignore:
+      - '^specifying action "\$/\.github/actions/setup-just" in invalid format because ref is missing\.'

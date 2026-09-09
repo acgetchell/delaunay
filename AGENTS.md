@@ -54,9 +54,12 @@ workflow references do not need to be loaded preemptively.
 - **Do not revert user changes.** The worktree may be dirty; preserve unrelated
   changes and work with any overlapping edits.
 - **Unsafe Rust is forbidden.** The crate enforces `#![forbid(unsafe_code)]`.
-- **Validate with the right command.** Core Rust changes require final
-  `just ci`. Documentation, configuration, Python, notebook, Rust
-  unit-test-only, doctest-only, integration-test-only, benchmark-only, and
+- **Validate with the right command.** Use `just check` during iterative
+  review and fixes, alongside targeted tests for changed behavior. Reserve
+  `just ci` for final validation once those iterations are complete; core
+  Rust/Cargo or public-behavior changes require that comprehensive pass before
+  a PR is ready or the changes are pushed. Documentation, configuration,
+  Python, notebook, Rust unit-test-only, doctest-only, integration-test-only, benchmark-only, and
   example-only changes use the matching focused validators from
   `docs/dev/commands.md`; compose those validators once each when multiple
   focused surfaces changed.
@@ -84,7 +87,7 @@ workflow references do not need to be loaded preemptively.
 
 - **Language**: Rust
 - **Project**: d-dimensional Delaunay triangulation library
-- **MSRV**: 1.98.0
+- **MSRV**: 1.98.1
 - **Edition**: 2024
 - **Primary architecture hub**: `docs/code_organization.md`
 

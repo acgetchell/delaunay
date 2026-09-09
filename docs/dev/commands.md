@@ -35,7 +35,7 @@ Agents must run appropriate checks after modifying code.
 
 ## Core Workflow
 
-Typical development loop:
+Available development commands:
 
 ```bash
 just check
@@ -53,13 +53,21 @@ These commands ensure:
 - tests
 
 Treat this as a menu, not a required sequence. The validation matrix below is
-the handoff source of truth.
+the source of truth for iteration and PR readiness.
 
 ## Validation Command Selection
 
-Use the smallest non-mutating validator that covers the files you changed while
-iterating. For final handoff validation, match commands to the changed file
-surfaces instead of defaulting all edits to full CI.
+Use `just check` during iterative review and fixes, alongside the smallest
+targeted tests that exercise changed behavior. Focused validators provide
+quicker feedback on individual surfaces, and `just check-fast` is available
+for compile-only feedback.
+
+Reserve `just ci` for final validation once those iterations are complete,
+when preparing core Rust/Cargo or public-behavior changes for PR readiness or
+push. Release validation and explicit maintainer requests may also require
+full CI. An intermediate local handoff records the checks run during iteration;
+it does not by itself trigger `just ci`. For non-core changes, compose the
+matching focused validators once each.
 
 Core Rust code means production Rust or manifest changes that can affect library
 behavior, public API, features, examples, benchmarks, or downstream users. It
@@ -67,7 +75,7 @@ does not include Rust doctest-only, unit-test-only, integration-test-only,
 benchmark-only, or example-only edits when the focused validator covers the
 changed surface.
 
-| Touched surface | Iteration validation | Final validation |
+| Touched surface | Iteration validation | Final validation / PR readiness |
 |-----|-----|-----|
 | Markdown documentation (`*.md`) | `just markdown-check` | `just check-docs` |
 | Python under `scripts/` | Targeted pytest or `just test-python`; add `just python-check` for logic/style | `just python-check` and `just test-python` |
@@ -79,9 +87,9 @@ changed surface.
 | Rust integration tests only (`tests/**`) | Targeted `cargo nextest run --test <name>` or `just test-integration-fast` | `just test-integration` |
 | Rust benchmark files only (`benches/**`) | Targeted benchmark command or `just bench-smoke` | Matching benchmark validator |
 | Rust examples only (`examples/**`) | Targeted `cargo run --example <name>` or `just examples` | `just examples` |
-| Core Rust code | Focused checks or targeted tests while iterating | `just ci` |
+| Core Rust code | `just check` and targeted tests | `just ci` |
 | Mixed focused surfaces without core Rust | Run each matching focused validator once | Run each matching focused validator once |
-| Mixed core Rust plus tests/benches/examples/docs/config | Focused checks while iterating | `just ci` |
+| Mixed core Rust plus tests/benches/examples/docs/config | `just check` and targeted tests | `just ci` |
 
 Do not run `just ci` merely because documentation, configuration, Python,
 notebook, or test-only Rust files changed. Do not run `just test` when a single
@@ -266,8 +274,9 @@ current-version changelog heading whose date matches `CITATION.cff`.
 
 ## Full CI Validation
 
-Before core Rust changes, broad API-affecting changes, release-style
-validation, or explicit maintainer requests, run the full CI command:
+Once iterative review and fixes are complete, core Rust/Cargo or public-behavior
+changes must pass the full CI command before a PR is ready or the changes are
+pushed. Also run it for release validation or an explicit maintainer request:
 
 ```bash
 just ci
@@ -529,10 +538,16 @@ audit record. Notebooks may derive disposable Parquet caches from it for larger
 analyses, but `performance-doc` accepts only the validated CSV and provenance
 JSON pair. Raw Criterion data remains in the release `.tar.gz` assets.
 
-Before pushing Rust or benchmark changes, run:
+Before pushing core Rust/Cargo or public-behavior changes, complete final
+comprehensive validation:
 
 ```bash
 just ci
+```
+
+Before pushing Rust or benchmark changes, also run the performance smoke guard:
+
+```bash
 just perf-large-scale-smoke
 ```
 
@@ -981,11 +996,11 @@ Rust warnings are denied by the manifest lint policy and Clippy warnings are
 denied by `just clippy`. Keep any
 intentional warning-level exceptions explicit in `Cargo.toml`.
 
-Agents must ensure changes pass the appropriate local validator before
-proposing patches. Use the validation matrix above for final handoff: core
-Rust/Cargo changes require `just ci`, while documentation, configuration,
-Python, test-only, benchmark-only, and example-only changes use their focused
-validators and compose them once each when multiple surfaces changed.
+Agents use `just check` and targeted tests during iterative review and fixes.
+For final PR readiness or push, core Rust/Cargo or public-behavior changes
+require `just ci`. Documentation, configuration, Python, notebook, test-only,
+benchmark-only, and example-only changes use the focused validators in the
+matrix above; compose each affected surface once.
 
 ---
 

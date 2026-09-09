@@ -48,7 +48,7 @@ jobs:
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
       - name: Set up just
-        uses: ./.github/actions/setup-just
+        uses: $/.github/actions/setup-just
 
       - name: Resolve cargo-audit version
         id: cargo_audit_version

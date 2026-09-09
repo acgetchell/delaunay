@@ -863,7 +863,7 @@ fn test_collinear_points_2d() {
 /// Delaunay property. This exercises:
 /// - `det_errbound()` fast filter in orientation/insphere predicates
 /// - Unified kernel predicates in flip repair
-/// - `solve_exact_rounded_f64` circumcenter fallback for near-singular simplices
+/// - `RationalMatrix::solve` circumcenter fallback for near-singular simplices
 ///
 /// Unlike the slow-tests gated 1000-point test in `large_scale_debug.rs`, this
 /// runs in normal CI (seconds in debug, sub-second in release).

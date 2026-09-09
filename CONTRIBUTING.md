@@ -57,12 +57,13 @@ A typical first local pass is:
 ```bash
 just setup
 just check
-just test
 ```
 
-Before opening or updating a pull request, run the final validator for every
-touched surface in the validation matrix. Core Rust or other broad changes
-require `just ci`; documentation, configuration, Python, notebook, test-only,
+During iterative review and fixes, use `just check` alongside targeted tests
+for changed behavior. Reserve `just ci` for final validation once those
+iterations are complete. Core Rust/Cargo or public-behavior changes must pass
+that comprehensive check before a pull request is ready or the changes are
+pushed. Documentation, configuration, Python, notebook, test-only,
 benchmark-only, and example-only changes use their focused validators. See
 [docs/dev/commands.md][dev-commands] for the authoritative matrix.
 

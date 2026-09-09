@@ -166,21 +166,24 @@ before and after medians or the reported percentage change. For example:
 Benchmarks are not the only invariant oracle, but they must not publish
 performance evidence for invariant-violating results.
 
-While iterating, run focused tests that cover the invariant the optimization
-relies on. Add a regression test when the optimization depends on internal
-evidence that could be lost later, such as a local repair seed scope. Benchmark
+During iterative review and fixes, use `just check` alongside focused tests
+that cover the invariant the optimization relies on. Add a regression test when
+the optimization depends on internal evidence that could be lost later, such
+as a local repair seed scope. Benchmark
 harnesses should assert known-answer checks or validation results around the
 measured workflow; keep those checks outside the Criterion-measured closure
 unless validation itself is the behavior being measured.
 
-For final handoff after Rust code changes, run:
+Once those iterations are complete, core Rust/Cargo or public-behavior changes
+require final comprehensive validation before a PR is ready or the changes are
+pushed:
 
 ```bash
 just ci
 ```
 
-For documentation-only, configuration-only, or Python-only changes, follow the
-command matrix in [`commands.md`](commands.md).
+Benchmark-only, test-only, documentation, configuration, and other non-core
+changes use the focused validators in [`commands.md`](commands.md).
 
 ## Reporting
 

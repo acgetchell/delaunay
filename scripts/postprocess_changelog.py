@@ -22,6 +22,7 @@ import re
 import stat
 import sys
 import tempfile
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -1592,8 +1593,7 @@ def postprocess(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     text = postprocess_text(text)
 
-    tmp_path: Path | None = None
-    try:
+    with ExitStack() as cleanup:
         with tempfile.NamedTemporaryFile(
             "w",
             encoding="utf-8",
@@ -1603,14 +1603,12 @@ def postprocess(path: Path) -> None:
             delete=False,
         ) as handle:
             tmp_path = Path(handle.name)
+            cleanup.callback(tmp_path.unlink, missing_ok=True)
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
         tmp_path.chmod(stat.S_IMODE(path.stat().st_mode))
         tmp_path.replace(path)
-    finally:
-        if tmp_path is not None and tmp_path.exists():
-            tmp_path.unlink()
 
 
 def main(argv: list[str] | None = None) -> int:

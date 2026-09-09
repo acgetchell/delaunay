@@ -6,7 +6,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::geometry::matrix::{StackMatrixDispatchError, solve_exact_runtime_system};
+use crate::geometry::matrix::{LaError, RationalVector, solve_exact_runtime_system};
 use crate::geometry::realization::{
     LabeledSimplexRealization, SimplexIntersectionWitness, SimplexRealizationBuffer,
 };
@@ -512,7 +512,7 @@ fn barycentric_coordinates<L, const D: usize>(
         }
     }
 
-    let lambdas = solve_rational_system(matrix, rhs)?;
+    let lambdas = solve_rational_system(&matrix, &rhs)?;
     let lambda_sum = lambdas
         .iter()
         .fold(rational_zero(), |sum, value| sum + value.clone());
@@ -600,7 +600,7 @@ fn intersection_vertex_for_active_set(
         rhs.push(rational_zero());
     }
 
-    solve_rational_system(matrix, rhs)
+    solve_rational_system(&matrix, &rhs)
 }
 
 /// Builds coefficients for either a beta non-negativity or alpha non-negativity constraint.
@@ -779,9 +779,7 @@ fn pivot_artificial_variables_out(
         let Some(current_basis_matrix) = basis_matrix(matrix, basis) else {
             return false;
         };
-        let Some(basic_solution) =
-            solve_rational_system(current_basis_matrix.clone(), rhs.to_vec())
-        else {
+        let Some(basic_solution) = solve_rational_system(&current_basis_matrix, rhs) else {
             return false;
         };
         if basic_solution[basis_position] != rational_zero() {
@@ -793,10 +791,9 @@ fn pivot_artificial_variables_out(
             if basis.contains(&candidate) {
                 continue;
             }
-            let Some(direction) = solve_rational_system(
-                current_basis_matrix.clone(),
-                matrix_column(matrix, candidate),
-            ) else {
+            let Some(direction) =
+                solve_rational_system(&current_basis_matrix, &matrix_column(matrix, candidate))
+            else {
                 continue;
             };
             if direction[basis_position] != rational_zero() {
@@ -860,9 +857,7 @@ fn revised_simplex_maximize_exact(
         let Some(current_basis_matrix) = basis_matrix(matrix, basis) else {
             return RevisedSimplexResult::Failed;
         };
-        let Some(basic_solution) =
-            solve_rational_system(current_basis_matrix.clone(), rhs.to_vec())
-        else {
+        let Some(basic_solution) = solve_rational_system(&current_basis_matrix, rhs) else {
             return RevisedSimplexResult::Failed;
         };
         if basic_solution.iter().any(Signed::is_negative) {
@@ -874,8 +869,8 @@ fn revised_simplex_maximize_exact(
             .map(|&index| objective[index].clone())
             .collect();
         let Some(dual_solution) = solve_rational_system(
-            transpose_square_matrix(&current_basis_matrix),
-            basic_objective,
+            &transpose_square_matrix(&current_basis_matrix),
+            &basic_objective,
         ) else {
             return RevisedSimplexResult::Failed;
         };
@@ -899,7 +894,7 @@ fn revised_simplex_maximize_exact(
         };
 
         let Some(direction) =
-            solve_rational_system(current_basis_matrix, matrix_column(matrix, entering))
+            solve_rational_system(&current_basis_matrix, &matrix_column(matrix, entering))
         else {
             return RevisedSimplexResult::Failed;
         };
@@ -1550,8 +1545,8 @@ fn phase_two_dual_proves_shared_face_confinement(
         return false;
     }
     let Some(dual_solution) = solve_rational_system(
-        transpose_square_matrix(&current_basis_matrix),
-        basic_objective,
+        &transpose_square_matrix(&current_basis_matrix),
+        &basic_objective,
     ) else {
         return false;
     };
@@ -1582,7 +1577,7 @@ fn certify_optimal_basis(
     basis: &[usize],
 ) -> Option<RevisedSimplexResult> {
     let current_basis_matrix = basis_matrix(matrix, basis)?;
-    let basic_solution = solve_rational_system(current_basis_matrix.clone(), rhs.to_vec())?;
+    let basic_solution = solve_rational_system(&current_basis_matrix, rhs)?;
     if basic_solution.iter().any(Signed::is_negative) {
         return None;
     }
@@ -1592,8 +1587,8 @@ fn certify_optimal_basis(
         .map(|&index| objective[index].clone())
         .collect();
     let dual_solution = solve_rational_system(
-        transpose_square_matrix(&current_basis_matrix),
-        basic_objective,
+        &transpose_square_matrix(&current_basis_matrix),
+        &basic_objective,
     )?;
     let dual_is_feasible = (0..entering_variable_count)
         .filter(|candidate| !basis.contains(candidate))
@@ -1785,97 +1780,29 @@ where
         .collect()
 }
 
-#[expect(
-    clippy::needless_range_loop,
-    reason = "index-based elimination keeps pivot row/column operations explicit"
-)]
-/// Solves a square rational linear system by Gaussian elimination.
+/// Solves an exact LP basis without rounding derived coefficients through binary64.
+/// Shape admission belongs here because LP bases are selected at runtime;
+/// canonical rational storage, pivoting, and singularity belong to `la-stack`.
 fn solve_rational_system(
-    mut matrix: Vec<Vec<BigRational>>,
-    mut rhs: Vec<BigRational>,
+    matrix: &[Vec<BigRational>],
+    rhs: &[BigRational],
 ) -> Option<Vec<BigRational>> {
     let dimension = rhs.len();
     if matrix.len() != dimension || matrix.iter().any(|row| row.len() != dimension) {
         return None;
     }
-    match try_solve_exact_f64_system(&matrix, &rhs) {
-        ExactF64Solve::Solution(solution) => return Some(solution),
-        ExactF64Solve::Singular => return None,
-        ExactF64Solve::Unsupported => {}
-    }
-
-    for pivot_col in 0..dimension {
-        let pivot_row =
-            (pivot_col..dimension).find(|&row| matrix[row][pivot_col] != rational_zero())?;
-        if pivot_row != pivot_col {
-            matrix.swap(pivot_col, pivot_row);
-            rhs.swap(pivot_col, pivot_row);
-        }
-
-        let pivot_value = matrix[pivot_col][pivot_col].clone();
-        for row in pivot_col + 1..dimension {
-            if matrix[row][pivot_col] == rational_zero() {
-                continue;
+    la_stack::try_with_rational_matrix!(dimension, |mut exact_matrix| -> Result<_, LaError> {
+        for (row, values) in matrix.iter().enumerate() {
+            for (column, value) in values.iter().enumerate() {
+                exact_matrix.set(row, column, value.clone())?;
             }
-            let factor = matrix[row][pivot_col].clone() / pivot_value.clone();
-            matrix[row][pivot_col] = rational_zero();
-            for col in pivot_col + 1..dimension {
-                matrix[row][col] =
-                    matrix[row][col].clone() - factor.clone() * matrix[pivot_col][col].clone();
-            }
-            rhs[row] = rhs[row].clone() - factor * rhs[pivot_col].clone();
         }
-    }
-
-    let mut solution = vec![rational_zero(); dimension];
-    for row in (0..dimension).rev() {
-        let mut sum = rhs[row].clone();
-        for col in row + 1..dimension {
-            sum -= matrix[row][col].clone() * solution[col].clone();
-        }
-        solution[row] = sum / matrix[row][row].clone();
-    }
-
-    Some(solution)
-}
-
-/// Outcome of attempting the fraction-free exact `f64` solver.
-enum ExactF64Solve {
-    /// The runtime stack dispatcher cannot represent this rational system.
-    Unsupported,
-    /// The system is exactly singular.
-    Singular,
-    /// The exact system solution.
-    Solution(Vec<BigRational>),
-}
-
-/// Uses fraction-free Bareiss elimination when every coefficient came directly
-/// from a finite `f64`; otherwise leaves the rational solver as the fallback.
-fn try_solve_exact_f64_system(matrix: &[Vec<BigRational>], rhs: &[BigRational]) -> ExactF64Solve {
-    let Some(float_matrix) = exact_rational_matrix_as_f64(matrix) else {
-        return ExactF64Solve::Unsupported;
-    };
-    let Some(float_rhs) = exact_rationals_as_f64(rhs) else {
-        return ExactF64Solve::Unsupported;
-    };
-    let Some(result) = solve_exact_runtime_system(&float_matrix, &float_rhs) else {
-        return ExactF64Solve::Unsupported;
-    };
-    match result {
-        Ok(solution) => ExactF64Solve::Solution(solution),
-        Err(StackMatrixDispatchError::La {
-            source: la_stack::LaError::Singular { .. },
-        }) => ExactF64Solve::Singular,
-        Err(_) => ExactF64Solve::Unsupported,
-    }
-}
-
-/// Converts rationals to `f64` only when doing so preserves each value exactly.
-fn exact_rational_matrix_as_f64(matrix: &[Vec<BigRational>]) -> Option<Vec<Vec<f64>>> {
-    matrix
-        .iter()
-        .map(|row| exact_rationals_as_f64(row))
-        .collect()
+        let exact_rhs = RationalVector::try_from_fn(|index| rhs[index].clone())?;
+        exact_matrix
+            .solve(&exact_rhs)
+            .map(|solution| solution.into_array().into_iter().collect())
+    })
+    .ok()
 }
 
 /// Converts a finite floating-point matrix to its exact rational representation.
@@ -1883,17 +1810,6 @@ fn exact_matrix_from_f64(matrix: &[Vec<f64>]) -> Vec<Vec<BigRational>> {
     matrix
         .iter()
         .map(|row| row.iter().copied().map(rational_from_f64).collect())
-        .collect()
-}
-
-/// Converts rationals to finite `f64` values and verifies an exact round trip.
-fn exact_rationals_as_f64(values: &[BigRational]) -> Option<Vec<f64>> {
-    values
-        .iter()
-        .map(|value| {
-            let converted = value.to_f64().filter(|candidate| candidate.is_finite())?;
-            (rational_from_f64(converted) == *value).then_some(converted)
-        })
         .collect()
 }
 
@@ -1916,6 +1832,7 @@ fn rational_one() -> BigRational {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::matrix::ExactF64Conversion;
     use crate::geometry::realization::{SimplexIntersectionFailure, validate_simplex_intersection};
     use proptest::prelude::*;
     use std::assert_matches;
@@ -1926,6 +1843,41 @@ mod tests {
         Valid,
         Invalid,
         SingularBarycentricBasis,
+    }
+
+    /// Select non-adjacent tableau columns, force pivoting, and recover a known
+    /// non-dyadic solution. Re-multiplication is independent of elimination.
+    fn assert_rational_basis_round_trip(dimension: usize) {
+        let mut tableau = vec![vec![rational_zero(); 2 * dimension]; dimension];
+        for (row, coefficients) in tableau.iter_mut().enumerate() {
+            for column in row..dimension {
+                coefficients[2 * column + 1] =
+                    BigRational::new(BigInt::from(row + column + 1), BigInt::from(3 + 2 * row));
+            }
+        }
+        tableau.rotate_left(1);
+        let basis: Vec<_> = (0..dimension).map(|column| 2 * column + 1).collect();
+        let matrix = basis_matrix(&tableau, &basis).unwrap();
+        let expected: Vec<_> = (1..=dimension)
+            .map(|value| BigRational::new(BigInt::from(value), BigInt::from(11)))
+            .collect();
+        let rhs: Vec<_> = matrix
+            .iter()
+            .map(|row| dot_product(row, &expected))
+            .collect();
+        assert!(
+            matrix
+                .iter()
+                .flatten()
+                .any(|value| value.try_to_f64().is_err())
+        );
+        let solution = solve_rational_system(&matrix, &rhs).unwrap();
+        assert_eq!(solution, expected);
+        let recovered: Vec<_> = matrix
+            .iter()
+            .map(|row| dot_product(row, &solution))
+            .collect();
+        assert_eq!(recovered, rhs);
     }
 
     /// Builds the standard D-simplex with vertices at the origin and coordinate axes.
@@ -2208,6 +2160,31 @@ mod tests {
                 }
             }
         };
+    }
+
+    #[test]
+    fn rational_lp_bases_round_trip_through_dimension_eight() {
+        // Geometric D <= 6 uses LP systems as large as D + 2.
+        for dimension in 1..=8 {
+            assert_rational_basis_round_trip(dimension);
+        }
+    }
+
+    #[test]
+    fn rational_lp_basis_rejects_singular_malformed_and_unsupported_systems() {
+        let one = rational_one();
+        let zero = rational_zero();
+        assert_eq!(solve_rational_system(&[], &[]), Some(vec![]));
+        assert_eq!(solve_rational_system(&[vec![one.clone()]], &[]), None);
+        assert_eq!(
+            solve_rational_system(&[vec![]], std::slice::from_ref(&one)),
+            None
+        );
+        assert_eq!(solve_rational_system(&[vec![zero.clone()]], &[one]), None);
+        assert_eq!(
+            solve_rational_system(&vec![vec![zero.clone(); 9]; 9], &vec![zero; 9]),
+            None
+        );
     }
 
     generate_intersection_agreement_tests!(
