@@ -29,7 +29,9 @@ reviews:
   auto_assign_reviewers: false
   poem: true
   labeling_instructions: []
-  path_filters: []
+  # Deliberate violations are validated by repository-owned fixture checks.
+  path_filters:
+    - "!tests/semgrep/**"
   path_instructions:
     - path: "scripts/*.py"
       instructions: |
@@ -52,8 +54,8 @@ reviews:
       enabled: true
   pre_merge_checks:
     docstrings:
-      mode: warning
-      threshold: 100
+      # Ruff owns the Python docstring policy, including fixture exceptions.
+      mode: "off"
     title:
       mode: warning
       requirements: ""

@@ -3,11 +3,15 @@
 import subprocess
 from datetime import date
 from pathlib import PureWindowsPath
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from tag_release import _citation_release_date, _get_repo_url, _package_version, create_tag, main, validate_semver
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # _get_repo_url
@@ -23,40 +27,40 @@ class TestGetRepoUrl:
     """Tests for _get_repo_url normalization and credential refusal."""
 
     @patch("tag_release.run_git_command")
-    def test_github_ssh(self, mock_git) -> None:
+    def test_github_ssh(self, mock_git: MagicMock) -> None:
         mock_git.return_value = _fake_remote("git@github.com:owner/repo.git")
         assert _get_repo_url() == "https://github.com/owner/repo"
 
     @patch("tag_release.run_git_command")
-    def test_github_https(self, mock_git) -> None:
+    def test_github_https(self, mock_git: MagicMock) -> None:
         mock_git.return_value = _fake_remote("https://github.com/owner/repo.git")
         assert _get_repo_url() == "https://github.com/owner/repo"
 
     @patch("tag_release.run_git_command")
-    def test_github_ssh_protocol(self, mock_git) -> None:
+    def test_github_ssh_protocol(self, mock_git: MagicMock) -> None:
         mock_git.return_value = _fake_remote("ssh://git@github.com/owner/repo.git")
         assert _get_repo_url() == "https://github.com/owner/repo"
 
     @patch("tag_release.run_git_command")
-    def test_plain_non_github_url_rejected(self, mock_git) -> None:
+    def test_plain_non_github_url_rejected(self, mock_git: MagicMock) -> None:
         mock_git.return_value = _fake_remote("https://gitlab.com/owner/repo.git")
         with pytest.raises(ValueError, match="Origin remote"):
             _get_repo_url()
 
     @patch("tag_release.run_git_command")
-    def test_rejects_https_user_pass(self, mock_git) -> None:
+    def test_rejects_https_user_pass(self, mock_git: MagicMock) -> None:
         mock_git.return_value = _fake_remote("https://user:token@github.com/owner/repo.git")
         with pytest.raises(ValueError, match="credentials"):
             _get_repo_url()
 
     @patch("tag_release.run_git_command")
-    def test_rejects_https_user_only(self, mock_git) -> None:
+    def test_rejects_https_user_only(self, mock_git: MagicMock) -> None:
         mock_git.return_value = _fake_remote("https://user@github.com/owner/repo.git")
         with pytest.raises(ValueError, match="credentials"):
             _get_repo_url()
 
     @patch("tag_release.run_git_command")
-    def test_rejects_ssh_style_non_github(self, mock_git) -> None:
+    def test_rejects_ssh_style_non_github(self, mock_git: MagicMock) -> None:
         mock_git.return_value = _fake_remote("deploy@gitlab.com:owner/repo.git")
         with pytest.raises(ValueError, match="Origin remote"):
             _get_repo_url()
@@ -69,7 +73,7 @@ class TestGetRepoUrl:
         ],
     )
     @patch("tag_release.run_git_command")
-    def test_rejects_query_and_fragment_without_echoing_them(self, mock_git, raw: str) -> None:
+    def test_rejects_query_and_fragment_without_echoing_them(self, mock_git: MagicMock, raw: str) -> None:
         mock_git.return_value = _fake_remote(raw)
 
         with pytest.raises(ValueError, match="query parameters or fragments") as exc_info:
@@ -93,7 +97,7 @@ class TestGetRepoUrl:
         ],
     )
     @patch("tag_release.run_git_command")
-    def test_rejects_unsupported_remotes_without_echoing_them(self, mock_git, raw: str) -> None:
+    def test_rejects_unsupported_remotes_without_echoing_them(self, mock_git: MagicMock, raw: str) -> None:
         mock_git.return_value = _fake_remote(raw)
 
         with pytest.raises(ValueError, match="Origin remote") as exc_info:
@@ -137,7 +141,7 @@ class TestCreateTag:
         monkeypatch.setattr("tag_release._citation_release_date", lambda _changelog: date(2026, 8, 24))
         monkeypatch.setattr("tag_release._current_utc_date", lambda: date(2026, 8, 24))
 
-    def test_package_version_reads_adjacent_cargo_manifest(self, tmp_path) -> None:
+    def test_package_version_reads_adjacent_cargo_manifest(self, tmp_path: Path) -> None:
         """The preflight source of truth is the package table beside the changelog."""
         changelog = tmp_path / "CHANGELOG.md"
         changelog.write_text("# Changelog\n", encoding="utf-8")
@@ -157,7 +161,7 @@ class TestCreateTag:
     )
     def test_package_version_rejects_invalid_manifests(
         self,
-        tmp_path,
+        tmp_path: Path,
         manifest: str,
         error_type: type[Exception],
         message: str,
@@ -172,7 +176,7 @@ class TestCreateTag:
 
         assert "Cargo.toml" in str(exc_info.value)
 
-    def test_package_version_reports_manifest_read_failure(self, tmp_path) -> None:
+    def test_package_version_reports_manifest_read_failure(self, tmp_path: Path) -> None:
         """Filesystem failures become controlled release-preflight errors."""
         changelog = tmp_path / "CHANGELOG.md"
         cargo_toml = tmp_path / "Cargo.toml"
@@ -185,7 +189,7 @@ class TestCreateTag:
 
         assert str(cargo_toml) in str(exc_info.value)
 
-    def test_citation_release_date_reads_one_valid_top_level_date(self, tmp_path) -> None:
+    def test_citation_release_date_reads_one_valid_top_level_date(self, tmp_path: Path) -> None:
         """The tag preflight reads the intended publication day from citation metadata."""
         changelog = tmp_path / "CHANGELOG.md"
         (tmp_path / "CITATION.cff").write_text("date-released: '2026-08-24'\n", encoding="utf-8")
@@ -200,7 +204,7 @@ class TestCreateTag:
             ("date-released: 2026-08-24\ndate-released: 2026-08-25\n", "duplicate top-level date-released"),
         ],
     )
-    def test_citation_release_date_rejects_invalid_contracts(self, tmp_path, citation: str, message: str) -> None:
+    def test_citation_release_date_rejects_invalid_contracts(self, tmp_path: Path, citation: str, message: str) -> None:
         """Missing, impossible, or ambiguous publication dates fail closed."""
         changelog = tmp_path / "CHANGELOG.md"
         (tmp_path / "CITATION.cff").write_text(citation, encoding="utf-8")
@@ -210,7 +214,7 @@ class TestCreateTag:
 
     def test_next_step_sets_release_title(
         self,
-        tmp_path,
+        tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         changelog = tmp_path / "CHANGELOG.md"
@@ -229,7 +233,7 @@ class TestCreateTag:
 
     def test_truncated_message_uses_posix_source_url(
         self,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         changelog = tmp_path / "CHANGELOG.md"
         with (
@@ -251,7 +255,7 @@ class TestCreateTag:
         assert "<https://github.com/owner/repo/blob/v1.2.3/docs/archive/changelog/1.2.md#v123>" in tag_message
         assert "docs\\archive\\changelog\\1.2.md" not in tag_message
 
-    def test_force_replaces_existing_tag_without_delete(self, tmp_path) -> None:
+    def test_force_replaces_existing_tag_without_delete(self, tmp_path: Path) -> None:
         changelog = tmp_path / "CHANGELOG.md"
         with (
             patch("tag_release._tag_exists", return_value=True),
@@ -266,7 +270,7 @@ class TestCreateTag:
 
     def test_invalid_remote_does_not_replace_existing_tag(
         self,
-        tmp_path,
+        tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         changelog = tmp_path / "CHANGELOG.md"
@@ -289,7 +293,7 @@ class TestCreateTag:
         assert marker not in output.out
         assert marker not in output.err
 
-    def test_rejects_tag_that_differs_from_cargo_before_git(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_rejects_tag_that_differs_from_cargo_before_git(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A mismatched requested tag fails before querying or mutating tags."""
         changelog = tmp_path / "CHANGELOG.md"
         changelog.write_text("# Changelog\n", encoding="utf-8")
@@ -303,7 +307,7 @@ class TestCreateTag:
 
         mock_tag_exists.assert_not_called()
 
-    def test_rejects_stale_publication_date_before_git(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_rejects_stale_publication_date_before_git(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A release delayed across UTC midnight cannot create or replace a tag."""
         changelog = tmp_path / "CHANGELOG.md"
         changelog.write_text("# Changelog\n", encoding="utf-8")
@@ -327,7 +331,7 @@ class TestCreateTag:
 # ---------------------------------------------------------------------------
 
 
-def test_main_handles_git_timeout(capsys) -> None:
+def test_main_handles_git_timeout(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch("sys.argv", ["tag-release", "v1.2.3"]),
         patch(
@@ -342,7 +346,7 @@ def test_main_handles_git_timeout(capsys) -> None:
     assert "Error: Command '['git', 'tag']' timed out after 30 seconds" in capsys.readouterr().err
 
 
-def test_main_handles_package_metadata_error_before_git(tmp_path, capsys) -> None:
+def test_main_handles_package_metadata_error_before_git(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Manifest contract failures use the normal CLI diagnostic and avoid Git."""
     changelog = tmp_path / "CHANGELOG.md"
     mock_tag_exists = MagicMock()

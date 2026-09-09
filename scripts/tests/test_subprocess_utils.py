@@ -16,7 +16,10 @@ import pytest
 # Add scripts directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from typing import IO, Any, Never, cast
+from typing import IO, TYPE_CHECKING, Any, Never, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from subprocess_utils import (
     ExecutableNotFoundError,
@@ -36,7 +39,7 @@ class TestGetSafeExecutable:
     """Test get_safe_executable function."""
 
     @pytest.mark.parametrize("command", ["echo", "git", "ls"])
-    def test_finds_existing_executables(self, command) -> None:
+    def test_finds_existing_executables(self, command: str) -> None:
         """Test that it finds common executables."""
         result = get_safe_executable(command)
         assert isinstance(result, str)
@@ -49,7 +52,7 @@ class TestGetSafeExecutable:
             pytest.skip(f"{command} may not be an external executable on Windows")
 
     @pytest.mark.parametrize("fake_command", ["definitely-nonexistent-command-xyz", "fake-command-for-testing", "nonexistent123"])
-    def test_raises_on_nonexistent_executables(self, fake_command) -> None:
+    def test_raises_on_nonexistent_executables(self, fake_command: str) -> None:
         """Test that it raises ExecutableNotFoundError for nonexistent commands."""
         with pytest.raises(ExecutableNotFoundError, match="not found in PATH") as exc_info:
             get_safe_executable(fake_command)
@@ -211,11 +214,11 @@ class TestErrorHandling:
         assert str(error) == "test message"
         assert isinstance(error, Exception)
 
-    def test_git_functions_handle_missing_git(self, monkeypatch) -> None:
+    def test_git_functions_handle_missing_git(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test git functions handle missing git executable gracefully."""
 
         # Mock get_safe_executable to raise ExecutableNotFoundError for git
-        def mock_get_safe_executable(command) -> str:
+        def mock_get_safe_executable(command: str) -> str:
             if command == "git":
                 raise ExecutableNotFoundError(f"Required executable '{command}' not found in PATH")
             return "/bin/echo"  # Return echo for other commands
@@ -233,10 +236,10 @@ class TestErrorHandling:
         with pytest.raises(ExecutableNotFoundError):
             get_git_remote_url()
 
-    def test_git_discovery_checks_handle_failed_git_commands(self, monkeypatch) -> None:
+    def test_git_discovery_checks_handle_failed_git_commands(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Git discovery helpers return False for nonzero git probes."""
 
-        def mock_run_git_command(_args) -> None:
+        def mock_run_git_command(_args: list[str]) -> None:
             raise subprocess.CalledProcessError(128, "git")
 
         monkeypatch.setattr("subprocess_utils.run_git_command", mock_run_git_command)
@@ -279,11 +282,17 @@ class TestSecurityFeatures:
             (run_safe_command, ("echo", ["test"]), {"executable": "/malicious/fake/command"}),
         ],
     )
-    def test_rejects_executable_override(self, function, args, kwargs, monkeypatch) -> None:
+    def test_rejects_executable_override(
+        self,
+        function: Callable[..., subprocess.CompletedProcess[str]],
+        args: tuple[list[str]] | tuple[str, list[str]],
+        kwargs: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Test that functions reject executable override for security."""
         called = {"run": False}
 
-        def fake_run(*_a, **_k) -> Never:
+        def fake_run(*_a: object, **_k: object) -> Never:
             called["run"] = True  # should never be set
             msg = "subprocess.run should not be called on override"
             raise AssertionError(msg)

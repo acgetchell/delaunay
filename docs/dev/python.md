@@ -1,6 +1,7 @@
 # Python Development Guidelines
 
-Guidance for Python automation under `scripts/`.
+Guidance for repository-owned Python, including automation under `scripts/`
+and static-analysis fixtures under `tests/semgrep/`.
 
 The Rust library is the primary product, but the Python benchmark, changelog,
 hardware, and release utilities are part of the trusted development workflow.
@@ -19,10 +20,17 @@ just test-python
 ```
 
 `just python-check` runs Ruff formatting checks, Ruff linting, and
-`just python-typecheck`. `just python-typecheck` runs
-`ty check scripts/ --error all`, which is the type-checking authority. Prefer
-reducing untyped surfaces in code and tests over adding more `ty`
-configuration.
+`just python-typecheck`. All three checks share a Git-derived list of tracked
+Python files plus new, unignored `.py` and `.pyi` files, including files outside
+`scripts/`. Deleted files are skipped. The fixer uses the same list.
+`ty check --error all` is the type-checking authority. Prefer reducing untyped
+surfaces in code and tests over adding more `ty` configuration.
+
+`just python-fixture-lint` runs the full configured Ruff policy over
+`tests/semgrep/` and is a direct dependency of `just ci`. Deliberate fixture
+violations use exact per-file rule ignores or line-specific suppressions;
+typing and annotation-import rules remain active. CodeRabbit excludes these
+fixtures from general review and leaves Python docstring policy to Ruff.
 
 `just check` also runs Python formatting checks, Ruff, and `ty` as part of the
 normal repository validation bundle.
@@ -36,7 +44,14 @@ treating `.ipynb` files as ordinary Python scripts.
 
 ## Typing
 
-- Add return annotations to functions and methods.
+- Annotate all function and method parameters (including `*args` and `**kwargs`)
+  and returns. Ruff enforces `ANN001`, `ANN002`, `ANN003`, `ANN201`, `ANN202`,
+  `ANN204`, `ANN205`, and `ANN206`.
+- Move annotation-only imports behind `if TYPE_CHECKING`; Ruff's configured
+  `TC` rules, including `TC003`, apply to fixtures as well as scripts.
+- On Python 3.14, use native deferred annotations and bare type names compatible
+  with `UP037`. Do not add `from __future__ import annotations` solely for lint
+  compliance. Document any runtime annotation consumer that requires strings.
 - Prefer concrete standard-library types over `Any`, `dict`, or bare `Mock`
   when the shape is known.
 - Keep helper signatures precise enough that `ty` can validate the call sites.

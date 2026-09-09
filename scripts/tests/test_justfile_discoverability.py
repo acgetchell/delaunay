@@ -5,13 +5,16 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 import update_cargo_tool_pins
+from subprocess_utils import run_safe_command
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 JUSTFILE = REPO_ROOT / "justfile"
@@ -33,7 +36,37 @@ def run_just(*args: str) -> subprocess.CompletedProcess[str]:
         check=True,
         capture_output=True,
         encoding="utf-8",
+        timeout=30,
     )
+
+
+def run_python_source_probe(tmp_path: Path, paths: list[str], *, git_returncode: int = 0) -> subprocess.CompletedProcess[str]:
+    """Exercise the rendered recipe with isolated Git output and a tool-argument recorder."""
+    git_output = tmp_path / "git-output.bin"
+    git_output.write_bytes(b"".join(path.encode("utf-8") + b"\0" for path in paths))
+    version = run_just("--evaluate", "uv_version").stdout.strip()
+    rendered = run_just("--dry-run", "_python-tool", "ruff check")
+    expected_git_args = "--no-pager ls-files --cached --others --exclude-standard --deduplicate -z -- *.py *.pyi"
+    script = f"""
+git() {{
+    if [[ "$*" != {shlex.quote(expected_git_args)} ]]; then
+        echo "Unexpected Git arguments: $*" >&2
+        return 2
+    fi
+    cat {shlex.quote(git_output.as_posix())}
+    return {git_returncode}
+}}
+uv() {{
+    if [[ "$*" == "--version" ]]; then
+        printf '%s\\n' {shlex.quote("uv " + version)}
+    else
+        printf '%s\\0' "$@"
+    fi
+}}
+TMPDIR="$PWD"
+{rendered.stdout}{rendered.stderr}
+"""
+    return run_safe_command("bash", ["-c", script], cwd=tmp_path, check=False, timeout=30)
 
 
 def just_recipes() -> dict[str, dict[str, Any]]:
@@ -126,6 +159,123 @@ def test_check_code_includes_dependency_hygiene() -> None:
     dependencies = {dependency["recipe"] for dependency in just_recipes()["check-code"]["dependencies"]}
 
     assert "unused-deps" in dependencies
+
+
+def test_ci_directly_lints_python_fixtures_with_full_ruff_policy() -> None:
+    """CI must not drop fixture lint or replace configured rules with a subset."""
+    recipes = just_recipes()
+    dependencies = {dependency["recipe"] for dependency in recipes["ci"]["dependencies"]}
+    result = run_just("--dry-run", "python-fixture-lint")
+    commands = [shlex.split(line) for line in (result.stdout + result.stderr).splitlines() if line.startswith("uv run ")]
+
+    assert "python-fixture-lint" in dependencies
+    assert commands == [["uv", "run", "--locked", "ruff", "check", "tests/semgrep/"]]
+
+
+def test_python_checks_and_fixer_share_source_discovery() -> None:
+    """Every Python tool should consume the same file inventory."""
+    recipes = just_recipes()
+    expected_commands = {
+        "python-format-check": ["ruff format --check"],
+        "python-lint": ["ruff check"],
+        "python-typecheck": ["--group notebooks ty check --error all"],
+        "python-fix": ["ruff check --fix", "ruff format"],
+    }
+    for name, commands in expected_commands.items():
+        result = run_just("--dry-run", name)
+        rendered = result.stdout + result.stderr
+        assert {dependency["recipe"] for dependency in recipes[name]["dependencies"]} == {"_python-tool"}
+        for command in commands:
+            assert f'uv run --locked {command} -- "${{python_files[@]}}"' in rendered
+
+
+def test_python_source_discovery_preserves_paths_and_skips_deleted_files(tmp_path: Path) -> None:
+    """Git-selected sources must reach the tool as paths, including leading dashes."""
+    paths = ["scripts/owned.py", "tests/semgrep/scripts/tests/python_style.py", "new module.py", "new module.pyi", "--new.py"]
+    for name in paths:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('"""Source discovery probe."""\n', encoding="utf-8")
+
+    result = run_python_source_probe(tmp_path, [*paths, "deleted.py"])
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split("\0") == ["run", "--locked", "ruff", "check", "--", *paths, ""]
+    assert not list(tmp_path.glob("delaunay-python-sources.*"))
+
+
+def test_python_source_discovery_rejects_an_empty_file_set(tmp_path: Path) -> None:
+    """Empty discovery must not let the tool fall back to an implicit root scan."""
+    result = run_python_source_probe(tmp_path, [])
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "No Python source files found" in result.stderr
+    assert not list(tmp_path.glob("delaunay-python-sources.*"))
+
+
+def test_python_source_discovery_stops_after_partial_git_failure(tmp_path: Path) -> None:
+    """A failing Git listing must stop before a partial source set reaches the tool."""
+    (tmp_path / "partial.py").write_text('"""Partial listing probe."""\n', encoding="utf-8")
+    result = run_python_source_probe(tmp_path, ["partial.py"], git_returncode=128)
+
+    assert result.returncode == 128
+    assert result.stdout == ""
+    assert not list(tmp_path.glob("delaunay-python-sources.*"))
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "scripts/typing_probe.py",
+        "tests/semgrep/scripts/tests/python_exceptions.py",
+        "tests/semgrep/scripts/tests/python_parse_boundaries.py",
+        "tests/semgrep/scripts/tests/python_style.py",
+    ],
+)
+def test_full_ruff_typing_policy_reaches_scripts_and_fixtures(filename: str) -> None:
+    """Negative probes prove annotation and import guards remain blocking."""
+    # Keep deliberately untyped probe text distinct from actual definitions so
+    # Semgrep's source-level return-annotation regex does not mistake it for code.
+    source_lines = [
+        '"""Typing policy probe."""',
+        "from pathlib import Path",
+        "",
+        "def missing_arguments(value, *args, **kwargs):",
+        "    return value",
+        "",
+        "def _private():",
+        "    return None",
+        "",
+        'def quoted(value: "Path") -> None:',
+        "    pass",
+        "",
+        "class Example:",
+        "    def __init__(self):",
+        "        pass",
+        "",
+        "    @staticmethod",
+        "    def static():",
+        "        return None",
+        "",
+        "    @classmethod",
+        "    def class_method(cls):",
+        "        return None",
+        "",
+    ]
+    source = "\n".join(source_lines)
+    result = run_safe_command(
+        sys.executable,
+        ["-m", "ruff", "check", "--config", str(REPO_ROOT / "pyproject.toml"), "--output-format", "json", "--stdin-filename", filename, "-"],
+        cwd=REPO_ROOT,
+        input=source,
+        check=False,
+        timeout=30,
+    )
+    codes = {finding["code"] for finding in json.loads(result.stdout)}
+
+    assert result.returncode == 1
+    assert {"ANN001", "ANN002", "ANN003", "ANN201", "ANN202", "ANN204", "ANN205", "ANN206", "TC003", "UP037"} <= codes
 
 
 def test_release_signal_benchmark_recipes_match_python_runner() -> None:

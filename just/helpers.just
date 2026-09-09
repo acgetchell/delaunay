@@ -213,6 +213,27 @@ _performance-tag-pair-state current_tag baseline_tag:
         echo "inferred"
     fi
 
+# Run a Python tool over tracked sources plus new, unignored sources.
+[private]
+_python-tool command: _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source_list="$(mktemp "${TMPDIR:-/tmp}/delaunay-python-sources.XXXXXX")"
+    trap 'rm -f "$source_list"' EXIT
+    git --no-pager ls-files --cached --others --exclude-standard --deduplicate -z -- '*.py' '*.pyi' > "$source_list"
+    python_files=()
+    while IFS= read -r -d '' file; do
+        # A tracked file may have been deleted in the working tree.
+        if [[ -f "$file" ]]; then
+            python_files+=("$file")
+        fi
+    done < "$source_list"
+    if [[ ${#python_files[@]} -eq 0 ]]; then
+        echo "No Python source files found" >&2
+        exit 1
+    fi
+    uv run --locked {{ command }} -- "${python_files[@]}"
+
 [private]
 _review scope base: _ensure-coderabbit
     #!/usr/bin/env bash

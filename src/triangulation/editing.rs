@@ -156,7 +156,7 @@ where
 mod tests {
     use super::*;
     use crate::DelaunayRefinementBuilder;
-    use crate::core::tds::{Tds, TdsBuilder, TopologyOwner};
+    use crate::core::tds::{EntityKind, Tds, TdsBuilder, TopologyOwner};
     use crate::geometry::kernel::RobustKernel;
     use crate::triangulation::builder::TriangulationBuilder;
     use crate::triangulation::validation::ValidationPolicy;
@@ -326,5 +326,46 @@ mod tests {
                 if matches!(*source, InsertionError::DuplicateCoordinates { .. }))
         );
         assert_eq!(serde_json::to_value(&tri.tds).unwrap(), before);
+    }
+
+    #[test]
+    fn duplicate_uuid_at_distinct_coordinates_preserves_the_owner() {
+        let mut tri = non_delaunay_quad();
+        tri.validate_realization().unwrap();
+        let uuid = tri.vertices().next().unwrap().1.uuid();
+        let candidate = vertex!([0.2, 0.3]; data = 99).unwrap();
+        let duplicate = Vertex::try_new_with_uuid(*candidate.point(), uuid, Some(99)).unwrap();
+        let storage = tri.tds.clone_for_rollback();
+        let serialized = serde_json::to_value(&tri.tds).unwrap();
+        let hints = tri
+            .vertices()
+            .map(|(key, vertex)| (key, vertex.incident_simplex()))
+            .collect::<Vec<_>>();
+        let identity = tri.topology_owner_id();
+        let generation = tri.topology_generation();
+        let evidence = tri.topology_construction_provenance;
+        let policy = tri.validation_policy();
+        assert_eq!(
+            tri.insert_vertex(duplicate),
+            Err(TriangulationEditError::Insertion {
+                source: Box::new(InsertionError::DuplicateUuid {
+                    entity: EntityKind::Vertex,
+                    uuid
+                }),
+            })
+        );
+        assert_eq!(tri.tds, storage);
+        assert_eq!(serde_json::to_value(&tri.tds).unwrap(), serialized);
+        assert_eq!(
+            tri.vertices()
+                .map(|(key, vertex)| (key, vertex.incident_simplex()))
+                .collect::<Vec<_>>(),
+            hints
+        );
+        assert_eq!(tri.topology_owner_id(), identity);
+        assert_eq!(tri.topology_generation(), generation);
+        assert_eq!(tri.topology_construction_provenance, evidence);
+        assert_eq!(tri.validation_policy(), policy);
+        tri.validate_realization().unwrap();
     }
 }

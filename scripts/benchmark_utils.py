@@ -6551,7 +6551,7 @@ class PerformanceComparator:
 
         return "⚠️ Sampling configuration differs from baseline: " + "; ".join(mismatches)
 
-    def _write_comparison_header(self, f, metadata: dict[str, str], hardware_report: str, *, sampling_warning: str = "") -> None:
+    def _write_comparison_header(self, f: TextIO, metadata: dict[str, str], hardware_report: str, *, sampling_warning: str = "") -> None:
         """Write the header section of comparison file."""
         f.write("Comparison Results\n")
         f.write("==================\n")
@@ -6870,13 +6870,13 @@ class PerformanceComparator:
             return None
         return cur_mean_us, base_mean_us
 
-    def _write_benchmark_header(self, f, benchmark: BenchmarkData) -> None:
+    def _write_benchmark_header(self, f: TextIO, benchmark: BenchmarkData) -> None:
         """Write benchmark section header."""
         f.write(f"{benchmark.header_line()}\n")
         if benchmark.benchmark_id:
             f.write(f"Benchmark ID: {benchmark.benchmark_id}\n")
 
-    def _write_current_benchmark_data(self, f, benchmark: BenchmarkData) -> None:
+    def _write_current_benchmark_data(self, f: TextIO, benchmark: BenchmarkData) -> None:
         """Write current benchmark data."""
         f.write(f"Current Time: [{benchmark.time_low}, {benchmark.time_mean}, {benchmark.time_high}] {benchmark.time_unit}\n")
         if benchmark.throughput_mean is not None:
@@ -6884,7 +6884,7 @@ class PerformanceComparator:
                 f"Current Throughput: [{benchmark.throughput_low}, {benchmark.throughput_mean}, {benchmark.throughput_high}] {benchmark.throughput_unit}\n",
             )
 
-    def _write_baseline_benchmark_data(self, f, benchmark: BenchmarkData) -> None:
+    def _write_baseline_benchmark_data(self, f: TextIO, benchmark: BenchmarkData) -> None:
         """Write baseline benchmark data."""
         f.write(f"Baseline Time: [{benchmark.time_low}, {benchmark.time_mean}, {benchmark.time_high}] {benchmark.time_unit}\n")
         if benchmark.throughput_mean is not None:
@@ -6892,7 +6892,7 @@ class PerformanceComparator:
                 f"Baseline Throughput: [{benchmark.throughput_low}, {benchmark.throughput_mean}, {benchmark.throughput_high}] {benchmark.throughput_unit}\n",
             )
 
-    def _write_time_comparison(self, f, current: BenchmarkData, baseline: BenchmarkData) -> tuple[float | None, bool]:
+    def _write_time_comparison(self, f: TextIO, current: BenchmarkData, baseline: BenchmarkData) -> tuple[float | None, bool]:
         """Write time comparison and return time change percentage and whether individual regression was found."""
         if baseline.time_mean <= 0:
             f.write("Time Change: N/A (baseline mean is 0)\n")
@@ -6951,7 +6951,7 @@ class PerformanceComparator:
 
         return time_change_pct, is_individual_regression
 
-    def _write_throughput_comparison(self, f, current: BenchmarkData, baseline: BenchmarkData) -> None:
+    def _write_throughput_comparison(self, f: TextIO, current: BenchmarkData, baseline: BenchmarkData) -> None:
         """Write throughput comparison if data is available."""
         if current.throughput_mean is None or baseline.throughput_mean is None:
             return

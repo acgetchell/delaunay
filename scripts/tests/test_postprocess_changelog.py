@@ -1168,7 +1168,7 @@ class TestIntegration:
         assert changelog.read_bytes().decode("utf-8") == original
         assert list(tmp_path.glob(".CHANGELOG.md.*.tmp")) == []
 
-    def test_cli_reports_malformed_utf8_without_traceback(self, tmp_path: Path, capsys) -> None:
+    def test_cli_reports_malformed_utf8_without_traceback(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         changelog = tmp_path / "CHANGELOG.md"
         changelog.write_bytes(b"# Changelog\n\xff\n")
 
@@ -1186,7 +1186,7 @@ class TestIntegration:
         self,
         operation: str,
         tmp_path: Path,
-        capsys,
+        capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         changelog = tmp_path / "CHANGELOG.md"

@@ -1,6 +1,10 @@
+"""Positive and negative fixtures for Python data boundary policies."""
+
 import json
-from io import StringIO
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from io import StringIO
 
 
 def reject_json_constant(value: str) -> object:
