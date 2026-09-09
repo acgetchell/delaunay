@@ -29,7 +29,7 @@ taplo_version := "0.10.0"
 tectonic_version := "0.17.0"
 tex_fmt_version := "0.5.7"
 typos_version := "1.50.1"
-uv_version := "0.12.10"
+uv_version := "0.12.11"
 zizmor_version := "1.30.1"
 
 # Common cargo-llvm-cov arguments for all coverage runs.
@@ -1658,7 +1658,7 @@ update-cargo-tools: _ensure-cargo-install-update _ensure-uv-stable
 # Advance Cargo and exact Python development requirements plus their lockfiles.
 [doc('Update Cargo and Python development requirements plus all Cargo/uv locked dependencies.')]
 [group('build and setup')]
-update-dependencies: _ensure-cargo-edit _ensure-uv-available update-cargo-dependencies update-python-dependencies
+update-dependencies: _ensure-cargo-edit _ensure-uv-stable update-cargo-dependencies update-python-dependencies
 
 # Resolve latest exact Python development tools, retain ranged requirements, and sync.
 [doc('Update exact dependency-groups.dev pins and uv.lock through uv.')]

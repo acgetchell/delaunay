@@ -573,13 +573,13 @@ def test_uv_backed_recipes_reuse_pinned_guard() -> None:
         dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
         assert "_ensure-uv" in dependencies, name
 
-    for name in ("_ensure-uv-stable", "update-dependencies", "update-python-dependencies"):
+    for name in ("_ensure-uv-stable", "update-python-dependencies"):
         dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
         assert "_ensure-uv-available" in dependencies, name
         assert "_ensure-uv" not in dependencies, name
 
 
-@pytest.mark.parametrize("recipe", ["update", "update-cargo-tools"])
+@pytest.mark.parametrize("recipe", ["update", "update-cargo-tools", "update-dependencies"])
 def test_update_preflights_stable_uv_before_mutations(recipe: str) -> None:
     """Reject unsupported uv output before dependency or installed-tool updates."""
     rendered_result = run_just("--dry-run", recipe)
@@ -588,10 +588,13 @@ def test_update_preflights_stable_uv_before_mutations(recipe: str) -> None:
 
     assert rendered.count(preflight) == 1
     assert rendered.index("uv --version") < rendered.index(preflight)
-    assert rendered.index(preflight) < rendered.index("cargo install-update --locked")
-    if recipe == "update":
+    if recipe in {"update", "update-cargo-tools"}:
+        assert rendered.index(preflight) < rendered.index("cargo install-update --locked")
+    if recipe in {"update", "update-dependencies"}:
         assert rendered.index(preflight) < rendered.index("cargo upgrade --incompatible allow")
         assert rendered.index(preflight) < rendered.index("uv run --locked update-python-dev-pins")
+        assert rendered.index(preflight) < rendered.index("uv lock --upgrade")
+        assert rendered.index(preflight) < rendered.index("uv sync --locked --group dev")
     assert "installed_version=" not in rendered.split(preflight)[0]
 
 
@@ -704,7 +707,7 @@ def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
     dependency_result = run_just("--dry-run", "update-dependencies")
     dependency_update = dependency_result.stdout + dependency_result.stderr
     dependency_preflights = [dependency["recipe"] for dependency in recipes["update-dependencies"]["dependencies"]]
-    assert dependency_preflights[:2] == ["_ensure-cargo-edit", "_ensure-uv-available"]
+    assert dependency_preflights[:2] == ["_ensure-cargo-edit", "_ensure-uv-stable"]
     assert dependency_update.index("cargo_tool_has_exact_version") < dependency_update.index("cargo upgrade --incompatible allow")
     assert dependency_update.index("uv --version") < dependency_update.index("cargo upgrade --incompatible allow")
     assert "cargo upgrade --incompatible allow" in dependency_update

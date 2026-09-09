@@ -63,6 +63,62 @@ def test_reconcile_pins_rejects_missing_package_without_writing(tmp_path: Path) 
     assert justfile.read_text(encoding="utf-8") == original
 
 
+@pytest.mark.parametrize(
+    ("cargo_output", "message"),
+    [
+        (installed_output() + "rumdl v2.0.0:\n    rumdl\n", "duplicate installed Cargo package: rumdl"),
+        (installed_output(override=("rumdl", "2.0")), "invalid installed version for rumdl: 2.0"),
+    ],
+)
+def test_reconcile_pins_rejects_invalid_cargo_inventory_without_writing(
+    cargo_output: str,
+    message: str,
+    tmp_path: Path,
+) -> None:
+    justfile = tmp_path / "justfile"
+    original = justfile_text()
+    justfile.write_text(original, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        update_cargo_tool_pins.reconcile_pins(justfile, cargo_output, "uv 2.0.0")
+
+    assert justfile.read_text(encoding="utf-8") == original
+    assert list(tmp_path.iterdir()) == [justfile]
+
+
+def test_reconcile_pins_preserves_file_and_cleans_up_failed_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    justfile = tmp_path / "justfile"
+    original = justfile_text()
+    justfile.write_text(original, encoding="utf-8")
+    original_mode = justfile.stat().st_mode
+
+    def failed_replace(temporary: Path, destination: Path) -> Never:
+        assert temporary.parent == tmp_path
+        assert temporary != justfile
+        assert destination == justfile
+        msg = "replacement denied"
+        raise PermissionError(msg)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(type(justfile), "replace", failed_replace)
+        with pytest.raises(PermissionError, match="replacement denied"):
+            update_cargo_tool_pins.reconcile_pins(justfile, installed_output(), "uv 2.0.0")
+
+    assert justfile.read_text(encoding="utf-8") == original
+    assert justfile.stat().st_mode == original_mode
+    assert list(tmp_path.iterdir()) == [justfile]
+
+    changes = update_cargo_tool_pins.reconcile_pins(justfile, installed_output(), "uv 2.0.0")
+
+    assert changes == {"uv_version": ("1.2.3", "2.0.0")}
+    assert justfile.read_text(encoding="utf-8") == original.replace('uv_version := "1.2.3"', 'uv_version := "2.0.0"')
+    assert justfile.stat().st_mode == original_mode
+    assert list(tmp_path.iterdir()) == [justfile]
+
+
 def test_update_pin_text_rejects_duplicate_assignment() -> None:
     duplicated = justfile_text() + 'rumdl_version := "1.2.3"\n'
     installed = update_cargo_tool_pins.parse_installed_packages(installed_output())
@@ -182,6 +238,43 @@ def test_uv_preflight_reports_command_failure_without_traceback(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == f"failed uv preflight (requires stable X.Y.Z): {error}\n"
+
+
+def test_main_reports_updated_pins_and_leaves_matching_file_untouched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    justfile = tmp_path / "justfile"
+    original = justfile_text()
+    justfile.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(
+        update_cargo_tool_pins,
+        "run_cargo_command",
+        lambda _args, **_kwargs: subprocess.CompletedProcess([], 0, stdout=installed_output(), stderr=""),
+    )
+    monkeypatch.setattr(
+        update_cargo_tool_pins,
+        "run_safe_command",
+        lambda _command, _args, **_kwargs: subprocess.CompletedProcess([], 0, stdout="uv 2.0.0", stderr=""),
+    )
+
+    assert update_cargo_tool_pins.main(["--justfile", str(justfile)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "Updated uv_version: 1.2.3 -> 2.0.0\n"
+    assert captured.err == ""
+    expected = original.replace('uv_version := "1.2.3"', 'uv_version := "2.0.0"')
+    assert justfile.read_text(encoding="utf-8") == expected
+    updated_stat = justfile.stat()
+
+    assert update_cargo_tool_pins.main(["--justfile", str(justfile)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "Tool pins already match installed repository tools.\n"
+    assert captured.err == ""
+    assert justfile.read_text(encoding="utf-8") == expected
+    assert justfile.stat().st_ino == updated_stat.st_ino
+    assert justfile.stat().st_mtime_ns == updated_stat.st_mtime_ns
+    assert list(tmp_path.iterdir()) == [justfile]
 
 
 def test_main_reports_missing_cargo_without_traceback(

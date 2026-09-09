@@ -2544,6 +2544,155 @@ mod tests {
         }
     }
 
+    fn assert_periodic_shift_range_limits<const D: usize>() {
+        // Quarter-unit simplices leave a margin inside a unit-period chart.
+        let mut base_coords = vec![[0.0; D]; D + 1];
+        for axis in 0..D {
+            base_coords[axis + 1][axis] = 0.25;
+        }
+        let axis = D - 1;
+        // These exact integer bounds straddle each end of the i32 range.
+        let cases = [
+            (2_147_483_647.0, Ok((i32::MIN, -2_147_483_646))),
+            (2_147_483_648.0, Err((-2_147_483_649.0, -2_147_483_647.0))),
+            (-2_147_483_646.0, Ok((2_147_483_645, i32::MAX))),
+            (-2_147_483_647.0, Err((2_147_483_646.0, 2_147_483_648.0))),
+        ];
+        for (displacement, expected) in cases {
+            let mut coords = base_coords.clone();
+            coords.extend(base_coords.iter().map(|point| {
+                let mut translated = *point;
+                translated[axis] += displacement;
+                translated
+            }));
+            let (tds, keys) = tds_from_vertices_and_simplices_with_keys(
+                &coords,
+                &[(0..=D).collect(), (D + 1..2 * (D + 1)).collect()],
+            );
+            let tri = tri_from_tds(tds);
+            let realized = tri.collect_realized_simplices().unwrap();
+            let first = realized
+                .iter()
+                .find(|simplex| simplex.key == keys[0])
+                .unwrap();
+            let second = realized
+                .iter()
+                .find(|simplex| simplex.key == keys[1])
+                .unwrap();
+            let result = periodic_shift_ranges(first, second, &[1.0; D]);
+
+            match expected {
+                Ok(bounds) => {
+                    let ranges = result.expect("representable shift bounds must be accepted");
+                    assert_eq!(ranges.len(), D);
+                    assert_eq!(ranges[axis], bounds);
+                    assert!(ranges[..axis].iter().all(|range| *range == (-1, 1)));
+                }
+                Err((expected_lower, expected_upper)) => {
+                    let error = result.expect_err("out-of-range shifts must not truncate or clamp");
+                    let TriangulationRealizationValidationError::PeriodicTranslateRangeOverflow {
+                        first_simplex_key,
+                        first_simplex_uuid,
+                        second_simplex_key,
+                        second_simplex_uuid,
+                        detail,
+                        axis: reported_axis,
+                        lower_bound,
+                        upper_bound,
+                    } = error
+                    else {
+                        panic!("expected periodic range overflow, got {error:?}");
+                    };
+                    assert_eq!(reported_axis, axis);
+                    assert_abs_diff_eq!(lower_bound, expected_lower, epsilon = 0.0);
+                    assert_abs_diff_eq!(upper_bound, expected_upper, epsilon = 0.0);
+                    assert_eq!(
+                        (first_simplex_key, first_simplex_uuid),
+                        (first.key, first.uuid)
+                    );
+                    assert_eq!(
+                        (second_simplex_key, second_simplex_uuid),
+                        (second.key, second.uuid)
+                    );
+                    assert_eq!(detail.first_simplex, first.detail());
+                    assert_eq!(detail.second_simplex, second.detail());
+                }
+            }
+        }
+    }
+
+    fn assert_translation_overflow_preserves_vertex_diagnostic<const D: usize>() {
+        let axis = D - 1;
+        for (extreme, step, expected_value) in [
+            (f64::MAX, 1, InvalidCoordinateValue::PositiveInfinity),
+            (-f64::MAX, -1, InvalidCoordinateValue::NegativeInfinity),
+        ] {
+            let mut coords = vec![[0.0; D]; D + 1];
+            for coordinate_axis in 0..D {
+                coords[coordinate_axis + 1][coordinate_axis] = 0.25;
+            }
+            coords[D][axis] = extreme;
+            let tri = tri_from_tds(tds_from_vertices_and_simplices(
+                &coords,
+                &[(0..=D).collect()],
+            ));
+            let realized = tri.collect_realized_simplices().unwrap().pop().unwrap();
+            let mut periods = [1.0; D];
+            periods[axis] = f64::MAX;
+            let mut shift = [0; D];
+            shift[axis] = step;
+
+            // Earlier vertices translate to finite +/-MAX. Only the last vertex overflows.
+            let error = translated_simplex(&realized, &periods, &shift)
+                .expect_err("an unrepresentable translated coordinate must be rejected");
+            let TriangulationRealizationValidationError::CoordinateValidation {
+                simplex_key,
+                simplex_uuid,
+                vertex_key,
+                vertex_uuid,
+                source,
+            } = error
+            else {
+                panic!("expected coordinate validation failure, got {error:?}");
+            };
+            assert_eq!((simplex_key, simplex_uuid), (realized.key, realized.uuid));
+            assert_eq!(vertex_key, realized.vertex_keys[D]);
+            assert_eq!(vertex_uuid, realized.vertex_uuids[D]);
+            assert_eq!(
+                source,
+                CoordinateValidationError::InvalidCoordinate {
+                    coordinate_index: axis,
+                    coordinate_value: expected_value,
+                    dimension: D,
+                }
+            );
+
+            let retry = translated_simplex(&realized, &periods, &[0; D]).unwrap();
+            assert_eq!(retry.realization.coordinates(), coords.as_slice());
+            assert_eq!(retry.realization.labels(), realized.realization.labels());
+        }
+    }
+
+    macro_rules! periodic_numeric_boundary_tests {
+        ($($dim:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<periodic_shift_ranges_enforce_i32_limits_ $dim d>]() {
+                        assert_periodic_shift_range_limits::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<translation_overflow_preserves_vertex_diagnostic_ $dim d>]() {
+                        assert_translation_overflow_preserves_vertex_diagnostic::<$dim>();
+                    }
+                )+
+            }
+        };
+    }
+
+    periodic_numeric_boundary_tests!(2, 3, 4, 5);
+
     #[test]
     fn point_for_identity_reports_missing_lifted_offset() {
         let coords = [[0.9, 0.1], [0.1, 0.1], [0.9, 0.3]];

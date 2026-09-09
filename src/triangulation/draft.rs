@@ -263,9 +263,12 @@ mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tds::TdsBuilder;
+    use crate::core::tds::{GeometricError, InvariantError, TdsBuilder, TdsError};
     use crate::geometry::kernel::AdaptiveKernel;
+    use crate::topology::traits::topological_space::TopologyKind;
+    use crate::triangulation::validation::TriangulationValidationError;
     use crate::vertex;
+    use std::assert_matches;
 
     #[test]
     fn explicit_connectivity_publishes_without_selecting_delaunay_connectivity() {
@@ -327,5 +330,122 @@ mod tests {
                 .finish(TriangulationBuildMode::Canonicalizing)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn transactional_publication_rejects_degeneracy_and_retains_the_journal() {
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![2.0, 0.0].unwrap(),
+        ];
+        let mut tds = TdsBuilder::new(&vertices, &[vec![0, 1, 2]])
+            .build()
+            .unwrap();
+        let expected_snapshot = serde_json::to_value(&tds).unwrap();
+        let expected_owner = tds.topology_owner_id();
+        let expected_generation = tds.generation();
+        let savepoint = tds.begin_rollback_savepoint();
+
+        let failure = TriangulationDraft::with_topology_context(
+            tds,
+            AdaptiveKernel::new(),
+            TopologyGuarantee::DEFAULT,
+            GlobalTopology::DEFAULT,
+        )
+        .finish_canonicalizing_in_transaction()
+        .expect_err("a zero-area simplex must fail geometric publication");
+        assert_matches!(
+            failure.reason(),
+            TriangulationBuilderError::GeometricNondegeneracy { source }
+                if matches!(source.as_ref(), TdsError::Geometric {
+                    source: GeometricError::DegenerateOrientation { .. },
+                })
+        );
+
+        let mut recovered = failure.into_owner();
+        recovered.rollback_savepoint(savepoint);
+        assert_eq!(recovered.topology_owner_id(), expected_owner);
+        assert_eq!(recovered.generation(), expected_generation);
+        assert_eq!(serde_json::to_value(&recovered).unwrap(), expected_snapshot);
+        recovered.validate().unwrap();
+    }
+
+    #[test]
+    fn transactional_publication_rolls_back_late_failure_and_can_retry() {
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+        ];
+        let mut tds = TdsBuilder::new(&vertices, &[vec![0, 2, 1]])
+            .build()
+            .unwrap();
+        let expected_snapshot = serde_json::to_value(&tds).unwrap();
+        let expected_owner = tds.topology_owner_id();
+        let expected_generation = tds.generation();
+        let expected_vertex_keys: Vec<_> = tds.vertex_keys().collect();
+        let (simplex_key, simplex) = tds.simplices().next().unwrap();
+        let simplex_uuid = simplex.uuid();
+        let savepoint = tds.begin_rollback_savepoint();
+
+        let failure = TriangulationDraft::with_topology_context(
+            tds,
+            AdaptiveKernel::new(),
+            TopologyGuarantee::DEFAULT,
+            GlobalTopology::Spherical,
+        )
+        .finish_canonicalizing_in_transaction()
+        .expect_err("an open triangle cannot publish as a closed sphere");
+        assert_matches!(
+            failure.reason(),
+            TriangulationBuilderError::TopologyValidation { source }
+                if matches!(source.as_ref(), InvariantError::Triangulation {
+                    source: TriangulationValidationError::BoundaryFacetInClosedTopology {
+                        topology: TopologyKind::Spherical,
+                        simplex_key: key,
+                        simplex_uuid: uuid,
+                        ..
+                    },
+                } if *key == simplex_key && *uuid == simplex_uuid)
+        );
+
+        let mut recovered = failure.into_owner();
+        assert_ne!(recovered.generation(), expected_generation);
+        assert_ne!(serde_json::to_value(&recovered).unwrap(), expected_snapshot);
+        recovered.rollback_savepoint(savepoint);
+        assert_eq!(recovered.topology_owner_id(), expected_owner);
+        assert_eq!(recovered.generation(), expected_generation);
+        assert_eq!(
+            recovered.vertex_keys().collect::<Vec<_>>(),
+            expected_vertex_keys
+        );
+        assert_eq!(recovered.simplex_keys().collect::<Vec<_>>(), [simplex_key]);
+        assert_eq!(serde_json::to_value(&recovered).unwrap(), expected_snapshot);
+        recovered.validate().unwrap();
+
+        let retry_savepoint = recovered.begin_rollback_savepoint();
+        let triangulation = TriangulationDraft::with_topology_context(
+            recovered,
+            AdaptiveKernel::new(),
+            TopologyGuarantee::DEFAULT,
+            GlobalTopology::Euclidean,
+        )
+        .finish_canonicalizing_in_transaction()
+        .expect("the recovered triangle should publish with Euclidean topology");
+        assert_eq!(
+            triangulation.validation_policy(),
+            TopologyGuarantee::DEFAULT.default_validation_policy()
+        );
+        triangulation.validate_realization().unwrap();
+        let mut published = triangulation.into_tds();
+        published.commit_savepoint(retry_savepoint);
+        assert_eq!(published.topology_owner_id(), expected_owner);
+        assert_eq!(
+            published.vertex_keys().collect::<Vec<_>>(),
+            expected_vertex_keys
+        );
+        assert_eq!(published.simplex_keys().collect::<Vec<_>>(), [simplex_key]);
+        assert_eq!(published.simplex(simplex_key).unwrap().uuid(), simplex_uuid);
     }
 }
