@@ -32,7 +32,25 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up just
+        uses: $/.github/actions/setup-just
+
+      - name: Resolve zizmor version
+        id: zizmor_version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(just --evaluate zizmor_version)"
+          if [[ -z "$version" ]]; then
+            echo "::error::Could not resolve zizmor_version from justfile"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Run zizmor
-        uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
           inputs: .github
+          version: ${{ steps.zizmor_version.outputs.version }}
+          online-audits: true
+          persona: regular

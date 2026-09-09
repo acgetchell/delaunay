@@ -145,6 +145,10 @@ _ensure-uv-available:
     }
     uv --version >/dev/null
 
+_ensure-uv-stable: _ensure-uv-available
+    # Check the reconciler's contract without syncing dependencies or installing Python.
+    uv run --locked --no-sync --no-python-downloads python scripts/update_cargo_tool_pins.py --check-uv
+
 _ensure-yamllint: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail

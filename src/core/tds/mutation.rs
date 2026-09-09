@@ -2159,6 +2159,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             }
         }
 
+        for &simplex_key in &targets {
+            self.journal_simplex_before_write(simplex_key);
+        }
         for (simplex_key, simplex) in self.simplices.iter_mut() {
             if targets.contains(&simplex_key) {
                 simplex.swap_vertex_slots(0, 1);
@@ -3153,6 +3156,49 @@ mod tests {
         }
     }
 
+    fn assert_reverse_simplex_orientations_retains_nested_rollback<const D: usize>() {
+        let StageNeighborSlotFixture {
+            mut tds,
+            simplex_key,
+            neighbor_key,
+            ..
+        } = stage_neighbor_slot_fixture::<D>();
+        tds.assign_neighbors().unwrap();
+        tds.assign_incident_simplices().unwrap();
+        tds.normalize_coherent_orientation().unwrap();
+        tds.force_construction_complete_for_test();
+        tds.validate().unwrap();
+        let before = serde_json::to_value(&tds).unwrap();
+        let owner = tds.topology_owner_id();
+        let generation = tds.generation();
+        let vertex_keys: Vec<_> = tds.vertex_keys().collect();
+        let simplex_keys: Vec<_> = tds.simplex_keys().collect();
+        let simplex_vertices = tds.simplex(simplex_key).unwrap().vertices().to_vec();
+
+        let outer = tds.begin_rollback_savepoint();
+        tds.reverse_simplex_orientations(&[simplex_key, simplex_key])
+            .unwrap();
+        assert_eq!(tds.generation(), generation + 1);
+        let reversed = tds.simplex(simplex_key).unwrap().vertices();
+        assert_eq!(reversed[0], simplex_vertices[1]);
+        assert_eq!(reversed[1], simplex_vertices[0]);
+        assert_eq!(reversed[2..], simplex_vertices[2..]);
+
+        let inner = tds.begin_rollback_savepoint();
+        tds.reverse_simplex_orientations(&[neighbor_key]).unwrap();
+        tds.commit_savepoint(inner);
+        assert_eq!(tds.generation(), generation + 2);
+        tds.validate().unwrap();
+
+        tds.rollback_savepoint(outer);
+        assert_eq!(tds.topology_owner_id(), owner);
+        assert_eq!(tds.generation(), generation);
+        assert_eq!(tds.vertex_keys().collect::<Vec<_>>(), vertex_keys);
+        assert_eq!(tds.simplex_keys().collect::<Vec<_>>(), simplex_keys);
+        assert_eq!(serde_json::to_value(&tds).unwrap(), before);
+        tds.validate().unwrap();
+    }
+
     fn assert_reverse_simplex_orientations_rejects_malformed_neighbors_without_mutation<
         const D: usize,
     >() {
@@ -3434,6 +3480,11 @@ mod tests {
         ($($dim:expr),+ $(,)?) => {
             pastey::paste! {
                 $(
+                    #[test]
+                    fn [<reverse_simplex_orientations_retains_nested_rollback_ $dim d>]() {
+                        assert_reverse_simplex_orientations_retains_nested_rollback::<$dim>();
+                    }
+
                     #[test]
                     fn [<reverse_simplex_orientations_rejects_malformed_neighbors_without_mutation_ $dim d>]() {
                         assert_reverse_simplex_orientations_rejects_malformed_neighbors_without_mutation::<$dim>();

@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,18 @@ JUST_VERSION_RESOLVER = REPO_ROOT / ".github" / "actions" / "setup-just" / "reso
 RECIPE_DECLARATION = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)(?:\s+.*?)?:(?=\s|$)", re.MULTILINE)
 WORKFLOW_VERSION_LOOKUP = re.compile(r"just --evaluate ([a-z0-9_]+_version)")
 UNLOCKED_UV_RUN = re.compile(r"\buv\s+run\b(?!\s+--locked\b)")
+
+
+@dataclass(frozen=True, kw_only=True)
+class ZizmorAuthCase:
+    """Synthetic credential sources and the token expected at the scanner boundary."""
+
+    tokens: dict[str, str]
+    expected_value: str
+    gh_available: bool = True
+    gh_stdout: str = ""
+    gh_returncode: int = 0
+    trace: bool = False
 
 
 def run_just(*args: str) -> subprocess.CompletedProcess[str]:
@@ -76,6 +89,52 @@ def just_recipes() -> dict[str, dict[str, Any]]:
     recipes = document["recipes"]
     assert isinstance(recipes, dict)
     return recipes
+
+
+def run_zizmor_probe(
+    tmp_path: Path,
+    case: ZizmorAuthCase,
+    scan_returncode: int,
+) -> subprocess.CompletedProcess[str]:
+    """Exercise the rendered recipe with fake authentication and scanner commands."""
+    version = run_just("--evaluate", "zizmor_version").stdout.strip()
+    rendered = run_just("--dry-run", "zizmor")
+    exports = "\n".join(f"export {name}={shlex.quote(value)}" for name, value in case.tokens.items())
+    script = f"""
+unset ZIZMOR_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN GH_HOST ZIZMOR_OFFLINE ZIZMOR_NO_ONLINE_AUDITS
+{exports}
+command() {{
+    if [[ "$*" == "-v gh" ]]; then
+        return {0 if case.gh_available else 1}
+    fi
+    builtin command "$@"
+}}
+gh() {{
+    printf '%s\\n' "$*" >> {shlex.quote((tmp_path / "gh.log").as_posix())}
+    printf '%s\\n' {shlex.quote(case.gh_stdout)}
+    echo "fixture-auth-diagnostic" >&2
+    return {case.gh_returncode}
+}}
+zizmor() {{
+    if [[ "$*" == "--version" ]]; then
+        printf '%s\\n' {shlex.quote("zizmor " + version)}
+        return 0
+    fi
+    if [[ "${{ZIZMOR_GITHUB_TOKEN:-}}" != {shlex.quote(case.expected_value)} ]]; then
+        echo "Unexpected scanner credential" >&2
+        return 97
+    fi
+    if [[ -n "${{GH_TOKEN:-}}" || -n "${{GITHUB_TOKEN:-}}" ]]; then
+        echo "Conflicting scanner credential" >&2
+        return 98
+    fi
+    printf 'scan:%s\\n' "$*"
+    return {scan_returncode}
+}}
+{"set -x" if case.trace else ""}
+{rendered.stdout}{rendered.stderr}
+"""
+    return run_safe_command("bash", ["-c", script], cwd=REPO_ROOT, check=False, timeout=30)
 
 
 def workflow_trigger_paths(path: Path) -> tuple[set[str], set[str]]:
@@ -514,10 +573,28 @@ def test_uv_backed_recipes_reuse_pinned_guard() -> None:
         dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
         assert "_ensure-uv" in dependencies, name
 
-    for name in ("update-cargo-tools", "update-dependencies", "update-python-dependencies"):
-        dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
-        assert "_ensure-uv-available" in dependencies, name
-        assert "_ensure-uv" not in dependencies, name
+    stable_dependencies = {dependency["recipe"] for dependency in recipes["_ensure-uv-stable"]["dependencies"]}
+    assert stable_dependencies == {"_ensure-uv-available"}
+
+
+@pytest.mark.parametrize("recipe", ["update", "update-cargo-tools", "update-dependencies", "update-python-dependencies"])
+def test_update_preflights_stable_uv_before_mutations(recipe: str) -> None:
+    """Reject unsupported uv output before dependency or installed-tool updates."""
+    rendered_result = run_just("--dry-run", recipe)
+    rendered = rendered_result.stdout + rendered_result.stderr
+    preflight = "uv run --locked --no-sync --no-python-downloads python scripts/update_cargo_tool_pins.py --check-uv"
+
+    assert rendered.count(preflight) == 1
+    assert rendered.index("uv --version") < rendered.index(preflight)
+    if recipe in {"update", "update-cargo-tools"}:
+        assert rendered.index(preflight) < rendered.index("cargo install-update --locked")
+    if recipe in {"update", "update-dependencies"}:
+        assert rendered.index(preflight) < rendered.index("cargo upgrade --incompatible allow")
+    if recipe in {"update", "update-dependencies", "update-python-dependencies"}:
+        assert rendered.index(preflight) < rendered.index("uv run --locked update-python-dev-pins")
+        assert rendered.index(preflight) < rendered.index("uv lock --upgrade")
+        assert rendered.index(preflight) < rendered.index("uv sync --locked --group dev")
+    assert "installed_version=" not in rendered.split(preflight)[0]
 
 
 def test_setup_tools_closes_external_and_cargo_update_prerequisites() -> None:
@@ -620,7 +697,7 @@ def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
     recipes = just_recipes()
     update_dependencies = [dependency["recipe"] for dependency in recipes["update"]["dependencies"]]
 
-    assert update_dependencies == ["_ensure-cargo-install-update", "update-dependencies", "update-cargo-tools"]
+    assert update_dependencies == ["_ensure-cargo-install-update", "_ensure-uv-stable", "update-dependencies", "update-cargo-tools"]
 
     aggregate_result = run_just("--dry-run", "update")
     aggregate_update = aggregate_result.stdout + aggregate_result.stderr
@@ -629,7 +706,7 @@ def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
     dependency_result = run_just("--dry-run", "update-dependencies")
     dependency_update = dependency_result.stdout + dependency_result.stderr
     dependency_preflights = [dependency["recipe"] for dependency in recipes["update-dependencies"]["dependencies"]]
-    assert dependency_preflights[:2] == ["_ensure-cargo-edit", "_ensure-uv-available"]
+    assert dependency_preflights[:2] == ["_ensure-cargo-edit", "_ensure-uv-stable"]
     assert dependency_update.index("cargo_tool_has_exact_version") < dependency_update.index("cargo upgrade --incompatible allow")
     assert dependency_update.index("uv --version") < dependency_update.index("cargo upgrade --incompatible allow")
     assert "cargo upgrade --incompatible allow" in dependency_update
@@ -675,3 +752,64 @@ def test_workflow_tool_version_lookups_resolve_from_just() -> None:
     for name in version_names:
         result = run_just("--evaluate", name)
         assert result.stdout.strip(), name
+
+
+@pytest.mark.parametrize("scan_returncode", [0, 23])
+@pytest.mark.parametrize(
+    "case",
+    [
+        ZizmorAuthCase(
+            tokens={"ZIZMOR_GITHUB_TOKEN": "fixture-zizmor", "GH_TOKEN": "fixture-gh", "GITHUB_TOKEN": "fixture-github"}, expected_value="fixture-zizmor"
+        ),
+        ZizmorAuthCase(tokens={"GH_TOKEN": "fixture-gh", "GITHUB_TOKEN": "fixture-github"}, expected_value="fixture-gh"),
+        ZizmorAuthCase(tokens={"GITHUB_TOKEN": "fixture-github"}, expected_value="fixture-github"),
+        ZizmorAuthCase(tokens={}, gh_stdout="fixture-auth", expected_value="fixture-auth"),
+        ZizmorAuthCase(tokens={}, gh_stdout="fixture-partial-auth", gh_returncode=1, expected_value=""),
+        ZizmorAuthCase(tokens={}, expected_value=""),
+        ZizmorAuthCase(tokens={}, gh_available=False, expected_value=""),
+        ZizmorAuthCase(tokens={"ZIZMOR_GITHUB_TOKEN": "fixture-traced"}, expected_value="fixture-traced", trace=True),
+    ],
+)
+def test_zizmor_authentication_and_offline_fallback(
+    tmp_path: Path,
+    case: ZizmorAuthCase,
+    scan_returncode: int,
+) -> None:
+    """Select credentials privately, report offline scans, and preserve scanner failures."""
+    result = run_zizmor_probe(tmp_path, case, scan_returncode)
+
+    assert result.returncode == scan_returncode, result.stderr
+    expected_args = "--persona regular .github" if case.expected_value else "--offline --persona regular .github"
+    assert result.stdout == f"scan:{expected_args}\n"
+    assert ("online audits disabled" in result.stderr) == (not case.expected_value)
+    assert "fixture-" not in result.stdout + result.stderr
+    gh_log = tmp_path / "gh.log"
+    if case.gh_available and not case.tokens:
+        assert gh_log.read_text(encoding="utf-8") == "auth token --hostname github.com\n"
+    else:
+        assert not gh_log.exists()
+
+
+def test_zizmor_sarif_workflow_uses_local_pin_and_online_persona(tmp_path: Path) -> None:
+    """The hosted scanner must consume the evaluated local pin with online audits."""
+    workflow_path = REPO_ROOT / ".github" / "workflows" / "zizmor.yml"
+    workflow: Any = yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)  # noqa: S506 - BaseLoader constructs data only.
+    steps = workflow["jobs"]["analyze"]["steps"]
+    setup = next(step for step in steps if step.get("uses") == "$/.github/actions/setup-just")
+    resolver = next(step for step in steps if step.get("id") == "zizmor_version")
+    scanners = [step for step in steps if step.get("uses", "").startswith("zizmorcore/zizmor-action@")]
+
+    assert len(scanners) == 1
+    scanner = scanners[0]
+    assert steps.index(setup) < steps.index(resolver) < steps.index(scanner)
+    assert scanner["with"]["version"] == "${{ steps.zizmor_version.outputs.version }}"
+    assert scanner["with"]["online-audits"] == "true"
+    assert scanner["with"]["persona"] == "regular"
+    assert scanner["with"]["inputs"] == ".github"
+    assert scanner["with"].get("advanced-security", "true") == "true"
+
+    output_path = tmp_path / "github-output"
+    script = f"export GITHUB_OUTPUT={shlex.quote(output_path.as_posix())}\n{resolver['run']}"
+    run_safe_command("bash", ["-c", script], cwd=REPO_ROOT, timeout=30)
+    expected_version = run_just("--evaluate", "zizmor_version").stdout.strip()
+    assert output_path.read_text(encoding="utf-8") == f"version={expected_version}\n"

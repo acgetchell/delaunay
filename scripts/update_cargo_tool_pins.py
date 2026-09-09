@@ -110,6 +110,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--justfile", type=Path, default=Path("justfile"), help="Just source containing repository tool pins")
+    parser.add_argument("--check-uv", action="store_true", help="Only check that active uv reports one stable X.Y.Z version; do not read Cargo or pins")
     return parser.parse_args(argv)
 
 
@@ -117,11 +118,16 @@ def main(argv: list[str] | None = None) -> int:
     """Reconcile managed pins from the active Cargo and uv installations."""
     args = parse_args(argv)
     try:
+        if args.check_uv:
+            uv = run_safe_command("uv", ["--version"], timeout=30)
+            parse_tool_version(uv.stdout, "uv")
+            return 0
         cargo = run_cargo_command(["install", "--list"], timeout=30)
         uv = run_safe_command("uv", ["--version"], timeout=30)
         changes = reconcile_pins(args.justfile, cargo.stdout, uv.stdout)
     except (ExecutableNotFoundError, OSError, subprocess.SubprocessError, ValueError) as error:
-        print(f"failed to update tool pins: {error}", file=sys.stderr)
+        context = "failed uv preflight (requires stable X.Y.Z)" if args.check_uv else "failed to update tool pins"
+        print(f"{context}: {error}", file=sys.stderr)
         return 1
 
     if not changes:

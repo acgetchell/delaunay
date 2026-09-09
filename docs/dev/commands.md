@@ -79,7 +79,7 @@ changed surface.
 | Touched surface | Iteration validation | Final validation / PR readiness |
 |-----|-----|-----|
 | Markdown documentation (`*.md`) | `just markdown-check` | `just check-docs` |
-| Python sources and fixtures | Targeted pytest and `just python-check` | `just python-check` and `just test-python` |
+| Python sources and fixtures | Targeted pytest and `just python-check` | `just python-check`, `just python-fixture-lint`, and `just test-python` |
 | Jupyter notebooks (`notebooks/**/*.ipynb`) | `just notebook-check` | `just notebook-check` |
 | Paper sources and figures (`papers/**/*`, paper notebooks) | `just paper-check` | `just papers` |
 | Configuration only (JSON, TOML, YAML, CFF, workflows) | Matching config validator | `just check-config` |
@@ -198,7 +198,7 @@ version, then upgrades `uv.lock`, with
 packages owned by `setup-tools` and atomically reconciles their root `justfile`
 pins plus the active uv version after every requested package updates
 successfully. uv remains an external prerequisite managed outside this
-repository; the update workflow accepts its active version long enough to
+repository; the update workflow accepts its active stable `X.Y.Z` version long enough to
 record the new pin but does not replace the uv installation. Ordinary uv-backed
 recipes continue to require the exact reconciled pin. The Cargo tool updater
 requires `cargo-install-update` from the `cargo-update` package and does not
@@ -206,8 +206,14 @@ touch other Cargo-installed executables or uv's user-global tool environments.
 `setup-tools` and CI consume the reconciled declarations. The exact-pin step
 leaves ranged development requirements, project/runtime dependencies, optional
 dependencies, build requirements, and intentional uv overrides unchanged.
-The aggregate `just update` runs its `cargo-install-update` preflight before
-either dependency updater can change declarations or lockfiles.
+The aggregate `just update` runs its `cargo-install-update` and stable-uv
+preflights before either dependency updater can change declarations or
+lockfiles. Direct `just update-dependencies`, `just update-python-dependencies`,
+and `just update-cargo-tools` also check stable uv before their updates.
+These entry points reuse the pin reconciler's version parser without requiring
+uv to match the tracked pin. This check uses an already installed Python
+interpreter with dependency syncing and Python downloads disabled; invalid uv
+output fails before updates begin.
 
 Agents should **prefer running `just` commands instead of invoking the
 underlying tools directly**. The justfile ensures the correct flags,
@@ -969,6 +975,20 @@ Run with:
 just action-lint
 ```
 
+`just zizmor` uses the repository's pinned scanner with the `regular` persona.
+It takes a token from `ZIZMOR_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`, in
+that order, then tries `gh auth token` for `GH_HOST` (default `github.com`).
+Tokens are passed through the environment without being printed. With
+authentication, online audits include action SHA/version-comment checks;
+without it, the recipe reports that it is running offline. Explicit zizmor
+environment settings such as `ZIZMOR_OFFLINE` still apply.
+
+The `zizmor.yml` SARIF workflow reads `zizmor_version` from `justfile` and
+explicitly enables online audits with the same persona. Zizmor resolves action
+SHAs against release tags; repository Semgrep rules require an explicit scanner
+version and disabled setup-uv caching in release workflows without duplicating
+that remote resolution.
+
 ---
 
 ## Recommended Command Matrix
@@ -1018,7 +1038,8 @@ CI enforces:
 - Markdown, JSON, TOML, YAML, CFF, and spell checks
 - release-version reference synchronization
 - `Cargo.toml`/`Cargo.lock` synchronization
-- Python lint, type checks, and tests
+- Python formatting, full-policy lint, type checks, and tests
+- direct Python Semgrep fixture lint
 - notebook hygiene and extracted-code checks
 - shell script formatting and lint checks
 - core Rust formatting, Clippy, rustdoc, and Semgrep checks

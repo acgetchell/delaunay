@@ -1,0 +1,80 @@
+name: Zizmor policy fixtures
+on: workflow_dispatch
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scanner pin resolved from justfile
+        # ok: delaunay.github-actions.zizmor-tool-version-pinned
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          inputs: .github
+          version: ${{ steps.zizmor_version.outputs.version }}
+          online-audits: true
+          persona: regular
+
+      - name: Missing scanner version
+        # ruleid: delaunay.github-actions.zizmor-tool-version-pinned
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          inputs: .github
+          online-audits: true
+          persona: regular
+
+      # ok: delaunay.github-actions.zizmor-tool-version-pinned
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: "1.30.1"
+
+      # ruleid: delaunay.github-actions.zizmor-tool-version-pinned
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: latest
+
+      - name: Inputs before uses
+        with:
+          version: 1.30.1
+        # ok: delaunay.github-actions.zizmor-tool-version-pinned
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+
+      - name: Empty version before uses
+        with:
+          version: ""
+        # ruleid: delaunay.github-actions.zizmor-tool-version-pinned
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+
+      - name: Version in another mapping does not pin the scanner
+        env:
+          version: "1.30.1"
+        # ruleid: delaunay.github-actions.zizmor-tool-version-pinned
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+
+      - name: Quoted version expression
+        # ok: delaunay.github-actions.zizmor-tool-version-pinned
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: "${{ steps.zizmor_version.outputs.version }}"
+
+      - name: Null scanner version
+        # ruleid: delaunay.github-actions.zizmor-tool-version-pinned
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version:
+
+      - name: Quoted action with scanner pin
+        # ok: delaunay.github-actions.zizmor-tool-version-pinned
+        uses: "zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482" # v0.6.4
+        with:
+          version: "1.30.1"
+
+      - name: Quoted action missing scanner pin
+        # ruleid: delaunay.github-actions.zizmor-tool-version-pinned
+        uses: "zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482" # v0.6.4
+
+      # ok: delaunay.github-actions.zizmor-tool-version-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Ordinary CI may retain uv caching
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true

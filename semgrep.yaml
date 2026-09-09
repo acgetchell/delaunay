@@ -2981,6 +2981,82 @@ rules:
     patterns:
       - pattern-regex: '(?m)^[ \t]*(?:-[ \t]*)?uses:[ \t]*actions/checkout@[a-fA-F0-9]{40}[^\n]*\n(?!(?:[ \t]*with:\n)?(?:[ \t]{10,}\S[^\n]*\n){0,8}[ \t]{10,}persist-credentials:[ \t]*false\b)' # yamllint disable-line rule:line-length
 
+  - id: delaunay.github-actions.zizmor-tool-version-pinned
+    languages:
+      - yaml
+    severity: WARNING
+    message: "Declare a stable zizmor version or an expression resolving the justfile pin in zizmor-action's with.version."
+    metadata:
+      category: security
+      rationale: "A floating scanner version can make local audits disagree with GitHub SARIF findings."
+    paths:
+      include:
+        - "/.github/workflows/**/*.yml"
+        - "/.github/workflows/**/*.yaml"
+        - "/tests/semgrep/.github/workflows/**/*.yml"
+        - "/tests/semgrep/.github/workflows/**/*.yaml"
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern: |
+                  uses: $ACTION
+                  ...
+              - pattern-not: |
+                  uses: $ACTION
+                  with:
+                    version: $VERSION
+                    ...
+                  ...
+          - patterns:
+              - pattern: |
+                  uses: $ACTION
+                  with:
+                    version: $VERSION
+                    ...
+                  ...
+              - metavariable-regex:
+                  metavariable: $VERSION
+                  regex: ^(?!(?:["']?(?:[0-9]+\.[0-9]+\.[0-9]+|\$\{\{.+\}\})["']?)$)
+      - metavariable-regex:
+          metavariable: $ACTION
+          regex: ^["']?zizmorcore/zizmor-action@
+      - focus-metavariable: $ACTION
+
+  - id: delaunay.github-actions.release-setup-uv-cache-disabled
+    languages:
+      - yaml
+    severity: ERROR
+    message: "Set enable-cache: false on setup-uv steps that produce release artifacts."
+    metadata:
+      category: security
+      rationale: "Release artifact producers must not restore writable dependency caches."
+    paths:
+      include:
+        - "/.github/workflows/release-*.yml"
+        - "/.github/workflows/release-*.yaml"
+        - "/tests/semgrep/.github/workflows/release-*.yml"
+        - "/tests/semgrep/.github/workflows/release-*.yaml"
+    patterns:
+      - pattern: |
+          uses: $ACTION
+          ...
+      - metavariable-regex:
+          metavariable: $ACTION
+          regex: ^["']?astral-sh/setup-uv@
+      - pattern-not: |
+          uses: $ACTION
+          with:
+            enable-cache: false
+            ...
+          ...
+      - pattern-not: |
+          uses: $ACTION
+          with:
+            enable-cache: "false"
+            ...
+          ...
+      - focus-metavariable: $ACTION
+
   - id: delaunay.github-actions.no-pull-request-target
     languages:
       - regex
