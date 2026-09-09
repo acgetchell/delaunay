@@ -6343,8 +6343,54 @@ Benchmark completed.""",
         write_estimate(tmp_path / "target", ("validation", "validate_2d"), 1_000.0)
         (tmp_path / "target/criterion/validation/validate_2d/base/benchmark.json").unlink()
 
-        with pytest.raises(ValueError, match="could not load Criterion benchmark metadata"):
-            PerformanceSummaryGenerator(tmp_path)._collect_release_signal_section_evidence()
+        sections = PerformanceSummaryGenerator(tmp_path)._collect_release_signal_section_evidence()
+        section = next(section for section in sections if section.target == "ci_performance_suite")
+        assert section.result_ids == ()
+        assert "validation" in section.missing_group_prefixes
+        assert not section.is_complete
+
+    @pytest.mark.parametrize("sample", ["base", "new"])
+    @pytest.mark.parametrize("metadata", [None, "{", "[]", '{"full_id":"","group_id":"obsolete"}', '{"full_id":"standalone","group_id":"standalone"}'])
+    def test_release_signal_coverage_skips_unusable_metadata(self, tmp_path: Path, sample: str, metadata: str | None) -> None:
+        """Unusable cached samples must not hide valid measured report groups."""
+        write_complete_release_signal_coverage(tmp_path)
+        write_named_estimate(tmp_path / "target", ("obsolete", "fixture"), sample, 1_000.0, stat="mean")
+        criterion_dir = tmp_path / "target/criterion"
+        metadata_path = criterion_dir / "obsolete/fixture" / sample / "benchmark.json"
+        if metadata is None:
+            metadata_path.unlink()
+        else:
+            metadata_path.write_text(metadata, encoding=UTF8)
+
+        sections = PerformanceSummaryGenerator(tmp_path)._collect_release_signal_section_evidence()
+        assert all(section.is_complete for section in sections)
+        assert "obsolete/fixture" not in benchmark_utils._criterion_result_ids(criterion_dir)
+        # Comparison and artifact consumers retain the strict default.
+        with pytest.raises((TypeError, ValueError)):
+            benchmark_utils._criterion_estimates_by_id(criterion_dir, sample)
+
+    def test_release_signal_result_ids_preserve_samples_and_sorting(self, tmp_path: Path) -> None:
+        """Collect valid base/new IDs once, with new estimates taking precedence."""
+        write_named_estimate(tmp_path, ("validation", "z_base"), "base", 1_000.0, stat="mean")
+        write_named_estimate(tmp_path, ("validation", "a_new"), "new", 1_000.0, stat="mean")
+        write_named_estimate(tmp_path, ("validation", "shared"), "base", 1_000.0, stat="mean")
+        write_named_estimate(tmp_path, ("validation", "shared"), "new", 2_000.0, stat="mean")
+        write_named_estimate(tmp_path, ("validation", "invalid_new"), "base", 1_000.0, stat="mean")
+        write_named_estimate(tmp_path, ("validation", "invalid_new"), "new", -1.0, stat="mean")
+
+        assert benchmark_utils._criterion_result_ids(tmp_path / "criterion") == (
+            "validation/a_new",
+            "validation/shared",
+            "validation/z_base",
+        )
+
+    def test_release_signal_coverage_still_rejects_duplicate_ids(self, tmp_path: Path) -> None:
+        """Skipping unreadable metadata must not hide ambiguous valid identities."""
+        for directory in ("first", "second"):
+            write_named_estimate(tmp_path, (directory,), "new", 1_000.0, stat="mean", full_id="validation/duplicate", group_id="validation")
+
+        with pytest.raises(ValueError, match="duplicate Criterion full_id"):
+            benchmark_utils._criterion_result_ids(tmp_path / "criterion")
 
     def test_generate_summary_strict_rejects_missing_planned_report_section(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A planned target without Criterion groups must block strict publication."""

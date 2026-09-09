@@ -1401,6 +1401,7 @@ shell-fix: _ensure-shfmt
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
+        [ -e "$file" ] || continue
         files+=("$file")
     done < <(git --no-pager ls-files --cached --others --exclude-standard -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
@@ -1418,6 +1419,7 @@ shell-fmt-check: _ensure-shfmt
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
+        [ -e "$file" ] || continue
         files+=("$file")
     done < <(git --no-pager ls-files --cached --others --exclude-standard -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
@@ -1433,6 +1435,7 @@ shell-lint: _ensure-shellcheck
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
+        [ -e "$file" ] || continue
         files+=("$file")
     done < <(git --no-pager ls-files --cached --others --exclude-standard -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then

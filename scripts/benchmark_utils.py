@@ -1171,8 +1171,9 @@ def _criterion_result_ids(criterion_dir: Path) -> tuple[str, ...]:
     """Return valid Criterion result IDs, preferring ``new`` over ``base``."""
     # Directory names escape slashes in group/function IDs. Reuse the canonical
     # metadata reader so report coverage and release comparisons agree.
-    samples = _criterion_estimates_by_id(criterion_dir, "base")
-    samples.update(_criterion_estimates_by_id(criterion_dir, "new"))
+    # Stale samples without usable identity metadata cannot contribute coverage.
+    samples = _criterion_estimates_by_id(criterion_dir, "base", skip_invalid_metadata=True)
+    samples.update(_criterion_estimates_by_id(criterion_dir, "new", skip_invalid_metadata=True))
     return tuple(sorted(result_id for result_id, sample in samples.items() if _load_criterion_estimate(sample.estimates) is not None))
 
 
@@ -3270,15 +3271,20 @@ def _criterion_sample(estimates_json: Path, criterion_dir: Path) -> CriterionSam
     return CriterionSample(benchmark_id=full_id, group=group, benchmark=benchmark, estimates=estimates_json)
 
 
-def _criterion_estimates_by_id(criterion_dir: Path, sample: str) -> dict[str, CriterionSample]:
-    """Map Criterion benchmark IDs to estimates files for one sample name."""
+def _criterion_estimates_by_id(criterion_dir: Path, sample: str, *, skip_invalid_metadata: bool = False) -> dict[str, CriterionSample]:
+    """Map sample IDs to estimates, optionally skipping unusable identity metadata."""
     results: dict[str, CriterionSample] = {}
     if not criterion_dir.is_dir():
         return results
     for estimates_json in sorted(criterion_dir.rglob("estimates.json")):
         if estimates_json.parent.name != sample:
             continue
-        criterion_sample = _criterion_sample(estimates_json, criterion_dir)
+        try:
+            criterion_sample = _criterion_sample(estimates_json, criterion_dir)
+        except TypeError, ValueError:
+            if not skip_invalid_metadata:
+                raise
+            continue
         if criterion_sample is not None:
             prior = results.get(criterion_sample.benchmark_id)
             if prior is not None and prior.estimates != criterion_sample.estimates:
