@@ -1,6 +1,11 @@
+"""Positive and negative fixtures for Python exception and test policies."""
+
 import subprocess
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, Mock
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 UTF8 = "utf-8"
 
@@ -33,7 +38,7 @@ def catches_broad_exception_in_tuple() -> None:
     try:
         pass
     # ruleid: delaunay.python.no-broad-exception
-    except (OSError, Exception):
+    except (OSError, Exception):  # fmt: skip
         pass
 
 
@@ -49,7 +54,7 @@ def catches_specific_exception_tuple() -> None:
     try:
         pass
     # ok: delaunay.python.no-broad-exception
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError):  # fmt: skip
         pass
 
 
@@ -78,10 +83,12 @@ def explicit_path_text_encoding(path: Path) -> None:
     path.read_text(encoding="utf-8")
     # ok: delaunay.python.explicit-path-text-encoding-in-tests
     path.write_text("Time: [1.0, 1.0, 1.0] µs\n", encoding="utf-8")
+    # fmt: off
     # ok: delaunay.python.explicit-path-text-encoding-in-tests
-    path.read_text(encoding='utf-8')
+    path.read_text(encoding='utf-8')  # noqa: Q000 - exercise both literal quote styles.
     # ok: delaunay.python.explicit-path-text-encoding-in-tests
-    path.write_text("Time: [1.0, 1.0, 1.0] µs\n", encoding='utf-8')
+    path.write_text("Time: [1.0, 1.0, 1.0] µs\n", encoding='utf-8')  # noqa: Q000 - exercise both literal quote styles.
+    # fmt: on
     # ok: delaunay.python.explicit-path-text-encoding-in-tests
     path.read_text(encoding=UTF8)
     # ok: delaunay.python.explicit-path-text-encoding-in-tests
@@ -121,7 +128,7 @@ def direct_subprocess_run() -> None:
 
 
 # ruleid: delaunay.python.no-untyped-defs-in-scripts
-def missing_return_annotation():
+def missing_return_annotation():  # noqa: ANN201 - deliberate missing-return fixture.
     return None
 
 

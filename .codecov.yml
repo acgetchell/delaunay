@@ -11,6 +11,5 @@ coverage:
         target: 70%
 
 ignore:
-  - "src/lib.rs"
   - "benches/**"
   - "examples/**"

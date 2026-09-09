@@ -24,7 +24,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from io import BytesIO, StringIO
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypedDict
 from unittest.mock import Mock, patch
 
 import pytest
@@ -86,6 +86,20 @@ from benchmark_utils import (
     resolve_performance_request,
     write_criterion_comparison_report,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from contextlib import AbstractContextManager
+    from typing import IO
+    from unittest.mock import MagicMock
+
+
+class InvalidWaitOptions(TypedDict, total=False):
+    """Named integer inputs for invalid baseline-fetch duration cases."""
+
+    wait_seconds: int
+    poll_seconds: int
+
 
 THRESHOLD_PERCENT = f"{DEFAULT_REGRESSION_THRESHOLD:.1f}%"
 CI_MANIFEST_STDOUT = (
@@ -236,7 +250,7 @@ def retained_performance_bundle(*, current: str = "v0.8.0", baseline: str = "v0.
     )
 
 
-def write_estimate(target_dir: Path, path_parts, mean_ns) -> None:
+def write_estimate(target_dir: Path, path_parts: tuple[str, ...], mean_ns: float) -> None:
     """Write a minimal Criterion estimates.json fixture."""
     estimates_dir = target_dir / "criterion" / Path(*path_parts) / "base"
     estimates_dir.mkdir(parents=True)
@@ -260,7 +274,7 @@ def write_estimate(target_dir: Path, path_parts, mean_ns) -> None:
 
 def write_named_estimate(  # noqa: PLR0913
     target_dir: Path,
-    path_parts,
+    path_parts: tuple[str, ...],
     sample: str,
     point_ns: float,
     stat: str = "median",
@@ -400,7 +414,7 @@ Throughput: [18.0, 19.0, 20.0] Kelem/s
 """
 
 
-def compute_average_time_change(current_results, baseline_results) -> float:
+def compute_average_time_change(current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData]) -> float:
     """Replicate PerformanceComparator's geometric mean logic for tests."""
     time_changes = []
     for current in current_results:
@@ -546,7 +560,7 @@ def test_release_measurement_plan_matches_workflow_and_just_recipe() -> None:
 
 
 @patch("benchmark_utils.run_cargo_command")
-def test_release_measurement_plan_runner_executes_exact_target_order(mock_cargo, tmp_path: Path) -> None:
+def test_release_measurement_plan_runner_executes_exact_target_order(mock_cargo: MagicMock, tmp_path: Path) -> None:
     """The executable plan should be the only owner of release target order."""
     mock_cargo.return_value = completed_process(stdout=CI_MANIFEST_STDOUT)
 
@@ -560,7 +574,7 @@ def test_release_measurement_plan_runner_executes_exact_target_order(mock_cargo,
 
 
 @patch("benchmark_utils.run_cargo_command")
-def test_release_measurement_plan_runner_stops_at_first_failed_target(mock_cargo, tmp_path: Path) -> None:
+def test_release_measurement_plan_runner_stops_at_first_failed_target(mock_cargo: MagicMock, tmp_path: Path) -> None:
     """A failed planned target must prevent later measurements from running."""
     mock_cargo.return_value = completed_process(returncode=101, stderr="benchmark failed")
 
@@ -2004,7 +2018,7 @@ def test_atomic_write_failure_preserves_original_and_cleans_temporary_file(
 class TestCriterionParser:
     """Test cases for CriterionParser class."""
 
-    def test_parse_estimates_json_valid_data(self, sample_estimates_data) -> None:
+    def test_parse_estimates_json_valid_data(self, sample_estimates_data: dict[str, object]) -> None:
         """Test parsing valid estimates.json data."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(sample_estimates_data, f)
@@ -2036,7 +2050,7 @@ class TestCriterionParser:
         assert benchmark.time_unit == "µs"
         assert benchmark.benchmark_id == ""
 
-    def test_parse_estimates_json_preserves_unsized_workload(self, sample_estimates_data) -> None:
+    def test_parse_estimates_json_preserves_unsized_workload(self, sample_estimates_data: dict[str, object]) -> None:
         """Test Criterion estimates without numeric input size do not get fake throughput."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(sample_estimates_data, f)
@@ -2079,7 +2093,7 @@ class TestCriterionParser:
             {"mean": {"point_estimate": 110000.0, "confidence_interval": {"lower_bound": 100000.0}}},
         ],
     )
-    def test_parse_estimates_json_rejects_invalid_estimates(self, estimates_data) -> None:
+    def test_parse_estimates_json_rejects_invalid_estimates(self, estimates_data: object) -> None:
         """Test parsing rejects non-finite or unordered Criterion estimates."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(estimates_data, f)
@@ -2118,7 +2132,7 @@ class TestCriterionParser:
             {"mean": {"point_estimate": 100000.0, "confidence_interval": []}},
         ],
     )
-    def test_summary_estimate_loader_rejects_structurally_invalid_mean_data(self, estimates_data) -> None:
+    def test_summary_estimate_loader_rejects_structurally_invalid_mean_data(self, estimates_data: object) -> None:
         """Test performance summary loader rejects structurally malformed Criterion estimates."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(estimates_data, f)
@@ -2200,7 +2214,7 @@ class TestCriterionParser:
 
     @patch("benchmark_utils.Path.exists")
     @patch("benchmark_utils.Path.iterdir")
-    def test_find_criterion_results_no_criterion_dir(self, mock_iterdir, mock_exists) -> None:  # noqa: ARG002
+    def test_find_criterion_results_no_criterion_dir(self, mock_iterdir: MagicMock, mock_exists: MagicMock) -> None:  # noqa: ARG002
         """Test finding criterion results when criterion directory doesn't exist."""
         mock_exists.return_value = False
 
@@ -2358,7 +2372,7 @@ malformed api_benchmark_metric benchmark_id=ignored vertices=x simplices=y
             ({"vertices": 10, "simplices": True}, "simplices must be a positive integer"),
         ],
     )
-    def test_ci_performance_metric_rejects_invalid_counts(self, kwargs, message) -> None:
+    def test_ci_performance_metric_rejects_invalid_counts(self, kwargs: dict[str, int], message: str) -> None:
         """CiPerformanceMetric rejects non-positive and bool counts."""
         with pytest.raises(ValueError, match=message):
             CiPerformanceMetric(**kwargs)
@@ -2463,7 +2477,7 @@ malformed api_benchmark_metric benchmark_id=ignored vertices=x simplices=y
                 "validation/validate_3d/50",
             ]
 
-    def test_fallback_discovery_prefers_new_estimates_over_base(self, tmp_path) -> None:
+    def test_fallback_discovery_prefers_new_estimates_over_base(self, tmp_path: Path) -> None:
         """Test fallback Criterion discovery replaces stale base estimates with new estimates."""
         criterion_dir = tmp_path / "criterion"
         base_dir = criterion_dir / "legacy" / "2d" / "benchmark" / "1000" / "base"
@@ -2525,7 +2539,7 @@ Time: [200.0, 220.0, 240.0] µs
 Throughput: [4.167, 4.545, 5.0] Kelem/s
 """
 
-    def test_parse_baseline_file(self, comparator, sample_baseline_content) -> None:
+    def test_parse_baseline_file(self, comparator: PerformanceComparator, sample_baseline_content: str) -> None:
         """Test parsing baseline file content."""
         results = comparator._parse_baseline_file(sample_baseline_content)
 
@@ -2541,7 +2555,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         assert bench_2d_1000.time_mean == 110.0
         assert bench_2d_1000.throughput_mean == 9.091
 
-    def test_parse_baseline_file_with_benchmark_ids(self, comparator) -> None:
+    def test_parse_baseline_file_with_benchmark_ids(self, comparator: PerformanceComparator) -> None:
         """Test parsing expanded ci_performance_suite baseline identifiers."""
         baseline_content = """Date: 2023-06-15 10:30:00 PDT
 Git commit: abc123def456
@@ -2566,7 +2580,7 @@ Throughput: [2.381, 2.5, 2.632] Kelem/s
         assert results["boundary_facets/boundary_facets_3d/50"].time_mean == 10.0
         assert results["validation/validate_3d/50"].time_mean == 20.0
 
-    def test_parse_baseline_file_with_scientific_notation(self, comparator) -> None:
+    def test_parse_baseline_file_with_scientific_notation(self, comparator: PerformanceComparator) -> None:
         """Test baseline parsing accepts the full float domain written by Python."""
         baseline_content = """Date: 2023-06-15 10:30:00 PDT
 Git commit: abc123def456
@@ -2584,7 +2598,7 @@ Throughput: [8.333e3, 9.091e3, 1.0e4] Kelem/s
         assert benchmark.time_high == pytest.approx(1.2e-6)
         assert benchmark.throughput_mean == pytest.approx(9.091e3)
 
-    def test_parse_baseline_file_rejects_sections_without_timing(self, comparator) -> None:
+    def test_parse_baseline_file_rejects_sections_without_timing(self, comparator: PerformanceComparator) -> None:
         """Test malformed baseline sections without timing data fail loudly."""
         baseline_content = """Date: 2023-06-15 10:30:00 PDT
 Git commit: abc123def456
@@ -2627,7 +2641,7 @@ Throughput: [9.524, 10.0, 10.526] Kelem/s
         with pytest.raises(BaselineParseError, match=message):
             comparator._parse_baseline_file(sections)
 
-    def test_parse_baseline_file_with_unsized_benchmark_id(self, comparator) -> None:
+    def test_parse_baseline_file_with_unsized_benchmark_id(self, comparator: PerformanceComparator) -> None:
         """Test parsing expanded CI benchmarks without numeric input sizes."""
         baseline_content = """Date: 2023-06-15 10:30:00 PDT
 Git commit: abc123def456
@@ -2646,7 +2660,7 @@ Time: [0.8, 0.95, 1.1] µs
 
     @patch("benchmark_utils.CriterionParser.find_criterion_results")
     @patch("benchmark_utils.run_cargo_command")
-    def test_compare_with_baseline_rejects_malformed_baseline(self, mock_cargo, mock_find_results, tmp_path) -> None:
+    def test_compare_with_baseline_rejects_malformed_baseline(self, mock_cargo: MagicMock, mock_find_results: MagicMock, tmp_path: Path) -> None:
         """Test compare fails instead of silently ignoring malformed baseline sections."""
         baseline_file = tmp_path / "baseline.txt"
         output_file = tmp_path / "compare_results.txt"
@@ -2676,7 +2690,7 @@ Time: [190.0, 200.0, 210.0] µs
         assert "Malformed baseline section" in content
         assert "malformed/no_timing" in content
 
-    def test_write_performance_comparison_matches_benchmark_ids(self, comparator) -> None:
+    def test_write_performance_comparison_matches_benchmark_ids(self, comparator: PerformanceComparator) -> None:
         """Test comparison uses expanded benchmark IDs instead of point/dimension collisions."""
         current_results = [
             BenchmarkData(50, "3D", benchmark_id="boundary_facets/boundary_facets_3d/50").with_timing(9.0, 10.0, 11.0, "µs"),
@@ -2704,7 +2718,7 @@ Time: [190.0, 200.0, 210.0] µs
         assert "OK: Time change +0.0%" in content
         assert "IMPROVEMENT: Time decreased by 50.0%" in content
 
-    def test_write_performance_comparison_no_legacy_fallback_for_benchmark_id(self, comparator) -> None:
+    def test_write_performance_comparison_no_legacy_fallback_for_benchmark_id(self, comparator: PerformanceComparator) -> None:
         """Test expanded IDs do not compare against unrelated collapsed legacy baselines."""
         current_results = [
             BenchmarkData(50, "3D", benchmark_id="validation/validate_3d/50").with_timing(
@@ -2725,7 +2739,7 @@ Time: [190.0, 200.0, 210.0] µs
         assert "Baseline: N/A (no matching entry)" in content
         assert "IMPROVEMENT: Time decreased by 50.0%" not in content
 
-    def test_write_time_comparison_no_regression(self, comparator) -> None:
+    def test_write_time_comparison_no_regression(self, comparator: PerformanceComparator) -> None:
         """Test time comparison writing with no regression."""
         current = BenchmarkData(1000, "2D").with_timing(100.0, 110.0, 120.0, "µs")
         baseline = BenchmarkData(1000, "2D").with_timing(95.0, 105.0, 115.0, "µs")
@@ -2741,7 +2755,7 @@ Time: [190.0, 200.0, 210.0] µs
         assert "4.8%" in result
         assert "✅ OK: Time change +4.8% within acceptable range" in result
 
-    def test_write_time_comparison_with_regression(self, comparator) -> None:
+    def test_write_time_comparison_with_regression(self, comparator: PerformanceComparator) -> None:
         """Test time comparison writing with regression."""
         current = BenchmarkData(1000, "2D").with_timing(100.0, 115.0, 130.0, "µs")
         baseline = BenchmarkData(1000, "2D").with_timing(95.0, 100.0, 105.0, "µs")
@@ -2757,7 +2771,7 @@ Time: [190.0, 200.0, 210.0] µs
         assert "15.0%" in result
         assert "REGRESSION" in result
 
-    def test_write_time_comparison_with_improvement(self, comparator) -> None:
+    def test_write_time_comparison_with_improvement(self, comparator: PerformanceComparator) -> None:
         """Test time comparison writing with significant improvement."""
         current = BenchmarkData(1000, "2D").with_timing(80.0, 90.0, 100.0, "µs")
         baseline = BenchmarkData(1000, "2D").with_timing(95.0, 100.0, 105.0, "µs")
@@ -2773,7 +2787,7 @@ Time: [190.0, 200.0, 210.0] µs
         assert "10.0%" in result
         assert "✅ IMPROVEMENT: Time decreased by 10.0% (faster performance)" in result
 
-    def test_write_time_comparison_zero_baseline(self, comparator) -> None:
+    def test_write_time_comparison_zero_baseline(self, comparator: PerformanceComparator) -> None:
         """Test time comparison with zero baseline time."""
         current = BenchmarkData(1000, "2D").with_timing(100.0, 110.0, 120.0, "µs")
         baseline = BenchmarkData(1000, "2D").with_timing(0.0, 0.0, 0.0, "µs")
@@ -2789,7 +2803,7 @@ Time: [190.0, 200.0, 210.0] µs
 
     @pytest.mark.parametrize("dev_mode", [False, True])
     @patch("benchmark_utils.run_cargo_command")
-    def test_compare_omits_quiet_flag(self, mock_cargo, dev_mode) -> None:
+    def test_compare_omits_quiet_flag(self, mock_cargo: MagicMock, dev_mode: bool) -> None:
         """Test that PerformanceComparator invokes cargo without --quiet flag (removed for better error visibility)."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -2820,7 +2834,7 @@ Time: [1.0, 1.0, 1.0] µs
             # And output is captured
             assert mock_cargo.call_args.kwargs.get("capture_output") is True
 
-    def test_write_performance_comparison_detects_individual_regression(self, comparator) -> None:
+    def test_write_performance_comparison_detects_individual_regression(self, comparator: PerformanceComparator) -> None:
         """Test strict performance comparison fails for individual regressions even when total time is fine."""
         # Create current results with mixed performance changes
         current_results = [
@@ -2854,7 +2868,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert re.search(r"Geomean time change:\s*-?0\.0%", result)
         assert "⚠️ INDIVIDUAL REGRESSION" in result
 
-    def test_total_time_policy_warns_on_individual_regressions_when_total_is_ok(self, comparator) -> None:
+    def test_total_time_policy_warns_on_individual_regressions_when_total_is_ok(self, comparator: PerformanceComparator) -> None:
         """Test local ref comparisons gate on total matched time while preserving warnings."""
         current_results = [
             BenchmarkData(1000, "2D").with_timing(45.0, 50.0, 55.0, "µs"),
@@ -2886,7 +2900,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert "Top improvements:" in result
         assert "- 1000_2D: -50.0%" in result
 
-    def test_write_performance_comparison_with_total_regression(self, comparator) -> None:
+    def test_write_performance_comparison_with_total_regression(self, comparator: PerformanceComparator) -> None:
         """Test performance comparison with total matched-time regression exceeding threshold."""
         # Create current results with overall performance degradation
         current_results = [
@@ -2919,7 +2933,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert "Geomean time change: +11.0%" in result
         assert "🚨 OVERALL REGRESSION" in result
 
-    def test_write_performance_comparison_with_improvement(self, comparator) -> None:
+    def test_write_performance_comparison_with_improvement(self, comparator: PerformanceComparator) -> None:
         """Test performance comparison with mixed improvements and no strict regression."""
         # Create current results with overall performance improvement
         current_results = [
@@ -2953,7 +2967,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert expected_average_line in result
         assert "✅ OVERALL OK" in result
 
-    def test_write_performance_comparison_missing_baseline(self, comparator) -> None:
+    def test_write_performance_comparison_missing_baseline(self, comparator: PerformanceComparator) -> None:
         """Missing baseline coverage is explicit and fails before aggregation."""
         current_results = [
             BenchmarkData(1000, "2D").with_timing(105.0, 110.0, 115.0, "µs"),
@@ -2976,7 +2990,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert "Total benchmarks compared:" not in result
         assert "3000 Points (2D)" in result  # Should still show the benchmark without baseline
 
-    def test_write_performance_comparison_no_benchmarks(self, comparator) -> None:
+    def test_write_performance_comparison_no_benchmarks(self, comparator: PerformanceComparator) -> None:
         """Empty coverage cannot pass an enforcing performance guard."""
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, [], {})
@@ -2984,7 +2998,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert regression_found
         assert "current and baseline benchmark keysets are empty" in output.getvalue()
 
-    def test_total_time_policy_fails_on_non_comparable_coverage(self, comparator) -> None:
+    def test_total_time_policy_fails_on_non_comparable_coverage(self, comparator: PerformanceComparator) -> None:
         """The lenient regression policy still enforces complete measurement coverage."""
         current = [BenchmarkData(10, "2D").with_timing(1.0, 2.0, 3.0, "µs")]
         baseline = {"20_2D": BenchmarkData(20, "2D").with_timing(1.0, 2.0, 3.0, "µs")}
@@ -3001,7 +3015,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert "Missing from baseline: 10_2D" in output.getvalue()
         assert "Missing from current run: 20_2D" in output.getvalue()
 
-    def test_duplicate_current_keys_are_non_comparable(self, comparator) -> None:
+    def test_duplicate_current_keys_are_non_comparable(self, comparator: PerformanceComparator) -> None:
         """Duplicate current measurements cannot be collapsed into one aggregate row."""
         benchmark = BenchmarkData(10, "2D").with_timing(1.0, 2.0, 3.0, "µs")
         baseline = {"10_2D": BenchmarkData(10, "2D").with_timing(1.0, 2.0, 3.0, "µs")}
@@ -3018,7 +3032,9 @@ Time: [1.0, 1.0, 1.0] µs
 
     @patch("benchmark_utils.get_git_commit_hash")
     @patch("benchmark_utils.datetime")
-    def test_prepare_comparison_metadata(self, mock_datetime, mock_git, comparator, sample_baseline_content) -> None:
+    def test_prepare_comparison_metadata(
+        self, mock_datetime: MagicMock, mock_git: MagicMock, comparator: PerformanceComparator, sample_baseline_content: str
+    ) -> None:
         """Test preparation of comparison metadata."""
         # Mock current datetime
         mock_now = Mock()
@@ -3036,7 +3052,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert metadata["baseline_commit"] == "abc123def456"
 
     @patch("benchmark_utils.get_git_commit_hash")
-    def test_prepare_comparison_metadata_git_failure(self, mock_git, comparator, sample_baseline_content) -> None:
+    def test_prepare_comparison_metadata_git_failure(self, mock_git: MagicMock, comparator: PerformanceComparator, sample_baseline_content: str) -> None:
         """Test metadata preparation when git command fails."""
         mock_git.side_effect = RuntimeError("Git not available")
 
@@ -3044,7 +3060,7 @@ Time: [1.0, 1.0, 1.0] µs
 
         assert metadata["current_commit"] == "unknown"
 
-    def test_regression_threshold_configuration(self, comparator) -> None:
+    def test_regression_threshold_configuration(self, comparator: PerformanceComparator) -> None:
         """Test that regression threshold can be configured."""
         # Test default threshold
         assert comparator.regression_threshold == DEFAULT_REGRESSION_THRESHOLD
@@ -3062,7 +3078,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert time_change == pytest.approx(7.0, abs=0.001)  # Use pytest.approx for floating-point comparison
         assert not is_regression
 
-    def test_write_error_file_baseline_not_found(self, comparator) -> None:
+    def test_write_error_file_baseline_not_found(self, comparator: PerformanceComparator) -> None:
         """Test writing error file when baseline is not found."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "error_results.txt"
@@ -3077,7 +3093,7 @@ Time: [1.0, 1.0, 1.0] µs
             assert str(baseline_file) in content
             assert "This error prevented the benchmark comparison from completing successfully" in content
 
-    def test_write_error_file_benchmark_error(self, comparator) -> None:
+    def test_write_error_file_benchmark_error(self, comparator: PerformanceComparator) -> None:
         """Test writing error file when benchmark execution fails."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "error_results.txt"
@@ -3091,7 +3107,7 @@ Time: [1.0, 1.0, 1.0] µs
             assert error_message in content
             assert "Please check the CI logs for more information" in content
 
-    def test_write_error_file_creates_parent_directory(self, comparator) -> None:
+    def test_write_error_file_creates_parent_directory(self, comparator: PerformanceComparator) -> None:
         """Test that _write_error_file creates parent directory if it doesn't exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "nested" / "path" / "error_results.txt"
@@ -3103,7 +3119,7 @@ Time: [1.0, 1.0, 1.0] µs
             content = output_file.read_text(encoding=UTF8)
             assert "❌ Error: Test error" in content
 
-    def test_write_error_file_handles_write_failure(self, comparator) -> None:
+    def test_write_error_file_handles_write_failure(self, comparator: PerformanceComparator) -> None:
         """Test that _write_error_file handles write failures gracefully."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "error_results.txt"
@@ -3137,7 +3153,7 @@ Criterion warm-up time: 1
             assert "Criterion measurement time: baseline=2, current=criterion-default" in warning
             assert "Criterion warm-up time: baseline=1, current=criterion-default" in warning
 
-    def test_sampling_warning_reports_missing_baseline_metadata(self, comparator, sample_baseline_content) -> None:
+    def test_sampling_warning_reports_missing_baseline_metadata(self, comparator: PerformanceComparator, sample_baseline_content: str) -> None:
         """Test that legacy baselines without sampling metadata produce a warning."""
         warning = comparator._sampling_warning(sample_baseline_content, dev_mode=False)
 
@@ -3162,7 +3178,7 @@ class TestBaselineGenerator:
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
     @patch("benchmark_utils.CriterionParser.find_criterion_results")
     @patch("benchmark_utils.run_cargo_command")
-    def test_generate_baseline_uses_perf_profile(self, mock_cargo, mock_find_results, mock_git) -> None:
+    def test_generate_baseline_uses_perf_profile(self, mock_cargo: MagicMock, mock_find_results: MagicMock, mock_git: MagicMock) -> None:
         """Test that full baseline generation benchmarks with the trusted Cargo profile."""
         mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
         mock_find_results.return_value = self._sample_benchmark_results()
@@ -3188,7 +3204,7 @@ class TestBaselineGenerator:
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
     @patch("benchmark_utils.CriterionParser.find_criterion_results")
     @patch("benchmark_utils.run_cargo_command")
-    def test_generate_baseline_dev_mode_keeps_perf_profile(self, mock_cargo, mock_find_results, mock_git) -> None:
+    def test_generate_baseline_dev_mode_keeps_perf_profile(self, mock_cargo: MagicMock, mock_find_results: MagicMock, mock_git: MagicMock) -> None:
         """Test that dev baseline mode reduces Criterion settings without changing Cargo profile."""
         mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
         mock_find_results.return_value = self._sample_benchmark_results()
@@ -3217,7 +3233,9 @@ class TestBaselineGenerator:
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
     @patch("benchmark_utils.CriterionParser.find_criterion_results")
     @patch("benchmark_utils.run_cargo_command")
-    def test_write_baseline_from_existing_results_does_not_rerun_benchmarks(self, mock_cargo, mock_find_results, mock_git) -> None:
+    def test_write_baseline_from_existing_results_does_not_rerun_benchmarks(
+        self, mock_cargo: MagicMock, mock_find_results: MagicMock, mock_git: MagicMock
+    ) -> None:
         """Test that existing Criterion results can be packaged as a baseline without rerunning Cargo."""
         mock_find_results.return_value = self._sample_benchmark_results()
 
@@ -3240,7 +3258,7 @@ class TestBaselineGenerator:
             assert "=== 10 Points (2D) ===" in content
 
     @patch("benchmark_utils.CriterionParser.find_criterion_results", return_value=[])
-    def test_write_baseline_from_existing_results_requires_criterion_data(self, mock_find_results, capsys) -> None:
+    def test_write_baseline_from_existing_results_requires_criterion_data(self, mock_find_results: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that packaging fails loudly when no existing Criterion data is available."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -3254,7 +3272,7 @@ class TestBaselineGenerator:
             assert "No Criterion results found" in captured.err
 
     @patch("benchmark_utils.CriterionParser.find_criterion_results")
-    def test_write_baseline_from_existing_results_requires_ci_suite_data(self, mock_find_results, capsys) -> None:
+    def test_write_baseline_from_existing_results_requires_ci_suite_data(self, mock_find_results: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that release baseline packaging rejects unrelated Criterion results."""
         mock_find_results.return_value = [BenchmarkData(10, "2D").with_timing(1.0, 2.0, 3.0, "µs")]
 
@@ -3272,16 +3290,18 @@ class TestBaselineGenerator:
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123def456")
     @patch("benchmark_utils.get_git_remote_url", return_value="git@github.com:acgetchell/delaunay.git")
     @patch("benchmark_utils.run_git_command")
-    def test_local_ref_baseline_uses_temporary_checkout(self, mock_git, mock_remote, mock_commit, capsys) -> None:
+    def test_local_ref_baseline_uses_temporary_checkout(
+        self, mock_git: MagicMock, mock_remote: MagicMock, mock_commit: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Test that local ref baseline generation cleans up its temporary checkout."""
         checkout_paths: list[Path] = []
 
-        def fake_git_command(args, _cwd=None, **_kwargs) -> subprocess.CompletedProcess[str]:
+        def fake_git_command(args: list[str], _cwd: Path | None = None, **_kwargs: object) -> subprocess.CompletedProcess[str]:
             if args[0] == "clone":
                 Path(args[-1]).mkdir(parents=True)
             return completed_process(args=args)
 
-        def fake_generate_baseline(self, *, dev_mode=False, output_file=None, bench_timeout=1800) -> bool:
+        def fake_generate_baseline(self: BaselineGenerator, *, dev_mode: bool = False, output_file: Path | None = None, bench_timeout: int = 1800) -> bool:
             checkout_paths.append(self.project_root)
             assert self.project_root.exists()
             assert dev_mode is True
@@ -3330,17 +3350,17 @@ class TestBaselineGenerator:
     @patch("benchmark_utils.run_git_command")
     def test_local_ref_baseline_metadata_failure_preserves_prior_pair(
         self,
-        mock_git,
-        tmp_path,
+        mock_git: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """Test that staged results are not published when metadata creation fails."""
 
-        def fake_git_command(args, _cwd=None, **_kwargs) -> subprocess.CompletedProcess[str]:
+        def fake_git_command(args: list[str], _cwd: Path | None = None, **_kwargs: object) -> subprocess.CompletedProcess[str]:
             if args[0] == "clone":
                 Path(args[-1]).mkdir(parents=True)
             return completed_process(args=args)
 
-        def fake_generate_baseline(self, *, dev_mode=False, output_file=None, bench_timeout=1800) -> bool:
+        def fake_generate_baseline(self: BaselineGenerator, *, dev_mode: bool = False, output_file: Path | None = None, bench_timeout: int = 1800) -> bool:
             assert output_file is not None
             output_file.write_text("new baseline\n", encoding="utf-8")
             return True
@@ -3369,7 +3389,7 @@ class TestBaselineGenerator:
         assert metadata_file.read_text(encoding="utf-8") == '{"commit": "prior-commit"}\n'
         assert not list(project_root.glob(".baseline-artifact-staging-*"))
 
-    def test_local_ref_baseline_publish_failure_restores_prior_pair(self, tmp_path) -> None:
+    def test_local_ref_baseline_publish_failure_restores_prior_pair(self, tmp_path: Path) -> None:
         """Test rollback when the second staged artifact cannot be published."""
         out_dir = tmp_path / "baseline-artifact"
         staging_dir = tmp_path / "staging"
@@ -3406,7 +3426,7 @@ class TestBaselineGenerator:
         assert metadata_file.read_text(encoding="utf-8") == '{"commit": "prior-commit"}\n'
         assert not list(out_dir.glob(".delaunay-baseline-backup-*"))
 
-    def test_cached_ref_baseline_reuses_valid_cache(self, tmp_path) -> None:
+    def test_cached_ref_baseline_reuses_valid_cache(self, tmp_path: Path) -> None:
         """Test that a valid same-machine ref baseline is reused without benchmarking."""
         commit = "abc123def456"
         options = LocalRefBaselineCacheOptions(
@@ -3430,7 +3450,7 @@ class TestBaselineGenerator:
         assert result.reused is True
         mock_generate.assert_not_called()
 
-    def test_cached_ref_baseline_reuses_same_commit_alias(self, tmp_path) -> None:
+    def test_cached_ref_baseline_reuses_same_commit_alias(self, tmp_path: Path) -> None:
         """Test that refs resolving to the same commit can share a cached baseline."""
         commit = "abc123def456"
         options = LocalRefBaselineCacheOptions(
@@ -3469,7 +3489,7 @@ class TestBaselineGenerator:
         baseline_path.write_text(cached_ref_baseline_content(commit="stale-baseline"), encoding="utf-8")
 
         def fake_generate_for_ref(
-            self,
+            self: LocalRefBaselineGenerator,
             *,
             ref_name: str,
             out_dir: Path,
@@ -3494,7 +3514,7 @@ class TestBaselineGenerator:
         assert result.resolved_commit == commit
         assert result.reused is False
 
-    def test_compare_ref_skips_same_clean_commit(self, tmp_path) -> None:
+    def test_compare_ref_skips_same_clean_commit(self, tmp_path: Path) -> None:
         """Test that compare-ref skips before generating a same-commit clean baseline."""
         options = LocalRefBaselineCacheOptions(ref_name="main", dev_mode=True)
 
@@ -3509,7 +3529,7 @@ class TestBaselineGenerator:
         assert exit_code == 0
         mock_ensure.assert_not_called()
 
-    def test_compare_ref_uses_ref_named_results_file(self, tmp_path, capsys) -> None:
+    def test_compare_ref_uses_ref_named_results_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that compare-ref writes a worktree-vs-ref report by default."""
         commit = "abc123def456"
         baseline_path = tmp_path / "baseline_results.txt"
@@ -3546,7 +3566,7 @@ class TestBaselineGenerator:
         )
 
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
-    def test_written_baseline_round_trips_through_parser(self, mock_git, tmp_path) -> None:
+    def test_written_baseline_round_trips_through_parser(self, mock_git: MagicMock, tmp_path: Path) -> None:
         """Test the baseline writer/parser contract for representative records."""
         benchmark_results = [
             BenchmarkData(1000, "2D").with_timing(1.0e-6, 1.1e-6, 1.2e-6, "µs").with_throughput(8.333e3, 9.091e3, 1.0e4, "Kelem/s"),
@@ -3586,7 +3606,7 @@ class TestIntegrationScenarios:
         project_root = Path("/fake/project")
         return PerformanceComparator(project_root)
 
-    def test_realistic_mixed_performance_scenario(self, comparator) -> None:
+    def test_realistic_mixed_performance_scenario(self, comparator: PerformanceComparator) -> None:
         """Test a realistic scenario with mixed performance changes."""
         # Simulate a realistic benchmark run with various performance changes
         current_results = [
@@ -3625,7 +3645,7 @@ class TestIntegrationScenarios:
         assert expected_average_line in result
         assert "⚠️ INDIVIDUAL REGRESSION" in result
 
-    def test_gradual_performance_degradation_scenario(self, comparator) -> None:
+    def test_gradual_performance_degradation_scenario(self, comparator: PerformanceComparator) -> None:
         """Test scenario where performance gradually degrades across all benchmarks."""
         # Simulate gradual performance degradation that individually isn't alarming
         # but collectively indicates a problem
@@ -3658,7 +3678,7 @@ class TestIntegrationScenarios:
         assert "Total time change: +9.0%" in result
         assert "🚨 OVERALL REGRESSION" in result
 
-    def test_noisy_benchmarks_scenario(self, comparator) -> None:
+    def test_noisy_benchmarks_scenario(self, comparator: PerformanceComparator) -> None:
         """Test scenario with noisy benchmarks that have high individual variance."""
         # Simulate noisy benchmarks where individual results vary significantly
         # but overall trend is acceptable
@@ -3703,7 +3723,7 @@ class TestEdgeCases:
         project_root = Path("/fake/project")
         return PerformanceComparator(project_root)
 
-    def test_empty_current_results(self, comparator) -> None:
+    def test_empty_current_results(self, comparator: PerformanceComparator) -> None:
         """A missing current keyset fails closed."""
         baseline_results = {
             "1000_2D": BenchmarkData(1000, "2D").with_timing(95.0, 100.0, 105.0, "µs"),
@@ -3716,7 +3736,7 @@ class TestEdgeCases:
         assert "Missing from current run: 1000_2D" in output.getvalue()
         assert "Aggregate timing comparison: NOT COMPARABLE" in output.getvalue()
 
-    def test_empty_baseline_results(self, comparator) -> None:
+    def test_empty_baseline_results(self, comparator: PerformanceComparator) -> None:
         """A missing baseline keyset fails closed."""
         current_results = [
             BenchmarkData(1000, "2D").with_timing(105.0, 110.0, 115.0, "µs"),
@@ -3731,7 +3751,7 @@ class TestEdgeCases:
         assert "Missing from baseline: 1000_2D" in result
         assert "Aggregate timing comparison: NOT COMPARABLE" in result
 
-    def test_all_zero_baseline_times(self, comparator) -> None:
+    def test_all_zero_baseline_times(self, comparator: PerformanceComparator) -> None:
         """Invalid timing evidence fails even when identity coverage matches."""
         current_results = [
             BenchmarkData(1000, "2D").with_timing(105.0, 110.0, 115.0, "µs"),
@@ -3752,7 +3772,7 @@ class TestEdgeCases:
         assert "Invalid baseline timings: 1000_2D, 2000_2D" in result
         assert "Aggregate timing comparison: NOT COMPARABLE" in result
 
-    def test_mixed_valid_invalid_baselines(self, comparator) -> None:
+    def test_mixed_valid_invalid_baselines(self, comparator: PerformanceComparator) -> None:
         """One invalid timing prevents a misleading matched-subset aggregate."""
         current_results = [
             BenchmarkData(1000, "2D").with_timing(105.0, 110.0, 115.0, "µs"),
@@ -3953,7 +3973,7 @@ class TestWorkflowHelper:
             assert output_dir.exists()
             assert (output_dir / "metadata.json").exists()
 
-    def test_display_baseline_summary_success(self, capsys) -> None:
+    def test_display_baseline_summary_success(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test successful baseline summary display."""
         baseline_content = """Date: 2023-12-15 14:30:00 UTC
 Git commit: abc123def456
@@ -3990,7 +4010,7 @@ Time: [220.0, 250.0, 280.0] µs
         finally:
             baseline_file.unlink()
 
-    def test_display_baseline_summary_nonexistent_file(self, capsys) -> None:
+    def test_display_baseline_summary_nonexistent_file(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test baseline summary with non-existent file."""
         baseline_file = Path("/nonexistent/file.txt")
 
@@ -4001,7 +4021,7 @@ Time: [220.0, 250.0, 280.0] µs
         captured = capsys.readouterr()
         assert "❌ Baseline file not found" in captured.err
 
-    def test_display_baseline_summary_long_file(self, capsys) -> None:
+    def test_display_baseline_summary_long_file(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test baseline summary with file longer than 10 lines."""
         baseline_content = "\n".join([f"Line {i}" for i in range(20)])
 
@@ -4055,7 +4075,7 @@ Time: [220.0, 250.0, 280.0] µs
             ("v1.0.0+build.123", "performance-baseline-v1_0_0_build_123"),
         ],
     )
-    def test_sanitize_artifact_name_edge_cases(self, input_tag, expected_output) -> None:
+    def test_sanitize_artifact_name_edge_cases(self, input_tag: str, expected_output: str) -> None:
         """Test artifact name sanitization with edge cases."""
         result = WorkflowHelper.sanitize_artifact_name(input_tag)
         assert result == expected_output
@@ -4071,7 +4091,7 @@ Time: [220.0, 250.0, 280.0] µs
 class TestBenchmarkRegressionHelper:
     """Test cases for BenchmarkRegressionHelper class."""
 
-    def test_prepare_baseline_success(self, capsys) -> None:
+    def test_prepare_baseline_success(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test successful baseline preparation."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -4112,7 +4132,7 @@ Time: [95.0, 100.0, 105.0] µs
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_prepare_baseline_copy_error_handling(self, capsys) -> None:
+    def test_prepare_baseline_copy_error_handling(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test error handling when copying baseline file fails."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -4153,7 +4173,7 @@ Tag: v1.0.0
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_prepare_baseline_read_summary_error_handling(self, capsys) -> None:
+    def test_prepare_baseline_read_summary_error_handling(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test graceful error handling when baseline summary cannot be read."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -4179,11 +4199,18 @@ Time: [95.0, 100.0, 105.0] µs
                 # Mock Path.open method to fail for read operations on baseline_results.txt
                 original_path_open = Path.open
 
-                def mock_path_open(self, mode="r", *args, **kwargs) -> Any:
+                def mock_path_open(  # noqa: PLR0913, PLR0917 - preserve Path.open's call signature.
+                    self: Path,
+                    mode: str = "r",
+                    buffering: int = -1,
+                    encoding: str | None = None,
+                    errors: str | None = None,
+                    newline: str | None = None,
+                ) -> IO[Any]:
                     if self.name == "baseline_results.txt" and "r" in mode:
                         msg = "Read permission denied"
                         raise OSError(msg)
-                    return original_path_open(self, mode, *args, **kwargs)
+                    return original_path_open(self, mode, buffering, encoding, errors, newline)
 
                 with patch.dict(os.environ, {"GITHUB_ENV": env_path}), patch.object(Path, "open", mock_path_open):
                     success = BenchmarkRegressionHelper.prepare_baseline(baseline_dir)
@@ -4209,7 +4236,7 @@ Time: [95.0, 100.0, 105.0] µs
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_prepare_baseline_missing_file(self, capsys) -> None:
+    def test_prepare_baseline_missing_file(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test baseline preparation when baseline file is missing."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -4236,7 +4263,7 @@ Time: [95.0, 100.0, 105.0] µs
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_set_no_baseline_status(self, capsys) -> None:
+    def test_set_no_baseline_status(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test setting no baseline status."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
             env_path = env_file.name
@@ -4412,7 +4439,7 @@ Hardware Information:
         assert reason == "same_commit"
 
     @patch("benchmark_utils.run_git_command")
-    def test_determine_benchmark_skip_baseline_not_found(self, mock_git) -> None:
+    def test_determine_benchmark_skip_baseline_not_found(self, mock_git: MagicMock) -> None:
         """Test skip determination when baseline commit not found in history."""
         # Simulate git cat-file failing
         mock_git.side_effect = subprocess.CalledProcessError(1, "git")
@@ -4423,7 +4450,7 @@ Hardware Information:
         assert reason == "baseline_commit_not_found"
 
     @patch("benchmark_utils.run_git_command")
-    def test_determine_benchmark_skip_no_changes(self, mock_git) -> None:
+    def test_determine_benchmark_skip_no_changes(self, mock_git: MagicMock) -> None:
         """Test skip determination when no relevant changes found."""
         # Mock successful git commands
         mock_git.side_effect = [
@@ -4437,7 +4464,7 @@ Hardware Information:
         assert reason == "no_relevant_changes"
 
     @patch("benchmark_utils.run_git_command")
-    def test_determine_benchmark_skip_changes_detected(self, mock_git) -> None:
+    def test_determine_benchmark_skip_changes_detected(self, mock_git: MagicMock) -> None:
         """Test skip determination when relevant changes are detected."""
         # Mock successful git commands
         mock_git.side_effect = [
@@ -4450,14 +4477,14 @@ Hardware Information:
         assert not should_skip
         assert reason == "changes_detected"
 
-    def test_display_skip_message(self, capsys) -> None:
+    def test_display_skip_message(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test displaying skip messages."""
         BenchmarkRegressionHelper.display_skip_message("same_commit", "abc1234")
 
         captured = capsys.readouterr()
         assert "Current commit matches baseline (abc1234)" in captured.out
 
-    def test_display_no_baseline_message(self, capsys) -> None:
+    def test_display_no_baseline_message(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test displaying no baseline message."""
         BenchmarkRegressionHelper.display_no_baseline_message()
 
@@ -4465,7 +4492,7 @@ Hardware Information:
         assert "No performance baseline available" in captured.out
         assert "To enable performance regression testing:" in captured.out
 
-    def test_run_regression_test_success(self, capsys) -> None:
+    def test_run_regression_test_success(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test successful regression test run."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_file = Path(temp_dir) / "baseline.txt"
@@ -4484,7 +4511,7 @@ Hardware Information:
                 captured = capsys.readouterr()
                 assert "Running performance regression test" in captured.out
 
-    def test_run_regression_test_dev_mode(self, capsys) -> None:
+    def test_run_regression_test_dev_mode(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test regression test run with dev mode enabled."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_file = Path(temp_dir) / "baseline.txt"
@@ -4518,7 +4545,7 @@ Hardware Information:
 
                 assert not success
 
-    def test_run_regression_test_custom_timeout(self, capsys) -> None:
+    def test_run_regression_test_custom_timeout(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test regression test run with custom bench_timeout parameter."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_file = Path(temp_dir) / "baseline.txt"
@@ -4537,7 +4564,7 @@ Hardware Information:
                 captured = capsys.readouterr()
                 assert "Running performance regression test" in captured.out
 
-    def test_display_results_file_exists(self, capsys) -> None:
+    def test_display_results_file_exists(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test displaying results when file exists."""
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "results.txt"
@@ -4550,7 +4577,7 @@ Hardware Information:
             assert "=== Performance Regression Test Results ===" in captured.out
             assert "All tests passed" in captured.out
 
-    def test_display_results_file_missing(self, capsys) -> None:
+    def test_display_results_file_missing(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test displaying results when file is missing."""
         missing_file = Path("/nonexistent/results.txt")
 
@@ -4559,7 +4586,9 @@ Hardware Information:
         captured = capsys.readouterr()
         assert "No comparison results file found" in captured.out
 
-    def test_generate_summary_with_regression(self, temp_chdir, capsys) -> None:
+    def test_generate_summary_with_regression(
+        self, temp_chdir: Callable[[os.PathLike[str] | str], AbstractContextManager[None]], capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Test generating summary when regression is detected."""
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
@@ -4585,7 +4614,7 @@ Hardware Information:
                 assert "Result:" in captured.out
                 assert "Performance regressions detected" in captured.out
 
-    def test_generate_summary_skip_same_commit(self, capsys) -> None:
+    def test_generate_summary_skip_same_commit(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test generating summary when benchmarks skipped due to same commit."""
         env_vars = {
             "BASELINE_SOURCE": "artifact",
@@ -4602,7 +4631,7 @@ Hardware Information:
             assert "Result:" in captured.out
             assert "Benchmarks skipped (same commit as baseline)" in captured.out
 
-    def test_generate_summary_no_baseline(self, capsys) -> None:
+    def test_generate_summary_no_baseline(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test generating summary when no baseline available."""
         env_vars = {
             "BASELINE_EXISTS": "false",
@@ -4616,7 +4645,9 @@ Hardware Information:
             assert "Result:" in captured.out
             assert "Benchmarks skipped (no baseline available)" in captured.out
 
-    def test_generate_summary_sets_regression_environment_variable(self, temp_chdir, capsys) -> None:
+    def test_generate_summary_sets_regression_environment_variable(
+        self, temp_chdir: Callable[[os.PathLike[str] | str], AbstractContextManager[None]], capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Test that generate_summary sets BENCHMARK_REGRESSION_DETECTED environment variable when regressions are found."""
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
@@ -4642,7 +4673,7 @@ Hardware Information:
                 captured = capsys.readouterr()
                 assert "Exported BENCHMARK_REGRESSION_DETECTED=true for downstream CI steps" in captured.out
 
-    def test_generate_summary_github_env_export(self, temp_chdir) -> None:
+    def test_generate_summary_github_env_export(self, temp_chdir: Callable[[os.PathLike[str] | str], AbstractContextManager[None]]) -> None:
         """Test that BENCHMARK_REGRESSION_DETECTED is also exported to GITHUB_ENV when available."""
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
@@ -4664,7 +4695,9 @@ Hardware Information:
                 github_env_content = github_env_file.read_text(encoding=UTF8)
                 assert "BENCHMARK_REGRESSION_DETECTED=true" in github_env_content
 
-    def test_generate_summary_with_error_file(self, temp_chdir, capsys) -> None:
+    def test_generate_summary_with_error_file(
+        self, temp_chdir: Callable[[os.PathLike[str] | str], AbstractContextManager[None]], capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Test generating summary when comparison failed with error file."""
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
@@ -4707,7 +4740,7 @@ Hardware Information:
 class TestProjectRootHandling:
     """Test cases for find_project_root functionality."""
 
-    def test_find_project_root_success(self, temp_chdir) -> None:
+    def test_find_project_root_success(self, temp_chdir: Callable[[os.PathLike[str] | str], AbstractContextManager[None]]) -> None:
         """Test finding project root when Cargo.toml exists."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -4725,7 +4758,7 @@ class TestProjectRootHandling:
                 # Resolve both paths to handle symlinks (macOS /var -> /private/var)
                 assert result.resolve() == temp_path.resolve()
 
-    def test_find_project_root_not_found(self, temp_chdir) -> None:
+    def test_find_project_root_not_found(self, temp_chdir: Callable[[os.PathLike[str] | str], AbstractContextManager[None]]) -> None:
         """Test finding project root when Cargo.toml doesn't exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -4752,7 +4785,7 @@ class TestTimeoutHandling:
             ),
         ],
     )
-    def test_timeout_parameter_passed(self, component_class, method_name, setup_func) -> None:
+    def test_timeout_parameter_passed(self, component_class: str, method_name: str, setup_func: Callable[[str], int | None]) -> None:
         """Test that benchmark components accept and use timeout parameter."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -4785,7 +4818,7 @@ class TestTimeoutHandling:
                 assert mock_cargo.call_count >= 1
                 assert any(call.kwargs.get("timeout") == 120 for call in mock_cargo.call_args_list)
 
-    def test_timeout_error_handling_baseline_generator(self, capsys) -> None:
+    def test_timeout_error_handling_baseline_generator(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test proper error handling when benchmark times out in BaselineGenerator."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -4803,7 +4836,7 @@ class TestTimeoutHandling:
                 assert "timed out after 1800 seconds" in captured.err
                 assert "Consider increasing --bench-timeout" in captured.err
 
-    def test_timeout_error_handling_performance_comparator(self, capsys) -> None:
+    def test_timeout_error_handling_performance_comparator(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test proper error handling when benchmark times out in PerformanceComparator."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -4833,7 +4866,9 @@ class TestTimeoutHandling:
                 assert "cargo bench" in error_content  # Command from exception
                 assert "timeout after 1800 seconds" in error_content  # Explicit timeout value
 
-    def test_cli_bench_timeout_validation(self, monkeypatch, temp_chdir) -> None:
+    def test_cli_bench_timeout_validation(
+        self, monkeypatch: pytest.MonkeyPatch, temp_chdir: Callable[[os.PathLike[str] | str], AbstractContextManager[None]]
+    ) -> None:
         """Test that CLI validates bench_timeout is positive via main()."""
         # Create a temporary project with Cargo.toml to satisfy find_project_root
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -4868,7 +4903,7 @@ class TestTimeoutHandling:
         assert args.verbose
         assert args.command == "generate-summary"
 
-    def test_parser_suggests_close_subcommand_name(self, capsys) -> None:
+    def test_parser_suggests_close_subcommand_name(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Python 3.14 argparse suggestions should help recover from CLI typos."""
         parser = create_argument_parser()
 
@@ -5057,7 +5092,7 @@ class TestTimeoutHandling:
         )
 
     @patch("benchmark_utils.PerformanceSummaryGenerator")
-    def test_execute_command_passes_strict_summary_generation(self, mock_generator_class) -> None:
+    def test_execute_command_passes_strict_summary_generation(self, mock_generator_class: MagicMock) -> None:
         """Test that CLI dispatch passes strict mode and exits nonzero on summary failure."""
         parser = create_argument_parser()
         args = parser.parse_args(
@@ -5122,7 +5157,7 @@ class TestTimeoutHandling:
             ({"poll_seconds": True}, "poll_seconds must be a positive integer"),
         ],
     )
-    def test_baseline_fetch_options_reject_invalid_waits(self, kwargs, message) -> None:
+    def test_baseline_fetch_options_reject_invalid_waits(self, kwargs: InvalidWaitOptions, message: str) -> None:
         """BaselineFetchOptions rejects durations that would break polling."""
         with pytest.raises(ValueError, match=message):
             BaselineFetchOptions(**kwargs)
@@ -5140,7 +5175,14 @@ class TestTimeoutHandling:
             ("compare-tags", "--poll-seconds", "-1"),
         ],
     )
-    def test_cli_rejects_invalid_baseline_fetch_waits(self, monkeypatch, temp_chdir, command: str, option: str, value: str) -> None:
+    def test_cli_rejects_invalid_baseline_fetch_waits(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        temp_chdir: Callable[[os.PathLike[str] | str], AbstractContextManager[None]],
+        command: str,
+        option: str,
+        value: str,
+    ) -> None:
         """CLI wait/poll validation fails before GitHub workflow dispatch."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -5201,7 +5243,7 @@ class TestCompareBaselinesCliFailures:
             argv.extend(["--output", str(output)])
         return create_argument_parser().parse_args(argv)
 
-    def test_rejects_directory_baseline_without_stdout(self, tmp_path: Path, capsys) -> None:
+    def test_rejects_directory_baseline_without_stdout(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         old_baseline = tmp_path / "old"
         old_baseline.mkdir()
         new_baseline = tmp_path / "new.txt"
@@ -5215,7 +5257,7 @@ class TestCompareBaselinesCliFailures:
         assert captured.out == ""
         assert captured.err == f"benchmark-utils compare-baselines: error: --old must name a regular file: {old_baseline}\n"
 
-    def test_reports_malformed_utf8_without_traceback(self, tmp_path: Path, capsys) -> None:
+    def test_reports_malformed_utf8_without_traceback(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         old_baseline = tmp_path / "old.txt"
         new_baseline = tmp_path / "new.txt"
         old_baseline.write_bytes(b"\xff")
@@ -5230,7 +5272,9 @@ class TestCompareBaselinesCliFailures:
         assert captured.err.startswith("benchmark-utils compare-baselines: error: baseline input is not valid UTF-8:")
         assert "Traceback" not in captured.err
 
-    def test_reports_input_permission_failure_without_traceback(self, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_reports_input_permission_failure_without_traceback(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         old_baseline = tmp_path / "old.txt"
         new_baseline = tmp_path / "new.txt"
         old_baseline.write_text("old\n", encoding=UTF8)
@@ -5253,7 +5297,7 @@ class TestCompareBaselinesCliFailures:
     def test_output_failure_preserves_destination_and_suppresses_report(
         self,
         tmp_path: Path,
-        capsys,
+        capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         old_baseline = tmp_path / "old.txt"
@@ -5298,7 +5342,7 @@ class TestPerformanceSummaryGenerator:
             assert isinstance(generator.current_version, str)
             assert isinstance(generator.current_date, str)
 
-    def test_parse_single_method_result_accepts_valid_estimate(self, tmp_path) -> None:
+    def test_parse_single_method_result_accepts_valid_estimate(self, tmp_path: Path) -> None:
         """Test circumsphere method parsing accepts finite ordered Criterion estimates."""
         criterion_path = tmp_path / "target" / "criterion" / "basic_2d_insphere"
         estimates_dir = criterion_path / "base"
@@ -5335,7 +5379,7 @@ class TestPerformanceSummaryGenerator:
             {"mean": {"point_estimate": 100000.0, "confidence_interval": {"lower_bound": 120000.0, "upper_bound": 110000.0}}},
         ],
     )
-    def test_parse_single_method_result_rejects_invalid_estimates(self, tmp_path, estimates_data) -> None:
+    def test_parse_single_method_result_rejects_invalid_estimates(self, tmp_path: Path, estimates_data: object) -> None:
         """Test circumsphere method parsing rejects malformed or invalid Criterion estimates."""
         criterion_path = tmp_path / "target" / "criterion" / "basic_2d_insphere"
         estimates_dir = criterion_path / "base"
@@ -5354,7 +5398,7 @@ class TestPerformanceSummaryGenerator:
         assert args.bench_timeout == 1800
 
     @patch("benchmark_utils.run_git_command")
-    def test_get_current_version_prefers_cargo_package_version(self, mock_git_command) -> None:
+    def test_get_current_version_prefers_cargo_package_version(self, mock_git_command: MagicMock) -> None:
         """Test getting current version from Cargo.toml before falling back to tags."""
         mock_git_command.side_effect = RuntimeError("git unavailable")
 
@@ -5370,7 +5414,7 @@ class TestPerformanceSummaryGenerator:
             assert generator.current_version == "1.2.3"
 
     @patch("benchmark_utils.run_git_command")
-    def test_get_current_version_with_tag(self, mock_git_command) -> None:
+    def test_get_current_version_with_tag(self, mock_git_command: MagicMock) -> None:
         """Test getting current version from git tags."""
         mock_git_command.return_value = completed_process("v1.2.3\n")
 
@@ -5383,14 +5427,14 @@ class TestPerformanceSummaryGenerator:
             mock_git_command.assert_called_with(["describe", "--tags", "--abbrev=0", "--match=v*"], cwd=project_root)
 
     @patch("benchmark_utils.run_git_command")
-    def test_get_current_version_fallback(self, mock_git_command) -> None:
+    def test_get_current_version_fallback(self, mock_git_command: MagicMock) -> None:
         """Test fallback version detection when describe fails."""
         # First call (describe) fails, second call (tag -l) succeeds
         mock_result = completed_process("v0.1.0\nv0.2.0")
 
         # The second call is made within the exception handler
-        def side_effect(*args, **kwargs) -> subprocess.CompletedProcess[str]:
-            if "describe" in args[0]:
+        def side_effect(args: list[str], _cwd: Path | None = None, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            if "describe" in args:
                 raise subprocess.CalledProcessError(1, "git describe", "describe failed")
             return mock_result
 
@@ -5404,7 +5448,7 @@ class TestPerformanceSummaryGenerator:
             assert version == "0.1.0"
 
     @patch("benchmark_utils.run_git_command")
-    def test_get_current_version_no_tags(self, mock_git_command) -> None:
+    def test_get_current_version_no_tags(self, mock_git_command: MagicMock) -> None:
         """Test version detection when no tags are found."""
         mock_git_command.side_effect = RuntimeError("No tags found")
 
@@ -5417,7 +5461,7 @@ class TestPerformanceSummaryGenerator:
 
     @patch("benchmark_utils.run_git_command")
     @patch("benchmark_utils.datetime")
-    def test_get_version_date_with_tag(self, mock_datetime, mock_git_command) -> None:  # noqa: ARG002
+    def test_get_version_date_with_tag(self, mock_datetime: MagicMock, mock_git_command: MagicMock) -> None:  # noqa: ARG002
         """Test getting version date from git tag."""
         mock_git_command.return_value = completed_process("2024-01-15\n")
 
@@ -5432,7 +5476,7 @@ class TestPerformanceSummaryGenerator:
 
     @patch("benchmark_utils.run_git_command")
     @patch("benchmark_utils.datetime")
-    def test_get_version_date_fallback(self, mock_datetime, mock_git_command) -> None:
+    def test_get_version_date_fallback(self, mock_datetime: MagicMock, mock_git_command: MagicMock) -> None:
         """Test version date fallback to current date."""
         mock_git_command.side_effect = RuntimeError("Git command failed")
         mock_now = Mock()
@@ -5594,7 +5638,7 @@ OK: Time change -1.8% within acceptable range
     @patch("benchmark_utils.get_git_commit_hash")
     @patch("benchmark_utils.run_git_command")
     @patch("benchmark_utils.datetime")
-    def test_generate_markdown_content(self, mock_datetime, mock_run_git, mock_git_commit) -> None:
+    def test_generate_markdown_content(self, mock_datetime: MagicMock, mock_run_git: MagicMock, mock_git_commit: MagicMock) -> None:
         """Test generating complete markdown content."""
         # Avoid calling actual git in __init__ helpers
         mock_run_git.side_effect = RuntimeError("git unavailable in test")
@@ -5730,7 +5774,7 @@ Benchmark completed."""
             assert result is None
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_circumsphere_benchmarks_success(self, mock_cargo) -> None:
+    def test_run_circumsphere_benchmarks_success(self, mock_cargo: MagicMock) -> None:
         """Test running circumsphere benchmarks successfully."""
         mock_cargo.return_value = completed_process()
 
@@ -5756,7 +5800,7 @@ Benchmark completed."""
             ]
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_circumsphere_benchmarks_uses_requested_cargo_profile(self, mock_cargo) -> None:
+    def test_run_circumsphere_benchmarks_uses_requested_cargo_profile(self, mock_cargo: MagicMock) -> None:
         """Test running circumsphere benchmarks with an explicit Cargo profile."""
         mock_cargo.return_value = completed_process()
 
@@ -5774,7 +5818,7 @@ Benchmark completed."""
             assert args[:5] == ["bench", "--profile", requested_profile, "--bench", "circumsphere_containment"]
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_circumsphere_benchmarks_with_numerical_data(self, mock_cargo) -> None:
+    def test_run_circumsphere_benchmarks_with_numerical_data(self, mock_cargo: MagicMock) -> None:
         """Test running circumsphere benchmarks with numerical accuracy data."""
         # Mock cargo command to return output with numerical accuracy data
         mock_result = completed_process(
@@ -5814,7 +5858,7 @@ Benchmark completed.""",
             ]
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_circumsphere_benchmarks_failure(self, mock_cargo, capsys) -> None:
+    def test_run_circumsphere_benchmarks_failure(self, mock_cargo: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
         """Test handling circumsphere benchmark failures."""
         mock_cargo.side_effect = RuntimeError("Benchmark failed")
 
@@ -5832,7 +5876,7 @@ Benchmark completed.""",
             assert "Error running circumsphere benchmarks" in captured.out
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_success(self, mock_cargo) -> None:
+    def test_run_ci_performance_suite_success(self, mock_cargo: MagicMock) -> None:
         """Test running the public API CI performance suite successfully."""
         mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
 
@@ -5867,7 +5911,7 @@ Benchmark completed.""",
             assert "completed_at" in metadata
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_uses_requested_cargo_profile(self, mock_cargo) -> None:
+    def test_run_ci_performance_suite_uses_requested_cargo_profile(self, mock_cargo: MagicMock) -> None:
         """Test running the public API CI performance suite with an explicit profile."""
         mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
 
@@ -5885,7 +5929,7 @@ Benchmark completed.""",
             assert "--" not in args
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_uses_requested_timeout(self, mock_cargo) -> None:
+    def test_run_ci_performance_suite_uses_requested_timeout(self, mock_cargo: MagicMock) -> None:
         """Test that release callers can extend the public API benchmark budget."""
         mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
 
@@ -5912,7 +5956,7 @@ Benchmark completed.""",
             mock_cargo.assert_not_called()
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_dev_mode_uses_reduced_sampling(self, mock_cargo) -> None:
+    def test_run_ci_performance_suite_dev_mode_uses_reduced_sampling(self, mock_cargo: MagicMock) -> None:
         """Test dev mode appends reduced Criterion sampling args explicitly."""
         mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
 
@@ -5932,7 +5976,7 @@ Benchmark completed.""",
             assert metadata["sampling_mode"] == "dev"
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_requires_manifest(self, mock_cargo) -> None:
+    def test_run_ci_performance_suite_requires_manifest(self, mock_cargo: MagicMock) -> None:
         """Test successful ci_performance_suite runs must emit the manifest."""
         mock_cargo.return_value = completed_process()
 
@@ -5949,7 +5993,7 @@ Benchmark completed.""",
             assert stale_manifest_path.read_text(encoding="utf-8") == "stale/benchmark/id\n"
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_requires_metrics(self, mock_cargo) -> None:
+    def test_run_ci_performance_suite_requires_metrics(self, mock_cargo: MagicMock) -> None:
         """Test fresh ci_performance_suite runs must emit construction metrics."""
         stdout_without_metrics = CI_MANIFEST_STDOUT.split("api_benchmark_metric", maxsplit=1)[0]
         mock_cargo.return_value = completed_process(stdout_without_metrics)
@@ -5970,7 +6014,7 @@ Benchmark completed.""",
             assert stale_metrics_path.read_text(encoding="utf-8") == "{}\n"
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_nonzero_exit(self, mock_cargo, capsys) -> None:
+    def test_run_ci_performance_suite_nonzero_exit(self, mock_cargo: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
         """Test handling ci_performance_suite nonzero process exits."""
         mock_cargo.return_value = completed_process(returncode=101, stderr="benchmark failed")
 
@@ -5985,7 +6029,7 @@ Benchmark completed.""",
             assert "cargo exited with status 101" in captured.out
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_failure(self, mock_cargo, capsys) -> None:
+    def test_run_ci_performance_suite_failure(self, mock_cargo: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
         """Test handling ci_performance_suite benchmark failures."""
         mock_cargo.side_effect = OSError("Benchmark failed")
 
@@ -6000,7 +6044,7 @@ Benchmark completed.""",
             assert "Error running ci_performance_suite benchmarks" in captured.out
 
     @patch("benchmark_utils.run_git_command")
-    def test_generate_summary_success(self, mock_git, capsys) -> None:
+    def test_generate_summary_success(self, mock_git: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
         """Test successful generation of performance summary."""
         mock_git.side_effect = RuntimeError("git unavailable in test")
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -6033,7 +6077,7 @@ Benchmark completed.""",
                 generator.generate_summary(bench_timeout=bench_timeout)
 
     @patch("benchmark_utils.run_release_signal_measurement_plan")
-    def test_generate_summary_with_benchmarks(self, mock_run_plan) -> None:
+    def test_generate_summary_with_benchmarks(self, mock_run_plan: MagicMock) -> None:
         """Test generating summary with fresh benchmark run."""
         mock_run_plan.return_value = {measurement.target: "" for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN}
 
@@ -6059,7 +6103,7 @@ Benchmark completed.""",
             assert output_file.exists()
 
     @patch("benchmark_utils.run_release_signal_measurement_plan")
-    def test_generate_summary_passes_cargo_profile_to_benchmarks(self, mock_run_plan) -> None:
+    def test_generate_summary_passes_cargo_profile_to_benchmarks(self, mock_run_plan: MagicMock) -> None:
         """Test generating a summary with fresh benchmarks under a specific Cargo profile."""
         mock_run_plan.return_value = {measurement.target: "" for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN}
 
@@ -6086,7 +6130,7 @@ Benchmark completed.""",
             assert output_file.exists()
 
     @patch("benchmark_utils.run_release_signal_measurement_plan")
-    def test_generate_summary_fresh_benchmark_failure_preserves_previous_report(self, mock_run_plan, capsys) -> None:
+    def test_generate_summary_fresh_benchmark_failure_preserves_previous_report(self, mock_run_plan: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
         """A failed fresh run must fail closed without replacing prior evidence."""
         mock_run_plan.side_effect = RuntimeError("benchmark failed")
 
@@ -6105,7 +6149,7 @@ Benchmark completed.""",
             assert "Fresh benchmark run failed" in captured.err
 
     @patch("benchmark_utils.run_release_signal_measurement_plan")
-    def test_generate_summary_strict_benchmark_failure_fails(self, mock_run_plan, capsys) -> None:
+    def test_generate_summary_strict_benchmark_failure_fails(self, mock_run_plan: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that strict summary generation fails instead of using fallback data."""
         mock_run_plan.side_effect = RuntimeError("benchmark failed")
 
@@ -6125,7 +6169,7 @@ Benchmark completed.""",
             captured = capsys.readouterr()
             assert "Fresh benchmark run failed" in captured.err
 
-    def test_generate_summary_strict_rejects_structural_fallback_provenance(self, capsys) -> None:
+    def test_generate_summary_strict_rejects_structural_fallback_provenance(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Strict generation rejects fallback based on provenance, not rendered prose."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -6179,7 +6223,7 @@ Benchmark completed.""",
         for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN:
             assert f"| `{measurement.target}` | {measurement.report_section} |" in rendered
 
-    def test_generate_summary_strict_rejects_missing_planned_report_section(self, tmp_path: Path, capsys) -> None:
+    def test_generate_summary_strict_rejects_missing_planned_report_section(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A planned target without Criterion groups must block strict publication."""
         generator = PerformanceSummaryGenerator(tmp_path)
         for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN[:-1]:
@@ -6198,7 +6242,7 @@ Benchmark completed.""",
         captured = capsys.readouterr()
         assert "realization_validation report section 'Realization validation' is incomplete" in captured.err
 
-    def test_generate_summary_strict_rejects_missing_circumsphere_results(self, capsys) -> None:
+    def test_generate_summary_strict_rejects_missing_circumsphere_results(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that strict summary generation fails when circumsphere results are absent."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -6216,7 +6260,7 @@ Benchmark completed.""",
             captured = capsys.readouterr()
             assert "circumsphere evidence uses reference fallback timings" in captured.err
 
-    def test_generate_summary_strict_rejects_partial_circumsphere_estimates(self, tmp_path: Path, capsys) -> None:
+    def test_generate_summary_strict_rejects_partial_circumsphere_estimates(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """One missing method estimate makes the fixed circumsphere contract incomplete."""
         generator = PerformanceSummaryGenerator(tmp_path)
         circumsphere_results = complete_circumsphere_results(generator)
@@ -6237,7 +6281,7 @@ Benchmark completed.""",
         assert "circumsphere Criterion evidence is incomplete" in captured.err
         assert "2d_insphere" in captured.err
 
-    def test_generate_summary_strict_rejects_manifest_result_with_malformed_estimate(self, tmp_path: Path, capsys) -> None:
+    def test_generate_summary_strict_rejects_manifest_result_with_malformed_estimate(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """The runtime manifest makes a skipped malformed CI estimate an explicit gap."""
         generator = PerformanceSummaryGenerator(tmp_path)
         manifest_path = tmp_path / "target" / "criterion" / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE
@@ -6258,7 +6302,7 @@ Benchmark completed.""",
         assert "runtime-manifest" in captured.err
         assert "validation/malformed/20" in captured.err
 
-    def test_generate_summary_atomic_replace_failure_preserves_previous_report(self, tmp_path: Path, capsys) -> None:
+    def test_generate_summary_atomic_replace_failure_preserves_previous_report(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A final replacement failure leaves the previous tracked report byte-identical."""
         generator = PerformanceSummaryGenerator(tmp_path)
         write_complete_release_signal_coverage(tmp_path)
@@ -6278,7 +6322,7 @@ Benchmark completed.""",
         captured = capsys.readouterr()
         assert "injected replace failure" in captured.err
 
-    def test_generate_summary_exception_handling(self, capsys) -> None:
+    def test_generate_summary_exception_handling(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test exception handling in generate_summary."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -6587,7 +6631,7 @@ Hardware Information:
 class TestTagSpecificBaselineHandling:
     """Test cases for tag-specific baseline file handling functionality."""
 
-    def test_prepare_baseline_with_tag_specific_file(self, capsys) -> None:
+    def test_prepare_baseline_with_tag_specific_file(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test baseline preparation with tag-specific file (baseline-v*.txt)."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -6639,7 +6683,7 @@ Time: [160.1, 168.18, 177.67] µs
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_prepare_baseline_with_generic_baseline_file(self, capsys) -> None:
+    def test_prepare_baseline_with_generic_baseline_file(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test baseline preparation with generic baseline*.txt file."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -6686,7 +6730,7 @@ Time: [95.0, 100.0, 105.0] µs
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_prepare_baseline_prefers_standard_name(self, capsys) -> None:
+    def test_prepare_baseline_prefers_standard_name(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that prepare_baseline prefers baseline_results.txt over tag-specific files."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -6728,7 +6772,7 @@ Time: [95.0, 100.0, 105.0] µs
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_prepare_baseline_no_matching_files(self, capsys) -> None:
+    def test_prepare_baseline_no_matching_files(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test baseline preparation when no matching baseline files are found."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)

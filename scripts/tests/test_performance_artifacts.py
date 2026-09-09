@@ -29,6 +29,7 @@ from performance_artifacts import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 SHA_A = "a" * 64
@@ -126,7 +127,7 @@ def bundle(*, current: str = "v0.8.0", baseline: str = "v0.7.8") -> PerformanceB
     )
 
 
-def replace_csv_rows(csv_payload: bytes, transform) -> bytes:
+def replace_csv_rows(csv_payload: bytes, transform: Callable[[list[dict[str, str]]], None]) -> bytes:
     reader = csv.DictReader(io.StringIO(csv_payload.decode("utf-8"), newline=""))
     rows = [dict(row) for row in reader]
     transform(rows)

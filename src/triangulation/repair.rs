@@ -919,6 +919,9 @@ where
     /// This handles fallback paths that do not retriangulate a cavity, such as isolated vertices
     /// or empty-boundary removals. Those paths can otherwise leave lower-dimensional remnants that
     /// are structurally valid at the TDS layer but invalid as a triangulation.
+    /// Every fallback candidate must pass the complete Level 4 `tri.is_valid_realization()` check
+    /// before publication. `full_realization_validation` controls only non-empty fan-retriangulation
+    /// paths and must not gate this fallback validation.
     fn remove_vertex_with_invariant_checks(
         &mut self,
         vertex_key: VertexKey,

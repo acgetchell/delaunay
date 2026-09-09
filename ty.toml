@@ -1,10 +1,7 @@
 # ty.toml
 # Astral ty configuration for delaunay
-# Python is auxiliary tooling only (scripts/), Rust is primary
-
-[src]
-# Restrict analysis strictly to Python tooling.
-include = [ "scripts" ]
+# Python is auxiliary tooling and static-analysis fixtures; Rust is primary.
+# The Just recipes pass every tracked and new, unignored Python source file.
 
 [terminal]
 # Keep output concise by default.

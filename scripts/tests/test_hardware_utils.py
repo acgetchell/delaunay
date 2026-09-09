@@ -19,6 +19,7 @@ from subprocess_utils import ExecutableNotFoundError
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from unittest.mock import MagicMock
 
 
 @pytest.fixture
@@ -30,25 +31,25 @@ def hardware() -> HardwareInfo:
 class TestHardwareInfo:
     """Test cases for HardwareInfo class."""
 
-    def test_init(self, hardware) -> None:
+    def test_init(self, hardware: HardwareInfo) -> None:
         """Test HardwareInfo initialization."""
         assert hardware.os_type == platform.system()
         assert hardware.machine == platform.machine()
 
     @patch("hardware_utils.platform.system")
-    def test_init_with_different_os(self, mock_system) -> None:
+    def test_init_with_different_os(self, mock_system: MagicMock) -> None:
         """Test initialization with different OS types."""
         mock_system.return_value = "Linux"
         hardware = HardwareInfo()
         assert hardware.os_type == "Linux"
 
-    def test_run_command_empty_cmd(self, hardware) -> None:
+    def test_run_command_empty_cmd(self, hardware: HardwareInfo) -> None:
         """Test _run_command with empty command list."""
         with pytest.raises(ValueError, match="Command list cannot be empty"):
             hardware._run_command([])
 
     @patch("hardware_utils.run_safe_command")
-    def test_run_command_success(self, mock_run_safe, hardware) -> None:
+    def test_run_command_success(self, mock_run_safe: MagicMock, hardware: HardwareInfo) -> None:
         """Test successful command execution."""
         mock_run_safe.return_value = subprocess.CompletedProcess(
             args=["echo", "test"],
@@ -70,7 +71,7 @@ class TestHardwareInfo:
         )
 
     @patch("hardware_utils.run_safe_command")
-    def test_run_command_failure(self, mock_run_safe, hardware) -> None:
+    def test_run_command_failure(self, mock_run_safe: MagicMock, hardware: HardwareInfo) -> None:
         """Test command execution failure."""
         mock_run_safe.side_effect = subprocess.CalledProcessError(1, "cmd")
 
@@ -79,7 +80,7 @@ class TestHardwareInfo:
 
     @patch("hardware_utils.platform.system")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_cpu_info_darwin(self, mock_run_command, mock_system) -> None:
+    def test_get_cpu_info_darwin(self, mock_run_command: MagicMock, mock_system: MagicMock) -> None:
         """Test CPU info detection on macOS."""
         mock_system.return_value = "Darwin"
         mock_run_command.side_effect = ["Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz", "6", "12"]
@@ -94,7 +95,7 @@ class TestHardwareInfo:
     @patch("hardware_utils.platform.system")
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_cpu_info_linux_with_lscpu(self, mock_run_command, mock_which, mock_system) -> None:
+    def test_get_cpu_info_linux_with_lscpu(self, mock_run_command: MagicMock, mock_which: MagicMock, mock_system: MagicMock) -> None:
         """Test CPU info detection on Linux with lscpu available."""
         mock_system.return_value = "Linux"
         mock_which.side_effect = lambda cmd: cmd in ["lscpu", "nproc"]
@@ -122,7 +123,7 @@ Thread(s) per core:  2"""
     @patch("hardware_utils.platform.system")
     @patch("hardware_utils.shutil.which")
     @patch("builtins.open", new_callable=mock_open, read_data="processor\t: 0\nmodel name\t: AMD Ryzen 5 3600\nprocessor\t: 1\n")
-    def test_get_cpu_info_linux_fallback_cpuinfo(self, _mock_file, mock_which, mock_system) -> None:  # noqa: PT019
+    def test_get_cpu_info_linux_fallback_cpuinfo(self, _mock_file: MagicMock, mock_which: MagicMock, mock_system: MagicMock) -> None:  # noqa: PT019
         """Test CPU info detection on Linux using /proc/cpuinfo fallback."""
         mock_system.return_value = "Linux"
         mock_which.return_value = None  # No commands available
@@ -137,7 +138,9 @@ Thread(s) per core:  2"""
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_get_linux_cpu_cores_from_proc")
     @patch.object(HardwareInfo, "_get_linux_cpu_cores_from_lscpu")
-    def test_get_linux_cpu_cores_falls_back_when_lscpu_unknown(self, mock_lscpu_cores, mock_proc_cores, mock_which, hardware) -> None:
+    def test_get_linux_cpu_cores_falls_back_when_lscpu_unknown(
+        self, mock_lscpu_cores: MagicMock, mock_proc_cores: MagicMock, mock_which: MagicMock, hardware: HardwareInfo
+    ) -> None:
         """Test Linux CPU core fallback when lscpu output is unusable."""
         mock_which.side_effect = lambda cmd: cmd == "lscpu"
         mock_lscpu_cores.return_value = "Unknown"
@@ -150,7 +153,9 @@ Thread(s) per core:  2"""
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_get_linux_cpu_cores_from_proc")
     @patch.object(HardwareInfo, "_get_linux_cpu_cores_from_lscpu")
-    def test_get_linux_cpu_cores_falls_back_when_lscpu_raises(self, mock_lscpu_cores, mock_proc_cores, mock_which, hardware) -> None:
+    def test_get_linux_cpu_cores_falls_back_when_lscpu_raises(
+        self, mock_lscpu_cores: MagicMock, mock_proc_cores: MagicMock, mock_which: MagicMock, hardware: HardwareInfo
+    ) -> None:
         """Test Linux CPU core fallback when lscpu parsing raises."""
         mock_which.side_effect = lambda cmd: cmd == "lscpu"
         mock_lscpu_cores.side_effect = RuntimeError("bad lscpu output")
@@ -163,7 +168,7 @@ Thread(s) per core:  2"""
     @patch("hardware_utils.platform.system")
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_cpu_info_windows(self, mock_run_command, mock_which, mock_system) -> None:
+    def test_get_cpu_info_windows(self, mock_run_command: MagicMock, mock_which: MagicMock, mock_system: MagicMock) -> None:
         """Test CPU info detection on Windows."""
         mock_system.return_value = "Windows"
         mock_which.side_effect = lambda cmd: cmd == "powershell"
@@ -179,7 +184,7 @@ Thread(s) per core:  2"""
 
     @patch("hardware_utils.platform.processor", return_value="")
     @patch("hardware_utils.platform.system")
-    def test_get_cpu_info_unknown_os(self, mock_system, mock_processor) -> None:
+    def test_get_cpu_info_unknown_os(self, mock_system: MagicMock, mock_processor: MagicMock) -> None:
         """Test CPU info detection on unknown OS."""
         mock_system.return_value = "UnknownOS"
 
@@ -196,9 +201,9 @@ Thread(s) per core:  2"""
     @patch("hardware_utils.shutil.which", return_value=None)
     def test_get_cpu_info_windows_uses_processor_identifier(
         self,
-        mock_which,
-        mock_system,
-        mock_processor,
+        mock_which: MagicMock,
+        mock_system: MagicMock,
+        mock_processor: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Windows provenance uses the concrete environment CPU identifier."""
@@ -216,7 +221,7 @@ Thread(s) per core:  2"""
 
     @patch("hardware_utils.platform.processor", return_value="Apple M4 Pro")
     @patch("hardware_utils.platform.system", return_value="UnknownOS")
-    def test_get_cpu_info_uses_concrete_platform_fallback(self, mock_system, mock_processor) -> None:
+    def test_get_cpu_info_uses_concrete_platform_fallback(self, mock_system: MagicMock, mock_processor: MagicMock) -> None:
         """Unknown platforms retain a concrete processor model when exposed."""
         cpu_model, cpu_cores, cpu_threads = HardwareInfo().get_cpu_info()
 
@@ -229,7 +234,7 @@ Thread(s) per core:  2"""
     @patch("hardware_utils.platform.processor", return_value="ppc64le")
     @patch("hardware_utils.platform.machine", return_value="PPC64LE")
     @patch("hardware_utils.platform.system", return_value="UnknownOS")
-    def test_get_cpu_info_rejects_processor_equal_to_machine(self, mock_system, mock_machine, mock_processor) -> None:
+    def test_get_cpu_info_rejects_processor_equal_to_machine(self, mock_system: MagicMock, mock_machine: MagicMock, mock_processor: MagicMock) -> None:
         """Architecture strings are not retained as concrete processor models."""
         cpu_model, cpu_cores, cpu_threads = HardwareInfo().get_cpu_info()
 
@@ -243,7 +248,7 @@ Thread(s) per core:  2"""
     @patch("hardware_utils.platform.processor", return_value="")
     @patch("hardware_utils.platform.system")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_cpu_info_command_failure(self, mock_run_command, mock_system, mock_processor) -> None:
+    def test_get_cpu_info_command_failure(self, mock_run_command: MagicMock, mock_system: MagicMock, mock_processor: MagicMock) -> None:
         """Test CPU info detection when commands fail."""
         mock_system.return_value = "Darwin"
         mock_run_command.side_effect = subprocess.CalledProcessError(1, "cmd")
@@ -259,7 +264,7 @@ Thread(s) per core:  2"""
     @patch("hardware_utils.platform.processor", return_value="Apple M4 Max")
     @patch("hardware_utils.platform.system", return_value="Darwin")
     @patch.object(HardwareInfo, "_run_command", side_effect=ExecutableNotFoundError("sysctl missing"))
-    def test_get_cpu_info_missing_command_uses_platform_fallback(self, mock_run_command, mock_system, mock_processor) -> None:
+    def test_get_cpu_info_missing_command_uses_platform_fallback(self, mock_run_command: MagicMock, mock_system: MagicMock, mock_processor: MagicMock) -> None:
         """A missing primary probe still reaches the concrete processor fallback."""
         cpu_model, cpu_cores, cpu_threads = HardwareInfo().get_cpu_info()
 
@@ -272,7 +277,7 @@ Thread(s) per core:  2"""
 
     @patch("hardware_utils.platform.system")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_memory_info_darwin(self, mock_run_command, mock_system) -> None:
+    def test_get_memory_info_darwin(self, mock_run_command: MagicMock, mock_system: MagicMock) -> None:
         """Test memory info detection on macOS."""
         mock_system.return_value = "Darwin"
         mock_run_command.return_value = "17179869184"  # 16 GB in bytes
@@ -284,7 +289,7 @@ Thread(s) per core:  2"""
 
     @patch("hardware_utils.platform.system")
     @patch("builtins.open", new_callable=mock_open, read_data="MemTotal:       16384000 kB\n")
-    def test_get_memory_info_linux(self, _mock_file, mock_system) -> None:  # noqa: PT019
+    def test_get_memory_info_linux(self, _mock_file: MagicMock, mock_system: MagicMock) -> None:  # noqa: PT019
         """Test memory info detection on Linux."""
         mock_system.return_value = "Linux"
 
@@ -296,7 +301,7 @@ Thread(s) per core:  2"""
     @patch("hardware_utils.platform.system")
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_memory_info_windows(self, mock_run_command, mock_which, mock_system) -> None:
+    def test_get_memory_info_windows(self, mock_run_command: MagicMock, mock_which: MagicMock, mock_system: MagicMock) -> None:
         """Test memory info detection on Windows."""
         mock_system.return_value = "Windows"
         mock_which.side_effect = lambda cmd: cmd == "powershell"
@@ -308,7 +313,7 @@ Thread(s) per core:  2"""
         assert memory == "32.0 GB"
 
     @patch("hardware_utils.platform.system")
-    def test_get_memory_info_unknown_os(self, mock_system) -> None:
+    def test_get_memory_info_unknown_os(self, mock_system: MagicMock) -> None:
         """Test memory info detection on unknown OS."""
         mock_system.return_value = "UnknownOS"
 
@@ -319,7 +324,7 @@ Thread(s) per core:  2"""
 
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_rust_info_success(self, mock_run_command, mock_which, hardware) -> None:
+    def test_get_rust_info_success(self, mock_run_command: MagicMock, mock_which: MagicMock, hardware: HardwareInfo) -> None:
         """Test Rust info detection when rustc is available."""
         mock_which.return_value = "/usr/bin/rustc"
         mock_run_command.side_effect = ["rustc 1.70.0 (90c541806 2023-05-31)", "rustc 1.70.0 (90c541806 2023-05-31)\nhost: x86_64-apple-darwin\n"]
@@ -330,7 +335,7 @@ Thread(s) per core:  2"""
         assert rust_target == "x86_64-apple-darwin"
 
     @patch("hardware_utils.shutil.which")
-    def test_get_rust_info_no_rustc(self, mock_which, hardware) -> None:
+    def test_get_rust_info_no_rustc(self, mock_which: MagicMock, hardware: HardwareInfo) -> None:
         """Test Rust info detection when rustc is not available."""
         mock_which.return_value = None
 
@@ -341,7 +346,7 @@ Thread(s) per core:  2"""
 
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_run_command")
-    def test_get_rust_info_command_failure(self, mock_run_command, mock_which, hardware) -> None:
+    def test_get_rust_info_command_failure(self, mock_run_command: MagicMock, mock_which: MagicMock, hardware: HardwareInfo) -> None:
         """Test Rust info detection when rustc commands fail."""
         mock_which.return_value = "/usr/bin/rustc"
         mock_run_command.side_effect = subprocess.CalledProcessError(1, "cmd")
@@ -351,7 +356,7 @@ Thread(s) per core:  2"""
         assert rust_version == "Unknown"
         assert rust_target == "Unknown"
 
-    def test_get_hardware_info(self, hardware) -> None:
+    def test_get_hardware_info(self, hardware: HardwareInfo) -> None:
         """Test comprehensive hardware info collection."""
         with (
             patch.object(hardware, "get_cpu_info") as mock_cpu,
@@ -377,7 +382,7 @@ Thread(s) per core:  2"""
         ("system_name", "expected_os"), [("Darwin", "macOS"), ("Linux", "Linux"), ("Windows", "Windows"), ("FreeBSD", "Unknown (FreeBSD)")]
     )
     @patch("hardware_utils.platform.system")
-    def test_get_hardware_info_os_mapping(self, mock_system, system_name, expected_os) -> None:
+    def test_get_hardware_info_os_mapping(self, mock_system: MagicMock, system_name: str, expected_os: str) -> None:
         """Test OS name mapping in hardware info."""
         mock_system.return_value = system_name
         hardware = HardwareInfo()
@@ -394,7 +399,7 @@ Thread(s) per core:  2"""
             info = hardware.get_hardware_info()
             assert info["OS"] == expected_os
 
-    def test_format_hardware_info(self, hardware) -> None:
+    def test_format_hardware_info(self, hardware: HardwareInfo) -> None:
         """Test hardware info formatting."""
         test_info = {
             "OS": "macOS",
@@ -417,7 +422,7 @@ Thread(s) per core:  2"""
         assert "Rust: rustc 1.70.0" in formatted
         assert "Target: x86_64-apple-darwin" in formatted
 
-    def test_format_hardware_info_none(self, hardware) -> None:
+    def test_format_hardware_info_none(self, hardware: HardwareInfo) -> None:
         """Test hardware info formatting with None input."""
         with patch.object(hardware, "get_hardware_info") as mock_get_info:
             mock_get_info.return_value = {
@@ -645,7 +650,7 @@ Other content here...
             ("", None),
         ],
     )
-    def test_extract_memory_value(self, memory_str, expected) -> None:
+    def test_extract_memory_value(self, memory_str: str, expected: float | None) -> None:
         """Test memory value extraction from strings."""
         result = HardwareComparator._extract_memory_value(memory_str)
         if expected is None:
@@ -657,7 +662,7 @@ Other content here...
 class TestHardwareUtilsIntegration:
     """Integration tests for hardware_utils functionality."""
 
-    def test_info_json_option_writes_only_json_to_stdout(self, capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_info_json_option_writes_only_json_to_stdout(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
         expected = {"OS": "TestOS", "CPU": "Test CPU"}
         monkeypatch.setattr(HardwareInfo, "get_hardware_info", lambda _self: expected)
 
@@ -676,7 +681,7 @@ class TestHardwareUtilsIntegration:
             ["compare", "--json", "--baseline-file", "baseline.txt"],
         ],
     )
-    def test_command_specific_options_are_rejected_for_other_commands(self, argv: list[str], capsys) -> None:
+    def test_command_specific_options_are_rejected_for_other_commands(self, argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
         with pytest.raises(SystemExit) as exc_info:
             main(argv)
 
@@ -685,7 +690,7 @@ class TestHardwareUtilsIntegration:
         assert captured.out == ""
         assert "unrecognized arguments:" in captured.err
 
-    def test_compare_requires_baseline_file(self, capsys) -> None:
+    def test_compare_requires_baseline_file(self, capsys: pytest.CaptureFixture[str]) -> None:
         with pytest.raises(SystemExit) as exc_info:
             main(["compare"])
 
@@ -694,7 +699,7 @@ class TestHardwareUtilsIntegration:
         assert captured.out == ""
         assert "the following arguments are required: --baseline-file" in captured.err
 
-    def test_compare_reports_result_on_stdout_only(self, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_compare_reports_result_on_stdout_only(self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
         baseline = tmp_path / "baseline.txt"
         baseline.write_text("Hardware Information:\n  OS: TestOS\n", encoding="utf-8")
         monkeypatch.setattr(HardwareInfo, "get_hardware_info", lambda _self: {"OS": "TestOS"})
@@ -707,7 +712,7 @@ class TestHardwareUtilsIntegration:
         assert captured.out == "compatible\n"
         assert captured.err == ""
 
-    def test_main_suggests_close_command_name(self, capsys, monkeypatch) -> None:
+    def test_main_suggests_close_command_name(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
         """Python 3.14 argparse suggestions should help recover from command typos."""
         monkeypatch.setattr(sys, "argv", ["hardware_utils.py", "inf"])
 

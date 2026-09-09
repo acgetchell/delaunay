@@ -79,7 +79,7 @@ changed surface.
 | Touched surface | Iteration validation | Final validation / PR readiness |
 |-----|-----|-----|
 | Markdown documentation (`*.md`) | `just markdown-check` | `just check-docs` |
-| Python under `scripts/` | Targeted pytest or `just test-python`; add `just python-check` for logic/style | `just python-check` and `just test-python` |
+| Python sources and fixtures | Targeted pytest and `just python-check` | `just python-check` and `just test-python` |
 | Jupyter notebooks (`notebooks/**/*.ipynb`) | `just notebook-check` | `just notebook-check` |
 | Paper sources and figures (`papers/**/*`, paper notebooks) | `just paper-check` | `just papers` |
 | Configuration only (JSON, TOML, YAML, CFF, workflows) | Matching config validator | `just check-config` |
@@ -91,6 +91,9 @@ changed surface.
 | Core Rust code | `just check` and targeted tests | `just ci` |
 | Mixed focused surfaces without core Rust | Run each matching focused validator once | Run each matching focused validator once |
 | Mixed core Rust plus tests/benches/examples/docs/config | `just check` and targeted tests | `just ci` |
+
+For Semgrep fixture changes, also run `just semgrep-test` to preserve the
+deliberate positive and negative cases.
 
 Do not run `just ci` merely because documentation, configuration, Python,
 notebook, or test-only Rust files changed. Do not run `just test` when a single
@@ -334,7 +337,8 @@ This runs:
 - release-version reference synchronization
 - `Cargo.toml`/`Cargo.lock` synchronization
 - JSON/TOML/YAML/CFF checks
-- Python lint/typecheck
+- Python formatting, full-policy lint, and type checks across tracked and new sources
+- direct Python Semgrep fixture lint
 - notebook hygiene and extracted-code checks
 - canonical validation-figure currentness on macOS
 - shell script formatting and lint checks
@@ -358,8 +362,8 @@ measured workflow maintains its triangulation, predicate, topology, and
 diagnostic invariants.
 
 `just ci` is the comprehensive error-catching validation path used by GitHub
-Actions. It composes `just check`, `just test`, `just bench-compile`, and
-`just examples`. The target classes remain orthogonal: `rust-core-check` covers
+Actions. It composes `just check`, `just python-fixture-lint`, `just test`,
+`just bench-compile`, and `just examples`. The target classes remain orthogonal: `rust-core-check` covers
 formatting, all-targets Clippy, rustdoc, and Semgrep; `unused-deps` checks direct
 Cargo dependency hygiene; `test-rust` composes unit, integration, CLI, and
 doctest buckets; `notebook-check` validates notebooks without executing them.

@@ -216,7 +216,7 @@ check-fast:
 
 # CI simulation: comprehensive validation.
 [group('workflows')]
-ci: _validation-doc-figures-check-if-canonical check test bench-compile examples
+ci: _validation-doc-figures-check-if-canonical check python-fixture-lint test bench-compile examples
     @echo "🎯 CI checks complete!"
 
 # CI followed by an explicit persistent local baseline refresh.
@@ -1101,19 +1101,20 @@ python-check: python-format-check python-lint python-typecheck
 
 # Apply Ruff lint fixes and formatting to Python source.
 [group('validation')]
-python-fix: _ensure-uv
-    uv run --locked ruff check scripts/ --fix
-    uv run --locked ruff format scripts/
+python-fix: (_python-tool "ruff check --fix") (_python-tool "ruff format")
+
+# Lint deliberate Python fixtures with the full configured Ruff policy.
+[group('validation')]
+python-fixture-lint: _ensure-uv
+    uv run --locked ruff check tests/semgrep/
 
 # Check Python formatting with Ruff.
 [group('validation')]
-python-format-check: _ensure-uv
-    uv run --locked ruff format --check scripts/
+python-format-check: (_python-tool "ruff format --check")
 
 # Lint Python source with Ruff.
 [group('validation')]
-python-lint: _ensure-uv
-    uv run --locked ruff check scripts/
+python-lint: (_python-tool "ruff check")
 
 # Synchronize development Python dependencies from the lockfile.
 [group('build and setup')]
@@ -1122,8 +1123,7 @@ python-sync: _ensure-uv
 
 # Type-check Python support code with ty.
 [group('validation')]
-python-typecheck: _ensure-uv
-    uv run --locked --group notebooks ty check scripts/ --error all
+python-typecheck: (_python-tool "--group notebooks ty check --error all")
 
 # Require final release versions plus matching changelog and citation dates.
 [group('release')]

@@ -4,13 +4,52 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import os
 import subprocess
 import tempfile
-from pathlib import Path
 
 # ok: delaunay.python.no-future-annotations-on-python314
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
+
+from subprocess_utils import run_safe_command
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+    from tarfile import TarFile
+
+
+class DataFrameReader(Protocol):
+    """Minimal eager Parquet reader, without requiring optional packages."""
+
+    def read_parquet(self, path: Path) -> object:
+        """Read the supplied Parquet file."""
+        ...
+
+
+class PolarsReader(DataFrameReader, Protocol):
+    """The additional lazy reader used by the Polars fixture."""
+
+    def scan_parquet(self, path: Path) -> object:
+        """Scan the supplied Parquet file."""
+        ...
+
+
+class ArrowParquet(Protocol):
+    """The PyArrow Parquet API shapes exercised by the fixture."""
+
+    ParquetFile: Callable[[Path], object]
+
+    def read_table(self, path: Path) -> object:
+        """Read the supplied Parquet table."""
+        ...
+
+
+class ArrowModule(Protocol):
+    """Expose PyArrow's Parquet namespace for static analysis."""
+
+    parquet: ArrowParquet
 
 
 def direct_process_spawning() -> None:
@@ -30,7 +69,7 @@ def direct_process_spawning() -> None:
     # ruleid: delaunay.python.no-direct-subprocess-run-outside-wrapper
     subprocess.getstatusoutput("true")
     # ruleid: delaunay.python.no-direct-subprocess-run-outside-wrapper
-    os.system("true")
+    os.system("true")  # ty: ignore[deprecated] - deliberate direct-spawn fixture.
 
 
 async def direct_async_process_spawning() -> None:
@@ -47,7 +86,7 @@ def wrapped_process_spawning() -> None:
     run_safe_command("true", [])
 
 
-def tar_extraction(archive: object, target: Path) -> None:
+def tar_extraction(archive: TarFile, target: Path) -> None:
     """Exercise unsafe and filtered tar extraction calls."""
     # ruleid: delaunay.python.safe-tar-extraction
     archive.extractall(target)
@@ -97,7 +136,7 @@ def performance_artifact_writes(path: Path) -> None:
     tempfile.NamedTemporaryFile("wb", dir=path.parent)
 
 
-def parquet_promotion_inputs(path: Path) -> None:
+def parquet_promotion_inputs(path: Path, pl: PolarsReader, pandas: DataFrameReader, pq: ArrowParquet, pyarrow: ArrowModule) -> None:
     """Exercise Parquet readers that would add a second promotion contract."""
     # ruleid: delaunay.python.performance-promotion-is-csv-only
     pl.read_parquet(path)

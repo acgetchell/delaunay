@@ -329,8 +329,11 @@ mod tests {
     use crate::core::tds::TdsBuilder;
     use crate::geometry::kernel::RobustKernel;
     use crate::triangulation::builder::TriangulationBuilderError;
-    use crate::triangulation::validation::TopologyConstructionProvenance;
-    use crate::vertex;
+    use crate::triangulation::realization::TriangulationRealizationValidationError;
+    use crate::triangulation::validation::{
+        TopologyConstructionProvenance, ValidationConfigurationError,
+    };
+    use crate::{DelaunayTriangulationBuilder, vertex};
     use serde_json::Value;
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -396,6 +399,25 @@ mod tests {
         );
     }
 
+    /// Builds a realized quotient for detecting an incompatible stored chart mode.
+    fn periodic_torus() -> Triangulation<RobustKernel<f64>, u32, (), 2> {
+        let vertices = (0_u32..7)
+            .map(|index| {
+                let index_f64 = f64::from(index);
+                vertex!([
+                    0.9_f64.mul_add(((index_f64 + 1.0) * 0.618_033_988_749_894_8).fract(), 0.05),
+                    0.9_f64.mul_add(((index_f64 + 1.0) * 0.414_213_562_373_095_03).fract(), 0.05),
+                ]; data = index)
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        DelaunayTriangulationBuilder::new(&vertices)
+            .try_toroidal([1.0; 2])
+            .unwrap()
+            .build_triangulation_with_kernel(&RobustKernel::new())
+            .unwrap()
+    }
+
     macro_rules! dimension_tests {
         ($($dimension:literal),+) => { $(pastey::paste! {
             #[test]
@@ -403,6 +425,179 @@ mod tests {
         })+ };
     }
     dimension_tests!(2, 3, 4, 5);
+
+    #[test]
+    fn nested_null_payloads_are_rejected_before_encoding() {
+        let payloads = [
+            CborValue::Array(vec![CborValue::from(7), CborValue::Null]),
+            CborValue::Map(vec![(CborValue::from("value"), CborValue::Null)]),
+            CborValue::Map(vec![(CborValue::Null, CborValue::from(7))]),
+            CborValue::Tag(42, Box::new(CborValue::Null)),
+        ];
+        for payload in payloads {
+            let result = capture_payload::<_, serde_json::Error>(&payload);
+            let error = result
+                .err()
+                .expect("nested null must not be silently collapsed");
+            assert!(error.to_string().contains("ambiguous CBOR null/unit data"));
+        }
+    }
+
+    #[test]
+    fn structured_payload_capture_retains_arrays_maps_and_tags() {
+        let payload = CborValue::Map(vec![(
+            CborValue::from("samples"),
+            CborValue::Array(vec![
+                CborValue::from(7),
+                CborValue::Tag(42, Box::new(CborValue::from(9))),
+            ]),
+        )]);
+        let captured = capture_payload::<_, serde_json::Error>(&payload).unwrap();
+        let mut bytes = Vec::new();
+        ciborium::ser::into_writer(&captured, &mut bytes).unwrap();
+        let restored: StoredPayload<CborValue> =
+            ciborium::de::from_reader(bytes.as_slice()).unwrap();
+        assert_eq!(restored.value, payload);
+    }
+
+    #[test]
+    fn snapshots_preserve_each_compatible_guarantee_and_validation_policy() {
+        let storage = sample::<2>().into_tds();
+        let expected = serde_json::to_value(&storage).unwrap();
+        for guarantee in [
+            TopologyGuarantee::PLManifold,
+            TopologyGuarantee::Pseudomanifold,
+        ] {
+            for policy in [
+                ValidationPolicy::Never,
+                ValidationPolicy::ExplicitOnly,
+                ValidationPolicy::OnSuspicion,
+                ValidationPolicy::Always,
+                ValidationPolicy::DebugOnly,
+            ] {
+                // Never is the one policy explicitly forbidden for PL manifolds.
+                if guarantee == TopologyGuarantee::PLManifold && policy == ValidationPolicy::Never {
+                    continue;
+                }
+                let tri = TriangulationBuilder::new(storage.clone(), RobustKernel::new())
+                    .topology_guarantee(guarantee)
+                    .validation_policy(policy)
+                    .build()
+                    .unwrap();
+                let restored: Triangulation<RobustKernel<f64>, u32, u32, 2> =
+                    serde_json::from_str(&serde_json::to_string(&tri).unwrap()).unwrap();
+                assert_eq!(restored.topology_guarantee(), guarantee);
+                assert_eq!(restored.validation_policy(), policy);
+                assert_eq!(serde_json::to_value(&restored.tds).unwrap(), expected);
+                restored.validate_realization().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_mode_cannot_be_reinterpreted_as_periodic_image_geometry() {
+        let tri = periodic_torus();
+        tri.validate_realization().unwrap();
+        let expected = serde_json::to_value(&tri.tds).unwrap();
+        assert!(tri.simplices().any(|(_, simplex)| {
+            simplex
+                .periodic_vertex_offsets()
+                .is_some_and(|offsets| offsets.iter().flatten().any(|&offset| offset != 0))
+        }));
+        let mut encoded = serde_json::to_value(&tri).unwrap();
+        encoded["global_topology"]["mode"] = Value::from("explicit");
+        assert_eq!(
+            encoded["global_topology"]["period_bits"],
+            serde_json::to_value([1.0_f64.to_bits(); 2]).unwrap()
+        );
+        let decoded: TriangulationSnapshot<u32, (), 2> = serde_json::from_value(encoded).unwrap();
+        assert_eq!(
+            decoded.global_topology,
+            GlobalTopology::try_toroidal([1.0; 2], ToroidalConstructionMode::Explicit).unwrap()
+        );
+        assert_eq!(serde_json::to_value(&decoded.tds).unwrap(), expected);
+        let failure = decoded
+            .try_into_triangulation(RobustKernel::new())
+            .unwrap_err();
+        assert!(
+            matches!(failure.reason(), TriangulationBuilderError::RealizationValidation { source }
+            if matches!(source.as_ref(), TriangulationRealizationValidationError::NegativeSimplexOrientation { .. }))
+        );
+        assert_eq!(serde_json::to_value(failure.owner()).unwrap(), expected);
+    }
+
+    #[test]
+    fn malformed_toroidal_domains_fail_during_snapshot_decoding() {
+        let original = serde_json::to_value(sample::<2>()).unwrap();
+        let unit = 1.0_f64.to_bits();
+        for (periods, diagnostic) in [
+            (vec![unit], "expected 2 periods, got 1"),
+            (vec![unit; 3], "expected 2 periods, got 3"),
+            (vec![unit, 0.0_f64.to_bits()], "axis 1"),
+            (vec![unit, (-1.0_f64).to_bits()], "axis 1"),
+            (vec![unit, f64::INFINITY.to_bits()], "axis 1"),
+            (vec![unit, f64::NAN.to_bits()], "axis 1"),
+        ] {
+            let mut invalid = original.clone();
+            invalid["global_topology"] = serde_json::json!({
+                "kind": "toroidal", "mode": "explicit", "period_bits": periods,
+            });
+            let error =
+                serde_json::from_value::<TriangulationSnapshot<u32, u32, 2>>(invalid).unwrap_err();
+            assert!(error.to_string().contains(diagnostic), "{error}");
+        }
+    }
+
+    #[test]
+    fn restored_policy_cannot_bypass_pl_manifold_requirements() {
+        let mut invalid = serde_json::to_value(sample::<2>()).unwrap();
+        invalid["validation_policy"] = Value::from("never");
+        let decoded: TriangulationSnapshot<u32, u32, 2> = serde_json::from_value(invalid).unwrap();
+        let expected = serde_json::to_value(&decoded.tds).unwrap();
+        let failure = decoded
+            .try_into_triangulation(RobustKernel::new())
+            .unwrap_err();
+        assert_eq!(
+            failure.reason(),
+            &TriangulationBuilderError::ValidationConfiguration {
+                source: ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                    topology_guarantee: TopologyGuarantee::PLManifold,
+                    validation_policy: ValidationPolicy::Never,
+                },
+            }
+        );
+        assert_eq!(serde_json::to_value(failure.owner()).unwrap(), expected);
+    }
+
+    #[test]
+    fn decoded_curved_metadata_cannot_publish_an_unsupported_owner() {
+        let empty = TriangulationBuilder::new(Tds::<(), (), 2>::empty(), RobustKernel::new())
+            .build()
+            .unwrap();
+        let original = serde_json::to_value(empty).unwrap();
+        for (topology, selected) in [
+            ("spherical", GlobalTopology::Spherical),
+            ("hyperbolic", GlobalTopology::Hyperbolic),
+        ] {
+            let mut invalid = original.clone();
+            invalid["global_topology"] = serde_json::json!({"kind": topology});
+            let decoded: TriangulationSnapshot<(), (), 2> =
+                serde_json::from_value(invalid).unwrap();
+            let expected = serde_json::to_value(&decoded.tds).unwrap();
+            assert_eq!(decoded.global_topology, selected);
+            let failure = decoded
+                .try_into_triangulation(RobustKernel::new())
+                .unwrap_err();
+            assert!(
+                matches!(failure.reason(), TriangulationBuilderError::RealizationValidation { source }
+                if matches!(source.as_ref(), TriangulationRealizationValidationError::UnsupportedTopology {
+                    topology, dimension: 2,
+                } if *topology == selected.kind()))
+            );
+            assert_eq!(serde_json::to_value(failure.owner()).unwrap(), expected);
+            failure.owner().validate().unwrap();
+        }
+    }
 
     #[test]
     fn serialization_and_transport_decoding_do_not_require_clone() {
