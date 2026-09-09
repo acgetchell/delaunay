@@ -1045,6 +1045,38 @@ impl<U, V, const D: usize> RawTdsSnapshot<U, V, D> {
 }
 
 impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
+    /// Moves codec payload wrappers without cloning payloads or UUID relationships.
+    pub(crate) fn map_payloads<NewU, NewV>(
+        self,
+        mut map_vertex: impl FnMut(U) -> NewU,
+        mut map_simplex: impl FnMut(V) -> NewV,
+    ) -> TdsSnapshot<NewU, NewV, D> {
+        TdsSnapshot {
+            vertices: self
+                .vertices
+                .into_iter()
+                .map(|vertex| {
+                    Vertex::from_validated_point_with_uuid(
+                        *vertex.point(),
+                        vertex.uuid(),
+                        vertex.data.map(&mut map_vertex),
+                    )
+                })
+                .collect(),
+            simplices: self
+                .simplices
+                .into_iter()
+                .map(|simplex| TdsSnapshotSimplex {
+                    uuid: simplex.uuid,
+                    data: simplex.data.map(&mut map_simplex),
+                    vertex_uuids: simplex.vertex_uuids,
+                    neighbor_uuids: simplex.neighbor_uuids,
+                    periodic_vertex_offsets: simplex.periodic_vertex_offsets,
+                })
+                .collect(),
+        }
+    }
+
     /// Returns the validated vertex records in their interchange order.
     pub(crate) fn vertices(&self) -> impl Iterator<Item = &Vertex<U, D>> {
         self.vertices.iter()

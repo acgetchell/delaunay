@@ -539,6 +539,55 @@ where
     U: DataType,
     V: DataType,
 {
+    /// Runs Level 4 insertion without assuming a Delaunay conflict cavity.
+    ///
+    /// An empty explicit conflict set selects the containing simplex's stellar
+    /// subdivision for interior points, or hull extension for exterior points.
+    /// The caller must select Euclidean geometry before entering this path.
+    pub(crate) fn insert_vertex_preserving_realization(
+        &mut self,
+        vertex: Vertex<U, D>,
+    ) -> Result<VertexKey, InsertionError> {
+        if D > 0 && self.tds.number_of_simplices() == 0 {
+            return Err(InsertionError::PublishedOwnerBootstrapRequiresBuilder { dimension: D });
+        }
+        let mut prepared = self.prepare_insertion(vertex, None, None);
+        if let Some(DetailedInsertionResult {
+            outcome: InsertionOutcome::Skipped { error },
+            ..
+        }) = self.duplicate_skip(&mut prepared, None)
+        {
+            return Err(error);
+        }
+
+        let mut transaction = TriangulationRollbackTransaction::begin(self);
+        let conflict = SimplexKeyBuffer::new();
+        let result = Self::insert_prepared_in_rollback_window(
+            &mut transaction,
+            prepared,
+            Some(&conflict),
+            0,
+            0,
+            None,
+            None,
+            InsertionTelemetryMode::CountsOnly,
+            false,
+            true,
+        )?;
+        let vertex_key = match result.outcome {
+            InsertionOutcome::Inserted { vertex_key, .. } => vertex_key,
+            InsertionOutcome::Skipped { error } => return Err(error),
+        };
+        // The generic adapter accepts non-Delaunay input and does not rely on
+        // Level 5 cavity arguments or a caller's optional validation cadence.
+        transaction
+            .triangulation_mut()
+            .validate_realization()
+            .map_err(|source| InsertionError::RealizationValidationFailed { source })?;
+        transaction.commit();
+        Ok(vertex_key)
+    }
+
     /// Returns duplicate-detection telemetry if enabled via `DELAUNAY_DUPLICATE_METRICS`.
     ///
     /// This is a process-wide counter (across all triangulation instances). It reports how often

@@ -60,7 +60,13 @@ just check
 ```
 
 During iterative review and fixes, use `just check` alongside targeted tests
-for changed behavior. Reserve `just ci` for final validation once those
+for changed behavior. Once substantive changes settle, run `just review`
+against the intended PR base and address valid CodeRabbit findings before
+final validation. Small editorial changes may skip this review. See
+[local CodeRabbit review](docs/dev/commands.md#local-coderabbit-review) for
+scope selection and prerequisites.
+
+Reserve `just ci` for final validation once those
 iterations are complete. Core Rust/Cargo or public-behavior changes must pass
 that comprehensive check before a pull request is ready or the changes are
 pushed. Documentation, configuration, Python, notebook, test-only,

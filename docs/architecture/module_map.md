@@ -91,6 +91,8 @@ receiving raw access to canonical TDS storage:
   complete connectivity and the generic layer exposes no further staged
   mutation.
 - `construction.rs` - generic construction helpers and initial-simplex setup.
+- `editing.rs` - public Euclidean insertion/deletion adapters and typed edit
+  failures, preserving Levels 1–4 without requiring Level 5.
 - `insertion.rs` - generic transactional insertion, duplicate detection, and
   insertion telemetry.
 - `orientation.rs` - simplex orientation validation, lifted-coordinate
@@ -100,6 +102,8 @@ receiving raw access to canonical TDS storage:
 - `repair.rs` - generic local topology repair, stale incident-simplex repair,
   and vertex-deletion cavity retriangulation.
 - `rollback.rs` - rollback guards for generic mutation windows.
+- `serialization.rs` - exact UUID snapshot envelope, borrowed payload encoding,
+  and strict Levels 1–4 restoration with caller-selected or default kernels.
 - `validation.rs` - Level 3 topology validation vocabulary and orchestration.
 - `realization.rs` - Level 4 realization validation and the shared Levels 3–4
   certification used by both strict TDS-to-`Triangulation` refinement and
@@ -206,8 +210,8 @@ operations require only the Levels 1–4 owner.
   visualization tools, analysis pipelines, and downstream crates.
 
 This layer is distinct from the TDS snapshot/hydration boundary. TDS serde
-persists the Levels 1–2 owner; Delaunay serde wraps that snapshot with the
-higher-layer proof context needed for validated restoration.
+persists the Levels 1–2 owner; triangulation and Delaunay serde each wrap that
+snapshot with their context for validated restoration at the owning layer.
 `io::visualization` exposes stable UUID-based records for consumers that should
 not depend on runtime slotmap handles.
 

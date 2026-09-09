@@ -898,6 +898,7 @@ pub(crate) mod triangulation {
     pub mod builder;
     pub mod construction;
     pub mod draft;
+    pub mod editing;
     pub mod flips;
     pub mod insertion;
     pub mod jaccard;
@@ -909,6 +910,7 @@ pub(crate) mod triangulation {
     pub mod realization;
     pub mod repair;
     pub mod rollback;
+    pub mod serialization;
     pub mod validation;
 
     pub use model::Triangulation;
@@ -1116,6 +1118,7 @@ pub use crate::triangulation::builder::{
 pub use crate::triangulation::construction::{
     FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
 };
+pub use crate::triangulation::editing::TriangulationEditError;
 pub use crate::triangulation::insertion::DuplicateDetectionMetrics;
 pub use crate::triangulation::query::SimplexBarycenterError;
 pub use crate::triangulation::realization::{
@@ -1125,6 +1128,9 @@ pub use crate::triangulation::realization::{
     TriangulationRealizationValidationReport,
 };
 pub use crate::triangulation::repair::{LocalFacetRepairGuard, TriangulationRepairOperation};
+pub use crate::triangulation::serialization::{
+    TRIANGULATION_SNAPSHOT_SCHEMA_VERSION, TriangulationSnapshot,
+};
 pub use crate::triangulation::validation::{
     OrientationWitness, TopologyGuarantee, TriangulationValidationError,
     ValidationConfigurationError, ValidationPolicy,
@@ -1718,6 +1724,10 @@ pub mod prelude {
             TriangulationValidationErrorKind, Vertex, VertexKey,
         };
         pub use crate::topology::manifold::ManifoldError;
+        pub use crate::triangulation::editing::{TriangulationEditError, VertexRemovalError};
+        pub use crate::triangulation::serialization::{
+            TRIANGULATION_SNAPSHOT_SCHEMA_VERSION, TriangulationSnapshot,
+        };
         pub use crate::vertex;
         pub use crate::{
             InsertionError, LocalFacetRepairGuard, PeriodicDomainPeriodError, RefinementError,

@@ -21,10 +21,11 @@ use delaunay::prelude::ordering::{
 };
 use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
 use delaunay::prelude::repair::DelaunayRepairError;
-use delaunay::prelude::tds::{InvariantError, Tds};
+use delaunay::prelude::tds::{InvariantError, Tds, TdsBuilder};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind};
 use delaunay::prelude::triangulation::{
-    Triangulation, TriangulationBuilder, TriangulationBuilderError,
+    Triangulation, TriangulationBuilder, TriangulationBuilderError, TriangulationEditError,
+    TriangulationSnapshot,
 };
 use delaunay::prelude::validation::{
     DelaunayTriangulationValidationError, TriangulationRealizationValidationError,
@@ -1125,6 +1126,119 @@ fn regression_issue_557_restores_evolved_toroidal_state_through_level_4() {
         global_topology,
     );
     assert_level_three_failure_returns_tds(evolved_tds, topology_guarantee, global_topology);
+}
+
+#[test]
+fn regression_issue_591_euclidean_non_delaunay_adapter_workflow() {
+    let vertices = [
+        vertex!([0.0, 0.0]; data = 10_u32).unwrap(),
+        vertex!([2.0, 0.0]; data = 20).unwrap(),
+        vertex!([2.0, 1.0]; data = 30).unwrap(),
+        vertex!([0.0, 2.0]; data = 40).unwrap(),
+    ];
+    let tds = TdsBuilder::new(&vertices, &[vec![0, 1, 3], vec![1, 2, 3]])
+        .simplex_data_type::<u32>()
+        .build()
+        .unwrap();
+    let mut tri = TriangulationBuilder::new(tds, RobustKernel::new())
+        .build()
+        .unwrap();
+    assert!(DelaunayRefinementBuilder::new(tri.clone()).build().is_err());
+    let before = serde_json::to_value(tri.to_visualization_data().unwrap()).unwrap();
+    let encoded = serde_json::to_string(&tri).unwrap();
+    let decoded: TriangulationSnapshot<u32, u32, 2> = serde_json::from_str(&encoded).unwrap();
+    let restored = decoded.try_into_triangulation(RobustKernel::new()).unwrap();
+    assert_eq!(
+        serde_json::to_value(restored.to_visualization_data().unwrap()).unwrap(),
+        before
+    );
+    let failure = DelaunayRefinementBuilder::new(restored)
+        .build()
+        .unwrap_err();
+    failure.owner().validate_realization().unwrap();
+    let key = tri
+        .insert_vertex(vertex!([0.2, 0.3]; data = 99).unwrap())
+        .unwrap();
+    assert_eq!(tri.vertex(key).unwrap().data(), Some(&99));
+    tri.delete_vertex(key).unwrap();
+    tri.validate_realization().unwrap();
+}
+
+#[test]
+fn regression_issue_591_evolved_torus_export_persistence_and_pachner_composition() {
+    let fresh = periodic_payload_fixture_t2();
+    assert_eq!(
+        serde_json::to_value(fresh.to_visualization_data().unwrap()).unwrap(),
+        serde_json::to_value(fresh.as_triangulation().to_visualization_data().unwrap()).unwrap(),
+    );
+    let mut tri = evolve_periodic_fixture_without_delaunay(&fresh);
+    tri.try_set_validation_policy(ValidationPolicy::Always)
+        .unwrap();
+    let expected_storage = serde_json::to_value(tri.clone().into_tds()).unwrap();
+    let expected_export = serde_json::to_value(tri.to_visualization_data().unwrap()).unwrap();
+    let restored: Triangulation<RobustKernel<f64>, u32, u32, 2> =
+        serde_json::from_str(&serde_json::to_string(&tri).unwrap()).unwrap();
+    assert_eq!(restored.global_topology(), tri.global_topology());
+    assert_eq!(restored.topology_guarantee(), tri.topology_guarantee());
+    assert_eq!(restored.validation_policy(), ValidationPolicy::Always);
+    assert_eq!(
+        serde_json::to_value(restored.to_visualization_data().unwrap()).unwrap(),
+        expected_export
+    );
+    assert_eq!(
+        serde_json::to_value(restored.clone().into_tds()).unwrap(),
+        expected_storage
+    );
+    assert!(DelaunayRefinementBuilder::new(restored).build().is_err());
+
+    // General Euclidean routines cannot reinterpret periodic quotient coordinates.
+    let key = tri.vertices().next().unwrap().0;
+    let keys_before = tri.vertices().map(|(key, _)| key).collect::<Vec<_>>();
+    assert_eq!(
+        tri.insert_vertex(vertex!([0.4, 0.4]; data = 99).unwrap())
+            .unwrap_err(),
+        TriangulationEditError::UnsupportedTopology {
+            topology: TopologyKind::Toroidal
+        }
+    );
+    assert_eq!(
+        tri.delete_vertex(key).unwrap_err(),
+        TriangulationEditError::UnsupportedTopology {
+            topology: TopologyKind::Toroidal
+        }
+    );
+    assert_eq!(
+        tri.vertices().map(|(key, _)| key).collect::<Vec<_>>(),
+        keys_before
+    );
+    assert_eq!(
+        serde_json::to_value(tri.clone().into_tds()).unwrap(),
+        expected_storage
+    );
+
+    // A chart-bound proposal composes the already public transactional primitive.
+    let proposal = tri
+        .simplices()
+        .find_map(|(simplex_key, _)| {
+            let point = tri.simplex_barycenter(simplex_key).unwrap();
+            tri.propose_pachner(PachnerMove::K1Insert {
+                simplex_key,
+                vertex: vertex!(*point.coords(); data = 123).unwrap(),
+            })
+            .ok()
+        })
+        .expect("an evolved periodic simplex must admit an interior stellar subdivision");
+    let inserted = proposal.attempt_on(&mut tri).unwrap();
+    tri.validate_realization().unwrap();
+    let vertex_key = inserted.inserted_face_vertices[0];
+    assert_eq!(tri.vertex(vertex_key).unwrap().data(), Some(&123));
+    let _removed = tri
+        .propose_pachner(PachnerMove::K1Remove { vertex_key })
+        .unwrap()
+        .attempt_on(&mut tri)
+        .unwrap();
+    assert!(tri.vertex(vertex_key).is_none());
+    tri.validate_realization().unwrap();
 }
 
 #[test]

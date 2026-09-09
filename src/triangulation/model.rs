@@ -38,6 +38,12 @@ use crate::triangulation::validation::{
 /// triangulation with [`DelaunayRefinementBuilder`](crate::DelaunayRefinementBuilder)
 /// to certify Level 5 strictly or repair and certify the Delaunay property.
 ///
+/// Mutable adapters can use [`Self::insert_vertex`], [`Self::delete_vertex`],
+/// and [`Self::to_visualization_data`] without Level 5 certification. Serde
+/// persists exact UUID connectivity and topology context; load through
+/// [`TriangulationSnapshot`](crate::TriangulationSnapshot) to select a kernel
+/// and retain typed strict-restoration errors.
+///
 /// # Type Parameters
 /// - `K`: Geometric kernel implementing predicates
 /// - `U`: User data type for vertices

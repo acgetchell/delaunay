@@ -244,6 +244,60 @@ as a full audit and as input to future repair workflows.
 
 ---
 
+## Level 4 adapter workflows
+
+Mutable geometry adapters can retain `Triangulation` after edits that preserve
+realization but invalidate the Delaunay predicate. The public workflows are:
+
+| Workflow | `Triangulation` contract | `DelaunayTriangulation` contract |
+|---|---|---|
+| `to_visualization_data()` | Export the current geometry and UUID connectivity. | Delegate to the Level 4 export. |
+| Serde persistence | Preserve exact storage; restore through Levels 1–4. | Restore through Levels 1–5 with the Delaunay checkpoint format. |
+| `insert_vertex()` | Euclidean simplex subdivision or hull extension. | Preserve Levels 1–5, with Delaunay repair as needed. |
+| `delete_vertex()` | Euclidean cavity fan retriangulation; no Level 5 check or repair. | Preserve Levels 1–5 after deletion and repair. |
+| Pachner proposals | Transactional moves in Euclidean or supported toroidal charts. | Requires explicit demotion to `Triangulation`. |
+
+General Level 4 insertion and deletion validate the complete candidate through
+Level 4 before committing, regardless of `ValidationPolicy`. Failed edits
+restore the owner, generational keys, payloads, and construction evidence.
+`TriangulationEditError` retains the typed insertion, cavity-operation, or
+invariant diagnostic. Insertion preserves the supplied vertex UUID, payload,
+and coordinate bits. New simplices have no payload; surviving entities retain
+theirs. A missing deletion key returns zero. Empty owners require a builder to
+bootstrap, and unsupported degenerate insertion locations return an error.
+
+General cavity editing currently accepts Euclidean geometry. Toroidal callers
+use `PachnerMove::K1Insert { simplex_key, vertex }` to choose a simplex in its
+lifted chart and `PachnerMove::K1Remove { vertex_key }` for the inverse stellar
+deletion. Obtain a canonical interior point with `simplex_barycenter`, construct
+the proposal with `propose_pachner`, then consume it with `attempt_on`. Other
+Pachner moves can reshape the vertex star before an inverse stellar deletion.
+Each proposal execution is failure-atomic; a sequence of separately committed
+proposals is not one transaction. Use a detached trial owner and publish it only
+after the complete sequence succeeds when the adapter needs sequence-wide
+atomicity. Arbitrary periodic cavity deletion is not currently supported by the
+general Euclidean fan routine.
+
+Serialize `&triangulation` directly, without cloning payloads or assembling a
+TDS snapshot. The versioned envelope embeds CBOR storage to preserve coordinate
+bits independently of the outer JSON/CBOR codec. It includes vertex/simplex
+UUIDs, simplex vertex order, neighbor slots, periodic lift offsets, topology
+guarantee, global topology, validation policy, and payloads. Runtime slotmap keys
+and incidence are rebuilt from UUIDs. Kernel configuration is chosen on load:
+deserialize `TriangulationSnapshot<U, V, D>` and call
+`try_into_triangulation(kernel)` for a typed, recoverable certification failure,
+or deserialize `Triangulation<K, U, V, D>` to use `K::default()`.
+
+Restoration performs no orientation normalization, connectivity repair, or
+Level 5 work. Stored construction provenance is not accepted as proof: a
+nontrivial high-dimensional PL-manifold snapshot can fail strict restoration
+when its link proof cannot be re-established. General high-dimensional fan
+deletion has the same proof limitation. Serialization also rejects present
+payloads containing CBOR null/unit values, whose nested `Option` states cannot
+all be distinguished by that codec; use explicitly tagged payload enums.
+Absent entity payloads are supported. `DelaunayRefinementBuilder` remains the
+consuming, explicit boundary for subsequent Level 5 certification or repair.
+
 ## Automatic validation during incremental insertion (`ValidationPolicy`)
 
 The library always provides **explicit** validation APIs (Levels 1–5) that you can call when you need them.

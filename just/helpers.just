@@ -58,6 +58,14 @@ _ensure-chktex:
         exit 1
     }
 
+_ensure-coderabbit:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v coderabbit >/dev/null || {
+        echo "CodeRabbit CLI is required for local review. Install it from https://docs.coderabbit.ai/cli and ensure coderabbit is on PATH." >&2
+        exit 1
+    }
+
 _ensure-dprint: (_ensure-pinned-cargo-tool "dprint" "dprint" dprint_version)
 
 _ensure-gh:
@@ -204,6 +212,18 @@ _performance-tag-pair-state current_tag baseline_tag:
     else
         echo "inferred"
     fi
+
+[private]
+_review scope base: _ensure-coderabbit
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=(review --agent --include-untracked -c AGENTS.md .coderabbit.yml)
+    case {{ quote(scope) }} in
+        branch) args+=(--base {{ quote(base) }}) ;;
+        uncommitted) args+=(--uncommitted) ;;
+        *) echo "Unsupported review scope: "{{ quote(scope) }} >&2; exit 2 ;;
+    esac
+    exec coderabbit "${args[@]}"
 
 _validation-doc-figures-check-if-canonical:
     #!/usr/bin/env bash
