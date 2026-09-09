@@ -304,6 +304,8 @@ impl VertexRemovalOutcome {
 /// the exact post-repair, pre-publication boundary without global test state.
 #[derive(Clone, Copy, Debug, Default)]
 struct VertexRemovalProofOptions {
+    /// General Level 4 editing checks the complete candidate before publication.
+    full_realization_validation: bool,
     corrupt_realization_before_final_check: bool,
 }
 
@@ -570,6 +572,21 @@ where
             vertex_key,
             VertexRemovalProofOptions::default(),
         )
+    }
+
+    /// Publishes a general cavity deletion only after cumulative Levels 1–4 validation.
+    pub(crate) fn remove_vertex_preserving_realization(
+        &mut self,
+        vertex_key: VertexKey,
+    ) -> Result<usize, VertexRemovalError> {
+        self.remove_vertex_with_repair_seeds_with_options(
+            vertex_key,
+            VertexRemovalProofOptions {
+                full_realization_validation: true,
+                ..VertexRemovalProofOptions::default()
+            },
+        )
+        .map(|outcome| outcome.simplices_removed)
     }
 
     /// Runs vertex removal with private proof controls used by the owning rollback regression.
@@ -924,6 +941,8 @@ where
                     .is_valid()
                     .map_err(|source| InvariantError::Tds { source })?;
                 tri.is_valid_topology()?;
+                tri.is_valid_realization()
+                    .map_err(|source| InvariantError::Realization { source })?;
                 Ok(simplices_removed)
             })()
         };
@@ -1065,6 +1084,11 @@ where
         }
         self.validate_realization_for_simplices(validation_scope)
             .map_err(|source| InvariantError::Realization { source })?;
+
+        if proof_options.full_realization_validation {
+            self.validate_realization()
+                .map_err(|source| InvariantError::Realization { source })?;
+        }
 
         #[cfg(debug_assertions)]
         {
@@ -2236,6 +2260,7 @@ mod tests {
             vertex_key,
             VertexRemovalProofOptions {
                 corrupt_realization_before_final_check: true,
+                ..VertexRemovalProofOptions::default()
             },
         );
 

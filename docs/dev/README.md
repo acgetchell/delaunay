@@ -11,7 +11,7 @@ remains the architecture hub.
 
 | File | Owns |
 |-----|-----|
-| [`commands.md`](commands.md) | Validation command selection, `just` recipes, benchmark profiles, and CI expectations |
+| [`commands.md`](commands.md) | Validation command selection, local CodeRabbit review, `just` recipes, benchmark profiles, and CI expectations |
 | [`git.md`](git.md) | Git safety, GitHub CLI usage, issue dependencies, branch names, and commit-message rules |
 | [`rust.md`](rust.md) | Rust guidance index; read its focused links before touching Rust code |
 | [`testing.md`](testing.md) | Unit, integration, property, doctest, slow-test, and dimension-coverage expectations |

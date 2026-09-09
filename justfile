@@ -329,6 +329,10 @@ help-workflows:
     @echo "  just test               # Default Rust and Python test buckets"
     @echo "  just ci                 # GitHub-equivalent default validation suite"
     @echo ""
+    @echo "Local CodeRabbit review:"
+    @echo "  just review [base]      # Review the branch and local edits; base defaults to main"
+    @echo "  just review-uncommitted # Review only local edits, including new files"
+    @echo ""
     @echo "Setup and maintenance:"
     @echo "  just setup              # Install pinned tools and build the development profile"
     @echo "  just setup-tools        # Install and verify pinned repository tools"
@@ -1125,6 +1129,14 @@ python-typecheck: _ensure-uv
 [group('release')]
 release-version-check: _ensure-uv
     uv run --locked check-docs-version-sync --final-release
+
+# Review committed and local changes against the PR base with CodeRabbit.
+[group('review')]
+review base="main": (_review "branch" base)
+
+# Review staged, unstaged, and new files without committed branch changes.
+[group('review')]
+review-uncommitted: (_review "uncommitted" "")
 
 # Run the opt-in companion binary with the CLI feature and perf profile.
 [group('build and setup')]

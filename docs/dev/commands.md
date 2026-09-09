@@ -10,6 +10,7 @@ Agents must run appropriate checks after modifying code.
 
 - [Core Workflow](#core-workflow)
 - [Validation Command Selection](#validation-command-selection)
+- [Local CodeRabbit Review](#local-coderabbit-review)
 - [Justfile Usage](#justfile-usage)
 - [Formatting](#formatting)
 - [Linting](#linting)
@@ -117,6 +118,48 @@ For benchmark-only changes, run the changed benchmark with
 `cargo bench --profile perf --bench <name>` when the change affects measured
 behavior. Use `just bench-smoke` for harness-only edits, and `just bench` for
 broad benchmark-suite changes.
+
+## Local CodeRabbit Review
+
+Run one local CodeRabbit review after substantive code, API, numerical, or
+tooling changes settle and fast checks pass, before submitting a PR. Assess
+each finding against the repository's contracts, fix valid issues, and run the
+affected checks. Small editorial or formatting-only changes may skip review.
+
+```bash
+just review                  # Complete branch diff against local main
+just review origin/main      # Use a different locally available PR base
+just review-uncommitted      # Only staged, unstaged, and new files
+```
+
+`just review [base]` includes committed branch changes and local edits;
+`just review-uncommitted` excludes already committed changes. Both include
+non-ignored untracked files and pass `AGENTS.md` and `.coderabbit.yml` as
+additional review instructions. Inspect the intended diff before invoking
+either recipe. The base defaults to local `main`; choose the actual PR base
+and ensure it is current. These commands do not fetch or change Git state.
+
+The recipes use CodeRabbit's `--agent` output so agents can read structured
+findings. Install the [CodeRabbit CLI](https://docs.coderabbit.ai/cli) separately
+and authenticate with `coderabbit auth login` before the first review. The
+required scope flags are supported by CLI 0.7.6; consult
+`coderabbit review --help` when using another version. CodeRabbit is an
+external prerequisite, separate from the tools managed by `just setup-tools`.
+
+Review is a separate step from `just check` and `just ci`: it uses a remote
+service, authentication, and review allowances. CLI failures propagate through
+the recipes. A skipped review, authentication failure, service error, or
+exhausted allowance is an unavailable review, never a clean result. Report
+the scope, completion status, actionable findings, fixes, and any remaining
+issues or access limitation in the handoff; continue the applicable local
+validators even when review is unavailable.
+
+Reuse a completed review of the same diff. Rerun only when substantial fixes
+or new changes warrant another pass, rather than after every edit or to chase
+style preferences. After fixes, run `just ci` for core Rust/Cargo or public
+behavior changes, or the focused final validators in the matrix above for
+other changes. Keep the GitHub PR review: its broader context can produce
+different findings from the local CLI review.
 
 ## Justfile Usage
 
@@ -930,6 +973,8 @@ just action-lint
 |-----|-----|
 | Run lints | `just check` |
 | Fast compile check | `just check-fast` |
+| Review a branch and local edits before a PR | `just review [base]` |
+| Review only uncommitted edits and new files | `just review-uncommitted` |
 | Check formatting | `just fmt-check` |
 | Check justfile formatting | `just justfile-fmt-check` |
 | Apply formatters/auto-fixes | `just fix` |

@@ -13,6 +13,7 @@ use crate::core::vertex::Vertex;
 use crate::delaunay_model::DelaunayTriangulation;
 use crate::geometry::traits::coordinate::InvalidCoordinateValue;
 use crate::topology::traits::topological_space::TopologyKind;
+use crate::triangulation::Triangulation;
 use crate::triangulation::validation::TopologyGuarantee;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -859,7 +860,7 @@ pub enum VisualizationDataValidationError {
     },
 }
 
-impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Exports this triangulation as generic visualization/interchange data.
     ///
     /// The returned value implements [`Serialize`] and [`Deserialize`] so callers
@@ -893,7 +894,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     vertex![0.0, 1.0, 0.0]?,
     ///     vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
     ///
     /// let export = triangulation.to_visualization_data()?;
     ///
@@ -965,6 +966,31 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
             simplices,
             adjacency,
         })
+    }
+}
+
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
+    /// Exports the same UUID-based records as [`Triangulation::to_visualization_data`].
+    ///
+    /// Export reads Levels 1–4 only and performs no Delaunay certification or repair.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VisualizationExportError`] for unresolved topology relationships.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder, vertex};
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// assert_eq!(dt.to_visualization_data()?.vertices.len(), 3);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn to_visualization_data(&self) -> Result<VisualizationData<D>, VisualizationExportError> {
+        self.as_triangulation().to_visualization_data()
     }
 }
 
