@@ -28,7 +28,7 @@ pub use la_stack::LaError;
 use la_stack::Matrix as LaMatrix;
 pub(crate) use la_stack::{
     BigRational, DEFAULT_SINGULAR_TOL, ExactF64Conversion, FromPrimitive, RationalMatrix,
-    RationalVector, Signed, SingularityReason, Vector as LaVector,
+    RationalVector, Signed, SingularityReason, Tolerance, Vector as LaVector, gram_matrix,
 };
 use thiserror::Error;
 
@@ -142,20 +142,6 @@ macro_rules! try_with_la_stack_matrix {
     }};
 }
 
-/// Read one entry from a stack matrix, preserving backend index diagnostics.
-///
-/// This wrapper keeps predicate and geometry helper code on the checked
-/// `la-stack` access path while mapping backend index errors into the crate's
-/// existing matrix-error vocabulary.
-#[inline]
-pub(crate) fn matrix_get<const D: usize>(
-    m: &Matrix<D>,
-    row: usize,
-    column: usize,
-) -> Result<f64, StackMatrixDispatchError> {
-    m.try_get(row, column).map_err(Into::into)
-}
-
 /// Write one finite entry into a stack matrix, preserving backend diagnostics.
 ///
 /// This wrapper is the boundary where predicate matrix construction rejects
@@ -257,6 +243,17 @@ pub fn determinant<const D: usize>(m: &Matrix<D>) -> Result<f64, LaError> {
 
 #[cfg(test)]
 pub(crate) mod test_support {
+    use super::{Matrix, StackMatrixDispatchError};
+
+    /// Keeps checked matrix reads available to predicate diagnostics in unit tests.
+    pub fn matrix_get<const D: usize>(
+        matrix: &Matrix<D>,
+        row: usize,
+        column: usize,
+    ) -> Result<f64, StackMatrixDispatchError> {
+        matrix.try_get(row, column).map_err(Into::into)
+    }
+
     /// Dispatch a runtime `k` to a stack-allocated matrix for concise unit tests.
     macro_rules! with_la_stack_matrix {
         ($k:expr, |$m:ident| $body:block) => {{
@@ -328,22 +325,6 @@ mod tests {
         assert_eq!(
             error.to_string(),
             StackMatrixDispatchError::La { source }.to_string()
-        );
-    }
-
-    #[test]
-    fn matrix_get_returns_error_on_out_of_bounds_index() {
-        let matrix = Matrix::<2>::zero();
-        let err = matrix_get(&matrix, 2, 0).unwrap_err();
-        assert_eq!(
-            err,
-            StackMatrixDispatchError::Matrix {
-                source: MatrixError::OutOfBounds {
-                    row: 2,
-                    column: 0,
-                    dimension: 2,
-                },
-            }
         );
     }
 

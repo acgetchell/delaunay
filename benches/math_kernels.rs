@@ -11,8 +11,9 @@ use criterion::{
 };
 use delaunay::prelude::construction::DelaunayTriangulationBuilder;
 use delaunay::prelude::geometry::{
-    AdaptiveKernel, ExactPredicates, Matrix, Orientation, Point, circumradius, inradius,
-    normalized_volume, radius_ratio, safe_usize_to_scalar, simplex_orientation, simplex_volume,
+    AdaptiveKernel, ExactPredicates, Matrix, Orientation, Point, circumradius, facet_measure,
+    inradius, normalized_volume, radius_ratio, safe_usize_to_scalar, simplex_orientation,
+    simplex_volume, surface_measure,
 };
 use delaunay::prelude::topology::validation::{
     count_boundary_simplices, count_simplices, euler_characteristic, validate_closed_boundary,
@@ -88,6 +89,10 @@ fn bench_orientation<const D: usize, const N: usize>(group: &mut BenchmarkGroup<
 }
 
 /// Measures geometric helpers on regular-scale and thin, still valid simplices.
+#[expect(
+    clippy::too_many_lines,
+    reason = "Keep each geometry fixture, independent oracles, and timed cases together"
+)]
 fn bench_geometry<const D: usize>(group: &mut BenchmarkGroup<'_, WallTime>, height: f64)
 where
     AdaptiveKernel<f64>: ExactPredicates<D>,
@@ -105,11 +110,19 @@ where
     assert_eq!(dt.number_of_simplices(), 1);
     let simplex_key = dt.simplices().next().or_abort("missing axis simplex").0;
     let tri = dt.as_triangulation();
+    let boundary_facets = dt
+        .boundary_facets()
+        .or_abort()
+        .collect::<Result<Vec<_>, _>>()
+        .or_abort();
 
     // For axis lengths (1, ..., 1, h), volume = h/D!, R = ||a||/2,
     // and r = 1 / (sum(1/a_i) + ||1/a||). Count the three edge families
     // analytically instead of using the production edge/volume helpers.
     let volume = height / factorial;
+    let facet = &points[1..];
+    let facet_volume = dimension * volume * (dimension - 1.0 + height.powi(-2)).sqrt();
+    let surface = (dimension * volume).mul_add(dimension - 1.0 + height.recip(), facet_volume);
     let radius = height.mul_add(height, dimension - 1.0).sqrt() / 2.0;
     let inner_radius =
         1.0 / (dimension - 1.0 + 1.0 / height + (dimension - 1.0 + height.powi(-2)).sqrt());
@@ -125,6 +138,16 @@ where
     assert_relative_eq!(
         simplex_volume(&points).or_abort(),
         volume,
+        max_relative = 1e-10
+    );
+    assert_relative_eq!(
+        facet_measure(facet).or_abort(),
+        facet_volume,
+        max_relative = 1e-10
+    );
+    assert_relative_eq!(
+        surface_measure(&boundary_facets).or_abort(),
+        surface,
         max_relative = 1e-10
     );
     assert_relative_eq!(
@@ -159,6 +182,12 @@ where
 
     group.bench_function(BenchmarkId::new("volume", format!("{D}d")), |b| {
         b.iter(|| black_box(simplex_volume(black_box(&points)).or_abort()));
+    });
+    group.bench_function(BenchmarkId::new("facet_measure", format!("{D}d")), |b| {
+        b.iter(|| black_box(facet_measure(black_box(facet)).or_abort()));
+    });
+    group.bench_function(BenchmarkId::new("surface_measure", format!("{D}d")), |b| {
+        b.iter(|| black_box(surface_measure(black_box(&boundary_facets)).or_abort()));
     });
     group.bench_function(BenchmarkId::new("circumradius", format!("{D}d")), |b| {
         b.iter(|| black_box(circumradius(black_box(&points)).or_abort()));
@@ -303,6 +332,7 @@ fn bench_math_kernels(c: &mut Criterion) {
         bench_geometry::<3>(&mut geometry, height);
         bench_geometry::<4>(&mut geometry, height);
         bench_geometry::<5>(&mut geometry, height);
+        bench_geometry::<6>(&mut geometry, height);
         geometry.finish();
     }
 

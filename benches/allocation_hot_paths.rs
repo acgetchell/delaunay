@@ -27,7 +27,8 @@ mod allocation_contracts {
     };
     use delaunay::prelude::generators::generate_random_points_in_range_seeded;
     use delaunay::prelude::geometry::{
-        AdaptiveKernel, CoordinateRange, ExactPredicates, Point, simplex_volume,
+        AdaptiveKernel, CoordinateRange, ExactPredicates, Point, inradius, safe_usize_to_scalar,
+        simplex_volume, surface_measure,
     };
     use delaunay::prelude::query::measure_with_result;
     use delaunay::prelude::tds::{SimplexKey, TdsError, VertexKey, facet_key_from_vertices};
@@ -317,6 +318,54 @@ mod allocation_contracts {
         vertices
     }
 
+    /// Measures borrowed geometry consumption without counting fixture or view construction.
+    fn bench_measure_allocations<const D: usize>(group: &mut BenchmarkGroup<'_, WallTime>)
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
+        let vertices = bootstrap_vertices::<D>();
+        let points: Vec<_> = vertices.iter().map(|vertex| *vertex.point()).collect();
+        let dt: BenchTriangulation<D> =
+            DelaunayTriangulation::builder(&vertices).build().or_abort();
+        dt.validate().or_abort();
+        let facets = dt
+            .boundary_facets()
+            .or_abort()
+            .collect::<Result<Vec<_>, _>>()
+            .or_abort();
+        assert_eq!(facets.len(), D + 1);
+
+        // A unit axis simplex has D coordinate facets and one slanted facet.
+        let dimension = safe_usize_to_scalar(D).or_abort();
+        let facet_factorial = (1..D)
+            .map(|factor| safe_usize_to_scalar(factor).or_abort())
+            .product::<f64>();
+        let expected_inradius = (dimension + dimension.sqrt()).recip();
+        let expected_surface = (dimension + dimension.sqrt()) / facet_factorial;
+
+        group.bench_function(
+            BenchmarkId::new(format!("zero_alloc/inradius_{D}d"), D + 1),
+            |b| {
+                b.iter(|| {
+                    let (radius, info) = measure_with_result(|| inradius(black_box(&points)));
+                    assert_relative_eq!(radius.or_abort(), expected_inradius, max_relative = 1e-10);
+                    assert_zero_allocations(&info, "inradius");
+                });
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(format!("zero_alloc/surface_measure_{D}d"), D + 1),
+            |b| {
+                b.iter(|| {
+                    let (surface, info) =
+                        measure_with_result(|| surface_measure(black_box(&facets)));
+                    assert_relative_eq!(surface.or_abort(), expected_surface, max_relative = 1e-10);
+                    assert_zero_allocations(&info, "surface_measure");
+                });
+            },
+        );
+    }
+
     /// Measures the complete public D+1 bootstrap and Levels 1–5 publication path.
     fn bench_bootstrap_publication<const D: usize>(group: &mut BenchmarkGroup<'_, WallTime>)
     where
@@ -581,6 +630,7 @@ mod allocation_contracts {
     ) where
         AdaptiveKernel<f64>: ExactPredicates<D>,
     {
+        bench_measure_allocations::<D>(group);
         let fixture = prepare_fixture::<D>(count, seed);
 
         bench_bootstrap_publication::<D>(group);

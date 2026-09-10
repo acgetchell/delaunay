@@ -49,7 +49,9 @@ use delaunay::vertex;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use proptest_config::with_default_cases;
+use std::array::from_fn;
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 // =============================================================================
@@ -73,6 +75,55 @@ fn unique_vertex_count<const D: usize>(vertices: &[Vertex<(), D>]) -> usize {
 // =============================================================================
 // HELPER FUNCTIONS
 // =============================================================================
+
+/// Positive diagonal lengths and bounded shear give full-rank triangular edges.
+/// This admits inputs independently of any production geometric calculation.
+fn well_conditioned_simplex<const D: usize>(
+    base: [f64; D],
+    lengths: [f64; D],
+    shear: f64,
+) -> Vec<Point<D>> {
+    let mut points = vec![Point::try_new(base).expect("finite fixture coordinates")];
+    for (axis, length) in lengths.into_iter().enumerate() {
+        let coordinates = from_fn(|coordinate| {
+            base[coordinate]
+                + match coordinate.cmp(&axis) {
+                    Ordering::Less => shear * length,
+                    Ordering::Equal => length,
+                    Ordering::Greater => 0.0,
+                }
+        });
+        points.push(Point::try_new(coordinates).expect("finite fixture coordinates"));
+    }
+    points
+}
+
+/// Every admitted quality fixture must produce finite positive radii and a ratio.
+fn checked_simplex_radius_ratio<const D: usize>(
+    points: &[Point<D>],
+    context: &str,
+) -> Result<f64, TestCaseError> {
+    let outer = circumradius(points).map_err(|error| {
+        TestCaseError::fail(format!(
+            "{context}: {D}D circumradius failed for {points:?}: {error:?}"
+        ))
+    })?;
+    let inner = inradius(points).map_err(|error| {
+        TestCaseError::fail(format!(
+            "{context}: {D}D inradius failed for {points:?}: {error:?}"
+        ))
+    })?;
+    prop_assert!(
+        outer.is_finite() && outer > 0.0 && inner.is_finite() && inner > 0.0,
+        "{context}: {D}D radii must be finite and positive: R={outer}, r={inner}, points={points:?}"
+    );
+    let ratio = outer / inner;
+    prop_assert!(
+        ratio.is_finite(),
+        "{context}: {D}D ratio overflowed: R={outer}, r={inner}"
+    );
+    Ok(ratio)
+}
 
 /// Compare quality metrics between two triangulations by matching simplices via vertex UUIDs.
 ///
@@ -200,185 +251,120 @@ where
 
 /// Macro to generate simplex-only quality metric property tests for a given dimension
 macro_rules! test_simplex_quality_properties {
-    ($dim:literal, $num_points:literal $(, #[$attr:meta])*) => {
+    ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             repo_proptest! {
                 /// Property: Radius ratio R/r ≥ D for non-degenerate D-simplices
                 $(#[$attr])*
                 #[test]
                 fn [<prop_radius_ratio_lower_bound_ $dim d>](
-                    simplex_points in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
-                        $num_points
-                    )
+                    base in prop::array::[<uniform $dim>](finite_coordinate()),
+                    lengths in prop::array::[<uniform $dim>](0.5f64..2.0f64),
+                    shear in -0.25f64..0.25f64
                 ) {
-                    if let (Ok(r_outer), Ok(r_inner)) = (circumradius(&simplex_points), inradius(&simplex_points)) {
-                        // Skip degenerate cases
-                        if r_outer > 1e-6 && r_inner > 1e-9 {
-                            let ratio = r_outer / r_inner;
-                            let dim_f64 = f64::from($dim);
-                            prop_assert!(
-                                ratio >= dim_f64 - 0.1,  // Small tolerance for numerical errors
-                                "{}D radius ratio {} should be >= {}",
-                                $dim,
-                                ratio,
-                                $dim
-                            );
-                        }
-                    }
+                    let points = well_conditioned_simplex::<$dim>(base, lengths, shear);
+                    let ratio = checked_simplex_radius_ratio(&points, "lower bound")?;
+                    prop_assert!(
+                        ratio >= f64::from($dim) - 1e-8,
+                        "{}D radius ratio {ratio} must be >= {} for {points:?}",
+                        $dim, $dim
+                    );
                 }
 
                 /// Property: Radius ratio is scale-invariant
                 $(#[$attr])*
                 #[test]
                 fn [<prop_radius_ratio_scale_invariant_ $dim d>](
-                    simplex_points in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
-                        $num_points
-                    ),
+                    base in prop::array::[<uniform $dim>](finite_coordinate()),
+                    lengths in prop::array::[<uniform $dim>](0.5f64..2.0f64),
+                    shear in -0.25f64..0.25f64,
                     scale in 0.1f64..10.0f64
                 ) {
-                    // Compute original radius ratio
-                    if let (Ok(r1), Ok(r_inner_1)) = (circumradius(&simplex_points), inradius(&simplex_points)) {
-                        if r1 > 1e-6 && r_inner_1 > 1e-9 {
-                            let ratio1 = r1 / r_inner_1;
-
-                            // Scale all points
-                            let scaled_points: Vec<Point<$dim>> = simplex_points
-                                .iter()
-                                .map(|p| {
-                                    let coords = *p.coords();
-                                    let mut scaled = [0.0f64; $dim];
-                                    for i in 0..$dim {
-                                        scaled[i] = coords[i] * scale;
-                                    }
-                                    Point::try_new(scaled).expect("finite point coordinates")
-                                })
-                                .collect();
-
-                            // Compute scaled radius ratio
-                            if let (Ok(r2), Ok(r_inner_2)) = (circumradius(&scaled_points), inradius(&scaled_points)) {
-                                if r2 > 1e-6 && r_inner_2 > 1e-9 {
-                                    let ratio2 = r2 / r_inner_2;
-                                    prop_assert!(
-                                        (ratio1 - ratio2).abs() < 0.01 * ratio1.max(1.0),
-                                        "{}D radius ratio should be scale-invariant: {} vs {}",
-                                        $dim,
-                                        ratio1,
-                                        ratio2
-                                    );
-                                }
-                            }
-                        }
-                    }
+                    let points = well_conditioned_simplex::<$dim>(base, lengths, shear);
+                    let ratio = checked_simplex_radius_ratio(&points, "before scaling")?;
+                    let scaled: Vec<_> = points.iter().map(|point| {
+                        Point::try_new(point.coords().map(|coordinate| coordinate * scale))
+                            .expect("bounded scaled coordinates")
+                    }).collect();
+                    let scaled_ratio = checked_simplex_radius_ratio(&scaled, "after scaling")?;
+                    prop_assert!(
+                        (ratio - scaled_ratio).abs() <= 1e-8 * ratio.max(scaled_ratio),
+                        "{}D radius ratio changed under scale {scale}: {ratio} vs {scaled_ratio}; points={points:?}",
+                        $dim
+                    );
                 }
 
-                /// Property: Regular simplex has better (lower) radius ratio than degenerate
+                /// Property: Equal axis lengths give a lower ratio than an elongated simplex.
                 $(#[$attr])*
                 #[test]
-                fn [<prop_regular_simplex_quality_ $dim d>](
+                fn [<prop_elongation_worsens_ratio_ $dim d>](
                     base_scale in 0.1f64..10.0f64
                 ) {
-                    // Create a regular simplex (vertices at unit distance from origin)
-                    let mut regular_points = Vec::new();
+                    // Create a right simplex with equal axis lengths.
+                    let mut axis_points = Vec::new();
 
                     // First vertex at origin (scaled)
                     let origin = [0.0f64; $dim];
-                    regular_points.push(Point::try_new(origin).expect("finite point coordinates"));
+                    axis_points.push(Point::try_new(origin).expect("finite point coordinates"));
 
                     // D more vertices with one coordinate = base_scale
                     for i in 0..$dim {
                         let mut coords = [0.0f64; $dim];
                         coords[i] = base_scale;
-                        regular_points.push(Point::try_new(coords).expect("finite point coordinates"));
+                        axis_points.push(Point::try_new(coords).expect("finite point coordinates"));
                     }
 
                     // Create a flatter simplex (still valid but lower quality)
                     // Make it elongated in one direction with small extent in others
-                    let mut degenerate_points = Vec::with_capacity($dim + 1);
-                    degenerate_points.push(Point::try_new([0.0f64; $dim]).expect("finite point coordinates"));
+                    let mut elongated_points = Vec::with_capacity($dim + 1);
+                    elongated_points.push(Point::try_new([0.0f64; $dim]).expect("finite point coordinates"));
                     for i in 0..$dim {
                         let mut coords = [0.0f64; $dim];
                         let i_f64: f64 = safe_usize_to_scalar(i).unwrap();
                         coords[0] = (10.0 + i_f64) * base_scale;
                         let axis = (i + 1) % $dim;
                         coords[axis] = 0.05_f64.mul_add(base_scale, coords[axis]);
-                        degenerate_points.push(Point::try_new(coords).expect("finite point coordinates"));
+                        elongated_points.push(Point::try_new(coords).expect("finite point coordinates"));
                     }
 
-                    // Try to compute quality metrics, but skip if degenerate
-                    // (higher dimensions with nearly collinear points can cause numerical issues)
-                    let regular_quality = circumradius(&regular_points)
-                        .and_then(|r| inradius(&regular_points).map(|r_inner| (r, r_inner)));
-                    let degenerate_quality = circumradius(&degenerate_points)
-                        .and_then(|r| inradius(&degenerate_points).map(|r_inner| (r, r_inner)));
-
-                    if let (Ok((r_reg, r_inner_reg)), Ok((r_deg, r_inner_deg))) = (regular_quality, degenerate_quality) {
-                        if r_reg > 1e-6 && r_inner_reg > 1e-9 && r_deg > 1e-6 && r_inner_deg > 1e-9 && r_inner_deg.is_finite() {
-                            let ratio_reg = r_reg / r_inner_reg;
-                            let ratio_deg = r_deg / r_inner_deg;
-
-                            // Only assert if both ratios are finite
-                            if ratio_reg.is_finite() && ratio_deg.is_finite() {
-                                prop_assert!(
-                                    ratio_reg < ratio_deg * 0.9,  // Regular should be significantly better
-                                    "{}D regular simplex quality ({}) should be better than degenerate ({})",
-                                    $dim,
-                                    ratio_reg,
-                                    ratio_deg
-                                );
-                            }
-                        }
-                    }
+                    let axis_ratio = checked_simplex_radius_ratio(&axis_points, "equal axes")?;
+                    let elongated_ratio = checked_simplex_radius_ratio(&elongated_points, "elongated")?;
+                    prop_assert!(
+                        axis_ratio < elongated_ratio * 0.9,
+                        "{}D equal-axis ratio ({axis_ratio}) should be better than elongated ({elongated_ratio}), scale={base_scale}",
+                        $dim
+                    );
                 }
 
-                /// Property: Extreme deformation degrades quality (becomes degenerate)
+                /// Property: Compressing one axis degrades quality without losing rank.
                 $(#[$attr])*
                 #[test]
-                fn [<prop_quality_degrades_under_collapse_ $dim d>](
+                fn [<prop_compression_worsens_ratio_ $dim d>](
                     base_scale in 0.1f64..10.0f64
                 ) {
-                    // Create a regular simplex
-                    let mut regular_points = Vec::new();
-                    regular_points.push(Point::try_new([0.0f64; $dim]).expect("finite point coordinates"));
+                    // Create a right simplex with equal axis lengths.
+                    let mut axis_points = Vec::new();
+                    axis_points.push(Point::try_new([0.0f64; $dim]).expect("finite point coordinates"));
                     for i in 0..$dim {
                         let mut coords = [0.0f64; $dim];
                         coords[i] = base_scale;
-                        regular_points.push(Point::try_new(coords).expect("finite point coordinates"));
+                        axis_points.push(Point::try_new(coords).expect("finite point coordinates"));
                     }
 
-                    // Create a nearly-degenerate version (collapse last vertex toward origin)
-                    let mut degenerate_points = regular_points.clone();
-                    if let Some(last) = degenerate_points.last_mut() {
-                        let coords = *last.coords();
-                        let mut collapsed_coords = coords;
-                        // Collapse to nearly coincident with first vertex
-                        for i in 0..$dim {
-                            collapsed_coords[i] *= 0.01; // Move 99% toward origin
-                        }
-                        *last = Point::try_new(collapsed_coords).expect("finite point coordinates");
-                    }
+                    // Compress the final axis to one percent of its original length.
+                    let mut compressed_points = axis_points.clone();
+                    let last = compressed_points.last_mut().expect("simplex has D+1 vertices");
+                    *last = Point::try_new(last.coords().map(|coordinate| coordinate * 0.01))
+                        .expect("finite point coordinates");
 
-                    // Compare quality metrics - collapsed should be much worse
-                    if let (Ok(r_reg), Ok(r_inner_reg)) = (circumradius(&regular_points), inradius(&regular_points)) {
-                        if let (Ok(r_coll), Ok(r_inner_coll)) = (circumradius(&degenerate_points), inradius(&degenerate_points)) {
-                            if r_reg > 1e-6 && r_inner_reg > 1e-9 && r_coll > 1e-6 && r_inner_coll > 1e-9 {
-                                let ratio_reg = r_reg / r_inner_reg;
-                                let ratio_coll = r_coll / r_inner_coll;
-
-                                if ratio_reg.is_finite() && ratio_coll.is_finite() {
-                                    // Collapsed simplex should have significantly worse quality
-                                    prop_assert!(
-                                        ratio_coll > ratio_reg * 1.5,
-                                        "{}D: Collapsed simplex should have worse quality: regular={}, collapsed={}",
-                                        $dim,
-                                        ratio_reg,
-                                        ratio_coll
-                                    );
-                                }
-                            }
-                        }
-                    }
+                    // The compressed simplex should have a larger radius ratio.
+                    let axis_ratio = checked_simplex_radius_ratio(&axis_points, "equal axes")?;
+                    let compressed_ratio = checked_simplex_radius_ratio(&compressed_points, "compressed axis")?;
+                    prop_assert!(
+                        compressed_ratio > axis_ratio * 1.5,
+                        "{}D compressed-axis ratio ({compressed_ratio}) should be worse than equal-axis ({axis_ratio}), scale={base_scale}",
+                        $dim
+                    );
                 }
             }
         }
@@ -732,10 +718,10 @@ macro_rules! test_quality_properties {
 
 // Generate tests for dimensions 2-5
 // Simplex-only quality metrics (D+1 points)
-test_simplex_quality_properties!(2, 3);
-test_simplex_quality_properties!(3, 4);
-test_simplex_quality_properties!(4, 5);
-test_simplex_quality_properties!(5, 6);
+test_simplex_quality_properties!(2);
+test_simplex_quality_properties!(3);
+test_simplex_quality_properties!(4);
+test_simplex_quality_properties!(5);
 // Parameters: dimension, min_vertices, max_vertices
 test_quality_properties!(2, 4, 10);
 test_quality_properties!(3, 5, 12);
