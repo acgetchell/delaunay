@@ -140,7 +140,7 @@ pub enum ArrayConversionFailureReason {
     LengthMismatch,
 }
 
-/// Errors that can occur during circumcenter calculation.
+/// Errors that can occur during circumcenter and simplex-measure calculations.
 ///
 /// # Examples
 ///
@@ -164,10 +164,20 @@ pub enum CircumcenterError {
     InvalidSimplex {
         /// Number of points provided.
         actual: usize,
-        /// Number of points expected (`D + 1`).
+        /// Number of points required by the operation (`D + 1` for a full
+        /// simplex, or `D` for a codimension-one facet).
         expected: usize,
         /// Dimension.
         dimension: usize,
+    },
+
+    /// The ambient dimension is below the minimum required by the operation.
+    #[error("Ambient dimension {dimension} is below the required minimum {minimum}")]
+    DimensionTooSmall {
+        /// Ambient dimension of the input points.
+        dimension: usize,
+        /// Minimum ambient dimension supported by the operation.
+        minimum: usize,
     },
 
     /// Matrix inversion failed (degenerate simplex).

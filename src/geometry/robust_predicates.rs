@@ -452,9 +452,10 @@ fn verify_insphere_consistency<const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::matrix::test_support::with_la_stack_matrix;
-    use crate::geometry::matrix::{Matrix, matrix_get};
-    use crate::geometry::point::Point;
+    use crate::geometry::matrix::{
+        Matrix,
+        test_support::{matrix_get, with_la_stack_matrix},
+    };
     use crate::geometry::predicates;
     use crate::geometry::util::squared_norm;
     use num_traits::NumCast;

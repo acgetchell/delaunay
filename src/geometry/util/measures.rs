@@ -2,20 +2,27 @@
 //!
 //! This module provides functions for computing volumes, surface measures,
 //! and quality metrics of simplices.
+//!
+//! Use [`simplex_volume`] for a full-dimensional simplex, [`facet_measure`] for
+//! one codimension-one facet, [`inradius`] for its inscribed-sphere radius, and
+//! [`surface_measure`] to sum a collection of facets. These functions are also
+//! available from [`crate::prelude::geometry`].
 
 #![forbid(unsafe_code)]
 
 use super::circumsphere::{
     CircumcenterError, CircumcenterFailureReason, DegenerateGeometry, DegenerateMeasure,
 };
-use super::conversions::{ValueConversionError, safe_coords_to_f64, safe_usize_to_scalar};
+use super::conversions::{ValueConversionError, safe_usize_to_scalar};
 use super::norms::hypot;
+use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::facet::FacetView;
-use crate::geometry::matrix::{DEFAULT_SINGULAR_TOL, Matrix, matrix_get, matrix_set};
+use crate::geometry::matrix::{LaError, LaVector, Matrix, Tolerance, gram_matrix};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateConversionValue;
 use crate::tds::FacetError;
 use num_traits::Float;
+use std::array::from_fn;
 
 /// Error type for surface measure computation operations.
 ///
@@ -56,12 +63,17 @@ impl From<CircumcenterError> for SurfaceMeasureError {
 
 const DEGENERACY_EPSILON_FACTOR: f64 = 64.0;
 
+/// Conservative relative pivot cutoff for approximate Gram measures, not an
+/// error bound or a certificate of the exact edge matrix's rank.
+const RELATIVE_GRAM_PIVOT_TOLERANCE: f64 = 1e-12;
+
 fn degeneracy_tolerance(scale: f64) -> f64 {
     if scale <= 0.0 {
         return 0.0;
     }
 
-    scale * DEGENERACY_EPSILON_FACTOR * f64::EPSILON
+    // Fold the exact power-of-two factor first, avoiding overflow of scale * 64.
+    scale * (DEGENERACY_EPSILON_FACTOR * f64::EPSILON)
 }
 
 fn is_zero_or_roundoff(value: f64, scale: f64) -> bool {
@@ -86,6 +98,34 @@ fn ensure_finite_measure_value(
     }
 }
 
+/// Checks a newly computed measure before it becomes a divisor or public result.
+/// Finiteness and positivity of the inputs do not survive arbitrary arithmetic.
+#[inline]
+fn ensure_positive_measure_value(
+    value: f64,
+    measure: DegenerateMeasure,
+) -> Result<(), CircumcenterError> {
+    if value.is_finite() && value > 0.0 {
+        Ok(())
+    } else {
+        Err(invalid_measure_error(value, measure))
+    }
+}
+
+/// Keeps typed diagnostic construction off successful measure paths.
+#[cold]
+fn invalid_measure_error(value: f64, measure: DegenerateMeasure) -> CircumcenterError {
+    match ensure_finite_measure_value(value, measure) {
+        Err(error) => error,
+        Ok(()) => CircumcenterError::MatrixInversionFailed {
+            reason: CircumcenterFailureReason::NonPositiveSimplexMeasure {
+                measure,
+                value: CoordinateConversionValue::from_numeric_debug(&value),
+            },
+        },
+    }
+}
+
 /// Validates vector-valued measure intermediates before reduction hides the source.
 fn ensure_finite_measure_values<const N: usize>(
     values: &[f64; N],
@@ -100,8 +140,14 @@ fn ensure_finite_measure_values<const N: usize>(
 /// Calculate the volume of a D-dimensional simplex.
 ///
 /// This function computes the D-dimensional volume of a simplex formed by D+1 points.
-/// The volume is calculated using the Gram matrix determinant method, which is
-/// numerically stable and generalizes correctly to arbitrary dimensions.
+/// Dimensions 1–3 use direct formulas; higher dimensions use a rounded Gram matrix
+/// and LDLT determinant. Forming a Gram matrix squares the edge matrix's spectral
+/// condition number, so nearly dependent edges can lose numerical rank.
+/// For `D >= 4`, LDLT rejects pivots at or below `1e-12` times the largest Gram
+/// diagonal entry (the largest squared edge length from the chosen origin).
+/// This relative cutoff scales with coordinate units; it is a conservative
+/// numerical policy, not a certified rank test. Extreme scales can still fail
+/// because Gram entries, the determinant, or the final measure are unrepresentable.
 ///
 /// # Mathematical Background
 ///
@@ -117,15 +163,28 @@ fn ensure_finite_measure_values<const N: usize>(
 ///
 /// # Returns
 ///
-/// The D-dimensional volume of the simplex, or an error if calculation fails
+/// The positive finite D-dimensional measure, in coordinate units raised to the
+/// power `D`. A single point in dimension zero has measure `1`.
 ///
 /// # Errors
 ///
-/// Returns an error if:
-/// - Wrong number of points provided (expected D+1)
-/// - Points are degenerate (volume would be zero)
-/// - A derived length, area, or volume is NaN or infinite
-/// - Coordinate conversion fails
+/// - [`CircumcenterError::InvalidSimplex`] if `points.len() != D + 1`.
+/// - [`CircumcenterError::MatrixInversionFailed`] for degeneracy detected by a
+///   direct formula, non-finite edge differences or measure intermediates, a
+///   non-positive/non-finite Gram determinant, or normalization underflow to zero.
+///   The [`CircumcenterFailureReason`] identifies the geometric failure.
+/// - [`CircumcenterError::LinearAlgebraFailure`] if checked Gram construction or
+///   LDLT fails. The preserved [`LaError`] distinguishes rejected pivots
+///   ([`LaError::Singular`]), a rounded Gram matrix that is not positive
+///   semidefinite ([`LaError::NotPositiveSemidefinite`]), and non-finite arithmetic
+///   ([`LaError::NonFinite`]). Dot-product overflow retains the backend operation
+///   and first failing coordinate index.
+/// - [`CircumcenterError::ValueConversion`] if a dimension factor used in the
+///   factorial normalization cannot be represented as `f64`.
+///
+/// Stored [`Point`] coordinates are already finite. Failures can still arise
+/// when subtracting coordinates or computing dot products; no exact fallback
+/// or certified error bound is provided for the measure.
 ///
 /// # Examples
 ///
@@ -152,6 +211,35 @@ fn ensure_finite_measure_values<const N: usize>(
 /// ];
 /// let volume = simplex_volume(&tetrahedron)?;
 /// assert_relative_eq!(volume, 1.0/6.0, epsilon = 1e-10); // Volume = 1/6
+/// # Ok(())
+/// # }
+/// ```
+///
+/// A 4D simplex exercises the Gram path. Finite coordinates can still overflow
+/// during its checked dot products:
+///
+/// ```
+/// use delaunay::prelude::geometry::{CircumcenterError, LaError, Point, simplex_volume};
+/// use approx::assert_relative_eq;
+///
+/// # fn main() -> Result<(), CircumcenterError> {
+/// let mut simplex = [
+///     Point::try_new([0.0, 0.0, 0.0, 0.0])?,
+///     Point::try_new([2.0, 0.0, 0.0, 0.0])?,
+///     Point::try_new([0.0, 3.0, 0.0, 0.0])?,
+///     Point::try_new([0.0, 0.0, 4.0, 0.0])?,
+///     Point::try_new([0.0, 0.0, 0.0, 5.0])?,
+/// ];
+/// // Product of axis lengths divided by 4!.
+/// assert_relative_eq!(simplex_volume(&simplex)?, 5.0, epsilon = 1e-12);
+///
+/// simplex[1] = Point::try_new([1.0e200, 0.0, 0.0, 0.0])?;
+/// std::assert_matches!(
+///     simplex_volume(&simplex),
+///     Err(CircumcenterError::LinearAlgebraFailure {
+///         source: LaError::NonFinite { .. },
+///     })
+/// );
 /// # Ok(())
 /// # }
 /// ```
@@ -211,7 +299,6 @@ pub fn simplex_volume<const D: usize>(points: &[Point<D>]) -> Result<f64, Circum
             let cross_z = v1[1].mul_add(-v2[0], v1[0] * v2[1]);
             ensure_finite_measure_value(cross_z, DegenerateMeasure::Area)?;
             let area = Float::abs(cross_z) / 2.0;
-            ensure_finite_measure_value(area, DegenerateMeasure::Area)?;
 
             // Check for degeneracy (collinear points) using a scale-aware
             // determinant threshold instead of an absolute area cutoff.
@@ -226,6 +313,7 @@ pub fn simplex_volume<const D: usize>(points: &[Point<D>]) -> Result<f64, Circum
                 });
             }
 
+            ensure_positive_measure_value(area, DegenerateMeasure::Area)?;
             Ok(area)
         }
         3 => {
@@ -254,7 +342,6 @@ pub fn simplex_volume<const D: usize>(points: &[Point<D>]) -> Result<f64, Circum
             // Volume = |triple product| / 6
             let six = 6.0;
             let volume = Float::abs(triple_product) / six;
-            ensure_finite_measure_value(volume, DegenerateMeasure::Volume)?;
 
             // Check for degeneracy (coplanar points) using the expansion scale
             // of the 3x3 determinant.
@@ -274,6 +361,7 @@ pub fn simplex_volume<const D: usize>(points: &[Point<D>]) -> Result<f64, Circum
                 });
             }
 
+            ensure_positive_measure_value(volume, DegenerateMeasure::Volume)?;
             Ok(volume)
         }
         _ => {
@@ -283,19 +371,12 @@ pub fn simplex_volume<const D: usize>(points: &[Point<D>]) -> Result<f64, Circum
     }
 }
 
-/// Validate a Gram determinant.
+/// Preserves geometric failure reasons before a Gram determinant is square-rooted.
 ///
-/// For valid inputs, Gram determinants should be non-negative.
-///
-/// In this crate we compute Gram determinants via a symmetry-exploiting LDLT factorization
-/// (see [`gram_determinant_ldlt`]), so **negative** determinants should not occur for PSD Gram
-/// matrices. Any negative determinant is reported as an error instead of being hidden behind an
-/// absolute tolerance.
-///
-/// This function treats any non-positive determinant as a degenerate simplex:
-/// - non-finite determinants error
-/// - negative determinants error
-/// - zero determinants error
+/// Exact Gram matrices are positive semidefinite, but rounded construction can
+/// lose that property or numerical rank. After [`gram_determinant_ldlt`] preserves
+/// backend failures, this guard classifies a non-finite, negative, or zero result
+/// without clamping it or hiding its sign behind an absolute tolerance.
 fn validate_gram_determinant(det: f64) -> Result<f64, CircumcenterError> {
     if !det.is_finite() {
         return Err(CircumcenterError::MatrixInversionFailed {
@@ -346,14 +427,72 @@ fn factorial_f64(n: usize) -> Result<f64, CircumcenterError> {
 /// by [`validate_gram_determinant`].
 #[inline]
 fn gram_determinant_ldlt<const D: usize>(gram_matrix: Matrix<D>) -> Result<f64, CircumcenterError> {
-    let ldlt = gram_matrix.ldlt(DEFAULT_SINGULAR_TOL)?;
+    // Gram diagonals are finite squared edge lengths. Uniform coordinate scaling
+    // multiplies both the pivots and this scale by the same squared factor.
+    let scale = gram_matrix
+        .as_rows()
+        .iter()
+        .enumerate()
+        .fold(0.0_f64, |scale, (index, row)| scale.max(row[index]));
+    let tolerance = Tolerance::try_new(RELATIVE_GRAM_PIVOT_TOLERANCE * scale)?;
+    let ldlt = gram_matrix.ldlt(tolerance)?;
     ldlt.det().map_err(CircumcenterError::from)
+}
+
+/// Reconstructs a rejected edge only on failure, keeping diagnostic storage off
+/// the successful Gram-construction path.
+///
+/// Volume and facet callers retain [`CircumcenterFailureReason::NonFiniteMeasure`]
+/// with the first rejected difference, rather than receiving a backend vector-input
+/// error. Any other backend failure remains available through its typed source.
+#[cold]
+fn gram_edge_error<const D: usize>(
+    source: LaError,
+    coords: &[f64; D],
+    origin: &[f64; D],
+) -> CircumcenterError {
+    let differences = from_fn(|axis| coords[axis] - origin[axis]);
+    match ensure_finite_measure_values::<D>(&differences, DegenerateMeasure::Volume) {
+        Ok(()) => source.into(),
+        Err(error) => error,
+    }
+}
+
+/// Keeps geometric edge validation local while delegating symmetric Gram assembly.
+/// `N` is the intrinsic simplex dimension and `D` is the ambient dimension.
+///
+/// Exactly `N + 1` points produce an `N` × `N` matrix of dot products between
+/// edges from the first point. Finite storage in [`Point`] is reused; newly
+/// computed differences are checked before Gram construction. The result is
+/// bit-for-bit symmetric, but rank and positive definiteness are left to LDLT.
+#[inline]
+fn simplex_gram_matrix<const N: usize, const D: usize>(
+    points: &[Point<D>],
+) -> Result<Matrix<N>, CircumcenterError> {
+    if points.len() != N + 1 {
+        return Err(CircumcenterError::InvalidSimplex {
+            actual: points.len(),
+            expected: N + 1,
+            dimension: D,
+        });
+    }
+    // Point already proves its stored f64 coordinates finite. Only the newly
+    // computed differences need validation before they become backend vectors.
+    let origin = points[0].coords();
+    let mut edges = [LaVector::<D>::zero(); N];
+    for (edge, point) in edges.iter_mut().zip(&points[1..]) {
+        let coords = point.coords();
+        let differences = from_fn(|axis| coords[axis] - origin[axis]);
+        *edge = LaVector::try_new(differences)
+            .map_err(|source| gram_edge_error(source, coords, origin))?;
+    }
+    gram_matrix(&edges).map_err(CircumcenterError::from)
 }
 
 /// Calculate the volume of a D-dimensional simplex using the Gram matrix method.
 ///
-/// This is a helper function that implements the general Gram matrix approach
-/// for computing simplex volumes in arbitrary dimensions.
+/// Shares checked edge/Gram construction with facet measurement while keeping
+/// full-dimensional `D!` normalization and geometric determinant errors local.
 ///
 /// # Arguments
 ///
@@ -365,32 +504,7 @@ fn gram_determinant_ldlt<const D: usize>(gram_matrix: Matrix<D>) -> Result<f64, 
 fn simplex_volume_gram_matrix<const D: usize>(
     points: &[Point<D>],
 ) -> Result<f64, CircumcenterError> {
-    // Convert points to f64 and create edge vectors from first point to all others
-    let p0_coords = points[0].coords();
-    let p0_f64 = safe_coords_to_f64(p0_coords)?;
-
-    let mut edge_matrix = Matrix::<D>::zero();
-    for (row, point) in points.iter().skip(1).enumerate() {
-        let point_f64 = safe_coords_to_f64(point.coords())?;
-
-        for (j, (&p, &p0)) in point_f64.iter().zip(p0_f64.iter()).enumerate() {
-            matrix_set(&mut edge_matrix, row, j, p - p0)?;
-        }
-    }
-
-    // Compute Gram matrix G where G[i,j] = edge_i · edge_j
-    let mut gram_matrix = Matrix::<D>::zero();
-    for i in 0..D {
-        for j in 0..D {
-            let mut dot_product = 0.0;
-            for k in 0..D {
-                let edge_i = matrix_get(&edge_matrix, i, k)?;
-                let edge_j = matrix_get(&edge_matrix, j, k)?;
-                dot_product = edge_i.mul_add(edge_j, dot_product);
-            }
-            matrix_set(&mut gram_matrix, i, j, dot_product)?;
-        }
-    }
+    let gram_matrix = simplex_gram_matrix::<D, D>(points)?;
 
     // Compute Gram determinant with validation (LDLT exploits symmetry / PSD structure).
     let det = validate_gram_determinant(gram_determinant_ldlt(gram_matrix)?)?;
@@ -401,6 +515,7 @@ fn simplex_volume_gram_matrix<const D: usize>(
         sqrt_det / d_fact
     };
 
+    ensure_positive_measure_value(volume_f64, DegenerateMeasure::Volume)?;
     Ok(volume_f64)
 }
 
@@ -412,6 +527,7 @@ fn simplex_volume_gram_matrix<const D: usize>(
 /// **inradius = D × volume / `surface_area`**
 ///
 /// where `surface_area` is the sum of all (D-1)-dimensional facet volumes.
+/// The ambient dimension `D` must be at least `1`.
 ///
 /// # Arguments
 ///
@@ -419,15 +535,19 @@ fn simplex_volume_gram_matrix<const D: usize>(
 ///
 /// # Returns
 ///
-/// The inradius of the simplex, or an error if calculation fails
+/// The positive finite inradius of the simplex, or an error if calculation fails.
 ///
 /// # Errors
 ///
-/// Returns an error if:
-/// - Wrong number of points provided (expected D+1)
-/// - Simplex is degenerate (zero volume or surface area)
-/// - A derived length, area, volume, or surface area is NaN or infinite
-/// - Coordinate conversion fails
+/// Returns [`CircumcenterError::InvalidSimplex`] if `points.len() != D + 1`,
+/// then [`CircumcenterError::DimensionTooSmall`] if `D == 0`.
+///
+/// Propagates errors from [`simplex_volume`] and [`facet_measure`], including
+/// their typed geometric and linear-algebra failures. Additionally returns
+/// [`CircumcenterError::MatrixInversionFailed`] if the sum of facet measures or
+/// the resulting radius is non-finite or non-positive, including radius underflow
+/// to zero, and [`CircumcenterError::ValueConversion`]
+/// if `D` cannot be represented as `f64` for the radius formula.
 ///
 /// # Examples
 ///
@@ -457,52 +577,36 @@ pub fn inradius<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumcenter
         });
     }
 
+    if D == 0 {
+        return Err(CircumcenterError::DimensionTooSmall {
+            dimension: D,
+            minimum: 1,
+        });
+    }
+
     // Special-case 1D: segment inradius is half the length
     if D == 1 {
         let length = simplex_volume(points)?; // 1D volume = segment length
-        return Ok(length / 2.0);
+        let radius = length / 2.0;
+        ensure_positive_measure_value(radius, DegenerateMeasure::Length)?;
+        return Ok(radius);
     }
 
-    // Compute volume
+    // simplex_volume establishes a positive finite measure.
     let volume = simplex_volume(points)?;
-
-    if volume <= 0.0 {
-        return Err(CircumcenterError::MatrixInversionFailed {
-            reason: CircumcenterFailureReason::NonPositiveSimplexMeasure {
-                measure: DegenerateMeasure::Volume,
-                value: CoordinateConversionValue::from_numeric_debug(&volume),
-            },
-        });
-    }
 
     // Compute surface area by summing all (D-1)-dimensional facet volumes
     let mut surface_area = 0.0;
     for i in 0..=D {
-        // Create facet by omitting vertex i
-        let facet_points: Vec<Point<D>> = points
-            .iter()
-            .enumerate()
-            .filter(|(j, _)| *j != i)
-            .map(|(_, p)| *p)
-            .collect();
-
-        if facet_points.len() != D {
-            continue;
-        }
+        // Keep contiguous numerical workspace on the stack, omitting vertex i.
+        let facet_points: [Point<D>; D] = from_fn(|j| points[j + usize::from(j >= i)]);
 
         let facet_area = facet_measure(&facet_points)?;
         surface_area += facet_area;
     }
 
-    // Check for degenerate surface area.
-    if surface_area <= 0.0 {
-        return Err(CircumcenterError::MatrixInversionFailed {
-            reason: CircumcenterFailureReason::NonPositiveSimplexMeasure {
-                measure: DegenerateMeasure::SurfaceArea,
-                value: CoordinateConversionValue::from_numeric_debug(&surface_area),
-            },
-        });
-    }
+    // Summing finite facets can overflow; establish the divisor's invariant.
+    ensure_positive_measure_value(surface_area, DegenerateMeasure::SurfaceArea)?;
 
     // inradius = D * volume / surface_area
     let d_scalar = safe_usize_to_scalar(D).map_err(|e| CircumcenterError::ValueConversion {
@@ -515,35 +619,56 @@ pub fn inradius<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumcenter
     })?;
 
     let inradius = (d_scalar * volume) / surface_area;
+    ensure_positive_measure_value(inradius, DegenerateMeasure::Length)?;
     Ok(inradius)
 }
 
 /// Calculate the area/volume of a facet defined by a set of points.
 ///
 /// This function calculates the (D-1)-dimensional "area" of a facet in D-dimensional space:
-/// - 1D: Point measure (0-dimensional, returns 0)
+/// - 1D: Point measure (0-dimensional, returns 1)
 /// - 2D: Length of line segment (1-dimensional)
 /// - 3D: Area of triangle using cross product (2-dimensional)
 /// - 4D+: Generalized volume using Gram matrix method
 ///
-/// For dimensions 4 and higher, this function uses the Gram matrix method for
-/// mathematically accurate volume computation.
+/// For dimensions 4 and higher, this function uses a rounded Gram matrix and LDLT
+/// determinant. Forming a Gram matrix squares the edge matrix's spectral condition
+/// number, so nearly dependent edges can lose numerical rank.
+/// The relative LDLT pivot cutoff and representability limits are the same as
+/// those described by [`simplex_volume`].
 ///
 /// # Arguments
 ///
-/// * `points` - Points defining the facet (should have exactly D points for (D-1)-dimensional facet)
+/// * `points` - Exactly `D` points defining a facet of intrinsic dimension `D - 1`.
+///   Positive ambient dimensions through
+///   [`MAX_STACK_MATRIX_DIM + 1`](crate::geometry::matrix::MAX_STACK_MATRIX_DIM)
+///   (currently `8`) are supported.
 ///
 /// # Returns
 ///
-/// The area/volume of the facet, or an error if calculation fails
+/// The positive finite intrinsic measure, in coordinate units raised to the power
+/// `D - 1`. For `D = 1`, the single point has dimensionless measure `1`.
 ///
 /// # Errors
 ///
-/// Returns an error if:
-/// - Wrong number of points provided
-/// - Points are degenerate (collinear/coplanar)
-/// - A derived length, area, or volume is NaN or infinite
-/// - Coordinate conversion fails
+/// - [`CircumcenterError::InvalidSimplex`] if `points.len() != D`.
+/// - [`CircumcenterError::DimensionTooSmall`] if `D == 0`, after checking the
+///   point count.
+/// - [`CircumcenterError::UnsupportedMatrixDimension`] if the Gram dimension
+///   `D - 1` exceeds [`crate::geometry::matrix::MAX_STACK_MATRIX_DIM`].
+/// - [`CircumcenterError::MatrixInversionFailed`] for geometric degeneracy,
+///   non-finite edge differences or measure intermediates, or a non-positive/
+///   non-finite Gram determinant, or normalization underflow to zero.
+///   The [`CircumcenterFailureReason`] is preserved.
+/// - [`CircumcenterError::LinearAlgebraFailure`] for checked Gram construction
+///   or LDLT failures, preserving [`LaError::Singular`],
+///   [`LaError::NotPositiveSemidefinite`], or [`LaError::NonFinite`] as applicable.
+///   Dot-product overflow retains the backend operation and first failing
+///   coordinate index.
+///
+/// As with [`simplex_volume`], finite [`Point`] coordinates do not guarantee
+/// representable edge differences or dot products. No exact fallback or
+/// certified error bound is provided for the measure.
 ///
 /// # Examples
 ///
@@ -571,6 +696,25 @@ pub fn inradius<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumcenter
 /// # Ok(())
 /// # }
 /// ```
+///
+/// A tetrahedral facet embedded in 4D uses a 3 × 3 Gram matrix:
+///
+/// ```
+/// use delaunay::prelude::geometry::{CircumcenterError, Point, facet_measure};
+/// use approx::assert_relative_eq;
+///
+/// # fn main() -> Result<(), CircumcenterError> {
+/// let facet = [
+///     Point::try_new([0.0, 0.0, 0.0, 0.0])?,
+///     Point::try_new([2.0, 0.0, 0.0, 0.0])?,
+///     Point::try_new([0.0, 3.0, 0.0, 0.0])?,
+///     Point::try_new([0.0, 0.0, 4.0, 0.0])?,
+/// ];
+/// // Product of axis lengths divided by 3!.
+/// assert_relative_eq!(facet_measure(&facet)?, 4.0, epsilon = 1e-12);
+/// # Ok(())
+/// # }
+/// ```
 pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, CircumcenterError> {
     if points.len() != D {
         return Err(CircumcenterError::InvalidSimplex {
@@ -581,15 +725,11 @@ pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumc
     }
 
     match D {
+        0 => Err(CircumcenterError::DimensionTooSmall {
+            dimension: D,
+            minimum: 1,
+        }),
         1 => {
-            // 1D: Point measure (0-dimensional facet)
-            if points.len() != 1 {
-                return Err(CircumcenterError::InvalidSimplex {
-                    actual: points.len(),
-                    expected: 1,
-                    dimension: 1,
-                });
-            }
             // The intrinsic measure of a 0-simplex is one: its empty Gram
             // determinant and 0! normalization are both one.
             Ok(1.0)
@@ -640,7 +780,6 @@ pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumc
             let cross_magnitude = hypot(&cross);
             let area = cross_magnitude / (2.0); // Divide by 2
             ensure_finite_measure_value(cross_magnitude, DegenerateMeasure::Area)?;
-            ensure_finite_measure_value(area, DegenerateMeasure::Area)?;
 
             // Check for degeneracy (collinear points) using the expansion scale
             // of the cross-product components.
@@ -660,6 +799,7 @@ pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumc
                 });
             }
 
+            ensure_positive_measure_value(area, DegenerateMeasure::Area)?;
             Ok(area)
         }
         4 => {
@@ -676,9 +816,8 @@ pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumc
 
 /// Calculate the area/volume of a (D-1)-dimensional simplex using the Gram matrix method.
 ///
-/// This function implements the mathematically rigorous approach for computing the volume
-/// of a (D-1)-dimensional simplex realized in D-dimensional space using the Gram matrix
-/// determinant formula:
+/// Keeps codimension-one shape dispatch and `(D - 1)!` normalization in the
+/// geometry layer while sharing checked Gram construction with full simplices:
 ///
 /// **Volume = (1/(D-1)!) × √(det(G))**
 ///
@@ -697,13 +836,14 @@ pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumc
 /// edge vectors), then computes the volume as the square root of the determinant
 /// divided by the appropriate factorial.
 ///
-/// This approach is numerically stable and generalizes correctly to arbitrary dimensions,
-/// unlike methods based on recursive determinant expansion which become computationally
-/// intractable in high dimensions.
+/// The backend computes each dot product once and mirrors it for exact symmetry.
+/// The rounded Gram matrix need not retain the exact rank or positive semidefiniteness;
+/// LDLT and determinant validation preserve typed failures in those cases.
 ///
 /// # Arguments
 ///
-/// * `points` - Points defining the simplex (should have exactly D points for (D-1)-dimensional facet)
+/// * `points` - Exactly `D` points defining the `(D - 1)`-dimensional facet.
+///   The caller must establish `D >= 1` before calling this helper.
 ///
 /// # Returns
 ///
@@ -711,41 +851,18 @@ pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumc
 ///
 /// # Errors
 ///
-/// Returns an error if:
-/// - Matrix operations fail (singular Gram matrix indicates degenerate simplex)
-/// - Coordinate conversion fails
-/// - Gram matrix determinant is negative (should never happen for valid input)
+/// Preserves the geometric and backend errors described by [`facet_measure`],
+/// including unsupported Gram dimensions and numerical rank loss.
 fn facet_measure_gram_matrix<const D: usize>(
     points: &[Point<D>],
 ) -> Result<f64, CircumcenterError> {
-    // Convert points to f64.
-    let mut coords_f64 = [[0.0f64; D]; D];
-    for (dst, p) in coords_f64.iter_mut().zip(points.iter()) {
-        *dst = safe_coords_to_f64(p.coords())?;
-    }
-
     // Compute Gram determinant with validation.
     //
     // For a (D-1)-simplex realized in D dimensions, there are (D-1) edge vectors from
     // one vertex to the remaining vertices, so the Gram matrix is (D-1)×(D-1).
     let gram_dim = D - 1;
     let det = try_with_la_stack_matrix!(gram_dim, |gram_matrix| {
-        for i in 0..gram_dim {
-            for j in 0..gram_dim {
-                let mut dot_product = 0.0;
-                for ((&ai, &aj), &a0) in coords_f64[i + 1]
-                    .iter()
-                    .zip(coords_f64[j + 1].iter())
-                    .zip(coords_f64[0].iter())
-                {
-                    let di = ai - a0;
-                    let dj = aj - a0;
-                    dot_product = di.mul_add(dj, dot_product);
-                }
-                matrix_set(&mut gram_matrix, i, j, dot_product)?;
-            }
-        }
-
+        gram_matrix = simplex_gram_matrix(points)?;
         validate_gram_determinant(gram_determinant_ldlt(gram_matrix)?)
     })?;
 
@@ -755,6 +872,7 @@ fn facet_measure_gram_matrix<const D: usize>(
         sqrt_det / d_fact
     };
 
+    ensure_positive_measure_value(volume_f64, DegenerateMeasure::Volume)?;
     Ok(volume_f64)
 }
 
@@ -770,11 +888,13 @@ fn facet_measure_gram_matrix<const D: usize>(
 ///
 /// # Returns
 ///
-/// Total surface area/volume, or error if any facet calculation fails
+/// The finite total surface area/volume. An empty collection has measure zero.
 ///
 /// # Errors
 ///
-/// Returns an error if any individual facet measure calculation fails
+/// Propagates individual facet failures through [`SurfaceMeasureError::GeometryError`].
+/// If summing finite facets overflows, returns the same variant with
+/// [`CircumcenterFailureReason::NonFiniteMeasure`] for [`DegenerateMeasure::SurfaceArea`].
 ///
 /// # Examples
 ///
@@ -822,13 +942,15 @@ pub fn surface_measure<U, V, const D: usize>(
     let mut total_measure = 0.0;
 
     for facet in facets {
-        // Convert vertices to Points for measure calculation
-        let points: Vec<Point<D>> = facet.vertices().map(|v| *v.point()).collect();
+        // Keep contiguous numerical workspace inline while the view borrows its owner.
+        let points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            facet.vertices().map(|vertex| *vertex.point()).collect();
 
         let measure = facet_measure(&points).map_err(SurfaceMeasureError::from)?;
         total_measure += measure;
     }
 
+    ensure_finite_measure_value(total_measure, DegenerateMeasure::SurfaceArea)?;
     Ok(total_measure)
 }
 
@@ -836,13 +958,280 @@ pub fn surface_measure<U, V, const D: usize>(
 mod tests {
     use super::*;
     use crate::{
-        core::vertex::Vertex,
-        delaunay_model::DelaunayTriangulation,
-        geometry::{matrix::LaError, point::Point, traits::coordinate::InvalidCoordinateValue},
-        vertex,
+        core::vertex::Vertex, delaunay_model::DelaunayTriangulation,
+        geometry::traits::coordinate::InvalidCoordinateValue, tds::TdsDraft, vertex,
     };
     use approx::assert_relative_eq;
+    use la_stack::ArithmeticOperation;
     use std::assert_matches;
+
+    /// Axis lengths give independent volume and facet-measure oracles.
+    fn scaled_axis_simplex<const D: usize>(scales: [f64; D]) -> Vec<Point<D>> {
+        let mut points = vec![Point::try_new([0.0; D]).unwrap()];
+        for (axis, scale) in scales.into_iter().enumerate() {
+            let mut coords = [0.0; D];
+            coords[axis] = scale;
+            points.push(Point::try_new(coords).unwrap());
+        }
+        points
+    }
+
+    /// A 3-4-5 plane rotation, reflection, and translation preserve measures and inradius.
+    fn check_measure_isometries<const D: usize>() {
+        let scales = from_fn(|axis| [0.125, 8.0, 0.5, 2.0, 1.0, 1.0][axis]);
+        let points = scaled_axis_simplex::<D>(scales);
+        let factorial = (1..=D)
+            .map(|value| safe_usize_to_scalar(value).unwrap())
+            .product::<f64>();
+        let volume = scales.iter().product::<f64>() / factorial;
+        let facet_volume = volume * safe_usize_to_scalar(D).unwrap() / scales[D - 1];
+        let inverse_scales = scales.map(f64::recip);
+        let inradius_expected = (inverse_scales.iter().sum::<f64>()
+            + inverse_scales
+                .iter()
+                .map(|value| value * value)
+                .sum::<f64>()
+                .sqrt())
+        .recip();
+        for (rotate, reflect, translation) in [
+            (false, false, 0.0),
+            (true, false, 0.0),
+            (false, true, 0.0),
+            (false, false, 16.0),
+            (true, true, 16.0),
+        ] {
+            let mut transformed: Vec<_> = points
+                .iter()
+                .map(|point| {
+                    let mut coords = *point.coords();
+                    if rotate {
+                        let (x, y) = (coords[0], coords[D - 1]);
+                        coords[0] = 0.8_f64.mul_add(-y, 0.6 * x);
+                        coords[D - 1] = 0.6_f64.mul_add(y, 0.8 * x);
+                    }
+                    if reflect {
+                        coords[0] = -coords[0];
+                    }
+                    Point::try_new(coords.map(|value| value + translation)).unwrap()
+                })
+                .collect();
+            assert_relative_eq!(
+                simplex_volume(&transformed).unwrap(),
+                volume,
+                max_relative = 1e-10
+            );
+            assert_relative_eq!(
+                facet_measure(&transformed[..D]).unwrap(),
+                facet_volume,
+                max_relative = 1e-10
+            );
+            // Cycle the origin so facet selection sees each vertex
+            // at every position in the input.
+            for _ in 0..=D {
+                assert_relative_eq!(
+                    inradius(&transformed).unwrap(),
+                    inradius_expected,
+                    max_relative = 1e-10
+                );
+                transformed.rotate_left(1);
+            }
+        }
+    }
+
+    /// Uniform scaling preserves shape; closed forms fix the measure units.
+    fn check_measure_rescaling<const D: usize>() {
+        let dimension = safe_usize_to_scalar(D).unwrap();
+        let exponent = i32::try_from(D).unwrap();
+        let factorial = (1..=D)
+            .map(|value| safe_usize_to_scalar(value).unwrap())
+            .product::<f64>();
+        for scale_exponent in [-30, 0, 30] {
+            let side = 2.0_f64.powi(scale_exponent);
+            let mut points = scaled_axis_simplex([side; D]);
+            let volume = side.powi(exponent) / factorial;
+            let facet = side.powi(exponent - 1) / (factorial / dimension);
+            assert_relative_eq!(
+                facet_measure(&points[..D]).unwrap(),
+                facet,
+                epsilon = 0.0,
+                max_relative = 1e-12
+            );
+            assert_relative_eq!(
+                facet_measure(&points[1..]).unwrap(),
+                dimension.sqrt() * facet,
+                epsilon = 0.0,
+                max_relative = 1e-12
+            );
+            // Every origin represents the same simplex, including non-diagonal
+            // Gram matrices when an axis endpoint becomes the origin.
+            for _ in 0..=D {
+                assert_relative_eq!(
+                    simplex_volume(&points).unwrap(),
+                    volume,
+                    epsilon = 0.0,
+                    max_relative = 1e-12
+                );
+                assert_relative_eq!(
+                    inradius(&points).unwrap(),
+                    side / (dimension + dimension.sqrt()),
+                    epsilon = 0.0,
+                    max_relative = 1e-12
+                );
+                points.rotate_left(1);
+            }
+        }
+    }
+
+    /// Scaling cannot repair a shape whose smallest edge is 2^-30 of the others.
+    fn check_gram_rank_cutoff_rescaling<const D: usize>() {
+        for scale_exponent in [30, 0, -30] {
+            let side = 2.0_f64.powi(scale_exponent);
+            let mut scales = [side; D];
+            scales[0] = side * 2.0_f64.powi(-30);
+            let points = scaled_axis_simplex(scales);
+            for result in [simplex_volume(&points), facet_measure(&points[..D])] {
+                assert_matches!(
+                    result,
+                    Err(CircumcenterError::LinearAlgebraFailure {
+                        source: LaError::Singular { .. }
+                    })
+                );
+            }
+        }
+    }
+
+    /// Separates geometric edge overflow from backend dot-product and rank failures.
+    fn check_gram_measure_errors<const D: usize>() {
+        let mut points = scaled_axis_simplex::<D>([1.0; D]);
+        points[1] = points[0];
+        for result in [simplex_volume(&points), facet_measure(&points[..D])] {
+            assert_matches!(
+                result,
+                Err(CircumcenterError::LinearAlgebraFailure {
+                    source: LaError::Singular { .. }
+                })
+            );
+        }
+
+        for axis in [0, D - 1] {
+            let mut points = scaled_axis_simplex::<D>([1.0; D]);
+            let mut edge = [0.0; D];
+            edge[axis] = 1.0e200;
+            // Keep the overflowing edge in the facet even when it uses the last
+            // ambient coordinate, which a rectangular Gram matrix must retain.
+            points[1] = Point::try_new(edge).unwrap();
+            for result in [simplex_volume(&points), facet_measure(&points[..D])] {
+                assert_eq!(
+                    result.unwrap_err(),
+                    CircumcenterError::LinearAlgebraFailure {
+                        source: LaError::non_finite_computation_step(
+                            ArithmeticOperation::VectorDotProduct,
+                            axis
+                        )
+                    },
+                    "{D}D dot-product overflow at coordinate {axis}"
+                );
+            }
+
+            for (origin_value, expected) in [
+                (-f64::MAX, InvalidCoordinateValue::PositiveInfinity),
+                (f64::MAX, InvalidCoordinateValue::NegativeInfinity),
+            ] {
+                let mut points = scaled_axis_simplex::<D>([1.0; D]);
+                let mut origin = [0.0; D];
+                origin[axis] = origin_value;
+                points[0] = Point::try_new(origin).unwrap();
+                origin[axis] = -origin_value;
+                points[1] = Point::try_new(origin).unwrap();
+                for result in [simplex_volume(&points), facet_measure(&points[..D])] {
+                    assert_eq!(
+                        result.unwrap_err(),
+                        CircumcenterError::MatrixInversionFailed {
+                            reason: CircumcenterFailureReason::NonFiniteMeasure {
+                                measure: DegenerateMeasure::Volume,
+                                value: CoordinateConversionValue::NonFinite(expected.clone()),
+                            }
+                        },
+                        "{D}D edge overflow at coordinate {axis} from {origin_value}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Exercises Gram construction and LDLT against independently known determinants.
+    fn gram_det_from_edges<const N: usize, const AMBIENT: usize>(
+        edges: &[[f64; AMBIENT]; N],
+    ) -> Result<f64, CircumcenterError> {
+        let vectors = edges.map(|edge| LaVector::try_new(edge).unwrap());
+        validate_gram_determinant(gram_determinant_ldlt(gram_matrix(&vectors)?)?)
+    }
+
+    macro_rules! measure_isometry_tests {
+        ($($dim:literal),+) => {
+            pastey::paste! {
+                $(#[test]
+                fn [<measure_isometries_ $dim d>]() {
+                    check_measure_isometries::<$dim>();
+                }
+                #[test]
+                fn [<measure_rescaling_ $dim d>]() {
+                    check_measure_rescaling::<$dim>();
+                })+
+            }
+        };
+    }
+
+    macro_rules! gram_measure_error_tests {
+        ($($dim:literal),+) => {
+            pastey::paste! {
+                $(#[test]
+                fn [<gram_measure_errors_ $dim d>]() {
+                    check_gram_measure_errors::<$dim>();
+                }
+                #[test]
+                fn [<gram_rank_cutoff_rescaling_ $dim d>]() {
+                    check_gram_rank_cutoff_rescaling::<$dim>();
+                })+
+            }
+        };
+    }
+
+    measure_isometry_tests!(2, 3, 4, 5, 6);
+    gram_measure_error_tests!(4, 5, 6);
+
+    #[test]
+    fn simplex_gram_matrix_preserves_exact_symmetry_and_shape() {
+        let points = [
+            Point::try_new([2.0, 3.0, 4.0, 5.0]).unwrap(),
+            Point::try_new([2.25, 3.5, 4.75, 6.0]).unwrap(),
+            Point::try_new([1.5, 4.0, 6.0, 8.0]).unwrap(),
+            Point::try_new([3.0, 2.0, 4.5, 7.0]).unwrap(),
+            Point::try_new([4.0, 3.0, 2.0, 1.0]).unwrap(),
+        ];
+        let gram = simplex_gram_matrix::<3, 4>(&points[..4]).unwrap();
+        let expected = [
+            [1.875, 4.875, 2.125],
+            [4.875, 14.25, 5.5],
+            [2.125, 5.5, 6.25],
+        ];
+        for (i, row) in gram.as_rows().iter().enumerate() {
+            for (j, value) in row.iter().enumerate() {
+                assert_relative_eq!(*value, expected[i][j], epsilon = 0.0);
+                assert_eq!(value.to_bits(), gram.as_rows()[j][i].to_bits());
+            }
+        }
+        for count in [0, 3, 5] {
+            assert_eq!(
+                simplex_gram_matrix::<3, 4>(&points[..count]).unwrap_err(),
+                CircumcenterError::InvalidSimplex {
+                    actual: count,
+                    expected: 4,
+                    dimension: 4,
+                }
+            );
+        }
+    }
 
     #[test]
     fn surface_measure_error_display_names_variants() {
@@ -855,6 +1244,12 @@ mod tests {
     // =============================================================================
     // SIMPLEX VOLUME TESTS
     // =============================================================================
+
+    #[test]
+    fn simplex_volume_zero_dimension_has_unit_measure() {
+        let point = Point::<0>::try_new([]).expect("finite point coordinates");
+        assert_relative_eq!(simplex_volume(&[point]).unwrap(), 1.0, epsilon = 1e-12);
+    }
 
     #[test]
     fn test_simplex_volume_1d_line_segment() {
@@ -1052,6 +1447,129 @@ mod tests {
     }
 
     #[test]
+    fn large_area_preserves_scale_aware_degeneracy() {
+        // The cross product is exactly 2^1020 and the area is 2^1019.
+        // Both are finite, although multiplying the expansion scale by 64
+        // before applying epsilon would overflow.
+        let side = 2.0_f64.powi(510);
+        let triangle = scaled_axis_simplex([side, side]);
+        let embedded_triangle = scaled_axis_simplex([side, side, 1.0]);
+        for result in [
+            simplex_volume(&triangle),
+            facet_measure(&embedded_triangle[..3]),
+        ] {
+            assert_relative_eq!(result.unwrap(), 2.0_f64.powi(1019), max_relative = 1e-14);
+        }
+        assert_relative_eq!(
+            inradius(&triangle).unwrap(),
+            side / (2.0 + 2.0_f64.sqrt()),
+            max_relative = 1e-14
+        );
+    }
+
+    #[test]
+    fn large_volume_preserves_scale_aware_degeneracy() {
+        // An axis tetrahedron with side 2^340 has determinant 2^1020.
+        let side = 2.0_f64.powi(340);
+        let tetrahedron = scaled_axis_simplex([side; 3]);
+        assert_relative_eq!(
+            simplex_volume(&tetrahedron).unwrap(),
+            2.0_f64.powi(1020) / 6.0,
+            max_relative = 1e-14
+        );
+        assert_relative_eq!(
+            inradius(&tetrahedron).unwrap(),
+            side / (3.0 + 3.0_f64.sqrt()),
+            max_relative = 1e-14
+        );
+    }
+
+    #[test]
+    fn large_nearly_collinear_geometry_is_rejected() {
+        // The determinant is 2^973 while its expansion scale exceeds 2^1021,
+        // so the configuration remains inside the relative roundoff threshold.
+        let side = 2.0_f64.powi(510);
+        let offset = 2.0_f64.powi(463);
+        let triangle = [
+            Point::try_new([0.0, 0.0]).unwrap(),
+            Point::try_new([side, side]).unwrap(),
+            Point::try_new([side, side + offset]).unwrap(),
+        ];
+        assert_matches!(
+            simplex_volume(&triangle),
+            Err(CircumcenterError::MatrixInversionFailed {
+                reason: CircumcenterFailureReason::DegenerateSimplex {
+                    measure: DegenerateMeasure::Volume,
+                    degeneracy: DegenerateGeometry::CollinearPoints,
+                },
+            })
+        );
+        let embedded = triangle.map(|point| {
+            let [x, y] = *point.coords();
+            Point::try_new([x, y, 0.0]).unwrap()
+        });
+        assert_matches!(
+            facet_measure(&embedded),
+            Err(CircumcenterError::MatrixInversionFailed {
+                reason: CircumcenterFailureReason::DegenerateFacet {
+                    measure: DegenerateMeasure::Area,
+                    degeneracy: DegenerateGeometry::CollinearPoints,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn area_normalization_rejects_zero_but_accepts_positive_subnormals() {
+        for bits in [1, 2] {
+            let height = f64::from_bits(bits);
+            let triangle = scaled_axis_simplex([1.0, height]);
+            let embedded_triangle = scaled_axis_simplex([1.0, height, 1.0]);
+            for result in [
+                simplex_volume(&triangle),
+                facet_measure(&embedded_triangle[..3]),
+            ] {
+                if bits == 1 {
+                    assert_eq!(
+                        result.unwrap_err(),
+                        CircumcenterError::MatrixInversionFailed {
+                            reason: CircumcenterFailureReason::NonPositiveSimplexMeasure {
+                                measure: DegenerateMeasure::Area,
+                                value: CoordinateConversionValue::from_numeric_debug(&0.0),
+                            },
+                        }
+                    );
+                } else {
+                    assert_eq!(result.unwrap().to_bits(), 1);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn volume_normalization_rejects_zero_but_accepts_positive_subnormals() {
+        // Dividing three subnormal units by 6 rounds the halfway result to zero;
+        // four units round to the smallest positive representable volume.
+        for bits in [3, 4] {
+            let tetrahedron = scaled_axis_simplex([1.0, 1.0, f64::from_bits(bits)]);
+            let result = simplex_volume(&tetrahedron);
+            if bits == 3 {
+                assert_eq!(
+                    result.unwrap_err(),
+                    CircumcenterError::MatrixInversionFailed {
+                        reason: CircumcenterFailureReason::NonPositiveSimplexMeasure {
+                            measure: DegenerateMeasure::Volume,
+                            value: CoordinateConversionValue::from_numeric_debug(&0.0),
+                        },
+                    }
+                );
+            } else {
+                assert_eq!(result.unwrap().to_bits(), 1);
+            }
+        }
+    }
+
+    #[test]
     fn test_simplex_volume_wrong_point_count() {
         // Wrong number of points for 2D
         let points = vec![
@@ -1065,6 +1583,96 @@ mod tests {
     // =============================================================================
     // INRADIUS TESTS
     // =============================================================================
+
+    #[test]
+    fn inradius_zero_dimension_returns_typed_error() {
+        let point = Point::<0>::try_new([]).expect("finite point coordinates");
+        assert_matches!(
+            inradius(&[point]),
+            Err(CircumcenterError::DimensionTooSmall {
+                dimension: 0,
+                minimum: 1,
+            })
+        );
+        assert_matches!(
+            inradius::<0>(&[]),
+            Err(CircumcenterError::InvalidSimplex {
+                actual: 0,
+                expected: 1,
+                dimension: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn inradius_1d_is_half_segment_length() {
+        let points = [
+            Point::try_new([-2.0]).expect("finite point coordinates"),
+            Point::try_new([4.0]).expect("finite point coordinates"),
+        ];
+        assert_relative_eq!(inradius(&points).unwrap(), 3.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn inradius_rejects_zero_but_accepts_positive_subnormal_radii() {
+        for bits in [1, 2] {
+            let height = f64::from_bits(bits);
+            let segment = scaled_axis_simplex([height]);
+            let triangle = scaled_axis_simplex([2.0, height]);
+            // Both simplices have positive representable measures. Their exact
+            // radii round like height / 2, including the halfway-to-zero case.
+            assert!(simplex_volume(&segment).unwrap() > 0.0);
+            assert!(simplex_volume(&triangle).unwrap() > 0.0);
+            for result in [inradius(&segment), inradius(&triangle)] {
+                if bits == 1 {
+                    assert_eq!(
+                        result.unwrap_err(),
+                        CircumcenterError::MatrixInversionFailed {
+                            reason: CircumcenterFailureReason::NonPositiveSimplexMeasure {
+                                measure: DegenerateMeasure::Length,
+                                value: CoordinateConversionValue::from_numeric_debug(&0.0),
+                            },
+                        }
+                    );
+                } else {
+                    assert_eq!(result.unwrap().to_bits(), 1);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inradius_rejects_overflow_when_summing_finite_facets() {
+        for (base, overflows) in [(8.0e307, false), (1.0e308, true)] {
+            let triangle = [
+                Point::try_new([0.0, 0.0]).unwrap(),
+                Point::try_new([base, 0.0]).unwrap(),
+                Point::try_new([base / 2.0, 1.0e-3]).unwrap(),
+            ];
+            let volume = simplex_volume(&triangle).unwrap();
+            assert!(volume.is_finite() && volume > 0.0);
+            for [i, j] in [[0, 1], [0, 2], [1, 2]] {
+                let length = facet_measure(&[triangle[i], triangle[j]]).unwrap();
+                assert!(length.is_finite() && length > 0.0);
+            }
+
+            if overflows {
+                assert_matches!(
+                    inradius(&triangle),
+                    Err(CircumcenterError::MatrixInversionFailed {
+                        reason: CircumcenterFailureReason::NonFiniteMeasure {
+                            measure: DegenerateMeasure::SurfaceArea,
+                            value: CoordinateConversionValue::NonFinite(
+                                InvalidCoordinateValue::PositiveInfinity
+                            ),
+                        },
+                    })
+                );
+            } else {
+                assert_relative_eq!(inradius(&triangle).unwrap(), 5.0e-4, max_relative = 1e-14);
+            }
+        }
+    }
 
     #[test]
     fn test_inradius_2d_equilateral_triangle() {
@@ -1123,6 +1731,38 @@ mod tests {
     // =============================================================================
 
     #[test]
+    fn facet_measure_zero_dimension_returns_typed_error() {
+        assert_matches!(
+            facet_measure::<0>(&[]),
+            Err(CircumcenterError::DimensionTooSmall {
+                dimension: 0,
+                minimum: 1,
+            })
+        );
+        let point = Point::<0>::try_new([]).expect("finite point coordinates");
+        assert_matches!(
+            facet_measure(&[point]),
+            Err(CircumcenterError::InvalidSimplex {
+                actual: 1,
+                expected: 0,
+                dimension: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn facet_measure_rejects_first_unsupported_gram_dimension() {
+        let points = scaled_axis_simplex::<9>([1.0; 9]);
+        assert_matches!(
+            facet_measure(&points[..9]),
+            Err(CircumcenterError::UnsupportedMatrixDimension {
+                requested: 8,
+                max: 7,
+            })
+        );
+    }
+
+    #[test]
     fn test_facet_measure_1d_point() {
         // A 1D facet is a 0-simplex, whose intrinsic measure is one.
         let points = vec![Point::try_new([5.0]).expect("finite point coordinates")];
@@ -1172,26 +1812,6 @@ mod tests {
         assert_relative_eq!(measure, 1.0 / 6.0, epsilon = 1e-10);
     }
 
-    fn gram_det_from_edges<const AMBIENT: usize>(
-        edges: &[[f64; AMBIENT]],
-    ) -> Result<f64, CircumcenterError> {
-        let k = edges.len();
-
-        try_with_la_stack_matrix!(k, |gram_matrix| {
-            for i in 0..k {
-                for j in 0..k {
-                    let mut dot_product = 0.0;
-                    for (&a, &b) in edges[i].iter().zip(edges[j].iter()) {
-                        dot_product = a.mul_add(b, dot_product);
-                    }
-                    matrix_set(&mut gram_matrix, i, j, dot_product)?;
-                }
-            }
-
-            validate_gram_determinant(gram_determinant_ldlt(gram_matrix)?)
-        })
-    }
-
     #[test]
     fn test_gram_determinant_ldlt_known_spd() {
         // Symmetric positive-definite matrix with known determinant.
@@ -1222,7 +1842,12 @@ mod tests {
     #[test]
     fn test_gram_determinant_parallel_edges_errors() {
         let edges = [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
-        assert!(gram_det_from_edges(&edges).is_err());
+        assert_matches!(
+            gram_det_from_edges(&edges),
+            Err(CircumcenterError::LinearAlgebraFailure {
+                source: LaError::Singular { .. }
+            })
+        );
     }
 
     #[test]
@@ -1281,7 +1906,7 @@ mod tests {
                     edges[i][i] = 1.0;
                 }
 
-                let det = gram_det_from_edges::<$dim>(&edges).unwrap();
+                let det = gram_det_from_edges(&edges).unwrap();
                 // Gram matrix is identity, so determinant should be 1.0
                 assert_relative_eq!(det, 1.0, epsilon = 1e-10);
             }
@@ -1305,7 +1930,7 @@ mod tests {
                     edges[i][i] = $scale;
                 }
 
-                let det = gram_det_from_edges::<$dim>(&edges).unwrap();
+                let det = gram_det_from_edges(&edges).unwrap();
                 // Gram matrix diagonal has $scale^2, determinant is ($scale^2)^$dim
                 assert_relative_eq!(det, $expected_det, epsilon = 1e-9);
             }
@@ -1513,8 +2138,15 @@ mod tests {
         ];
         let result = facet_measure(&points);
 
-        // Should fail with degenerate error
-        assert!(result.is_err(), "Collinear points should return an error");
+        assert_matches!(
+            result,
+            Err(CircumcenterError::MatrixInversionFailed {
+                reason: CircumcenterFailureReason::DegenerateFacet {
+                    measure: DegenerateMeasure::Area,
+                    degeneracy: DegenerateGeometry::CollinearPoints,
+                }
+            })
+        );
     }
 
     #[test]
@@ -1556,19 +2188,20 @@ mod tests {
 
     #[test]
     fn test_facet_measure_degenerate_4d_tetrahedron() {
-        // Test with points that are coplanar in 4D (all points in 3D subspace)
+        // Four points spanning only a plane cannot form a nondegenerate tetrahedron.
         let points = vec![
             Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([0.5, 0.5, 0.0, 0.0]).expect("finite point coordinates"), // In the same 3D subspace
+            Point::try_new([0.5, 0.5, 0.0, 0.0]).expect("finite point coordinates"),
         ];
 
         let result = facet_measure(&points);
-        // Should fail with degenerate error since all points lie in 3D subspace
-        assert!(
-            result.is_err(),
-            "Degenerate 4D tetrahedron should return an error"
+        assert_matches!(
+            result,
+            Err(CircumcenterError::LinearAlgebraFailure {
+                source: LaError::Singular { .. }
+            })
         );
     }
 
@@ -1583,6 +2216,47 @@ mod tests {
         let result = surface_measure(&facets).unwrap();
 
         assert_relative_eq!(result, 0.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn surface_measure_rejects_overflow_when_summing_finite_facets() {
+        for (base, overflows) in [(8.0e307, false), (1.0e308, true)] {
+            let mut draft: TdsDraft<(), (), 2> = TdsDraft::new();
+            let a = draft.insert_vertex(vertex![0.0, 0.0].unwrap()).unwrap();
+            let b = draft.insert_vertex(vertex![base, 0.0].unwrap()).unwrap();
+            let c = draft
+                .insert_vertex(vertex![base / 2.0, 1.0e-3].unwrap())
+                .unwrap();
+            draft.insert_simplex([a, b, c]).unwrap();
+            let tds = draft.finish().unwrap();
+            let facets = tds.facets().collect::<Result<Vec<_>, _>>().unwrap();
+            assert_eq!(facets.len(), 3);
+            for facet in &facets {
+                let points: Vec<_> = facet.vertices().map(|vertex| *vertex.point()).collect();
+                let length = facet_measure(&points).unwrap();
+                assert!(length.is_finite() && length > 0.0);
+            }
+
+            if overflows {
+                assert_eq!(
+                    surface_measure(&facets).unwrap_err(),
+                    SurfaceMeasureError::from(CircumcenterError::MatrixInversionFailed {
+                        reason: CircumcenterFailureReason::NonFiniteMeasure {
+                            measure: DegenerateMeasure::SurfaceArea,
+                            value: CoordinateConversionValue::NonFinite(
+                                InvalidCoordinateValue::PositiveInfinity
+                            ),
+                        },
+                    })
+                );
+            } else {
+                assert_relative_eq!(
+                    surface_measure(&facets).unwrap(),
+                    1.6e308,
+                    max_relative = 1e-14
+                );
+            }
+        }
     }
 
     #[test]
@@ -2335,22 +3009,5 @@ mod tests {
 
         assert_relative_eq!(original_measure, rotated_measure, epsilon = 1e-10);
         assert_relative_eq!(original_measure, 5.0, epsilon = 1e-10); // Both should be 5.0
-    }
-
-    #[test]
-    fn test_facet_measure_gram_matrix_degenerate() {
-        // Test degenerate simplex (collinear points)
-        let degenerate_points = vec![
-            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([2.0, 0.0, 0.0]).expect("finite point coordinates"), // All collinear
-        ];
-
-        let result = facet_measure(&degenerate_points);
-        // This should either return 0 or an error depending on numerical precision
-        if let Ok(measure) = result {
-            assert_relative_eq!(measure, 0.0, epsilon = 1e-10);
-        }
-        // Also acceptable for degenerate case if Err
     }
 }

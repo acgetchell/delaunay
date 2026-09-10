@@ -196,7 +196,7 @@ without multiplying the release matrix with small synthetic cases.
 | Orientation / exact fallback | `cold_path_predicates` | `math/orientation` |
 | Barycentric intersection | `realization_validation` | Retain existing cases |
 | Circumsphere / insphere | `circumsphere_containment`, `cold_path_predicates` | `math/geometry` radii |
-| Quality / volume | Indirect public-workflow coverage | `math/geometry` quality and volume |
+| Quality / volume | Indirect public-workflow coverage | `math/geometry` quality, volume, facet measure, and surface measure |
 | Ridge / Euler / manifold | `ci_performance_suite` validation and proof boundaries | `math/topology` |
 | Locate / hull / visible facets | `locate`, `ci_performance_suite` | Retain existing cases |
 | Barycenter | None; allocation coverage is manual | `math/geometry/*/barycenter` |
@@ -227,18 +227,21 @@ visible, and nearest-visible queries. Non-Euclidean and adversarial walk
 distributions remain separate investigations. Periodic-chart barycenters are
 also deferred until a representative stable query workload is selected.
 
-`allocation_hot_paths` already checks bootstrap, insertion, iterators,
-incidence, simplex vertices, barycenters, UUID iteration, facet keys, and hinted
-locate in 2D-5D; `profiling_suite` supplies allocation/RSS diagnostics. Keep
+`allocation_hot_paths` checks bootstrap, insertion, iterators, incidence,
+simplex vertices, barycenters, UUID iteration, facet keys, hinted locate,
+inradius, and surface measure in 2D-5D; `profiling_suite` supplies allocation/RSS
+diagnostics. Measure allocation checks borrow prebuilt geometry and exclude
+fixture and facet-view construction. Keep
 allocation assertions and process RSS out of release timings. Allocation counts
 are useful local contracts, but instrumentation overhead and process-level noise
 do not establish a release latency signal. The added barycenter cases measure
 latency without that instrumentation.
 
-Other small helpers, such as facet measures, norms, and radius queries with a
-precomputed center, remain indirect coverage through geometric workflows.
+`math/geometry` directly times volume, facet measure, surface measure, radius,
+and quality calculations. Other small helpers, such as norms and radius queries
+with a precomputed center, remain indirectly covered through geometric workflows.
 Defer additional microcases until profiling identifies a distinct cost worth
-tracking; the new volume, radius, and quality cases cover the current major gaps.
+tracking.
 
 All reviewed repair, deletion, Pachner, clone, checkpoint, topology-policy,
 allocation, and large-scale profiling targets remain manual diagnostics. Their
@@ -265,7 +268,7 @@ cargo bench --profile perf --bench math_kernels -- --baseline before --noplot
 ```
 
 `math_kernels` defaults to 30 samples, one second of warm-up, and two seconds of
-measurement per case; Criterion CLI overrides remain available. Its 82 cases
+measurement per case; Criterion CLI overrides remain available. Its 114 cases
 are investigations, not new performance claims. Use the same filter, profile,
 hardware, and sampling settings before and after an implementation change.
 `just bench-compile` includes this target in the ordinary benchmark compile
@@ -280,9 +283,10 @@ and zero cases must require exact arithmetic. This measures ordinary exact
 orientation separately from SoS, whose nonzero symbolic ordering has its own
 existing benchmark.
 
-Geometry fixtures have axis lengths `(1, ..., 1, h)` with `h = 1` or
-`h = 1/1024`. Volume, circumradius, inradius, both quality metrics, and barycenter
-coordinates are checked against analytical values. The thin fixtures stay
+Geometry fixtures cover 2D-6D with axis lengths `(1, ..., 1, h)` and `h = 1` or
+`h = 1/1024`. Volume, opposite-origin facet measure, total boundary measure,
+circumradius, inradius,
+both quality metrics, and barycenter coordinates are checked against analytical values. The thin fixtures stay
 inside the helpers' supported nondegenerate domain; they do not time rejected
 inputs. Each owning triangulation passes cumulative Level 5 validation before
 sampling. The barycenter case measures one public query, including its ordinary
@@ -330,7 +334,7 @@ operations abort on error so a failed path cannot silently publish a fast result
 | `realization_validation.rs` | Level 4 narrow phase and whole validation | Realistic/near-degenerate 2D-5D | ~1-5 min | Level 4 tuning |
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex deletion |
 | `locate.rs` | Point-location facet-walk latency (no-hint vs exact-hint) | 2D-5D fixed cases | ~1-3 min | Locate/walk tuning |
-| `math_kernels.rs` | Geometry and topology kernels | 82 analytical 2D-5D cases | Several minutes | Manual kernel investigations |
+| `math_kernels.rs` | Geometry and topology kernels | 114 cases: geometry 2D-6D, others 2D-5D | Several minutes | Manual kernel investigations |
 | `tds_clone.rs` | Owner clone and topology-view cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback and incidence baselines |
 | `topology_guarantee_construction.rs` | Cost of PL-manifold validation audit cadences | 2D-5D construction cases | ~45-60 min | Manual topology policy work |
 
