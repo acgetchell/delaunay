@@ -179,9 +179,140 @@ timing data.
 The default release-signal suite is deliberately curated. It favors stable,
 release-relevant public behavior over every exploratory benchmark in this
 directory. Broader math-kernel benchmark coverage is tracked separately in
-[#513](https://github.com/acgetchell/delaunay/issues/513) so future additions
-can decide whether each kernel belongs in `bench-latest`, `profiling_suite`,
-allocation checks, or targeted diagnostics.
+the [math-kernel coverage audit](#math-kernel-coverage-audit-513), which records
+release membership and the role of targeted diagnostics.
+
+## Math-Kernel Coverage Audit (#513)
+
+The release plan in `scripts/benchmark_utils.py` selects exactly five targets:
+`ci_performance_suite`, `circumsphere_containment`, `cold_path_predicates`,
+`locate`, and `realization_validation`. Every other target in the overview below
+is excluded from `bench-latest`. This audit keeps that plan unchanged: the new
+`math_kernels` target isolates costs already represented by public workflows,
+without multiplying the release matrix with small synthetic cases.
+
+| Kernel family | Existing release target(s) | Targeted addition |
+|---------------|----------------------------|-------------------|
+| Orientation / exact fallback | `cold_path_predicates` | `math/orientation` |
+| Barycentric intersection | `realization_validation` | Retain existing cases |
+| Circumsphere / insphere | `circumsphere_containment`, `cold_path_predicates` | `math/geometry` radii |
+| Quality / volume | Indirect public-workflow coverage | `math/geometry` quality and volume |
+| Ridge / Euler / manifold | `ci_performance_suite` validation and proof boundaries | `math/topology` |
+| Locate / hull / visible facets | `locate`, `ci_performance_suite` | Retain existing cases |
+| Barycenter | None; allocation coverage is manual | `math/geometry/*/barycenter` |
+| Allocation hot paths | None; instrumentation is manual | Retain separate allocation contracts |
+
+The existing orientation coverage is indirect through insphere and explicit
+through `predicates/sos_degenerate` (2D-6D). Direct ordinary orientation now has
+separate well-conditioned, nonzero cancellation, and zero-determinant cases.
+Circumsphere coverage already compares three predicate families,
+boundary/far/near-boundary queries, 3D circumcenter solve paths, certified
+cospherical exact cases, and SoS; the audit retains those release cases.
+
+`realization_narrow_phase/shared_face_boundary` and
+`near_degenerate_shared_face` already isolate exact barycentric intersection
+decisions in 2D-5D. Whole Level 4 validation covers their integration. Defer
+isolated LP primitives and exhaustive invalid intersection families to focused
+correctness tests; the public narrow phase is the useful timed unit.
+
+Topology previously had aggregate release coverage, with manual component work
+in `profiling_suite/validation_components_*`, `topology_guarantee_construction`,
+`pl_manifold_repair`, and `tds_clone/topology_view_construction`. The new target
+isolates Euler enumeration, unique ridges, boundary and link checks, and Level 3
+validation. Large random-mesh scaling remains in profiling.
+
+Locate already compares `no_hint` and `exact_hint`. Hull release coverage
+includes `boundary_facets`, `convex_hull`, and `convex_hull_queries` for outside,
+visible, and nearest-visible queries. Non-Euclidean and adversarial walk
+distributions remain separate investigations. Periodic-chart barycenters are
+also deferred until a representative stable query workload is selected.
+
+`allocation_hot_paths` already checks bootstrap, insertion, iterators,
+incidence, simplex vertices, barycenters, UUID iteration, facet keys, and hinted
+locate in 2D-5D; `profiling_suite` supplies allocation/RSS diagnostics. Keep
+allocation assertions and process RSS out of release timings. Allocation counts
+are useful local contracts, but instrumentation overhead and process-level noise
+do not establish a release latency signal. The added barycenter cases measure
+latency without that instrumentation.
+
+Other small helpers, such as facet measures, norms, and radius queries with a
+precomputed center, remain indirect coverage through geometric workflows.
+Defer additional microcases until profiling identifies a distinct cost worth
+tracking; the new volume, radius, and quality cases cover the current major gaps.
+
+All reviewed repair, deletion, Pachner, clone, checkpoint, topology-policy,
+allocation, and large-scale profiling targets remain manual diagnostics. Their
+absence from the five-target release plan is intentional, not missing release
+execution. Promote a kernel only after representative same-machine runs establish
+a useful, repeatable signal and its added release runtime is justified. A future
+promotion must update the shared measurement plan and its coverage tests together.
+
+### Targeted Math Kernels
+
+```bash
+# Execute every fixture and operation once; no timing evidence is produced.
+cargo bench --profile perf --bench math_kernels -- --test
+
+# Measure all kernel families, or select one with a Criterion filter.
+cargo bench --profile perf --bench math_kernels -- --noplot
+cargo bench --profile perf --bench math_kernels -- 'math/orientation' --noplot
+cargo bench --profile perf --bench math_kernels -- 'math/geometry' --noplot
+cargo bench --profile perf --bench math_kernels -- 'math/topology' --noplot
+
+# Save and compare a local baseline around a kernel implementation change.
+cargo bench --profile perf --bench math_kernels -- --save-baseline before --noplot
+cargo bench --profile perf --bench math_kernels -- --baseline before --noplot
+```
+
+`math_kernels` defaults to 30 samples, one second of warm-up, and two seconds of
+measurement per case; Criterion CLI overrides remain available. Its 82 cases
+are investigations, not new performance claims. Use the same filter, profile,
+hardware, and sampling settings before and after an implementation change.
+`just bench-compile` includes this target in the ordinary benchmark compile
+gate; `just bench` runs it with the broader suite. No new release command or
+saved-baseline suite alias is needed.
+
+The orientation setup checks the actual `la-stack` determinant/error-bound
+decision on the same homogeneous matrix used by `simplex_orientation`.
+Well-conditioned 2D-3D cases must use the filter; 4D-5D are exact-path references
+because their homogeneous matrices exceed the direct filter's 4×4 limit. Both cancellation
+and zero cases must require exact arithmetic. This measures ordinary exact
+orientation separately from SoS, whose nonzero symbolic ordering has its own
+existing benchmark.
+
+Geometry fixtures have axis lengths `(1, ..., 1, h)` with `h = 1` or
+`h = 1/1024`. Volume, circumradius, inradius, both quality metrics, and barycenter
+coordinates are checked against analytical values. The thin fixtures stay
+inside the helpers' supported nondegenerate domain; they do not time rejected
+inputs. Each owning triangulation passes cumulative Level 5 validation before
+sampling. The barycenter case measures one public query, including its ordinary
+handle checks and coordinate work, without allocation instrumentation.
+
+Topology fixtures cone the boundary of a cross-polytope to its center. They have
+`2D + 1` vertices, `2^D` maximal simplices (4, 8, 16, and 32), Euler
+characteristic one, and both interior and boundary links. Setup verifies the
+entire f-vector and boundary f-vector analytically, not just the Euler sum,
+and checks cumulative Level 5 validity. Component scans use an untimed clone
+demoted through the public `into_tds` boundary; the original owner retains its
+construction proof for `is_valid_topology`. Closed-boundary and vertex-link
+cases reuse a facet index built outside timing, as their names state. Euler
+timing includes face enumeration, where the substantive work occurs, rather
+than only summing an already computed f-vector. Ridge timing consumes the full
+deduplicating iterator. Geometry throughput counts queries; topology throughput
+counts maximal simplices processed per scan.
+
+Standalone vertex-link timing is limited to 2D-3D. Public TDS demotion discards
+construction provenance, and the standalone checker cannot certify links of
+dimension three or higher from local incidence alone. The 4D-5D fixtures retain
+coverage through the original owner's `is_valid_topology`; do not bypass that
+proof boundary or benchmark its rejection as successful validation.
+
+These symmetric fixtures isolate kernels and supply independent answers; they
+do not model large random meshes, all supported topology spaces, or every
+conditioning regime. Use `profiling_suite` for scale and mixed workloads,
+`realization_validation` for barycentric narrow-phase work, and the existing
+predicate suites for in-sphere and SoS investigations. All measured fallible
+operations abort on error so a failed path cannot silently publish a fast result.
 
 ## Benchmark Suite Overview
 
@@ -199,6 +330,7 @@ allocation checks, or targeted diagnostics.
 | `realization_validation.rs` | Level 4 narrow phase and whole validation | Realistic/near-degenerate 2D-5D | ~1-5 min | Level 4 tuning |
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex deletion |
 | `locate.rs` | Point-location facet-walk latency (no-hint vs exact-hint) | 2D-5D fixed cases | ~1-3 min | Locate/walk tuning |
+| `math_kernels.rs` | Geometry and topology kernels | 82 analytical 2D-5D cases | Several minutes | Manual kernel investigations |
 | `tds_clone.rs` | Owner clone and topology-view cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback and incidence baselines |
 | `topology_guarantee_construction.rs` | Cost of PL-manifold validation audit cadences | 2D-5D construction cases | ~45-60 min | Manual topology policy work |
 
@@ -244,6 +376,8 @@ a fresh `u32-payloads-v1` baseline before drawing performance conclusions.
 | Allocation hot-path contracts | `cargo bench --profile perf --bench allocation_hot_paths --features count-allocations -- --noplot` |
 | Predicate comparison | `cargo bench --profile perf --bench circumsphere_containment -- --noplot` |
 | Predicate cold-path work | `cargo bench --profile perf --bench cold_path_predicates -- --noplot` |
+| Orientation, quality, volume, radius, barycenter, or topology kernels | `cargo bench --profile perf --bench math_kernels -- --noplot` |
+| New math-kernel fixture/operation smoke check | `cargo bench --profile perf --bench math_kernels -- --test` |
 | Flip-based Delaunay repair | `cargo bench --profile perf --bench delaunay_repair -- --noplot` |
 | Flip-repair transaction pressure | `cargo bench --profile perf --bench delaunay_repair -- repair_transaction_pressure --noplot` |
 | Unified Pachner move stress | `just pachner-stress` |
