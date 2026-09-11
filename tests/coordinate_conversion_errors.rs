@@ -42,43 +42,16 @@ fn test_point_try_new_rejects_non_finite_coordinates() {
 }
 
 #[test]
-fn test_hypot_distance_with_mixed_problematic_coordinates() {
-    // Test distance calculation using hypot with mixed NaN and infinity
-    let point1_coords: [f64; 2] = [f64::NAN, 1.0];
-    let point2_coords: [f64; 2] = [1.0, f64::INFINITY];
-
-    // Calculate difference vector
-    let diff_coords = [
-        point1_coords[0] - point2_coords[0],
-        point1_coords[1] - point2_coords[1],
-    ];
-
-    // The 2D standard-library hypot semantics make infinity dominate NaN.
-    let result = hypot(&diff_coords);
-
-    assert!(result.is_infinite());
-    assert!(result.is_sign_positive());
-}
-
-#[test]
-fn test_hypot_with_nan_values() {
-    // Test hypot with NaN values
-    let result = hypot(&[f64::NAN, 1.0]);
-
-    // hypot returns T directly, so we check that the result is NaN
-    assert!(
-        result.is_nan(),
-        "Expected NaN result from hypot with NaN input"
+fn circumradius_reports_unrepresentable_displacement() -> Result<(), CoordinateValidationError> {
+    let point = Point::try_new([-f64::MAX, 0.0])?;
+    let center = Point::try_new([f64::MAX, 0.0])?;
+    assert_eq!(
+        circumradius_with_center(&[point], &center),
+        Err(CircumcenterError::LinearAlgebraFailure {
+            source: LaError::non_finite_input_vector(0),
+        })
     );
-}
-
-#[test]
-fn test_hypot_with_infinity_values() {
-    // Test hypot with infinity values
-    let result = hypot(&[f64::INFINITY, 1.0]);
-
-    assert!(result.is_infinite());
-    assert!(result.is_sign_positive());
+    Ok(())
 }
 
 // =============================================================================

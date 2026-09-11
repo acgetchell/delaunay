@@ -6,21 +6,19 @@
 
 #![forbid(unsafe_code)]
 
+use core::hint::cold_path;
+
 use crate::core::simplex::SimplexValidationError;
 use crate::geometry::matrix::{
-    Matrix, RationalMatrix, StackMatrixDispatchError, matrix_fast_filter, matrix_set,
+    LaVector, Matrix, RationalMatrix, StackMatrixDispatchError, matrix_fast_filter, matrix_set,
     rational_from_f64,
 };
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
-    CoordinateConversionError, CoordinateConversionValue, DEFAULT_TOLERANCE_F64,
-    DegenerateSimplexReason, InvalidCoordinateValue,
+    CoordinateConversionError, DEFAULT_TOLERANCE_F64, DegenerateSimplexReason,
+    InvalidCoordinateValue,
 };
-use crate::geometry::util::{
-    CircumcenterFailureReason, DegenerateMeasure, circumcenter, circumradius_with_center, hypot,
-};
-use crate::prelude::CircumcenterError;
-use core::hint::cold_path;
+use crate::geometry::util::{CircumcenterError, circumcenter, circumradius_with_center};
 
 /// Convert an exact determinant sign (from `det_sign_exact`) to an [`Orientation`].
 #[inline]
@@ -610,7 +608,7 @@ pub fn insphere_distance<const D: usize>(
     let circumcenter = circumcenter(simplex_points)?;
     let circumradius = circumradius_with_center(simplex_points, &circumcenter)?;
 
-    // Calculate distance using hypot for numerical stability
+    // Do not require the squared point-to-center distance to be representable.
     let point_coords = test_point.coords();
     let circumcenter_coords = circumcenter.coords();
 
@@ -621,15 +619,7 @@ pub fn insphere_distance<const D: usize>(
     {
         *dst = *p - *c;
     }
-    let radius = hypot(&diff_coords);
-    if !radius.is_finite() {
-        return Err(CircumcenterError::MatrixInversionFailed {
-            reason: CircumcenterFailureReason::NonFiniteMeasure {
-                measure: DegenerateMeasure::Length,
-                value: CoordinateConversionValue::from_numeric_debug(&radius),
-            },
-        });
-    }
+    let radius = LaVector::try_new(diff_coords)?.norm()?;
 
     // Scale tolerance with geometric magnitude to avoid absolute-epsilon
     // misclassification for large circumradii in near-degenerate simplices.
@@ -1452,12 +1442,24 @@ mod tests {
 
         assert_matches!(
             insphere_distance(&simplex_points, center),
-            Err(CircumcenterError::MatrixInversionFailed {
-                reason: CircumcenterFailureReason::NonFiniteMeasure {
-                    measure: DegenerateMeasure::Length,
-                    ..
-                },
+            Err(CircumcenterError::LinearAlgebraFailure {
+                source: LaError::NonFinite { .. },
             })
+        );
+    }
+
+    #[test]
+    fn insphere_distance_accepts_finite_distance_with_overflowing_square() {
+        let simplex_points = [
+            Point::try_new([0.0, 0.0, 0.0]).unwrap(),
+            Point::try_new([1.0, 0.0, 0.0]).unwrap(),
+            Point::try_new([0.0, 1.0, 0.0]).unwrap(),
+            Point::try_new([0.0, 0.0, 1.0]).unwrap(),
+        ];
+        let far_point = Point::try_new([1.0e200; 3]).unwrap();
+        assert_eq!(
+            insphere_distance(&simplex_points, far_point),
+            Ok(InSphere::OUTSIDE)
         );
     }
 
@@ -1474,11 +1476,8 @@ mod tests {
 
         assert_matches!(
             insphere_distance(&simplex_points, far_point),
-            Err(CircumcenterError::MatrixInversionFailed {
-                reason: CircumcenterFailureReason::NonFiniteMeasure {
-                    measure: DegenerateMeasure::Length,
-                    ..
-                },
+            Err(CircumcenterError::LinearAlgebraFailure {
+                source: LaError::NonFinite { .. },
             })
         );
     }

@@ -359,8 +359,9 @@ def test_checkpoint_baseline_replacement_and_full_report_are_discoverable() -> N
     assert "row * 8 + column" in normalized_benchmark_docs
     assert "simplex vertex count" in normalized_benchmark_docs
     assert "unit-payload timings and saved Criterion baselines must not be compared" in normalized_benchmark_docs
-    assert "[Performance Report](docs/PERFORMANCE.md)" in readme
-    assert "legacy [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) report" in readme
+    assert "[Performance Report][performance-report]" in readme
+    assert "legacy [`docs/PERFORMANCE.md`][performance-report] report" in readme
+    assert "[performance-report]: https://github.com/acgetchell/delaunay/blob/main/docs/PERFORMANCE.md" in readme
     assert "provenance-limited release evidence" in readme
     assert "full report retains every benchmark and confidence interval" not in readme
 

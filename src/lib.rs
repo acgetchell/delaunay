@@ -938,6 +938,8 @@ pub mod geometry {
     }
     /// Validated coordinate-range types.
     pub mod coordinate_range;
+    /// Validated periodic domains shared by geometry and topology.
+    pub mod periodic;
     /// Pure labeled-simplex realization predicates used by Level 4 validation.
     pub mod realization;
     #[macro_use]
@@ -957,7 +959,6 @@ pub mod geometry {
         pub mod circumsphere;
         pub mod conversions;
         pub mod measures;
-        pub mod norms;
         pub mod point_generation;
         pub(crate) mod simplex_lp;
         pub mod triangulation_generation;
@@ -966,7 +967,6 @@ pub mod geometry {
         pub use circumsphere::*;
         pub use conversions::*;
         pub use measures::*;
-        pub use norms::*;
         pub use point_generation::*;
         pub use triangulation_generation::*;
     }
@@ -983,6 +983,7 @@ pub mod geometry {
     pub use algorithms::*;
     pub use coordinate_range::*;
     pub use matrix::*;
+    pub use periodic::{ToroidalDomain, ToroidalDomainError};
     pub use point::*;
     pub use predicates::*;
     pub use quality::*;
@@ -1122,10 +1123,9 @@ pub use crate::triangulation::editing::TriangulationEditError;
 pub use crate::triangulation::insertion::DuplicateDetectionMetrics;
 pub use crate::triangulation::query::SimplexBarycenterError;
 pub use crate::triangulation::realization::{
-    PeriodicDomainPeriodError, TriangulationRealizationIntersectionDetail,
-    TriangulationRealizationSimplexDetail, TriangulationRealizationSimplexPairDetail,
-    TriangulationRealizationValidationError, TriangulationRealizationValidationErrorKind,
-    TriangulationRealizationValidationReport,
+    TriangulationRealizationIntersectionDetail, TriangulationRealizationSimplexDetail,
+    TriangulationRealizationSimplexPairDetail, TriangulationRealizationValidationError,
+    TriangulationRealizationValidationErrorKind, TriangulationRealizationValidationReport,
 };
 pub use crate::triangulation::repair::{LocalFacetRepairGuard, TriangulationRepairOperation};
 pub use crate::triangulation::serialization::{
@@ -1485,9 +1485,9 @@ pub mod prelude {
         DelaunayTriangulationValidationError, DelaunayVerificationError,
         DelaunayVerificationErrorKind, DuplicateDetectionMetrics, FinalDelaunayValidationContext,
         FinalTopologyValidationContext, InitialSimplexStrategy, InsertionOrderStrategy,
-        InsertionResult, PeriodicDomainPeriodError, PlManifoldRepairError,
-        PlManifoldRepairRefinementError, PlManifoldRepairStage, PlManifoldRepairStats,
-        RefinementError, RepairDecision, RepairSkipReason, RetryPolicy, SphericalDelaunayBuilder,
+        InsertionResult, PlManifoldRepairError, PlManifoldRepairRefinementError,
+        PlManifoldRepairStage, PlManifoldRepairStats, RefinementError, RepairDecision,
+        RepairSkipReason, RetryPolicy, SphericalDelaunayBuilder,
         SphericalDelaunayConstructionError, SphericalDelaunayTriangulation,
         SphericalDelaunayValidationError, SphericalMetric, SphericalPoint, SphericalPointError,
         SphericalSimplex, SphericalSimplexError, SphericalValidationLayer, TopologicalOperation,
@@ -1730,7 +1730,7 @@ pub mod prelude {
         };
         pub use crate::vertex;
         pub use crate::{
-            InsertionError, LocalFacetRepairGuard, PeriodicDomainPeriodError, RefinementError,
+            InsertionError, LocalFacetRepairGuard, RefinementError,
             SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
             TriangulationBuildFailure, TriangulationBuilder, TriangulationBuilderError,
             TriangulationConstructionError, TriangulationRealizationIntersectionDetail,
@@ -1960,13 +1960,12 @@ pub mod prelude {
         pub use crate::{
             DelaunayTriangulationRefinementError, DelaunayTriangulationValidationError,
             DelaunayVerificationError, DelaunayVerificationErrorKind, OrientationWitness,
-            PeriodicDomainPeriodError, RefinementError, SphericalDelaunayValidationError,
-            SphericalValidationLayer, TopologyGuarantee,
-            TriangulationRealizationIntersectionDetail, TriangulationRealizationSimplexDetail,
-            TriangulationRealizationSimplexPairDetail, TriangulationRealizationValidationError,
-            TriangulationRealizationValidationErrorKind, TriangulationRealizationValidationReport,
-            TriangulationValidationError, TriangulationValidationReport,
-            ValidationConfigurationError, ValidationPolicy,
+            RefinementError, SphericalDelaunayValidationError, SphericalValidationLayer,
+            TopologyGuarantee, TriangulationRealizationIntersectionDetail,
+            TriangulationRealizationSimplexDetail, TriangulationRealizationSimplexPairDetail,
+            TriangulationRealizationValidationError, TriangulationRealizationValidationErrorKind,
+            TriangulationRealizationValidationReport, TriangulationValidationError,
+            TriangulationValidationReport, ValidationConfigurationError, ValidationPolicy,
         };
         pub use crate::{
             DelaunayValidationError, DelaunayViolationDetail, DelaunayViolationReport,
@@ -2034,7 +2033,34 @@ pub mod prelude {
         pub use crate::tds::*;
     }
 
-    /// Focused exports for geometry types, simplex realizations, predicates, and helpers.
+    /// Focused exports for geometry types, periodic domains, simplex realizations,
+    /// predicates, and measures.
+    ///
+    /// [`ToroidalDomain`] and [`ToroidalDomainError`] are shared with
+    /// [`topology::spaces`] so a parsed domain
+    /// can be used for both geometry and topology metadata.
+    ///
+    /// General vector arithmetic belongs to `la-stack`: declare a direct
+    /// dependency and import [`la_stack::Vector`] for `norm` or `norm_squared`.
+    /// [`LaError`] is exposed here for inspecting errors returned by Delaunay's
+    /// geometry APIs.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::{ToroidalDomain, ToroidalDomainError};
+    /// use delaunay::prelude::topology::spaces::{GlobalTopology, ToroidalConstructionMode};
+    ///
+    /// # fn main() -> Result<(), ToroidalDomainError> {
+    /// let domain = ToroidalDomain::try_new([2.0, 3.0])?;
+    /// let topology = GlobalTopology::Toroidal {
+    ///     domain,
+    ///     mode: ToroidalConstructionMode::Explicit,
+    /// };
+    /// assert!(topology.is_toroidal());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub mod geometry {
         pub use crate::geometry::{
             coordinate_range::{
@@ -2043,6 +2069,7 @@ pub mod prelude {
             },
             kernel::{AdaptiveKernel, ExactPredicates, FastKernel, Kernel, RobustKernel},
             matrix::{LaError, Matrix, MatrixError, determinant},
+            periodic::{ToroidalDomain, ToroidalDomainError},
             point::Point,
             predicates::{
                 InSphere, Orientation, insphere, insphere_distance, insphere_lifted,
@@ -2054,10 +2081,9 @@ pub mod prelude {
             },
             realization::{
                 LabeledSimplexRealization, LabeledSimplexRealizationError, PeriodicSimplexSpan,
-                PeriodicSimplexSpanError, SimplexIntersectionFailure, SimplexIntersectionWitness,
-                SimplexRealizationBuffer, axis_aligned_bounding_boxes_overlap,
-                coordinate_range_for_axis, try_periodic_simplex_span,
-                validate_simplex_intersection,
+                SimplexIntersectionFailure, SimplexIntersectionWitness, SimplexRealizationBuffer,
+                axis_aligned_bounding_boxes_overlap, coordinate_range_for_axis,
+                periodic_simplex_span, validate_simplex_intersection,
             },
             robust_predicates::{
                 ConsistencyResult, InsphereConsistencyError, robust_insphere, robust_orientation,
@@ -2074,9 +2100,9 @@ pub mod prelude {
                 ArrayConversionFailureReason, CircumcenterError, CircumcenterFailureReason,
                 DegenerateGeometry, DegenerateMeasure, SurfaceMeasureError, ValueConversionError,
                 ValueConversionFailureReason, circumcenter, circumradius, circumradius_with_center,
-                facet_measure, hypot, inradius, safe_coords_from_f64, safe_coords_to_f64,
+                facet_measure, inradius, safe_coords_from_f64, safe_coords_to_f64,
                 safe_scalar_from_f64, safe_scalar_to_f64, safe_usize_to_scalar, simplex_volume,
-                squared_norm, surface_measure,
+                surface_measure,
             },
         };
     }

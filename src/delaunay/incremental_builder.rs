@@ -28,6 +28,7 @@ use crate::core::tds::{
     TriangulationValidationReport, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
+use crate::core::util::coords_within_epsilon_inclusive;
 use crate::core::vertex::Vertex;
 use crate::delaunay_model::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
 use crate::draft::DelaunayTriangulationDraft;
@@ -185,34 +186,16 @@ impl<K, U, V, const D: usize> DelaunayBootstrapWorkspace<K, U, V, D> {
 
     /// Returns a scale-aware duplicate-coordinate failure for bootstrap input.
     fn duplicate_coordinates_error(&self, coords: &[f64; D]) -> Option<InsertionError> {
-        let mut minimum_distance_squared: Option<f64> = None;
-
-        for (_, existing) in self.tds.vertices() {
-            let mut distance_squared = 0.0;
-            for (coordinate, existing_coordinate) in coords.iter().zip(existing.point().coords()) {
-                let difference = coordinate - existing_coordinate;
-                distance_squared = difference.mul_add(difference, distance_squared);
-            }
-            minimum_distance_squared = Some(
-                minimum_distance_squared
-                    .map_or(distance_squared, |minimum| minimum.min(distance_squared)),
-            );
-        }
-
         let tolerance = duplicate_coordinate_tolerance_from_references(
             coords,
             self.tds
                 .vertices()
                 .map(|(_, vertex)| vertex.point().coords()),
         );
-        let tolerance_squared = tolerance * tolerance;
-        minimum_distance_squared
-            .is_some_and(|distance_squared| {
-                if tolerance_squared.is_finite() {
-                    distance_squared <= tolerance_squared
-                } else {
-                    distance_squared.sqrt() <= tolerance
-                }
+        self.tds
+            .vertices()
+            .any(|(_, existing)| {
+                coords_within_epsilon_inclusive(coords, existing.point().coords(), tolerance)
             })
             .then(|| InsertionError::DuplicateCoordinates {
                 coordinates: CoordinateValues::from_numeric_slice(coords),
@@ -1152,19 +1135,23 @@ mod tests {
             .insert_vertex(vertex![1.0e308, -1.0e308].unwrap())
             .unwrap();
 
-        let (outcome, statistics) = builder
-            .insert_best_effort_with_statistics(vertex![1.0e308, -1.0e308].unwrap())
-            .unwrap();
+        // Cover an exact duplicate and a finite displacement whose square
+        // overflows; both must satisfy the same scale-aware tolerance.
+        for coordinate in [1.0e308, 1.0e308 + 1.0e293] {
+            let (outcome, statistics) = builder
+                .insert_best_effort_with_statistics(vertex![coordinate, -1.0e308].unwrap())
+                .unwrap();
 
-        assert!(matches!(
-            outcome,
-            InsertionOutcome::Skipped {
-                error: InsertionError::DuplicateCoordinates { .. }
-            }
-        ));
-        assert_eq!(statistics.result, InsertionResult::SkippedDuplicate);
-        assert_eq!(builder.number_of_vertices(), 1);
-        assert_eq!(builder.number_of_simplices(), 0);
+            assert!(matches!(
+                outcome,
+                InsertionOutcome::Skipped {
+                    error: InsertionError::DuplicateCoordinates { .. }
+                }
+            ));
+            assert_eq!(statistics.result, InsertionResult::SkippedDuplicate);
+            assert_eq!(builder.number_of_vertices(), 1);
+            assert_eq!(builder.number_of_simplices(), 0);
+        }
     }
 
     #[test]

@@ -1542,7 +1542,7 @@ rules:
       - pattern-regex: >-
           (?s)\bDegenerateSimplex\s*\{[^}]*\b(?:observed|epsilon|avg_edge_length)\s*:\s*(?:Option\s*<\s*)?String\s*,
       - pattern-regex: >-
-          (?s)\bMatrixInversionFailed\s*\{[^}]*\bdetails\s*:\s*String\s*,
+          (?s)\bInvalidMeasure\s*\{[^}]*\bdetails\s*:\s*String\s*,
       - pattern-regex: >-
           (?s)\bPerturbationScaleConversion\s*\{[^}]*\bvalue\s*:\s*String\s*,
       - pattern-regex: >-

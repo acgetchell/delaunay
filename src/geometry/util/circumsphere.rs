@@ -5,8 +5,9 @@
 
 #![forbid(unsafe_code)]
 
-use super::conversions::{ValueConversionError, safe_coords_to_f64};
-use super::norms::{hypot, squared_norm};
+use core::{array::from_fn, fmt, hint::cold_path};
+
+use super::conversions::ValueConversionError;
 use crate::geometry::matrix::{
     DEFAULT_SINGULAR_TOL, ExactF64Conversion, LaError, LaVector, Matrix, MatrixError,
     RationalMatrix, RationalVector, SingularityReason, StackMatrixDispatchError, matrix_set,
@@ -16,7 +17,6 @@ use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
 };
-use core::{fmt, hint::cold_path};
 
 /// Geometric measure involved in a degenerate simplex or facet calculation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -68,7 +68,7 @@ impl fmt::Display for DegenerateGeometry {
     }
 }
 
-/// Structured reason for matrix-inversion or measure-degeneracy failures.
+/// Structured reason a geometric measure is invalid or unrepresentable.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum CircumcenterFailureReason {
@@ -180,10 +180,13 @@ pub enum CircumcenterError {
         minimum: usize,
     },
 
-    /// Matrix inversion failed (degenerate simplex).
-    #[error("Matrix inversion failed: {reason}")]
-    MatrixInversionFailed {
-        /// Structured reason for the matrix inversion failure.
+    /// A simplex or facet measure is degenerate, invalid, or unrepresentable.
+    ///
+    /// Failures from matrix factorization or vector operations are reported
+    /// separately as [`Self::LinearAlgebraFailure`].
+    #[error("Invalid geometric measure: {reason}")]
+    InvalidMeasure {
+        /// Structured reason for rejecting the geometric measure.
         reason: CircumcenterFailureReason,
     },
 
@@ -340,7 +343,7 @@ impl From<LaError> for CircumcenterError {
 /// Returns an error if:
 /// - The points do not form a valid simplex
 /// - The matrix inversion fails due to degeneracy
-/// - Array conversion fails
+/// - The computed center cannot be represented with finite coordinates
 ///
 /// # Example
 ///
@@ -387,9 +390,6 @@ pub fn circumcenter<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, Cir
     // Here, A is D×D and b is length D, so we can solve with stack-allocated la-stack types.
     let coords_0 = points[0].coords();
 
-    // Use safe coordinate conversion
-    let coords_0_f64: [f64; D] = safe_coords_to_f64(coords_0)?;
-
     let mut a = Matrix::<D>::zero();
     let mut b_arr = [0.0f64; D];
     let mut fast_system_is_finite = true;
@@ -397,26 +397,28 @@ pub fn circumcenter<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, Cir
     for i in 0..D {
         let coords_point = points[i + 1].coords();
 
-        // Use safe coordinate conversion
-        let coords_point_f64: [f64; D] = safe_coords_to_f64(coords_point)?;
-
-        // Fill matrix row
-        for j in 0..D {
-            let difference = coords_point_f64[j] - coords_0_f64[j];
-            if difference.is_finite() {
-                matrix_set(&mut a, i, j, difference)?;
-            } else {
-                fast_system_is_finite = false;
-            }
+        // Points already prove finite coordinates. Subtraction creates new
+        // values, so parse the displacement once before using it in the system.
+        let difference =
+            match LaVector::<D>::try_new(from_fn(|axis| coords_point[axis] - coords_0[axis])) {
+                Ok(difference) => difference,
+                Err(LaError::NonFinite { .. }) => {
+                    fast_system_is_finite = false;
+                    continue;
+                }
+                Err(source) => return Err(source.into()),
+            };
+        for (j, &coordinate) in difference.as_array().iter().enumerate() {
+            matrix_set(&mut a, i, j, coordinate)?;
         }
 
-        // Calculate squared distance using squared_norm for consistency
-        let mut diff_coords = [0.0; D];
-        for j in 0..D {
-            diff_coords[j] = coords_point_f64[j] - coords_0_f64[j];
+        // Rounded squared distances belong only to the finite fast system.
+        // On overflow, rebuild from the original coordinates in exact arithmetic.
+        match difference.norm_squared() {
+            Ok(squared_distance) => b_arr[i] = squared_distance,
+            Err(LaError::NonFinite { .. }) => fast_system_is_finite = false,
+            Err(source) => return Err(source.into()),
         }
-        b_arr[i] = squared_norm(&diff_coords);
-        fast_system_is_finite &= b_arr[i].is_finite();
     }
 
     // Solve for x, then C = x0 + 1/2 * x.
@@ -434,7 +436,7 @@ pub fn circumcenter<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, Cir
                     .solve(b_vec)
                     .map_err(CircumcenterError::from)?
                     .into_array();
-                std::array::from_fn(|index| 0.5_f64.mul_add(solution[index], coords_0_f64[index]))
+                from_fn(|index| 0.5_f64.mul_add(solution[index], coords_0[index]))
             }
             Err(LaError::Singular {
                 reason: SingularityReason::Numerical { .. },
@@ -468,17 +470,6 @@ pub fn circumcenter<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, Cir
         exact_circumcenter_from_points(points)?
     };
 
-    for value in circumcenter_coords {
-        if !value.is_finite() {
-            return Err(CircumcenterError::MatrixInversionFailed {
-                reason: CircumcenterFailureReason::NonFiniteMeasure {
-                    measure: DegenerateMeasure::Volume,
-                    value: CoordinateConversionValue::from_numeric_debug(&value),
-                },
-            });
-        }
-    }
-
     Ok(Point::try_new(circumcenter_coords)?)
 }
 
@@ -486,36 +477,20 @@ pub fn circumcenter<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, Cir
 fn exact_circumcenter_from_points<const D: usize>(
     points: &[Point<D>],
 ) -> Result<[f64; D], CircumcenterError> {
-    let reference: Vec<_> = points[0]
-        .coords()
-        .iter()
-        .copied()
-        .map(rational_from_f64)
-        .collect::<Option<_>>()
-        .ok_or_else(|| CircumcenterError::MatrixInversionFailed {
-            reason: CircumcenterFailureReason::NonFiniteMeasure {
-                measure: DegenerateMeasure::Volume,
-                value: CoordinateConversionValue::from_numeric_debug(&points[0].coords()[0]),
-            },
-        })?;
+    // Point construction already proves finiteness, and every finite binary64
+    // coordinate has an exact rational representation.
+    let reference = points[0].coords().map(|coordinate| {
+        rational_from_f64(coordinate).expect("validated Point coordinates are finite")
+    });
     let zero = rational_from_f64(0.0).expect("zero is finite");
     let half = rational_from_f64(0.5).expect("one half is finite");
     let mut matrix = RationalMatrix::<D>::zero();
-    let mut rhs = std::array::from_fn(|_| zero.clone());
+    let mut rhs = from_fn(|_| zero.clone());
 
     for row in 0..D {
         for (column, origin) in reference.iter().enumerate() {
-            let coordinate =
-                rational_from_f64(points[row + 1].coords()[column]).ok_or_else(|| {
-                    CircumcenterError::MatrixInversionFailed {
-                        reason: CircumcenterFailureReason::NonFiniteMeasure {
-                            measure: DegenerateMeasure::Volume,
-                            value: CoordinateConversionValue::from_numeric_debug(
-                                &points[row + 1].coords()[column],
-                            ),
-                        },
-                    }
-                })?;
+            let coordinate = rational_from_f64(points[row + 1].coords()[column])
+                .expect("validated Point coordinates are finite");
             let relative = coordinate - origin;
             rhs[row] += relative.clone() * relative.clone();
             matrix.set(row, column, relative)?;
@@ -538,12 +513,15 @@ fn exact_circumcenter_from_points<const D: usize>(
 /// * `points` - A slice of points that form the simplex
 ///
 /// # Returns
-/// The circumradius as a value of type T if successful, or an error if the
-/// circumcenter calculation fails.
+/// The finite circumradius in coordinate units if successful, or an error if
+/// the center or radius computation fails.
 ///
 /// # Errors
 ///
-/// Returns an error if the circumcenter calculation fails. See [`circumcenter`] for details.
+/// Propagates errors from [`circumcenter`] and [`circumradius_with_center`].
+/// Even when the center is finite, an unrepresentable center-to-vertex
+/// displacement or norm returns [`CircumcenterError::LinearAlgebraFailure`]
+/// with the underlying [`LaError`].
 ///
 /// # Example
 ///
@@ -572,22 +550,26 @@ pub fn circumradius<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumce
 ///
 /// This is a helper function that calculates the circumradius when the circumcenter
 /// is already known, avoiding redundant computation.
+/// It measures the distance to `points[0]` and accepts any nonempty slice. The
+/// caller must supply the correct center to interpret this distance as a
+/// circumradius; this function does not check simplex arity, nondegeneracy, or
+/// equidistance from the remaining points.
 ///
 /// # Arguments
 ///
-/// * `points` - A slice of points that form the simplex
+/// * `points` - A nonempty slice whose first point supplies the radius measurement
 /// * `circumcenter` - The precomputed circumcenter
 ///
 /// # Returns
-/// The circumradius as a value of type T if successful, or an error if the
-/// simplex is degenerate or the distance calculation fails.
+/// The finite non-negative `f64` distance in coordinate units. The result is
+/// zero when the first point equals the supplied center.
 ///
 /// # Errors
 ///
 /// Returns an error if:
-/// - The points slice is empty
-/// - Coordinate conversion fails
-/// - Distance calculation fails
+/// - [`CircumcenterError::EmptyPointSet`] if the points slice is empty.
+/// - [`CircumcenterError::LinearAlgebraFailure`] if a displacement or its norm
+///   is not representable, preserving the underlying [`LaError`].
 ///
 /// # Example
 ///
@@ -621,33 +603,70 @@ pub fn circumradius_with_center<const D: usize>(
     let point_coords = points[0].coords();
     let circumcenter_coords = circumcenter.coords();
 
-    // Calculate distance using hypot for numerical stability
+    // The distance may be finite even when its square is unrepresentable.
     let mut diff_coords = [0.0; D];
     for i in 0..D {
         diff_coords[i] = circumcenter_coords[i] - point_coords[i];
     }
-    let distance = hypot(&diff_coords);
-    if distance.is_finite() {
-        Ok(distance)
-    } else {
-        Err(CircumcenterError::MatrixInversionFailed {
-            reason: CircumcenterFailureReason::NonFiniteMeasure {
-                measure: DegenerateMeasure::Length,
-                value: CoordinateConversionValue::from_numeric_debug(&distance),
-            },
-        })
-    }
+    Ok(LaVector::try_new(diff_coords)?.norm()?)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::geometry::matrix::BigRational;
-    use crate::geometry::point::Point;
-    use crate::geometry::util::conversions::ValueConversionFailureReason;
+    use std::assert_matches;
+
     use approx::assert_relative_eq;
     use la_stack::UnrepresentableReason;
-    use std::assert_matches;
+
+    use super::*;
+    use crate::geometry::matrix::BigRational;
+    use crate::geometry::util::conversions::{ValueConversionFailureReason, safe_usize_to_scalar};
+
+    /// Known lengths exercise the geometry boundary independently of the backend norm.
+    fn assert_stable_radius<const D: usize>() {
+        let origin = Point::try_new([0.0; D]).unwrap();
+        for scale in [1.0e-200, 1.0, 1.0e200] {
+            let mut coords = [0.0; D];
+            coords[0] = -3.0 * scale;
+            coords[1] = 4.0 * scale;
+            let point = Point::try_new(coords).unwrap();
+            let radius = circumradius_with_center(&[point], &origin).unwrap();
+            assert_relative_eq!(radius / scale, 5.0, max_relative = 1e-14);
+        }
+        for (large, small) in [
+            (1.0e200, 1.0e-200),
+            (f64::MIN_POSITIVE / 2.0, 0.0),
+            (f64::MAX, 0.0),
+        ] {
+            let mut coords = [small; D];
+            coords[0] = large;
+            let point = Point::try_new(coords).unwrap();
+            let radius = circumradius_with_center(&[point], &origin).unwrap();
+            assert_relative_eq!(radius / large, 1.0, max_relative = 1e-14);
+        }
+        assert_relative_eq!(circumradius_with_center(&[origin], &origin).unwrap(), 0.0);
+
+        // Orthogonal equal axes have center (scale/2, ..., scale/2), including
+        // when relative squares underflow or overflow in the fast system.
+        for scale in [1.0e-200, 1.0, 1.0e200] {
+            let mut simplex = vec![origin];
+            for axis in 0..D {
+                let mut coords = [0.0; D];
+                coords[axis] = scale;
+                simplex.push(Point::try_new(coords).unwrap());
+            }
+            let center = circumcenter(&simplex).unwrap();
+            for coordinate in center.coords() {
+                assert_relative_eq!(coordinate / scale, 0.5, max_relative = 1e-14);
+            }
+            let expected = safe_usize_to_scalar(D).unwrap().sqrt() / 2.0;
+            assert_relative_eq!(
+                circumradius(&simplex).unwrap() / scale,
+                expected,
+                max_relative = 1e-14
+            );
+        }
+    }
 
     /// Exact equal squared distances certify the cold-path solve independently
     /// of the matrix backend, including cancellation of enormous relative offsets.
@@ -699,6 +718,10 @@ mod tests {
                 #[test]
                 fn [<rational_circumcenter_round_trip_ $dimension d>]() {
                     assert_rational_circumcenter_round_trip::<$dimension>();
+                }
+                #[test]
+                fn [<stable_radius_ $dimension d>]() {
+                    assert_stable_radius::<$dimension>();
                 }
             }
         };
@@ -906,11 +929,8 @@ mod tests {
 
         assert_matches!(
             circumradius(&points),
-            Err(CircumcenterError::MatrixInversionFailed {
-                reason: CircumcenterFailureReason::NonFiniteMeasure {
-                    measure: DegenerateMeasure::Length,
-                    ..
-                },
+            Err(CircumcenterError::LinearAlgebraFailure {
+                source: LaError::NonFinite { .. },
             })
         );
     }
@@ -995,22 +1015,20 @@ mod tests {
         }
 
         // Verify all points are equidistant from circumcenter
-        let distances: Vec<f64> = points
-            .iter()
-            .map(|p| {
-                let p_coords = *p.coords();
-                let diff = [
-                    p_coords[0] - center_coords[0],
-                    p_coords[1] - center_coords[1],
-                    p_coords[2] - center_coords[2],
-                ];
-                hypot(&diff)
-            })
-            .collect();
+        let mut distances = points.iter().map(|p| {
+            let p_coords = *p.coords();
+            let diff = [
+                p_coords[0] - center_coords[0],
+                p_coords[1] - center_coords[1],
+                p_coords[2] - center_coords[2],
+            ];
+            LaVector::try_new(diff).unwrap().norm().unwrap()
+        });
 
         // All distances should be equal
-        for i in 1..distances.len() {
-            assert_relative_eq!(distances[0], distances[i], epsilon = 1e-10);
+        let first_distance = distances.next().expect("fixture has vertices");
+        for distance in distances {
+            assert_relative_eq!(first_distance, distance, epsilon = 1e-10);
         }
     }
 
@@ -1225,23 +1243,19 @@ mod tests {
         assert_relative_eq!(center_coords[1], expected_y, epsilon = 1e-10);
 
         // Verify all vertices are equidistant from circumcenter
-        let _center_point =
-            Point::try_new([center_coords[0], center_coords[1]]).expect("finite point coordinates");
-        let distances: Vec<f64> = points
-            .iter()
-            .map(|p| {
-                let p_coords = *p.coords();
-                let diff = [
-                    p_coords[0] - center_coords[0],
-                    p_coords[1] - center_coords[1],
-                ];
-                hypot(&diff)
-            })
-            .collect();
+        let mut distances = points.iter().map(|p| {
+            let p_coords = *p.coords();
+            let diff = [
+                p_coords[0] - center_coords[0],
+                p_coords[1] - center_coords[1],
+            ];
+            LaVector::try_new(diff).unwrap().norm().unwrap()
+        });
 
         // All distances should be equal
-        for i in 1..distances.len() {
-            assert_relative_eq!(distances[0], distances[i], epsilon = 1e-10);
+        let first_distance = distances.next().expect("fixture has vertices");
+        for distance in distances {
+            assert_relative_eq!(first_distance, distance, epsilon = 1e-10);
         }
     }
 
@@ -1311,24 +1325,22 @@ mod tests {
 
         // For this configuration, all points are equidistant from circumcenter
         // Verify all points are at same distance from circumcenter
-        let distances: Vec<f64> = points
-            .iter()
-            .map(|p| {
-                let p_coords = *p.coords();
-                let diff = [
-                    p_coords[0] - center_coords[0],
-                    p_coords[1] - center_coords[1],
-                    p_coords[2] - center_coords[2],
-                    p_coords[3] - center_coords[3],
-                    p_coords[4] - center_coords[4],
-                ];
-                hypot(&diff)
-            })
-            .collect();
+        let mut distances = points.iter().map(|p| {
+            let p_coords = *p.coords();
+            let diff = [
+                p_coords[0] - center_coords[0],
+                p_coords[1] - center_coords[1],
+                p_coords[2] - center_coords[2],
+                p_coords[3] - center_coords[3],
+                p_coords[4] - center_coords[4],
+            ];
+            LaVector::try_new(diff).unwrap().norm().unwrap()
+        });
 
         // All distances should be equal
-        for i in 1..distances.len() {
-            assert_relative_eq!(distances[0], distances[i], epsilon = 1e-9);
+        let first_distance = distances.next().expect("fixture has vertices");
+        for distance in distances {
+            assert_relative_eq!(first_distance, distance, epsilon = 1e-9);
         }
     }
 
@@ -1440,20 +1452,18 @@ mod tests {
 
         // Verify equidistance: all vertices should be the same distance
         // from the circumcenter.
-        let distances: Vec<f64> = points
-            .iter()
-            .map(|p| {
-                let diff = [
-                    p.coords()[0] - center_coords[0],
-                    p.coords()[1] - center_coords[1],
-                    p.coords()[2] - center_coords[2],
-                ];
-                hypot(&diff)
-            })
-            .collect();
+        let mut distances = points.iter().map(|p| {
+            let diff = [
+                p.coords()[0] - center_coords[0],
+                p.coords()[1] - center_coords[1],
+                p.coords()[2] - center_coords[2],
+            ];
+            LaVector::try_new(diff).unwrap().norm().unwrap()
+        });
 
-        for i in 1..distances.len() {
-            assert_relative_eq!(distances[0], distances[i], epsilon = 1e-6);
+        let first_distance = distances.next().expect("fixture has vertices");
+        for distance in distances {
+            assert_relative_eq!(first_distance, distance, epsilon = 1e-6);
         }
     }
 

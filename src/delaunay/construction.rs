@@ -42,6 +42,20 @@
 
 #![forbid(unsafe_code)]
 
+use core::{array::from_fn, cmp::Ordering, fmt};
+use std::{
+    env,
+    hash::{Hash, Hasher},
+    iter::once,
+    num::NonZeroUsize,
+    time::{Duration, Instant},
+};
+
+use num_traits::ToPrimitive;
+use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
+use thiserror::Error;
+use uuid::Uuid;
+
 use crate::builder::{DelaunayTriangulationBuilder, ExplicitConstructionError};
 use crate::core::adjacency::TopologyIndexBuildError;
 use crate::core::algorithms::flips::{
@@ -76,14 +90,14 @@ use crate::core::util::{
     hilbert_quantize_batch_in_range, stable_hash_u64_slice,
 };
 use crate::core::vertex::Vertex;
-use crate::delaunay_model::DelaunayTriangulation;
-use crate::delaunay_model::EuclideanDelaunayReportDomain;
+use crate::delaunay_model::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
 use crate::delaunay_property_validation::DelaunayValidationError;
 use crate::deletion::DeleteVertexError;
 use crate::diagnostics::{BatchLocalRepairTrigger, ConstructionTelemetry, LocalRepairSample};
 use crate::draft::DelaunayTriangulationDraft;
 use crate::geometry::coordinate_range::CoordinateRange;
 use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates};
+use crate::geometry::matrix::LaVector;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateValidationError, CoordinateValues,
@@ -119,20 +133,6 @@ use crate::validation::{
     DelaunayLevelFiveCertificate, DelaunayTriangulationValidationError, DelaunayVerificationError,
     certify_level_five_for_refinement,
 };
-use core::{cmp::Ordering, fmt};
-use num_traits::ToPrimitive;
-use rand::SeedableRng;
-use rand::rngs::StdRng;
-use rand::seq::SliceRandom;
-use std::{
-    env,
-    hash::{Hash, Hasher},
-    iter::once,
-    num::NonZeroUsize,
-    time::{Duration, Instant},
-};
-use thiserror::Error;
-use uuid::Uuid;
 
 /// Number of deterministic shuffled reconstruction attempts used by the
 /// default construction retry policy.
@@ -2859,15 +2859,13 @@ fn vertices_coords_f64<U, const D: usize>(vertices: &[Vertex<U, D>]) -> Option<V
 }
 
 /// Computes squared Euclidean distance for initial-simplex selection
-/// heuristics that only need deterministic ordering.
-fn squared_distance<const D: usize>(a: &[f64; D], b: &[f64; D]) -> f64 {
-    a.iter()
-        .zip(b.iter())
-        .map(|(lhs, rhs)| {
-            let diff = lhs - rhs;
-            diff * diff
-        })
-        .sum::<f64>()
+/// heuristics that only rank representable scores. An unrepresentable score
+/// excludes this pair from the heuristic; construction still certifies the
+/// selected simplex or follows its ordinary fallback policy.
+fn squared_distance<const D: usize>(a: &[f64; D], b: &[f64; D]) -> Option<f64> {
+    LaVector::<D>::try_new(from_fn(|axis| a[axis] - b[axis]))
+        .and_then(|difference| difference.norm_squared())
+        .ok()
 }
 
 /// Appends an index once so candidate pools remain small and deterministic.
@@ -2987,7 +2985,9 @@ fn extend_candidate_pool_by_farthest_points<const D: usize>(
             continue;
         }
         for &candidate_idx in candidates.iter() {
-            let dist = squared_distance(&coords_f64[idx], &coords_f64[candidate_idx]);
+            let Some(dist) = squared_distance(&coords_f64[idx], &coords_f64[candidate_idx]) else {
+                continue;
+            };
             if dist < min_dist_sq[idx] {
                 min_dist_sq[idx] = dist;
             }
@@ -3025,7 +3025,9 @@ fn extend_candidate_pool_by_farthest_points<const D: usize>(
             if selected_mask[idx] {
                 continue;
             }
-            let dist = squared_distance(&coords_f64[idx], &coords_f64[best_idx]);
+            let Some(dist) = squared_distance(&coords_f64[idx], &coords_f64[best_idx]) else {
+                continue;
+            };
             if dist < min_dist_sq[idx] {
                 min_dist_sq[idx] = dist;
             }
@@ -3076,7 +3078,9 @@ fn select_balanced_simplex_indices<U, const D: usize>(
 
     let mut min_dist_sq = vec![f64::INFINITY; coords_f64.len()];
     for i in 0..coords_f64.len() {
-        min_dist_sq[i] = squared_distance(&coords_f64[i], &coords_f64[seed_idx]);
+        if let Some(distance) = squared_distance(&coords_f64[i], &coords_f64[seed_idx]) {
+            min_dist_sq[i] = distance;
+        }
     }
     min_dist_sq[seed_idx] = 0.0;
 
@@ -3111,7 +3115,9 @@ fn select_balanced_simplex_indices<U, const D: usize>(
             if selected_mask[i] {
                 continue;
             }
-            let dist_sq = squared_distance(&coords_f64[i], &coords_f64[best_idx]);
+            let Some(dist_sq) = squared_distance(&coords_f64[i], &coords_f64[best_idx]) else {
+                continue;
+            };
             if dist_sq < min_dist_sq[i] {
                 min_dist_sq[i] = dist_sq;
             }

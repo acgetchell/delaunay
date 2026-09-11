@@ -2008,7 +2008,7 @@ pub enum NumericDiagnosticError {
         avg_edge_length: Option<String>,
     },
     // ruleid: delaunay.rust.no-stringly-numeric-error-payloads
-    MatrixInversionFailed {
+    InvalidMeasure {
         details: String,
     },
     // ruleid: delaunay.rust.no-stringly-numeric-error-payloads

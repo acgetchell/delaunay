@@ -102,7 +102,7 @@ meshing, or production-scale dynamic remeshing.
   lifting and canonicalization.
 - [x] Vertex/simplex payloads plus secondary maps for caller-owned algorithm state.
 
-See [CHANGELOG.md](CHANGELOG.md) for release history and [`docs/roadmap.md`](docs/roadmap.md) for
+See [CHANGELOG.md][changelog] for release history and [`docs/roadmap.md`][roadmap] for
 current direction, near-term candidates, and non-goals.
 
 ## 🚀 Quickstart
@@ -151,7 +151,7 @@ fn main() -> DelaunayResult<()> {
 For runnable Rust workflows spanning toroidal and spherical construction,
 auxiliary data, serialization, insertion statistics, deletion, queries,
 quality metrics, and explicit flips, see the
-[`examples/` coverage index](examples/README.md).
+[`examples/` coverage index][examples-guide].
 
 ### Notebook and binary
 
@@ -163,19 +163,19 @@ just notebook
 ```
 
 `just notebook-setup` installs the uv-managed notebook dependency group, and `just notebook`
-launches JupyterLab with [`notebooks/00_quickstart.ipynb`](notebooks/00_quickstart.ipynb). The
+launches JupyterLab with [`notebooks/00_quickstart.ipynb`][quickstart-notebook]. The
 notebook uses the opt-in `delaunay` binary as the engine, loads generic simplicial-complex
 visualization and convex-hull JSON, and writes a transparent preview under
 `target/notebooks/00_quickstart/`.
 The notebook and `just run` recipes enable the Cargo `cli` feature, which pulls in the binary and
 notebook-support dependencies; ordinary library builds do not need them.
-The [reviewer artifact guide](papers/ARTIFACT.md) and paper-claim mapping consume
+The [reviewer artifact guide][artifact-guide] and paper-claim mapping consume
 this visual-inspection workflow without duplicating its implementation.
 For validation-layer failure visuals, open
-[`notebooks/01_validation.ipynb`](notebooks/01_validation.ipynb);
+[`notebooks/01_validation.ipynb`][validation-notebook];
 it runs `delaunay validation-demo` and renders generated validation figures for docs and papers.
 The tracked spherical hero is generated from the real `S²` prototype by
-[`notebooks/02_spherical_hero.ipynb`](notebooks/02_spherical_hero.ipynb).
+[`notebooks/02_spherical_hero.ipynb`][spherical-notebook].
 Refresh it deliberately with `just spherical-readme-hero`; routine notebook checks only lint this
 computational artifact.
 
@@ -229,10 +229,10 @@ for the documented coordinate models and dimensions. It does not replace constra
 packages, prove arbitrary abstract PL-manifolds realizable from coordinates, or certify unsupported
 spherical/hyperbolic workflows.
 
-For the detailed contract, see [`docs/construction_and_validation.md`](docs/construction_and_validation.md),
-[`docs/invariants.md`](docs/invariants.md), [`docs/topology.md`](docs/topology.md),
-[`docs/numerical_robustness_guide.md`](docs/numerical_robustness_guide.md),
-[`docs/limitations.md`](docs/limitations.md), and [`benches/README.md`](benches/README.md).
+For the detailed contract, see [`docs/construction_and_validation.md`][Construction and Validation Guide],
+[`docs/invariants.md`][invariants-guide], [`docs/topology.md`][topology-guide],
+[`docs/numerical_robustness_guide.md`][exact predicates],
+[`docs/limitations.md`][limitations-guide], and [`benches/README.md`][benchmarks-guide].
 
 ## ✅ Validation Model
 
@@ -262,31 +262,31 @@ APIs use `validate()` / `validation_report()`.
 `orientation_witness()` exposes the supported 2D/3D Level 3 orientability certificate directly.
 
 For generated failure pictures, public test anchors, and diagnostics for each layer, run
-[`notebooks/01_validation.ipynb`](notebooks/01_validation.ipynb). For the paper-facing mathematical
-exposition, see [`papers/validation.tex`](papers/validation.tex) and the compiled reviewer copy at
-[`papers/validation.pdf`](papers/validation.pdf).
+[`notebooks/01_validation.ipynb`][validation-notebook]. For the paper-facing mathematical
+exposition, see [`papers/validation.tex`][validation-paper-source] and the compiled reviewer copy at
+[`papers/validation.pdf`][validation-paper].
 
 ## 🗺️ Documentation Map
 
-- [Artifact Guide](papers/ARTIFACT.md) - v0.8.0 reviewer reproduction paths, claim map, evidence, and limits.
-- [API Design](docs/api_design.md) - construction, vertex lifecycle, and explicit Pachner moves.
-- [Benchmarks](benches/README.md) - Criterion suites, perf-profile workflow, release summaries, and canary sizes.
-- [Code Organization](docs/code_organization.md) - Architecture hub with links to module maps, focused preludes, and file layout.
-- [Diagnostics](docs/diagnostics.md) - Structured reports, telemetry, and debug switches.
-- [Examples and Notebooks](examples/README.md) - Coverage map for runnable Rust workflows and visual computational artifacts.
-- [Invariants](docs/invariants.md) - Topological and geometric invariants enforced by the crate.
-- [Limitations](docs/limitations.md) - Supported dimensions, predicate limits, toroidal modes, and feature gaps.
-- [Mesh Export](docs/mesh_export.md) - Stable UUID-based simplicial-complex export for notebooks and downstream tools.
-- [Numerical Robustness Guide](docs/numerical_robustness_guide.md) - Predicate kernels, SoS, retry, and repair behavior.
-- [Orientation Spec](docs/ORIENTATION_SPEC.md) - Coherent combinatorial and geometric orientation rules.
-- [Performance Report](docs/PERFORMANCE.md) - Legacy release-to-release benchmark evidence without a retained artifact bundle.
-- [Property Testing Summary](docs/property_testing_summary.md) - Property-test layout and coverage summary.
-- [Releasing](docs/RELEASING.md) - Changelog, benchmark, and publish workflow.
-- [Roadmap](docs/roadmap.md) - Current release sequence and deferred feature tracks.
-- [Topology](docs/topology.md) - Level 3 Intrinsic PL Topology validation, orientability, and global topology models.
-- [Construction and Validation Guide](docs/construction_and_validation.md) - Proof-bearing construction, validation hierarchy, and policy configuration.
-- [Construction and Validation Paper](papers/validation.pdf) - Reviewer-facing architecture paper.
-- [Workflows](docs/workflows.md) - Practical recipes for construction, repair, toroidal domains, payloads, and flips.
+- [Artifact Guide][artifact-guide] - v0.8.0 reviewer reproduction paths, claim map, evidence, and limits.
+- [API Design][api-design-guide] - construction, vertex lifecycle, and explicit Pachner moves.
+- [Benchmarks][benchmarks-guide] - Criterion suites, perf-profile workflow, release summaries, and canary sizes.
+- [Code Organization][code-organization-guide] - Architecture hub with links to module maps, focused preludes, and file layout.
+- [Diagnostics][diagnostics-guide] - Structured reports, telemetry, and debug switches.
+- [Examples and Notebooks][examples-guide] - Coverage map for runnable Rust workflows and visual computational artifacts.
+- [Invariants][invariants-guide] - Topological and geometric invariants enforced by the crate.
+- [Limitations][limitations-guide] - Supported dimensions, predicate limits, toroidal modes, and feature gaps.
+- [Mesh Export][mesh-export-guide] - Stable UUID-based simplicial-complex export for notebooks and downstream tools.
+- [Numerical Robustness Guide][exact predicates] - Predicate kernels, SoS, retry, and repair behavior.
+- [Orientation Spec][orientation-spec] - Coherent combinatorial and geometric orientation rules.
+- [Performance Report][performance-report] - Legacy release-to-release benchmark evidence without a retained artifact bundle.
+- [Property Testing Summary][property-testing-guide] - Property-test layout and coverage summary.
+- [Releasing][releasing-guide] - Changelog, benchmark, and publish workflow.
+- [Roadmap][roadmap] - Current release sequence and deferred feature tracks.
+- [Topology][topology-guide] - Level 3 Intrinsic PL Topology validation, orientability, and global topology models.
+- [Construction and Validation Guide] - Proof-bearing construction, validation hierarchy, and policy configuration.
+- [Construction and Validation Paper][validation-paper] - Reviewer-facing architecture paper.
+- [Workflows][workflows-guide] - Practical recipes for construction, repair, toroidal domains, payloads, and flips.
 
 ## 🧩 Ecosystem
 
@@ -330,8 +330,8 @@ just bench-ci
 just bench-perf-summary
 ```
 
-See the legacy [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) report for historical,
-provenance-limited release evidence and [`benches/README.md`](benches/README.md)
+See the legacy [`docs/PERFORMANCE.md`][performance-report] report for historical,
+provenance-limited release evidence and [`benches/README.md`][benchmarks-guide]
 for benchmark selection, fixture sizes, baseline workflows, and large-scale
 profiling guidance.
 
@@ -362,14 +362,14 @@ Not implemented today: constrained Delaunay triangulations, Voronoi diagram extr
 visualization, massively parallel/GPU construction, out-of-core meshing, full spherical integration
 beyond the bounded `S^2`/`S^3` prototype, and hyperbolic triangulation semantics.
 
-See [`docs/limitations.md`](docs/limitations.md) for operational limits and [`docs/roadmap.md`](docs/roadmap.md)
+See [`docs/limitations.md`][limitations-guide] for operational limits and [`docs/roadmap.md`][roadmap]
 for v0.8.1 follow-up work and later feature tracks.
 
 ## 🤝 Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contributor guide: project layout, development
+See [CONTRIBUTING.md][contributing-guide] for the full contributor guide: project layout, development
 workflow, code style, testing, documentation, benchmarking, and release support. Community expectations
-live in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). AI assistants should follow [AGENTS.md](AGENTS.md).
+live in [CODE_OF_CONDUCT.md][code-of-conduct]. AI assistants should follow [AGENTS.md][agent-guide].
 
 Quick local workflow:
 
@@ -387,10 +387,10 @@ For the full command list, run `just --list`.
 ## 📚 Citation
 
 If you use this software in academic work or downstream research software, cite the Zenodo DOI and
-include the software metadata from [CITATION.cff](CITATION.cff).
+include the software metadata from [CITATION.cff][citation-metadata].
 
 - DOI: <https://doi.org/10.5281/zenodo.16931097>
-- Citation metadata: [CITATION.cff](CITATION.cff)
+- Citation metadata: [CITATION.cff][citation-metadata]
 
 ```bibtex
 @software{getchell_delaunay,
@@ -401,11 +401,11 @@ include the software metadata from [CITATION.cff](CITATION.cff).
 }
 ```
 
-For release-specific fields such as version, release date, and ORCID, prefer [CITATION.cff](CITATION.cff).
+For release-specific fields such as version, release date, and ORCID, prefer [CITATION.cff][citation-metadata].
 
 ## 🔎 References
 
-For academic references and bibliographic citations used throughout the library, see [REFERENCES.md](REFERENCES.md).
+For academic references and bibliographic citations used throughout the library, see [REFERENCES.md][references-guide].
 
 This includes foundational work on:
 
@@ -416,15 +416,15 @@ This includes foundational work on:
 
 ## 🤖 AI-assisted Development
 
-This repository contains [AGENTS.md](AGENTS.md), which defines the rules and invariants for AI coding
+This repository contains [AGENTS.md][agent-guide], which defines the rules and invariants for AI coding
 assistants and autonomous agents working on this codebase.
 
 Portions of this library were developed with the assistance of AI tools including [ChatGPT], [Claude],
 [Codex], and [CodeRabbit]. All accepted code and documentation changes are reviewed, edited, and
 validated by the author.
 
-For tool citation metadata, see the [AI-assisted development tools](REFERENCES.md#ai-assisted-development-tools)
-section of [REFERENCES.md](REFERENCES.md).
+For tool citation metadata, see the [AI-assisted development tools][ai-tools]
+section of [REFERENCES.md][references-guide].
 
 ## 📜 License
 
@@ -450,7 +450,7 @@ This project is licensed under the [BSD 3-Clause License](https://github.com/acg
 [Codex]: https://openai.com/codex
 [Convex hulls]: https://en.wikipedia.org/wiki/Convex_hull
 [Delaunay triangulations]: https://en.wikipedia.org/wiki/Delaunay_triangulation
-[exact predicates]: docs/numerical_robustness_guide.md
+[exact predicates]: https://github.com/acgetchell/delaunay/blob/main/docs/numerical_robustness_guide.md
 [Hilbert curve]: https://en.wikipedia.org/wiki/Hilbert_curve
 [Jupyter]: https://jupyter.org/
 [JSON]: https://www.json.org/json-en.html
@@ -459,6 +459,37 @@ This project is licensed under the [BSD 3-Clause License](https://github.com/acg
 [PL-manifold]: https://en.wikipedia.org/wiki/Piecewise_linear_manifold
 [Pseudomanifold]: https://en.wikipedia.org/wiki/Pseudomanifold
 [readme-hero]: https://raw.githubusercontent.com/acgetchell/delaunay/main/docs/assets/readme/delaunay_spherical_readme.png
-[Secondary maps]: docs/workflows.md#builder-api-auxiliary-vertex-and-simplex-data
-[Simulation of Simplicity]: docs/numerical_robustness_guide.md#identity-based-sos-perturbation-via-canonical-vertex-ordering
-[Construction and Validation Guide]: docs/construction_and_validation.md
+[Secondary maps]: https://github.com/acgetchell/delaunay/blob/main/docs/workflows.md#builder-api-auxiliary-vertex-and-simplex-data
+[Simulation of Simplicity]:
+  <https://github.com/acgetchell/delaunay/blob/main/docs/numerical_robustness_guide.md#identity-based-sos-perturbation-via-canonical-vertex-ordering>
+[Construction and Validation Guide]: https://github.com/acgetchell/delaunay/blob/main/docs/construction_and_validation.md
+
+<!-- Repository guides follow main so links work in both GitHub and included rustdoc. -->
+[agent-guide]: https://github.com/acgetchell/delaunay/blob/main/AGENTS.md
+[ai-tools]: https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md#ai-assisted-development-tools
+[api-design-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/api_design.md
+[artifact-guide]: https://github.com/acgetchell/delaunay/blob/main/papers/ARTIFACT.md
+[benchmarks-guide]: https://github.com/acgetchell/delaunay/blob/main/benches/README.md
+[changelog]: https://github.com/acgetchell/delaunay/blob/main/CHANGELOG.md
+[citation-metadata]: https://github.com/acgetchell/delaunay/blob/main/CITATION.cff
+[code-of-conduct]: https://github.com/acgetchell/delaunay/blob/main/CODE_OF_CONDUCT.md
+[code-organization-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/code_organization.md
+[contributing-guide]: https://github.com/acgetchell/delaunay/blob/main/CONTRIBUTING.md
+[diagnostics-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/diagnostics.md
+[examples-guide]: https://github.com/acgetchell/delaunay/blob/main/examples/README.md
+[invariants-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/invariants.md
+[limitations-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/limitations.md
+[mesh-export-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/mesh_export.md
+[orientation-spec]: https://github.com/acgetchell/delaunay/blob/main/docs/ORIENTATION_SPEC.md
+[performance-report]: https://github.com/acgetchell/delaunay/blob/main/docs/PERFORMANCE.md
+[property-testing-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/property_testing_summary.md
+[quickstart-notebook]: https://github.com/acgetchell/delaunay/blob/main/notebooks/00_quickstart.ipynb
+[references-guide]: https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md
+[releasing-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/RELEASING.md
+[roadmap]: https://github.com/acgetchell/delaunay/blob/main/docs/roadmap.md
+[spherical-notebook]: https://github.com/acgetchell/delaunay/blob/main/notebooks/02_spherical_hero.ipynb
+[topology-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/topology.md
+[validation-notebook]: https://github.com/acgetchell/delaunay/blob/main/notebooks/01_validation.ipynb
+[validation-paper]: https://github.com/acgetchell/delaunay/blob/main/papers/validation.pdf
+[validation-paper-source]: https://github.com/acgetchell/delaunay/blob/main/papers/validation.tex
+[workflows-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/workflows.md

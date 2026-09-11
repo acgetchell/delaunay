@@ -33,6 +33,8 @@ use delaunay::geometry::{
     CoordinateConversionError as GeometryModuleCoordinateConversionError,
     CoordinateRange as GeometryCoordinateRange,
     LabeledSimplexRealization as GeometryModuleLabeledSimplexRealization,
+    ToroidalDomain as GeometryModuleToroidalDomain,
+    ToroidalDomainError as GeometryModuleToroidalDomainError,
     validate_simplex_intersection as geometry_module_validate_simplex_intersection,
 };
 use delaunay::incremental_builder::{
@@ -106,10 +108,10 @@ use delaunay::prelude::geometry::{
     CoordinateValues, DegenerateGeometry, DegenerateMeasure, DegenerateSimplexReason,
     ExactPredicates, FiniteCoordinateValue, InvalidCoordinateValue, LaError,
     LabeledSimplexRealization, LabeledSimplexRealizationError, MatrixError, PeriodicSimplexSpan,
-    PeriodicSimplexSpanError, Point, QualitySimplexVerticesError, SimplexIntersectionFailure,
-    SimplexIntersectionWitness, SimplexRealizationBuffer, SurfaceMeasureError,
-    ValueConversionError, ValueConversionFailureReason, axis_aligned_bounding_boxes_overlap,
-    coordinate_range_for_axis, try_periodic_simplex_span, validate_simplex_intersection,
+    Point, QualitySimplexVerticesError, SimplexIntersectionFailure, SimplexIntersectionWitness,
+    SimplexRealizationBuffer, SurfaceMeasureError, ValueConversionError,
+    ValueConversionFailureReason, axis_aligned_bounding_boxes_overlap, coordinate_range_for_axis,
+    periodic_simplex_span, validate_simplex_intersection,
 };
 use delaunay::prelude::insertion::{
     InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage, InsertionError,
@@ -213,7 +215,6 @@ use delaunay::prelude::validation::{
     DelaunayViolationDetail as FocusedDelaunayViolationDetail,
     DelaunayViolationReport as FocusedDelaunayViolationReport,
     ManifoldError as FocusedValidationManifoldError,
-    PeriodicDomainPeriodError as FocusedPeriodicDomainPeriodError,
     SphericalDelaunayValidationError as FocusedSphericalDelaunayValidationError,
     SphericalValidationLayer as FocusedSphericalValidationLayer,
     TopologyGuarantee as FocusedValidationTopologyGuarantee,
@@ -238,7 +239,6 @@ use delaunay::prelude::{
     GlobalTopology as RootGlobalTopology, GlobalTopologyModelError as RootGlobalTopologyModelError,
     IncidenceView as RootIncidenceView,
     InitialSimplexUnexpectedInsertionStage as RootInitialSimplexUnexpectedInsertionStage,
-    PeriodicDomainPeriodError as RootPeriodicDomainPeriodError,
     PlManifoldRepairStage as RootPreludePlManifoldRepairStage,
     RidgeCandidate as RootRidgeCandidate, RidgeCandidateError as RootRidgeCandidateError,
     RidgeHandle as RootRidgeHandle, RidgeLinkView as RootRidgeLinkView,
@@ -387,8 +387,6 @@ enum PreludeExportTestError {
     InvalidCoordinateValue(InvalidCoordinateValue),
     #[error(transparent)]
     LabeledSimplexRealization(#[from] LabeledSimplexRealizationError),
-    #[error(transparent)]
-    PeriodicSimplexSpan(#[from] PeriodicSimplexSpanError),
     #[error(transparent)]
     SimplexIntersection(#[from] SimplexIntersectionFailure<usize>),
     #[error(transparent)]
@@ -1705,7 +1703,7 @@ fn geometry_prelude_covers_typed_error_variants() -> Result<(), PreludeExportTes
         "collinear or coplanar points"
     );
 
-    let circumcenter_error = CircumcenterError::MatrixInversionFailed {
+    let circumcenter_error = CircumcenterError::InvalidMeasure {
         reason: CircumcenterFailureReason::DegenerateSimplex {
             measure: DegenerateMeasure::Volume,
             degeneracy: DegenerateGeometry::CoplanarPoints,
@@ -1713,7 +1711,7 @@ fn geometry_prelude_covers_typed_error_variants() -> Result<(), PreludeExportTes
     };
     assert_matches!(
         circumcenter_error,
-        CircumcenterError::MatrixInversionFailed {
+        CircumcenterError::InvalidMeasure {
             reason: CircumcenterFailureReason::DegenerateSimplex {
                 measure: DegenerateMeasure::Volume,
                 degeneracy: DegenerateGeometry::CoplanarPoints,
@@ -1804,7 +1802,10 @@ fn geometry_prelude_covers_simplex_realization_validation() -> Result<(), Prelud
 
     let spanning_simplex =
         LabeledSimplexRealization::try_new([4_usize, 5, 6], [[0.0, 0.0], [1.0, 0.0], [0.0, 0.25]])?;
-    let span = try_periodic_simplex_span(&spanning_simplex, &[1.0, 2.0])?.ok_or(
+    // Geometry's facade and both workflow preludes expose the same domain proof.
+    let domain: ToroidalDomain<2> = GeometryModuleToroidalDomain::try_new([1.0, 2.0])?;
+    let domain: delaunay::prelude::geometry::ToroidalDomain<2> = domain;
+    let span = periodic_simplex_span(&spanning_simplex, &domain).ok_or(
         PreludeExportTestError::MissingFixture {
             context: "periodic span for a domain-crossing simplex",
         },
@@ -1824,9 +1825,13 @@ fn geometry_prelude_covers_simplex_realization_validation() -> Result<(), Prelud
             duplicate_index: 1
         })
     );
+    let invalid_domain: Result<
+        delaunay::prelude::geometry::ToroidalDomain<2>,
+        delaunay::prelude::geometry::ToroidalDomainError,
+    > = GeometryModuleToroidalDomain::try_new([0.0, 1.0]);
     assert_matches!(
-        try_periodic_simplex_span(&first, &[0.0, 1.0]),
-        Err(PeriodicSimplexSpanError::NonPositivePeriod {
+        invalid_domain,
+        Err(GeometryModuleToroidalDomainError::InvalidPeriod {
             axis: 0,
             period: 0.0
         })
@@ -1835,7 +1840,6 @@ fn geometry_prelude_covers_simplex_realization_validation() -> Result<(), Prelud
     let _labels: SimplexRealizationBuffer<usize> = [0, 1].into_iter().collect();
     assert_send_sync_unpin::<PeriodicSimplexSpan>();
     assert_send_sync_unpin::<LabeledSimplexRealizationError>();
-    assert_send_sync_unpin::<PeriodicSimplexSpanError>();
     assert_send_sync_unpin::<SimplexIntersectionFailure<usize>>();
     assert_error::<SimplexIntersectionFailure<usize>>();
     Ok(())
@@ -2106,24 +2110,6 @@ fn validation_prelude_covers_configuration_error() {
     };
     let root_report: RootTriangulationValidationReport = focused_report;
     assert!(root_report.is_empty());
-
-    let focused_period_error = FocusedPeriodicDomainPeriodError::NonPositivePeriod {
-        axis: 0,
-        period: 0.0,
-    };
-    assert_matches!(
-        focused_period_error,
-        FocusedPeriodicDomainPeriodError::NonPositivePeriod { axis: 0, .. }
-    );
-
-    let root_period_error = RootPeriodicDomainPeriodError::NonFinitePeriod {
-        axis: 1,
-        period: InvalidCoordinateValue::PositiveInfinity,
-    };
-    assert_matches!(
-        root_period_error,
-        RootPeriodicDomainPeriodError::NonFinitePeriod { axis: 1, .. }
-    );
 
     assert_eq!(
         FocusedSphericalValidationLayer::Realization.to_string(),

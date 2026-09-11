@@ -63,11 +63,15 @@ workflow references do not need to be loaded preemptively.
   example-only changes use the matching focused validators from
   `docs/dev/commands.md`; compose those validators once each when multiple
   focused surfaces changed.
-- **Review substantive changes before a PR.** After fast checks, run
-  `just review` against the intended PR base, assess CodeRabbit findings, and
-  fix valid issues before final validation. Small editorial changes may skip
-  review. Report unavailable or skipped reviews explicitly; command scope and
-  follow-up guidance live in `docs/dev/commands.md#local-coderabbit-review`.
+- **CodeRabbit review requires explicit authorization.** Never run CodeRabbit
+  automatically. Run `just review` (or `just review-uncommitted`) only when the
+  maintainer explicitly requests that command or gives permission for the
+  CodeRabbit review. A general request to review, fix, or prepare a PR does not
+  authorize uploading the diff to this external service. Without authorization,
+  continue local review and validation; CodeRabbit is not a readiness requirement.
+  When authorized, assess its findings and fix valid issues before final
+  validation. Command scope and follow-up guidance live in
+  `docs/dev/commands.md#local-coderabbit-review`.
 - **Find local MacTeX tools before declaring them missing.** On macOS, prepend
   `/Library/TeX/texbin` to `PATH` when commands such as `chktex` are not visible
   to a non-interactive shell; see `docs/dev/commands.md`.

@@ -43,20 +43,22 @@
 
 #![forbid(unsafe_code)]
 
+use thiserror::Error;
+use uuid::Uuid;
+
 use crate::core::collections::{
     FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
 use crate::core::facet::FacetError;
 use crate::core::util::stable_facet_identifier_from_vertex_uuids;
 use crate::core::vertex::Vertex;
+use crate::geometry::matrix::{LaError, LaVector};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{Orientation, simplex_orientation};
 use crate::geometry::traits::coordinate::CoordinateConversionError;
-use crate::geometry::util::{safe_usize_to_scalar, squared_norm};
+use crate::geometry::util::safe_usize_to_scalar;
 use crate::triangulation::Triangulation;
 use crate::triangulation::query::QueryError;
-use thiserror::Error;
-use uuid::Uuid;
 
 /// Reasons that a triangulation cannot define a convex hull.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -165,6 +167,15 @@ pub enum ConvexHullConstructionError {
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum ConvexHullQueryError {
+    /// A query-to-centroid displacement or distance is not representable.
+    #[error("distance failed while querying boundary facet {facet_index}: {source}")]
+    FacetDistance {
+        /// Zero-based boundary-facet index.
+        facet_index: usize,
+        /// Underlying vector construction or norm failure.
+        #[source]
+        source: LaError,
+    },
     /// Predicate setup failed for a query point and hull facet.
     #[error("orientation failed while querying boundary facet {facet_index}: {source}")]
     FacetOrientation {
@@ -577,9 +588,55 @@ impl<U, const D: usize> ConvexHull<U, D> {
 
     /// Finds the visible facet whose centroid is nearest to `point`.
     ///
+    /// Returns `Ok(None)` when no facet is visible, including for points on or
+    /// inside the hull. Distances are Euclidean distances to facet centroids,
+    /// not minimum distances to the facets themselves.
+    ///
     /// # Errors
     ///
-    /// Returns [`ConvexHullQueryError`] if visibility classification fails.
+    /// Returns [`ConvexHullQueryError::FacetOrientation`] if visibility
+    /// classification fails, or [`ConvexHullQueryError::FacetDistance`] if a
+    /// query-to-centroid displacement or distance is not representable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    /// };
+    /// use delaunay::prelude::geometry::{CoordinateConversionError, Point};
+    /// use delaunay::prelude::query::{
+    ///     ConvexHull, ConvexHullConstructionError, ConvexHullQueryError,
+    /// };
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     HullConstruction(#[from] ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     HullQuery(#[from] ConvexHullQueryError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
+    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let hull = ConvexHull::try_from_triangulation(triangulation.as_triangulation())?;
+    /// let outside = Point::try_from([2.0, 2.0])?;
+    /// let nearest = hull.find_nearest_visible_facet(&outside)?;
+    /// assert!(nearest.is_some());
+    /// if let Some(facet) = nearest {
+    ///     assert!(facet.is_visible_from_point(&outside)?);
+    ///     assert_eq!(facet.vertices().len(), 2);
+    /// }
+    ///
+    /// let interior = Point::try_from([0.25, 0.25])?;
+    /// assert!(hull.find_nearest_visible_facet(&interior)?.is_none());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn find_nearest_visible_facet(
         &self,
         point: &Point<D>,
@@ -590,7 +647,12 @@ impl<U, const D: usize> ConvexHull<U, D> {
                 continue;
             }
 
-            let distance = squared_distance(point.coords(), &facet.facet.centroid);
+            let distance = distance(point.coords(), &facet.facet.centroid).map_err(|source| {
+                ConvexHullQueryError::FacetDistance {
+                    facet_index: facet.index,
+                    source,
+                }
+            })?;
             if nearest.as_ref().is_none_or(
                 |(_, nearest_distance): &(ConvexHullFacetView<'_, U, D>, f64)| {
                     distance.total_cmp(nearest_distance).is_lt()
@@ -666,16 +728,24 @@ impl<U, const D: usize> ConvexHullDraft<U, D> {
     }
 }
 
-fn squared_distance<const D: usize>(left: &[f64; D], right: &[f64; D]) -> f64 {
+/// Keeps nearest-facet ordering meaningful when squared distances overflow.
+fn distance<const D: usize>(left: &[f64; D], right: &[f64; D]) -> Result<f64, LaError> {
     let mut difference = [0.0; D];
     for ((difference, left), right) in difference.iter_mut().zip(left).zip(right) {
         *difference = *left - *right;
     }
-    squared_norm(&difference)
+    LaVector::try_new(difference)?.norm()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        assert_matches,
+        sync::{Arc, Barrier},
+    };
+
+    use approx::assert_relative_eq;
+
     use super::*;
     use crate::builder::DelaunayTriangulationBuilder;
     use crate::core::tds::TdsBuilder;
@@ -683,8 +753,6 @@ mod tests {
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::triangulation::builder::TriangulationBuilder;
     use crate::vertex;
-    use std::assert_matches;
-    use std::sync::{Arc, Barrier};
 
     macro_rules! simplex_hull_test {
         ($name:ident, $dimension:literal) => {
@@ -730,6 +798,36 @@ mod tests {
         DelaunayTriangulationBuilder::new(&vertices)
             .build()
             .unwrap()
+    }
+
+    #[test]
+    fn nearest_visible_facet_orders_distances_whose_squares_overflow() {
+        let vertices: [Vertex<(), 2>; 3] = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![4.0e200, 0.0].unwrap(),
+            vertex![0.0, 2.0e200].unwrap(),
+        ];
+        let dt = DelaunayTriangulationBuilder::new(&vertices)
+            .build()
+            .unwrap();
+        dt.validate().unwrap();
+        let mut hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
+        // Visit the farther visible edge first: two infinite squares would tie.
+        hull.facets
+            .sort_by(|a, b| b.centroid[0].total_cmp(&a.centroid[0]));
+        let query = Point::try_new([-1.0e200, -1.0e200]).unwrap();
+        let nearest = hull.find_nearest_visible_facet(&query).unwrap().unwrap();
+        assert_relative_eq!(nearest.facet.centroid[0], 0.0);
+        assert_relative_eq!(nearest.facet.centroid[1] / 1.0e200, 1.0);
+
+        let query = Point::try_new([-f64::MAX, -f64::MAX]).unwrap();
+        assert_matches!(
+            hull.find_nearest_visible_facet(&query),
+            Err(ConvexHullQueryError::FacetDistance {
+                source: LaError::NonFinite { .. },
+                ..
+            })
+        );
     }
 
     #[test]

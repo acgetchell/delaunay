@@ -19,6 +19,7 @@ use delaunay::prelude::topology::validation::{
     count_boundary_simplices, count_simplices, euler_characteristic, validate_closed_boundary,
     validate_ridge_links, validate_vertex_links,
 };
+use delaunay::prelude::try_dedup_vertices_epsilon;
 use delaunay::try_vertices_from_points;
 use std::{hint::black_box, time::Duration};
 
@@ -311,6 +312,42 @@ where
     });
 }
 
+/// Axis clusters have exact binary distances and an independently known survivor order.
+fn bench_epsilon_deduplication<const D: usize>(group: &mut BenchmarkGroup<'_, WallTime>) {
+    for (case, offsets) in [
+        ("separated", &[0.0][..]),
+        ("near_duplicates", &[0.0, 0.25][..]),
+    ] {
+        let mut points = Vec::new();
+        for index in 0..64 {
+            let position = 2.0 * safe_usize_to_scalar(index).or_abort();
+            for offset in offsets {
+                let mut coordinates = [0.0; D];
+                coordinates[0] = position + offset;
+                points.push(Point::try_new(coordinates).or_abort());
+            }
+        }
+        let vertices = try_vertices_from_points(&points).or_abort();
+        let unique = try_dedup_vertices_epsilon(&vertices, 0.5).or_abort();
+        assert_eq!(unique.len(), 64);
+        for (index, vertex) in unique.iter().enumerate() {
+            let mut expected = [0.0; D];
+            expected[0] = 2.0 * safe_usize_to_scalar(index).or_abort();
+            assert_eq!(
+                vertex.point().coords().map(f64::to_bits),
+                expected.map(f64::to_bits)
+            );
+        }
+        group.bench_function(BenchmarkId::new(case, format!("{D}d")), |b| {
+            b.iter(|| {
+                black_box(
+                    try_dedup_vertices_epsilon(black_box(&vertices), black_box(0.5)).or_abort(),
+                )
+            });
+        });
+    }
+}
+
 /// Registers the same kernel families across the supported routine dimensions.
 fn bench_math_kernels(c: &mut Criterion) {
     // Each group must span every dimension: finishing another group with the
@@ -334,6 +371,15 @@ fn bench_math_kernels(c: &mut Criterion) {
         bench_geometry::<5>(&mut geometry, height);
         bench_geometry::<6>(&mut geometry, height);
         geometry.finish();
+    }
+
+    {
+        let mut deduplication = c.benchmark_group("math/epsilon_deduplication");
+        bench_epsilon_deduplication::<2>(&mut deduplication);
+        bench_epsilon_deduplication::<3>(&mut deduplication);
+        bench_epsilon_deduplication::<4>(&mut deduplication);
+        bench_epsilon_deduplication::<5>(&mut deduplication);
+        deduplication.finish();
     }
 
     let mut topology = c.benchmark_group("math/topology/cross_polytope");

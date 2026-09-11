@@ -7,6 +7,9 @@
 
 #![forbid(unsafe_code)]
 
+use core::{cmp::Ordering, hint::cold_path};
+use std::sync::LazyLock;
+
 use super::predicates::{
     InSphere, Orientation, insphere_distance, relative_insphere_classification,
     relative_insphere_determinant_sign, relative_insphere_signs, try_orientation_from_matrix,
@@ -14,8 +17,6 @@ use super::predicates::{
 use crate::geometry::matrix::{MAX_STACK_MATRIX_DIM, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateConversionError;
-use core::{cmp::Ordering, hint::cold_path};
-use std::sync::LazyLock;
 
 static PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
     LazyLock::new(|| std::env::var_os("DELAUNAY_STRICT_INSPHERE_CONSISTENCY").is_some());
@@ -451,16 +452,17 @@ fn verify_insphere_consistency<const D: usize>(
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
+    use num_traits::NumCast;
+    use rand::{RngExt, SeedableRng};
+
     use super::*;
     use crate::geometry::matrix::{
-        Matrix,
+        LaVector, Matrix,
         test_support::{matrix_get, with_la_stack_matrix},
     };
     use crate::geometry::predicates;
-    use crate::geometry::util::squared_norm;
-    use num_traits::NumCast;
-    use rand::{RngExt, SeedableRng};
-    use std::assert_matches;
 
     fn matrix_block_is_finite<const N: usize>(matrix: &Matrix<N>, k: usize) -> bool {
         (0..k).all(|row| (0..k).all(|column| matrix_get(matrix, row, column).unwrap().is_finite()))
@@ -1684,7 +1686,13 @@ mod tests {
                 for (j, &v) in coords.iter().enumerate() {
                     matrix_set(&mut matrix, i, j, v).unwrap();
                 }
-                matrix_set(&mut matrix, i, 3, squared_norm(coords)).unwrap();
+                matrix_set(
+                    &mut matrix,
+                    i,
+                    3,
+                    LaVector::try_new(*coords).unwrap().norm_squared().unwrap(),
+                )
+                .unwrap();
                 matrix_set(&mut matrix, i, 4, 1.0).unwrap();
             }
 
@@ -1692,7 +1700,16 @@ mod tests {
             for (j, &v) in test_coords.iter().enumerate() {
                 matrix_set(&mut matrix, 4, j, v).unwrap();
             }
-            matrix_set(&mut matrix, 4, 3, squared_norm(test_coords)).unwrap();
+            matrix_set(
+                &mut matrix,
+                4,
+                3,
+                LaVector::try_new(*test_coords)
+                    .unwrap()
+                    .norm_squared()
+                    .unwrap(),
+            )
+            .unwrap();
             matrix_set(&mut matrix, 4, 4, 1.0).unwrap();
 
             matrix_block_is_finite(&matrix, 5)
@@ -1726,7 +1743,13 @@ mod tests {
                 for (j, &v) in coords.iter().enumerate() {
                     matrix_set(&mut matrix, i, j, v).unwrap();
                 }
-                matrix_set(&mut matrix, i, 2, squared_norm(coords)).unwrap();
+                matrix_set(
+                    &mut matrix,
+                    i,
+                    2,
+                    LaVector::try_new(*coords).unwrap().norm_squared().unwrap(),
+                )
+                .unwrap();
                 matrix_set(&mut matrix, i, 3, 1.0).unwrap();
             }
 
@@ -1734,7 +1757,16 @@ mod tests {
             for (j, &v) in test_coords.iter().enumerate() {
                 matrix_set(&mut matrix, 3, j, v).unwrap();
             }
-            matrix_set(&mut matrix, 3, 2, squared_norm(test_coords)).unwrap();
+            matrix_set(
+                &mut matrix,
+                3,
+                2,
+                LaVector::try_new(*test_coords)
+                    .unwrap()
+                    .norm_squared()
+                    .unwrap(),
+            )
+            .unwrap();
             matrix_set(&mut matrix, 3, 3, 1.0).unwrap();
 
             matrix_block_is_finite(&matrix, 4)

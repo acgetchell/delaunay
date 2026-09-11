@@ -124,10 +124,17 @@ broad benchmark-suite changes.
 
 ## Local CodeRabbit Review
 
-Run one local CodeRabbit review after substantive code, API, numerical, or
-tooling changes settle and fast checks pass, before submitting a PR. Assess
-each finding against the repository's contracts, fix valid issues, and run the
-affected checks. Small editorial or formatting-only changes may skip review.
+CodeRabbit review is opt-in. Agents may run `just review` or
+`just review-uncommitted` only when the maintainer explicitly requests that
+command or gives permission for the CodeRabbit review. A general request to
+review, fix, validate, or prepare a PR does not authorize sending the diff to
+this external service. Without authorization, continue local review and the
+applicable validators; CodeRabbit is not a PR-readiness requirement. Do not
+interrupt routine work to request a CodeRabbit review.
+
+When authorized, run the review after substantive changes settle and fast
+checks pass. Assess each finding against the repository's contracts, fix valid
+issues, and run the affected checks.
 
 ```bash
 just review                  # Complete branch diff against local main
@@ -149,17 +156,18 @@ required scope flags are supported by CLI 0.7.6; consult
 `coderabbit review --help` when using another version. CodeRabbit is an
 external prerequisite, separate from the tools managed by `just setup-tools`.
 
-Review is a separate step from `just check` and `just ci`: it uses a remote
+CodeRabbit review is separate from `just check` and `just ci`: it uses a remote
 service, authentication, and review allowances. CLI failures propagate through
-the recipes. A skipped review, authentication failure, service error, or
-exhausted allowance is an unavailable review, never a clean result. Report
-the scope, completion status, actionable findings, fixes, and any remaining
-issues or access limitation in the handoff; continue the applicable local
-validators even when review is unavailable.
+the recipes. If an authorized review cannot run because of authentication,
+service errors, exhausted allowances, or another access limitation, report it
+as unavailable, never as a clean result. Report the scope, completion status,
+actionable findings, fixes, and any remaining issues in the handoff. A review
+that was not requested is simply not run; it does not block local validation
+or handoff.
 
-Reuse a completed review of the same diff. Rerun only when substantial fixes
-or new changes warrant another pass, rather than after every edit or to chase
-style preferences. After fixes, run `just ci` for core Rust/Cargo or public
+Reuse a completed review of the same diff. Any rerun must be covered by the
+maintainer's explicit authorization and warranted by substantial fixes or new
+changes. After fixes, run `just ci` for core Rust/Cargo or public
 behavior changes, or the focused final validators in the matrix above for
 other changes. Keep the GitHub PR review: its broader context can produce
 different findings from the local CLI review.
@@ -1014,8 +1022,8 @@ that remote resolution.
 |-----|-----|
 | Run lints | `just check` |
 | Fast compile check | `just check-fast` |
-| Review a branch and local edits before a PR | `just review [base]` |
-| Review only uncommitted edits and new files | `just review-uncommitted` |
+| CodeRabbit review of a branch and local edits, when explicitly authorized | `just review [base]` |
+| CodeRabbit review of only local edits and new files, when explicitly authorized | `just review-uncommitted` |
 | Check formatting | `just fmt-check` |
 | Check justfile formatting | `just justfile-fmt-check` |
 | Apply formatters/auto-fixes | `just fix` |

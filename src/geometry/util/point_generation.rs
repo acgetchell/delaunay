@@ -5,17 +5,18 @@
 
 #![forbid(unsafe_code)]
 
+use core::array;
+use std::{any::type_name, env, num::NonZeroUsize};
+
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+
 use super::conversions::safe_usize_to_scalar;
-use super::norms::hypot;
 use crate::geometry::coordinate_range::{
     CoordinateRange, CoordinateRangeError, InvalidCoordinateValue,
 };
+use crate::geometry::matrix::{LaError, LaVector};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateValidationError};
-use core::array;
-use rand::rngs::StdRng;
-use rand::{RngExt, SeedableRng};
-use std::{any::type_name, env, num::NonZeroUsize};
 
 /// Reason a scalar that must be finite and positive failed validation.
 ///
@@ -113,6 +114,7 @@ pub enum RandomPointGenerationError<T = f64> {
         /// Axis whose period failed validation.
         axis: usize,
         /// Why the period failed validation.
+        #[source]
         reason: InvalidPositiveScalar<T>,
     },
 
@@ -120,14 +122,16 @@ pub enum RandomPointGenerationError<T = f64> {
     #[error("Invalid ball radius: {reason}; radius must be finite and positive")]
     InvalidBallRadius {
         /// Why the radius failed validation.
+        #[source]
         reason: InvalidPositiveScalar<T>,
     },
 
-    /// Squaring a validated finite ball radius produced a non-finite value.
-    #[error("Invalid squared ball radius: {value}; squared radius must be finite")]
-    InvalidBallRadiusSquared {
-        /// The non-finite squared radius value.
-        value: InvalidCoordinateValue,
+    /// A derived displacement or norm could not be represented.
+    #[error("Point generation vector computation failed: {source}")]
+    VectorComputation {
+        /// Underlying finite-vector construction or norm failure.
+        #[from]
+        source: LaError,
     },
 
     /// Ball rejection sampling could not produce the requested point count.
@@ -189,6 +193,7 @@ pub enum RandomPointGenerationError<T = f64> {
     #[error("Invalid grid spacing: {reason}; spacing must be finite and positive")]
     InvalidGridSpacing {
         /// Why the spacing failed validation.
+        #[source]
         reason: InvalidPositiveScalar<T>,
     },
 
@@ -362,14 +367,17 @@ fn is_poisson_candidate_spaced<const D: usize>(
     candidate: &Point<D>,
     points: &[Point<D>],
     min_distance: f64,
-) -> bool {
+) -> Result<bool, RandomPointGenerationError> {
     let candidate_coords = *candidate.coords();
-    points.iter().all(|existing_point| {
+    for existing_point in points {
         let existing_coords = *existing_point.coords();
         let diff_coords: [f64; D] = array::from_fn(|i| candidate_coords[i] - existing_coords[i]);
-        let distance = hypot(&diff_coords);
-        distance >= min_distance
-    })
+        let distance = LaVector::try_new(diff_coords)?.norm()?;
+        if distance < min_distance {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Generates points after proving the validated range is safe for uniform sampling.
@@ -817,12 +825,6 @@ where
     // Rejection sampling from `[-radius, radius]^D` yields a uniform ball sample.
     let bounds = radius.symmetric_range();
     let radius = radius.get();
-    let radius_sq = radius * radius;
-    if !radius_sq.is_finite() {
-        return Err(RandomPointGenerationError::InvalidBallRadiusSquared {
-            value: InvalidCoordinateValue::from_debug(&radius_sq),
-        });
-    }
     let bounds = SamplerRange::try_new(bounds)?;
 
     let mut points = Vec::with_capacity(n_points);
@@ -831,8 +833,10 @@ where
     while points.len() < n_points && attempts < max_attempts {
         attempts += 1;
         let coords = [0.0; D].map(|_| rng.random_range(bounds.min()..bounds.max()));
-        let norm_sq = coords.iter().fold(0.0, |acc, &c| c.mul_add(c, acc));
-        if norm_sq <= radius_sq {
+        // Compare in units of radius so neither large squares overflow nor tiny
+        // squares underflow and admit points outside the ball.
+        let scaled = LaVector::try_new(coords.map(|coordinate| coordinate / radius))?;
+        if scaled.norm_squared()? <= 1.0 {
             points.push(point_from_generated_coords(coords)?);
         }
     }
@@ -870,8 +874,6 @@ where
 ///
 /// Returns [`RandomPointGenerationError::InvalidBallRadius`] if `radius` is
 /// non-finite or non-positive,
-/// [`RandomPointGenerationError::InvalidBallRadiusSquared`] if squaring a
-/// finite radius overflows to a non-finite value,
 /// [`RandomPointGenerationError::CoordinateRangeWidthOverflow`] if the
 /// radius-derived sampling cube is too wide for uniform floating-point
 /// sampling, or
@@ -914,8 +916,6 @@ pub fn generate_random_points_in_ball<const D: usize>(
 ///
 /// Returns [`RandomPointGenerationError::InvalidBallRadius`] if `radius` is
 /// non-finite or non-positive,
-/// [`RandomPointGenerationError::InvalidBallRadiusSquared`] if squaring a
-/// finite radius overflows to a non-finite value,
 /// [`RandomPointGenerationError::CoordinateRangeWidthOverflow`] if the
 /// radius-derived sampling cube is too wide for uniform floating-point
 /// sampling, or
@@ -1150,6 +1150,8 @@ fn grid_index_as_scalar<const D: usize>(
 /// * [`RandomPointGenerationError::PoissonSamplingFailed`] if `min_distance`
 ///   is too large for the bounds or if no points can be generated within the
 ///   attempt limit
+/// * [`RandomPointGenerationError::VectorComputation`] if a candidate distance
+///   is not representable as a finite `f64`.
 ///
 /// # Examples
 ///
@@ -1203,6 +1205,8 @@ pub fn try_generate_poisson_points<const D: usize>(
 /// limit. Returns
 /// [`RandomPointGenerationError::CoordinateRangeWidthOverflow`] if the validated
 /// bounds are too wide for uniform floating-point sampling.
+/// Returns [`RandomPointGenerationError::VectorComputation`] if a candidate
+/// distance is not representable as a finite `f64`.
 ///
 /// # Examples
 ///
@@ -1257,7 +1261,7 @@ pub fn generate_poisson_points_in_range<const D: usize>(
         // Generate candidate point
         let candidate = sample_point_in_range(bounds, &mut rng)?;
 
-        if is_poisson_candidate_spaced(&candidate, &points, min_distance) {
+        if is_poisson_candidate_spaced(&candidate, &points, min_distance)? {
             points.push(candidate);
         }
     }
@@ -1277,13 +1281,15 @@ pub fn generate_poisson_points_in_range<const D: usize>(
 
 #[cfg(test)]
 mod tests {
+    use std::{assert_matches, error::Error};
+
+    use approx::assert_relative_eq;
+
     use super::*;
     use crate::geometry::coordinate_range::{
         CoordinateRangeBound, CoordinateRangeError, CoordinateRangeOrdering, InvalidCoordinateValue,
     };
     use crate::geometry::traits::coordinate::CoordinateConversionError;
-    use approx::assert_relative_eq;
-    use std::assert_matches;
 
     /// Builds non-zero test literals so grid-generation tests exercise the typed boundary.
     const fn nonzero(value: usize) -> NonZeroUsize {
@@ -1329,6 +1335,51 @@ mod tests {
         assert_eq!(dimension, D);
     }
 
+    /// Scaling the independently checked ball constraint avoids overflowing the oracle.
+    fn assert_extreme_scale_sampling<const D: usize>() {
+        for radius in [1.0e-200, 1.0, 1.0e200] {
+            let points = generate_random_points_in_ball_seeded::<D>(64, radius, 576).unwrap();
+            assert_eq!(points.len(), 64);
+            for point in points {
+                let scaled_square: f64 = point
+                    .coords()
+                    .iter()
+                    .map(|coordinate| {
+                        let scaled = coordinate / radius;
+                        scaled * scaled
+                    })
+                    .sum();
+                assert!(scaled_square <= 1.0 + 1.0e-12);
+            }
+        }
+        let origin = Point::try_new([0.0; D]).unwrap();
+        let mut coords = [0.0; D];
+        coords[0] = 3.0e200;
+        coords[1] = 4.0e200;
+        let candidate = Point::try_new(coords).unwrap();
+        assert!(is_poisson_candidate_spaced(&candidate, &[origin], 4.9e200).unwrap());
+        assert!(!is_poisson_candidate_spaced(&candidate, &[origin], 5.1e200).unwrap());
+
+        let candidate = Point::try_new([f64::MAX; D]).unwrap();
+        assert_matches!(
+            is_poisson_candidate_spaced(&candidate, &[origin], 1.0),
+            Err(RandomPointGenerationError::VectorComputation {
+                source: LaError::NonFinite { .. }
+            })
+        );
+    }
+
+    macro_rules! extreme_scale_sampling_tests {
+        ($($dimension:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(#[test]
+                fn [<extreme_scale_sampling_ $dimension d>]() {
+                    assert_extreme_scale_sampling::<$dimension>();
+                })+
+            }
+        };
+    }
+
     macro_rules! gen_generated_point_coordinate_rejected_tests {
         ($dim:literal) => {
             pastey::paste! {
@@ -1361,6 +1412,27 @@ mod tests {
     gen_generated_point_coordinate_rejected_tests!(3);
     gen_generated_point_coordinate_rejected_tests!(4);
     gen_generated_point_coordinate_rejected_tests!(5);
+
+    extreme_scale_sampling_tests!(2, 3, 4, 5, 6);
+
+    #[test]
+    fn scalar_validation_errors_preserve_source_chain() {
+        let errors = [
+            generate_random_points_periodic::<2>(1, [1.0, -1.0], 576).unwrap_err(),
+            generate_random_points_in_ball::<2>(1, -1.0).unwrap_err(),
+            generate_grid_points(nonzero(1), -1.0, [0.0; 2]).unwrap_err(),
+        ];
+        for error in errors {
+            let source = error
+                .source()
+                .and_then(|source| source.downcast_ref::<InvalidPositiveScalar>());
+            assert_eq!(
+                source,
+                Some(&InvalidPositiveScalar::NonPositive { value: -1.0 }),
+                "missing typed validation cause for {error:?}"
+            );
+        }
+    }
 
     #[test]
     fn random_point_generation_error_display_names_variants() {
@@ -1420,14 +1492,6 @@ mod tests {
         let display = format!("{radius_error}");
         assert!(display.contains("Invalid ball radius"));
         assert!(display.contains("NaN"));
-
-        let squared_radius_error: RandomPointGenerationError<f64> =
-            RandomPointGenerationError::InvalidBallRadiusSquared {
-                value: InvalidCoordinateValue::PositiveInfinity,
-            };
-        let display = format!("{squared_radius_error}");
-        assert!(display.contains("Invalid squared ball radius"));
-        assert!(display.contains("inf"));
 
         let ball_error = RandomPointGenerationError::BallSamplingFailed {
             requested_points: 4,
@@ -2005,12 +2069,11 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_random_points_in_ball_rejects_overflowing_radius_squared() {
+    fn test_generate_random_points_in_ball_rejects_overflowing_sampling_width() {
         let result = generate_random_points_in_ball::<2>(1, f64::MAX);
         assert_matches!(
             result,
-            Err(RandomPointGenerationError::InvalidBallRadiusSquared { value })
-                if value == InvalidCoordinateValue::PositiveInfinity
+            Err(RandomPointGenerationError::CoordinateRangeWidthOverflow { .. })
         );
     }
 
@@ -2382,7 +2445,7 @@ mod tests {
                     let coords1 = *p1.coords();
                     let coords2 = *p2.coords();
                     let diff = [coords1[0] - coords2[0], coords1[1] - coords2[1]];
-                    let distance = hypot(&diff);
+                    let distance = LaVector::try_new(diff).unwrap().norm().unwrap();
                     assert!(
                         distance >= 0.5 - 1e-10,
                         "Distance {distance} violates minimum distance constraint"
@@ -2418,7 +2481,7 @@ mod tests {
                         coords1[1] - coords2[1],
                         coords1[2] - coords2[2],
                     ];
-                    let distance = hypot(&diff);
+                    let distance = LaVector::try_new(diff).unwrap().norm().unwrap();
                     assert!(distance >= 0.2 - 1e-10);
                 }
             }
@@ -2451,7 +2514,7 @@ mod tests {
                         coords1[2] - coords2[2],
                         coords1[3] - coords2[3],
                     ];
-                    let distance = hypot(&diff);
+                    let distance = LaVector::try_new(diff).unwrap().norm().unwrap();
                     assert!(distance >= 0.5 - 1e-12);
                 }
             }
@@ -2485,7 +2548,7 @@ mod tests {
                         coords1[3] - coords2[3],
                         coords1[4] - coords2[4],
                     ];
-                    let distance = hypot(&diff);
+                    let distance = LaVector::try_new(diff).unwrap().norm().unwrap();
                     assert!(distance >= 0.4 - 1e-10);
                 }
             }

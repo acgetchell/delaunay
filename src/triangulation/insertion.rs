@@ -6,6 +6,19 @@
 
 #![forbid(unsafe_code)]
 
+use core::{array::from_fn, fmt::NumBuffer};
+use std::{
+    borrow::Cow,
+    env,
+    sync::{
+        Mutex, MutexGuard, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
+
+use uuid::Uuid;
+
 use crate::core::algorithms::insertion::{
     CavityFillingError, CavityRepairStage, HullExtensionReason, InitialSimplexConstructionError,
     InsertionError, extend_hull, external_facets_for_boundary, fill_cavity_replacing_simplices,
@@ -34,6 +47,7 @@ use crate::core::traits::data_type::DataType;
 use crate::core::util::coords_within_epsilon_inclusive;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
+use crate::geometry::matrix::LaVector;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateValues, DEFAULT_TOLERANCE_F64};
 use crate::triangulation::Triangulation;
@@ -46,17 +60,6 @@ use crate::triangulation::rollback::{
     TriangulationRollbackTransaction, TriangulationRollbackWindow,
 };
 use crate::triangulation::validation::TopologyConstructionProvenance;
-
-use uuid::Uuid;
-
-use core::fmt::NumBuffer;
-use std::borrow::Cow;
-use std::env;
-use std::sync::{
-    Mutex, MutexGuard, OnceLock,
-    atomic::{AtomicBool, Ordering},
-};
-use std::time::{Duration, Instant};
 
 /// Maximum number of repair iterations for fixing non-manifold topology after insertion.
 ///
@@ -100,14 +103,13 @@ pub fn duplicate_coordinate_tolerance_from_references<'a, const D: usize>(
     }
 
     let feature_scale = if saw_reference {
-        axis_min
-            .iter()
-            .zip(axis_max)
-            .fold(0.0, |span_squared, (minimum, maximum)| {
-                let span = maximum - minimum;
-                span.mul_add(span, span_squared)
-            })
-            .sqrt()
+        let span = from_fn(|axis| axis_max[axis] - axis_min[axis]);
+        let Ok(length) = LaVector::<D>::try_new(span).and_then(|span| span.norm()) else {
+            // Preserve the conservative default when the span itself cannot
+            // be represented, without discarding a finite span whose square overflows.
+            return DUPLICATE_RELATIVE_TOLERANCE;
+        };
+        length
     } else {
         1.0
     };

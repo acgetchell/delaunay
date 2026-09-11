@@ -39,7 +39,10 @@
 
 #![forbid(unsafe_code)]
 
+use thiserror::Error;
+
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
+use crate::geometry::periodic::ToroidalDomain;
 use crate::geometry::point::{Point, ValidatedCoordinates};
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
@@ -49,7 +52,6 @@ use crate::geometry::util::simplex_lp::{
     intersection_via_legacy_active_sets, intersection_via_linear_program,
     shared_face_fast_confinement,
 };
-use thiserror::Error;
 
 /// Stack-backed buffer for per-simplex realization labels and coordinates.
 pub type SimplexRealizationBuffer<T> = SmallBuffer<T, MAX_PRACTICAL_DIMENSION_SIZE>;
@@ -215,25 +217,23 @@ impl<L, const D: usize> LabeledSimplexRealization<L, D> {
     ///
     /// # Errors
     ///
-    /// Returns [`LabeledSimplexRealizationError::InvalidPeriodicDomainPeriod`] if a
-    /// period is non-finite or non-positive, or
-    /// [`LabeledSimplexRealizationError::NonFiniteCoordinate`] if translating by
+    /// Returns [`LabeledSimplexRealizationError::NonFiniteCoordinate`] if translating by
     /// `shift * period` produces a NaN or infinite coordinate.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::geometry::{
-    ///     LabeledSimplexRealization, LabeledSimplexRealizationError,
-    /// };
     /// use approx::assert_abs_diff_eq;
+    /// use delaunay::prelude::geometry::{
+    ///     LabeledSimplexRealization, LabeledSimplexRealizationError, ToroidalDomain,
+    /// };
     ///
     /// # fn main() -> Result<(), LabeledSimplexRealizationError> {
     /// let simplex = LabeledSimplexRealization::try_new(
     ///     [0_usize, 1, 2],
     ///     [[0.0, 0.0], [0.5, 0.0], [0.0, 0.5]],
     /// )?;
-    /// let translated = simplex.try_translated(&[1.0, 1.0], &[1, -1])?;
+    /// let translated = simplex.try_translated(&ToroidalDomain::unit(), &[1, -1])?;
     ///
     /// assert_abs_diff_eq!(translated.coordinates()[0][0], 1.0, epsilon = f64::EPSILON);
     /// assert_abs_diff_eq!(translated.coordinates()[0][1], -1.0, epsilon = f64::EPSILON);
@@ -242,14 +242,13 @@ impl<L, const D: usize> LabeledSimplexRealization<L, D> {
     /// ```
     pub fn try_translated(
         &self,
-        periods: &[f64; D],
+        domain: &ToroidalDomain<D>,
         shift: &[i32; D],
     ) -> Result<Self, LabeledSimplexRealizationError>
     where
         L: Clone,
     {
-        validate_periods(periods)?;
-
+        let periods = domain.periods();
         let mut translated_coordinates = self.coordinates.clone();
         for coords in &mut translated_coordinates {
             for axis in 0..D {
@@ -321,35 +320,6 @@ pub enum LabeledSimplexRealizationError {
         coordinate_index: usize,
         /// Classified invalid floating-point value.
         coordinate_value: InvalidCoordinateValue,
-    },
-    /// A periodic domain period was invalid.
-    #[error(transparent)]
-    InvalidPeriodicDomainPeriod {
-        /// Underlying invalid-period error.
-        #[from]
-        source: PeriodicSimplexSpanError,
-    },
-}
-
-/// Errors produced while checking a simplex against periodic-domain periods.
-#[derive(Clone, Debug, Error, PartialEq)]
-#[non_exhaustive]
-pub enum PeriodicSimplexSpanError {
-    /// A period was NaN or infinite.
-    #[error("non-finite periodic period at axis {axis}: {period}")]
-    NonFinitePeriod {
-        /// Periodic axis with the invalid period.
-        axis: usize,
-        /// Classified invalid period value.
-        period: InvalidCoordinateValue,
-    },
-    /// A finite period was zero or negative.
-    #[error("non-positive periodic period at axis {axis}: {period}")]
-    NonPositivePeriod {
-        /// Periodic axis with the invalid period.
-        axis: usize,
-        /// Raw finite non-positive period.
-        period: f64,
     },
 }
 
@@ -498,45 +468,34 @@ pub fn axis_aligned_bounding_boxes_overlap<L1, L2, const D: usize>(
 
 /// Finds the first periodic axis whose simplex span cannot fit in one chart.
 ///
-/// # Errors
-///
-/// Returns [`PeriodicSimplexSpanError`] when any period is non-finite or not
-/// strictly positive.
+/// The domain already carries finite, strictly positive periods. A span that
+/// overflows `f64` still exceeds its finite period and produces a witness.
 ///
 /// # Examples
 ///
 /// ```rust
 /// use delaunay::prelude::geometry::{
 ///     LabeledSimplexRealization, LabeledSimplexRealizationError,
-///     PeriodicSimplexSpanError, try_periodic_simplex_span,
+///     ToroidalDomain, periodic_simplex_span,
 /// };
 ///
-/// #[derive(Debug, thiserror::Error)]
-/// enum ExampleError {
-///     #[error(transparent)]
-///     Realization(#[from] LabeledSimplexRealizationError),
-///     #[error(transparent)]
-///     PeriodicSpan(#[from] PeriodicSimplexSpanError),
-/// }
-///
-/// # fn main() -> Result<(), ExampleError> {
+/// # fn main() -> Result<(), LabeledSimplexRealizationError> {
 /// let simplex = LabeledSimplexRealization::try_new(
 ///     [0_usize, 1, 2],
 ///     [[0.0, 0.0], [1.0, 0.0], [0.0, 0.25]],
 /// )?;
 ///
-/// let span = try_periodic_simplex_span(&simplex, &[1.0, 2.0])?;
+/// let span = periodic_simplex_span(&simplex, &ToroidalDomain::unit());
 /// assert_eq!(span.map(|witness| witness.axis()), Some(0));
 /// # Ok(())
 /// # }
 /// ```
-pub fn try_periodic_simplex_span<L, const D: usize>(
+#[must_use]
+pub fn periodic_simplex_span<L, const D: usize>(
     simplex: &LabeledSimplexRealization<L, D>,
-    periods: &[f64; D],
-) -> Result<Option<PeriodicSimplexSpan>, PeriodicSimplexSpanError> {
-    validate_periods(periods)?;
-
-    for (axis, &period) in periods.iter().enumerate() {
+    domain: &ToroidalDomain<D>,
+) -> Option<PeriodicSimplexSpan> {
+    for (axis, &period) in domain.periods().iter().enumerate() {
         let (min_coord, max_coord) = simplex.coordinates().iter().fold(
             (f64::INFINITY, f64::NEG_INFINITY),
             |(min_coord, max_coord), coords| {
@@ -546,26 +505,10 @@ pub fn try_periodic_simplex_span<L, const D: usize>(
         );
         let span = max_coord - min_coord;
         if span >= period {
-            return Ok(Some(PeriodicSimplexSpan { axis, span, period }));
+            return Some(PeriodicSimplexSpan { axis, span, period });
         }
     }
-    Ok(None)
-}
-
-/// Proves that every periodic-domain period is finite and strictly positive.
-fn validate_periods<const D: usize>(periods: &[f64; D]) -> Result<(), PeriodicSimplexSpanError> {
-    for (axis, &period) in periods.iter().enumerate() {
-        if !period.is_finite() {
-            return Err(PeriodicSimplexSpanError::NonFinitePeriod {
-                axis,
-                period: InvalidCoordinateValue::from_debug(&period),
-            });
-        }
-        if period <= 0.0 {
-            return Err(PeriodicSimplexSpanError::NonPositivePeriod { axis, period });
-        }
-    }
-    Ok(())
+    None
 }
 
 /// Validates that two simplex realizations meet only along labels they share.
@@ -783,9 +726,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use approx::assert_abs_diff_eq;
     use std::assert_matches;
+
+    use approx::assert_abs_diff_eq;
+
+    use super::*;
 
     #[derive(Clone)]
     struct CloneOnlyLabel;
@@ -928,7 +873,7 @@ mod tests {
         .unwrap();
 
         let err = simplex
-            .try_translated(&[f64::MAX, 1.0], &[2, 0])
+            .try_translated(&ToroidalDomain::try_new([f64::MAX, 1.0]).unwrap(), &[2, 0])
             .unwrap_err();
 
         assert_matches!(
@@ -942,24 +887,27 @@ mod tests {
     }
 
     #[test]
-    fn translated_realization_rejects_invalid_periods() {
+    fn periodic_realization_preserves_validated_domain_across_translations() {
         let simplex = LabeledSimplexRealization::try_new(
             vec![0, 1, 2],
             vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
         )
         .unwrap();
 
-        let err = simplex.try_translated(&[1.0, -1.0], &[0, 1]).unwrap_err();
-
-        assert_matches!(
-            err,
-            LabeledSimplexRealizationError::InvalidPeriodicDomainPeriod {
-                source: PeriodicSimplexSpanError::NonPositivePeriod {
-                    axis: 1,
-                    period: -1.0,
-                },
+        let domain = ToroidalDomain::try_new([2.5, 3.25]).unwrap();
+        let translated = simplex.try_translated(&domain, &[1, -1]).unwrap();
+        let expected = [[2.5, -3.25], [3.5, -3.25], [2.5, -2.25]];
+        assert_eq!(translated.coordinates().len(), expected.len());
+        for (actual, expected) in translated.coordinates().iter().zip(expected) {
+            for (actual, expected) in actual.iter().zip(expected) {
+                assert_abs_diff_eq!(*actual, expected, epsilon = f64::EPSILON);
             }
-        );
+        }
+        assert_eq!(translated.labels(), simplex.labels());
+        assert!(periodic_simplex_span(&simplex, &domain).is_none());
+        assert!(periodic_simplex_span(&translated, &domain).is_none());
+        let restored = translated.try_translated(&domain, &[-1, 1]).unwrap();
+        assert_eq!(restored, simplex);
     }
 
     #[test]
@@ -974,7 +922,7 @@ mod tests {
         };
 
         let translated = simplex
-            .try_translated(&[1.0, 1.0], &[1, 0])
+            .try_translated(&ToroidalDomain::unit(), &[1, 0])
             .expect("translation preserves already-validated labels");
 
         assert_eq!(translated.labels().len(), 3);
@@ -1011,38 +959,24 @@ mod tests {
         )
         .unwrap();
 
-        let span = try_periodic_simplex_span(&simplex, &[1.0, 1.0])
-            .unwrap()
-            .unwrap();
+        let span = periodic_simplex_span(&simplex, &ToroidalDomain::unit()).unwrap();
         assert_eq!(span.axis(), 0);
         assert_abs_diff_eq!(span.span(), 1.0, epsilon = f64::EPSILON);
         assert_abs_diff_eq!(span.period(), 1.0, epsilon = f64::EPSILON);
     }
 
     #[test]
-    fn periodic_simplex_span_rejects_invalid_periods() {
+    fn periodic_simplex_span_detects_unrepresentable_coordinate_span() {
         let simplex = LabeledSimplexRealization::try_new(
             vec![0, 1, 2],
-            vec![[0.0, 0.0], [0.5, 0.0], [0.0, 0.25]],
+            vec![[-f64::MAX, 0.0], [f64::MAX, 0.0], [0.0, 0.25]],
         )
         .unwrap();
 
-        let non_finite = try_periodic_simplex_span(&simplex, &[f64::NAN, 1.0]).unwrap_err();
-        assert_matches!(
-            non_finite,
-            PeriodicSimplexSpanError::NonFinitePeriod {
-                axis: 0,
-                period: InvalidCoordinateValue::Nan,
-            }
-        );
-
-        let non_positive = try_periodic_simplex_span(&simplex, &[1.0, 0.0]).unwrap_err();
-        assert_matches!(
-            non_positive,
-            PeriodicSimplexSpanError::NonPositivePeriod {
-                axis: 1,
-                period: 0.0,
-            }
-        );
+        let domain = ToroidalDomain::try_new([f64::MAX, 1.0]).unwrap();
+        let span = periodic_simplex_span(&simplex, &domain).unwrap();
+        assert_eq!(span.axis(), 0);
+        assert!(span.span().is_infinite());
+        assert_eq!(span.period().to_bits(), f64::MAX.to_bits());
     }
 }

@@ -16,6 +16,16 @@
 //! `la-stack` owns exact matrix elimination. Already-derived rational inputs
 //! stay exact through `RationalMatrix` and `RationalVector`, with explicit
 //! rounding only at a public coordinate boundary.
+//!
+//! Fixed-size distances use [`la_stack::Vector::norm`], which can return a finite
+//! length even when its square overflows. Rounded squared quantities use
+//! [`la_stack::Vector::norm_squared`]; predicate-specific exact lifting still forms squares
+//! from rational source coordinates. The former `geometry::util::{hypot,
+//! squared_norm}` helpers and their prelude exports have been removed. Downstream
+//! callers replacing those imports must declare their own direct `la-stack`
+//! dependency. Construct a vector with [`la_stack::Vector::try_new`], then call
+//! [`norm`](la_stack::Vector::norm) or [`norm_squared`](la_stack::Vector::norm_squared)
+//! and handle the typed backend errors.
 
 #![forbid(unsafe_code)]
 
