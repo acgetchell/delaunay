@@ -6,11 +6,14 @@
 
 #![forbid(unsafe_code)]
 
-use crate::geometry::matrix::{LaError, RationalVector, solve_exact_runtime_system};
+use core::array::from_fn;
+
+use la_stack::{BigInt, BigRational, FromPrimitive, Signed, ToPrimitive};
+
+use crate::geometry::matrix::{LaError, LaVector, RationalVector, solve_exact_runtime_system};
 use crate::geometry::realization::{
     LabeledSimplexRealization, SimplexIntersectionWitness, SimplexRealizationBuffer,
 };
-use la_stack::{BigInt, BigRational, FromPrimitive, Signed, ToPrimitive};
 
 /// Tries cheap candidate separators in the normal space of one shared face.
 #[expect(
@@ -71,17 +74,13 @@ where
         })
         .collect();
 
-    let mut axis = vec![0.0; D];
+    let mut axis = [0.0; D];
     let mut normalized_rays = Vec::with_capacity(2 * D);
     for (label, coordinates) in first.labels().iter().zip(first.coordinates()) {
         if shared_labels.contains(label) {
             continue;
         }
-        let raw_ray: Vec<_> = coordinates
-            .iter()
-            .zip(base)
-            .map(|(coordinate, shared)| coordinate - shared)
-            .collect();
+        let raw_ray = from_fn(|coordinate| coordinates[coordinate] - base[coordinate]);
         let Some(ray) = project_ray_orthogonal_to_shared_face(raw_ray, &shared_deltas, &gram)
         else {
             return false;
@@ -89,17 +88,13 @@ where
         for coordinate in 0..D {
             axis[coordinate] += ray[coordinate];
         }
-        push_normalized_ray(&mut normalized_rays, ray);
+        push_normalized_ray::<D>(&mut normalized_rays, ray);
     }
     for (label, coordinates) in second.labels().iter().zip(second.coordinates()) {
         if shared_labels.contains(label) {
             continue;
         }
-        let raw_ray: Vec<_> = base
-            .iter()
-            .zip(coordinates)
-            .map(|(shared, coordinate)| shared - coordinate)
-            .collect();
+        let raw_ray = from_fn(|coordinate| base[coordinate] - coordinates[coordinate]);
         let Some(ray) = project_ray_orthogonal_to_shared_face(raw_ray, &shared_deltas, &gram)
         else {
             return false;
@@ -107,7 +102,7 @@ where
         for coordinate in 0..D {
             axis[coordinate] += ray[coordinate];
         }
-        push_normalized_ray(&mut normalized_rays, ray);
+        push_normalized_ray::<D>(&mut normalized_rays, ray);
     }
     if axis.iter().all(|value| value.is_finite())
         && provisional_axis_certifies_confinement(first, second, shared_labels, &axis)
@@ -115,7 +110,7 @@ where
         return true;
     }
 
-    let mut refined_axis = vec![0.0; D];
+    let mut refined_axis = [0.0; D];
     for ray in &normalized_rays {
         for (value, component) in refined_axis.iter_mut().zip(ray) {
             *value += component;
@@ -142,11 +137,11 @@ where
 }
 
 /// Removes provisional components tangent to the shared affine face.
-fn project_ray_orthogonal_to_shared_face(
-    mut ray: Vec<f64>,
+fn project_ray_orthogonal_to_shared_face<const D: usize>(
+    mut ray: [f64; D],
     shared_deltas: &[Vec<f64>],
     gram: &[Vec<f64>],
-) -> Option<Vec<f64>> {
+) -> Option<[f64; D]> {
     if shared_deltas.is_empty() {
         return Some(ray);
     }
@@ -181,12 +176,12 @@ where
 }
 
 /// Appends one finite unit ray for provisional separator refinement.
-fn push_normalized_ray(rays: &mut Vec<Vec<f64>>, ray: Vec<f64>) {
-    let norm = ray
-        .iter()
-        .fold(0.0_f64, |value, component| value.hypot(*component));
-    if norm.is_finite() && norm > 0.0 {
-        rays.push(ray.into_iter().map(|component| component / norm).collect());
+fn push_normalized_ray<const D: usize>(rays: &mut Vec<[f64; D]>, ray: [f64; D]) {
+    let Ok(norm) = LaVector::try_new(ray).and_then(|vector| vector.norm()) else {
+        return;
+    };
+    if norm > 0.0 {
+        rays.push(ray.map(|component| component / norm));
     }
 }
 

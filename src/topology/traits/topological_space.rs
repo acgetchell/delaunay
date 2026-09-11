@@ -6,9 +6,12 @@
 //! Topology-specific behavior is delegated through the internal
 //! `global_topology_model` adapter layer.
 
+use thiserror::Error;
+
 use crate::core::{facet::FacetError, tds::TdsError};
 use crate::topology::manifold::ManifoldError;
-use thiserror::Error;
+
+pub use crate::geometry::periodic::{ToroidalDomain, ToroidalDomainError};
 
 /// Errors that can occur during topology computation or validation.
 ///
@@ -135,168 +138,6 @@ pub enum ToroidalConstructionMode {
     /// because quotient realization validation is not implemented for that
     /// construction path.
     Explicit,
-}
-
-/// Errors that can occur while parsing a toroidal fundamental domain.
-///
-/// Toroidal domains require every period to be finite and strictly positive.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::topology::spaces::{ToroidalDomain, ToroidalDomainError};
-///
-/// std::assert_matches!(
-///     ToroidalDomain::<2>::try_new([1.0, 0.0]),
-///     Err(ToroidalDomainError::InvalidPeriod { axis: 1, period })
-///         if period.abs() < f64::EPSILON
-/// );
-/// ```
-#[derive(Clone, Copy, Debug, Error, PartialEq)]
-#[non_exhaustive]
-pub enum ToroidalDomainError {
-    /// A domain period was not finite and strictly positive.
-    #[error("Invalid toroidal period {period:?} on axis {axis}; expected finite value > 0")]
-    InvalidPeriod {
-        /// Axis index containing the invalid period.
-        axis: usize,
-        /// Invalid period value.
-        period: f64,
-    },
-}
-
-/// Validated toroidal fundamental-domain periods.
-///
-/// This type carries the invariant that every period is finite and strictly
-/// positive, so stored topology metadata cannot represent invalid domains.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::topology::spaces::ToroidalDomain;
-///
-/// # fn main() -> Result<(), delaunay::prelude::topology::spaces::ToroidalDomainError> {
-/// let domain = ToroidalDomain::<2>::try_new([1.0, 2.0])?;
-/// assert_eq!(domain.periods(), &[1.0, 2.0]);
-/// # Ok(())
-/// # }
-/// ```
-#[must_use]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ToroidalDomain<const D: usize> {
-    periods: [f64; D],
-}
-
-impl<const D: usize> ToroidalDomain<D> {
-    /// Creates a validated toroidal domain from raw periods.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ToroidalDomainError::InvalidPeriod`] when any period is
-    /// non-finite, zero, or negative.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::topology::spaces::{ToroidalDomain, ToroidalDomainError};
-    ///
-    /// # fn main() -> Result<(), ToroidalDomainError> {
-    /// let domain = ToroidalDomain::<2>::try_new([1.0, 2.0])?;
-    /// assert_eq!(domain.periods(), &[1.0, 2.0]);
-    ///
-    /// std::assert_matches!(
-    ///     ToroidalDomain::<2>::try_new([0.0, 2.0]),
-    ///     Err(ToroidalDomainError::InvalidPeriod { axis: 0, period })
-    ///         if period.abs() < f64::EPSILON
-    /// );
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn try_new(periods: [f64; D]) -> Result<Self, ToroidalDomainError> {
-        for (axis, period) in periods.iter().copied().enumerate() {
-            if !period.is_finite() || period <= 0.0 {
-                return Err(ToroidalDomainError::InvalidPeriod { axis, period });
-            }
-        }
-        Ok(Self { periods })
-    }
-
-    /// Creates a unit toroidal domain with period `1.0` on every axis.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::topology::spaces::ToroidalDomain;
-    ///
-    /// let domain = ToroidalDomain::<3>::unit();
-    /// assert_eq!(domain.periods(), &[1.0, 1.0, 1.0]);
-    /// ```
-    pub const fn unit() -> Self {
-        Self { periods: [1.0; D] }
-    }
-
-    /// Returns the validated periods.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::topology::spaces::ToroidalDomain;
-    ///
-    /// # fn main() -> Result<(), delaunay::prelude::topology::spaces::ToroidalDomainError> {
-    /// let domain = ToroidalDomain::<2>::try_new([2.0, 3.0])?;
-    /// assert_eq!(domain.periods(), &[2.0, 3.0]);
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use]
-    pub const fn periods(&self) -> &[f64; D] {
-        &self.periods
-    }
-
-    /// Returns the period for one axis.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::topology::spaces::ToroidalDomain;
-    ///
-    /// # fn main() -> Result<(), delaunay::prelude::topology::spaces::ToroidalDomainError> {
-    /// let domain = ToroidalDomain::<2>::try_new([2.0, 3.0])?;
-    /// assert_eq!(domain.period(0), Some(2.0));
-    /// assert_eq!(domain.period(2), None);
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use]
-    pub fn period(&self, axis: usize) -> Option<f64> {
-        self.periods.get(axis).copied()
-    }
-
-    /// Consumes the domain and returns the validated raw periods.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::topology::spaces::ToroidalDomain;
-    ///
-    /// # fn main() -> Result<(), delaunay::prelude::topology::spaces::ToroidalDomainError> {
-    /// let domain = ToroidalDomain::<2>::try_new([2.0, 3.0])?;
-    /// assert_eq!(domain.into_periods(), [2.0, 3.0]);
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use]
-    pub const fn into_periods(self) -> [f64; D] {
-        self.periods
-    }
-}
-
-impl<const D: usize> TryFrom<[f64; D]> for ToroidalDomain<D> {
-    type Error = ToroidalDomainError;
-
-    fn try_from(value: [f64; D]) -> Result<Self, Self::Error> {
-        Self::try_new(value)
-    }
 }
 
 /// Runtime metadata describing the global topological space associated with a triangulation.
@@ -727,7 +568,6 @@ pub trait TopologicalSpace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use approx::assert_relative_eq;
     use std::assert_matches;
 
     #[test]
@@ -928,57 +768,6 @@ mod tests {
         assert!(debug_str.contains("Toroidal"));
         assert!(debug_str.contains("domain"));
         assert!(debug_str.contains("mode"));
-    }
-
-    #[test]
-    fn test_toroidal_domain_try_new_rejects_invalid_periods() {
-        let zero = ToroidalDomain::<2>::try_new([1.0, 0.0]).unwrap_err();
-        assert_matches!(
-            zero,
-            ToroidalDomainError::InvalidPeriod { axis: 1, period }
-                if period.abs() < f64::EPSILON
-        );
-
-        let negative = ToroidalDomain::<2>::try_new([-1.0, 1.0]).unwrap_err();
-        assert_matches!(
-            negative,
-            ToroidalDomainError::InvalidPeriod { axis: 0, period }
-                if period < 0.0
-        );
-
-        let nan = ToroidalDomain::<2>::try_new([f64::NAN, 1.0]).unwrap_err();
-        assert_matches!(
-            nan,
-            ToroidalDomainError::InvalidPeriod { axis: 0, period }
-                if period.is_nan()
-        );
-
-        let infinite = ToroidalDomain::<2>::try_new([1.0, f64::INFINITY]).unwrap_err();
-        assert_matches!(
-            infinite,
-            ToroidalDomainError::InvalidPeriod { axis: 1, period }
-                if period.is_infinite()
-        );
-    }
-
-    #[test]
-    fn test_toroidal_domain_try_from_and_into_periods_preserve_validation() {
-        let domain = ToroidalDomain::<3>::try_from([1.0, 2.0, 4.0]).unwrap();
-        assert_relative_eq!(domain.periods()[0], 1.0);
-        assert_relative_eq!(domain.periods()[1], 2.0);
-        assert_relative_eq!(domain.periods()[2], 4.0);
-
-        let periods = domain.into_periods();
-        assert_relative_eq!(periods[0], 1.0);
-        assert_relative_eq!(periods[1], 2.0);
-        assert_relative_eq!(periods[2], 4.0);
-
-        let invalid = ToroidalDomain::<3>::try_from([1.0, f64::NEG_INFINITY, 4.0]).unwrap_err();
-        assert_matches!(
-            invalid,
-            ToroidalDomainError::InvalidPeriod { axis: 1, period }
-                if period.is_infinite() && period.is_sign_negative()
-        );
     }
 
     #[test]

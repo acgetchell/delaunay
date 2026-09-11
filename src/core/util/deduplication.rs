@@ -2,10 +2,13 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::vertex::Vertex;
-use crate::geometry::traits::coordinate::OrderedEq;
-use core::cmp::Ordering;
+use core::{array::from_fn, cmp::Ordering};
+
 use thiserror::Error;
+
+use crate::core::vertex::Vertex;
+use crate::geometry::matrix::{LaError, LaVector};
+use crate::geometry::traits::coordinate::OrderedEq;
 
 /// Errors returned by fallible vertex deduplication helpers.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -84,6 +87,8 @@ where
 /// Uses Euclidean distance to detect vertices within `epsilon` of each other.
 /// This is more lenient than exact comparison and helps prevent numerical issues
 /// from near-duplicate insertions.
+/// Comparisons use rounded `f64` arithmetic, falling back to stable lengths when
+/// squared quantities overflow or lose precision in the subnormal range.
 ///
 /// # Complexity
 ///
@@ -246,8 +251,12 @@ pub(crate) fn coords_equal_exact<const D: usize>(a: &[f64; D], b: &[f64; D]) -> 
 }
 
 /// Compares Euclidean distance with a non-negative finite threshold without
-/// overflowing when both squared values exceed the binary64 range.
-#[inline]
+/// losing their scale when squared values overflow or become subnormal.
+#[expect(
+    clippy::inline_always,
+    reason = "measured 2D–5D deduplication kernels avoid a comparison call for every vertex pair"
+)]
+#[inline(always)]
 fn compare_coordinate_distance_to_threshold<const D: usize>(
     a: &[f64; D],
     b: &[f64; D],
@@ -257,43 +266,44 @@ fn compare_coordinate_distance_to_threshold<const D: usize>(
         return None;
     }
 
-    let distance_squared = a.iter().zip(b).fold(0.0, |acc, (x, y)| {
-        let difference = *x - *y;
-        difference.mul_add(difference, acc)
-    });
+    let differences = from_fn(|axis| a[axis] - b[axis]);
+    let Ok(difference) = LaVector::<D>::try_new(differences) else {
+        // Finite endpoints whose subtraction overflows are farther apart
+        // than any finite threshold. Non-finite inputs have no ordering.
+        return a
+            .iter()
+            .chain(b)
+            .all(|value| value.is_finite())
+            .then_some(Ordering::Greater);
+    };
     let threshold_squared = threshold * threshold;
-    let both_squares_underflowed = distance_squared == 0.0 && threshold_squared == 0.0;
-    let both_squares_overflowed = !distance_squared.is_finite() && !threshold_squared.is_finite();
-
-    if !both_squares_underflowed && !both_squares_overflowed {
-        return distance_squared.partial_cmp(&threshold_squared);
-    }
-
-    // Both squares lost scale, so compare in units of the largest coordinate
-    // difference. This cold path distinguishes both `inf` from `inf` and
-    // nonzero subnormal distances from zero.
-    let mut scale = 0.0_f64;
-    for (x, y) in a.iter().zip(b) {
-        let difference = (*x - *y).abs();
-        if difference.is_nan() {
-            return None;
+    match difference.norm_squared() {
+        Ok(distance_squared)
+            if distance_squared >= f64::MIN_POSITIVE && threshold_squared >= f64::MIN_POSITIVE =>
+        {
+            return distance_squared.partial_cmp(&threshold_squared);
         }
-        if difference.is_infinite() {
-            return Some(Ordering::Greater);
-        }
-        scale = scale.max(difference);
+        Ok(_) | Err(LaError::NonFinite { .. }) => {}
+        Err(_) => return None,
     }
 
-    if scale == 0.0 {
-        return 0.0_f64.partial_cmp(&threshold);
-    }
+    compare_length_to_threshold(&difference, threshold)
+}
 
-    let scaled_distance_squared = a.iter().zip(b).fold(0.0, |acc, (x, y)| {
-        let scaled_difference = (*x - *y) / scale;
-        scaled_difference.mul_add(scaled_difference, acc)
-    });
-    let scaled_threshold = threshold / scale;
-    scaled_distance_squared.partial_cmp(&(scaled_threshold * scaled_threshold))
+/// Keeps the stable-length fallback out of ordinary squared-distance comparisons.
+#[cold]
+fn compare_length_to_threshold<const D: usize>(
+    difference: &LaVector<D>,
+    threshold: f64,
+) -> Option<Ordering> {
+    // Even nonzero subnormal squares can lose enough relative precision to
+    // change the ordering. For a finite vector, norm overflow proves the
+    // distance exceeds every finite threshold.
+    match difference.norm() {
+        Ok(distance) => distance.partial_cmp(&threshold),
+        Err(LaError::NonFinite { .. }) => Some(Ordering::Greater),
+        Err(_) => None,
+    }
 }
 
 /// Checks whether Euclidean distance is strictly less than epsilon.
@@ -428,6 +438,11 @@ mod tests {
 
         let positive_extreme = [f64::MAX, f64::MAX];
         let negative_extreme = [-f64::MAX, -f64::MAX];
+        assert!(!coords_within_epsilon_inclusive(
+            &a,
+            &positive_extreme,
+            f64::MAX
+        ));
         assert!(!coords_within_epsilon(
             &positive_extreme,
             &negative_extreme,
@@ -450,6 +465,61 @@ mod tests {
                 &coords, &coords, threshold
             ));
         }
+    }
+
+    #[test]
+    fn epsilon_comparison_preserves_order_when_squares_are_subnormal() {
+        fn check<const D: usize>() {
+            let unit = 2.0_f64.powi(-539);
+            let origin = [0.0; D];
+            // Squaring 3*unit and 4*unit rounds both to the smallest
+            // subnormal. Squaring each 2.5*unit component rounds to zero,
+            // although the diagonal is longer than 3*unit: 12.5 > 9.
+            for (x, y, threshold, expected) in [
+                (3.0, 0.0, 4.0, Ordering::Less),
+                (4.0, 0.0, 3.0, Ordering::Greater),
+                (2.5, 2.5, 3.0, Ordering::Greater),
+                (3.0, 0.0, 3.0, Ordering::Equal),
+            ] {
+                let mut point = origin;
+                point[0] = x * unit;
+                point[1] = y * unit;
+                let threshold = threshold * unit;
+                assert_eq!(
+                    compare_coordinate_distance_to_threshold(&origin, &point, threshold),
+                    Some(expected),
+                    "{D}D displacement ({x}, {y}) at threshold {threshold:e}"
+                );
+                assert_eq!(
+                    coords_within_epsilon(&origin, &point, threshold),
+                    expected == Ordering::Less
+                );
+                assert_eq!(
+                    coords_within_epsilon_inclusive(&origin, &point, threshold),
+                    expected != Ordering::Greater
+                );
+            }
+        }
+        check::<2>();
+        check::<3>();
+        check::<4>();
+        check::<5>();
+    }
+
+    #[test]
+    fn epsilon_deduplication_preserves_tiny_distance_clusters() {
+        let unit = 2.0_f64.powi(-539);
+        let origin = vertex([0.0, 0.0]);
+        let near = vertex([3.0 * unit, 0.0]);
+        let distant = vertex([2.5 * unit, 2.5 * unit]);
+        assert_eq!(
+            try_dedup_vertices_epsilon(&[origin, near], 4.0 * unit).unwrap(),
+            vec![origin]
+        );
+        assert_eq!(
+            try_dedup_vertices_epsilon(&[origin, distant], 3.0 * unit).unwrap(),
+            vec![origin, distant]
+        );
     }
 
     #[test]

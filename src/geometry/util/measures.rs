@@ -10,19 +10,19 @@
 
 #![forbid(unsafe_code)]
 
+use std::array::from_fn;
+
+use num_traits::Float;
+
 use super::circumsphere::{
     CircumcenterError, CircumcenterFailureReason, DegenerateGeometry, DegenerateMeasure,
 };
 use super::conversions::{ValueConversionError, safe_usize_to_scalar};
-use super::norms::hypot;
-use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::facet::FacetView;
 use crate::geometry::matrix::{LaError, LaVector, Matrix, Tolerance, gram_matrix};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateConversionValue;
 use crate::tds::FacetError;
-use num_traits::Float;
-use std::array::from_fn;
 
 /// Error type for surface measure computation operations.
 ///
@@ -89,7 +89,7 @@ fn ensure_finite_measure_value(
     if value.is_finite() {
         Ok(())
     } else {
-        Err(CircumcenterError::MatrixInversionFailed {
+        Err(CircumcenterError::InvalidMeasure {
             reason: CircumcenterFailureReason::NonFiniteMeasure {
                 measure,
                 value: CoordinateConversionValue::from_numeric_debug(&value),
@@ -117,7 +117,7 @@ fn ensure_positive_measure_value(
 fn invalid_measure_error(value: f64, measure: DegenerateMeasure) -> CircumcenterError {
     match ensure_finite_measure_value(value, measure) {
         Err(error) => error,
-        Ok(()) => CircumcenterError::MatrixInversionFailed {
+        Ok(()) => CircumcenterError::InvalidMeasure {
             reason: CircumcenterFailureReason::NonPositiveSimplexMeasure {
                 measure,
                 value: CoordinateConversionValue::from_numeric_debug(&value),
@@ -169,7 +169,7 @@ fn ensure_finite_measure_values<const N: usize>(
 /// # Errors
 ///
 /// - [`CircumcenterError::InvalidSimplex`] if `points.len() != D + 1`.
-/// - [`CircumcenterError::MatrixInversionFailed`] for degeneracy detected by a
+/// - [`CircumcenterError::InvalidMeasure`] for degeneracy detected by a
 ///   direct formula, non-finite edge differences or measure intermediates, a
 ///   non-positive/non-finite Gram determinant, or normalization underflow to zero.
 ///   The [`CircumcenterFailureReason`] identifies the geometric failure.
@@ -273,7 +273,7 @@ pub fn simplex_volume<const D: usize>(points: &[Point<D>]) -> Result<f64, Circum
 
             // Check for degeneracy (coincident points).
             if length == 0.0 {
-                return Err(CircumcenterError::MatrixInversionFailed {
+                return Err(CircumcenterError::InvalidMeasure {
                     reason: CircumcenterFailureReason::DegenerateSimplex {
                         measure: DegenerateMeasure::Length,
                         degeneracy: DegenerateGeometry::CoincidentPoints,
@@ -305,7 +305,7 @@ pub fn simplex_volume<const D: usize>(points: &[Point<D>]) -> Result<f64, Circum
             let cross_scale = Float::abs(v1[0] * v2[1]) + Float::abs(v1[1] * v2[0]);
             ensure_finite_measure_value(cross_scale, DegenerateMeasure::Area)?;
             if is_zero_or_roundoff(cross_z, cross_scale) {
-                return Err(CircumcenterError::MatrixInversionFailed {
+                return Err(CircumcenterError::InvalidMeasure {
                     reason: CircumcenterFailureReason::DegenerateSimplex {
                         measure: DegenerateMeasure::Volume,
                         degeneracy: DegenerateGeometry::CollinearPoints,
@@ -353,7 +353,7 @@ pub fn simplex_volume<const D: usize>(points: &[Point<D>]) -> Result<f64, Circum
                 + Float::abs(v1[2] * v2[1] * v3[0]);
             ensure_finite_measure_value(triple_scale, DegenerateMeasure::Volume)?;
             if is_zero_or_roundoff(triple_product, triple_scale) {
-                return Err(CircumcenterError::MatrixInversionFailed {
+                return Err(CircumcenterError::InvalidMeasure {
                     reason: CircumcenterFailureReason::DegenerateSimplex {
                         measure: DegenerateMeasure::Volume,
                         degeneracy: DegenerateGeometry::CoplanarPoints,
@@ -379,20 +379,20 @@ pub fn simplex_volume<const D: usize>(points: &[Point<D>]) -> Result<f64, Circum
 /// without clamping it or hiding its sign behind an absolute tolerance.
 fn validate_gram_determinant(det: f64) -> Result<f64, CircumcenterError> {
     if !det.is_finite() {
-        return Err(CircumcenterError::MatrixInversionFailed {
+        return Err(CircumcenterError::InvalidMeasure {
             reason: CircumcenterFailureReason::NonFiniteGramDeterminant,
         });
     }
 
     if det < 0.0 {
-        return Err(CircumcenterError::MatrixInversionFailed {
+        return Err(CircumcenterError::InvalidMeasure {
             reason: CircumcenterFailureReason::NegativeGramDeterminant,
         });
     }
 
     // Degenerate case: zero determinant means no volume
     if det == 0.0 {
-        return Err(CircumcenterError::MatrixInversionFailed {
+        return Err(CircumcenterError::InvalidMeasure {
             reason: CircumcenterFailureReason::DegenerateSimplex {
                 measure: DegenerateMeasure::Volume,
                 degeneracy: DegenerateGeometry::CollinearOrCoplanarPoints,
@@ -544,7 +544,7 @@ fn simplex_volume_gram_matrix<const D: usize>(
 ///
 /// Propagates errors from [`simplex_volume`] and [`facet_measure`], including
 /// their typed geometric and linear-algebra failures. Additionally returns
-/// [`CircumcenterError::MatrixInversionFailed`] if the sum of facet measures or
+/// [`CircumcenterError::InvalidMeasure`] if the sum of facet measures or
 /// the resulting radius is non-finite or non-positive, including radius underflow
 /// to zero, and [`CircumcenterError::ValueConversion`]
 /// if `D` cannot be represented as `f64` for the radius formula.
@@ -656,14 +656,16 @@ pub fn inradius<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumcenter
 ///   point count.
 /// - [`CircumcenterError::UnsupportedMatrixDimension`] if the Gram dimension
 ///   `D - 1` exceeds [`crate::geometry::matrix::MAX_STACK_MATRIX_DIM`].
-/// - [`CircumcenterError::MatrixInversionFailed`] for geometric degeneracy,
-///   non-finite edge differences or measure intermediates, or a non-positive/
-///   non-finite Gram determinant, or normalization underflow to zero.
+/// - [`CircumcenterError::InvalidMeasure`] for geometric degeneracy,
+///   non-finite 3D edge or cross-product expansion-scale intermediates, non-finite
+///   Gram edge differences, a non-positive/non-finite Gram determinant, or
+///   normalization underflow to zero.
 ///   The [`CircumcenterFailureReason`] is preserved.
-/// - [`CircumcenterError::LinearAlgebraFailure`] for checked Gram construction
-///   or LDLT failures, preserving [`LaError::Singular`],
+/// - [`CircumcenterError::LinearAlgebraFailure`] for checked vector construction
+///   (including a non-finite 3D cross product), norms, Gram construction, or
+///   LDLT failures, preserving [`LaError::Singular`],
 ///   [`LaError::NotPositiveSemidefinite`], or [`LaError::NonFinite`] as applicable.
-///   Dot-product overflow retains the backend operation and first failing
+///   Vector and dot-product failures retain the backend operation and failing
 ///   coordinate index.
 ///
 /// As with [`simplex_volume`], finite [`Point`] coordinates do not guarantee
@@ -715,6 +717,11 @@ pub fn inradius<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumcenter
 /// # Ok(())
 /// # }
 /// ```
+#[expect(
+    clippy::inline_always,
+    reason = "measured 2D–6D facet and surface kernels eliminate dimension-dispatch call overhead"
+)]
+#[inline(always)]
 pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, CircumcenterError> {
     if points.len() != D {
         return Err(CircumcenterError::InvalidSimplex {
@@ -740,13 +747,11 @@ pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumc
             let p1 = points[1].coords();
 
             let diff = [p1[0] - p0[0], p1[1] - p0[1]];
-            ensure_finite_measure_values(&diff, DegenerateMeasure::Length)?;
-            let length = hypot(&diff);
-            ensure_finite_measure_value(length, DegenerateMeasure::Length)?;
+            let length = LaVector::try_new(diff)?.norm()?;
 
             // Check for degeneracy (coincident points).
             if length == 0.0 {
-                return Err(CircumcenterError::MatrixInversionFailed {
+                return Err(CircumcenterError::InvalidMeasure {
                     reason: CircumcenterFailureReason::DegenerateFacet {
                         measure: DegenerateMeasure::Length,
                         degeneracy: DegenerateGeometry::CoincidentPoints,
@@ -774,12 +779,9 @@ pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumc
                 v1[0].mul_add(-v2[2], v1[2] * v2[0]),
                 v1[1].mul_add(-v2[0], v1[0] * v2[1]),
             ];
-            ensure_finite_measure_values(&cross, DegenerateMeasure::Area)?;
-
             // Area is |cross product| / 2
-            let cross_magnitude = hypot(&cross);
+            let cross_magnitude = LaVector::try_new(cross)?.norm()?;
             let area = cross_magnitude / (2.0); // Divide by 2
-            ensure_finite_measure_value(cross_magnitude, DegenerateMeasure::Area)?;
 
             // Check for degeneracy (collinear points) using the expansion scale
             // of the cross-product components.
@@ -791,7 +793,7 @@ pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumc
                 + Float::abs(v1[1] * v2[0]);
             ensure_finite_measure_value(cross_scale, DegenerateMeasure::Area)?;
             if is_zero_or_roundoff(cross_magnitude, cross_scale) {
-                return Err(CircumcenterError::MatrixInversionFailed {
+                return Err(CircumcenterError::InvalidMeasure {
                     reason: CircumcenterFailureReason::DegenerateFacet {
                         measure: DegenerateMeasure::Area,
                         degeneracy: DegenerateGeometry::CollinearPoints,
@@ -942,9 +944,11 @@ pub fn surface_measure<U, V, const D: usize>(
     let mut total_measure = 0.0;
 
     for facet in facets {
-        // Keep contiguous numerical workspace inline while the view borrows its owner.
-        let points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
-            facet.vertices().map(|vertex| *vertex.point()).collect();
+        // FacetView proves that its containing D-simplex has exactly D facet vertices.
+        let mut points = [Point::default(); D];
+        for (point, vertex) in points.iter_mut().zip(facet.vertices()) {
+            *point = *vertex.point();
+        }
 
         let measure = facet_measure(&points).map_err(SurfaceMeasureError::from)?;
         total_measure += measure;
@@ -1146,7 +1150,7 @@ mod tests {
                 for result in [simplex_volume(&points), facet_measure(&points[..D])] {
                     assert_eq!(
                         result.unwrap_err(),
-                        CircumcenterError::MatrixInversionFailed {
+                        CircumcenterError::InvalidMeasure {
                             reason: CircumcenterFailureReason::NonFiniteMeasure {
                                 measure: DegenerateMeasure::Volume,
                                 value: CoordinateConversionValue::NonFinite(expected.clone()),
@@ -1199,6 +1203,17 @@ mod tests {
 
     measure_isometry_tests!(2, 3, 4, 5, 6);
     gram_measure_error_tests!(4, 5, 6);
+
+    #[test]
+    fn facet_measure_handles_norms_whose_squares_overflow() {
+        let segment =
+            [[0.0, 0.0], [3.0e200, 4.0e200]].map(|coords| Point::try_new(coords).unwrap());
+        assert_relative_eq!(facet_measure(&segment).unwrap() / 1.0e200, 5.0);
+
+        let triangle = [[0.0, 0.0, 0.0], [1.0e100, 0.0, 0.0], [0.0, 1.0e100, 0.0]]
+            .map(|coords| Point::try_new(coords).unwrap());
+        assert_relative_eq!(facet_measure(&triangle).unwrap() / 1.0e200, 0.5);
+    }
 
     #[test]
     fn simplex_gram_matrix_preserves_exact_symmetry_and_shape() {
@@ -1278,7 +1293,7 @@ mod tests {
         ];
         assert_matches!(
             simplex_volume(&line),
-            Err(CircumcenterError::MatrixInversionFailed {
+            Err(CircumcenterError::InvalidMeasure {
                 reason: CircumcenterFailureReason::DegenerateSimplex {
                     measure: DegenerateMeasure::Length,
                     degeneracy: DegenerateGeometry::CoincidentPoints,
@@ -1348,7 +1363,7 @@ mod tests {
         let result = simplex_volume(&collinear);
         assert_matches!(
             result,
-            Err(CircumcenterError::MatrixInversionFailed {
+            Err(CircumcenterError::InvalidMeasure {
                 reason: CircumcenterFailureReason::DegenerateSimplex {
                     measure: DegenerateMeasure::Volume,
                     degeneracy: DegenerateGeometry::CollinearPoints,
@@ -1367,7 +1382,7 @@ mod tests {
 
         assert_matches!(
             simplex_volume(&points),
-            Err(CircumcenterError::MatrixInversionFailed {
+            Err(CircumcenterError::InvalidMeasure {
                 reason: CircumcenterFailureReason::NonFiniteMeasure {
                     measure: DegenerateMeasure::Length,
                     value: CoordinateConversionValue::NonFinite(
@@ -1388,7 +1403,7 @@ mod tests {
 
         assert_matches!(
             simplex_volume(&points),
-            Err(CircumcenterError::MatrixInversionFailed {
+            Err(CircumcenterError::InvalidMeasure {
                 reason: CircumcenterFailureReason::NonFiniteMeasure {
                     measure: DegenerateMeasure::Area,
                     value: CoordinateConversionValue::NonFinite(
@@ -1410,7 +1425,7 @@ mod tests {
         let result = simplex_volume(&coplanar);
         assert_matches!(
             result,
-            Err(CircumcenterError::MatrixInversionFailed {
+            Err(CircumcenterError::InvalidMeasure {
                 reason: CircumcenterFailureReason::DegenerateSimplex {
                     measure: DegenerateMeasure::Volume,
                     degeneracy: DegenerateGeometry::CoplanarPoints,
@@ -1497,7 +1512,7 @@ mod tests {
         ];
         assert_matches!(
             simplex_volume(&triangle),
-            Err(CircumcenterError::MatrixInversionFailed {
+            Err(CircumcenterError::InvalidMeasure {
                 reason: CircumcenterFailureReason::DegenerateSimplex {
                     measure: DegenerateMeasure::Volume,
                     degeneracy: DegenerateGeometry::CollinearPoints,
@@ -1510,7 +1525,7 @@ mod tests {
         });
         assert_matches!(
             facet_measure(&embedded),
-            Err(CircumcenterError::MatrixInversionFailed {
+            Err(CircumcenterError::InvalidMeasure {
                 reason: CircumcenterFailureReason::DegenerateFacet {
                     measure: DegenerateMeasure::Area,
                     degeneracy: DegenerateGeometry::CollinearPoints,
@@ -1532,7 +1547,7 @@ mod tests {
                 if bits == 1 {
                     assert_eq!(
                         result.unwrap_err(),
-                        CircumcenterError::MatrixInversionFailed {
+                        CircumcenterError::InvalidMeasure {
                             reason: CircumcenterFailureReason::NonPositiveSimplexMeasure {
                                 measure: DegenerateMeasure::Area,
                                 value: CoordinateConversionValue::from_numeric_debug(&0.0),
@@ -1556,7 +1571,7 @@ mod tests {
             if bits == 3 {
                 assert_eq!(
                     result.unwrap_err(),
-                    CircumcenterError::MatrixInversionFailed {
+                    CircumcenterError::InvalidMeasure {
                         reason: CircumcenterFailureReason::NonPositiveSimplexMeasure {
                             measure: DegenerateMeasure::Volume,
                             value: CoordinateConversionValue::from_numeric_debug(&0.0),
@@ -1627,7 +1642,7 @@ mod tests {
                 if bits == 1 {
                     assert_eq!(
                         result.unwrap_err(),
-                        CircumcenterError::MatrixInversionFailed {
+                        CircumcenterError::InvalidMeasure {
                             reason: CircumcenterFailureReason::NonPositiveSimplexMeasure {
                                 measure: DegenerateMeasure::Length,
                                 value: CoordinateConversionValue::from_numeric_debug(&0.0),
@@ -1659,7 +1674,7 @@ mod tests {
             if overflows {
                 assert_matches!(
                     inradius(&triangle),
-                    Err(CircumcenterError::MatrixInversionFailed {
+                    Err(CircumcenterError::InvalidMeasure {
                         reason: CircumcenterFailureReason::NonFiniteMeasure {
                             measure: DegenerateMeasure::SurfaceArea,
                             value: CoordinateConversionValue::NonFinite(
@@ -1860,13 +1875,13 @@ mod tests {
     fn gram_determinant_nonfinite_errors() {
         assert_matches!(
             validate_gram_determinant(f64::NAN),
-            Err(CircumcenterError::MatrixInversionFailed {
+            Err(CircumcenterError::InvalidMeasure {
                 reason: CircumcenterFailureReason::NonFiniteGramDeterminant,
             })
         );
         assert_matches!(
             validate_gram_determinant(f64::INFINITY),
-            Err(CircumcenterError::MatrixInversionFailed {
+            Err(CircumcenterError::InvalidMeasure {
                 reason: CircumcenterFailureReason::NonFiniteGramDeterminant,
             })
         );
@@ -1876,7 +1891,7 @@ mod tests {
     fn gram_determinant_zero_reports_degenerate_volume() {
         assert_matches!(
             validate_gram_determinant(0.0),
-            Err(CircumcenterError::MatrixInversionFailed {
+            Err(CircumcenterError::InvalidMeasure {
                 reason: CircumcenterFailureReason::DegenerateSimplex {
                     measure: DegenerateMeasure::Volume,
                     degeneracy: DegenerateGeometry::CollinearOrCoplanarPoints,
@@ -1889,7 +1904,7 @@ mod tests {
     fn test_validate_gram_determinant_tiny_negative_errors() {
         assert_matches!(
             validate_gram_determinant(-1e-13),
-            Err(CircumcenterError::MatrixInversionFailed {
+            Err(CircumcenterError::InvalidMeasure {
                 reason: CircumcenterFailureReason::NegativeGramDeterminant,
             })
         );
@@ -2076,15 +2091,17 @@ mod tests {
             Point::try_new([1.0, -2.0]).expect("finite point coordinates"),
         ];
 
+        let error = facet_measure(&points).unwrap_err();
         assert_matches!(
-            facet_measure(&points),
-            Err(CircumcenterError::MatrixInversionFailed {
+            error,
+            CircumcenterError::InvalidMeasure {
                 reason: CircumcenterFailureReason::DegenerateFacet {
                     measure: DegenerateMeasure::Length,
                     degeneracy: DegenerateGeometry::CoincidentPoints,
                 },
-            })
+            }
         );
+        assert!(error.to_string().contains("Invalid geometric measure"));
     }
 
     #[test]
@@ -2094,15 +2111,10 @@ mod tests {
             Point::try_new([f64::MAX, f64::MAX]).expect("finite point coordinates"),
         ];
 
-        assert_matches!(
+        assert_eq!(
             facet_measure(&points),
-            Err(CircumcenterError::MatrixInversionFailed {
-                reason: CircumcenterFailureReason::NonFiniteMeasure {
-                    measure: DegenerateMeasure::Length,
-                    value: CoordinateConversionValue::NonFinite(
-                        InvalidCoordinateValue::PositiveInfinity
-                    ),
-                },
+            Err(CircumcenterError::LinearAlgebraFailure {
+                source: LaError::non_finite_input_vector(0),
             })
         );
     }
@@ -2115,15 +2127,10 @@ mod tests {
             Point::try_new([0.0, f64::MAX, 0.0]).expect("finite point coordinates"),
         ];
 
-        assert_matches!(
+        assert_eq!(
             facet_measure(&points),
-            Err(CircumcenterError::MatrixInversionFailed {
-                reason: CircumcenterFailureReason::NonFiniteMeasure {
-                    measure: DegenerateMeasure::Area,
-                    value: CoordinateConversionValue::NonFinite(
-                        InvalidCoordinateValue::PositiveInfinity
-                    ),
-                },
+            Err(CircumcenterError::LinearAlgebraFailure {
+                source: LaError::non_finite_input_vector(2),
             })
         );
     }
@@ -2140,7 +2147,7 @@ mod tests {
 
         assert_matches!(
             result,
-            Err(CircumcenterError::MatrixInversionFailed {
+            Err(CircumcenterError::InvalidMeasure {
                 reason: CircumcenterFailureReason::DegenerateFacet {
                     measure: DegenerateMeasure::Area,
                     degeneracy: DegenerateGeometry::CollinearPoints,
@@ -2240,7 +2247,7 @@ mod tests {
             if overflows {
                 assert_eq!(
                     surface_measure(&facets).unwrap_err(),
-                    SurfaceMeasureError::from(CircumcenterError::MatrixInversionFailed {
+                    SurfaceMeasureError::from(CircumcenterError::InvalidMeasure {
                         reason: CircumcenterFailureReason::NonFiniteMeasure {
                             measure: DegenerateMeasure::SurfaceArea,
                             value: CoordinateConversionValue::NonFinite(

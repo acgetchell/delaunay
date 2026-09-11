@@ -51,6 +51,11 @@
 use std::cmp::Ordering;
 use std::fmt::{self, Display, Formatter};
 
+use num_traits::NumCast;
+use slotmap::Key;
+use thiserror::Error;
+use uuid::Uuid;
+
 use crate::core::collections::{
     SimplexKeyBuffer, SimplexKeySet, VertexKeyBuffer, fast_hash_set_with_capacity,
 };
@@ -58,7 +63,7 @@ use crate::core::facet::{FacetHandle, facet_key_from_vertices};
 use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, Tds, TdsError, TdsRollbackTransaction, VertexKey};
 use crate::core::vertex::Vertex;
-use crate::geometry::util::norms::hypot;
+use crate::geometry::matrix::LaVector;
 use crate::refinement::RefinementError;
 use crate::topology::manifold::{
     BoundaryFacetClassification, ManifoldError, ValidatedFacetDegreeMap, classify_boundary_facet,
@@ -67,10 +72,6 @@ use crate::topology::manifold::{
 };
 use crate::topology::ridge::{build_ridge_star_map, simplex_star_simplices};
 use crate::topology::traits::topological_space::GlobalTopology;
-use num_traits::NumCast;
-use slotmap::Key;
-use thiserror::Error;
-use uuid::Uuid;
 
 // =============================================================================
 // CONFIGURATION
@@ -1191,10 +1192,9 @@ fn simplex_quality_score<U, V, const D: usize>(tds: &Tds<U, V, D>, simplex_key: 
             for (idx, d) in diff.iter_mut().enumerate() {
                 *d = vi.point().coords()[idx] - vj.point().coords()[idx];
             }
-            let len = hypot(&diff);
-            if !len.is_finite() {
+            let Ok(len) = LaVector::try_new(diff).and_then(|edge| edge.norm()) else {
                 return f64::MAX;
-            }
+            };
             edge_count += 1;
             let Some(current_edge_count): Option<f64> = NumCast::from(edge_count) else {
                 return f64::MAX;

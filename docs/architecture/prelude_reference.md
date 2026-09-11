@@ -22,7 +22,7 @@ they exercise.
 | Post-construction vertex deletion errors and keys | `use delaunay::prelude::deletion::*` |
 | Topological operation outcomes, policies, and telemetry | `use delaunay::prelude::operations::*` |
 | Construct, stage, inspect, or validate low-level TDS values | `use delaunay::prelude::tds::*` |
-| Points, simplex realizations, coordinate ranges, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
+| Points, periodic domains, simplex realizations, coordinate ranges, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
 | Random points or triangulations for examples, tests, and benchmarks | `use delaunay::prelude::generators::*` |
 | Read-only traversal, adjacency, ridge views, simplex barycenters, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
 | Point location and conflict-region algorithms | `use delaunay::prelude::algorithms::*` |
@@ -38,6 +38,17 @@ The operations prelude intentionally overlaps the insertion prelude for
 insertion result types. Use `insertion` for the complete insertion error/result
 workflow and `operations` for cross-operation classification, repair decisions,
 and suspicion telemetry.
+
+The geometry and topology-space preludes intentionally share `ToroidalDomain`
+and `ToroidalDomainError`. Both expose the canonical types from
+`delaunay::geometry::periodic`, also available through `delaunay::geometry`.
+One parsed domain can therefore serve simplex translation, periodic-span checks,
+and `GlobalTopology::Toroidal` metadata without conversion or revalidation.
+
+General vector norms use a direct `la-stack` dependency and `la_stack::Vector`.
+The former `hypot` and `squared_norm` utility/prelude exports have been removed.
+The geometry prelude retains `LaError` so callers can inspect backend causes
+returned by Delaunay APIs; it does not export the internal vector alias.
 
 ## Policy
 

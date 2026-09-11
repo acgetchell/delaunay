@@ -28,7 +28,6 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::geometry::{
     AdaptiveKernel, CircumcenterError, Coordinate, CoordinateConversionError, Point, circumcenter,
-    hypot,
 };
 use delaunay::prelude::insertion::InsertionError;
 use delaunay::prelude::pachner::{
@@ -41,12 +40,18 @@ use delaunay::prelude::validation::{
     DelaunayTriangulationValidationError, TriangulationRealizationValidationError,
 };
 use delaunay::{DelaunayRefinementBuilder, InvariantError};
+use la_stack::{LaError, Vector};
 
 type ExampleResult<T = ()> = Result<T, TopologyEditingExampleError>;
 type Dt3 = Triangulation<AdaptiveKernel<f64>, (), (), 3>;
 
 #[derive(Debug, thiserror::Error)]
 enum TopologyEditingExampleError {
+    #[error("distance computation failed: {source}")]
+    Distance {
+        #[from]
+        source: LaError,
+    },
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
@@ -213,9 +218,9 @@ fn pachner_2d_k1() -> ExampleResult {
                 coords[0] - circumcenter_coords[0],
                 coords[1] - circumcenter_coords[1],
             ];
-            hypot(&diff)
+            Vector::try_new(diff)?.norm()
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     println!("  Circumcenter distances to vertices: {distances:?}");
 
     println!(
@@ -429,9 +434,9 @@ fn pachner_3d_k1() -> ExampleResult {
                 coords[1] - circumcenter_coords[1],
                 coords[2] - circumcenter_coords[2],
             ];
-            hypot(&diff)
+            Vector::try_new(diff)?.norm()
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     println!("  Circumcenter distances to vertices: {distances:?}");
 
     println!(

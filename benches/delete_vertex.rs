@@ -15,14 +15,15 @@
 //! cargo bench --profile perf --bench delete_vertex
 //! ```
 
+use std::{hint::black_box, time::Duration};
+
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, ExactPredicates, Point};
 use delaunay::prelude::tds::VertexKey;
 use delaunay::try_vertices_from_points;
-use std::hint::black_box;
-use std::time::Duration;
+use la_stack::Vector;
 
 /// Shared benchmark setup error helpers.
 #[path = "common/bench_utils.rs"]
@@ -287,12 +288,16 @@ fn normalized_positive_direction<const D: usize>(point: &Point<D>) -> [f64; D] {
 /// Convert a random point in `[0, 1]^D` into a unit direction around the origin.
 fn centered_unit_direction<const D: usize>(point: &Point<D>) -> [f64; D] {
     let mut direction = [0.0; D];
-    let mut norm_squared = 0.0;
 
     for (direction_coord, coordinate) in direction.iter_mut().zip(point.coords()) {
         *direction_coord = coordinate - COSPHERICAL_CENTER;
-        norm_squared = (*direction_coord).mul_add(*direction_coord, norm_squared);
     }
+    // Coordinates lie in [-0.5, 0.5], so this squared epsilon comparison and
+    // its reused square root are representable for the fixture dimensions.
+    let norm_squared = Vector::try_new(direction)
+        .or_abort()
+        .norm_squared()
+        .or_abort();
 
     if norm_squared <= f64::EPSILON {
         direction[0] = 1.0;

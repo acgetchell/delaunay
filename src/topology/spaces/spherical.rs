@@ -14,6 +14,9 @@ use thiserror::Error;
 /// vector. Construction proves that the vector length is exactly `D + 1`,
 /// every coordinate is finite, and the point has been normalized to the
 /// requested radius.
+/// Radius scaling must preserve each computed unit coordinate to within
+/// `4 * f64::EPSILON` absolute error when divided back by the radius. This
+/// rejects subnormal radii that cannot represent the direction accurately.
 ///
 /// # Examples
 ///
@@ -60,7 +63,9 @@ impl<const D: usize> SphericalPoint<D> {
     ///
     /// Returns [`SphericalPointError`] when `radius` is not finite and positive,
     /// the coordinate count is not `D + 1`, any coordinate is non-finite, or the
-    /// input vector has zero norm.
+    /// input vector has zero norm. Returns
+    /// [`SphericalPointError::UnrepresentableNormalization`] if radius scaling
+    /// cannot preserve the computed unit direction within the type's tolerance.
     ///
     /// # Examples
     ///
@@ -84,8 +89,10 @@ impl<const D: usize> SphericalPoint<D> {
     ///
     /// # Errors
     ///
-    /// Returns [`SphericalPointError`] when the slice cannot be normalized into
-    /// a point on `S^D`.
+    /// Returns [`SphericalPointError::InvalidAmbientCoordinateCount`] unless the
+    /// slice has `D + 1` entries, [`SphericalPointError::NonFiniteCoordinate`] if
+    /// any entry is non-finite, or [`SphericalPointError::ZeroNorm`] if all entries
+    /// are zero.
     ///
     /// # Examples
     ///
@@ -106,8 +113,14 @@ impl<const D: usize> SphericalPoint<D> {
     ///
     /// # Errors
     ///
-    /// Returns [`SphericalPointError`] when `radius` is not finite and positive
-    /// or when the slice cannot be normalized into a point on `S^D`.
+    /// Returns [`SphericalPointError::InvalidRadius`] if `radius` is not finite
+    /// and positive, [`SphericalPointError::InvalidAmbientCoordinateCount`]
+    /// unless the slice has `D + 1` entries,
+    /// [`SphericalPointError::NonFiniteCoordinate`] if any entry is non-finite,
+    /// or [`SphericalPointError::ZeroNorm`] if all entries are zero.
+    /// Returns [`SphericalPointError::UnrepresentableNormalization`] if scaling
+    /// a finite nonzero direction to `radius` exceeds the unit-coordinate
+    /// tolerance documented on [`SphericalPoint`].
     ///
     /// # Examples
     ///
@@ -226,6 +239,11 @@ impl<const D: usize> SphericalPoint<D> {
 
     /// Returns the squared Euclidean norm of the stored ambient coordinates.
     ///
+    /// This rounded scalar observation is in squared coordinate units. It can
+    /// overflow to infinity for a large valid radius or underflow to zero for a
+    /// small valid radius. It does not certify normalization or finite distances;
+    /// use [`Self::radius`] for the radius established during construction.
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -337,8 +355,12 @@ impl<const D: usize> SphericalMetric<D> {
     ///
     /// # Errors
     ///
-    /// Returns [`SphericalPointError`] when the coordinates cannot represent a
-    /// finite nonzero point in `R^(D+1)`.
+    /// Returns [`SphericalPointError::InvalidAmbientCoordinateCount`] unless
+    /// there are `D + 1` entries, [`SphericalPointError::NonFiniteCoordinate`] if
+    /// any entry is non-finite, or [`SphericalPointError::ZeroNorm`] if all entries
+    /// are zero. Returns [`SphericalPointError::UnrepresentableNormalization`]
+    /// if this metric's radius cannot preserve the finite nonzero direction
+    /// within the unit-coordinate tolerance documented on [`SphericalPoint`].
     ///
     /// # Examples
     ///
@@ -362,8 +384,11 @@ impl<const D: usize> SphericalMetric<D> {
     ///
     /// # Errors
     ///
-    /// Returns [`SphericalPointError`] when the slice cannot represent a finite
-    /// nonzero point in `R^(D+1)`.
+    /// Returns the coordinate-count, non-finite-coordinate, zero-norm, or
+    /// [`SphericalPointError::UnrepresentableNormalization`] errors described
+    /// by [`Self::canonicalize`]. Even a finite nonzero input can fail when
+    /// this metric's radius cannot preserve its direction within the
+    /// unit-coordinate tolerance documented on [`SphericalPoint`].
     ///
     /// # Examples
     ///
@@ -481,6 +506,21 @@ pub enum SphericalPointError {
         norm: f64,
     },
 
+    /// Radius scaling lost more than `4 * f64::EPSILON` in a unit coordinate.
+    #[error(
+        "spherical radius {radius:?} cannot represent unit coordinate {unit_coordinate:?} at axis {axis}: round trip produced {roundtrip_coordinate:?}"
+    )]
+    UnrepresentableNormalization {
+        /// Ambient axis whose direction cannot be represented accurately.
+        axis: usize,
+        /// Requested finite positive radius.
+        radius: f64,
+        /// Computed coordinate before scaling to the requested radius.
+        unit_coordinate: f64,
+        /// Stored coordinate divided back by the requested radius.
+        roundtrip_coordinate: f64,
+    },
+
     /// Already-normalized points had different radii.
     #[error("spherical point radius {actual:?} does not match expected radius {expected:?}")]
     MismatchedRadius {
@@ -536,6 +576,10 @@ fn validate_radius(radius: f64) -> Result<(), SphericalPointError> {
 /// metric backend. It classifies user-visible normalization failures while
 /// scaling by the largest coordinate magnitude so finite vectors can be
 /// projected without avoidable overflow or underflow.
+/// Unlike a distance query, projection must also accept a direction whose
+/// unscaled norm is unrepresentable. Keep this radius-scaled, runtime-slice
+/// reduction here: spherical storage has `D + 1` entries, which stable const
+/// generics cannot pass directly to `la_stack::Vector<D>`.
 fn normalize_coordinates(coords: &mut [f64], radius: f64) -> Result<(), SphericalPointError> {
     let mut max_abs = 0.0_f64;
     for (axis, coord) in coords.iter().copied().enumerate() {
@@ -557,6 +601,22 @@ fn normalize_coordinates(coords: &mut [f64], radius: f64) -> Result<(), Spherica
         return Err(SphericalPointError::NonFiniteNorm { norm: scale });
     }
 
+    // Establish the output representation before mutating the slice: callers
+    // of the in-place unit-sphere helper retain their input on failure. The
+    // absolute unit-coordinate tolerance admits negligible component loss but
+    // rejects severe subnormal distortion, including an all-zero projection.
+    for (axis, &coord) in coords.iter().enumerate() {
+        let unit_coordinate = (coord / max_abs) / scale;
+        let roundtrip_coordinate = (unit_coordinate * radius) / radius;
+        if (roundtrip_coordinate - unit_coordinate).abs() > 4.0 * f64::EPSILON {
+            return Err(SphericalPointError::UnrepresentableNormalization {
+                axis,
+                radius,
+                unit_coordinate,
+                roundtrip_coordinate,
+            });
+        }
+    }
     for coord in coords {
         *coord = ((*coord / max_abs) / scale) * radius;
     }
@@ -565,8 +625,10 @@ fn normalize_coordinates(coords: &mut [f64], radius: f64) -> Result<(), Spherica
 
 /// Computes squared Euclidean norm for stored ambient coordinates.
 ///
-/// This backs [`SphericalPoint::squared_norm`], which validation uses to check
-/// that normalized points still lie on the configured sphere.
+/// Preserves [`SphericalPoint::squared_norm`]'s scalar observation contract over
+/// `D + 1` ambient entries, including overflow to infinity and underflow to zero
+/// at extreme radii. Normalization and distance certification use their own
+/// scaled computations instead of this observation.
 fn squared_norm_slice(coords: &[f64]) -> f64 {
     coords
         .iter()
@@ -665,6 +727,74 @@ mod tests {
             .expect("tiny finite arc length should remain representable");
 
         assert_relative_eq!(distance / radius, FRAC_PI_2);
+    }
+
+    #[test]
+    fn spherical_point_rejects_unrepresentable_subnormal_directions() {
+        fn check<const D: usize>() {
+            let mut coords = vec![1.0; D + 1];
+            coords[0] = 2.0;
+            for radius in [f64::from_bits(1), f64::from_bits(2)] {
+                assert_matches!(
+                    SphericalPoint::<D>::try_from_slice_with_radius(&coords, radius),
+                    Err(SphericalPointError::UnrepresentableNormalization { axis: 0, .. })
+                );
+                let mut unchanged = coords.clone();
+                assert!(normalize_coordinates(&mut unchanged, radius).is_err());
+                assert_eq!(unchanged, coords);
+            }
+        }
+        check::<2>();
+        check::<3>();
+        check::<4>();
+        check::<5>();
+        assert_matches!(
+            SphericalPoint::<4>::try_new_with_radius([1.0; 5], f64::from_bits(1)),
+            Err(SphericalPointError::UnrepresentableNormalization { .. })
+        );
+    }
+
+    #[test]
+    fn spherical_normalization_preserves_input_on_late_rejection() {
+        let original = [1.0, 1.0, 2.0_f64.sqrt()];
+        let mut coords = original;
+
+        // The first two unit coordinates survive scaling to this radius, but
+        // the last does not. Rejection must precede every in-place write.
+        let error = normalize_coordinates(&mut coords, f64::from_bits(2)).unwrap_err();
+        assert_matches!(
+            error,
+            SphericalPointError::UnrepresentableNormalization { axis: 2, .. }
+        );
+        assert_eq!(coords.map(f64::to_bits), original.map(f64::to_bits));
+    }
+
+    #[test]
+    fn spherical_point_preserves_representable_subnormal_directions() {
+        // Axis directions remain exactly representable even at the smallest radius.
+        let radius = f64::from_bits(1);
+        let point = SphericalPoint::<4>::try_new_with_radius([1.0, 0.0, 0.0, 0.0, 0.0], radius)
+            .expect("the smallest positive axis coordinate is representable");
+        assert_eq!(point.coords()[0].to_bits(), radius.to_bits());
+        let metric = SphericalMetric::<4>::try_new(radius).unwrap();
+        assert_eq!(metric.try_distance(&point, &point).unwrap().to_bits(), 0);
+
+        // Four equal components also remain exact at a radius of two subnormal units.
+        let diagonal = SphericalPoint::<3>::try_new_with_radius([1.0; 4], f64::from_bits(2))
+            .expect("exactly representable subnormal diagonal should succeed");
+        assert!(diagonal.coords().iter().all(|coord| coord.to_bits() == 1));
+
+        // A large subnormal radius still resolves a general direction accurately.
+        let radius = f64::MIN_POSITIVE / 2.0;
+        let diagonal = SphericalPoint::<2>::try_new_with_radius([1.0, 1.0, 0.0], radius)
+            .expect("subnormal scaling with sufficient precision should succeed");
+        assert_relative_eq!(diagonal.coords()[0] / radius, FRAC_1_SQRT_2);
+
+        // Losing an insignificant component does not invalidate the direction.
+        let near_axis =
+            SphericalPoint::<2>::try_new_with_radius([1.0, f64::MIN_POSITIVE, 0.0], radius)
+                .expect("negligible component underflow stays within the direction tolerance");
+        assert_eq!(near_axis.coords()[0].to_bits(), radius.to_bits());
     }
 
     #[test]

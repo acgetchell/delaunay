@@ -120,6 +120,8 @@ receiving raw access to canonical TDS storage:
 
 - `coordinate_range.rs` - validated coordinate-range value type for random
   point and triangulation generator APIs.
+- `periodic.rs` - canonical `ToroidalDomain` period proof shared by geometric
+  realization and topology metadata.
 - `realization.rs` - pure labeled-simplex realization predicates and witnesses
   used by generic Level 4 validation.
 - `kernel.rs` - kernel abstraction (`AdaptiveKernel`, `RobustKernel`,
@@ -130,11 +132,12 @@ receiving raw access to canonical TDS storage:
 - `sos.rs` - Simulation of Simplicity for deterministic degeneracy resolution.
 - `quality.rs` - simplex quality metrics such as radius ratio and normalized
   volume.
-- `matrix.rs` - linear algebra support.
+- `matrix.rs` - linear algebra boundary, including the internal `la-stack`
+  vector import used for stable norms and checked squared norms.
 - `algorithms/convex_hull.rs` - convex-hull extraction.
 - `traits/coordinate.rs` - coordinate abstractions and typed coordinate
   diagnostic payloads.
-- `util/` - coordinate conversions, vector norms, circumsphere computations,
+- `util/` - coordinate conversions, circumsphere computations,
   geometric measures, point generation, random triangulation generation, and
   the private `simplex_lp.rs` implementation used by realization validation.
 

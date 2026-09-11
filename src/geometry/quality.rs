@@ -5,6 +5,9 @@
 //! are used to prefer well-shaped simplices over degenerate or sliver simplices during
 //! triangulation operations.
 //!
+//! Metrics use stored `f64` coordinates directly. They do not call the
+//! triangulation's kernel or inspect vertex and simplex payloads.
+//!
 //! # Quality Metrics
 //!
 //! - **Radius Ratio**: Circumradius divided by inradius. Lower values indicate
@@ -34,20 +37,22 @@
 
 #![forbid(unsafe_code)]
 
+use core::{array, fmt};
+
+use num_traits::One;
+use thiserror::Error;
+
 use crate::core::{
     collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer},
     tds::{SimplexKey, TdsError, VertexKey},
 };
 use crate::geometry::{
-    kernel::Kernel,
+    matrix::{LaError, LaVector},
     point::Point,
     traits::coordinate::CoordinateConversionValue,
-    util::{CircumcenterError, circumradius, hypot, inradius as simplex_inradius, simplex_volume},
+    util::{CircumcenterError, circumradius, inradius as simplex_inradius, simplex_volume},
 };
 use crate::triangulation::Triangulation;
-use core::{array, fmt};
-use num_traits::One;
-use thiserror::Error;
 
 /// Numeric operation being performed when quality metric computation failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,6 +178,15 @@ impl From<TdsError> for QualitySimplexVerticesError {
 #[derive(Debug, Clone, PartialEq, Error)]
 #[non_exhaustive]
 pub enum QualityError {
+    /// An edge displacement or length is not representable.
+    #[error("Edge length computation failed between vertices {vertex_indices:?}: {source}")]
+    EdgeLength {
+        /// Zero-based indices of the edge endpoints in the simplex vertex order.
+        vertex_indices: [usize; 2],
+        /// Underlying vector construction or norm failure.
+        #[source]
+        source: LaError,
+    },
     /// Failed to fetch a simplex's vertex keys from the TDS.
     #[error("Failed to fetch vertices for simplex {simplex_key:?}: {source}")]
     SimplexVertices {
@@ -245,13 +259,15 @@ pub enum QualityError {
 ///
 /// This centralizes the vertex-to-point extraction logic used by quality metrics.
 /// Uses `SmallBuffer` to avoid heap allocation for typical simplex sizes (D+1 vertices).
+#[expect(
+    clippy::inline_always,
+    reason = "measured 2D–5D quality kernels avoid copying the intermediate point buffer"
+)]
+#[inline(always)]
 fn simplex_points<K, U, V, const D: usize>(
     tri: &Triangulation<K, U, V, D>,
     simplex_key: SimplexKey,
-) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, QualityError>
-where
-    K: Kernel<D, Scalar = f64>,
-{
+) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, QualityError> {
     let vertex_keys =
         tri.tds
             .simplex_vertices(simplex_key)
@@ -275,8 +291,10 @@ where
 
 /// Returns the scale-aware epsilon and average edge length for degeneracy detection.
 ///
-/// This helper centralizes the epsilon calculation logic used by both `radius_ratio`
-/// and `normalized_volume` to ensure consistent degeneracy detection across metrics.
+/// This helper centralizes the epsilon calculation logic used by both [`radius_ratio`]
+/// and [`normalized_volume`] to ensure consistent degeneracy detection across metrics.
+/// An overflowing sum of finite edge lengths is handled by a running mean, so
+/// the sum alone does not cause a representability failure.
 ///
 /// # Arguments
 ///
@@ -287,34 +305,89 @@ where
 /// A tuple of `(avg_edge_length, epsilon)` where:
 /// - `avg_edge_length`: Translation-invariant geometric scale
 /// - `epsilon`: Relative tolerance (1e-8 × `avg_edge_length`) with 1e-12 floor
-fn scale_aware_epsilon<const D: usize>(
-    points: &SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>,
-) -> (f64, f64) {
-    let (total_edge_length, edge_count) = points
-        .iter()
-        .enumerate()
-        .flat_map(|(i, point_i)| {
-            points.iter().skip(i + 1).map(move |point_j| {
-                let diff_coords: [f64; D] =
-                    array::from_fn(|idx| point_i.coords()[idx] - point_j.coords()[idx]);
-                hypot(&diff_coords)
-            })
-        })
-        .fold((0.0, 0_u32), |(total, count), dist| {
-            (total + dist, count + 1)
-        });
+///
+/// # Errors
+///
+/// Returns [`QualityError::EdgeLength`] if a derived displacement or length is
+/// not representable, even when all input coordinates are finite. The running
+/// mean fallback returns [`QualityError::NumericConversion`] if its edge count
+/// cannot be represented as `u32`.
+#[expect(
+    clippy::inline_always,
+    reason = "measured 2D–5D quality kernels eliminate edge traversal call overhead"
+)]
+#[inline(always)]
+fn scale_aware_epsilon<const D: usize>(points: &[Point<D>]) -> Result<(f64, f64), QualityError> {
+    let mut total = 0.0;
+    let mut edge_count = 0_u32;
+    for (i, point_i) in points.iter().enumerate() {
+        for (j, point_j) in points.iter().enumerate().skip(i + 1) {
+            total += edge_length(point_i, point_j).map_err(|source| QualityError::EdgeLength {
+                vertex_indices: [i, j],
+                source,
+            })?;
+            edge_count += 1;
+        }
+    }
 
     // If there are no edges (e.g., D == 0), fall back to floor epsilon.
     if edge_count == 0 {
-        return (0.0, 1e-12);
+        return Ok((0.0, 1e-12));
     }
 
-    let avg_edge_length = total_edge_length / f64::from(edge_count);
+    let count = f64::from(edge_count);
+    let avg_edge_length = if total.is_finite() {
+        total / count
+    } else {
+        // A finite mean need not have a representable sum of edge lengths.
+        // Accumulate a running mean only on this cold overflow path.
+        mean_edge_length_after_sum_overflow(points)?
+    };
+
     let floor: f64 = 1e-12;
     let relative_factor: f64 = 1e-8;
     let epsilon = floor.max(avg_edge_length * relative_factor);
 
-    (avg_edge_length, epsilon)
+    Ok((avg_edge_length, epsilon))
+}
+
+/// Computes a checked distance from newly derived edge coordinates.
+#[expect(
+    clippy::inline_always,
+    reason = "measured quality kernels avoid an out-of-line checked-vector call per edge"
+)]
+#[inline(always)]
+fn edge_length<const D: usize>(first: &Point<D>, second: &Point<D>) -> Result<f64, LaError> {
+    let differences: [f64; D] = array::from_fn(|axis| first.coords()[axis] - second.coords()[axis]);
+    LaVector::try_new(differences)?.norm()
+}
+
+/// Computes a finite edge mean when the ordinary sum is unrepresentable.
+#[cold]
+fn mean_edge_length_after_sum_overflow<const D: usize>(
+    points: &[Point<D>],
+) -> Result<f64, QualityError> {
+    let edge_lengths = points.iter().enumerate().flat_map(|(i, first)| {
+        points
+            .iter()
+            .enumerate()
+            .skip(i + 1)
+            .map(move |(j, second)| {
+                edge_length(first, second).map_err(|source| QualityError::EdgeLength {
+                    vertex_indices: [i, j],
+                    source,
+                })
+            })
+    });
+    edge_lengths
+        .enumerate()
+        .try_fold(0.0, |mean, (index, distance)| {
+            let distance = distance?;
+            let count = u32::try_from(index + 1).map_err(|_| QualityError::NumericConversion {
+                operation: QualityNumericOperation::EdgeCountConversion,
+            })?;
+            Ok(mean + (distance - mean) / f64::from(count))
+        })
 }
 
 /// Computes the radius ratio quality metric for a simplex.
@@ -341,10 +414,17 @@ fn scale_aware_epsilon<const D: usize>(
 ///
 /// # Errors
 ///
-/// Returns `QualityError` if:
-/// - Simplex has missing or invalid vertices
-/// - Simplex is degenerate (zero or near-zero volume)
-/// - Circumsphere computation fails
+/// - [`QualityError::SimplexVertices`] or [`QualityError::VertexNotFound`] if
+///   simplex vertices cannot be retrieved.
+/// - [`QualityError::InvalidSimplexArity`] unless there are `D + 1` vertices.
+/// - [`QualityError::Circumradius`] or [`QualityError::Inradius`] if the
+///   corresponding measure fails, preserving the underlying geometry error.
+/// - [`QualityError::EdgeLength`] if a derived edge displacement or length is
+///   not representable, even with finite stored coordinates.
+/// - [`QualityError::NumericConversion`] if the running-mean edge count cannot
+///   be represented.
+/// - [`QualityError::DegenerateSimplex`] if the inradius is below the
+///   scale-aware tolerance, which includes an absolute `1e-12` length floor.
 ///
 /// # Examples
 ///
@@ -382,10 +462,7 @@ fn scale_aware_epsilon<const D: usize>(
 pub fn radius_ratio<K, U, V, const D: usize>(
     tri: &Triangulation<K, U, V, D>,
     simplex_key: SimplexKey,
-) -> Result<f64, QualityError>
-where
-    K: Kernel<D, Scalar = f64>,
-{
+) -> Result<f64, QualityError> {
     // Extract simplex points using helper
     let points = simplex_points(tri, simplex_key)?;
 
@@ -408,7 +485,7 @@ where
     })?;
 
     // Check for near-zero inradius (degenerate simplex) using scale-aware tolerance
-    let (avg_edge_length, epsilon) = scale_aware_epsilon(&points);
+    let (avg_edge_length, epsilon) = scale_aware_epsilon(&points)?;
 
     if inradius_val < epsilon {
         return Err(QualityError::DegenerateSimplex {
@@ -435,6 +512,7 @@ where
 /// smaller scales as numerically degenerate. Volume and edge-length-power
 /// degeneracy checks use the D-th power of the scale-aware length epsilon so
 /// comparisons have matching physical dimensions.
+/// Normalization uses successive division if the mean-edge-length power overflows.
 ///
 /// # Quality Interpretation
 ///
@@ -453,11 +531,17 @@ where
 ///
 /// # Errors
 ///
-/// Returns a [`QualityError`] if:
-/// - Simplex has missing or invalid vertices
-/// - Simplex is degenerate (zero or near-zero volume, average edge length, or
-///   edge-length power)
-/// - Edge length computation fails
+/// - [`QualityError::SimplexVertices`] or [`QualityError::VertexNotFound`] if
+///   simplex vertices cannot be retrieved.
+/// - [`QualityError::InvalidSimplexArity`] unless there are `D + 1` vertices.
+/// - [`QualityError::Volume`] if volume computation fails, preserving the
+///   underlying geometry error.
+/// - [`QualityError::EdgeLength`] if a derived edge displacement or length is
+///   not representable, even with finite stored coordinates.
+/// - [`QualityError::NumericConversion`] if the running-mean edge count cannot
+///   be represented.
+/// - [`QualityError::DegenerateSimplex`] if volume, average edge length, or
+///   edge-length power is below its dimensionally matched tolerance.
 ///
 /// # Examples
 ///
@@ -494,10 +578,7 @@ where
 pub fn normalized_volume<K, U, V, const D: usize>(
     tri: &Triangulation<K, U, V, D>,
     simplex_key: SimplexKey,
-) -> Result<f64, QualityError>
-where
-    K: Kernel<D, Scalar = f64>,
-{
+) -> Result<f64, QualityError> {
     // Extract simplex points using helper
     let points = simplex_points(tri, simplex_key)?;
 
@@ -515,7 +596,7 @@ where
     })?;
 
     // Compute scale-aware epsilon and average edge length
-    let (avg_edge_length, epsilon) = scale_aware_epsilon(&points);
+    let (avg_edge_length, epsilon) = scale_aware_epsilon(&points)?;
     let mut epsilon_pow = f64::one();
     for _ in 0..D {
         epsilon_pow *= epsilon;
@@ -566,9 +647,24 @@ where
         });
     }
 
-    let normalized = volume / edge_length_power;
+    let normalized = if edge_length_power.is_finite() {
+        volume / edge_length_power
+    } else {
+        normalize_volume_after_edge_power_overflow::<D>(volume, avg_edge_length)
+    };
 
     Ok(normalized)
+}
+
+/// Normalizes without requiring the mean edge length raised to D to be representable.
+#[cold]
+fn normalize_volume_after_edge_power_overflow<const D: usize>(
+    volume: f64,
+    avg_edge_length: f64,
+) -> f64 {
+    // Overflow implies avg_edge_length > 1. Divide successively so the
+    // finite volume only decreases, without an overflowing denominator.
+    (0..D).fold(volume, |value, _| value / avg_edge_length)
 }
 
 #[cfg(test)]
@@ -840,11 +936,32 @@ mod tests {
     }
 
     #[test]
-    fn scale_aware_epsilon_uses_floor_when_point_set_has_no_edges() {
-        let mut points = SmallBuffer::new();
-        points.push(Point::try_new([]).expect("finite point coordinates"));
+    fn scale_aware_epsilon_handles_unrepresentable_edge_sum() {
+        let points = [[0.0, 0.0], [1.0e308, 0.0], [0.0, 1.0e308]]
+            .map(|coords| Point::try_new(coords).unwrap());
+        let (mean, epsilon) = scale_aware_epsilon(&points).unwrap();
+        assert_relative_eq!(mean / 1.0e308, (2.0 + 2.0_f64.sqrt()) / 3.0);
+        assert_relative_eq!(epsilon / mean, 1.0e-8);
+    }
 
-        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points);
+    #[test]
+    fn scale_aware_epsilon_rejects_unrepresentable_edge() {
+        let points = [[0.0, 0.0], [-f64::MAX, 0.0], [f64::MAX, 0.0]]
+            .map(|coords| Point::try_new(coords).unwrap());
+        assert_eq!(
+            scale_aware_epsilon(&points),
+            Err(QualityError::EdgeLength {
+                vertex_indices: [1, 2],
+                source: LaError::non_finite_input_vector(0)
+            })
+        );
+    }
+
+    #[test]
+    fn scale_aware_epsilon_uses_floor_when_point_set_has_no_edges() {
+        let points = [Point::try_new([]).expect("finite point coordinates")];
+
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
 
         assert_relative_eq!(avg_edge_length, 0.0);
         assert_relative_eq!(epsilon, 1e-12);
@@ -1031,6 +1148,48 @@ mod tests {
 
         assert!(ratio.is_finite() && ratio > 0.0);
         assert!(normalized.is_finite() && normalized > 0.0);
+    }
+
+    #[test]
+    fn normalized_triangle_volume_survives_edge_power_overflow() {
+        // A right triangle with legs 2 and 0.1 has area 0.1. Its mean
+        // edge length squared overflows after scaling by 1e154, but its
+        // area and dimensionless normalized volume remain representable.
+        let mean_edge = (2.0 + 0.1 + 4.01_f64.sqrt()) / 3.0;
+        let expected = 0.1 / mean_edge.powi(2);
+        for scale in [1.0, 1e154] {
+            let vertices = [
+                vertex!([0.0, 0.0]).unwrap(),
+                vertex!([2.0 * scale, 0.0]).unwrap(),
+                vertex!([0.0, 0.1 * scale]).unwrap(),
+            ];
+            let dt: DelaunayTriangulation<_, (), (), 2> =
+                DelaunayTriangulation::builder(&vertices).build().unwrap();
+            let simplex_key = dt.simplices().next().unwrap().0;
+            let actual = normalized_volume(dt.as_triangulation(), simplex_key).unwrap();
+            assert_relative_eq!(actual, expected, max_relative = 1e-14);
+        }
+    }
+
+    #[test]
+    fn normalized_tetrahedron_volume_survives_edge_power_overflow() {
+        // Orthogonal axes of lengths 2, 0.1, 0.1 give volume 0.02/6.
+        // Count the six edges analytically, independently of the metric.
+        let mean_edge = (2.0_f64.mul_add(4.01_f64.sqrt(), 2.2) + 0.02_f64.sqrt()) / 6.0;
+        let expected = (0.02 / 6.0) / mean_edge.powi(3);
+        for scale in [1.0, 1e103] {
+            let vertices = [
+                vertex!([0.0, 0.0, 0.0]).unwrap(),
+                vertex!([2.0 * scale, 0.0, 0.0]).unwrap(),
+                vertex!([0.0, 0.1 * scale, 0.0]).unwrap(),
+                vertex!([0.0, 0.0, 0.1 * scale]).unwrap(),
+            ];
+            let dt: DelaunayTriangulation<_, (), (), 3> =
+                DelaunayTriangulation::builder(&vertices).build().unwrap();
+            let simplex_key = dt.simplices().next().unwrap().0;
+            let actual = normalized_volume(dt.as_triangulation(), simplex_key).unwrap();
+            assert_relative_eq!(actual, expected, max_relative = 1e-14);
+        }
     }
 
     // =============================================================================
@@ -1335,12 +1494,10 @@ let simplex_key = dt.simplices().next().unwrap().0;
     #[test]
     fn test_scale_aware_epsilon_2d() {
         // Test epsilon computation for 2D simplex
-        let mut points = SmallBuffer::new();
-        points.push(Point::try_new([0.0, 0.0]).expect("finite point coordinates"));
-        points.push(Point::try_new([1.0, 0.0]).expect("finite point coordinates"));
-        points.push(Point::try_new([0.5, 0.866_025]).expect("finite point coordinates"));
+        let points = [[0.0, 0.0], [1.0, 0.0], [0.5, 0.866_025]]
+            .map(|coords| Point::try_new(coords).expect("finite point coordinates"));
 
-        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points);
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
         assert!(
             avg_edge_length > 0.0,
             "Average edge length should be positive"
@@ -1352,12 +1509,10 @@ let simplex_key = dt.simplices().next().unwrap().0;
     #[test]
     fn test_scale_aware_epsilon_tiny_simplex() {
         // Test epsilon computation with very small coordinates
-        let mut points = SmallBuffer::new();
-        points.push(Point::try_new([0.0, 0.0]).expect("finite point coordinates"));
-        points.push(Point::try_new([1e-10, 0.0]).expect("finite point coordinates"));
-        points.push(Point::try_new([0.5e-10, 0.866_025e-10]).expect("finite point coordinates"));
+        let points = [[0.0, 0.0], [1e-10, 0.0], [0.5e-10, 0.866_025e-10]]
+            .map(|coords| Point::try_new(coords).expect("finite point coordinates"));
 
-        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points);
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
         // For tiny simplices, epsilon should use the floor (1e-12)
         assert!(epsilon >= 1e-12);
         assert!(avg_edge_length > 0.0);
@@ -1366,12 +1521,10 @@ let simplex_key = dt.simplices().next().unwrap().0;
     #[test]
     fn test_scale_aware_epsilon_large_simplex() {
         // Test epsilon computation with large coordinates
-        let mut points = SmallBuffer::new();
-        points.push(Point::try_new([0.0, 0.0]).expect("finite point coordinates"));
-        points.push(Point::try_new([1e6, 0.0]).expect("finite point coordinates"));
-        points.push(Point::try_new([0.5e6, 0.866_025e6]).expect("finite point coordinates"));
+        let points = [[0.0, 0.0], [1e6, 0.0], [0.5e6, 0.866_025e6]]
+            .map(|coords| Point::try_new(coords).expect("finite point coordinates"));
 
-        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points);
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
         // For large simplices, epsilon scales with average edge length
         assert!(epsilon > 1e-12);
         assert!(avg_edge_length > 1e5);
@@ -1380,13 +1533,15 @@ let simplex_key = dt.simplices().next().unwrap().0;
     #[test]
     fn test_scale_aware_epsilon_3d() {
         // Test epsilon computation for 3D simplex
-        let mut points = SmallBuffer::new();
-        points.push(Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"));
-        points.push(Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"));
-        points.push(Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"));
-        points.push(Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"));
+        let points = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+        .map(|coords| Point::try_new(coords).expect("finite point coordinates"));
 
-        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points);
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
         assert!(avg_edge_length > 0.0);
         assert!(epsilon > 0.0);
     }

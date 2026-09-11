@@ -9,6 +9,10 @@
 
 use core::ops::ControlFlow;
 
+use num_traits::ToPrimitive;
+use thiserror::Error;
+use uuid::Uuid;
+
 use crate::core::collections::{
     FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SimplexVertexKeyBuffer, SimplexVertexUuidBuffer,
     SmallBuffer,
@@ -18,17 +22,16 @@ use crate::core::tds::{
     InvariantError, InvariantKind, SimplexKey, Tds, TdsError, TriangulationConstructionState,
     VertexKey,
 };
+use crate::geometry::periodic::ToroidalDomain;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::realization::{
-    LabeledSimplexRealization, LabeledSimplexRealizationError, PeriodicSimplexSpanError,
-    SimplexIntersectionFailure, axis_aligned_bounding_boxes_overlap, coordinate_range_for_axis,
-    try_periodic_simplex_span, validate_simplex_intersection,
+    LabeledSimplexRealization, LabeledSimplexRealizationError, SimplexIntersectionFailure,
+    axis_aligned_bounding_boxes_overlap, coordinate_range_for_axis, periodic_simplex_span,
+    validate_simplex_intersection,
 };
 use crate::geometry::robust_predicates::robust_orientation;
-use crate::geometry::traits::coordinate::{
-    CoordinateConversionError, CoordinateValidationError, InvalidCoordinateValue,
-};
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateValidationError};
 use crate::topology::traits::global_topology_model::{
     GlobalTopologyModel, GlobalTopologyModelError,
 };
@@ -37,9 +40,6 @@ use crate::triangulation::Triangulation;
 use crate::triangulation::validation::{
     TopologyCertificationEvidence, TriangulationValidationError,
 };
-use num_traits::ToPrimitive;
-use thiserror::Error;
-use uuid::Uuid;
 
 /// Key- and UUID-based snapshot of one realized simplex.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -82,41 +82,6 @@ pub struct TriangulationRealizationIntersectionDetail {
     pub second_only_witness_vertices: SimplexVertexKeyBuffer,
     /// UUIDs of second-simplex vertices with positive barycentric weight at the witness.
     pub second_only_witness_vertex_uuids: SimplexVertexUuidBuffer,
-}
-
-/// Invalid periodic-domain period observed during Level 4 realization validation.
-#[derive(Clone, Debug, Error, PartialEq)]
-#[non_exhaustive]
-pub enum PeriodicDomainPeriodError {
-    /// A period was NaN or infinite.
-    #[error("non-finite periodic domain period at axis {axis}: {period}")]
-    NonFinitePeriod {
-        /// Periodic axis with the invalid period.
-        axis: usize,
-        /// Classified invalid period value.
-        period: InvalidCoordinateValue,
-    },
-    /// A finite period was zero or negative.
-    #[error("non-positive periodic domain period at axis {axis}: {period}")]
-    NonPositivePeriod {
-        /// Periodic axis with the invalid period.
-        axis: usize,
-        /// Raw finite non-positive period.
-        period: f64,
-    },
-}
-
-impl From<PeriodicSimplexSpanError> for PeriodicDomainPeriodError {
-    fn from(source: PeriodicSimplexSpanError) -> Self {
-        match source {
-            PeriodicSimplexSpanError::NonFinitePeriod { axis, period } => {
-                Self::NonFinitePeriod { axis, period }
-            }
-            PeriodicSimplexSpanError::NonPositivePeriod { axis, period } => {
-                Self::NonPositivePeriod { axis, period }
-            }
-        }
-    }
 }
 
 /// Preserves the typed lower-layer source when a Level 3 promotion check fails.
@@ -365,22 +330,6 @@ pub enum TriangulationRealizationValidationError {
         period: f64,
     },
 
-    /// A periodic domain period was invalid while checking realized geometry.
-    #[error(
-        "invalid periodic domain period while validating simplex {simplex_uuid} (key {simplex_key:?}): {source}"
-    )]
-    InvalidPeriodicDomainPeriod {
-        /// Key of the simplex being checked.
-        simplex_key: SimplexKey,
-        /// UUID of the simplex being checked.
-        simplex_uuid: Uuid,
-        /// Vertex-level diagnostic details for the simplex being checked.
-        detail: Box<TriangulationRealizationSimplexDetail>,
-        /// Underlying invalid-period error.
-        #[source]
-        source: PeriodicDomainPeriodError,
-    },
-
     /// Periodic translate enumeration would require shifts outside the supported range.
     #[error(
         "periodic translate range for simplices {first_simplex_uuid} (key {first_simplex_key:?}) and {second_simplex_uuid} (key {second_simplex_key:?}) on axis {axis} exceeds i32 shift bounds: lower {lower_bound}, upper {upper_bound}"
@@ -461,8 +410,6 @@ pub enum TriangulationRealizationValidationErrorKind {
     SimplexIntersectionOutsideSharedFace,
     /// A periodic simplex spans at least one full domain period.
     PeriodicSimplexSpansDomain,
-    /// A periodic domain period was invalid.
-    InvalidPeriodicDomainPeriod,
     /// Periodic translate enumeration exceeded supported shift bounds.
     PeriodicTranslateRangeOverflow,
     /// A higher validation layer unexpectedly surfaced during realization validation.
@@ -510,9 +457,6 @@ impl From<&TriangulationRealizationValidationError>
             } => Self::SimplexIntersectionOutsideSharedFace,
             TriangulationRealizationValidationError::PeriodicSimplexSpansDomain { .. } => {
                 Self::PeriodicSimplexSpansDomain
-            }
-            TriangulationRealizationValidationError::InvalidPeriodicDomainPeriod { .. } => {
-                Self::InvalidPeriodicDomainPeriod
             }
             TriangulationRealizationValidationError::PeriodicTranslateRangeOverflow { .. } => {
                 Self::PeriodicTranslateRangeOverflow
@@ -825,19 +769,6 @@ fn labeled_simplex_error_to_realization_error<V, const D: usize>(
                 },
             };
         }
-        LabeledSimplexRealizationError::InvalidPeriodicDomainPeriod { source } => {
-            return TriangulationRealizationValidationError::InvalidPeriodicDomainPeriod {
-                simplex_key,
-                simplex_uuid: simplex.uuid(),
-                detail: Box::new(TriangulationRealizationSimplexDetail {
-                    key: simplex_key,
-                    uuid: simplex.uuid(),
-                    vertices: vertex_keys.clone(),
-                    vertex_uuids: vertex_uuids.clone(),
-                }),
-                source: source.into(),
-            };
-        }
     };
 
     TdsError::DimensionMismatch {
@@ -959,14 +890,6 @@ fn labeled_simplex_error_to_realized_simplex_error<const D: usize>(
                     coordinate_value,
                     dimension: D,
                 },
-            };
-        }
-        LabeledSimplexRealizationError::InvalidPeriodicDomainPeriod { source } => {
-            return TriangulationRealizationValidationError::InvalidPeriodicDomainPeriod {
-                simplex_key: simplex.key,
-                simplex_uuid: simplex.uuid,
-                detail: Box::new(simplex.detail()),
-                source: source.into(),
             };
         }
     };
@@ -1163,7 +1086,6 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         let simplices = self.collect_realized_simplices()?;
         report.checked_simplices = simplices.len();
         let periodic_domain = topology_model.periodic_domain();
-        let periodic_periods = periodic_domain.map(|domain| *domain.periods());
         let mut invalid_simplex_keys = FastHashSet::default();
 
         for simplex in &simplices {
@@ -1172,7 +1094,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
                 report.violations.push(error);
             }
             if let Some(domain) = periodic_domain
-                && let Err(error) = validate_periodic_simplex_chart(simplex, domain.periods())
+                && let Err(error) = validate_periodic_simplex_chart(simplex, &domain)
             {
                 invalid_simplex_keys.insert(simplex.key);
                 report.violations.push(error);
@@ -1182,10 +1104,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         let (checked_simplex_pairs, _) = for_each_candidate_simplex_pair::<D, ()>(
             &simplices,
             &invalid_simplex_keys,
-            periodic_periods,
+            periodic_domain,
             |first, second| {
                 if let Err(error) =
-                    validate_topology_aware_simplex_pair(first, second, periodic_periods)
+                    validate_topology_aware_simplex_pair(first, second, periodic_domain)
                 {
                     report.violations.push(error);
                 }
@@ -1266,7 +1188,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             )?;
             validate_simplex_orientation(&realized)?;
             if let Some(domain) = periodic_domain {
-                validate_periodic_simplex_chart(&realized, domain.periods())?;
+                validate_periodic_simplex_chart(&realized, &domain)?;
             }
         }
 
@@ -1314,7 +1236,6 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 
         let simplices = self.collect_realized_simplices()?;
         let periodic_domain = topology_model.periodic_domain();
-        let periodic_periods = periodic_domain.map(|domain| *domain.periods());
 
         for simplex in &simplices {
             if !local_simplex_keys.contains(&simplex.key) {
@@ -1322,7 +1243,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             }
             validate_simplex_orientation(simplex)?;
             if let Some(domain) = periodic_domain {
-                validate_periodic_simplex_chart(simplex, domain.periods())?;
+                validate_periodic_simplex_chart(simplex, &domain)?;
             }
         }
 
@@ -1332,11 +1253,11 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
                 &simplices,
                 &empty_skip,
                 &local_simplex_keys,
-                periodic_periods,
+                periodic_domain,
                 |first, second| match validate_topology_aware_simplex_pair(
                     first,
                     second,
-                    periodic_periods,
+                    periodic_domain,
                 ) {
                     Ok(()) => ControlFlow::Continue(()),
                     Err(error) => ControlFlow::Break(error),
@@ -1380,7 +1301,6 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         }
 
         let periodic_domain = topology_model.periodic_domain();
-        let periodic_periods = periodic_domain.map(|domain| *domain.periods());
         let mut simplices = Vec::with_capacity(self.tds.number_of_simplices());
         for (simplex_key, simplex) in self.tds.simplices() {
             let realized = RealizedSimplex::try_from_simplex(
@@ -1393,7 +1313,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
                 return Ok(Some(error));
             }
             if let Some(domain) = periodic_domain
-                && let Err(error) = validate_periodic_simplex_chart(&realized, domain.periods())
+                && let Err(error) = validate_periodic_simplex_chart(&realized, &domain)
             {
                 return Ok(Some(error));
             }
@@ -1405,11 +1325,11 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             for_each_candidate_simplex_pair::<D, TriangulationRealizationValidationError>(
                 &simplices,
                 &empty_skip,
-                periodic_periods,
+                periodic_domain,
                 |first, second| match validate_topology_aware_simplex_pair(
                     first,
                     second,
-                    periodic_periods,
+                    periodic_domain,
                 ) {
                     Ok(()) => ControlFlow::Continue(()),
                     Err(error) => ControlFlow::Break(error),
@@ -1424,9 +1344,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 fn validate_topology_aware_simplex_pair<const D: usize>(
     first: &RealizedSimplex<D>,
     second: &RealizedSimplex<D>,
-    periodic_periods: Option<[f64; D]>,
+    periodic_domain: Option<ToroidalDomain<D>>,
 ) -> Result<(), TriangulationRealizationValidationError> {
-    let Some(periods) = periodic_periods else {
+    let Some(domain) = periodic_domain else {
         if bounding_boxes_overlap(first, second) {
             if try_validate_full_facet_pair(first, second)? {
                 return Ok(());
@@ -1436,9 +1356,9 @@ fn validate_topology_aware_simplex_pair<const D: usize>(
         return Ok(());
     };
 
-    let shift_ranges = periodic_shift_ranges(first, second, &periods)?;
+    let shift_ranges = periodic_shift_ranges(first, second, &domain)?;
     let mut shift = [0_i32; D];
-    validate_periodic_translates(first, second, &periods, &shift_ranges, 0, &mut shift)
+    validate_periodic_translates(first, second, &domain, &shift_ranges, 0, &mut shift)
 }
 
 /// Uses an exact side-of-facet test for adjacent simplices sharing a full facet.
@@ -1574,13 +1494,13 @@ fn shared_facet_same_side_intersection<const D: usize>(
 fn validate_periodic_translates<const D: usize>(
     first: &RealizedSimplex<D>,
     second: &RealizedSimplex<D>,
-    periods: &[f64; D],
+    domain: &ToroidalDomain<D>,
     shift_ranges: &[(i32, i32)],
     axis: usize,
     shift: &mut [i32; D],
 ) -> Result<(), TriangulationRealizationValidationError> {
     if axis == D {
-        let translated = translated_simplex(second, periods, shift)?;
+        let translated = translated_simplex(second, domain, shift)?;
         if bounding_boxes_overlap(first, &translated) {
             if try_validate_full_facet_pair(first, &translated)? {
                 return Ok(());
@@ -1593,7 +1513,7 @@ fn validate_periodic_translates<const D: usize>(
     let (start, end) = shift_ranges[axis];
     for value in start..=end {
         shift[axis] = value;
-        validate_periodic_translates(first, second, periods, shift_ranges, axis + 1, shift)?;
+        validate_periodic_translates(first, second, domain, shift_ranges, axis + 1, shift)?;
     }
     Ok(())
 }
@@ -1602,7 +1522,7 @@ fn validate_periodic_translates<const D: usize>(
 fn periodic_shift_ranges<const D: usize>(
     first: &RealizedSimplex<D>,
     second: &RealizedSimplex<D>,
-    periods: &[f64; D],
+    domain: &ToroidalDomain<D>,
 ) -> Result<PeriodicShiftRangeBuffer, TriangulationRealizationValidationError> {
     (0..D)
         .map(|axis| {
@@ -1610,7 +1530,7 @@ fn periodic_shift_ranges<const D: usize>(
                 .expect("axis generated from 0..D must be valid");
             let (second_min, second_max) = coordinate_range_for_axis(&second.realization, axis)
                 .expect("axis generated from 0..D must be valid");
-            let period = periods[axis];
+            let period = domain.periods()[axis];
             let lower_bound = ((first_min - second_max) / period).floor();
             let upper_bound = ((first_max - second_min) / period).ceil();
             let Some(start) = lower_bound.to_i32() else {
@@ -1662,12 +1582,12 @@ fn periodic_translate_range_overflow<const D: usize>(
 /// Translates one realized simplex into a neighboring periodic chart.
 fn translated_simplex<const D: usize>(
     simplex: &RealizedSimplex<D>,
-    periods: &[f64; D],
+    domain: &ToroidalDomain<D>,
     shift: &[i32; D],
 ) -> Result<RealizedSimplex<D>, TriangulationRealizationValidationError> {
     let translated = simplex
         .realization
-        .try_translated(periods, shift)
+        .try_translated(domain, shift)
         .map_err(|source| labeled_simplex_error_to_realized_simplex_error(source, simplex))?;
     let labels = translated
         .labels()
@@ -1688,16 +1608,9 @@ fn translated_simplex<const D: usize>(
 /// Rejects a periodic simplex whose lifted vertices cannot fit in one chart.
 fn validate_periodic_simplex_chart<const D: usize>(
     simplex: &RealizedSimplex<D>,
-    periods: &[f64; D],
+    domain: &ToroidalDomain<D>,
 ) -> Result<(), TriangulationRealizationValidationError> {
-    let span = try_periodic_simplex_span(&simplex.realization, periods).map_err(|source| {
-        TriangulationRealizationValidationError::InvalidPeriodicDomainPeriod {
-            simplex_key: simplex.key,
-            simplex_uuid: simplex.uuid,
-            detail: Box::new(simplex.detail()),
-            source: source.into(),
-        }
-    })?;
+    let span = periodic_simplex_span(&simplex.realization, domain);
     if let Some(span) = span {
         return Err(
             TriangulationRealizationValidationError::PeriodicSimplexSpansDomain {
@@ -1917,13 +1830,13 @@ fn widest_extent_axis<const D: usize>(boxes: &[SimplexBoundingBox<D>]) -> usize 
 fn for_each_candidate_simplex_pair<const D: usize, B>(
     simplices: &[RealizedSimplex<D>],
     skip: &FastHashSet<SimplexKey>,
-    periodic_periods: Option<[f64; D]>,
+    periodic_domain: Option<ToroidalDomain<D>>,
     on_pair: impl FnMut(&RealizedSimplex<D>, &RealizedSimplex<D>) -> ControlFlow<B>,
 ) -> (usize, Option<B>) {
     // Lifted-chart AABBs cannot express wrap-around overlaps, and a degenerate
     // 0-dimensional chart has no sweep axis, so both fall back to exhaustive
     // pairwise enumeration.
-    if periodic_periods.is_some() || D == 0 {
+    if periodic_domain.is_some() || D == 0 {
         return exhaustive_candidate_simplex_pairs(simplices, skip, on_pair);
     }
     sweep_and_prune_candidate_simplex_pairs(simplices, skip, on_pair)
@@ -1934,13 +1847,13 @@ fn for_each_scoped_candidate_simplex_pair<const D: usize, B>(
     simplices: &[RealizedSimplex<D>],
     skip: &FastHashSet<SimplexKey>,
     scope: &FastHashSet<SimplexKey>,
-    periodic_periods: Option<[f64; D]>,
+    periodic_domain: Option<ToroidalDomain<D>>,
     mut on_pair: impl FnMut(&RealizedSimplex<D>, &RealizedSimplex<D>) -> ControlFlow<B>,
 ) -> (usize, Option<B>) {
     if scope.is_empty() {
-        return for_each_candidate_simplex_pair(simplices, skip, periodic_periods, on_pair);
+        return for_each_candidate_simplex_pair(simplices, skip, periodic_domain, on_pair);
     }
-    if periodic_periods.is_some() || D == 0 {
+    if periodic_domain.is_some() || D == 0 {
         return scoped_exhaustive_candidate_simplex_pairs(simplices, skip, scope, on_pair);
     }
     sweep_and_prune_candidate_simplex_pairs(simplices, skip, |first, second| {
@@ -2069,16 +1982,19 @@ fn sweep_and_prune_candidate_simplex_pairs<const D: usize, B>(
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
+    use approx::assert_abs_diff_eq;
+
     use super::*;
     use crate::builder::DelaunayTriangulationBuilder;
     use crate::core::vertex::Vertex;
     use crate::delaunay_property_validation::DelaunayValidationError;
     use crate::geometry::kernel::FastKernel;
+    use crate::geometry::traits::coordinate::InvalidCoordinateValue;
     use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use crate::vertex;
-    use approx::assert_abs_diff_eq;
-    use std::assert_matches;
 
     fn test_vertex<const D: usize>(coords: [f64; D]) -> Vertex<(), D> {
         vertex!(coords).unwrap()
@@ -2527,7 +2443,7 @@ mod tests {
             .pop()
             .expect("fixture should contain one simplex");
         let shift = [-1_i32, 2_i32];
-        let translated = translated_simplex(&realized, &[1.0, 1.0], &shift)
+        let translated = translated_simplex(&realized, &ToroidalDomain::unit(), &shift)
             .expect("finite periodic translation should succeed");
 
         for (before, after) in realized
@@ -2579,7 +2495,7 @@ mod tests {
                 .iter()
                 .find(|simplex| simplex.key == keys[1])
                 .unwrap();
-            let result = periodic_shift_ranges(first, second, &[1.0; D]);
+            let result = periodic_shift_ranges(first, second, &ToroidalDomain::unit());
 
             match expected {
                 Ok(bounds) => {
@@ -2639,11 +2555,12 @@ mod tests {
             let realized = tri.collect_realized_simplices().unwrap().pop().unwrap();
             let mut periods = [1.0; D];
             periods[axis] = f64::MAX;
+            let domain = ToroidalDomain::try_new(periods).unwrap();
             let mut shift = [0; D];
             shift[axis] = step;
 
             // Earlier vertices translate to finite +/-MAX. Only the last vertex overflows.
-            let error = translated_simplex(&realized, &periods, &shift)
+            let error = translated_simplex(&realized, &domain, &shift)
                 .expect_err("an unrepresentable translated coordinate must be rejected");
             let TriangulationRealizationValidationError::CoordinateValidation {
                 simplex_key,
@@ -2667,7 +2584,7 @@ mod tests {
                 }
             );
 
-            let retry = translated_simplex(&realized, &periods, &[0; D]).unwrap();
+            let retry = translated_simplex(&realized, &domain, &[0; D]).unwrap();
             assert_eq!(retry.realization.coordinates(), coords.as_slice());
             assert_eq!(retry.realization.labels(), realized.realization.labels());
         }
@@ -2955,18 +2872,6 @@ mod tests {
                 period: 1.0,
             },
             TriangulationRealizationValidationErrorKind::PeriodicSimplexSpansDomain,
-        );
-        assert_realization_error_kind(
-            &TriangulationRealizationValidationError::InvalidPeriodicDomainPeriod {
-                simplex_key: SimplexKey::default(),
-                simplex_uuid: Uuid::nil(),
-                detail: Box::new(realization_detail()),
-                source: PeriodicDomainPeriodError::NonPositivePeriod {
-                    axis: 0,
-                    period: 0.0,
-                },
-            },
-            TriangulationRealizationValidationErrorKind::InvalidPeriodicDomainPeriod,
         );
         assert_realization_error_kind(
             &TriangulationRealizationValidationError::PeriodicTranslateRangeOverflow {

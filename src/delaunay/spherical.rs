@@ -1439,6 +1439,10 @@ fn synthetic_topology_coordinates<const D: usize>(
 }
 
 /// Computes `||coords|| / radius` without squaring very large radii.
+/// This spherical ratio can be finite when the unscaled norm is not. Stable
+/// const generics cannot express its arbitrary `D + 1` ambient length as the
+/// vector's const parameter, so this geometry-specific scaled reduction remains
+/// separate from distance queries through `la_stack::Vector::norm`.
 fn scaled_norm_over_radius(coords: &[f64], radius: f64) -> f64 {
     let max_abs = coords
         .iter()
@@ -1458,20 +1462,7 @@ fn scaled_norm_over_radius(coords: &[f64], radius: f64) -> f64 {
 
 /// Computes a best-effort Euclidean norm for validation diagnostics.
 fn scaled_euclidean_norm(coords: &[f64]) -> f64 {
-    let max_abs = coords
-        .iter()
-        .fold(0.0_f64, |max_abs, &coord| max_abs.max(coord.abs()));
-    if max_abs == 0.0 {
-        return 0.0;
-    }
-    let scaled_norm = coords
-        .iter()
-        .fold(0.0, |acc, &coord| {
-            let scaled = coord / max_abs;
-            scaled.mul_add(scaled, acc)
-        })
-        .sqrt();
-    max_abs * scaled_norm
+    scaled_norm_over_radius(coords, 1.0)
 }
 
 /// Wraps TDS invariant failures from the synthetic topology bridge.

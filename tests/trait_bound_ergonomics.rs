@@ -1,6 +1,6 @@
 //! Compile coverage for read-only APIs with non-`DataType` payloads.
 
-use std::{assert_matches, hash::Hasher};
+use std::{assert_matches, hash::Hasher, hint::black_box};
 
 use delaunay::DelaunayTriangulation;
 use delaunay::prelude::Triangulation;
@@ -9,7 +9,8 @@ use delaunay::prelude::construction::{
     DelaunayIncrementalBuilder, GlobalTopology, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::{
-    Coordinate, CoordinateValidationError, FastKernel, Point, surface_measure,
+    Coordinate, CoordinateValidationError, FastKernel, Point, QualityError, normalized_volume,
+    radius_ratio, surface_measure,
 };
 use delaunay::prelude::query::{
     ConvexHull, QueryError, TopologyIndexBuildError, extract_edge_set,
@@ -35,6 +36,8 @@ type NotAKernelTriangulation = Triangulation<NotAKernel, Payload, Payload, 2>;
 type NotAKernelDelaunay = DelaunayTriangulation<NotAKernel, Payload, Payload, 2>;
 type GenericTrySetTopologyFn =
     fn(&mut NotAKernelTriangulation, GlobalTopology<2>) -> Result<(), InvariantError>;
+type QualityMetricsFn =
+    fn(&NotAKernelTriangulation, SimplexKey) -> Result<(f64, f64), QualityError>;
 
 fn accepts_generic_try_set(_: GenericTrySetTopologyFn) {}
 
@@ -78,6 +81,16 @@ fn convex_hull_constructor_compiles(
     tri: &Triangulation<NotAKernel, ClonePayload, OpaquePayload, 2>,
 ) {
     let _ = ConvexHull::try_from_triangulation(tri);
+}
+
+fn quality_metrics_compile(
+    tri: &NotAKernelTriangulation,
+    simplex_key: SimplexKey,
+) -> Result<(f64, f64), QualityError> {
+    Ok((
+        radius_ratio(tri, simplex_key)?,
+        normalized_volume(tri, simplex_key)?,
+    ))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -168,7 +181,7 @@ fn storage_and_validation_methods_have_payload_agnostic_contracts() {
     let delaunay_validation: fn(&DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2>) =
         delaunay_validation_compiles;
 
-    std::hint::black_box((
+    black_box((
         storage,
         demotion,
         triangulation_validation,
@@ -182,7 +195,14 @@ fn jaccard_and_convex_hull_extractors_have_minimal_payload_bounds() {
     let hull: fn(&Triangulation<NotAKernel, ClonePayload, OpaquePayload, 2>) =
         convex_hull_constructor_compiles;
 
-    std::hint::black_box((jaccard, hull));
+    black_box((jaccard, hull));
+}
+
+#[test]
+fn quality_metrics_do_not_require_kernel_or_payload_bounds() {
+    let contract: QualityMetricsFn = quality_metrics_compile;
+
+    black_box(contract);
 }
 
 #[test]
@@ -249,7 +269,7 @@ fn read_only_topology_apis_accept_non_datatype_payloads() {
     }
     let compile_contract: fn(&Triangulation<FastKernel<f64>, Payload, Payload, 2>) =
         triangulation_queries_compile;
-    std::hint::black_box(compile_contract);
+    black_box(compile_contract);
 
     let tds: Tds<Payload, Payload, 2> = Tds::empty();
     assert!(tds.build_facet_to_simplices_index().unwrap().is_empty());
@@ -279,7 +299,7 @@ fn locate_and_conflict_apis_accept_non_datatype_payloads() {
         &Point<2>,
     );
     let compile_contract: OwnerQueriesCompileFn = owner_queries_compile;
-    std::hint::black_box(compile_contract);
+    black_box(compile_contract);
 
     let point = Point::try_new([0.25, 0.25]).unwrap();
     let kernel = FastKernel::new();
@@ -325,16 +345,16 @@ fn delaunay_query_wrappers_accept_non_datatype_payloads() {
         let incidence = dt.incidence();
         let edge_index = dt.build_edge_index()?;
         let neighbor_index = dt.build_simplex_neighbor_index()?;
-        std::hint::black_box(incidence.number_of_adjacent_simplices(VertexKey::default()));
-        std::hint::black_box(edge_index.number_of_edges());
-        std::hint::black_box(neighbor_index.number_of_simplex_neighbors(SimplexKey::default()));
+        black_box(incidence.number_of_adjacent_simplices(VertexKey::default()));
+        black_box(edge_index.number_of_edges());
+        black_box(neighbor_index.number_of_simplex_neighbors(SimplexKey::default()));
         Ok(())
     }
     type QueriesCompileFn = fn(
         &mut DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2>,
     ) -> Result<(), TraitBoundErgonomicsError>;
     let compile_contract: QueriesCompileFn = queries_compile;
-    std::hint::black_box(compile_contract);
+    black_box(compile_contract);
 
     let empty: DelaunayTriangulation<_, (), (), 2> =
         DelaunayIncrementalBuilder::new().finish().unwrap();
