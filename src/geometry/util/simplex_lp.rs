@@ -1829,6 +1829,7 @@ mod tests {
     use super::*;
     use crate::geometry::matrix::ExactF64Conversion;
     use crate::geometry::realization::{SimplexIntersectionFailure, validate_simplex_intersection};
+    use approx::assert_abs_diff_eq;
     use proptest::prelude::*;
     use std::assert_matches;
 
@@ -2118,11 +2119,66 @@ mod tests {
         );
     }
 
+    /// Retains a finite unit direction even when its unnormalized squared length overflows.
+    fn assert_large_separator_ray_is_normalized<const D: usize>() {
+        let mut ray = [0.0; D];
+        ray[0] = 3.0e200;
+        ray[1] = -4.0e200;
+        let mut rays = Vec::new();
+        push_normalized_ray(&mut rays, ray);
+
+        assert_eq!(rays.len(), 1);
+        let normalized = &rays[0];
+        assert_abs_diff_eq!(normalized[0], 0.6, epsilon = f64::EPSILON);
+        assert_abs_diff_eq!(normalized[1], -0.8, epsilon = f64::EPSILON);
+        for &coordinate in &normalized[2..] {
+            assert_abs_diff_eq!(coordinate, 0.0, epsilon = f64::EPSILON);
+        }
+        let squared_length: f64 = normalized
+            .iter()
+            .map(|coordinate| coordinate * coordinate)
+            .sum();
+        assert_abs_diff_eq!(squared_length, 1.0, epsilon = 4.0 * f64::EPSILON);
+    }
+
+    /// Rejected provisional rays must not contaminate already collected directions.
+    fn assert_unusable_separator_rays_are_skipped<const D: usize>() {
+        let mut unit_ray = [0.0; D];
+        unit_ray[0] = 1.0;
+        let mut rays = vec![unit_ray];
+        for ray in [[0.0; D], [f64::MAX; D], [f64::INFINITY; D], [f64::NAN; D]] {
+            push_normalized_ray(&mut rays, ray);
+            assert_eq!(rays.len(), 1);
+            assert_eq!(rays[0].map(f64::to_bits), unit_ray.map(f64::to_bits));
+        }
+    }
+
+    macro_rules! separator_ray_tests {
+        ($($dim:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<large_separator_ray_is_normalized_ $dim d>]() {
+                        assert_large_separator_ray_is_normalized::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<unusable_separator_rays_are_skipped_ $dim d>]() {
+                        assert_unusable_separator_rays_are_skipped::<$dim>();
+                    }
+                )+
+            }
+        };
+    }
+
     macro_rules! generate_intersection_agreement_tests {
         ($dim:literal, $random_test:ident, $boundary_test:ident) => {
+            generate_intersection_agreement_tests!($dim, $random_test, $boundary_test, 16);
+        };
+        ($dim:literal, $random_test:ident, $boundary_test:ident, $cases:literal) => {
             proptest! {
                 #![proptest_config(ProptestConfig {
-                    cases: 16,
+                    cases: $cases,
                     ..ProptestConfig::default()
                 })]
 
@@ -2156,6 +2212,8 @@ mod tests {
             }
         };
     }
+
+    separator_ray_tests!(2, 3, 4, 5);
 
     #[test]
     fn rational_lp_bases_round_trip_through_dimension_eight() {
@@ -2201,6 +2259,13 @@ mod tests {
         5,
         optimized_intersection_agrees_with_legacy_random_5d,
         optimized_intersection_agrees_with_legacy_boundary_degenerate_5d
+    );
+    // Bound the larger exact active-set oracle while extending agreement to D=6.
+    generate_intersection_agreement_tests!(
+        6,
+        optimized_intersection_agrees_with_legacy_random_6d,
+        optimized_intersection_agrees_with_legacy_boundary_degenerate_6d,
+        4
     );
 
     #[test]
@@ -2259,6 +2324,11 @@ mod tests {
     #[test]
     fn exact_linear_program_accepts_a_shared_facet_intersection_5d() {
         assert_shared_facet_is_valid::<5>();
+    }
+
+    #[test]
+    fn exact_linear_program_accepts_a_shared_facet_intersection_6d() {
+        assert_shared_facet_is_valid::<6>();
     }
 
     #[test]
@@ -2354,6 +2424,134 @@ mod tests {
             None
         );
     }
+
+    /// Checks certified separation and range-sensitive fallback against simplices
+    /// in opposite orthants, whose only common point is their shared origin.
+    fn assert_shared_vertex_filter_and_fallback<const D: usize>() {
+        for (scale, certifies) in [
+            (1.0, true),
+            (2.0_f64.powi(-40), false),
+            (f64::from_bits(1), false),
+            (f64::MAX, false),
+        ] {
+            let (first, second, shared) = boundary_degenerate_pair::<D>(1, scale);
+            assert_eq!(
+                filtered_single_shared_vertex_confinement(&first, &second, &shared, &[1.0; D]),
+                certifies,
+                "unexpected certificate for scale {scale}"
+            );
+            assert_eq!(
+                filtered_single_shared_vertex_confinement(&second, &first, &shared, &[-1.0; D]),
+                certifies
+            );
+            assert_eq!(
+                optimized_classification(&first, &second),
+                IntersectionClassification::Valid
+            );
+            assert_eq!(
+                optimized_classification(&second, &first),
+                IntersectionClassification::Valid
+            );
+        }
+
+        let (first, second, shared) = boundary_degenerate_pair::<D>(1, 1.0);
+        let mut tangent_axis = [0.0; D];
+        tangent_axis[0] = 1.0;
+        // Zero projections and an exact unit margin must remain inconclusive.
+        for axis in [tangent_axis, [1.0 / 1024.0; D], [f64::MAX; D]] {
+            assert!(!filtered_single_shared_vertex_confinement(
+                &first, &second, &shared, &axis
+            ));
+        }
+        assert_matches!(
+            intersection_via_linear_program(&first, &second, &shared, false),
+            IntersectionLinearProgramResult::Valid
+        );
+
+        // Identical geometry with different non-shared labels overlaps outside
+        // the shared vertex; a missing certificate must not turn into success.
+        let (first, second, shared) = boundary_degenerate_pair::<D>(1, -1.0);
+        assert!(!filtered_single_shared_vertex_confinement(
+            &first, &second, &shared, &[1.0; D]
+        ));
+        assert_matches!(
+            validate_simplex_intersection(&first, &second),
+            Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { .. })
+        );
+    }
+
+    /// Large common translations obscure a small, exactly representable gap in
+    /// floating-point projections, but do not change the intersection geometry.
+    fn assert_shared_vertex_filter_cancellation<const D: usize>() {
+        let (first, second, shared) = boundary_degenerate_pair::<D>(1, 1.0);
+        let translation = 2.0_f64.powi(50);
+        let translate = |simplex: &LabeledSimplexRealization<usize, D>| {
+            LabeledSimplexRealization::try_new(
+                simplex.labels().iter().copied(),
+                simplex
+                    .coordinates()
+                    .iter()
+                    .map(|point| point.map(|value| value + translation)),
+            )
+            .unwrap()
+        };
+        let first = translate(&first);
+        let second = translate(&second);
+        assert!(!filtered_single_shared_vertex_confinement(
+            &first, &second, &shared, &[1.0; D]
+        ));
+        assert!(exact_shared_face_confinement_certificate(
+            &first, &second, &shared, &[1.0; D]
+        ));
+        assert_eq!(
+            optimized_classification(&first, &second),
+            IntersectionClassification::Valid
+        );
+        assert_eq!(
+            optimized_classification(&second, &first),
+            IntersectionClassification::Valid
+        );
+    }
+
+    macro_rules! shared_vertex_bound_tests {
+        ($($dim:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<shared_vertex_filter_and_fallback_ $dim d>]() {
+                        assert_shared_vertex_filter_and_fallback::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<shared_vertex_filter_cancellation_ $dim d>]() {
+                        assert_shared_vertex_filter_cancellation::<$dim>();
+                    }
+
+                    proptest! {
+                        #![proptest_config(ProptestConfig {
+                            cases: 32,
+                            ..ProptestConfig::default()
+                        })]
+
+                        #[test]
+                        fn [<shared_vertex_filter_certificate_is_exact_ $dim d>](
+                            raw_coordinates in proptest::collection::vec(-8_i16..=4, ($dim + 1) * $dim),
+                            raw_axis in proptest::collection::vec(1_i16..=8, $dim),
+                        ) {
+                            let (first, second, shared) = random_grid_pair::<$dim>(&raw_coordinates, 1);
+                            let axis: Vec<_> = raw_axis.into_iter().map(f64::from).collect();
+                            if filtered_single_shared_vertex_confinement(&first, &second, &shared, &axis) {
+                                prop_assert!(exact_shared_face_confinement_certificate(&first, &second, &shared, &axis));
+                                prop_assert_eq!(optimized_classification(&first, &second), IntersectionClassification::Valid);
+                            }
+                        }
+                    }
+                )+
+            }
+        };
+    }
+
+    shared_vertex_bound_tests!(2, 3, 4, 5, 6);
 
     #[test]
     fn exact_axis_rejects_post_scaling_overflow() {

@@ -178,7 +178,7 @@ Absolute timings are not portable across machines. Use same-machine comparisons
 for regression claims and stored GitHub release assets for runner-to-runner
 release comparisons when both releases provide them. See
 [`benches/README.md`](../benches/README.md) for the benchmark contract and
-[`docs/dev/perf-tuning.md`](../docs/dev/perf-tuning.md) for evidence rules.
+[`docs/dev/TUNING-PERFORMANCE.md`](../docs/dev/TUNING-PERFORMANCE.md) for evidence rules.
 
 #### Known benchmark exception
 

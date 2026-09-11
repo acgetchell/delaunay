@@ -21,17 +21,18 @@ deterministic degeneracy handling, explicit topology validation, and bistellar f
 
 - [Introduction](#-introduction)
 - [Features](#-features)
+- [API at a glance](#api-at-a-glance)
 - [Quickstart](#-quickstart)
 - [Scientific Basis](#-scientific-basis)
 - [Validation Model](#-validation-model)
-- [Documentation Map](#-documentation-map)
+- [Documentation Map](#readme-documentation-map)
 - [Ecosystem](#-ecosystem)
 - [Benchmarking](#-benchmarking)
-- [Limitations and Roadmap](#-limitations-and-roadmap)
+- [Limitations and Roadmap](#readme-limitations-and-roadmap)
 - [Contributing](#-contributing)
 - [Citation](#-citation)
 - [References](#-references)
-- [AI-assisted Development](#-ai-assisted-development)
+- [AI Agents](#-ai-agents)
 - [License](#-license)
 
 ## 📐 Introduction
@@ -55,10 +56,10 @@ Use this crate when you want:
 
 - Delaunay triangulations or convex hulls in 2D through 5D.
 - Exact predicates and deterministic SoS handling for degenerate inputs.
-- Valid-realization checks for Euclidean, toroidal, and spherical models independent of Delaunay predicates.
 - PL-manifold checks and explicit topology guarantees.
 - PL-manifold-aware editing via bistellar flips and bounded Delaunay repair.
 - Typed construction, insertion, validation, topology, and repair diagnostics.
+- Valid-realization checks for Euclidean, toroidal, and spherical models independent of Delaunay predicates.
 - Validation reports that separate element, combinatorial, intrinsic topology, realization, and
   geometric-predicate failures.
 
@@ -104,6 +105,32 @@ meshing, or production-scale dynamic remeshing.
 
 See [CHANGELOG.md][changelog] for release history and [`docs/roadmap.md`][roadmap] for
 current direction, near-term candidates, and non-goals.
+
+## API at a glance
+
+Use these public entry points with the linked recipes and runnable examples.
+The full [import selector][import-selector] stays in the API documentation.
+Here, `dt` is a `DelaunayTriangulation` and `tri` is a `Triangulation`.
+
+| Capability | Public entry points | Learn by doing |
+|---|---|---|
+| Construction and configuration | `DelaunayTriangulationBuilder`, `ConstructionOptions` | [Recipe][construction-recipe] |
+| Insertion and vertex deletion | `dt.insert_with_statistics()`, `dt.delete_vertex()` | [Lifecycle example][lifecycle-example] |
+| Queries, quality, and hulls | `dt.locate()`, `radius_ratio()`, `ConvexHull` | [Example][hull-example] |
+| Validation and diagnostics | `dt.validate()`, `dt.validation_report()`, `tri.realization_report()` | [Guide][Construction and Validation Guide] |
+| Repair and Pachner editing | `DelaunayRefinementBuilder`, `PachnerMoves` | [Repair][repair-example]; [editing][pachner-example] |
+| Toroidal/spherical construction | `.try_toroidal()`, `SphericalDelaunayBuilder` | [Torus][toroidal-example]; [sphere][spherical-example] |
+| Payloads, checkpoints, JSON, export | `Vertex`, `Simplex`, `prelude::checkpoint` | [JSON][data-example]; [export][mesh-export-guide] |
+
+Toroidal construction covers `T^2` and compact `T^3`; spherical construction is a
+bounded `S^2`/`S^3` prototype. These library workflows use default features. The
+[diagnostics example][diagnostics-example] requires `diagnostics`; the notebook/binary
+workflow below requires `cli`. [Checkpoint contracts][checkpoint-guide] describe
+versioned persistence; `dt.to_visualization_data()` creates a detached export.
+Pachner moves preserve
+their promised topology/realization scope; use repair and Level 5 validation when
+you need the Delaunay property. See [scope and limitations][limitations-guide]
+before choosing a dimension or geometric model.
 
 ## 🚀 Quickstart
 
@@ -201,35 +228,13 @@ just notebook-clear-outputs-all
 
 ## 🧪 Scientific Basis
 
-The crate treats a finite point-set triangulation as an oriented abstract simplicial complex plus a
-coordinate realization in a supported geometric model. Level 1 certifies element validity, including
-coordinate storage and local coordinate invariants. Levels 2-3 certify combinatorial consistency and
-intrinsic PL topology without depending on coordinates: Level 2 checks coherent stored simplex
-orderings, while Level 3 independently certifies intrinsic orientability for supported 2D/3D
-PL-manifold guarantees, including periodic quotient constraints. Level 4 certifies geometric validity:
-Euclidean/toroidal affine-chart maximal simplices must be positively oriented and nondegenerate, and
-their realizations may intersect only in shared abstract faces. The bounded spherical prototype
-separately certifies model-specific simplex nondegeneracy in `S^D \subset R^(D+1)`. Level 5 certifies
-geometric optimality or predicate satisfaction, currently the Delaunay empty-circumsphere property.
+The crate separates the abstract simplicial complex, its coordinate realization,
+and the Delaunay predicate contract through the five validation levels below.
+The [scientific basis overview][scientific-basis-guide] connects API selection,
+supported geometric models, numerical assumptions, and methods to their sources.
+It also distinguishes correctness evidence from performance measurements.
 
-The public domain hierarchy mirrors those proofs: `Tds` owns Levels 1–2,
-`Triangulation` consumes a validated TDS and adds Levels 3–4, and
-`DelaunayTriangulation` consumes a realized triangulation and adds Level 5.
-Canonical TDS mutation stays behind checked TDS operations, so higher owners
-cannot bypass lower-layer invariants.
-
-Correctness evidence comes from the invariant model, exact predicate fallbacks, deterministic
-Simulation of Simplicity, validation reports, property tests, regression tests, and public examples.
-Performance evidence is separate: Hilbert ordering, allocation-conscious data structures,
-validation-level benchmarks, math-kernel benchmarks, and release-to-release Criterion reports
-characterize cost and observability, but they do not replace correctness checks.
-
-The crate guarantees the implemented finite-dimensional Delaunay, topology, and validation contracts
-for the documented coordinate models and dimensions. It does not replace constrained meshing
-packages, prove arbitrary abstract PL-manifolds realizable from coordinates, or certify unsupported
-spherical/hyperbolic workflows.
-
-For the detailed contract, see [`docs/construction_and_validation.md`][Construction and Validation Guide],
+For the detailed contracts, see [`docs/construction_and_validation.md`][Construction and Validation Guide],
 [`docs/invariants.md`][invariants-guide], [`docs/topology.md`][topology-guide],
 [`docs/numerical_robustness_guide.md`][exact predicates],
 [`docs/limitations.md`][limitations-guide], and [`benches/README.md`][benchmarks-guide].
@@ -266,12 +271,16 @@ For generated failure pictures, public test anchors, and diagnostics for each la
 exposition, see [`papers/validation.tex`][validation-paper-source] and the compiled reviewer copy at
 [`papers/validation.pdf`][validation-paper].
 
+<a id="readme-documentation-map"></a>
+
 ## 🗺️ Documentation Map
 
-- [Artifact Guide][artifact-guide] - v0.8.0 reviewer reproduction paths, claim map, evidence, and limits.
 - [API Design][api-design-guide] - construction, vertex lifecycle, and explicit Pachner moves.
+- [Artifact Guide][artifact-guide] - v0.8.0 reviewer reproduction paths, claim map, evidence, and limits.
 - [Benchmarks][benchmarks-guide] - Criterion suites, perf-profile workflow, release summaries, and canary sizes.
 - [Code Organization][code-organization-guide] - Architecture hub with links to module maps, focused preludes, and file layout.
+- [Construction and Validation Guide] - Proof-bearing construction, validation hierarchy, and policy configuration.
+- [Construction and Validation Paper][validation-paper] - Reviewer-facing architecture paper.
 - [Diagnostics][diagnostics-guide] - Structured reports, telemetry, and debug switches.
 - [Examples and Notebooks][examples-guide] - Coverage map for runnable Rust workflows and visual computational artifacts.
 - [Invariants][invariants-guide] - Topological and geometric invariants enforced by the crate.
@@ -283,9 +292,8 @@ exposition, see [`papers/validation.tex`][validation-paper-source] and the compi
 - [Property Testing Summary][property-testing-guide] - Property-test layout and coverage summary.
 - [Releasing][releasing-guide] - Changelog, benchmark, and publish workflow.
 - [Roadmap][roadmap] - Current release sequence and deferred feature tracks.
+- [Scientific Basis][scientific-basis-guide] - API selection, scientific scope, assumptions, methods, and supporting sources.
 - [Topology][topology-guide] - Level 3 Intrinsic PL Topology validation, orientability, and global topology models.
-- [Construction and Validation Guide] - Proof-bearing construction, validation hierarchy, and policy configuration.
-- [Construction and Validation Paper][validation-paper] - Reviewer-facing architecture paper.
 - [Workflows][workflows-guide] - Practical recipes for construction, repair, toroidal domains, payloads, and flips.
 
 ## 🧩 Ecosystem
@@ -330,7 +338,7 @@ just bench-ci
 just bench-perf-summary
 ```
 
-See the legacy [`docs/PERFORMANCE.md`][performance-report] report for historical,
+See the legacy [`docs/performance.md`][performance-report] report for historical,
 provenance-limited release evidence and [`benches/README.md`][benchmarks-guide]
 for benchmark selection, fixture sizes, baseline workflows, and large-scale
 profiling guidance.
@@ -345,6 +353,8 @@ bundle.
 No retained release-comparison bundle has been published to the README yet.
 
 <!-- PERFORMANCE_RELEASE_TABLE:END -->
+
+<a id="readme-limitations-and-roadmap"></a>
 
 ## 🛣️ Limitations and Roadmap
 
@@ -414,17 +424,13 @@ This includes foundational work on:
 - Simulation of Simplicity.
 - PL-manifold topology and Pachner moves.
 
-## 🤖 AI-assisted Development
+<a id="-ai-assisted-development"></a>
 
-This repository contains [AGENTS.md][agent-guide], which defines the rules and invariants for AI coding
-assistants and autonomous agents working on this codebase.
+## 🤖 AI Agents
 
-Portions of this library were developed with the assistance of AI tools including [ChatGPT], [Claude],
-[Codex], and [CodeRabbit]. All accepted code and documentation changes are reviewed, edited, and
-validated by the author.
-
-For tool citation metadata, see the [AI-assisted development tools][ai-tools]
-section of [REFERENCES.md][references-guide].
+AI coding assistants should read [AGENTS.md][agent-guide]
+before proposing or applying changes. See [CONTRIBUTING.md][ai-development-guide]
+for the repository's AI-assisted development note.
 
 ## 📜 License
 
@@ -444,10 +450,6 @@ This project is licensed under the [BSD 3-Clause License](https://github.com/acg
 [codeql-badge]: https://github.com/acgetchell/delaunay/actions/workflows/codeql.yml/badge.svg
 [codeql-workflow]: https://github.com/acgetchell/delaunay/actions/workflows/codeql.yml
 [CGAL]: https://www.cgal.org/
-[ChatGPT]: https://openai.com/chatgpt
-[Claude]: https://www.anthropic.com/claude
-[CodeRabbit]: https://coderabbit.ai/
-[Codex]: https://openai.com/codex
 [Convex hulls]: https://en.wikipedia.org/wiki/Convex_hull
 [Delaunay triangulations]: https://en.wikipedia.org/wiki/Delaunay_triangulation
 [exact predicates]: https://github.com/acgetchell/delaunay/blob/main/docs/numerical_robustness_guide.md
@@ -459,37 +461,49 @@ This project is licensed under the [BSD 3-Clause License](https://github.com/acg
 [PL-manifold]: https://en.wikipedia.org/wiki/Piecewise_linear_manifold
 [Pseudomanifold]: https://en.wikipedia.org/wiki/Pseudomanifold
 [readme-hero]: https://raw.githubusercontent.com/acgetchell/delaunay/main/docs/assets/readme/delaunay_spherical_readme.png
-[Secondary maps]: https://github.com/acgetchell/delaunay/blob/main/docs/workflows.md#builder-api-auxiliary-vertex-and-simplex-data
+[Secondary maps]: https://github.com/acgetchell/delaunay/blob/main/docs/USING_TRIANGULATIONS.md#builder-api-auxiliary-vertex-and-simplex-data
 [Simulation of Simplicity]:
   <https://github.com/acgetchell/delaunay/blob/main/docs/numerical_robustness_guide.md#identity-based-sos-perturbation-via-canonical-vertex-ordering>
 [Construction and Validation Guide]: https://github.com/acgetchell/delaunay/blob/main/docs/construction_and_validation.md
 
 <!-- Repository guides follow main so links work in both GitHub and included rustdoc. -->
 [agent-guide]: https://github.com/acgetchell/delaunay/blob/main/AGENTS.md
-[ai-tools]: https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md#ai-assisted-development-tools
+[ai-development-guide]: https://github.com/acgetchell/delaunay/blob/main/CONTRIBUTING.md#ai-assisted-development
 [api-design-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/api_design.md
 [artifact-guide]: https://github.com/acgetchell/delaunay/blob/main/papers/ARTIFACT.md
 [benchmarks-guide]: https://github.com/acgetchell/delaunay/blob/main/benches/README.md
 [changelog]: https://github.com/acgetchell/delaunay/blob/main/CHANGELOG.md
+[checkpoint-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/construction_and_validation.md#owner-checkpoint-manifests
 [citation-metadata]: https://github.com/acgetchell/delaunay/blob/main/CITATION.cff
 [code-of-conduct]: https://github.com/acgetchell/delaunay/blob/main/CODE_OF_CONDUCT.md
 [code-organization-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/code_organization.md
 [contributing-guide]: https://github.com/acgetchell/delaunay/blob/main/CONTRIBUTING.md
+[construction-recipe]: https://github.com/acgetchell/delaunay/blob/main/docs/USING_TRIANGULATIONS.md#builder-api-the-happy-path
+[data-example]: https://github.com/acgetchell/delaunay/blob/main/examples/data_and_serialization.rs
+[diagnostics-example]: https://github.com/acgetchell/delaunay/blob/main/examples/diagnostics.rs
 [diagnostics-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/diagnostics.md
 [examples-guide]: https://github.com/acgetchell/delaunay/blob/main/examples/README.md
+[hull-example]: https://github.com/acgetchell/delaunay/blob/main/examples/triangulation_and_hull.rs
+[import-selector]: https://docs.rs/delaunay/latest/delaunay/#which-import-do-i-need
 [invariants-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/invariants.md
 [limitations-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/limitations.md
+[lifecycle-example]: https://github.com/acgetchell/delaunay/blob/main/examples/dynamic_lifecycle.rs
 [mesh-export-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/mesh_export.md
-[orientation-spec]: https://github.com/acgetchell/delaunay/blob/main/docs/ORIENTATION_SPEC.md
-[performance-report]: https://github.com/acgetchell/delaunay/blob/main/docs/PERFORMANCE.md
+[orientation-spec]: https://github.com/acgetchell/delaunay/blob/main/docs/orientation_spec.md
+[pachner-example]: https://github.com/acgetchell/delaunay/blob/main/examples/topology_editing.rs
+[performance-report]: https://github.com/acgetchell/delaunay/blob/main/docs/performance.md
 [property-testing-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/property_testing_summary.md
 [quickstart-notebook]: https://github.com/acgetchell/delaunay/blob/main/notebooks/00_quickstart.ipynb
 [references-guide]: https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md
 [releasing-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/RELEASING.md
+[repair-example]: https://github.com/acgetchell/delaunay/blob/main/examples/delaunayize_repair.rs
 [roadmap]: https://github.com/acgetchell/delaunay/blob/main/docs/roadmap.md
+[scientific-basis-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/scientific_basis.md
+[spherical-example]: https://github.com/acgetchell/delaunay/blob/main/examples/spherical_construction.rs
 [spherical-notebook]: https://github.com/acgetchell/delaunay/blob/main/notebooks/02_spherical_hero.ipynb
 [topology-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/topology.md
+[toroidal-example]: https://github.com/acgetchell/delaunay/blob/main/examples/toroidal_construction.rs
 [validation-notebook]: https://github.com/acgetchell/delaunay/blob/main/notebooks/01_validation.ipynb
 [validation-paper]: https://github.com/acgetchell/delaunay/blob/main/papers/validation.pdf
 [validation-paper-source]: https://github.com/acgetchell/delaunay/blob/main/papers/validation.tex
-[workflows-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/workflows.md
+[workflows-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/USING_TRIANGULATIONS.md

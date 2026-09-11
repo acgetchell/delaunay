@@ -369,7 +369,7 @@ This runs:
 ## Benchmark Profiles
 
 For performance-sensitive code changes, follow
-[`perf-tuning.md`](perf-tuning.md): benchmark before editing, add a benchmark
+[`TUNING-PERFORMANCE.md`](TUNING-PERFORMANCE.md): benchmark before editing, add a benchmark
 when none covers the hot path, benchmark after editing, and preserve
 scientific invariants throughout. Benchmark output is only evidence when the
 measured workflow maintains its triangulation, predicate, topology, and
@@ -582,7 +582,7 @@ the requested clean tag. Existing legacy archives remain loadable as
 provenance-limited absolute timing evidence. GitHub-asset ratios are always
 suppressed because the archives came from separate measurement sessions. Use
 `just performance-release` in release PRs to measure, retain, reload-validate, and
-promote one curated comparison into `docs/PERFORMANCE.md`, archiving the
+promote one curated comparison into `docs/performance.md`, archiving the
 previous report and exact promoted CSV/provenance bytes under
 `docs/archive/performance/`.
 

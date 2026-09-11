@@ -77,6 +77,14 @@ workflow references do not need to be loaded preemptively.
   to a non-interactive shell; see `docs/dev/commands.md`.
 - **Do not edit generated changelogs manually.** Changelog and documentation
   maintenance rules live in `docs/dev/docs.md`.
+- **Keep documentation owners distinct.** README owns evaluation and quickstart;
+  REFERENCES owns thematic bibliography and stable citation keys;
+  `docs/scientific_basis.md` owns the scientific overview. Preserve Contents,
+  early API/scope guidance, and existing deep links. Sort independent methods
+  lexicographically within coherent groups, after their prerequisites. Task
+  guides use uppercase verb/gerund filenames; discussions, policy, references,
+  and results use lowercase descriptive names. Keep conventional indexes and
+  archives intact; details live in [documentation policy](docs/dev/docs.md).
 - **Treat paper prose as author-owned.** Agents must not add substantive
   publication prose to `papers/`; local paper maintenance rules live in
   `docs/dev/docs.md`.
@@ -222,7 +230,7 @@ enforce that contract.
   compatibility aliases or shims; make breaks intentional and document them
   through the commit/changelog workflow.
 - Performance is subordinate to scientific invariants. Use the
-  benchmark-before/after workflow in `docs/dev/perf-tuning.md` for
+  benchmark-before/after workflow in `docs/dev/TUNING-PERFORMANCE.md` for
   performance-sensitive changes, and treat timings from invariant-violating
   runs as invalid evidence.
 - Tests should verify mathematical, geometric, and topological invariants.
@@ -242,7 +250,7 @@ enforce that contract.
 | Validation command selection and `just` recipes | `docs/dev/commands.md` |
 | Rust API, naming, error, panic, prelude, and implementation conventions | `docs/dev/rust.md`, then its focused links |
 | Tests, doctests, proptests, slow tests, and dimension coverage | `docs/dev/testing.md` |
-| Performance tuning and benchmark evidence | `docs/dev/perf-tuning.md` |
+| Performance tuning and benchmark evidence | `docs/dev/TUNING-PERFORMANCE.md` |
 | Documentation, references, changelog, and scientific notation | `docs/dev/docs.md` |
 | Jupyter notebook cells, execution, and tracked artifacts | `docs/dev/notebooks.md` |
 | Python support scripts | `docs/dev/python.md` |

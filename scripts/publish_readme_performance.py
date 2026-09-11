@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from benchmark_utils import render_performance_bundle
+from benchmark_utils import DOCS_PERFORMANCE_REPORT, render_performance_bundle
 from performance_artifacts import ArtifactPaths, PerformanceBundle, PerformanceRow, load_bundle
 
 if TYPE_CHECKING:
@@ -105,7 +105,7 @@ def render_readme_block(bundle: PerformanceBundle) -> str:
             ),
             "",
             (
-                f"[Full report]({asset_base}/docs/PERFORMANCE.md) · "
+                f"[Full report]({asset_base}/{DOCS_PERFORMANCE_REPORT.as_posix()}) · "
                 f"[CSV]({asset_base}/{_ASSET_CSV.as_posix()}) · "
                 f"[provenance]({asset_base}/{_ASSET_PROVENANCE.as_posix()})"
             ),
@@ -225,7 +225,7 @@ def publish_readme_performance(
     )
     performance_report = _contained_destination(
         resolved_root,
-        resolved_root / "docs/PERFORMANCE.md",
+        resolved_root / DOCS_PERFORMANCE_REPORT,
         label="promoted performance report",
     )
     source_csv = source.csv.read_bytes()
@@ -249,7 +249,7 @@ def publish_readme_performance(
     )
     expected_report = render_performance_bundle(bundle, evidence_paths=durable_evidence, evidence_state="promoted")
     if performance_report.read_text(encoding="utf-8") != expected_report:
-        msg = "docs/PERFORMANCE.md is not the canonical rendering of the retained and promoted performance bundle"
+        msg = f"{DOCS_PERFORMANCE_REPORT.as_posix()} is not the canonical rendering of the retained and promoted performance bundle"
         raise ValueError(msg)
 
     updated_readme = _replace_marked_block(readme_path.read_text(encoding="utf-8"), render_readme_block(bundle))

@@ -15,7 +15,7 @@ remains the architecture hub.
 | [`git.md`](git.md) | Git safety, GitHub CLI usage, issue dependencies, branch names, and commit-message rules |
 | [`rust.md`](rust.md) | Rust guidance index; read its focused links before touching Rust code |
 | [`testing.md`](testing.md) | Unit, integration, property, doctest, slow-test, and dimension-coverage expectations |
-| [`perf-tuning.md`](perf-tuning.md) | Benchmark-before/after workflow for performance-sensitive Rust changes |
+| [`TUNING-PERFORMANCE.md`](TUNING-PERFORMANCE.md) | Benchmark-before/after workflow for performance-sensitive Rust changes |
 | [`docs.md`](docs.md) | Documentation ownership, scientific notation, references, changelog, and crates.io docs |
 | [`notebooks.md`](notebooks.md) | Notebook cell IDs, source hygiene, deliberate execution, and tracked artifacts |
 | [`python.md`](python.md) | Python support-script typing, subprocess mocks, exceptions, and parser contracts |

@@ -1006,7 +1006,7 @@ Property tests are preferred for geometric invariants such as:
 ## Performance
 
 For performance-sensitive Rust changes, follow the benchmark-before-and-after
-workflow in [`perf-tuning.md`](../perf-tuning.md). Add a representative benchmark
+workflow in [`TUNING-PERFORMANCE.md`](../TUNING-PERFORMANCE.md). Add a representative benchmark
 when none exists, and cover 2D through 5D for dimension-generic hot paths
 whenever feasible.
 

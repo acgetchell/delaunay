@@ -129,7 +129,7 @@ loadable as provenance-limited absolute timing evidence. Acquisition is retained
 separately from measurement provenance, and ratios are suppressed for these
 separate hosted measurement sessions.
 `performance-release` retains and reload-validates the local bundle before
-promoting the curated report into `docs/PERFORMANCE.md`, archiving the previous
+promoting the curated report into `docs/performance.md`, archiving the previous
 report, and copying the exact CSV/provenance bytes into
 `docs/archive/performance/data/`. `performance-doc` consumes an existing
 validated CSV/JSON pair and performs the same promotion without Cargo or

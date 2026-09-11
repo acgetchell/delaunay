@@ -34,6 +34,7 @@ def _write_project(root: Path, *, metadata_version: str = "1.2.2", dependency_ve
             f'delaunay = {{ version = "{dependency_version}", features = ["diagnostics"] }}\n'
             f"[license](https://github.com/acgetchell/delaunay/blob/v{metadata_version}/LICENSE)\n"
             f"[performance](https://github.com/acgetchell/delaunay/blob/v{metadata_version}/docs/PERFORMANCE.md)\n"
+            f"[current report](https://github.com/acgetchell/delaunay/blob/v{metadata_version}/docs/performance.md)\n"
             f"[csv](https://github.com/acgetchell/delaunay/blob/v{metadata_version}/docs/assets/bench/release-performance.csv)\n"
         ),
         "CHANGELOG.md": "# Changelog\n\n## [1.2.2] - 2026-07-13\n",
@@ -82,6 +83,7 @@ def test_update_release_version_updates_current_surfaces_without_dependency_upgr
     assert 'version = "1.2.3"' in readme
     assert "blob/v1.2.3/LICENSE" in readme
     assert "blob/v1.2.2/docs/PERFORMANCE.md" in readme
+    assert "blob/v1.2.2/docs/performance.md" in readme
     assert "blob/v1.2.2/docs/assets/bench/release-performance.csv" in readme
     benchmarking = (tmp_path / "docs" / "BENCHMARKING.md").read_text(encoding="utf-8")
     assert "just performance-release v1.2.3 v1.2.2" in benchmarking

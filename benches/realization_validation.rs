@@ -41,12 +41,12 @@ fn standard_simplex_coordinates<const D: usize>() -> Vec<[f64; D]> {
 
 /// Builds simplices whose exact intersection is a non-facet shared face.
 fn shared_face_pair<const D: usize>(
+    shared_count: usize,
     transverse_scale: f64,
 ) -> (
     LabeledSimplexRealization<usize, D>,
     LabeledSimplexRealization<usize, D>,
 ) {
-    let shared_count = D.saturating_sub(1).max(1);
     let first_coordinates = standard_simplex_coordinates::<D>();
     let mut second_coordinates = first_coordinates[..shared_count].to_vec();
     for axis in shared_count.saturating_sub(1)..D {
@@ -65,9 +65,10 @@ fn shared_face_pair<const D: usize>(
 fn register_valid_narrow_phase<const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     case: &str,
+    shared_count: usize,
     transverse_scale: f64,
 ) {
-    let (first, second) = shared_face_pair::<D>(transverse_scale);
+    let (first, second) = shared_face_pair::<D>(shared_count, transverse_scale);
     if let Err(error) = validate_simplex_intersection(&first, &second) {
         abort_benchmark(format_args!(
             "{D}D {case} fixture must meet only in its shared face: {error}"
@@ -89,14 +90,38 @@ fn bench_realization_narrow_phase(c: &mut Criterion) {
     let mut group = c.benchmark_group("realization_narrow_phase");
     group.throughput(Throughput::Elements(1));
 
-    register_valid_narrow_phase::<2>(&mut group, "shared_face_boundary", 1.0);
-    register_valid_narrow_phase::<3>(&mut group, "shared_face_boundary", 1.0);
-    register_valid_narrow_phase::<4>(&mut group, "shared_face_boundary", 1.0);
-    register_valid_narrow_phase::<5>(&mut group, "shared_face_boundary", 1.0);
-    register_valid_narrow_phase::<2>(&mut group, "near_degenerate_shared_face", 2.0_f64.powi(-40));
-    register_valid_narrow_phase::<3>(&mut group, "near_degenerate_shared_face", 2.0_f64.powi(-40));
-    register_valid_narrow_phase::<4>(&mut group, "near_degenerate_shared_face", 2.0_f64.powi(-40));
-    register_valid_narrow_phase::<5>(&mut group, "near_degenerate_shared_face", 2.0_f64.powi(-40));
+    register_valid_narrow_phase::<2>(&mut group, "shared_face_boundary", 1, 1.0);
+    register_valid_narrow_phase::<3>(&mut group, "shared_face_boundary", 2, 1.0);
+    register_valid_narrow_phase::<4>(&mut group, "shared_face_boundary", 3, 1.0);
+    register_valid_narrow_phase::<5>(&mut group, "shared_face_boundary", 4, 1.0);
+    register_valid_narrow_phase::<2>(
+        &mut group,
+        "near_degenerate_shared_face",
+        1,
+        2.0_f64.powi(-40),
+    );
+    register_valid_narrow_phase::<3>(
+        &mut group,
+        "near_degenerate_shared_face",
+        2,
+        2.0_f64.powi(-40),
+    );
+    register_valid_narrow_phase::<4>(
+        &mut group,
+        "near_degenerate_shared_face",
+        3,
+        2.0_f64.powi(-40),
+    );
+    register_valid_narrow_phase::<5>(
+        &mut group,
+        "near_degenerate_shared_face",
+        4,
+        2.0_f64.powi(-40),
+    );
+    register_valid_narrow_phase::<2>(&mut group, "single_shared_vertex", 1, 1.0);
+    register_valid_narrow_phase::<3>(&mut group, "single_shared_vertex", 1, 1.0);
+    register_valid_narrow_phase::<4>(&mut group, "single_shared_vertex", 1, 1.0);
+    register_valid_narrow_phase::<5>(&mut group, "single_shared_vertex", 1, 1.0);
 
     group.finish();
 }

@@ -60,9 +60,10 @@ just check
 ```
 
 During iterative review and fixes, use `just check` alongside targeted tests
-for changed behavior. Once substantive changes settle, run `just review`
-against the intended PR base and address valid CodeRabbit findings before
-final validation. Small editorial changes may skip this review. See
+for changed behavior. CodeRabbit review requires explicit maintainer
+authorization and is not a readiness requirement. When authorized, run
+`just review` against the intended PR base and address valid findings before
+final validation. See
 [local CodeRabbit review](docs/dev/commands.md#local-coderabbit-review) for
 scope selection and prerequisites.
 
@@ -79,9 +80,9 @@ This repository contains an [`AGENTS.md`](AGENTS.md) file, which defines the
 canonical rules and invariants for AI coding assistants and autonomous agents
 working on this codebase.
 
-AI tools, including ChatGPT, Claude, CodeRabbit, Codex, GitHub Copilot,
-KiloCode, and WARP, are expected to read and follow `AGENTS.md` when proposing
-or applying changes.
+AI tools, including ChatGPT, Claude, CodeRabbit, Codex, KiloCode, and WARP, are
+expected to read and follow `AGENTS.md` and its task-relevant linked guidance
+when proposing or applying changes.
 
 Portions of this library were developed with the assistance of these tools:
 
@@ -89,7 +90,6 @@ Portions of this library were developed with the assistance of these tools:
 - [Claude](https://www.anthropic.com/claude)
 - [CodeRabbit](https://coderabbit.ai/)
 - [Codex](https://openai.com/codex/)
-- [GitHub Copilot](https://github.com/features/copilot)
 - [KiloCode](https://kilocode.ai/)
 - [WARP](https://www.warp.dev)
 

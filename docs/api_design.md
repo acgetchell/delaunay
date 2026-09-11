@@ -219,7 +219,7 @@ for topology guarantee and validation policy details.
 - **Auxiliary data**: Vertices and simplices carry optional user data (`U` / `V`). Read via `vertex.data()` /
   `simplex.data()`, write via checked `dt.set_vertex_data(key, data)?` /
   `dt.set_simplex_data(key, data)?` calls (O(1), invariant-preserving, typed failure for stale keys).
-  See [`workflows.md`](workflows.md) for examples.
+  See [`USING_TRIANGULATIONS.md`](USING_TRIANGULATIONS.md) for examples.
 - **Error handling**: Operations fail gracefully if they would violate invariants (see
   [`invariants.md`](invariants.md)). Mutating operations that invoke repair use
   typed repair diagnostics where available, for example

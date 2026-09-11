@@ -3070,6 +3070,7 @@ mod tests {
         },
         vertex,
     };
+    use approx::assert_relative_eq;
     use slotmap::KeyData;
     use std::{assert_matches, sync::Barrier, thread};
 
@@ -3488,6 +3489,26 @@ mod tests {
         assert_matches!(err, Some(InsertionError::DuplicateCoordinates { .. }));
     }
 
+    /// Distinguishes an overflowing square from an unrepresentable span or length.
+    fn duplicate_coordinate_tolerance_handles_extreme_spans<const D: usize>() {
+        let origin = [0.0; D];
+        let mut reference = [0.0; D];
+        reference[0] = 3.0e200;
+        reference[1] = 4.0e200;
+        let tolerance = duplicate_coordinate_tolerance_from_references(&origin, [&reference]);
+        assert_relative_eq!(tolerance, 5.0e190, max_relative = 1.0e-14);
+
+        let negative = coords_with_first::<D>(-f64::MAX);
+        let positive = coords_with_first::<D>(f64::MAX);
+        let subtraction_overflow =
+            duplicate_coordinate_tolerance_from_references(&negative, [&positive]);
+        assert_relative_eq!(subtraction_overflow, DUPLICATE_RELATIVE_TOLERANCE);
+
+        let length_overflow =
+            duplicate_coordinate_tolerance_from_references(&origin, [&[f64::MAX; D]]);
+        assert_relative_eq!(length_overflow, DUPLICATE_RELATIVE_TOLERANCE);
+    }
+
     fn duplicate_coordinate_tolerance_scales_down_for_small_features<const D: usize>() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), D> =
             Triangulation::new_empty(FastKernel::new());
@@ -3598,6 +3619,11 @@ mod tests {
         ($($dim:expr),+ $(,)?) => {
             pastey::paste! {
                 $(
+                    #[test]
+                    fn [<test_duplicate_coordinate_tolerance_handles_extreme_spans_ $dim d>]() {
+                        duplicate_coordinate_tolerance_handles_extreme_spans::<$dim>();
+                    }
+
                     #[test]
                     fn [<test_duplicate_coordinate_tolerance_scales_down_for_small_features_ $dim d>]() {
                         duplicate_coordinate_tolerance_scales_down_for_small_features::<$dim>();

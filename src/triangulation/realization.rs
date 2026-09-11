@@ -2715,6 +2715,51 @@ mod tests {
     }
 
     #[test]
+    fn realization_report_skips_pairs_with_invalid_periodic_charts() {
+        // The second simplex lies inside the first. The first spans a whole
+        // period, so its chart violation must preclude pairwise diagnostics.
+        let coords = [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 0.25],
+            [0.125, 0.0625],
+            [0.25, 0.0625],
+            [0.125, 0.1875],
+        ];
+        let (tds, keys) =
+            tds_from_vertices_and_simplices_with_keys(&coords, &[vec![0, 1, 2], vec![3, 4, 5]]);
+        let tri = tri_from_tds_with_topology(
+            tds,
+            GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap(),
+        );
+
+        let report = tri.realization_report().unwrap();
+        assert_eq!(report.checked_simplices, 2);
+        assert_eq!(report.checked_simplex_pairs, 0);
+        assert_eq!(report.violations.len(), 1);
+        let TriangulationRealizationValidationError::PeriodicSimplexSpansDomain {
+            simplex_key,
+            detail,
+            axis,
+            span,
+            period,
+            ..
+        } = &report.violations[0]
+        else {
+            panic!(
+                "expected periodic chart violation, got {:?}",
+                report.violations
+            );
+        };
+        assert_eq!(*simplex_key, keys[0]);
+        assert_eq!(detail.key, keys[0]);
+        assert_eq!(*axis, 0);
+        assert_abs_diff_eq!(*span, 1.0, epsilon = f64::EPSILON);
+        assert_abs_diff_eq!(*period, 1.0, epsilon = f64::EPSILON);
+    }
+
+    #[test]
     fn is_valid_realization_rejects_periodic_translate_overlap() {
         let coords = [
             [0.0, 0.0],

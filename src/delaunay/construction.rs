@@ -6229,6 +6229,56 @@ mod tests {
 
     type TestDelaunay<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 
+    /// Keeps usable simplex candidates when an outlier has no representable distance score.
+    fn assert_initial_simplex_sampling_skips_overflow<const D: usize>() {
+        let mut coordinates = vec![[0.0; D]];
+        for axis in 0..D {
+            let mut point = [0.0; D];
+            point[axis] = f64::from(u32::try_from(axis + 1).unwrap());
+            coordinates.push(point);
+        }
+        let expected: Vec<_> = std::iter::once(0).chain((1..=D).rev()).collect();
+
+        // Both outliers have finite coordinates but no representable squared
+        // distance to an ordinary candidate.
+        for outlier in [1.0e200, f64::MAX] {
+            let mut with_outlier = coordinates.clone();
+            with_outlier.push([outlier; D]);
+            let vertices: Vec<Vertex<(), D>> = with_outlier
+                .iter()
+                .map(|coords| vertex!(*coords).unwrap())
+                .collect();
+
+            let mut candidates = vec![0];
+            extend_candidate_pool_by_farthest_points(
+                &with_outlier,
+                &mut candidates,
+                with_outlier.len(),
+            );
+            assert_eq!(candidates, expected);
+            assert_eq!(
+                select_balanced_simplex_indices(&vertices),
+                Some(expected.clone())
+            );
+        }
+
+        // With no usable pair score, both heuristics exhaust their search
+        // without promoting an overflowing distance to a candidate ranking.
+        for point in &mut coordinates[1..] {
+            for coordinate in point {
+                *coordinate *= 1.0e200;
+            }
+        }
+        let vertices: Vec<Vertex<(), D>> = coordinates
+            .iter()
+            .map(|coords| vertex!(*coords).unwrap())
+            .collect();
+        let mut candidates = vec![0];
+        extend_candidate_pool_by_farthest_points(&coordinates, &mut candidates, D + 1);
+        assert_eq!(candidates, [0]);
+        assert_eq!(select_balanced_simplex_indices(&vertices), None);
+    }
+
     fn into_batch_workspace<const D: usize>(
         dt: TestDelaunay<D>,
     ) -> DelaunayBatchWorkspace<AdaptiveKernel<f64>, (), (), D> {
@@ -6240,6 +6290,21 @@ mod tests {
             delaunay_certificate: None,
         }
     }
+
+    macro_rules! initial_simplex_sampling_overflow_tests {
+        ($($dim:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<initial_simplex_sampling_skips_overflow_ $dim d>]() {
+                        assert_initial_simplex_sampling_skips_overflow::<$dim>();
+                    }
+                )+
+            }
+        };
+    }
+
+    initial_simplex_sampling_overflow_tests!(2, 3, 4, 5);
 
     #[test]
     fn construction_certificate_requires_publishable_evidence_for_the_exact_topology_state() {

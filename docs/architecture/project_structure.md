@@ -48,17 +48,21 @@ delaunay/
 │   │       └── data/
 │   ├── dev/
 │   ├── templates/
+│   ├── RELEASING.md
+│   ├── USING_TRIANGULATIONS.md
 │   ├── api_design.md
 │   ├── code_organization.md
+│   ├── construction_and_validation.md
 │   ├── diagnostics.md
 │   ├── invariants.md
 │   ├── limitations.md
 │   ├── mesh_export.md
 │   ├── numerical_robustness_guide.md
+│   ├── orientation_spec.md
+│   ├── performance.md
 │   ├── property_testing_summary.md
-│   ├── topology.md
-│   ├── construction_and_validation.md
-│   └── workflows.md
+│   ├── scientific_basis.md
+│   └── topology.md
 ├── examples/
 ├── notebooks/
 │   ├── 00_quickstart.ipynb

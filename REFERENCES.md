@@ -1,5 +1,55 @@
 # References and Citations
 
+This file owns bibliographic provenance and stable citation keys. For API
+selection, scientific scope, assumptions, and method explanations, start with
+the [scientific basis overview](docs/scientific_basis.md); for installation and
+first use, start with the [README](README.md).
+
+## Contents
+
+- [Topic-to-source index](#topic-to-source-index)
+- [AI-Assisted Development Tools](#ai-assisted-development-tools)
+- [How to Cite This Library](#how-to-cite-this-library)
+- [Inline Citation Keys](#inline-citation-keys)
+- [Advanced Computational Geometry Topics](#advanced-computational-geometry-topics)
+- [Combinatorial Algorithms and Enumeration](#combinatorial-algorithms-and-enumeration)
+- [Convex Hull Algorithms](#convex-hull-algorithms)
+- [Core Delaunay Triangulation Algorithms and Data Structures](#core-delaunay-triangulation-algorithms-and-data-structures)
+- [Geometric Predicates and Numerical Robustness](#geometric-predicates-and-numerical-robustness)
+- [Mesh Quality Metrics](#mesh-quality-metrics)
+- [Performance Optimization and Memory Management](#performance-optimization-and-memory-management)
+- [Research Software, Citation, and Reproducibility](#research-software-citation-and-reproducibility)
+- [Set Similarity Metrics (Testing and Validation)](#set-similarity-metrics-testing-and-validation)
+- [Topological Manifolds, Realizations, and PL Topology](#topological-manifolds-realizations-and-pl-topology-levels-3-4-validation)
+- [Realized-Simplex Overlap Detection](#realized-simplex-overlap-detection-level-4-validation)
+
+## Topic-to-source index
+
+| Topic | Sources and their role |
+|---|---|
+| Construction and point location | [Bowyer/Watson][construction] [2, 3]: cavity construction; [walking literature][location]: location context |
+| Convex hulls and lifting | [Brown][hulls]: Delaunay–hull provenance; [lifting texts][lifting] and [Quickhull][quickhull]: background |
+| Local editing and repair | [Edelsbrunner–Shah and Pachner](#bistellar-pachner-moves-and-delaunay-repair): flip repair and PL-homeomorphism context |
+| Numerical signs and degeneracy | [Shewchuk][predicates] [1], [Bareiss][exact] [6], [Edelsbrunner–Mücke][sos] [7]: filter, exact-elimination, SoS foundations |
+| Periodic geometry | [Caroli–Teillaud](#periodic-and-toroidal-triangulations): covering-space construction; CGAL: reference implementation |
+| Quality and similarity | [Mesh quality][quality] and [set similarity][similarity]: metric definitions and interpretation |
+| Realization overlap | [Baraff and I-COLLIDE][overlap]: sweep-and-prune provenance; Ericson: collision-detection background |
+| Spatial locality | [Skilling and Moon et al.](#spatial-ordering-and-hilbert-curves) [9, 8]: index algorithm and locality analysis |
+| Topology | [PL and computational topology texts][topology]: simplicial complexes, links, and manifold background |
+
+[construction]: #triangulation-construction-algorithms
+[location]: #point-location-in-triangulations
+[hulls]: #convex-hull-from-delaunay-triangulations
+[lifting]: #lifted-paraboloid-method
+[quickhull]: #related-incremental-convex-hull-construction
+[predicates]: #robust-geometric-predicates
+[exact]: #exact-determinant-sign-computation
+[sos]: #simulation-of-simplicity-and-degeneracy-handling
+[quality]: #mesh-quality-metrics
+[similarity]: #set-similarity-metrics-testing-and-validation
+[overlap]: #realized-simplex-overlap-detection-level-4-validation
+[topology]: #topological-manifolds-realizations-and-pl-topology-levels-3-4-validation
+
 ## AI-Assisted Development Tools
 
 - **ChatGPT**: OpenAI. <https://openai.com/chatgpt>.
@@ -139,11 +189,9 @@ This section contains the foundational algorithms and data structures that form 
   *European Journal of Combinatorics* 12, no. 2 (1991): 129-145.
   DOI: [10.1016/S0195-6698(13)80080-7](https://doi.org/10.1016/S0195-6698(13)80080-7)
 
-Edelsbrunner and Shah supply the regular-triangulation basis for the crate's
-incremental Delaunay flip-repair stage; Pachner supplies the PL-homeomorphism
-context for admissible bistellar moves. The implementation adds finite budgets,
-rollback, and final certification rather than interpreting either result as an
-unconditional convergence bound for every supported local repair schedule.
+Edelsbrunner and Shah supply the flip-repair basis; Pachner supplies the
+PL-homeomorphism context. The [method overview](docs/scientific_basis.md#bistellar-moves-and-bounded-repair)
+explains the implementation's budgets, rollback, and certification limits.
 
 ### Data Structures and Implementation References
 
@@ -380,14 +428,11 @@ realizations, and the topology-only manifold / PL-manifold validation logic in t
 
 ## Realized-Simplex Overlap Detection (Level 4 Validation)
 
-These references support the realized-simplex overlap validator used by Level 4 affine-chart
-realization checks, which certify that maximal simplices are nondegenerate and intersect only in
-their shared faces. Candidate overlapping pairs are found with a sweep-and-prune broad phase over
-axis-aligned bounding boxes before exact rational barycentric intersection tests are applied. Two
-axis-aligned boxes intersect if and only if their projections overlap on every coordinate axis (the
-separating-axis test), and sorting boxes by their lower endpoint on one axis while retiring boxes
-whose upper endpoint precedes the current lower endpoint examines a superset of all axis-overlapping
-pairs, so no intersecting pair is skipped.
+These references support the sweep-and-prune broad phase used by affine Level 4
+realization validation. The [method overview](docs/scientific_basis.md#realized-simplex-overlap-detection)
+connects it to exact barycentric intersection checks; the
+[realization contract](docs/construction_and_validation.md#level-4-valid-realization)
+owns the caller-facing guarantees.
 
 - Baraff, D. "Dynamic Simulation of Non-Penetrating Rigid Bodies." PhD thesis, Cornell University, 1992.
   Introduces coordinate sorting ("sort and sweep") for axis-aligned bounding-box overlap detection.

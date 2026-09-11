@@ -366,7 +366,7 @@ BENCH_COMPARE_GROUP_PREFIXES_BY_SUITE = {
 BENCH_COMPARE_SUITE_CHOICES = tuple(BENCH_TARGET_SUITES)
 PERFORMANCE_REPORT_SOURCE = Path("target") / "bench-reports" / "performance.md"
 GITHUB_ASSETS_PERFORMANCE_REPORT = Path("target") / "bench-reports" / "github-assets-performance.md"
-DOCS_PERFORMANCE_REPORT = Path("docs") / "PERFORMANCE.md"
+DOCS_PERFORMANCE_REPORT = Path("docs") / "performance.md"
 PERFORMANCE_ARCHIVE_DIR = Path("docs") / "archive" / "performance"
 RELEASE_BENCH_TIMEOUT_SECONDS = 7200
 RELEASE_PREFLIGHT_TIMEOUT_SECONDS = 600
@@ -3802,7 +3802,7 @@ def _archive_index_text(archive_dir: Path) -> str:
         "# Archived Performance Reports",
         "",
         "Older release-to-release benchmark comparisons are archived here.",
-        "`docs/PERFORMANCE.md` contains the latest curated comparison.",
+        "`docs/performance.md` contains the latest curated comparison.",
         "",
     ]
     if reports:

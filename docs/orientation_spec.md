@@ -7,7 +7,7 @@ for the library's topological and geometric invariants.
 
 - `invariants.md` explains the whole invariant model: simplicial complexes,
   PL-manifold checks, Delaunay validation, and convergence rationale.
-- `ORIENTATION_SPEC.md` documents one invariant in detail: how simplex orderings,
+- `orientation_spec.md` documents one invariant in detail: how simplex orderings,
   facet parity, and geometric signs are maintained in the implementation.
 
 ## Orientation Invariants
