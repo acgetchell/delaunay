@@ -383,7 +383,7 @@ fn main() -> DelaunayResult<()> {
 - **Validated dimensions**: `T^2` and compact `T^3` are release-covered;
   `T^4`/`T^5` fail fast pending issue #416.
 
-For more details, see `docs/topology.md` and the toroidal section in the main `README.md`.
+For more details, see [`docs/topology.md`](topology.md) and the toroidal section in the main `README.md`.
 
 ## Builder API: auxiliary vertex and simplex data
 

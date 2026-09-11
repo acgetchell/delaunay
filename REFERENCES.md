@@ -30,7 +30,7 @@ first use, start with the [README](README.md).
 | Construction and point location | [Bowyer/Watson][construction] [2, 3]: cavity construction; [walking literature][location]: location context |
 | Convex hulls and lifting | [Brown][hulls]: Delaunay–hull provenance; [lifting texts][lifting] and [Quickhull][quickhull]: background |
 | Local editing and repair | [Edelsbrunner–Shah and Pachner](#bistellar-pachner-moves-and-delaunay-repair): flip repair and PL-homeomorphism context |
-| Numerical signs and degeneracy | [Shewchuk][predicates] [1], [Bareiss][exact] [6], [Edelsbrunner–Mücke][sos] [7]: filter, exact-elimination, SoS foundations |
+| Numerical signs and degeneracy | [Shewchuk][predicates] [1], [Bareiss][exact] [6], [Edelsbrunner–Mücke][sos] [7]: filters, exact signs, and SoS |
 | Periodic geometry | [Caroli–Teillaud](#periodic-and-toroidal-triangulations): covering-space construction; CGAL: reference implementation |
 | Quality and similarity | [Mesh quality][quality] and [set similarity][similarity]: metric definitions and interpretation |
 | Realization overlap | [Baraff and I-COLLIDE][overlap]: sweep-and-prune provenance; Ericson: collision-detection background |

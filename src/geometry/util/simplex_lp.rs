@@ -2423,6 +2423,16 @@ mod tests {
             certified_dot_difference_lower_bound(&[f64::MIN_POSITIVE], &[0.5], &[0.0],),
             None
         );
+
+        // Finite products can still overflow the accumulated estimate, the
+        // absolute magnitude despite exact cancellation, or its error bound.
+        for right in [-f64::MAX, f64::MAX, 0.0] {
+            assert_eq!(
+                certified_dot_difference_lower_bound(&[1.0], &[f64::MAX], &[right]),
+                None,
+                "unrepresentable bound must request exact fallback for right={right}"
+            );
+        }
     }
 
     /// Checks certified separation and range-sensitive fallback against simplices

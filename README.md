@@ -271,6 +271,8 @@ For generated failure pictures, public test anchors, and diagnostics for each la
 exposition, see [`papers/validation.tex`][validation-paper-source] and the compiled reviewer copy at
 [`papers/validation.pdf`][validation-paper].
 
+<!-- Keep this explicit anchor stable across GitHub and rustdoc rendering. -->
+<!-- markdownlint-disable-next-line MD033 -->
 <a id="readme-documentation-map"></a>
 
 ## 🗺️ Documentation Map
@@ -354,6 +356,8 @@ No retained release-comparison bundle has been published to the README yet.
 
 <!-- PERFORMANCE_RELEASE_TABLE:END -->
 
+<!-- Keep this explicit anchor stable across GitHub and rustdoc rendering. -->
+<!-- markdownlint-disable-next-line MD033 -->
 <a id="readme-limitations-and-roadmap"></a>
 
 ## 🛣️ Limitations and Roadmap
@@ -424,6 +428,8 @@ This includes foundational work on:
 - Simulation of Simplicity.
 - PL-manifold topology and Pachner moves.
 
+<!-- Preserve links to the former AI-assisted Development heading. -->
+<!-- markdownlint-disable-next-line MD033 -->
 <a id="-ai-assisted-development"></a>
 
 ## 🤖 AI Agents

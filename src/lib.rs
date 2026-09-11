@@ -29,7 +29,7 @@
 //!   API selection, geometric scope, shared assumptions, and method summaries
 //!   linked to the detailed contracts and bibliography.
 //!
-//! - **`docs/USING_TRIANGULATIONS.md`**:
+//! - **[`docs/USING_TRIANGULATIONS.md`](https://github.com/acgetchell/delaunay/blob/main/docs/USING_TRIANGULATIONS.md)**:
 //!   Task-oriented, end-to-end usage recipes (Builder API, Edit API, validation,
 //!   repairs, diagnostics, and statistics).
 //!
