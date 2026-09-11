@@ -448,7 +448,11 @@ README_TAG_LINK_RE = re.compile(
 def readme_tag_link_is_performance_asset(match: re.Match[str]) -> bool:
     """Return whether a README link is owned by ``performance-readme``."""
     path = str(match.group("path") or "")
-    return path.startswith(("/docs/assets/bench/", "/docs/archive/performance/data/")) or path == "/docs/PERFORMANCE.md"
+    # Older release evidence keeps its tag and the report's historical case.
+    return path.startswith(("/docs/assets/bench/", "/docs/archive/performance/data/")) or path in {
+        "/docs/performance.md",
+        "/docs/PERFORMANCE.md",
+    }
 
 
 def _readme_tag_references(path: Path) -> list[VersionReference]:

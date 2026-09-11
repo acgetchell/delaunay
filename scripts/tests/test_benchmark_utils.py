@@ -1119,7 +1119,7 @@ def test_performance_local_rejects_identical_inferred_tags_before_external_work(
 
 def test_promote_performance_report_archives_previous_and_updates_index(tmp_path: Path) -> None:
     source = tmp_path / "target" / "bench-reports" / "performance.md"
-    current = tmp_path / "docs" / "PERFORMANCE.md"
+    current = tmp_path / "docs" / "performance.md"
     archive_dir = tmp_path / "docs" / "archive" / "performance"
 
     source.parent.mkdir(parents=True)
@@ -1160,7 +1160,7 @@ def test_promote_performance_report_archives_previous_and_updates_index(tmp_path
     assert (archive_dir / "README.md").read_text(encoding=UTF8) == (
         "# Archived Performance Reports\n\n"
         "Older release-to-release benchmark comparisons are archived here.\n"
-        "`docs/PERFORMANCE.md` contains the latest curated comparison.\n\n"
+        "`docs/performance.md` contains the latest curated comparison.\n\n"
         "- [v0.7.6-vs-v0.7.5](v0.7.6-vs-v0.7.5.md)\n"
         "- [v0.7.8-vs-v0.7.7](v0.7.8-vs-v0.7.7.md)\n"
     )
@@ -1172,7 +1172,7 @@ def test_promote_performance_report_rolls_back_every_destination_on_failure(
 ) -> None:
     """A failed archive-index update must leave all promoted files unchanged."""
     source = tmp_path / "performance.md"
-    current = tmp_path / "docs" / "PERFORMANCE.md"
+    current = tmp_path / "docs" / "performance.md"
     archive_dir = tmp_path / "docs" / "archive" / "performance"
     index = archive_dir / "README.md"
     archived = archive_dir / "v0.7.8-vs-v0.7.7.md"
@@ -1223,7 +1223,7 @@ def test_promote_performance_report_rolls_back_every_destination_on_failure(
 
 def test_promote_performance_report_rejects_conflicting_existing_archive_before_mutation(tmp_path: Path) -> None:
     source = tmp_path / "performance.md"
-    current = tmp_path / "docs" / "PERFORMANCE.md"
+    current = tmp_path / "docs" / "performance.md"
     archive_dir = tmp_path / "docs" / "archive" / "performance"
     current.parent.mkdir(parents=True)
     archive_dir.mkdir(parents=True)
@@ -1264,7 +1264,7 @@ def test_promote_performance_report_rejects_conflicting_existing_archive_before_
 
 
 def test_release_generation_preflights_output_aliases_before_measurement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    destination = tmp_path / "docs" / "PERFORMANCE.md"
+    destination = tmp_path / "docs" / "performance.md"
 
     def unexpected_measurement(*_args: object, **_kwargs: object) -> None:
         msg = "measurement must not start"
@@ -1313,7 +1313,7 @@ def test_release_generation_rejects_archive_escape_before_measurement_or_publica
     with pytest.raises(ValueError, match="contained by repository root"):
         benchmark_utils.generate_and_promote_performance_report(
             output=project_root / "target" / "bench-reports" / "performance.md",
-            current=project_root / "docs" / "PERFORMANCE.md",
+            current=project_root / "docs" / "performance.md",
             archive_dir=archive_dir,
             config=ReleaseReportConfig(
                 repo_root=project_root,
@@ -1334,7 +1334,7 @@ def test_performance_doc_promotes_retained_bundle_without_commands(tmp_path: Pat
         csv=output.with_suffix(".csv"),
         provenance=output.with_suffix(".provenance.json"),
     )
-    current = tmp_path / "docs" / "PERFORMANCE.md"
+    current = tmp_path / "docs" / "performance.md"
     archive_dir = tmp_path / "docs" / "archive" / "performance"
     current.parent.mkdir(parents=True)
     current.write_text(delaunay_report("0.7.8", "v0.7.7"), encoding=UTF8)
@@ -1372,7 +1372,7 @@ def test_performance_doc_rejects_same_version_without_changing_outputs(tmp_path:
         provenance=tmp_path / "performance.provenance.json",
     )
     performance_artifacts.write_bundle(artifacts, retained_performance_bundle(current="v0.8.0", baseline="v0.8.0"))
-    current = tmp_path / "docs" / "PERFORMANCE.md"
+    current = tmp_path / "docs" / "performance.md"
     current.parent.mkdir()
     current.write_text("prior docs\n", encoding=UTF8)
 
@@ -1402,7 +1402,7 @@ def test_performance_doc_rejects_malformed_pair_without_changing_outputs(tmp_pat
     )
     performance_artifacts.write_bundle(artifacts, retained_performance_bundle())
     artifacts.csv.write_text("not,the,canonical,schema\n", encoding=UTF8)
-    current = tmp_path / "docs" / "PERFORMANCE.md"
+    current = tmp_path / "docs" / "performance.md"
     current.parent.mkdir()
     current.write_text("prior docs\n", encoding=UTF8)
 
@@ -1426,7 +1426,7 @@ def test_performance_doc_rejects_stale_current_release_before_writing(tmp_path: 
     output = tmp_path / "performance.md"
     artifacts = performance_artifacts.ArtifactPaths(csv=tmp_path / "performance.csv", provenance=tmp_path / "performance.provenance.json")
     performance_artifacts.write_bundle(artifacts, retained_performance_bundle(current="v0.7.9", baseline="v0.7.8"))
-    current = tmp_path / "docs" / "PERFORMANCE.md"
+    current = tmp_path / "docs" / "performance.md"
     current.parent.mkdir()
     current.write_text("prior docs\n", encoding=UTF8)
 
@@ -1462,7 +1462,7 @@ def test_performance_doc_rejects_zero_comparable_rows_before_writing(tmp_path: P
             artifacts=artifacts,
             destinations=benchmark_utils.PerformancePromotionDestinations(
                 project_root=tmp_path,
-                current=tmp_path / "docs" / "PERFORMANCE.md",
+                current=tmp_path / "docs" / "performance.md",
                 archive_dir=tmp_path / "docs" / "archive" / "performance",
             ),
             expected_current_tag="v0.8.0",
@@ -1511,7 +1511,7 @@ def test_renderer_distinguishes_scratch_and_promoted_evidence_paths(tmp_path: Pa
         csv=tmp_path / "docs" / "archive" / "performance" / "data" / "v0.8.0-vs-v0.7.8.csv",
         provenance=tmp_path / "docs" / "archive" / "performance" / "data" / "v0.8.0-vs-v0.7.8.provenance.json",
     )
-    current = tmp_path / "docs" / "PERFORMANCE.md"
+    current = tmp_path / "docs" / "performance.md"
 
     scratch_report = benchmark_utils.render_performance_artifacts(scratch)
     promoted_report = benchmark_utils.render_performance_bundle(
@@ -5090,7 +5090,7 @@ class TestTimeoutHandling:
                 "v0.8.0",
                 "v0.7.8",
                 "--current",
-                "docs/PERFORMANCE.md",
+                "docs/performance.md",
                 "--archive-dir",
                 "docs/archive/performance",
                 "--no-apply-current-diff",
@@ -5126,7 +5126,7 @@ class TestTimeoutHandling:
         assert release_args.command == "performance-release"
         assert release_args.current_tag == "v0.8.0"
         assert release_args.baseline_tag == "v0.7.8"
-        assert release_args.current == Path("docs/PERFORMANCE.md")
+        assert release_args.current == Path("docs/performance.md")
         assert release_args.archive_dir == Path("docs/archive/performance")
         assert release_args.no_apply_current_diff
         assert doc_args.command == "performance-doc"
@@ -5147,7 +5147,7 @@ class TestTimeoutHandling:
                 "--artifact-provenance",
                 "target/bench-reports/performance.provenance.json",
                 "--current",
-                "docs/PERFORMANCE.md",
+                "docs/performance.md",
                 "--archive-dir",
                 "docs/archive/performance",
             ]
@@ -5168,7 +5168,7 @@ class TestTimeoutHandling:
             ),
             destinations=benchmark_utils.PerformancePromotionDestinations(
                 project_root=tmp_path,
-                current=tmp_path / "docs" / "PERFORMANCE.md",
+                current=tmp_path / "docs" / "performance.md",
                 archive_dir=tmp_path / "docs" / "archive" / "performance",
             ),
             expected_current_tag="v0.8.0",

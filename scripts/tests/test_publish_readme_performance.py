@@ -114,7 +114,7 @@ def _write_project(root: Path, *, bundle: performance_artifacts.PerformanceBundl
         ),
         evidence_state="promoted",
     )
-    (root / "docs/PERFORMANCE.md").write_text(report, encoding="utf-8")
+    (root / "docs/performance.md").write_text(report, encoding="utf-8")
     return source
 
 
@@ -129,7 +129,7 @@ def test_publish_readme_performance_uses_retained_bundle_without_measurement_com
     readme = (tmp_path / "README.md").read_text(encoding="utf-8")
     assert "**v0.8.1 vs v0.8.0**" in readme
     assert "| `validation` | 1 | 2.000x |" in readme
-    assert "blob/v0.8.1/docs/PERFORMANCE.md" in readme
+    assert "blob/v0.8.1/docs/performance.md" in readme
     assert "blob/v0.8.1/docs/assets/bench/release-performance.csv" in readme
     published = performance_artifacts.ArtifactPaths(
         csv=tmp_path / "docs/assets/bench/release-performance.csv",
@@ -159,8 +159,8 @@ def test_promoted_report_validation_is_independent_of_checkout_path(tmp_path: Pa
     _write_project(first)
     _write_project(second)
 
-    first_report = (first / "docs/PERFORMANCE.md").read_text(encoding="utf-8")
-    second_report = (second / "docs/PERFORMANCE.md").read_text(encoding="utf-8")
+    first_report = (first / "docs/performance.md").read_text(encoding="utf-8")
+    second_report = (second / "docs/performance.md").read_text(encoding="utf-8")
     assert first_report == second_report
     assert str(first) not in first_report
     assert str(second) not in second_report
@@ -230,11 +230,11 @@ def test_publish_readme_performance_rejects_external_durable_symlink(tmp_path: P
 
 def test_publish_readme_performance_requires_promoted_report(tmp_path: Path) -> None:
     source = _write_project(tmp_path)
-    report = tmp_path / "docs/PERFORMANCE.md"
+    report = tmp_path / "docs/performance.md"
     report.unlink()
     original = (tmp_path / "README.md").read_bytes()
 
-    with pytest.raises(ValueError, match=r"docs/PERFORMANCE\.md.*missing"):
+    with pytest.raises(ValueError, match=r"docs/performance\.md.*missing"):
         publish_readme_performance.publish_readme_performance(tmp_path, artifacts=source)
 
     assert (tmp_path / "README.md").read_bytes() == original
@@ -245,8 +245,8 @@ def test_publish_readme_performance_rejects_external_report_symlink(tmp_path: Pa
     root = tmp_path / "repo"
     root.mkdir()
     source = _write_project(root)
-    report = root / "docs/PERFORMANCE.md"
-    outside = tmp_path / "PERFORMANCE.md"
+    report = root / "docs/performance.md"
+    outside = tmp_path / "performance.md"
     outside.write_bytes(report.read_bytes())
     report.unlink()
     report.symlink_to(outside)
@@ -261,7 +261,7 @@ def test_publish_readme_performance_rejects_external_report_symlink(tmp_path: Pa
 
 def test_publish_readme_performance_rejects_stale_promoted_report(tmp_path: Path) -> None:
     source = _write_project(tmp_path)
-    report = tmp_path / "docs/PERFORMANCE.md"
+    report = tmp_path / "docs/performance.md"
     report.write_text(f"{report.read_text(encoding='utf-8')}\nstale\n", encoding="utf-8")
     original = (tmp_path / "README.md").read_bytes()
 

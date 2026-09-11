@@ -69,7 +69,7 @@ validation model and
 [`02_spherical_hero.ipynb`](../notebooks/02_spherical_hero.ipynb) for the
 `S^2` result. The direct Rust export snippet remains in
 [`docs/mesh_export.md`](../docs/mesh_export.md). Detailed workflow contracts
-remain in [`docs/workflows.md`](../docs/workflows.md),
+remain in [`docs/USING_TRIANGULATIONS.md`](../docs/USING_TRIANGULATIONS.md),
 [`docs/topology.md`](../docs/topology.md), and
 [`docs/numerical_robustness_guide.md`](../docs/numerical_robustness_guide.md).
 

@@ -7,6 +7,7 @@ Historical design notes, investigations, and completed optimization roadmaps liv
 
 ## Start here
 
+- [`scientific_basis.md`](scientific_basis.md): API selection, scientific scope, assumptions, and method/source map.
 - [`../papers/ARTIFACT.md`](../papers/ARTIFACT.md): v0.8.0 reviewer reproduction paths, claim map, evidence, and limits.
 - [`../examples/README.md`](../examples/README.md): public-workflow coverage across runnable Rust examples and notebooks.
 - [`api_design.md`](api_design.md): construction, vertex lifecycle, and Pachner move APIs.
@@ -15,7 +16,7 @@ Historical design notes, investigations, and completed optimization roadmaps liv
 - [`../papers/validation.pdf`](../papers/validation.pdf): reviewer-facing construction and validation architecture paper.
 - [`diagnostics.md`](diagnostics.md): opt-in diagnostic helpers, structured reports, and debug switches.
 - [`mesh_export.md`](mesh_export.md): stable simplicial-complex export schema for notebooks and downstream tools.
-- [`workflows.md`](workflows.md): practical recipes for construction, deletion, and local Pachner moves.
+- [`USING_TRIANGULATIONS.md`](USING_TRIANGULATIONS.md): practical recipes for construction, deletion, and local Pachner moves.
 - [`limitations.md`](limitations.md): supported dimensions, predicate limits, large-scale cautions, and feature gaps.
 
 ## Reference guides
@@ -25,9 +26,12 @@ Historical design notes, investigations, and completed optimization roadmaps liv
   prelude, and module-pattern references.
 - [`invariants.md`](invariants.md): theoretical background and rationale for the topological and geometric invariants.
 - [`numerical_robustness_guide.md`](numerical_robustness_guide.md): robustness strategies, kernels, and retry/repair behavior.
+- [`orientation_spec.md`](orientation_spec.md): coherent combinatorial and geometric orientation specification.
+- [`performance.md`](performance.md): retained release comparisons and their provenance qualifications.
 - [`property_testing_summary.md`](property_testing_summary.md): property-based testing with proptest (where tests live, how to run).
 - [`../benches/README.md`](../benches/README.md): benchmark suites, perf-profile workflow, release summaries, and canary sizes.
 - [`RELEASING.md`](RELEASING.md): release workflow (changelog + benchmarks + publish).
+- [`dev/TUNING-PERFORMANCE.md`](dev/TUNING-PERFORMANCE.md): benchmark-before/after workflow for performance changes.
 - [`roadmap.md`](roadmap.md): current follow-up work and deferred features.
 
 ## Templates and archive

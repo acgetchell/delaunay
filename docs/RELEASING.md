@@ -150,7 +150,7 @@ just performance-release
 The no-argument form compares the current package version with the previous
 stable published release. It runs the release-signal Criterion measurements,
 retains `target/bench-reports/performance.{md,csv,provenance.json}`, validates
-the CSV/provenance pair after reloading it, promotes `docs/PERFORMANCE.md`, and
+the CSV/provenance pair after reloading it, promotes `docs/performance.md`, and
 archives the prior report plus the exact promoted evidence under
 `docs/archive/performance/`.
 
@@ -215,7 +215,7 @@ git --no-pager diff
 ```
 
 Expected release artifacts include package metadata and lockfiles,
-`CITATION.cff`, `CHANGELOG.md`, `README.md`, `docs/PERFORMANCE.md`, and generated
+`CITATION.cff`, `CHANGELOG.md`, `README.md`, `docs/performance.md`, and generated
 files under `docs/archive/` and `docs/assets/bench/`. Stage only reviewed paths;
 do not stage unrelated work or the entire `docs/` tree without inspecting it.
 

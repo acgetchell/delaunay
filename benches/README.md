@@ -99,7 +99,7 @@ published release assets, or retained inputs:
   timing evidence. Ratios are always suppressed because two independently
   hosted release runs are separate measurement sessions.
 - `just performance-release` performs the local measurement and retention
-  workflow, reload-validates the pair, promotes `docs/PERFORMANCE.md`, and
+  workflow, reload-validates the pair, promotes `docs/performance.md`, and
   archives both the prior report and the exact promoted CSV/provenance pair.
 - `just performance-doc` reloads a retained CSV/provenance pair and performs
   only the documentation promotion. It runs no Cargo benchmarks or measurement
@@ -111,7 +111,7 @@ published release assets, or retained inputs:
 
 Promotion uses per-file atomic replacement and rolls back caught failures. A
 hard process or machine interruption can stop between replacements. Inspect
-`docs/PERFORMANCE.md`, `docs/archive/performance/` and its `data/` directory,
+`docs/performance.md`, `docs/archive/performance/` and its `data/` directory,
 `README.md`, and `docs/assets/bench/`, then rerun the owning idempotent command:
 `just performance-doc` or `just performance-readme` for an already-retained
 bundle.
@@ -144,7 +144,7 @@ Artifact ownership is deliberately narrow:
 | `target/bench-reports/performance.csv` | No | `performance-local`, `performance-release` | Scratch copy of canonical versioned timing and coverage data |
 | `target/bench-reports/performance.provenance.json` | No | `performance-local`, `performance-release` | Scratch provenance and CSV binding evidence |
 | `target/bench-reports/github-assets-performance.*` | No | `performance-github-assets` | Provenance-validated bundle sourced from release archives |
-| `docs/PERFORMANCE.md` | Yes | `performance-release`, `performance-doc` | Latest curated distinct-release report |
+| `docs/performance.md` | Yes | `performance-release`, `performance-doc` | Latest curated distinct-release report |
 | `docs/archive/performance/` | Yes | `performance-release`, `performance-doc` | Older curated distinct-release reports |
 | `docs/archive/performance/data/` | Yes | `performance-release`, `performance-doc` | Exact CSV/provenance evidence for each new promoted report |
 | `README.md` | Yes | `performance-readme` | Compact snapshot of the latest retained and promoted comparison |
@@ -848,7 +848,7 @@ stored as GitHub Release assets named
 `delaunay-vX.Y.Z-criterion-baseline.tar.gz`; the performance-regression
 workflow downloads the latest stable release asset and compares the current
 Ubuntu GitHub Actions run against that released-version Ubuntu baseline. Use
-local baselines for developer-machine comparisons, and use `docs/PERFORMANCE.md`
+local baselines for developer-machine comparisons, and use `docs/performance.md`
 for the single curated release-to-release comparison that should stay visible in
 active docs.
 

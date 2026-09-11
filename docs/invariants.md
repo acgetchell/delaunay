@@ -51,7 +51,7 @@ the guarantees stated in the public API documentation.
 Readers primarily interested in **how to use the library** should start with:
 
 - [`README.md`](../README.md)
-- [`docs/workflows.md`](workflows.md)
+- [`docs/USING_TRIANGULATIONS.md`](USING_TRIANGULATIONS.md)
 - [`docs/construction_and_validation.md`](construction_and_validation.md)
 - [`docs/limitations.md`](limitations.md)
 - [`docs/numerical_robustness_guide.md`](numerical_robustness_guide.md)
@@ -59,7 +59,7 @@ Readers primarily interested in **how to use the library** should start with:
 - [`docs/topology.md`](topology.md)
 
 For the implementation details of the coherent-orientation invariant specifically,
-see [`ORIENTATION_SPEC.md`](ORIENTATION_SPEC.md).
+see [`orientation_spec.md`](orientation_spec.md).
 
 ---
 
@@ -446,7 +446,7 @@ realization validation before the edited state is accepted. If the repaired stat
 contract, the transaction rolls back with a typed error instead of leaving a partially repaired
 triangulation behind.
 
-See [`ORIENTATION_SPEC.md`](ORIENTATION_SPEC.md) for the exact parity convention, implementation
+See [`orientation_spec.md`](orientation_spec.md) for the exact parity convention, implementation
 map, and test expectations.
 
 ---
@@ -807,7 +807,7 @@ The crate therefore treats flip/repair as a best-effort procedure with explicit 
   are near-degenerate (`Triangulation::validate_realization` and
   `DelaunayTriangulation::is_valid_delaunay` for the Delaunay predicate family).
 
-See the public API docs (<https://docs.rs/delaunay>) and [`docs/workflows.md`](workflows.md) for practical guidance.
+See the public API docs (<https://docs.rs/delaunay>) and [`docs/USING_TRIANGULATIONS.md`](USING_TRIANGULATIONS.md) for practical guidance.
 
 ---
 
@@ -837,7 +837,7 @@ Ordering and preprocessing can mitigate (but not eliminate) these issues:
 - Deduplication / near-duplicate rejection avoids many “almost coincident” degeneracies.
 
 For concrete failure modes and recommended workflows, see [`docs/limitations.md`](limitations.md),
-[`docs/workflows.md`](workflows.md), [`docs/construction_and_validation.md`](construction_and_validation.md), and the issue
+[`docs/USING_TRIANGULATIONS.md`](USING_TRIANGULATIONS.md), [`docs/construction_and_validation.md`](construction_and_validation.md), and the issue
 investigation notes in [`docs/archive/`](archive/).
 
 ---

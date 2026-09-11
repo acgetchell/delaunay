@@ -8,6 +8,8 @@ repository.
 ## Contents
 
 - [Documentation Ownership](#documentation-ownership)
+- [Navigation and Ordering](#navigation-and-ordering)
+- [Filenames and Renames](#filenames-and-renames)
 - [Academic Paper Authorship](#academic-paper-authorship)
 - [Scientific Notation](#scientific-notation)
 - [References](#references)
@@ -18,6 +20,16 @@ repository.
 
 ## Documentation Ownership
 
+- `README.md` owns evaluation and getting started: introduction, "Use this crate
+  when" immediately afterward, capabilities, quickstart, and links to the API,
+  workflows, and scientific contracts.
+- `REFERENCES.md` owns bibliographic records, stable citation keys/anchors, and
+  a concise topic-to-source index. Keep derivations and caller contracts in
+  their topic guides; retain brief implementation/background attribution.
+- `docs/scientific_basis.md` owns the scientific overview: early API selection
+  and geometry/topology scope, shared assumptions, method summaries, and links
+  to existing detailed contracts and specific sources. Do not copy entire
+  guides into the overview.
 - `AGENTS.md` is the coding-agent entry point.
 - `docs/dev/README.md` indexes development workflow guidance.
 - `docs/dev/notebooks.md` owns notebook cell identity, execution, and artifact
@@ -27,7 +39,6 @@ repository.
   vocabulary, promotion boundaries, validation levels, and validation-policy
   guidance.
 - `docs/architecture/README.md` indexes focused architecture references.
-- `REFERENCES.md` owns literature references.
 - `CITATION.cff` owns citation metadata.
 - `papers/*.tex` owns publication-facing mathematical exposition. The matching
   `papers/*.bib` files own paper-local BibTeX references. The matching
@@ -46,6 +57,54 @@ repository.
 - `docs/archive/` stores historical plans, completed changelog series, and old
   design notes. Do not update archived docs as active guidance unless an
   explicit archive-maintenance task asks for it.
+
+## Navigation and Ordering
+
+Keep Contents links current in the README, bibliography, scientific overview,
+and other documents with Contents sections. Put API selection and scientific
+scope before shared assumptions and method discussions in the overview.
+
+Sort independent algorithm/method headings lexicographically within coherent
+groups. Keep prerequisites before dependent explanations and derivations under
+their method. Do not alphabetize validation levels, execution steps, release
+chronology, or bibliography themes. Sort introductory/capability bullets only
+when their order carries no meaning. Retain existing citation identifiers and
+heading fragments; use compatibility anchors when a heading must change.
+
+The README is included verbatim in rustdoc. Use explicit repository URLs for
+learning documents, with `main` for active guides and the declared release tag
+for release-owned files. Use docs.rs for API destinations. New or renamed paths
+must target a revision containing them, never an older release tag. Local work
+can verify the future tree, but links to new `main` paths become public only
+after the changes land. Check exact filename case and fragment targets in both
+GitHub-compatible rendering and generated rustdoc. Prefer explicit ASCII
+anchors when emoji or punctuation produce different renderer slugs.
+
+## Filenames and Renames
+
+Classify active Markdown throughout `docs/`, including subdirectories, by its
+primary purpose:
+
+- Task guides with execution instructions use uppercase verbs or verb phrases,
+  preferably gerunds: `RELEASING.md`, `USING_TRIANGULATIONS.md`, and
+  `dev/TUNING-PERFORMANCE.md`.
+- Discussions of invariants, principles, policy, architecture, reference
+  material, analysis, and results use lowercase descriptive names. A performance
+  report is `performance.md`; tuning instructions belong in a task guide.
+  A few command examples do not make a reference or policy document a task guide.
+- Keep conventional directory `README.md` indexes, standard root filenames,
+  historical archive paths, and each area's existing hyphen/underscore style.
+
+Record old-to-new paths and classification rationale in the change description.
+Update navigation, ownership maps, source comments, generators, configured output
+paths, and relevant checks together. On case-insensitive filesystems, use an
+intermediate filename for a case-only rename and verify the final directory entry.
+
+Preserve generated measurements and provenance byte-for-byte when only moving a
+report. Update its generator for future output; regenerate affected generated
+navigation through its owner. Human-maintained indexes and architecture trees
+are edited with the rename. Renaming alone does not require fresh benchmarks or
+manual edits to historical archives.
 
 ## Academic Paper Authorship
 

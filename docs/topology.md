@@ -355,7 +355,7 @@ fixtures. `T^4`/`T^5` periodic quotients fail fast pending scalable construction
 work in issue #416.
 
 For examples, see
-[Builder API: toroidal construction](workflows.md#builder-api-toroidal-construction)
+[Builder API: toroidal construction](USING_TRIANGULATIONS.md#builder-api-toroidal-construction)
 and
 [`DelaunayTriangulationBuilder::try_toroidal`](https://docs.rs/delaunay/latest/delaunay/builder/struct.DelaunayTriangulationBuilder.html#method.try_toroidal).
 

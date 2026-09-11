@@ -25,7 +25,11 @@
 //!   - Topological guarantees (`TopologyGuarantee`) and insertion-time validation policy (`ValidationPolicy`)
 //!   - High-level error semantics and programming contract (transactional operations, duplicate rejection)
 //!
-//! - **docs/workflows.md**:
+//! - **[Scientific basis](https://github.com/acgetchell/delaunay/blob/main/docs/scientific_basis.md)**:
+//!   API selection, geometric scope, shared assumptions, and method summaries
+//!   linked to the detailed contracts and bibliography.
+//!
+//! - **[`docs/USING_TRIANGULATIONS.md`](https://github.com/acgetchell/delaunay/blob/main/docs/USING_TRIANGULATIONS.md)**:
 //!   Task-oriented, end-to-end usage recipes (Builder API, Edit API, validation,
 //!   repairs, diagnostics, and statistics).
 //!

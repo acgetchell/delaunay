@@ -174,7 +174,7 @@ def test_find_version_mismatches_reports_stale_benchmark_current_tags(tmp_path: 
     _write_project(tmp_path)
     docs = tmp_path / "docs"
     docs.mkdir()
-    workflows = docs / "workflows.md"
+    workflows = docs / "USING_TRIANGULATIONS.md"
     workflows.write_text(
         f"| Release workflow | `just {recipe} v1.2.2 v1.2.1` |\n"
         "```bash\njust performance-release v1.2.3 v1.2.2\n```\n"
@@ -248,13 +248,14 @@ def test_find_version_mismatches_rejects_benchmark_command_missing_baseline(tmp_
     assert "workflow.md:1" in str(exc_info.value)
 
 
-def test_find_version_mismatches_leaves_performance_readme_links_to_their_owner(tmp_path: Path) -> None:
+@pytest.mark.parametrize("report_name", ["performance.md", "PERFORMANCE.md"])
+def test_find_version_mismatches_leaves_performance_readme_links_to_their_owner(tmp_path: Path, report_name: str) -> None:
     """Performance publication, not metadata updates, owns tagged evidence links."""
     _write_project(
         tmp_path,
         readme=(
             "[license](https://github.com/acgetchell/delaunay/blob/v1.2.3/LICENSE)\n"
-            "[report](https://github.com/acgetchell/delaunay/blob/v1.2.2/docs/PERFORMANCE.md)\n"
+            f"[report](https://github.com/acgetchell/delaunay/blob/v1.2.2/docs/{report_name})\n"
             "[csv](https://github.com/acgetchell/delaunay/blob/v1.2.2/docs/assets/bench/release-performance.csv)\n"
             "[provenance](https://github.com/acgetchell/delaunay/blob/v1.2.2/docs/archive/performance/data/v1.2.2-vs-v1.2.1.provenance.json)\n"
         ),
