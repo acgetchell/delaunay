@@ -38,6 +38,9 @@ use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(debug_assertions)]
+use std::time::Instant;
+
+#[cfg(debug_assertions)]
 #[derive(Debug, Clone, Copy)]
 struct ConflictDebugConfig {
     log_conflict: bool,
@@ -61,6 +64,8 @@ fn conflict_debug_config() -> &'static ConflictDebugConfig {
 }
 
 static RIDGE_FAN_DUMP_ENABLED: OnceLock<bool> = OnceLock::new();
+// Relaxed swap elects one diagnostic caller, not a publisher of shared state.
+// A true flag means claimed, not that logging has finished on another thread.
 static RIDGE_FAN_DUMP_EMITTED: AtomicBool = AtomicBool::new(false);
 
 /// Returns whether a one-shot release-visible ridge-fan dump is enabled.
@@ -1289,7 +1294,7 @@ where
     #[cfg(debug_assertions)]
     let debug_config = conflict_debug_config();
     #[cfg(debug_assertions)]
-    let start_time = std::time::Instant::now();
+    let start_time = Instant::now();
     #[cfg(debug_assertions)]
     let mut visited_count = 0usize;
     #[cfg(debug_assertions)]
@@ -1650,7 +1655,7 @@ pub(crate) fn extract_cavity_boundary<U, V, const D: usize>(
     #[cfg(debug_assertions)]
     let detail_enabled = env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
     #[cfg(debug_assertions)]
-    let start_time = std::time::Instant::now();
+    let start_time = Instant::now();
     #[cfg(debug_assertions)]
     let mut boundary_facet_count = 0usize;
     #[cfg(debug_assertions)]

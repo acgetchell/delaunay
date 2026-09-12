@@ -103,6 +103,23 @@
 //! benchmarks, and downstream-style integration tests. High-level Delaunay
 //! construction remains outside the low-level TDS/query surface.
 //!
+//! ## Thread safety and execution
+//!
+//! Library operations are synchronous: the crate does not spawn workers or
+//! require an async runtime. Moving CPU-intensive work off an async executor is
+//! the caller's responsibility; dropping an external task handle does not cancel
+//! an already-running synchronous operation.
+//!
+//! Owners and borrowed views follow Rust's automatic `Send`/`Sync` rules for
+//! their stored payloads and kernels. Immutable queries may share an owner when
+//! those types are `Sync`; mutation still requires exclusive access. Use scoped
+//! threads for borrowed work rather than imposing unnecessary `'static` bounds.
+//! Generation counters are invalidation tags, not locks or publication barriers.
+//!
+//! Duplicate-detection telemetry is process-wide, not per owner or worker. Its
+//! counters are copied coherently under one lock. One-shot diagnostic flags elect
+//! a single caller but do not promise which concurrent operation emits the trace.
+//!
 //! ## Examples (contract-oriented)
 //!
 //! ### Validation hierarchy (Levels 1–5)
@@ -871,6 +888,7 @@ mod core {
         pub mod facet_keys;
         pub mod hashing;
         pub mod hilbert;
+        #[cfg(feature = "count-allocations")]
         pub mod measurement;
         pub mod uuid;
 
@@ -879,6 +897,7 @@ mod core {
         pub use facet_keys::*;
         pub use hashing::*;
         pub use hilbert::*;
+        #[cfg(feature = "count-allocations")]
         pub use measurement::*;
         pub use uuid::*;
     }
@@ -1361,9 +1380,12 @@ pub mod tds {
     pub use crate::core::facet::*;
     pub use crate::core::simplex::*;
     pub use crate::core::tds::*;
+    #[cfg(feature = "count-allocations")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "count-allocations")))]
+    pub use crate::core::util::measure_with_result;
     pub use crate::core::util::{
-        UuidValidationError, checked_facet_key_from_vertex_keys, make_uuid, measure_with_result,
-        stable_hash_u64_slice, usize_to_u8, validate_uuid, verify_facet_index_consistency,
+        UuidValidationError, checked_facet_key_from_vertex_keys, make_uuid, stable_hash_u64_slice,
+        usize_to_u8, validate_uuid, verify_facet_index_consistency,
     };
     pub use crate::core::vertex::*;
     pub use crate::triangulation::jaccard::{
@@ -1428,11 +1450,17 @@ pub mod algorithms {
 /// # Ok(())
 /// # }
 /// ```
+#[cfg_attr(
+    not(feature = "count-allocations"),
+    doc = "Allocation measurement requires the `count-allocations` feature; there is no unmeasured fallback.\n\n```compile_fail,E0432\nuse delaunay::prelude::query::measure_with_result;\n```\n\n```compile_fail,E0432\nuse delaunay::prelude::tds::measure_with_result;\n```"
+)]
 pub mod query {
     pub use crate::assert_jaccard_gte;
     pub use crate::core::traits::data_type::{
         DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
     };
+    #[cfg(feature = "count-allocations")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "count-allocations")))]
     pub use crate::core::util::measure_with_result;
     pub use crate::flips::RidgeHandle;
     pub use crate::geometry::Point;
@@ -1526,11 +1554,7 @@ pub mod prelude {
     pub use crate::query::{
         JaccardComputationError, extract_edge_set, extract_facet_identifier_set,
         extract_hull_facet_set, extract_vertex_coordinate_set, format_jaccard_report,
-        jaccard_distance, jaccard_index, measure_with_result,
-    };
-    pub use crate::tds::{
-        UuidValidationError, checked_facet_key_from_vertex_keys, make_uuid, stable_hash_u64_slice,
-        usize_to_u8, validate_uuid, verify_facet_index_consistency,
+        jaccard_distance, jaccard_index,
     };
     pub use crate::topology::{
         GlobalTopology, GlobalTopologyModelError, TopologyError, TopologyKind,
@@ -1715,12 +1739,13 @@ pub mod prelude {
         };
         pub use crate::geometry::point::Point;
         pub use crate::query::{
-            AllFacetsIter, BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity,
-            DataSerde, DataSerialize, DataType, EdgeIndex, EdgeKey, EdgeKeyError, EdgeView,
-            FacetIncidenceView, FacetToSimplicesIndex, FacetView, IncidenceView,
-            OneSidedFacetsIter, QueryError, RidgeCandidate, RidgeCandidateError, RidgeHandle,
-            RidgeLinkView, RidgeQuery, RidgeView, SimplexFacetsIter, SimplexNeighborIndex,
-            TopologyIndexBuildError, TriangulationAdjacency,
+            AllFacetsIter, BoundaryFacetsIter, CavityBoundary, ConflictRegion, ConflictSimplexView,
+            DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
+            EdgeIndex, EdgeKey, EdgeKeyError, EdgeView, FacetIncidenceView, FacetToSimplicesIndex,
+            FacetView, IncidenceView, OneSidedFacetsIter, QueryError, RidgeCandidate,
+            RidgeCandidateError, RidgeHandle, RidgeLinkView, RidgeQuery, RidgeView,
+            SimplexFacetsIter, SimplexNeighborIndex, TopologyIndexBuildError,
+            TriangulationAdjacency,
         };
         pub use crate::tds::{
             FacetHandle, InvariantError, NeighborSlot, Simplex, SimplexKey, Tds,
@@ -1941,9 +1966,30 @@ pub mod prelude {
     ///
     /// Self-contained: a single `use delaunay::prelude::delaunayize::*`
     /// import brings in [`DelaunayTriangulationBuilder`], [`DelaunayTriangulation`],
-    /// and all Delaunay-refinement types.
+    /// and the refinement builder, outcomes, and typed failures.
+    ///
+    /// Builder state markers are intentionally excluded. Let method chaining infer
+    /// the state, or name it through the direct [`crate::delaunayize`] module when
+    /// writing a specialized type annotation.
+    ///
+    /// ```compile_fail,E0432
+    /// use delaunay::prelude::delaunayize::StrictDelaunayRefinement;
+    /// ```
+    ///
+    /// ```compile_fail,E0432
+    /// use delaunay::prelude::delaunayize::FlipRepairDelaunayRefinement;
+    /// ```
     pub mod delaunayize {
-        pub use crate::delaunayize::*;
+        pub use crate::delaunayize::{
+            DelaunayRefinementBuilder, DelaunayRepairError, DelaunayRepairHeuristicRebuildFailure,
+            DelaunayRepairHeuristicRebuildFailureKind, DelaunayRepairHeuristicVertexContext,
+            DelaunayRepairOrientationCanonicalizationFailure,
+            DelaunayRepairOrientationCanonicalizationFailureKind,
+            DelaunayRepairPostconditionFailure, DelaunayRepairStats,
+            DelaunayTriangulationConstructionError, DelaunayizeError, DelaunayizeOutcome,
+            DelaunayizeRefinementError, DelaunayizeResult, SimplexDataRestoreError,
+            SimplexValidationError,
+        };
         pub use crate::{DelaunayTriangulation, DelaunayTriangulationBuilder, RefinementError};
     }
 
@@ -1960,7 +2006,7 @@ pub mod prelude {
     /// ```
     pub mod validation {
         pub use crate::topology::manifold::ManifoldError;
-        pub use crate::validation::*;
+        pub use crate::validation::ValidationCadence;
         pub use crate::{
             DelaunayTriangulationRefinementError, DelaunayTriangulationValidationError,
             DelaunayVerificationError, DelaunayVerificationErrorKind, OrientationWitness,
@@ -2030,10 +2076,6 @@ pub mod prelude {
     /// assert_eq!(tds.number_of_simplices(), 0);
     /// ```
     pub mod tds {
-        pub use crate::collections::{
-            FacetIndex, FastHashMap, FastHashSet, NeighborBuffer, PeriodicOffsetBuffer,
-            SimplexKeyBuffer, SmallBuffer, Uuid,
-        };
         pub use crate::tds::*;
     }
 
@@ -2214,6 +2256,10 @@ pub mod prelude {
     ///   [`DelaunayTriangulation::adjacency`] / [`TriangulationAdjacency`]
     /// - Zero-allocation geometry accessors: [`DelaunayTriangulation::vertex_coords`],
     ///   [`DelaunayTriangulation::simplex_vertices`]
+    /// - Owner-bound conflict queries: [`ConflictRegion`](crate::query::ConflictRegion),
+    ///   [`ConflictSimplexView`](crate::query::ConflictSimplexView), and
+    ///   [`CavityBoundary`](crate::query::CavityBoundary); query failures use
+    ///   [`crate::prelude::algorithms`]
     /// - Local-editing coordinates: [`Triangulation::simplex_barycenter`] and
     ///   [`SimplexBarycenterError`]
     /// - Convex hull extraction: [`ConvexHull::try_from_triangulation`]
@@ -2250,10 +2296,11 @@ pub mod prelude {
         };
         pub use crate::geometry::traits::coordinate::Coordinate;
         pub use crate::query::{
-            AllFacetsIter, BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity,
-            DataSerde, DataSerialize, DataType, FacetView, OneSidedFacetsIter, QueryError,
-            RidgeCandidate, RidgeCandidateError, RidgeHandle, RidgeLinkView, RidgeQuery, RidgeView,
-            Simplex, SimplexBarycenterError, SimplexDataFillError, SimplexFacetsIter, Vertex,
+            AllFacetsIter, BoundaryFacetsIter, CavityBoundary, ConflictRegion, ConflictSimplexView,
+            DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
+            FacetView, OneSidedFacetsIter, QueryError, RidgeCandidate, RidgeCandidateError,
+            RidgeHandle, RidgeLinkView, RidgeQuery, RidgeView, Simplex, SimplexBarycenterError,
+            SimplexDataFillError, SimplexFacetsIter, Vertex,
         };
 
         // Read-only predicates (useful in benchmarks / lightweight geometry checks)
@@ -2271,7 +2318,9 @@ pub mod prelude {
             jaccard_distance, jaccard_index,
         };
 
-        // Instrumentation helpers (no-op unless features enable extra tracking)
+        // Allocation instrumentation is available only when explicitly enabled.
+        #[cfg(feature = "count-allocations")]
+        #[cfg_attr(docsrs, doc(cfg(feature = "count-allocations")))]
         pub use crate::query::measure_with_result;
     }
 

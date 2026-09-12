@@ -4,9 +4,9 @@
 
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::operations::DelaunayInsertionState;
-use crate::core::traits::data_type::DataType;
 use crate::delaunay_model::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
 use crate::geometry::kernel::Kernel;
+use crate::refinement::RefinementError;
 use crate::triangulation::Triangulation;
 use crate::validation::{
     DelaunayLevelFiveCertificate, DelaunayTriangulationRefinementError,
@@ -81,8 +81,6 @@ impl<K, U, V, const D: usize> DelaunayTriangulationDraft<K, U, V, D> {
 impl<K, U, V, const D: usize> DelaunayTriangulationDraft<K, U, V, D>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     /// Promotes the proof-bearing Levels 1–4 owner by checking only Level 5.
     ///
@@ -128,10 +126,7 @@ where
         let certificate = match certify_level_five_for_refinement(&self.triangulation) {
             Ok(certificate) => certificate,
             Err(reason) => {
-                return Err(crate::refinement::RefinementError::new(
-                    self.triangulation,
-                    reason,
-                ));
+                return Err(RefinementError::new(self.triangulation, reason));
             }
         };
         Ok(CertifiedDelaunayTriangulationDraft {

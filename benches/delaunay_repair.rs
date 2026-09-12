@@ -35,9 +35,7 @@ use criterion::{
 use delaunay::prelude::construction::{DelaunayTriangulationBuilder, Vertex};
 use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeOutcome};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-use delaunay::prelude::geometry::{
-    AdaptiveKernel, CoordinateRange, ExactPredicates, Kernel, Point,
-};
+use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, ExactPredicates, Point};
 use delaunay::prelude::triangulation::Triangulation;
 use delaunay::try_vertices_from_points;
 use std::hint::black_box;
@@ -147,7 +145,7 @@ fn generate_vertices<const D: usize>(requested_vertices: usize, seed: u64) -> Ve
 /// never times a repair failure chain.
 fn build_source<const D: usize>(requested_vertices: usize, seed_base: u64) -> RepairSource<D>
 where
-    AdaptiveKernel<f64>: ExactPredicates<D> + Kernel<D, Scalar = f64>,
+    AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     build_source_with_requirement(
         requested_vertices,
@@ -167,7 +165,7 @@ fn build_source_with_requirement<const D: usize>(
     requirement: RepairFixtureRequirement,
 ) -> RepairSource<D>
 where
-    AdaptiveKernel<f64>: ExactPredicates<D> + Kernel<D, Scalar = f64>,
+    AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     for attempt in 0..SEED_SEARCH_ATTEMPTS {
         let attempt_seed = u64::try_from(attempt).or_abort();
@@ -222,7 +220,7 @@ fn bench_repair_dimension<const D: usize>(
     seed_base: u64,
     transaction_pressure_vertices: usize,
 ) where
-    AdaptiveKernel<f64>: ExactPredicates<D> + Kernel<D, Scalar = f64>,
+    AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     let mut group = c.benchmark_group(format!("delaunay_repair/{dim_label}"));
     group.sample_size(SAMPLE_SIZE);
@@ -279,7 +277,7 @@ fn bench_transaction_pressure_case<const D: usize>(
     requested_vertices: usize,
     seed_base: u64,
 ) where
-    AdaptiveKernel<f64>: ExactPredicates<D> + Kernel<D, Scalar = f64>,
+    AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     let source = build_source_with_requirement::<D>(
         requested_vertices,

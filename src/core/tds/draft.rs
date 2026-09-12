@@ -113,13 +113,13 @@ pub enum TdsDraftError {
 /// # }
 /// ```
 #[derive(Clone, Debug)]
+#[must_use = "call finish to publish the accumulated topology"]
 pub struct TdsDraft<U, V, const D: usize> {
     storage: UnverifiedTds<U, V, D>,
 }
 
 impl<U, V, const D: usize> TdsDraft<U, V, D> {
     /// Creates an empty unpublished assembly workspace.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             storage: UnverifiedTds::empty_unpublished(),

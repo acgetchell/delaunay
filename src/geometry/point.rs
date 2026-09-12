@@ -10,7 +10,7 @@ use crate::geometry::traits::coordinate::{
     HashCoordinate, InvalidCoordinateValue,
 };
 use num_traits::cast;
-use serde::de::{Error, SeqAccess, Visitor};
+use serde::de::{Error, IgnoredAny, SeqAccess, Visitor};
 use serde::ser::SerializeTuple;
 use serde::{Deserialize, Serialize};
 use std::any;
@@ -119,6 +119,8 @@ impl<const D: usize> Default for ValidatedCoordinates<D> {
 /// `Point<D>` stores a validated coordinate array. Public construction is
 /// fallible so non-finite coordinates are rejected before storage, and signed
 /// zero is canonicalized so equality, hashing, and ordering agree.
+/// Deserialization accepts exactly `D` numeric coordinates and passes them
+/// through the same checked constructor; strings and nulls are rejected.
 ///
 /// # Properties
 ///
@@ -333,20 +335,6 @@ impl<const D: usize> Serialize for Point<D> {
     }
 }
 
-/// Format-agnostic representation for coordinate values during deserialization.
-/// This enum allows the deserializer to work with any format (JSON, CBOR, bincode, etc.)
-/// without being tied to specific format types.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum CoordRepr {
-    /// Regular numeric value
-    Num(f64),
-    /// String representation, rejected because `Point` stores only finite coordinates.
-    Str(String),
-    /// Null value, rejected because `Point` stores only finite coordinates.
-    Null,
-}
-
 // Implement Deserialize manually so raw serialized coordinates parse through the validated boundary.
 impl<'de, const D: usize> Deserialize<'de> for Point<D> {
     fn deserialize<DE>(deserializer: DE) -> Result<Self, DE::Error>
@@ -366,36 +354,19 @@ impl<'de, const D: usize> Deserialize<'de> for Point<D> {
             where
                 A: SeqAccess<'de>,
             {
-                // Collect coordinates into a Vec first, then convert to array
-                let mut coords = Vec::with_capacity(D);
-                for i in 0..D {
-                    // Deserialize each element using the format-agnostic enum
-                    let element: CoordRepr = seq
+                // Request the known numeric type so non-self-describing formats
+                // do not need deserialize_any to interpret coordinate values.
+                let mut coords = [0.0; D];
+                for (index, coordinate) in coords.iter_mut().enumerate() {
+                    *coordinate = seq
                         .next_element()?
-                        .ok_or_else(|| Error::invalid_length(i, &self))?;
-
-                    let coord = match element {
-                        CoordRepr::Num(value) => value,
-                        CoordRepr::Str(s) => {
-                            return Err(Error::custom(format!(
-                                "non-finite coordinate string is not valid for Point: {s}"
-                            )));
-                        }
-                        CoordRepr::Null => {
-                            return Err(Error::custom("null is not a valid Point coordinate"));
-                        }
-                    };
-
-                    coords.push(coord);
+                        .ok_or_else(|| Error::invalid_length(index, &self))?;
+                }
+                if seq.next_element::<IgnoredAny>()?.is_some() {
+                    return Err(Error::invalid_length(D.saturating_add(1), &self));
                 }
 
-                // Convert Vec to array
-                let coords_len = coords.len();
-                let coords_array: [f64; D] = coords
-                    .try_into()
-                    .map_err(|_| Error::invalid_length(coords_len, &self))?;
-
-                Point::try_new(coords_array).map_err(Error::custom)
+                Point::try_new(coords).map_err(Error::custom)
             }
         }
 
@@ -1459,15 +1430,13 @@ mod tests {
     #[test]
     fn point_deserialize_rejects_null() {
         let json = "[null,1.0,2.0]";
-        let result: Result<Point<3>, _> = serde_json::from_str(json);
-        assert!(result.is_err());
+        let error = serde_json::from_str::<Point<3>>(json).expect_err("null is not numeric");
+        assert!(error.is_data());
     }
 
     #[test]
-    fn point_deserialize_format_agnostic_comprehensive() {
-        // Test the format-agnostic deserialization improvements with CoordRepr enum
-
-        // Test 1: Regular numeric values (NumCast improvement)
+    fn point_deserialize_json_numeric_contract() {
+        // Test 1: Regular numeric values
         let json_regular = "[1.0, 2.5, 4.25]";
         let point_regular: Point<3> = serde_json::from_str(json_regular).unwrap();
         assert_relative_eq!(
@@ -1496,10 +1465,10 @@ mod tests {
 
         // Test 6: Invalid special string should fail gracefully
         let json_invalid = "[1.0, \"NotASpecialValue\", 2.0]";
-        let result: Result<Point<3>, _> = serde_json::from_str(json_invalid);
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("non-finite coordinate string"));
+        let error = serde_json::from_str::<Point<3>>(json_invalid)
+            .expect_err("strings are not numeric coordinates");
+        assert!(error.is_data());
+        assert!(error.to_string().contains("invalid type: string"));
     }
 
     #[test]
@@ -1568,14 +1537,10 @@ mod tests {
 
         // Test that unknown special values still fail
         let invalid = r#"["unknown_special", 1.0]"#;
-        let result: Result<Point<2>, _> = serde_json::from_str(invalid);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("non-finite coordinate string")
-        );
+        let error = serde_json::from_str::<Point<2>>(invalid)
+            .expect_err("strings are not numeric coordinates");
+        assert!(error.is_data());
+        assert!(error.to_string().contains("invalid type: string"));
     }
 
     #[test]

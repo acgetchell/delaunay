@@ -41,6 +41,11 @@ check_draft() {
         and .immutable == false and .published_at == null
         and (.id | type == "number" and . > 0)
     ' <<<"$release" >/dev/null || fail "target must be an unpublished, mutable stable draft"
+	jq -e '
+        .assets | type == "array" and all(.[];
+            type == "object" and (.name | type == "string" and length > 0)
+        )
+    ' <<<"$release" >/dev/null || fail "release assets must be an array of named objects"
 	release_id="$(jq -r '.id' <<<"$release")"
 	if [[ -n "${EXPECTED_RELEASE_ID:-}" ]]; then
 		[[ "$release_id" == "$EXPECTED_RELEASE_ID" ]] || fail "draft release identity changed"
@@ -70,14 +75,18 @@ fi
 [[ -n "${EXPECTED_RELEASE_ID:-}" && -n "${EXPECTED_COMMIT:-}" ]] || fail "publish requires preflight identity"
 [[ "$(git --no-pager rev-parse HEAD)" == "$EXPECTED_COMMIT" ]] || fail "HEAD differs from the benchmarked tag"
 [[ -s "$asset" ]] || fail "missing or empty baseline archive: $asset"
+size="$(wc -c <"$asset")"
 digest="sha256:$(sha256sum "$asset" | cut -d ' ' -f 1)"
 gh release upload "$tag" "$asset" --repo "$repo"
 
 # Recheck draft identity and tag after upload, then verify GitHub stored these
 # exact archive bytes before making the release public.
 check_draft
-jq -e --arg asset "$asset" --arg digest "$digest" '
-    [.assets[] | select(.name == $asset and .state == "uploaded" and .size > 0 and .digest == $digest)]
-    | length == 1
-' <<<"$release" >/dev/null || fail "uploaded baseline is missing, incomplete, or has a different digest"
+jq -e --arg asset "$asset" --arg digest "$digest" --argjson size "$size" '
+    [.assets[] | select(.name == $asset)]
+    | length == 1 and (.[0] |
+        .state == "uploaded" and (.size | type == "number")
+        and .size == $size and .digest == $digest
+    )
+' <<<"$release" >/dev/null || fail "uploaded baseline is missing, incomplete, or has a different size or digest"
 gh api "repos/$repo/releases/$release_id" --method PATCH -F draft=false >/dev/null

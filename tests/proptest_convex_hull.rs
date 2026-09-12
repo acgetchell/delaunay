@@ -9,6 +9,9 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+#[path = "common/full_dimensional_vertices.rs"]
+mod full_dimensional_vertices;
+
 #[macro_use]
 #[path = "common/proptest_config.rs"]
 mod proptest_config;
@@ -17,7 +20,10 @@ use delaunay::assert_jaccard_gte;
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::query::*;
 use delaunay::try_vertices_from_points;
+use full_dimensional_vertices::full_dimensional_vertices;
 use proptest::prelude::*;
+use proptest::test_runner::TestCaseError;
+use std::collections::{HashMap, HashSet};
 
 // =============================================================================
 // TEST CONFIGURATION
@@ -107,19 +113,17 @@ macro_rules! test_convex_hull_properties {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_hull_construction_ $dim d>](
-                    vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
-                        $min_vertices..=$max_vertices
-                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
+                    vertices in full_dimensional_vertices::<$dim>($min_vertices, $max_vertices)
                 ) {
-                    let dt_result = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build();
-                    prop_assume!(dt_result.is_ok());
-                    let dt = dt_result.expect("assumed valid random triangulation");
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D construction failed for admitted vertices {vertices:?}: {error:?}", $dim
+                        )))?;
 
-                    // Filter: Skip degenerate configurations (no boundary facets)
-                    // These are tested separately in dedicated degenerate case tests
                     let boundary_count = count_boundary_facets(&dt);
-                    prop_assume!(boundary_count > 0);
+                    prop_assert!(boundary_count > 0, "{}D full-dimensional cloud must have a boundary", $dim);
 
                     // Should be able to construct hull from valid triangulation
                     let hull_result = ConvexHull::try_from_triangulation(dt.as_triangulation());
@@ -143,17 +147,18 @@ macro_rules! test_convex_hull_properties {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_hull_facet_bounds_ $dim d>](
-                    vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
-                        $min_vertices..=$max_vertices
-                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
+                    vertices in full_dimensional_vertices::<$dim>($min_vertices, $max_vertices)
                 ) {
-                    let dt_result = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build();
-                    prop_assume!(dt_result.is_ok());
-                    let dt = dt_result.expect("assumed valid random triangulation");
-                    let hull_result = ConvexHull::try_from_triangulation(dt.as_triangulation());
-                    prop_assume!(hull_result.is_ok());
-                    let hull = hull_result.expect("assumed hull construction");
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D construction failed for admitted vertices {vertices:?}: {error:?}", $dim
+                        )))?;
+                    let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D hull extraction failed for {vertices:?}: {error:?}", $dim
+                        )))?;
 
                     let facet_count = hull.number_of_facets();
                     let vertex_count = dt.number_of_vertices();
@@ -193,34 +198,41 @@ macro_rules! test_convex_hull_properties {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_hull_snapshot_independence_ $dim d>](
-                    initial_vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
-                        $min_vertices..=$max_vertices
-                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates")),
+                    initial_vertices in full_dimensional_vertices::<$dim>($min_vertices, $max_vertices),
                     new_point in prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
                 ) {
-                    let dt_result = DelaunayTriangulation::builder(&initial_vertices).topology_guarantee(TopologyGuarantee::PLManifold).build();
-                    prop_assume!(dt_result.is_ok());
-                    let mut dt = dt_result.expect("assumed valid random triangulation");
+                    // Only raw coordinate equality can exclude an insertion case.
+                    prop_assume!(initial_vertices.iter().all(|vertex| {
+                        !vertex.point().coords().iter().eq(new_point.coords().iter())
+                    }));
+                    let mut dt = DelaunayTriangulation::builder(&initial_vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D construction failed for admitted vertices {initial_vertices:?}: {error:?}", $dim
+                        )))?;
 
-                    // Filter: Skip degenerate initial configurations
                     let initial_boundary_count = count_boundary_facets(&dt);
-                    prop_assume!(initial_boundary_count > 0);
+                    prop_assert!(initial_boundary_count > 0);
 
-                    let hull_result = ConvexHull::try_from_triangulation(dt.as_triangulation());
-                    prop_assume!(hull_result.is_ok());
-                    let hull = hull_result.expect("assumed initial hull construction");
+                    let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D initial hull extraction failed for {initial_vertices:?}: {error:?}", $dim
+                        )))?;
 
                     let original_facets = extract_hull_facet_set(&hull);
 
                     // Modify the triangulation by inserting a new vertex
                     let new_vertex =
                         try_vertices_from_points(&[new_point]).expect("finite point coordinates");
-                    prop_assume!(dt.insert_vertex(new_vertex[0]).is_ok());
+                    dt.insert_vertex(new_vertex[0])
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D insertion failed for {initial_vertices:?}, point {new_point:?}: {error:?}", $dim
+                        )))?;
+                    prop_assert_eq!(dt.number_of_vertices(), initial_vertices.len() + 1);
 
-                    // Filter: Skip if modification resulted in degenerate configuration
                     let modified_boundary_count = count_boundary_facets(&dt);
-                    prop_assume!(modified_boundary_count > 0);
+                    prop_assert!(modified_boundary_count > 0);
 
                     prop_assert_eq!(
                         extract_hull_facet_set(&hull),
@@ -245,41 +257,41 @@ macro_rules! test_convex_hull_properties {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_hull_vertices_subset_ $dim d>](
-                    vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
-                        $min_vertices..=$max_vertices
-                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
+                    vertices in full_dimensional_vertices::<$dim>($min_vertices, $max_vertices)
                 ) {
-                    let dt_result = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build();
-                    prop_assume!(dt_result.is_ok());
-                    let dt = dt_result.expect("assumed valid random triangulation");
-                    let hull_result = ConvexHull::try_from_triangulation(dt.as_triangulation());
-                    prop_assume!(hull_result.is_ok());
-                    let hull = hull_result.expect("assumed hull construction");
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D construction failed for admitted vertices {vertices:?}: {error:?}", $dim
+                        )))?;
+                    let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D hull extraction failed for {vertices:?}: {error:?}", $dim
+                        )))?;
 
-                    let triangulation_vertex_count = dt.number_of_vertices();
-                    let facet_count = hull.number_of_facets();
-
-                    // Each facet references D vertices (D-dimensional facets in D-space)
-                    // Total references could be up to facet_count * D
-                    // But actual unique vertices on hull should be <= total vertices
-                    // This is a basic sanity check
+                    let source_vertices: HashMap<_, _> = dt.vertices()
+                        .map(|(_, vertex)| (vertex.uuid(), vertex.point().coords().map(f64::to_bits)))
+                        .collect();
+                    let mut hull_vertices = HashSet::new();
+                    for facet in hull.facets() {
+                        let mut facet_vertices = HashSet::new();
+                        for vertex in facet.vertices() {
+                            let uuid = vertex.uuid();
+                            let coordinates = vertex.point().coords().map(f64::to_bits);
+                            prop_assert_eq!(
+                                source_vertices.get(&uuid), Some(&coordinates),
+                                "{}D hull vertex {} must preserve source identity and coordinates", $dim, uuid
+                            );
+                            prop_assert!(facet_vertices.insert(uuid), "{}D facet must not repeat a vertex", $dim);
+                            hull_vertices.insert(uuid);
+                        }
+                        prop_assert_eq!(facet_vertices.len(), $dim);
+                    }
                     prop_assert!(
-                        facet_count > 0,
-                        "{}D hull should have positive facet count",
-                        $dim
-                    );
-
-                    // For D-dimensional triangulation with n vertices,
-                    // hull should have between D+1 and n vertices
-                    // (we can't easily extract unique hull vertices without iterating facets,
-                    // so we just check facet count is reasonable)
-                    prop_assert!(
-                        facet_count > $dim,
-                        "{}D hull should have more than {} facets for {} triangulation vertices",
-                        $dim,
-                        $dim,
-                        triangulation_vertex_count
+                        hull_vertices.len() > $dim && hull_vertices.len() <= source_vertices.len(),
+                        "{}D hull must contain between {} and {} distinct source vertices, got {}",
+                        $dim, $dim + 1, source_vertices.len(), hull_vertices.len()
                     );
                 }
 
@@ -287,20 +299,22 @@ macro_rules! test_convex_hull_properties {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_hull_reconstruction_consistency_ $dim d>](
-                    vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
-                        $min_vertices..=$max_vertices
-                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
+                    vertices in full_dimensional_vertices::<$dim>($min_vertices, $max_vertices)
                 ) {
-                    let dt_result = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build();
-                    prop_assume!(dt_result.is_ok());
-                    let dt = dt_result.expect("assumed valid random triangulation");
-                    let hull1_result = ConvexHull::try_from_triangulation(dt.as_triangulation());
-                    let hull2_result = ConvexHull::try_from_triangulation(dt.as_triangulation());
-                    prop_assume!(hull1_result.is_ok());
-                    prop_assume!(hull2_result.is_ok());
-                    let hull1 = hull1_result.expect("assumed first hull construction");
-                    let hull2 = hull2_result.expect("assumed second hull construction");
+                    let dt = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D construction failed for admitted vertices {vertices:?}: {error:?}", $dim
+                        )))?;
+                    let hull1 = ConvexHull::try_from_triangulation(dt.as_triangulation())
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D first hull extraction failed for {vertices:?}: {error:?}", $dim
+                        )))?;
+                    let hull2 = ConvexHull::try_from_triangulation(dt.as_triangulation())
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D second hull extraction failed for {vertices:?}: {error:?}", $dim
+                        )))?;
 
                     // Both hulls should have the same facet count
                     prop_assert_eq!(

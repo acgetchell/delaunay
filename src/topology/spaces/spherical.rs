@@ -413,6 +413,12 @@ impl<const D: usize> SphericalMetric<D> {
     ///
     /// The returned arc length is in the same units as this metric's radius and
     /// lies in `[0, pi * radius]` up to floating-point roundoff.
+    /// This is a rounded numerical distance, not an exact geometric predicate.
+    /// A norm-weighted half-angle formula avoids the loss of accuracy in
+    /// `acos(dot)` near coincident and antipodal directions; scaled `hypot`
+    /// reductions preserve tiny separations without squaring them away.
+    /// See Kahan's "Mangled Angles" discussion in
+    /// [REFERENCES.md](https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md#stable-vector-angles).
     ///
     /// # Errors
     ///
@@ -448,14 +454,30 @@ impl<const D: usize> SphericalMetric<D> {
                 });
             }
         }
-        let cosine = a
-            .coords()
-            .iter()
-            .zip(b.coords().iter())
-            .fold(0.0, |acc, (&left, &right)| {
-                (left / self.radius).mul_add(right / self.radius, acc)
-            });
-        let distance = self.radius * cosine.clamp(-1.0, 1.0).acos();
+        // Scale before forming norm products: stored coordinates can have
+        // extreme radii and their rounded norms need not equal the radius.
+        let (left_norm, right_norm) = a.coords().iter().zip(b.coords()).fold(
+            (0.0_f64, 0.0_f64),
+            |(left_norm, right_norm), (&left, &right)| {
+                (
+                    left_norm.hypot(left / self.radius),
+                    right_norm.hypot(right / self.radius),
+                )
+            },
+        );
+        let (difference, sum) = a.coords().iter().zip(b.coords()).fold(
+            (0.0_f64, 0.0_f64),
+            |(difference, sum), (&left, &right)| {
+                let left = (left / self.radius) * right_norm;
+                let right = (right / self.radius) * left_norm;
+                (difference.hypot(left - right), sum.hypot(left + right))
+            },
+        );
+        // Kahan's norm-weighted lengths give angle = 2 * atan2(difference, sum).
+        // Apply the double-angle identity inside atan2 so a representable
+        // subnormal angle is not lost when its half rounds to zero.
+        let angle = (2.0 * difference * sum).atan2((sum - difference) * (sum + difference));
+        let distance = self.radius * angle;
         if distance.is_finite() {
             Ok(distance)
         } else {

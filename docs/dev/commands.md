@@ -1077,6 +1077,11 @@ macOS, and Windows. Optimize bootstrap and caching without silently reducing
 that platform coverage; a narrower matrix requires an explicit replacement for
 each lost portability check.
 
+The native targets are `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, and
+`x86_64-pc-windows-msvc`, respectively. CI checks the compiler host against the
+matrix before running recipes; installing a target alone does not prove that
+Cargo built or tested it. Intel macOS is not a separate native CI cell.
+
 The root `justfile` owns managed tool-version pins. After bootstrapping `just`
 through `.github/actions/setup-just`, workflows resolve those pins with
 `just --evaluate` instead of repeating version literals. Rust workflow caches

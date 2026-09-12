@@ -35,6 +35,7 @@ first use, start with the [README](README.md).
 | Quality and similarity | [Mesh quality][quality] and [set similarity][similarity]: metric definitions and interpretation |
 | Realization overlap | [Baraff and I-COLLIDE][overlap]: sweep-and-prune provenance; Ericson: collision-detection background |
 | Spatial locality | [Skilling and Moon et al.](#spatial-ordering-and-hilbert-curves) [9, 8]: index algorithm and locality analysis |
+| Spherical distances | [Kahan](#stable-vector-angles): stable norm-weighted vector-angle formulas |
 | Topology | [PL and computational topology texts][topology]: simplicial complexes, links, and manifold background |
 
 [construction]: #triangulation-construction-algorithms
@@ -331,6 +332,16 @@ These references ensure the library's geometric computations are mathematically 
   *ACM Transactions on Graphics* 9, no. 1 (1990): 66-104. DOI: [10.1145/77635.77639](https://doi.org/10.1145/77635.77639)
 - Seidel, R. "The Nature and Meaning of Perturbations in Geometric Computing."
   *Discrete & Computational Geometry* 19, no. 1 (1998): 1-17. DOI: [10.1007/PL00009330](https://doi.org/10.1007/PL00009330)
+
+### Stable Vector Angles
+
+- Kahan, W. "How Futile Are Mindless Assessments of Roundoff in Floating-Point Computation?"
+  Working paper, January 11, 2006, Section 12, "Mangled Angles," pp. 46-48.
+  Available at: <https://people.eecs.berkeley.edu/~wkahan/Mindless.pdf>
+
+  Supplies the norm-weighted half-angle identity used by `SphericalMetric::try_distance`.
+  The implementation uses scaled norms and a double-angle `atan2` identity to retain
+  representable subnormal full angles. This is a rounded distance, not an exact predicate.
 
 ## Mesh Quality Metrics
 

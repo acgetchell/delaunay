@@ -859,7 +859,7 @@ pub(super) fn validate_flip_trial_neighbor_orientation<V, const D: usize>(
     neighbor_simplex: &Simplex<V, D>,
     mirror_idx: usize,
 ) -> Result<(), TdsValidationFailure> {
-    let (observed_odd_permutation, expected_odd_permutation, facet_vertex_count, target_count) =
+    let (observed_odd_permutation, expected_odd_permutation, _, _) =
         match flip_trial_neighbor_orientation_parity(
             simplex_key,
             simplex,
@@ -903,8 +903,20 @@ pub(super) fn validate_flip_trial_neighbor_orientation<V, const D: usize>(
             simplex2_uuid: neighbor_simplex.uuid(),
             simplex1_facet_index: facet_idx,
             simplex2_facet_index: mirror_idx,
-            facet_vertex_count,
-            simplex2_facet_vertex_count: target_count,
+            facet_vertex_orderings: Box::new([
+                simplex
+                    .vertices()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, &key)| (index != facet_idx).then_some(key))
+                    .collect(),
+                neighbor_simplex
+                    .vertices()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, &key)| (index != mirror_idx).then_some(key))
+                    .collect(),
+            ]),
             observed_odd_permutation,
             expected_odd_permutation,
         });

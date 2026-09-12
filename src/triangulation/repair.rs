@@ -1248,7 +1248,9 @@ where
 
         Ok(fan_boundary_facets)
     }
+}
 
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Detects over-shared facets
     ///
     /// This is an **O(k * D)** operation where k = number of simplices to check,
@@ -1365,6 +1367,29 @@ where
         }
     }
 
+    /// Detects over-shared facets using only the supplied `simplices`.
+    ///
+    /// A facet is over-shared when it occurs more than twice among these
+    /// simplices. Incident simplices omitted from the slice are not counted,
+    /// so this is not a global check of each supplied simplex's facets.
+    ///
+    /// This read-only query exposes only the diagnostic fact, not the
+    /// runtime-local key map used by repair.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsError`] if live simplex or vertex storage is inconsistent.
+    pub fn has_local_facet_issues(&self, simplices: &[SimplexKey]) -> Result<bool, TdsError> {
+        Ok(self.detect_local_facet_issues(simplices)?.is_some())
+    }
+}
+
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
     /// Select simplices to remove for over-shared-facet repair without mutating the TDS.
     fn simplices_for_local_facet_issue_repair(
         &self,
@@ -1561,18 +1586,6 @@ where
                 Err(error)
             }
         }
-    }
-
-    /// Detects whether `simplices` participate in any over-shared local facet.
-    ///
-    /// This read-only query exposes only the diagnostic fact, not the
-    /// runtime-local key map used by repair.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TdsError`] if live simplex or vertex storage is inconsistent.
-    pub fn has_local_facet_issues(&self, simplices: &[SimplexKey]) -> Result<bool, TdsError> {
-        Ok(self.detect_local_facet_issues(simplices)?.is_some())
     }
 
     /// Creates an owner-bound local-facet repair proposal.

@@ -161,12 +161,12 @@ _pachner-stress-dim label vertices attempts validate_every output_dir mode:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    label="{{ label }}"
-    vertices="{{ vertices }}"
-    attempts="{{ attempts }}"
-    validate_every="{{ validate_every }}"
-    output_dir="{{ output_dir }}"
-    mode="{{ mode }}"
+    label={{ quote(label) }}
+    vertices={{ quote(vertices) }}
+    attempts={{ quote(attempts) }}
+    validate_every={{ quote(validate_every) }}
+    output_dir={{ quote(output_dir) }}
+    mode={{ quote(mode) }}
 
     require_positive_integer() {
         local name="$1"

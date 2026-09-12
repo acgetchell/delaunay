@@ -91,6 +91,21 @@ def just_recipes() -> dict[str, dict[str, Any]]:
     return recipes
 
 
+def run_pachner_stress_probe(tmp_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    """Capture literal artifact and Cargo arguments without running a stress workload."""
+    rendered = run_just("--dry-run", "_pachner-stress-dim", *args)
+    script = f"""
+cargo() {{
+    printf '%s\\0' "$@" > {shlex.quote((tmp_path / "cargo-args").as_posix())}
+}}
+mkdir() {{
+    printf '%s\\0' "$@" > {shlex.quote((tmp_path / "mkdir-args").as_posix())}
+}}
+{rendered.stdout}{rendered.stderr}
+"""
+    return run_safe_command("bash", ["-c", script], cwd=tmp_path, check=False, timeout=30)
+
+
 def run_zizmor_probe(
     tmp_path: Path,
     case: ZizmorAuthCase,
@@ -211,6 +226,57 @@ def test_cli_recipe_runs_binary_unit_and_integration_targets() -> None:
     command = result.stdout + result.stderr
 
     assert ("cargo nextest run --release --profile ci --features cli --bin delaunay --bin pachner-stress --test cli") in command
+
+
+@pytest.mark.parametrize(
+    "output_dir",
+    ["artifacts with spaces", "artifacts/$trial", "artifacts/$(printf expanded)", "artifacts/`printf expanded`", "artifacts/single' double\""],
+)
+def test_pachner_stress_recipe_preserves_literal_output_paths(tmp_path: Path, output_dir: str) -> None:
+    """Shell metacharacters in output paths must reach both file sinks unchanged."""
+    result = run_pachner_stress_probe(tmp_path, ["3d", "5", "2", "1", output_dir, "round-trip"])
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "mkdir-args").read_text(encoding="utf-8").split("\0") == ["-p", output_dir, ""]
+    assert (tmp_path / "cargo-args").read_text(encoding="utf-8").split("\0") == [
+        "run",
+        "--locked",
+        "--profile",
+        "perf",
+        "--features",
+        "cli",
+        "--bin",
+        "pachner-stress",
+        "--",
+        "--dimension",
+        "3d",
+        "--mode",
+        "round-trip",
+        "--vertices",
+        "5",
+        "--attempts",
+        "2",
+        "--validate-every",
+        "1",
+        "--progress-csv",
+        f"{output_dir}/progress.csv",
+        "--summary-json",
+        f"{output_dir}/summary.json",
+        "",
+    ]
+
+
+@pytest.mark.parametrize("argument_index", [1, 2, 3, 5])
+def test_pachner_stress_recipe_rejects_literal_invalid_arguments(tmp_path: Path, argument_index: int) -> None:
+    """Command substitutions must not turn invalid counts or modes into accepted values."""
+    args = ["3d", "5", "2", "1", "artifacts", "round-trip"]
+    args[argument_index] = f"$(printf {args[argument_index]})"
+    result = run_pachner_stress_probe(tmp_path, args)
+
+    assert result.returncode == 2, result.stderr
+    assert args[argument_index] in result.stderr
+    assert not (tmp_path / "mkdir-args").exists()
+    assert not (tmp_path / "cargo-args").exists()
 
 
 def test_check_code_includes_dependency_hygiene() -> None:

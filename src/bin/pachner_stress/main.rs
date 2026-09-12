@@ -529,8 +529,10 @@ fn canonicalize_existing_prefix(path: &Path) -> Result<ArtifactPathIdentity, Pac
             }
             Component::Normal(name) if missing_suffix.as_os_str().is_empty() => {
                 let candidate = existing_prefix.join(name);
-                match candidate.try_exists() {
-                    Ok(true) => {
+                // A dangling symlink is an existing entry, not a new output name.
+                // Canonicalization must reject it before either artifact is opened.
+                match fs::symlink_metadata(&candidate) {
+                    Ok(_) => {
                         existing_prefix = fs::canonicalize(&candidate).map_err(|source| {
                             PachnerStressError::ArtifactResolveIdentity {
                                 path: candidate,
@@ -538,7 +540,9 @@ fn canonicalize_existing_prefix(path: &Path) -> Result<ArtifactPathIdentity, Pac
                             }
                         })?;
                     }
-                    Ok(false) => missing_suffix.push(name),
+                    Err(source) if source.kind() == io::ErrorKind::NotFound => {
+                        missing_suffix.push(name);
+                    }
                     Err(source) => {
                         return Err(PachnerStressError::ArtifactInspect {
                             path: candidate,
@@ -2134,6 +2138,41 @@ mod tests {
         );
 
         fs::remove_dir_all(directory).expect("scratch hard-link fixture should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_artifacts_are_rejected_before_storage() {
+        let directory = target_artifact_path("dangling-symlink", "dir");
+        fs::create_dir_all(&directory).expect("scratch directory should be created");
+        let direct = directory.join("summary.json");
+        let alias = directory.join("progress.csv");
+        symlink(Path::new("summary.json"), &alias)
+            .expect("scratch dangling symlink should be created");
+        let expected_path = fs::canonicalize(&directory)
+            .expect("scratch directory should resolve")
+            .join("progress.csv");
+
+        for (progress_path, summary_path) in [
+            (alias.clone(), direct.clone()),
+            (direct.clone(), alias.clone()),
+        ] {
+            let error =
+                PachnerStressArtifacts::try_new(Some(progress_path), Some(summary_path), false)
+                    .expect_err("dangling symlinks must fail before artifact creation");
+            let PachnerStressError::ArtifactResolveIdentity { path, source } = error else {
+                panic!("expected ArtifactResolveIdentity error, got {error:?}");
+            };
+            assert_eq!(path, expected_path);
+            assert_eq!(source.kind(), io::ErrorKind::NotFound);
+            assert!(!direct.exists(), "validation must not create the target");
+            assert_eq!(
+                fs::read_link(&alias).expect("validation must preserve the symlink"),
+                Path::new("summary.json")
+            );
+        }
+
+        fs::remove_dir_all(directory).expect("scratch symlink fixture should be removed");
     }
 
     #[cfg(unix)]

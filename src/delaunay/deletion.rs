@@ -362,15 +362,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::algorithms::flips::{
-        DelaunayRepairDiagnostics, DelaunayRepairError, RepairQueueOrder,
-    };
+    use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
+    use crate::core::algorithms::insertion::CavityFillingError;
     use crate::core::collections::spatial_hash_grid::HashGridIndex;
     use crate::core::vertex::Vertex;
-    use crate::geometry::kernel::AdaptiveKernel;
+    use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates};
     use crate::geometry::util::safe_usize_to_scalar;
     use crate::repair::DelaunayRepairPolicy;
-    use crate::triangulation::validation::{TopologyGuarantee, TriangulationValidationError};
+    use crate::triangulation::validation::TriangulationValidationError;
     use crate::vertex;
     use std::assert_matches;
     use std::sync::Once;
@@ -514,7 +513,7 @@ mod tests {
 
     fn assert_delete_vertex_rollback<const D: usize>()
     where
-        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+        AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         init_tracing();
         let vertices = simplex_vertices::<D>();
@@ -540,7 +539,7 @@ mod tests {
 
     fn assert_delete_vertex_fallback_rollback<const D: usize>()
     where
-        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+        AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         init_tracing();
         let vertices = simplex_vertices::<D>();
@@ -917,7 +916,7 @@ mod tests {
     #[test]
     fn delete_vertex_error_preserves_triangulation_repair_source() {
         let source = InsertionError::CavityFilling {
-            reason: crate::core::algorithms::insertion::CavityFillingError::EmptyFanTriangulation,
+            reason: CavityFillingError::EmptyFanTriangulation,
         };
         let error = DeleteVertexError::from(VertexRemovalError::Operation {
             operation: TriangulationRepairOperation::FanTriangulation,

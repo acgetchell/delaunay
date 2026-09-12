@@ -22,6 +22,7 @@ mod allocation_contracts {
     use approx::assert_relative_eq;
     use criterion::{BenchmarkGroup, BenchmarkId, Criterion, measurement::WallTime};
     use delaunay::prelude::algorithms::LocateResult;
+    use delaunay::prelude::collections::FastHashSet;
     use delaunay::prelude::construction::{
         ConstructionOptions, DelaunayIncrementalBuilder, DelaunayTriangulation, RetryPolicy, Vertex,
     };
@@ -30,7 +31,7 @@ mod allocation_contracts {
         AdaptiveKernel, CoordinateRange, ExactPredicates, Point, inradius, safe_usize_to_scalar,
         simplex_volume, surface_measure,
     };
-    use delaunay::prelude::query::measure_with_result;
+    use delaunay::prelude::query::{EdgeKey, measure_with_result};
     use delaunay::prelude::tds::{SimplexKey, TdsError, VertexKey, facet_key_from_vertices};
     use delaunay::{try_vertices_from_points, vertex};
     use std::assert_matches;
@@ -483,6 +484,67 @@ mod allocation_contracts {
         );
     }
 
+    /// Measures the actual allocator cost of one empty edge-set reservation.
+    fn edge_set_reservation(capacity: usize) -> AllocationInfo {
+        let ((), info) = measure_with_result(|| {
+            let mut set: FastHashSet<EdgeKey> = FastHashSet::default();
+            set.reserve(capacity);
+            black_box(set);
+        });
+        info
+    }
+
+    fn bench_edge_queries<const D: usize>(
+        group: &mut BenchmarkGroup<'_, WallTime>,
+        fixture: &DimensionFixture<D>,
+    ) {
+        let tri = fixture.dt.as_triangulation();
+        // Independent incidence-based count for these non-periodic fixtures.
+        let expected_edges = tri
+            .vertices()
+            .map(|(key, _)| tri.number_of_incident_edges(key))
+            .sum::<usize>()
+            / 2;
+        let occurrences = fixture.simplex_count.saturating_mul(D * (D + 1) / 2);
+        let vertex_pairs = fixture
+            .vertex_count
+            .saturating_mul(fixture.vertex_count.saturating_add(1))
+            / 2;
+        let legacy_reservation = edge_set_reservation(occurrences);
+        let bounded_reservation = edge_set_reservation(occurrences.min(vertex_pairs));
+        let (edge_count, observed) = measure_with_result(|| tri.edges().count());
+        assert_eq!(edge_count, expected_edges);
+        assert!(observed.bytes_total <= bounded_reservation.bytes_total);
+        assert_allocation_budget(&observed, "edge enumeration", 1);
+        assert_eq!(
+            tri.build_edge_index().or_abort().number_of_edges(),
+            expected_edges
+        );
+        eprintln!(
+            "edge_query_reservation dimension={D} vertices={} simplices={} edges={expected_edges} legacy_reserve_bytes={} observed_bytes={}",
+            fixture.vertex_count,
+            fixture.simplex_count,
+            legacy_reservation.bytes_total,
+            observed.bytes_total,
+        );
+
+        group.bench_function(
+            BenchmarkId::new(format!("edge_queries/enumerate_{D}d"), fixture.vertex_count),
+            |b| {
+                b.iter(|| black_box(tri.edges().count()));
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                format!("edge_queries/build_index_{D}d"),
+                fixture.vertex_count,
+            ),
+            |b| {
+                b.iter(|| black_box(tri.build_edge_index().or_abort()));
+            },
+        );
+    }
+
     fn bench_simplex_vertices<const D: usize>(
         group: &mut BenchmarkGroup<'_, WallTime>,
         fixture: &DimensionFixture<D>,
@@ -637,6 +699,7 @@ mod allocation_contracts {
         bench_post_bootstrap_insertion(group, &fixture);
         bench_public_iterators(group, &fixture);
         bench_incidence_view_construction(group, &fixture);
+        bench_edge_queries(group, &fixture);
         bench_simplex_vertices(group, &fixture);
         bench_simplex_barycenter(group, &fixture);
         bench_simplex_vertex_uuid_iter(group, &fixture);

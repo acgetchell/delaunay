@@ -55,7 +55,7 @@ impl<V, const D: usize> Clone for ConflictSimplexView<'_, V, D> {
     }
 }
 
-impl<V, const D: usize> ConflictSimplexView<'_, V, D> {
+impl<'tri, V, const D: usize> ConflictSimplexView<'tri, V, D> {
     /// Returns the runtime-local key under the region's borrowed owner.
     #[must_use]
     pub const fn key(&self) -> SimplexKey {
@@ -63,8 +63,36 @@ impl<V, const D: usize> ConflictSimplexView<'_, V, D> {
     }
 
     /// Returns the borrowed simplex.
+    ///
+    /// The reference borrows the canonical triangulation for `'tri`, not this
+    /// view or its conflict region. It may outlive those wrappers, but keeps
+    /// their source owner immutably borrowed until its last use.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::query::ConflictSimplexView;
+    /// use delaunay::prelude::tds::Simplex;
+    ///
+    /// fn simplex<'tri, V, const D: usize>(
+    ///     view: ConflictSimplexView<'tri, V, D>,
+    /// ) -> &'tri Simplex<V, D> {
+    ///     view.simplex()
+    /// }
+    /// ```
+    ///
+    /// Dropping the view cannot extend the source owner's lifetime:
+    ///
+    /// ```compile_fail
+    /// use delaunay::prelude::query::ConflictSimplexView;
+    /// use delaunay::prelude::tds::Simplex;
+    ///
+    /// fn detached(view: ConflictSimplexView<'_, (), 2>) -> &'static Simplex<(), 2> {
+    ///     view.simplex()
+    /// }
+    /// ```
     #[must_use]
-    pub const fn simplex(&self) -> &Simplex<V, D> {
+    pub const fn simplex(&self) -> &'tri Simplex<V, D> {
         self.simplex
     }
 }
@@ -102,9 +130,10 @@ impl<'tri, U, V, const D: usize> CavityBoundary<'tri, U, V, D> {
 
 /// An owner-bound conflict region produced by a triangulation query.
 ///
-/// The view retains an immutable borrow of its topology owner, its query point,
-/// and parsed simplex references. This prevents intervening mutation and avoids
-/// asking callers to pair a detached key buffer with a TDS manually.
+/// The view retains an immutable borrow of its topology owner and parsed simplex
+/// references. This prevents intervening mutation and avoids asking callers to
+/// pair a detached key buffer with a TDS manually. With diagnostics enabled, it
+/// also stores a copy of the query point.
 #[must_use]
 pub struct ConflictRegion<'tri, K, U, V, const D: usize> {
     triangulation: &'tri Triangulation<K, U, V, D>,
@@ -1925,8 +1954,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// let query = Point::try_from([0.2, 0.2])?;
     ///
     /// if let LocateResult::InsideSimplex(start) = tri.locate(&query, None)? {
-    ///     let conflict = tri.find_conflict_region(&query, start)?;
+    ///     let conflict: ConflictRegion<'_, _, (), (), 2> = tri.find_conflict_region(&query, start)?;
     ///     assert!(!conflict.is_empty());
+    ///     let boundary: CavityBoundary<'_, (), (), 2> = conflict.boundary()?;
+    ///     assert_eq!(boundary.len(), 3);
     /// }
     /// # Ok(())
     /// # }
@@ -2058,15 +2089,13 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// references a vertex key that is absent from vertex storage.
     pub fn build_edge_index(&self) -> Result<EdgeIndex<'_>, TopologyIndexBuildError> {
         let vertex_cap = self.tds.number_of_vertices();
-        let simplex_cap = self.tds.number_of_simplices();
         let mut vertex_to_edges: FastHashMap<
             VertexKey,
             SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>,
         > = fast_hash_map_with_capacity(vertex_cap);
 
-        let edges_per_simplex = (D + 1).saturating_mul(D) / 2;
         let mut seen_edges: FastHashSet<EdgeKey> =
-            fast_hash_set_with_capacity(simplex_cap.saturating_mul(edges_per_simplex));
+            fast_hash_set_with_capacity(self.edge_capacity_hint());
 
         for (simplex_key, simplex) in self.tds.simplices() {
             let vertices = simplex.vertices();
@@ -2157,13 +2186,27 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         ))
     }
 
+    /// Bounds initial edge-set reservation by both occurrences and vertex pairs.
+    ///
+    /// Shared edges can occur in many simplices, especially in higher dimensions.
+    /// Include self-pairs because periodic quotient simplices may repeat a vertex
+    /// key. This is only a reservation hint: insertion and validation are unchanged.
+    #[must_use]
+    fn edge_capacity_hint(&self) -> usize {
+        let vertex_count = self.tds.number_of_vertices();
+        let edges_per_simplex = (D + 1).saturating_mul(D) / 2;
+        let occurrences = self
+            .tds
+            .number_of_simplices()
+            .saturating_mul(edges_per_simplex);
+        let vertex_pairs = vertex_count.saturating_mul(vertex_count.saturating_add(1)) / 2;
+        occurrences.min(vertex_pairs)
+    }
+
     #[must_use]
     fn collect_edges(&self) -> FastHashSet<EdgeKey> {
-        let simplex_cap = self.tds.number_of_simplices();
-        let edges_per_simplex = (D + 1).saturating_mul(D) / 2;
-
         let mut edges: FastHashSet<EdgeKey> =
-            fast_hash_set_with_capacity(simplex_cap.saturating_mul(edges_per_simplex));
+            fast_hash_set_with_capacity(self.edge_capacity_hint());
 
         for (_simplex_key, simplex) in self.tds.simplices() {
             let vertices = simplex.vertices();
@@ -2867,6 +2910,35 @@ mod tests {
             Err(EdgeKeyError::MissingVertexIncidence { vertex_key, .. })
                 if vertex_key == first
         );
+    }
+
+    #[test]
+    fn edge_queries_bound_reservation_across_dimensions() {
+        fn assert_reservation<const D: usize>() {
+            let tri = split_topology_fixture::<D>();
+            let vertices = tri.number_of_vertices();
+            let occurrences = tri.number_of_simplices() * D * (D + 1) / 2;
+            let vertex_pairs = vertices * (vertices + 1) / 2;
+            let reference: FastHashSet<EdgeKey> =
+                fast_hash_set_with_capacity(occurrences.min(vertex_pairs));
+            let edges = tri.collect_edges();
+
+            assert_eq!(edges.len(), expected_split_topology_fixture_edges::<D>());
+            assert_eq!(edges.capacity(), reference.capacity());
+            assert_eq!(tri.edge_capacity_hint(), occurrences.min(vertex_pairs));
+        }
+
+        assert_reservation::<2>();
+        assert_reservation::<3>();
+        assert_reservation::<4>();
+        assert_reservation::<5>();
+
+        let empty = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(
+            FastKernel::new(),
+            Tds::empty(),
+        );
+        assert_eq!(empty.edge_capacity_hint(), 0);
+        assert_eq!(empty.collect_edges().capacity(), 0);
     }
 
     #[test]

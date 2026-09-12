@@ -14,6 +14,7 @@ use crate::core::{
     facet::facet_key_from_vertices,
     tds::VertexKey,
 };
+use crate::geometry::periodic::wrap_coordinate;
 use crate::topology::traits::topological_space::{
     TopologicalSpace, TopologyKind, ToroidalDomain, ToroidalDomainError,
 };
@@ -457,8 +458,9 @@ impl<const D: usize> ToroidalSpace<D> {
     /// Wraps a single coordinate value into the fundamental domain `[0, L_axis)`
     /// using `rem_euclid` arithmetic.
     ///
-    /// Applies `rem_euclid(domain[axis])`. Returns `None` if `axis` is out of
-    /// range or `value` is not finite.
+    /// Applies `rem_euclid(domain[axis])`, mapping a rounded upper endpoint back
+    /// to zero so the result stays in the half-open domain. Returns `None` if
+    /// `axis` is out of range or `value` is not finite.
     ///
     /// # Arguments
     ///
@@ -490,7 +492,7 @@ impl<const D: usize> ToroidalSpace<D> {
         if !value.is_finite() {
             return None;
         }
-        Some(value.rem_euclid(period))
+        Some(wrap_coordinate(value, period))
     }
 }
 
@@ -507,7 +509,7 @@ impl<const D: usize> TopologicalSpace for ToroidalSpace<D> {
 
     fn canonicalize_point(&self, coords: &mut [f64]) {
         for (coord, &period) in coords.iter_mut().zip(self.domain.periods().iter()) {
-            *coord = coord.rem_euclid(period);
+            *coord = wrap_coordinate(*coord, period);
         }
     }
 
@@ -765,5 +767,6 @@ mod tests {
         let space = ToroidalSpace::<2>::unit();
         assert!(space.wrap_coord(0, f64::NAN).is_none());
         assert!(space.wrap_coord(0, f64::INFINITY).is_none());
+        assert!(space.wrap_coord(0, f64::NEG_INFINITY).is_none());
     }
 }

@@ -2215,14 +2215,14 @@ mod tests {
     #[test]
     fn simplex_quality_score_ranks_degenerate_geometry_as_worst() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
-        let vertex_keys: Vec<_> = [
+        let mut vertex_keys = Vec::with_capacity(3);
+        for vertex in [
             vertex!([0.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0]).unwrap(),
-        ]
-        .iter()
-        .map(|vertex| tds.insert_vertex_with_mapping(*vertex).unwrap())
-        .collect();
+        ] {
+            vertex_keys.push(tds.insert_vertex_with_mapping(vertex).unwrap());
+        }
         let simplex_key = tds
             .insert_simplex_with_mapping(Simplex::try_new(vertex_keys).unwrap())
             .unwrap();

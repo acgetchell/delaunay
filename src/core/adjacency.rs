@@ -189,9 +189,30 @@ impl<'tds> TriangulationAdjacency<'tds> {
     ///
     /// If `v` is not present in this view, the iterator is empty. Iteration
     /// order is not specified.
+    ///
+    /// The iterator borrows the canonical TDS incidence relation, not this
+    /// composite index, so it can outlive the index while the TDS remains borrowed.
+    /// Edge and simplex-neighbor iterators instead borrow this index's owned maps.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::query::TriangulationAdjacency;
+    /// use delaunay::prelude::tds::{SimplexKey, VertexKey};
+    ///
+    /// fn incident<'tds>(
+    ///     adjacency: TriangulationAdjacency<'tds>,
+    ///     vertex: VertexKey,
+    /// ) -> impl Iterator<Item = SimplexKey> + 'tds + use<'tds> {
+    ///     adjacency.adjacent_simplices(vertex)
+    /// }
+    /// ```
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
-    pub fn adjacent_simplices(&self, v: VertexKey) -> impl Iterator<Item = SimplexKey> + '_ {
+    pub fn adjacent_simplices(
+        &self,
+        v: VertexKey,
+    ) -> impl Iterator<Item = SimplexKey> + 'tds + use<'tds> {
         self.incidence.adjacent_simplices(v)
     }
 
@@ -273,7 +294,7 @@ impl<'tds> IncidenceView<'tds> {
 
     /// Borrows the validated vertex-to-simplices mapping for crate-internal queries.
     #[inline]
-    pub(crate) const fn vertex_to_simplices(&self) -> &VertexIncidenceIndex {
+    pub(crate) const fn vertex_to_simplices(&self) -> &'tds VertexIncidenceIndex {
         self.vertex_to_simplices
     }
 
@@ -281,9 +302,63 @@ impl<'tds> IncidenceView<'tds> {
     ///
     /// If `v` is not present in this view, the iterator is empty.
     /// Iteration order is not specified.
+    ///
+    /// The iterator borrows the canonical TDS relation for `'tds`, independently
+    /// of this view's lifetime. The source owner must remain alive and cannot be
+    /// mutably borrowed until the iterator's last use.
+    ///
+    /// # Examples
+    ///
+    /// The temporary view can be dropped before consuming its iterator:
+    ///
+    /// ```rust
+    /// use delaunay::prelude::query::IncidenceView;
+    /// use delaunay::prelude::tds::{SimplexKey, VertexKey};
+    ///
+    /// fn incident<'tds>(
+    ///     view: IncidenceView<'tds>,
+    ///     vertex: VertexKey,
+    /// ) -> impl Iterator<Item = SimplexKey> + 'tds + use<'tds> {
+    ///     view.adjacent_simplices(vertex)
+    /// }
+    /// ```
+    ///
+    /// The iterator cannot outlive its source owner:
+    ///
+    /// ```compile_fail,E0515
+    /// use delaunay::prelude::tds::{SimplexKey, VertexKey};
+    /// use delaunay::prelude::triangulation::{FastKernel, Triangulation};
+    ///
+    /// fn detached(
+    ///     owner: Triangulation<FastKernel<f64>, (), (), 2>,
+    ///     vertex: VertexKey,
+    /// ) -> impl Iterator<Item = SimplexKey> + 'static {
+    ///     owner.incidence().adjacent_simplices(vertex)
+    /// }
+    /// ```
+    ///
+    /// Dropping the view does not permit mutation while its iterator is live:
+    ///
+    /// ```compile_fail,E0506
+    /// use delaunay::prelude::tds::VertexKey;
+    /// use delaunay::prelude::triangulation::{FastKernel, Triangulation};
+    ///
+    /// fn replace_while_iterating(
+    ///     owner: &mut Triangulation<FastKernel<f64>, (), (), 2>,
+    ///     replacement: Triangulation<FastKernel<f64>, (), (), 2>,
+    ///     vertex: VertexKey,
+    /// ) {
+    ///     let simplices = owner.incidence().adjacent_simplices(vertex);
+    ///     *owner = replacement;
+    ///     let _ = simplices.count();
+    /// }
+    /// ```
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
-    pub fn adjacent_simplices(&self, v: VertexKey) -> impl Iterator<Item = SimplexKey> + '_ {
+    pub fn adjacent_simplices(
+        &self,
+        v: VertexKey,
+    ) -> impl Iterator<Item = SimplexKey> + 'tds + use<'tds> {
         self.vertex_to_simplices().simplex_keys(v)
     }
 

@@ -27,6 +27,8 @@ use delaunay::prelude::construction::{
     DelaunayConstructionFailure, DelaunayConstructionRetryFailure,
     DelaunayTriangulationConstructionError,
 };
+#[cfg(feature = "slow-tests")]
+use delaunay::prelude::geometry::{ExactPredicates, RobustKernel};
 use delaunay::prelude::tds::{FacetError, SimplexKey};
 use delaunay::prelude::validation::{
     DelaunayTriangulationValidationError, TriangulationRealizationValidationError,
@@ -549,7 +551,7 @@ fn verify_roundtrip_fixture_move<const D: usize>(
     filter: CandidateFilter,
     roundtrip_move: RoundtripMove,
 ) where
-    delaunay::prelude::geometry::RobustKernel<f64>: delaunay::prelude::geometry::ExactPredicates<D>,
+    RobustKernel<f64>: ExactPredicates<D>,
 {
     let base_dt = build_flip_dt(points).expect("benchmark flip fixture should build");
     assert_topology_and_delaunay_valid(&base_dt, "benchmark flip fixture");

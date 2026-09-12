@@ -458,6 +458,7 @@ enum DelaunayIncrementalBuilderState<K, U, V, const D: usize> {
 /// # }
 /// ```
 #[derive(Clone, Debug)]
+#[must_use = "call finish to publish the accumulated triangulation"]
 pub struct DelaunayIncrementalBuilder<K, U, V, const D: usize> {
     state: DelaunayIncrementalBuilderState<K, U, V, D>,
 }
@@ -467,13 +468,11 @@ where
     AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     /// Starts an empty incremental builder using the default adaptive kernel and topology.
-    #[must_use]
     pub fn new() -> Self {
         Self::with_kernel(AdaptiveKernel::new())
     }
 
     /// Starts an empty incremental builder with an explicit topology guarantee.
-    #[must_use]
     pub fn with_topology_guarantee(topology_guarantee: TopologyGuarantee) -> Self {
         Self::with_kernel_and_topology_guarantee(AdaptiveKernel::new(), topology_guarantee)
     }
@@ -493,7 +492,6 @@ where
     K: ExactPredicates<D, Scalar = f64>,
 {
     /// Starts an empty incremental builder with a caller-selected kernel.
-    #[must_use]
     pub fn with_kernel(kernel: K) -> Self {
         Self::with_kernel_and_topology_context(
             kernel,
@@ -503,7 +501,6 @@ where
     }
 
     /// Starts an empty incremental builder with a kernel and topology guarantee.
-    #[must_use]
     pub fn with_kernel_and_topology_guarantee(
         kernel: K,
         topology_guarantee: TopologyGuarantee,
@@ -512,7 +509,6 @@ where
     }
 
     /// Starts an empty incremental builder with complete topology context.
-    #[must_use]
     pub(crate) fn with_kernel_and_topology_context(
         kernel: K,
         topology_guarantee: TopologyGuarantee,

@@ -21,9 +21,14 @@ use proptest::prelude::*;
 // Strategies
 // =============================================================================
 
-/// Generates a positive period in `(0.0001, 100.0]`.
+/// Mixes ordinary positive periods with finite representability boundaries.
 fn positive_period() -> impl Strategy<Value = f64> {
-    (0.0001_f64..=100.0_f64).prop_filter("must be positive finite", |p| p.is_finite() && *p > 0.0)
+    prop_oneof![
+        4 => 0.0001_f64..=100.0_f64,
+        1 => Just(f64::from_bits(1)),
+        1 => Just(f64::MIN_POSITIVE),
+        1 => Just(f64::MAX),
+    ]
 }
 
 /// Generates a `T^2` domain `[L_x, L_y]`.
@@ -33,8 +38,39 @@ fn domain_t2() -> impl Strategy<Value = [f64; 2]> {
 
 /// Generates an arbitrary (possibly out-of-domain) 2D coordinate pair.
 fn coords_2d() -> impl Strategy<Value = [f64; 2]> {
-    let c = (-1000.0_f64..=1000.0_f64).prop_filter("finite", |x| x.is_finite());
+    let c = prop_oneof![
+        4 => -1000.0_f64..=1000.0_f64,
+        1 => Just(-f64::from_bits(1)),
+        1 => Just(-f64::MIN_POSITIVE),
+        1 => Just(-0.0),
+        1 => Just(f64::MIN),
+        1 => Just(f64::MAX),
+    ];
     [c.clone(), c]
+}
+
+fn assert_toroidal_roundoff_contract<const D: usize>() {
+    let space = ToroidalSpace::<D>::try_new([3.0; D]).unwrap();
+    for axis in 0..D {
+        assert_eq!(
+            space.wrap_coord(axis, -f64::EPSILON).map(f64::to_bits),
+            Some(0.0_f64.to_bits())
+        );
+    }
+    let mut coords = [-f64::EPSILON; D];
+    space.canonicalize_point(&mut coords);
+    assert_eq!(coords.map(f64::to_bits), [0.0_f64.to_bits(); D]);
+    space.canonicalize_point(&mut coords);
+    assert_eq!(coords.map(f64::to_bits), [0.0_f64.to_bits(); D]);
+
+    // A representable remainder below the endpoint must not be snapped to zero.
+    let space = ToroidalSpace::<D>::try_new([f64::MIN_POSITIVE; D]).unwrap();
+    let mut coords = [-f64::from_bits(1); D];
+    space.canonicalize_point(&mut coords);
+    assert_eq!(
+        coords.map(f64::to_bits),
+        [f64::MIN_POSITIVE.next_down().to_bits(); D]
+    );
 }
 
 /// Builds a proven non-degenerate fixture after axis reflection and input reordering.
@@ -70,6 +106,14 @@ fn transformed_periodic_vertices_t2(
 // Tests
 // =============================================================================
 
+#[test]
+fn canonicalize_roundoff_boundaries_2d_through_5d() {
+    assert_toroidal_roundoff_contract::<2>();
+    assert_toroidal_roundoff_contract::<3>();
+    assert_toroidal_roundoff_contract::<4>();
+    assert_toroidal_roundoff_contract::<5>();
+}
+
 repo_proptest! {
     /// Canonicalized coordinates always lie in `[0, L_i)` for every axis.
     #[test]
@@ -92,14 +136,11 @@ repo_proptest! {
         space.canonicalize_point(&mut coords);
         let once = coords;
         space.canonicalize_point(&mut coords);
-        let twice = coords;
-        for i in 0..2 {
-            prop_assert!(
-                (once[i] - twice[i]).abs() < 1e-12,
-                "axis {i}: once={} twice={} — canonicalize_point is not idempotent",
-                once[i], twice[i]
-            );
-        }
+        prop_assert_eq!(
+            once.map(f64::to_bits),
+            coords.map(f64::to_bits),
+            "canonicalization must be bit-exactly idempotent"
+        );
     }
 }
 

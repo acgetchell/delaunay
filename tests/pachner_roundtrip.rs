@@ -3,14 +3,11 @@
 //! Public API roundtrip tests for Pachner/bistellar flips.
 
 use delaunay::flips::{BistellarFlips, FlipFailureKind, FlipFeasibility, FlipMutationError};
-use delaunay::{DelaunayRefinementBuilder, TdsConstructionFailure, vertex};
-use std::assert_matches;
-
 use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayError, DelaunayResult, DelaunayTriangulationBuilder,
-    InsertionOrderStrategy, TopologyGuarantee, Vertex,
+    GlobalTopology, InsertionOrderStrategy, TopologyGuarantee, Vertex,
 };
-use delaunay::prelude::geometry::RobustKernel;
+use delaunay::prelude::geometry::{ExactPredicates, RobustKernel};
 #[cfg(feature = "slow-tests")]
 use delaunay::prelude::pachner::RidgeHandle;
 use delaunay::prelude::pachner::{
@@ -19,6 +16,9 @@ use delaunay::prelude::pachner::{
     TopologyOwner, TriangleHandle, VertexKey,
 };
 use delaunay::prelude::triangulation::Triangulation;
+use delaunay::prelude::validation::ValidationPolicy;
+use delaunay::{DelaunayRefinementBuilder, TdsConstructionFailure, vertex};
+use std::assert_matches;
 use uuid::Uuid;
 
 type Tri4 = Triangulation<RobustKernel<f64>, (), (), 4>;
@@ -82,6 +82,60 @@ const STABLE_POINTS_4D: &[[f64; 4]] = &[
 struct TopologySnapshot {
     vertex_uuids: Vec<Uuid>,
     simplex_vertex_uuids: Vec<Vec<Uuid>>,
+}
+
+/// Failed attempts must preserve live identities, geometry, and owner metadata,
+/// unlike successful roundtrips that may legitimately replace simplex keys.
+#[derive(Debug, PartialEq)]
+struct FailureSnapshot {
+    generation: u64,
+    global_topology: GlobalTopology<4>,
+    topology_guarantee: TopologyGuarantee,
+    validation_policy: ValidationPolicy,
+    vertices: Vec<(VertexKey, Uuid, [u64; 4])>,
+    simplices: Vec<SimplexFailureSnapshot>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SimplexFailureSnapshot {
+    key: SimplexKey,
+    uuid: Uuid,
+    vertices: Vec<VertexKey>,
+    neighbors: Option<Vec<Option<SimplexKey>>>,
+    periodic_offsets: Option<Vec<[i8; 4]>>,
+    data: Option<()>,
+}
+
+fn snapshot_failure_state(tri: &Tri4) -> FailureSnapshot {
+    FailureSnapshot {
+        generation: tri.topology_generation(),
+        global_topology: tri.global_topology(),
+        topology_guarantee: tri.topology_guarantee(),
+        validation_policy: tri.validation_policy(),
+        vertices: tri
+            .vertices()
+            .map(|(key, vertex)| {
+                (
+                    key,
+                    vertex.uuid(),
+                    vertex.point().coords().map(f64::to_bits),
+                )
+            })
+            .collect(),
+        simplices: tri
+            .simplices()
+            .map(|(key, simplex)| SimplexFailureSnapshot {
+                key,
+                uuid: simplex.uuid(),
+                vertices: simplex.vertices().to_vec(),
+                // Preserve unassigned slots rather than requiring the stricter
+                // checkpoint serialization contract for a single simplex.
+                neighbors: simplex.neighbors().map(Iterator::collect),
+                periodic_offsets: simplex.periodic_vertex_offsets().map(<[_]>::to_vec),
+                data: simplex.data().copied(),
+            })
+            .collect(),
+    }
 }
 
 fn topology_and_delaunay_valid<const D: usize>(
@@ -600,7 +654,7 @@ fn build_dt_4d(points: &[[f64; 4]], fixture_name: &str) -> Tri4 {
 /// Builds a minimal Euclidean D-simplex fixture for dimension smoke tests.
 fn build_minimal_simplex_dt<const D: usize>() -> Tri<D>
 where
-    RobustKernel<f64>: delaunay::prelude::geometry::ExactPredicates<D>,
+    RobustKernel<f64>: ExactPredicates<D>,
 {
     let vertices = minimal_simplex_vertices::<D>();
     let options =
@@ -789,7 +843,7 @@ fn assert_duplicate_vertex_uuid_error<T>(result: Result<T, FlipError>, duplicate
 /// Exercises public `PachnerMove::K1Insert` feasibility and mutation in one dimension.
 fn assert_public_k1_insert_feasibility_smoke<const D: usize>()
 where
-    RobustKernel<f64>: delaunay::prelude::geometry::ExactPredicates<D>,
+    RobustKernel<f64>: ExactPredicates<D>,
 {
     let tri = build_minimal_simplex_dt::<D>();
     let simplex_key = first_simplex_generic(&tri);
@@ -921,7 +975,7 @@ fn assert_failed_attempt_preserves_topology(
     assert_error: impl Fn(&FlipError),
 ) {
     assert_valid_realized_topology(tri, "state before stale Pachner attempt");
-    let before = snapshot_topology(tri);
+    let before = snapshot_failure_state(tri);
     let proposal_generation = proposal.topology_generation();
     let current_generation = tri.topology_generation();
 
@@ -930,7 +984,7 @@ fn assert_failed_attempt_preserves_topology(
         .expect_err("stale Pachner proposal feasibility should fail");
     assert_error(&feasibility_err);
     assert_stale_proposal_generation(&feasibility_err, proposal_generation, current_generation);
-    assert_eq!(snapshot_topology(tri), before);
+    assert_eq!(snapshot_failure_state(tri), before);
     assert_valid_realized_topology(tri, "state after stale Pachner feasibility rejection");
 
     let err = proposal
@@ -938,7 +992,7 @@ fn assert_failed_attempt_preserves_topology(
         .expect_err("stale Pachner proposal should fail");
     assert_error(&err);
     assert_stale_proposal_generation(&err, proposal_generation, current_generation);
-    assert_eq!(snapshot_topology(tri), before);
+    assert_eq!(snapshot_failure_state(tri), before);
     assert_valid_realized_topology(tri, "state restored after stale Pachner attempt");
 }
 

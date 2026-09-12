@@ -15,6 +15,7 @@ use crate::core::collections::{
 use crate::core::facet::{FacetHandle, FacetToSimplicesIndex};
 use crate::core::simplex::{NeighborSlot, Simplex};
 use crate::core::util::{deduplication::coords_equal_exact, usize_to_u8};
+use crate::geometry::traits::coordinate::CoordinateValues;
 use slotmap::Key;
 
 impl<U, V, const D: usize> Tds<U, V, D> {
@@ -445,30 +446,33 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     fn validate_no_duplicate_simplices(&self) -> Result<(), TdsError> {
         // Include periodic per-vertex offsets in the duplicate key so periodic quotient simplices
         // with identical vertex sets but distinct lattice offsets are not collapsed.
-        let mut unique_simplices: FastHashMap<SimplexUuidSortKey<D>, SimplexKey> =
+        let mut unique_simplices: FastHashMap<SimplexUuidSortKey<D>, (SimplexKey, uuid::Uuid)> =
             fast_hash_map_with_capacity(self.simplices.len());
         let mut duplicates = Vec::new();
 
-        for (simplex_key, _simplex) in self.simplices.iter() {
+        for (simplex_key, simplex) in self.simplices.iter() {
             let vertices = self.simplex_vertices(simplex_key)?;
             let vertex_uuid_offsets =
                 self.build_periodic_vertex_uuid_offsets(simplex_key, vertices)?;
 
-            if let Some(existing_simplex_key) = unique_simplices.get(&vertex_uuid_offsets) {
+            if let Some((existing_simplex_key, existing_uuid)) =
+                unique_simplices.get(&vertex_uuid_offsets)
+            {
                 duplicates.push((
                     simplex_key,
                     *existing_simplex_key,
                     vertex_uuid_offsets.clone(),
+                    [*existing_uuid, simplex.uuid()],
                 ));
             } else {
-                unique_simplices.insert(vertex_uuid_offsets, simplex_key);
+                unique_simplices.insert(vertex_uuid_offsets, (simplex_key, simplex.uuid()));
             }
         }
 
         if !duplicates.is_empty() {
             let duplicate_descriptions: Vec<String> = duplicates
                 .iter()
-                .map(|(simplex1, simplex2, vertex_uuids)| {
+                .map(|(simplex1, simplex2, vertex_uuids, _)| {
                     format!(
                         "simplices {simplex1:?} and {simplex2:?} with vertex UUIDs {vertex_uuids:?}"
                     )
@@ -476,6 +480,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                 .collect();
 
             return Err(TdsError::DuplicateSimplices {
+                simplex_pairs: duplicates.iter().map(|(_, _, _, pair)| *pair).collect(),
                 message: format!(
                     "Found {} duplicate simplex(s): {}",
                     duplicates.len(),
@@ -520,14 +525,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                     if coords_equal_exact(vi.point().coords(), vj.point().coords()) {
                         return Err(TdsError::DuplicateCoordinatesInSimplex {
                             simplex_id: simplex.uuid(),
-                            message: format!(
-                                "vertices {:?} and {:?} (keys {:?}, {:?}) have identical coordinates {:?}",
-                                vi.uuid(),
-                                vj.uuid(),
-                                vkeys[i],
-                                vkeys[j],
-                                vi.point().coords(),
-                            ),
+                            vertex_keys: [vkeys[i], vkeys[j]],
+                            vertex_uuids: [vi.uuid(), vj.uuid()],
+                            coordinates: CoordinateValues::from(*vi.point().coords()),
                         });
                     }
                 }
@@ -3922,8 +3922,15 @@ mod tests {
             .expect_err("cumulative Levels 1-2 validation must reject duplicate coordinates");
         assert_matches!(
             &err,
-            TdsError::DuplicateCoordinatesInSimplex { .. },
-            "Expected DuplicateCoordinatesInSimplex, got {err:?}"
+            TdsError::DuplicateCoordinatesInSimplex {
+                simplex_id,
+                vertex_keys,
+                vertex_uuids,
+                coordinates,
+            } if *simplex_id == tds.simplices().next().unwrap().1.uuid()
+                && *vertex_keys == [v0, v1]
+                && *vertex_uuids == [tds.vertex(v0).unwrap().uuid(), tds.vertex(v1).unwrap().uuid()]
+                && *coordinates == CoordinateValues::from([0.0, 0.0])
         );
 
         let report = tds
@@ -4032,7 +4039,12 @@ mod tests {
         .unwrap();
 
         let err = tds.validate_no_duplicate_simplices().unwrap_err();
-        assert_matches!(err, TdsError::DuplicateSimplices { .. });
+        let simplex_uuids: Vec<_> = tds.simplices().map(|(_, simplex)| simplex.uuid()).collect();
+        assert_matches!(
+            err,
+            TdsError::DuplicateSimplices { simplex_pairs, .. }
+                if simplex_pairs == [[simplex_uuids[0], simplex_uuids[1]]]
+        );
     }
 
     #[test]

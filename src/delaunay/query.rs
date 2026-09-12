@@ -24,7 +24,7 @@ use crate::core::tds::{
     InvariantError, InvariantViolation, SimplexKey, TdsError, TdsMutationError,
     TriangulationValidationReport, VertexKey,
 };
-use crate::core::traits::data_type::{DataCopy, DataType};
+use crate::core::traits::data_type::DataCopy;
 use crate::core::vertex::Vertex;
 use crate::delaunay_model::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
 use crate::geometry::kernel::Kernel;
@@ -1478,8 +1478,6 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ) -> Result<(), DelaunayTriangulationValidationError>
     where
         K: Kernel<D, Scalar = f64>,
-        U: DataType,
-        V: DataType,
     {
         let previous_topology = self.global_topology();
         if previous_topology == global_topology {
@@ -2527,9 +2525,9 @@ mod tests {
     use crate::builder::DelaunayTriangulationBuilder;
     use crate::construction::{DelaunayError, DelaunayResult};
     use crate::core::operations::DelaunayInsertionState;
-    use crate::core::tds::{Tds, TdsError};
+    use crate::core::tds::Tds;
     use crate::draft::DelaunayTriangulationDraft;
-    use crate::geometry::kernel::FastKernel;
+    use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates, FastKernel};
     use crate::geometry::traits::coordinate::{CoordinateValidationError, InvalidCoordinateValue};
     use crate::geometry::util::safe_usize_to_scalar;
     use crate::topology::traits::GlobalTopologyModelError;
@@ -2592,7 +2590,7 @@ mod tests {
     /// Asserts that the simplex barycenter of the standard fixture is `1 / (D + 1)`.
     fn assert_standard_simplex_barycenter<const D: usize>()
     where
-        crate::geometry::kernel::AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+        AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         let vertices = standard_simplex_vertices::<D>();
         let dt: DelaunayTriangulation<_, (), (), D> = DelaunayTriangulationBuilder::new(&vertices)

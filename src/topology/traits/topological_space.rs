@@ -495,7 +495,9 @@ pub trait TopologicalSpace {
     ///
     ///     fn canonicalize_point(&self, coords: &mut [f64]) {
     ///         for (coord, domain) in coords.iter_mut().zip(self.domain) {
-    ///             *coord = coord.rem_euclid(domain);
+    ///             let wrapped = coord.rem_euclid(domain);
+    ///             // Round-off can produce the excluded upper endpoint.
+    ///             *coord = if wrapped >= domain { 0.0 } else { wrapped };
     ///         }
     ///     }
     ///
@@ -508,6 +510,9 @@ pub trait TopologicalSpace {
     /// let mut point = [1.5, -0.3];
     /// space.canonicalize_point(&mut point);
     /// assert_eq!(point, [0.5, 0.7]); // Wrapped into [0, 1)
+    /// let mut near_boundary = [-f64::MIN_POSITIVE; 2];
+    /// space.canonicalize_point(&mut near_boundary);
+    /// assert_eq!(near_boundary, [0.0; 2]);
     /// ```
     fn canonicalize_point(&self, coords: &mut [f64]);
 

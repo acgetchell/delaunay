@@ -3402,7 +3402,6 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub fn builder(vertices: &[Vertex<(), D>]) -> DelaunayTriangulationBuilder<'_, (), D> {
         DelaunayTriangulationBuilder::new(vertices)
     }

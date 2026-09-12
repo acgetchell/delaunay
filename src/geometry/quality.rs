@@ -921,7 +921,9 @@ mod tests {
             } if observed == vertex_key && context == "quality metric vertex lookup"
         );
 
+        let simplex_pair = [1, 2].map(uuid::Uuid::from_u128);
         let unexpected = QualitySimplexVerticesError::from(TdsError::DuplicateSimplices {
+            simplex_pairs: vec![simplex_pair],
             message: "same vertex set appears twice".to_string(),
         });
         assert_matches!(
@@ -929,8 +931,8 @@ mod tests {
             QualitySimplexVerticesError::UnexpectedTdsFailure { source }
                 if matches!(
                     *source,
-                    TdsError::DuplicateSimplices { ref message }
-                        if message == "same vertex set appears twice"
+                    TdsError::DuplicateSimplices { ref simplex_pairs, .. }
+                        if simplex_pairs == &[simplex_pair]
                 )
         );
     }
@@ -1123,10 +1125,9 @@ mod tests {
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
-        // Either should error or produce very poor quality
-        if let Ok(ratio) = radius_ratio(dt.as_triangulation(), simplex_key) {
-            assert!(ratio > 100.0); // Very poor quality
-        }
+        let ratio = radius_ratio(dt.as_triangulation(), simplex_key)
+            .expect("near-duplicate fixture has an inradius above the degeneracy threshold");
+        assert!(ratio.is_finite() && ratio > 100.0);
     }
 
     #[test]
@@ -1234,9 +1235,9 @@ mod tests {
                     let dt: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::builder(&vertices).build().unwrap();
 let simplex_key = dt.simplices().next().unwrap().0;
 
-                    if let Ok(ratio) = radius_ratio(dt.as_triangulation(), simplex_key) {
-                        assert!(ratio > $min_ratio, "{}: ratio={ratio}, expected > {}", $desc, $min_ratio);
-                    }
+                    let ratio = radius_ratio(dt.as_triangulation(), simplex_key)
+                        .expect("nondegenerate poor-quality fixture must have a radius ratio");
+                    assert!(ratio.is_finite() && ratio > $min_ratio, "{}: ratio={ratio}, expected finite and > {}", $desc, $min_ratio);
                 }
             )+
         };

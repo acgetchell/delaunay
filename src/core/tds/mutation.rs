@@ -535,13 +535,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ) -> Result<(), TdsError> {
         let candidate_identity = self.candidate_periodic_vertex_uuid_offsets(simplex)?;
 
-        for (existing_simplex_key, _existing_simplex) in self.simplices.iter() {
+        for (existing_simplex_key, existing_simplex) in self.simplices.iter() {
             let vertices = self.simplex_vertices(existing_simplex_key)?;
             let existing_identity =
                 self.build_periodic_vertex_uuid_offsets(existing_simplex_key, vertices)?;
 
             if existing_identity == candidate_identity {
                 return Err(TdsError::DuplicateSimplices {
+                    simplex_pairs: vec![[existing_simplex.uuid(), simplex.uuid()]],
                     message: format!(
                         "Refusing to insert duplicate simplex {} with same vertex UUIDs as existing simplex {existing_simplex_key:?}: {candidate_identity:?}",
                         simplex.uuid()
@@ -4083,6 +4084,7 @@ mod tests {
         .unwrap();
         let candidate = Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap();
         let candidate_uuid = candidate.uuid();
+        let existing_uuid = tds.simplices().next().unwrap().1.uuid();
         let generation_before = tds.generation();
 
         let err = tds.insert_simplex_with_mapping(candidate).unwrap_err();
@@ -4090,8 +4092,8 @@ mod tests {
         assert_matches!(
             err,
             TdsConstructionError::ValidationError {
-                source: TdsError::DuplicateSimplices { .. }
-            }
+                source: TdsError::DuplicateSimplices { simplex_pairs, .. }
+            } if simplex_pairs == [[existing_uuid, candidate_uuid]]
         );
         assert_eq!(tds.number_of_simplices(), 1);
         assert_eq!(tds.generation(), generation_before);

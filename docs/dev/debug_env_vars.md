@@ -13,6 +13,14 @@ This matters for large-scale investigations that need to run under
 **Activation**: most variables are presence-activated (any value works, e.g.
 `DELAUNAY_DEBUG_CAVITY=1`). Variables that read a **value** are marked below.
 
+**Initialization and threads**: set diagnostic variables before launching the
+process. Several hot-path switches are cached on first use with `OnceLock` or
+`LazyLock`, so they are not live per-owner or per-thread settings. Concurrent
+calls share these cached values. One-shot traces select one caller across the
+process; scheduling determines which caller wins, and claiming a trace does not
+mean its output has finished. Tests should inject configuration directly rather
+than mutate the process environment.
+
 **Output**: all diagnostic output uses the `tracing` crate. Enable with a
 `tracing-subscriber` (e.g. `RUST_LOG=debug`).
 
@@ -137,12 +145,18 @@ and release builds.
 | `DELAUNAY_LARGE_DEBUG_VALIDATION` | **value** | Scope: `full` (Levels 1-5), `realization` (Level 4), or `construction` (Levels 1-3 + 5) |
 | `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY` | **value** | Batch/incremental repair interval (default: 1) |
 | `DELAUNAY_LARGE_DEBUG_REPAIR_MAX_FLIPS` | **value** | Flip budget override |
-| `DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS` | **value** | Timeout (0 = no cap) |
+| `DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS` | **value** | Timeout, plus up to 100 ms waiting for diagnostics (0 = no cap) |
 | `DELAUNAY_LARGE_DEBUG_MAX_SKIP_PCT` | **value** | Maximum skipped-vertex percentage before failing (default: 5.0) |
 | `DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS` | presence | Allow any number of vertex insertion skips |
 | `DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR` | presence | Skip final global repair pass |
 | `DELAUNAY_LARGE_DEBUG_FALLBACK_REBUILD` | presence | Allow final conversion to rebuild after bounded flip repair fails (disabled by default) |
 | `DELAUNAY_BATCH_REPAIR_TRACE` | presence | Trace cadenced batch-repair seed counts, flips, queues, and elapsed time |
+
+The runtime-cap guard cancels and joins its watchdog on normal return or panic.
+Once the timeout wins, a separate reporter gets a 100 ms grace period to write
+and flush the final diagnostic. The watchdog then aborts without joining that
+reporter, even if stderr or logging is blocked. The final message may therefore
+be missing or incomplete; a reporting failure must not suppress the abort.
 
 ## Proptest Configuration
 

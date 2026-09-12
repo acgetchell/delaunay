@@ -8,6 +8,7 @@ use crate::core::algorithms::flips::{FlipError, FlipNeighborWiringError};
 use crate::core::facet::FacetError;
 use crate::core::simplex::SimplexValidationError;
 use crate::core::vertex::VertexValidationError;
+use crate::geometry::traits::coordinate::CoordinateValues;
 use crate::triangulation::realization::TriangulationRealizationValidationError;
 use crate::triangulation::validation::TriangulationValidationError;
 use crate::validation::DelaunayTriangulationValidationError;
@@ -595,7 +596,9 @@ pub enum TdsError {
     /// The triangulation contains duplicate simplices.
     #[error("Duplicate simplices detected: {message}")]
     DuplicateSimplices {
-        /// Description of the duplicate simplex validation failure.
+        /// UUID pairs ordered as existing simplex, then duplicate or rejected candidate.
+        simplex_pairs: Vec<[Uuid; 2]>,
+        /// Supplemental diagnostic detail, not a machine-readable contract.
         message: String,
     },
     /// Explicit input contains duplicate maximal simplices.
@@ -805,12 +808,18 @@ pub enum TdsError {
     /// for duplicate vertex *keys*. This variant detects the case where different
     /// vertex keys reference geometrically identical points — producing a zero-volume
     /// simplex that is catastrophic for `SoS` and Pachner moves.
-    #[error("Duplicate coordinates in simplex {simplex_id}: {message}")]
+    #[error(
+        "Duplicate coordinates in simplex {simplex_id}: vertices {vertex_uuids:?} (keys {vertex_keys:?}) have identical coordinates {coordinates}"
+    )]
     DuplicateCoordinatesInSimplex {
         /// UUID of the simplex containing duplicate-coordinate vertices.
         simplex_id: Uuid,
-        /// Description of which vertices share coordinates.
-        message: String,
+        /// Keys of the two distinct vertices with identical coordinates.
+        vertex_keys: [VertexKey; 2],
+        /// UUIDs corresponding to the two vertex keys, in the same order.
+        vertex_uuids: [Uuid; 2],
+        /// Shared coordinate tuple, preserved without display-string parsing.
+        coordinates: CoordinateValues,
     },
 }
 
@@ -1329,7 +1338,9 @@ mod tests {
         assert_tds_error_kind(
             &TdsError::DuplicateCoordinatesInSimplex {
                 simplex_id: uuid,
-                message: "two vertices share coordinates".to_string(),
+                vertex_keys: [vertex_key, VertexKey::from(KeyData::from_ffi(4))],
+                vertex_uuids: [uuid, Uuid::from_u128(2)],
+                coordinates: CoordinateValues::from([0.0, 0.0]),
             },
             TdsErrorKind::DuplicateCoordinatesInSimplex,
         );
@@ -1343,6 +1354,7 @@ mod tests {
 
         assert_tds_error_kind(
             &TdsError::DuplicateSimplices {
+                simplex_pairs: vec![[uuid, Uuid::from_u128(2)]],
                 message: "duplicate simplex vertex set".to_string(),
             },
             TdsErrorKind::DuplicateSimplices,

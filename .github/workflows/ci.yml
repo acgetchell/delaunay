@@ -37,7 +37,7 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
           - os: macos-latest
-            target: x86_64-apple-darwin
+            target: aarch64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
 
@@ -60,6 +60,21 @@ jobs:
           cache: true # Built-in caching
           cache-bin: false # Avoid restoring stale rustup/cargo shims from cache.
       # toolchain, components, etc. are specified in rust-toolchain.toml
+
+      - name: Verify native Rust host
+        id: rust-host
+        shell: bash
+        env:
+          EXPECTED_RUST_HOST: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          compiler="$(rustc --version --verbose)"
+          printf '%s\n' "$compiler"
+          actual_host="$(printf '%s\n' "$compiler" | sed -n 's/^host: //p')"
+          if [[ "$actual_host" != "$EXPECTED_RUST_HOST" ]]; then
+            echo "::error::Rust host $actual_host differs from matrix target $EXPECTED_RUST_HOST."
+            exit 1
+          fi
 
       - name: Set up just
         id: setup_just

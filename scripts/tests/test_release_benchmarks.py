@@ -49,7 +49,12 @@ case "$*" in
         cp "$FAKE_ROOT/after.json" "$FAKE_ROOT/before.json" ;;
     *'/releases?per_page=100'*)
         [[ "${MISSING_RELEASE:-0}" == 0 ]] || exit 1
-        jq '[[.]]' "$FAKE_ROOT/before.json" ;;
+        if [[ -f "$FAKE_ROOT/releases-response.json" ]]; then
+            cat "$FAKE_ROOT/releases-response.json"
+        else
+            jq '[[.]]' "$FAKE_ROOT/before.json"
+        fi
+        exit "${RELEASES_STATUS:-0}" ;;
     *'/git/ref/tags/'*) printf '{"type":"commit","sha":"%s"}\\n' "$REMOTE_COMMIT" ;;
     *) exit 99 ;;
 esac
@@ -91,6 +96,14 @@ def assert_no_publication(tmp_path: Path) -> None:
     """Check that no publication request escaped a failed validation."""
     calls = tmp_path / "calls"
     assert not calls.exists() or "--method PATCH" not in calls.read_text(encoding="utf-8")
+
+
+def assert_no_remote_writes(tmp_path: Path) -> None:
+    """Require failed pre-upload validation to leave the remote draft untouched."""
+    assert_no_publication(tmp_path)
+    calls = tmp_path / "calls"
+    assert not calls.exists() or "release upload" not in calls.read_text(encoding="utf-8")
+    assert not (tmp_path / "output").exists()
 
 
 @pytest.mark.parametrize("tag", ["main", "v01.2.3", "v1.2.3-rc.1", "v1.2.3+build", "v1.2.3\n", "$(touch injected)"])
@@ -156,3 +169,79 @@ def test_failed_publication_leaves_draft_recoverable(tmp_path: Path, release_env
         release_env.pop("EXPECTED_COMMIT")
     assert run_guard(tmp_path, release_env, "publish").returncode != 0
     assert_no_publication(tmp_path)
+
+
+@pytest.mark.parametrize("mode", ["preflight", "publish"])
+@pytest.mark.parametrize("response", ["", "null", "[]", "[[]]", "[null]", "{"])
+def test_malformed_release_response_never_writes(tmp_path: Path, release_env: dict[str, str], response: str, mode: str) -> None:
+    (tmp_path / "releases-response.json").write_text(response, encoding="utf-8")
+    assert run_guard(tmp_path, release_env, mode).returncode != 0
+    assert_no_remote_writes(tmp_path)
+
+
+@pytest.mark.parametrize("mode", ["preflight", "publish"])
+def test_release_response_followed_by_transport_failure_never_writes(tmp_path: Path, release_env: dict[str, str], mode: str) -> None:
+    release_env["RELEASES_STATUS"] = "57"
+    assert run_guard(tmp_path, release_env, mode).returncode == 57
+    assert_no_remote_writes(tmp_path)
+
+
+@pytest.mark.parametrize("filename", ["before.json", "after.json"])
+@pytest.mark.parametrize("assets", [None, {}, {"asset": {"name": "other"}}, False, 0, "assets", [None], [{}], [{"name": None}], [{"name": 3}], [{"name": ""}]])
+def test_invalid_asset_collection_blocks_publication(tmp_path: Path, release_env: dict[str, str], filename: str, assets: object) -> None:
+    change_release(tmp_path, "assets", assets, filename)
+    result = run_guard(tmp_path, release_env, "publish")
+    assert result.returncode != 0
+    assert "release assets must be an array of named objects" in result.stderr
+    assert_no_publication(tmp_path)
+    if filename == "before.json":
+        assert_no_remote_writes(tmp_path)
+    else:
+        assert "release upload" in (tmp_path / "calls").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("filename", ["before.json", "after.json"])
+def test_missing_asset_collection_blocks_publication(tmp_path: Path, release_env: dict[str, str], filename: str) -> None:
+    path = tmp_path / filename
+    release = json.loads(path.read_text(encoding="utf-8"))
+    del release["assets"]
+    path.write_text(json.dumps(release), encoding="utf-8")
+    assert run_guard(tmp_path, release_env, "publish").returncode != 0
+    assert_no_publication(tmp_path)
+    if filename == "before.json":
+        assert_no_remote_writes(tmp_path)
+
+
+@pytest.mark.parametrize("size", ["0", "26", None, True, {}, [], 0, -1, 1, 1.5])
+def test_uploaded_asset_size_must_match_local_bytes(tmp_path: Path, release_env: dict[str, str], size: object) -> None:
+    path = tmp_path / "after.json"
+    release = json.loads(path.read_text(encoding="utf-8"))
+    release["assets"][0]["size"] = size
+    path.write_text(json.dumps(release), encoding="utf-8")
+    result = run_guard(tmp_path, release_env, "publish")
+    assert result.returncode != 0
+    assert "different size or digest" in result.stderr
+    assert "release upload" in (tmp_path / "calls").read_text(encoding="utf-8")
+    assert_no_publication(tmp_path)
+
+
+def test_duplicate_baseline_name_blocks_publication_even_if_one_copy_matches(tmp_path: Path, release_env: dict[str, str]) -> None:
+    path = tmp_path / "after.json"
+    release = json.loads(path.read_text(encoding="utf-8"))
+    release["assets"].append({**release["assets"][0], "digest": "sha256:wrong"})
+    path.write_text(json.dumps(release), encoding="utf-8")
+    assert run_guard(tmp_path, release_env, "publish").returncode != 0
+    assert_no_publication(tmp_path)
+
+
+def test_unrelated_asset_names_are_data_not_filter_or_shell_code(tmp_path: Path, release_env: dict[str, str]) -> None:
+    name = "other'\"; $(touch injected); [not a filter]"
+    for filename in ("before.json", "after.json"):
+        path = tmp_path / filename
+        release = json.loads(path.read_text(encoding="utf-8"))
+        release["assets"].append({"name": name})
+        path.write_text(json.dumps(release), encoding="utf-8")
+    result = run_guard(tmp_path, release_env, "publish")
+    assert result.returncode == 0, result.stderr
+    assert "--method PATCH" in (tmp_path / "calls").read_text(encoding="utf-8")
+    assert not (tmp_path / "injected").exists()

@@ -77,7 +77,7 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::delaunayize::{
     DelaunayRefinementBuilder,
     DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeError,
-    DelaunayizeOutcome, SimplexDataRestoreError,
+    DelaunayizeOutcome, DelaunayizeResult, SimplexDataRestoreError,
 };
 use delaunay::prelude::deletion::{
     DeleteVertexError as FocusedDeleteVertexError, TriangulationRepairOperation,
@@ -143,8 +143,9 @@ use delaunay::prelude::pachner::{
     VertexKey as PachnerVertexKey, vertex as pachner_vertex,
 };
 use delaunay::prelude::query::{
-    AllFacetsIter as QueryAllFacetsIter, BoundaryFacetsIter as QueryBoundaryFacetsIter, ConvexHull,
-    ConvexHullConstructionError,
+    AllFacetsIter as QueryAllFacetsIter, BoundaryFacetsIter as QueryBoundaryFacetsIter,
+    CavityBoundary as QueryCavityBoundary, ConflictRegion as QueryConflictRegion,
+    ConflictSimplexView as QueryConflictSimplexView, ConvexHull, ConvexHullConstructionError,
     ConvexHullInsufficientDataReason as QueryConvexHullInsufficientDataReason,
     ConvexHullQueryError, EdgeIndex as QueryEdgeIndex, EdgeKey as QueryEdgeKey,
     EdgeView as QueryEdgeView, FacetHandle as QueryFacetHandle,
@@ -175,8 +176,8 @@ use delaunay::prelude::tds::{
     AllFacetsIter as TdsAllFacetsIter, BoundaryFacetsIter as TdsBoundaryFacetsIter, EdgeKeyError,
     EdgeView, FacetError, FacetIncidenceView as TdsFacetIncidenceView, FacetView, InvariantError,
     NeighborSlot, OneSidedFacetsIter as TdsOneSidedFacetsIter,
-    SimplexFacetsIter as TdsSimplexFacetsIter, SimplexKey, Tds, TdsConstructionError, TdsDraft,
-    TdsDraftError, TdsDraftInsertionError, TdsError, TdsMutationError,
+    SimplexFacetsIter as TdsSimplexFacetsIter, SimplexKey, Tds, TdsBuilder, TdsConstructionError,
+    TdsDraft, TdsDraftError, TdsDraftInsertionError, TdsError, TdsMutationError,
     TopologyOwner as TdsTopologyOwner, TopologyOwnerId as TdsTopologyOwnerId, VertexKey,
 };
 use delaunay::prelude::topology::spaces::{
@@ -190,7 +191,9 @@ use delaunay::prelude::topology::validation::{
 };
 use delaunay::prelude::triangulation::{
     AllFacetsIter as TriangulationAllFacetsIter,
-    BoundaryFacetsIter as TriangulationBoundaryFacetsIter, EdgeIndex as GenericEdgeIndex,
+    BoundaryFacetsIter as TriangulationBoundaryFacetsIter,
+    CavityBoundary as TriangulationCavityBoundary, ConflictRegion as TriangulationConflictRegion,
+    ConflictSimplexView as TriangulationConflictSimplexView, EdgeIndex as GenericEdgeIndex,
     FastKernel as TriangulationFastKernel, IncidenceView as GenericIncidenceView,
     InsertionError as TriangulationInsertionError, ManifoldError as TriangulationManifoldError,
     OneSidedFacetsIter as TriangulationOneSidedFacetsIter, QueryError as TriangulationQueryError,
@@ -353,6 +356,8 @@ enum PreludeExportTestError {
     VisualizationValidation(#[from] ExportPreludeVisualizationDataValidationError),
     #[error(transparent)]
     Insertion(#[from] InsertionError),
+    #[error(transparent)]
+    Conflict(#[from] ConflictError),
     #[error(transparent)]
     Manifold(#[from] ManifoldError),
     #[error(transparent)]
@@ -528,6 +533,60 @@ const fn assert_pl_manifold_repair_function(_: PlManifoldRepairFunction) {}
 const fn assert_send_sync_unpin<T: Send + Sync + Unpin>() {}
 
 const fn assert_error<T: Error>() {}
+
+#[test]
+fn public_builder_stages_warn_when_discarded() -> Result<(), PreludeExportTestError> {
+    // A generic passthrough isolates type-level warnings from constructor
+    // attributes. Each expectation must be fulfilled independently by the compiler.
+    const fn returned_stage<T>(stage: T) -> T {
+        stage
+    }
+
+    let vertices = [vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
+    let simplices = [vec![0, 1, 2]];
+
+    #[expect(unused_must_use, reason = "unfinished TDS builder must warn")]
+    returned_stage(TdsBuilder::new(&vertices, &simplices));
+
+    #[expect(unused_must_use, reason = "unfinished TDS draft must warn")]
+    returned_stage(TdsDraft::<(), (), 2>::new());
+
+    #[expect(unused_must_use, reason = "unfinished triangulation builder must warn")]
+    returned_stage(GenericTriangulationBuilder::new(
+        Tds::<(), (), 2>::empty(),
+        AdaptiveKernel::<f64>::new(),
+    ));
+
+    #[expect(
+        unused_must_use,
+        reason = "successful fallible builder stage must warn"
+    )]
+    returned_stage(DelaunayTriangulationBuilder::new(&vertices).try_toroidal([1.0; 2])?);
+
+    #[expect(unused_must_use, reason = "unfinished incremental builder must warn")]
+    returned_stage(DelaunayIncrementalBuilder::<_, (), (), 2>::new());
+
+    #[expect(unused_must_use, reason = "unfinished refinement builder must warn")]
+    returned_stage(DelaunayRefinementBuilder::new(
+        DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?,
+    ));
+
+    #[expect(
+        unused_must_use,
+        reason = "successful spherical parsing is not construction"
+    )]
+    returned_stage(SphericalDelaunayBuilder::<2>::try_new([[1.0, 0.0, 0.0]])?);
+
+    let count = NonZeroUsize::new(3).ok_or(PreludeExportTestError::MissingFixture {
+        context: "three is a valid nonzero point count",
+    })?;
+    #[expect(unused_must_use, reason = "unfinished random builder must warn")]
+    returned_stage(RandomTriangulationBuilder::<2>::try_new(
+        count,
+        (-1.0, 1.0),
+    )?);
+    Ok(())
+}
 
 fn assert_construction_prelude_unsupported_topology_variants() {
     let unsupported_euclidean_topology =
@@ -1738,8 +1797,10 @@ fn geometry_prelude_covers_typed_error_variants() -> Result<(), PreludeExportTes
         ArrayConversionFailureReason::LengthMismatch
     );
 
+    let simplex_pair = [1, 2].map(uuid::Uuid::from_u128);
     let quality_error = QualitySimplexVerticesError::UnexpectedTdsFailure {
         source: Box::new(TdsError::DuplicateSimplices {
+            simplex_pairs: vec![simplex_pair],
             message: "same vertex set appears twice".to_string(),
         }),
     };
@@ -1748,8 +1809,8 @@ fn geometry_prelude_covers_typed_error_variants() -> Result<(), PreludeExportTes
         QualitySimplexVerticesError::UnexpectedTdsFailure { source }
             if matches!(
                 *source,
-                TdsError::DuplicateSimplices { ref message }
-                    if message == "same vertex set appears twice"
+                TdsError::DuplicateSimplices { ref simplex_pairs, .. }
+                    if simplex_pairs == &[simplex_pair]
             )
     );
 
@@ -2154,6 +2215,53 @@ fn validation_prelude_covers_delaunay_property_diagnostics() -> Result<(), Prelu
     Ok(())
 }
 
+/// Exercises both scoped import paths against the same owner-bound query results.
+fn assert_borrowed_query_prelude_exports<const D: usize>() -> Result<(), PreludeExportTestError>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
+    let vertices = simplex_prelude_vertices::<D>(0.0, 1.0)?;
+    let triangulation = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()?;
+    let (start, stored_simplex) =
+        triangulation
+            .simplices()
+            .next()
+            .ok_or(PreludeExportTestError::MissingFixture {
+                context: "initial simplex for borrowed query prelude coverage",
+            })?;
+    let point = Point::try_new([0.1; D])?;
+    let region: QueryConflictRegion<'_, _, (), (), D> =
+        triangulation.find_conflict_region(&point, start)?;
+    let region: TriangulationConflictRegion<'_, _, (), (), D> = region;
+    assert_eq!(region.len(), 1);
+
+    let simplex: QueryConflictSimplexView<'_, (), D> =
+        region
+            .simplices()
+            .next()
+            .ok_or(PreludeExportTestError::MissingFixture {
+                context: "conflict simplex for borrowed query prelude coverage",
+            })?;
+    let simplex: TriangulationConflictSimplexView<'_, (), D> = simplex;
+    assert_eq!(simplex.key(), start);
+    assert!(std::ptr::eq(simplex.simplex(), stored_simplex));
+
+    let boundary: QueryCavityBoundary<'_, (), (), D> = region.boundary()?;
+    let boundary: TriangulationCavityBoundary<'_, (), (), D> = boundary;
+    assert_eq!(boundary.len(), D + 1);
+    assert_eq!(boundary.facets().count(), D + 1);
+    Ok(())
+}
+
+#[test]
+fn query_preludes_cover_borrowed_conflict_views() -> Result<(), PreludeExportTestError> {
+    assert_borrowed_query_prelude_exports::<2>()?;
+    assert_borrowed_query_prelude_exports::<3>()?;
+    assert_borrowed_query_prelude_exports::<4>()?;
+    assert_borrowed_query_prelude_exports::<5>()?;
+    Ok(())
+}
+
 fn simplex_prelude_vertices<const D: usize>(
     origin: f64,
     scale: f64,
@@ -2453,11 +2561,10 @@ fn triangulation_prelude_covers_generic_layer() -> Result<(), PreludeExportTestE
         triangulation_vertex![0.0, 1.0]?,
     ];
     let mut tds_draft: TdsDraft<(), (), 2> = TdsDraft::new();
-    let vertex_keys: Vec<_> = vertices
-        .iter()
-        .copied()
-        .map(|vertex| tds_draft.insert_vertex(vertex))
-        .collect::<Result<_, _>>()?;
+    let mut vertex_keys = Vec::with_capacity(vertices.len());
+    for vertex in &vertices {
+        vertex_keys.push(tds_draft.insert_vertex(*vertex)?);
+    }
     tds_draft.insert_simplex(vertex_keys)?;
     let tds = tds_draft.finish()?;
     assert_eq!(tds.number_of_vertices(), 3);
@@ -2687,12 +2794,13 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
 
     dt.verify_via_flip_predicates()?;
 
-    let result = DelaunayRefinementBuilder::new(dt.into_triangulation())
-        .repair_by_flips()
-        .max_flips(500)
-        .default_flip_budget()
-        .build()
-        .map_err(delaunay::RefinementError::into_reason)?;
+    let result: DelaunayizeResult<_, (), (), 3> =
+        DelaunayRefinementBuilder::new(dt.into_triangulation())
+            .repair_by_flips()
+            .max_flips(500)
+            .default_flip_budget()
+            .build()
+            .map_err(delaunay::RefinementError::into_reason)?;
     assert!(!result.outcome.used_fallback_rebuild);
     let _typed_outcome: DelaunayizeOutcome = result.outcome;
     let _typed_error: Option<DelaunayizeError> = None;

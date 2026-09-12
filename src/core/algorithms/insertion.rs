@@ -67,6 +67,8 @@ use crate::triangulation::realization::TriangulationRealizationValidationError;
 use crate::triangulation::validation::TriangulationValidationError;
 use crate::validation::DelaunayTriangulationValidationError;
 use slotmap::Key;
+#[cfg(debug_assertions)]
+use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -180,7 +182,7 @@ impl fmt::Display for InsertionTopologyValidationContext {
     }
 }
 
-/// Compact, typed summary of a [`TdsError`] used inside insertion-stage errors.
+/// Typed [`TdsError`] diagnostic used inside insertion-stage errors.
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum TdsValidationFailure {
@@ -215,8 +217,8 @@ pub enum TdsValidationFailure {
     /// Coherent orientation was violated between adjacent simplices.
     #[error(
         "orientation invariant violated between simplices {simplex1_uuid} and {simplex2_uuid} \
-         (facet indices {simplex1_facet_index}/{simplex2_facet_index} counts \
-         {facet_vertex_count}/{simplex2_facet_vertex_count}, observed odd permutation \
+         (facet indices {simplex1_facet_index}/{simplex2_facet_index}, vertex orderings \
+         {facet_vertex_orderings:?}, observed odd permutation \
          {observed_odd_permutation}, expected {expected_odd_permutation})"
     )]
     OrientationViolation {
@@ -232,10 +234,10 @@ pub enum TdsValidationFailure {
         simplex1_facet_index: usize,
         /// Facet index in the second simplex.
         simplex2_facet_index: usize,
-        /// Number of vertices in the first facet ordering.
-        facet_vertex_count: usize,
-        /// Number of vertices in the second facet ordering.
-        simplex2_facet_vertex_count: usize,
+        /// Vertex-key orderings for the first and second facets, respectively.
+        ///
+        /// Boxed together to keep nested insertion/construction errors compact.
+        facet_vertex_orderings: Box<[Vec<VertexKey>; 2]>,
         /// Observed permutation parity.
         observed_odd_permutation: bool,
         /// Expected permutation parity.
@@ -245,7 +247,9 @@ pub enum TdsValidationFailure {
     /// Duplicate simplices were detected.
     #[error("duplicate simplices detected: {message}")]
     DuplicateSimplices {
-        /// Duplicate-simplex detail.
+        /// UUID pairs ordered as existing simplex, then duplicate or rejected candidate.
+        simplex_pairs: Vec<[uuid::Uuid; 2]>,
+        /// Supplemental diagnostic detail, not a machine-readable contract.
         message: String,
     },
 
@@ -442,12 +446,18 @@ pub enum TdsValidationFailure {
     },
 
     /// A simplex contains duplicate coordinates.
-    #[error("duplicate coordinates in simplex {simplex_id}: {message}")]
+    #[error(
+        "duplicate coordinates in simplex {simplex_id}: vertices {vertex_uuids:?} (keys {vertex_keys:?}) have identical coordinates {coordinates}"
+    )]
     DuplicateCoordinatesInSimplex {
         /// UUID of the simplex containing duplicates.
         simplex_id: uuid::Uuid,
-        /// Duplicate-coordinate detail.
-        message: String,
+        /// Keys of the two distinct vertices with identical coordinates.
+        vertex_keys: [VertexKey; 2],
+        /// UUIDs corresponding to the two vertex keys, in the same order.
+        vertex_uuids: [uuid::Uuid; 2],
+        /// Shared coordinate tuple, preserved without display-string parsing.
+        coordinates: CoordinateValues,
     },
 }
 
@@ -483,12 +493,17 @@ impl From<TdsError> for TdsValidationFailure {
                 simplex2_uuid,
                 simplex1_facet_index,
                 simplex2_facet_index,
-                facet_vertex_count: facet_vertices.len(),
-                simplex2_facet_vertex_count: simplex2_facet_vertices.len(),
+                facet_vertex_orderings: Box::new([facet_vertices, simplex2_facet_vertices]),
                 observed_odd_permutation,
                 expected_odd_permutation,
             },
-            TdsError::DuplicateSimplices { message } => Self::DuplicateSimplices { message },
+            TdsError::DuplicateSimplices {
+                simplex_pairs,
+                message,
+            } => Self::DuplicateSimplices {
+                simplex_pairs,
+                message,
+            },
             TdsError::DuplicateExplicitSimplices {
                 existing_simplex_index,
                 duplicate_simplex_index,
@@ -606,10 +621,14 @@ impl From<TdsError> for TdsValidationFailure {
             TdsError::FacetError { source } => Self::Facet { source },
             TdsError::DuplicateCoordinatesInSimplex {
                 simplex_id,
-                message,
+                vertex_keys,
+                vertex_uuids,
+                coordinates,
             } => Self::DuplicateCoordinatesInSimplex {
                 simplex_id,
-                message,
+                vertex_keys,
+                vertex_uuids,
+                coordinates,
             },
         }
     }
@@ -3954,11 +3973,15 @@ fn missing_boundary_vertex(
     })
 }
 
-fn invalid_boundary_facet_index(facet_index: u8, facet_count: usize) -> InsertionError {
-    hull_extension_tds_error(FacetError::InvalidFacetIndex {
-        index: facet_index,
-        facet_count,
-    })
+fn invalid_boundary_facet_index(facet_index: usize, facet_count: usize) -> InsertionError {
+    let source = u8::try_from(facet_index).map_or_else(
+        |_| FacetError::InvalidFacetIndexOverflow {
+            original_index: facet_index,
+            facet_count,
+        },
+        |index| FacetError::InvalidFacetIndex { index, facet_count },
+    );
+    hull_extension_tds_error(source)
 }
 
 /// Preserves the public hull-extension error contract for 2D boundary-edge splits.
@@ -4070,7 +4093,7 @@ fn find_boundary_edge_split_facet_in_simplex<U, V, const D: usize>(
             continue;
         }
         let facet_index = u8::try_from(facet_idx)
-            .map_err(|_| invalid_boundary_facet_index(u8::MAX, facet_count))?;
+            .map_err(|_| invalid_boundary_facet_index(facet_idx, facet_count))?;
         if boundary_edge_split_facet_matches(tds, point, start_simplex, facet_index)? {
             let current_facet = FacetHandle::from_validated(start_simplex, facet_index);
             record_boundary_edge_split_match(&mut match_facet, current_facet)?;
@@ -4131,8 +4154,9 @@ fn boundary_edge_split_facet_matches<U, V, const D: usize>(
         return Ok(false);
     }
 
-    let opposite_point = opposite_point
-        .ok_or_else(|| invalid_boundary_facet_index(facet_index, simplex.vertices().len()))?;
+    let opposite_point = opposite_point.ok_or_else(|| {
+        invalid_boundary_facet_index(usize::from(facet_index), simplex.vertices().len())
+    })?;
 
     let p0 = edge_points[0].coords();
     let p1 = edge_points[1].coords();
@@ -4299,8 +4323,9 @@ where
             }
         }
 
-        let opposite_point = opposite_point
-            .ok_or_else(|| invalid_boundary_facet_index(facet_index, simplex.vertices().len()))?;
+        let opposite_point = opposite_point.ok_or_else(|| {
+            invalid_boundary_facet_index(usize::from(facet_index), simplex.vertices().len())
+        })?;
 
         facet_vertex_keys.sort_unstable_by_key(|key| key.data().as_ffi());
         let mut simplex_points =
@@ -4390,14 +4415,14 @@ where
         #[cfg(debug_assertions)]
         if track_orientations {
             match orientation_with_opposite.cmp(&0) {
-                std::cmp::Ordering::Greater => orientation_opposite_positive += 1,
-                std::cmp::Ordering::Less => orientation_opposite_negative += 1,
-                std::cmp::Ordering::Equal => orientation_opposite_zero += 1,
+                Ordering::Greater => orientation_opposite_positive += 1,
+                Ordering::Less => orientation_opposite_negative += 1,
+                Ordering::Equal => orientation_opposite_zero += 1,
             }
             match orientation_with_point.cmp(&0) {
-                std::cmp::Ordering::Greater => orientation_point_positive += 1,
-                std::cmp::Ordering::Less => orientation_point_negative += 1,
-                std::cmp::Ordering::Equal => orientation_point_zero += 1,
+                Ordering::Greater => orientation_point_positive += 1,
+                Ordering::Less => orientation_point_negative += 1,
+                Ordering::Equal => orientation_point_zero += 1,
             }
             if is_strict_visible {
                 visible_facets_strict += 1;
@@ -5801,6 +5826,76 @@ mod tests {
     }
 
     #[test]
+    fn tds_validation_failure_preserves_orientation_orderings() {
+        let simplex1_key = SimplexKey::from(KeyData::from_ffi(1));
+        let simplex2_key = SimplexKey::from(KeyData::from_ffi(2));
+        let simplex1_uuid = uuid::Uuid::from_u128(1);
+        let simplex2_uuid = uuid::Uuid::from_u128(2);
+        let first = VertexKey::from(KeyData::from_ffi(3));
+        let second = VertexKey::from(KeyData::from_ffi(4));
+        let source = TdsError::OrientationViolation {
+            simplex1_key,
+            simplex1_uuid,
+            simplex2_key,
+            simplex2_uuid,
+            simplex1_facet_index: 0,
+            simplex2_facet_index: 1,
+            facet_vertices: vec![first, second],
+            simplex2_facet_vertices: vec![second, first],
+            observed_odd_permutation: true,
+            expected_odd_permutation: false,
+        };
+        assert_eq!(
+            TdsValidationFailure::from(source),
+            TdsValidationFailure::OrientationViolation {
+                simplex1_key,
+                simplex1_uuid,
+                simplex2_key,
+                simplex2_uuid,
+                simplex1_facet_index: 0,
+                simplex2_facet_index: 1,
+                facet_vertex_orderings: Box::new([vec![first, second], vec![second, first]]),
+                observed_odd_permutation: true,
+                expected_odd_permutation: false,
+            }
+        );
+    }
+
+    #[test]
+    fn tds_validation_failure_preserves_duplicate_evidence() {
+        let simplex_id = uuid::Uuid::from_u128(1);
+        let duplicate_id = uuid::Uuid::from_u128(2);
+        let duplicate = TdsValidationFailure::from(TdsError::DuplicateSimplices {
+            simplex_pairs: vec![[simplex_id, duplicate_id]],
+            message: "periodic identity collision".to_string(),
+        });
+        assert_matches!(
+            duplicate,
+            TdsValidationFailure::DuplicateSimplices { simplex_pairs, .. }
+                if simplex_pairs == [[simplex_id, duplicate_id]]
+        );
+
+        let vertex_keys = [1, 2].map(|key| VertexKey::from(KeyData::from_ffi(key)));
+        let vertex_uuids = [3, 4].map(uuid::Uuid::from_u128);
+        let coordinates = CoordinateValues::from([0.0, 1.0]);
+        let source = TdsError::DuplicateCoordinatesInSimplex {
+            simplex_id,
+            vertex_keys,
+            vertex_uuids,
+            coordinates: coordinates.clone(),
+        };
+        assert_eq!(
+            TdsValidationFailure::from(source),
+            TdsValidationFailure::DuplicateCoordinatesInSimplex {
+                simplex_id,
+                vertex_keys,
+                vertex_uuids,
+                coordinates,
+            }
+        );
+    }
+
+    #[test]
     fn test_robust_fallback_context_preserves_initial_repair_source() {
         let initial = DelaunayRepairError::PostconditionFailed {
             reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
@@ -6506,6 +6601,23 @@ mod tests {
                 reason: HullExtensionReason::Tds {
                     source: TdsError::FacetError {
                         source: FacetError::InsideVertexNotFound
+                    }
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn boundary_facet_index_overflow_preserves_original_index() {
+        assert_matches!(
+            invalid_boundary_facet_index(256, 300),
+            InsertionError::HullExtension {
+                reason: HullExtensionReason::Tds {
+                    source: TdsError::FacetError {
+                        source: FacetError::InvalidFacetIndexOverflow {
+                            original_index: 256,
+                            facet_count: 300,
+                        }
                     }
                 },
             }

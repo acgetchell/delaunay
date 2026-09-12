@@ -991,6 +991,7 @@ impl From<ExplicitSimplexParseError> for ExplicitConstructionError {
 /// # Ok(())
 /// # }
 /// ```
+#[must_use = "call a build method to construct a triangulation"]
 pub struct DelaunayTriangulationBuilder<'v, U, const D: usize, V = ()> {
     vertices: &'v [Vertex<U, D>],
     /// Topology mode for construction.
@@ -1078,7 +1079,6 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub fn new(vertices: &'v [Vertex<U, D>]) -> Self {
         Self {
             vertices,
@@ -1194,7 +1194,6 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn simplex_data_type<W>(self) -> DelaunayTriangulationBuilder<'v, U, D, W> {
         let Self {
             vertices,
@@ -1310,7 +1309,6 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn toroidal(mut self, domain: ToroidalDomain<D>) -> Self {
         self.topology = BuilderTopology::PeriodicImagePoint(domain);
         self
@@ -1344,7 +1342,6 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn topology_guarantee(mut self, topology_guarantee: TopologyGuarantee) -> Self {
         self.topology_guarantee = topology_guarantee;
         self
@@ -1373,7 +1370,6 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn validation_policy(mut self, validation_policy: ValidationPolicy) -> Self {
         self.requested_validation_policy = Some(validation_policy);
         self
@@ -1429,7 +1425,6 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn global_topology(mut self, global_topology: GlobalTopology<D>) -> Self {
         self.requested_global_topology = Some(global_topology);
         self
@@ -1473,7 +1468,6 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn construction_options(mut self, construction_options: ConstructionOptions) -> Self {
         self.construction_options = construction_options;
         self

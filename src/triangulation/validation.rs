@@ -121,8 +121,7 @@ use crate::topology::characteristics::euler::{
     FVector, TopologyClassification, count_boundary_simplices, count_simplices,
 };
 use crate::topology::characteristics::validation::{
-    EulerClassificationEvidence, TopologyCheckResult,
-    validate_triangulation_euler_from_validated_facet_map_with_evidence,
+    EulerClassificationEvidence, TopologyCheckResult, validate_euler_from_facets_with_evidence,
     validate_triangulation_euler_with_evidence,
 };
 use crate::topology::manifold::{
@@ -1414,7 +1413,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         }
 
         // 3. Euler characteristic using the topology module
-        let topology_result = validate_triangulation_euler_from_validated_facet_map_with_evidence(
+        let topology_result = validate_euler_from_facets_with_evidence(
             facet_to_simplices,
             self.global_topology,
             self.topology_construction_provenance
@@ -2602,17 +2601,17 @@ mod tests {
 
     fn build_mobius_strip_tds_2d() -> Tds<(), (), 2> {
         let mut tds = Tds::empty();
-        let vertices: Vec<_> = [
+        let mut vertices = Vec::with_capacity(6);
+        for coords in [
             [0.0, 0.0],
             [1.0, 0.0],
             [2.0, 0.0],
             [0.0, 1.0],
             [1.0, 1.0],
             [2.0, 1.0],
-        ]
-        .into_iter()
-        .map(|coords| tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap())
-        .collect();
+        ] {
+            vertices.push(tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap());
+        }
 
         for [a, b, c] in [
             [0, 2, 1],
@@ -2634,20 +2633,14 @@ mod tests {
 
     fn build_two_triangle_disk_tds_2d() -> Tds<(), (), 2> {
         let mut tds = Tds::empty();
-        let vertices: Vec<_> = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
-            .into_iter()
-            .map(|coords| tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap())
-            .collect();
+        let mut vertices = Vec::with_capacity(4);
+        for coords in [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]] {
+            vertices.push(tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap());
+        }
         for indices in [[0, 1, 2], [1, 3, 2]] {
             tds.insert_simplex_with_mapping(
-                Simplex::try_new_with_data(
-                    indices
-                        .into_iter()
-                        .map(|index| vertices[index])
-                        .collect::<Vec<_>>(),
-                    None,
-                )
-                .unwrap(),
+                Simplex::try_new_with_data(indices.map(|index| vertices[index]).as_slice(), None)
+                    .unwrap(),
             )
             .unwrap();
         }
@@ -2657,17 +2650,17 @@ mod tests {
 
     fn build_coned_mobius_strip_tds_3d() -> Tds<(), (), 3> {
         let mut tds = Tds::empty();
-        let vertices: Vec<_> = [
+        let mut vertices = Vec::with_capacity(6);
+        for coords in [
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
             [2.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
             [1.0, 1.0, 0.0],
             [2.0, 1.0, 0.0],
-        ]
-        .into_iter()
-        .map(|coords| tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap())
-        .collect();
+        ] {
+            vertices.push(tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap());
+        }
         let apex = tds
             .insert_vertex_with_mapping(test_vertex([0.5, 0.5, 1.0]))
             .unwrap();
@@ -2692,26 +2685,20 @@ mod tests {
 
     fn build_two_tetrahedra_ball_tds_3d() -> Tds<(), (), 3> {
         let mut tds = Tds::empty();
-        let vertices: Vec<_> = [
+        let mut vertices = Vec::with_capacity(5);
+        for coords in [
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
             [0.0, 0.0, 1.0],
             [0.0, 0.0, -1.0],
-        ]
-        .into_iter()
-        .map(|coords| tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap())
-        .collect();
+        ] {
+            vertices.push(tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap());
+        }
         for indices in [[0, 1, 2, 3], [0, 2, 1, 4]] {
             tds.insert_simplex_with_mapping(
-                Simplex::try_new_with_data(
-                    indices
-                        .into_iter()
-                        .map(|index| vertices[index])
-                        .collect::<Vec<_>>(),
-                    None,
-                )
-                .unwrap(),
+                Simplex::try_new_with_data(indices.map(|index| vertices[index]).as_slice(), None)
+                    .unwrap(),
             )
             .unwrap();
         }
@@ -4211,7 +4198,7 @@ mod tests {
         let facet_to_simplices =
             ValidatedFacetDegreeMap::try_from_facet_map(&tri.tds, &facet_to_simplices).unwrap();
 
-        let topology = validate_triangulation_euler_from_validated_facet_map_with_evidence(
+        let topology = validate_euler_from_facets_with_evidence(
             facet_to_simplices,
             GlobalTopology::Euclidean,
             EulerClassificationEvidence::Unproven,

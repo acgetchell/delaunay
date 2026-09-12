@@ -34,6 +34,17 @@ The triangulation, Delaunayize, and validation preludes re-export
 promotion therefore remains recoverable without importing an unrelated
 construction prelude.
 
+The Delaunayize prelude explicitly lists its builder, outcome, and error types.
+It does not export the hidden `StrictDelaunayRefinement` and
+`FlipRepairDelaunayRefinement` state markers. Prefer inferred builder states;
+specialized annotations can name the markers through `delaunay::delaunayize`.
+
+The query and generic triangulation preludes share `ConflictRegion`,
+`ConflictSimplexView`, and `CavityBoundary`. These views retain the source
+owner's borrow while exposing conflict simplices and parsed cavity facets.
+Import `ConflictError` and point-location results from
+`delaunay::prelude::algorithms` when composing that workflow.
+
 The operations prelude intentionally overlaps the insertion prelude for
 insertion result types. Use `insertion` for the complete insertion error/result
 workflow and `operations` for cross-operation classification, repair decisions,
