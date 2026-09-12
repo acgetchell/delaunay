@@ -2930,10 +2930,9 @@ where
                         source: Box::new(source),
                     }
                 })?;
-            // The lifted image triangulation is an internal Levels 1–4 workspace,
-            // not a publishable Euclidean owner. Successful flip repair above is
-            // sufficient for selecting periodic quotient representatives; the
-            // quotient receives its own topology-aware Level 5 certification.
+            // The repaired image cover supplies quotient candidates, not a
+            // certificate for the periodic owner. The quotient still receives
+            // its own topology-aware Level 5 certification below.
             Ok(full_triangulation)
         })();
         let full_dt = match relaxed_full_dt {
@@ -2942,12 +2941,23 @@ where
                 source:
                     DelaunayConstructionFailure::DelaunayRepair { .. }
                     | DelaunayConstructionFailure::FinalDelaunayValidation { .. },
-            }) => DelaunayTriangulation::build_triangulation_with_kernel_options(
-                &image_kernel,
-                &expanded,
-                TopologyGuarantee::PLManifold,
-                expanded_options,
-            )?,
+            }) => {
+                // Central-first insertion can leave non-flippable local
+                // violations in the finite 3D cover. Retry with spatial
+                // ordering, still enforcing Delaunay repair and certification.
+                // Canonical-vertex coverage is checked below on either path.
+                let retry_options = if D == 3 {
+                    expanded_options.with_insertion_order(InsertionOrderStrategy::default())
+                } else {
+                    expanded_options
+                };
+                DelaunayTriangulation::build_triangulation_with_kernel_options(
+                    &image_kernel,
+                    &expanded,
+                    TopologyGuarantee::PLManifold,
+                    retry_options,
+                )?
+            }
             Err(error) => return Err(error),
         };
 

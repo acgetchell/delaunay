@@ -2459,8 +2459,7 @@ impl<U, const D: usize> PreprocessVertices<U, D> {
         self.primary.as_deref().unwrap_or(input)
     }
 
-    /// Exposes the original order as a retry fallback for balanced-simplex
-    /// preprocessing.
+    /// Exposes an alternative vertex order for construction retry fallback.
     pub(crate) fn fallback_slice(&self) -> Option<&[Vertex<U, D>]> {
         self.fallback.as_deref()
     }
@@ -5725,7 +5724,13 @@ where
                 let base = owned_vertices.unwrap_or_else(|| vertices.to_vec());
                 if let Some(indices) = select_max_volume_simplex_indices(&base) {
                     if let Some(reordered) = reorder_vertices_for_simplex(&base, &indices) {
-                        (Some(reordered), Some(base))
+                        // A spatially sorted prefix can be coplanar even when
+                        // the full input spans D dimensions. Try a different
+                        // spread-out seed before falling back to that prefix.
+                        let fallback = select_balanced_simplex_indices(&base)
+                            .and_then(|indices| reorder_vertices_for_simplex(&base, &indices))
+                            .unwrap_or(base);
+                        (Some(reordered), Some(fallback))
                     } else {
                         (Some(base), None)
                     }

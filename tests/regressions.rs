@@ -54,8 +54,8 @@ where
     on_edge[D - 1] = 42.623_854_432_556_19;
     let inserted_vertex = vertex!(on_edge).unwrap();
 
-    // The default bulk path must publish the CI input, but its documented
-    // perturbation retries need not retain this fixture's exact simplex count.
+    // The default bulk path must retain the CI vertex identities. Its documented
+    // perturbation retries may change coordinates and the exact simplex count.
     let bulk = DelaunayTriangulationBuilder::new(&vertices)
         .topology_guarantee(TopologyGuarantee::PLManifold)
         .build()
@@ -63,6 +63,14 @@ where
     bulk.validate()
         .expect("bulk construction must preserve Levels 1-5");
     assert_eq!(bulk.number_of_vertices(), D + 2);
+    for input in &vertices {
+        assert!(
+            bulk.vertices()
+                .any(|(_, vertex)| vertex.uuid() == input.uuid()),
+            "bulk construction must retain vertex {}",
+            input.uuid()
+        );
+    }
 
     for negative_axis_first in [false, true] {
         // Publish an explicit basis simplex so bulk seed selection and its
@@ -154,6 +162,50 @@ coplanar_hull_regression_tests!(2);
 coplanar_hull_regression_tests!(3);
 coplanar_hull_regression_tests!(4);
 coplanar_hull_regression_tests!(5);
+
+#[test]
+fn regression_max_volume_seed_fallback_preserves_hull_snapshot_4d() {
+    // Minimized Codecov input: the cloud spans 4D, but its spatially sorted
+    // prefix need not. A failed max-volume insertion order needs another seed.
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([100.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 100.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 100.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 100.0]).unwrap(),
+        vertex!([0.0, 31.016_630_588_498_18, 0.0, -61.231_812_741_336_89]).unwrap(),
+        vertex!([
+            19.063_652_850_997_748,
+            23.974_022_946_552_093,
+            0.0,
+            -30.579_128_251_134_133
+        ])
+        .unwrap(),
+    ];
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build()
+        .expect("the full-dimensional CI input must construct");
+    dt.validate()
+        .expect("construction must preserve Levels 1-5");
+    assert_eq!(dt.number_of_vertices(), vertices.len());
+    for input in &vertices {
+        assert!(
+            dt.vertices()
+                .any(|(_, vertex)| vertex.uuid() == input.uuid())
+        );
+    }
+
+    let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
+    let original_facets = extract_hull_facet_set(&hull);
+    dt.insert_vertex(vertex!([0.0, 0.0, 0.0, -89.499_405_743_184]).unwrap())
+        .expect("the CI follow-on insertion must succeed");
+    dt.validate().expect("insertion must preserve Levels 1-5");
+    assert_eq!(dt.number_of_vertices(), vertices.len() + 1);
+    assert_eq!(extract_hull_facet_set(&hull), original_facets);
+    let updated_hull = ConvexHull::try_from_triangulation(dt.as_triangulation())
+        .expect("the updated triangulation must also have a valid hull");
+    assert!(updated_hull.number_of_facets() >= 5);
+}
 
 #[test]
 fn regression_exact_insphere_methods_agree_on_clean_2d_boundary_and_interior() {

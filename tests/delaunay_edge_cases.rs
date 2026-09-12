@@ -19,9 +19,6 @@ use delaunay::prelude::generators::{
     try_generate_random_triangulation_with_topology,
 };
 use delaunay::prelude::geometry::RobustKernel;
-use delaunay::prelude::validation::{
-    DelaunayTriangulationValidationError, TriangulationRealizationValidationError,
-};
 use delaunay::vertex;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
@@ -73,42 +70,6 @@ fn is_geometric_degeneracy_or_retry_exhausted(
                 if is_geometric_degeneracy_error(source)
         ),
         other => is_geometric_degeneracy_error(other),
-    }
-}
-
-fn validation_error_is_degenerate_simplex(error: &DelaunayTriangulationValidationError) -> bool {
-    matches!(
-        error,
-        DelaunayTriangulationValidationError::Realization { source }
-            if matches!(
-                source.as_ref(),
-                TriangulationRealizationValidationError::DegenerateSimplex { .. }
-            )
-    )
-}
-
-fn construction_error_is_degenerate_simplex(
-    error: &DelaunayTriangulationConstructionError,
-) -> bool {
-    match error {
-        DelaunayTriangulationConstructionError::Triangulation {
-            source: DelaunayConstructionFailure::FinalDelaunayValidation { source, .. },
-        } => validation_error_is_degenerate_simplex(source),
-        DelaunayTriangulationConstructionError::Triangulation {
-            source: DelaunayConstructionFailure::InsertionRealizationValidation { source },
-        } => matches!(
-            source,
-            TriangulationRealizationValidationError::DegenerateSimplex { .. }
-        ),
-        DelaunayTriangulationConstructionError::Triangulation {
-            source: DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
-        } => match source.as_ref() {
-            DelaunayConstructionRetryFailure::Construction { source } => {
-                construction_error_is_degenerate_simplex(source)
-            }
-            _ => false,
-        },
-        _ => false,
     }
 }
 
@@ -726,15 +687,24 @@ fn test_cube_vertices_3d() {
         vertex!([1.0, 1.0, 1.0]).unwrap(),
     ];
 
-    let err = DelaunayTriangulation::builder(&vertices)
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
         .topology_guarantee(TopologyGuarantee::PLManifold)
         .build()
-        .expect_err("exact cube corners should fail before storing a zero-volume simplex");
+        .expect("exact cube corners must construct without zero-volume simplices");
 
-    assert!(
-        construction_error_is_degenerate_simplex(&err),
-        "cube-corner failure should preserve the realization degeneracy source: {err:?}"
-    );
+    dt.validate().expect("the cube must satisfy Levels 1-5");
+    assert_eq!(dt.number_of_vertices(), vertices.len());
+    assert!((5..=6).contains(&dt.number_of_simplices()));
+    for input in &vertices {
+        let (_, actual) = dt
+            .vertices()
+            .find(|(_, vertex)| vertex.uuid() == input.uuid())
+            .expect("every cube corner must retain its identity");
+        assert_eq!(
+            actual.point().coords().map(f64::to_bits),
+            input.point().coords().map(f64::to_bits)
+        );
+    }
 }
 
 // =========================================================================
