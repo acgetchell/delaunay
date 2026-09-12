@@ -2438,7 +2438,7 @@ type VertexBuffer<U, const D: usize> = Vec<Vertex<U, D>>;
 /// reuse across public construction entry points.
 pub(crate) struct PreprocessVertices<U, const D: usize> {
     primary: Option<VertexBuffer<U, D>>,
-    fallback: Option<VertexBuffer<U, D>>,
+    fallbacks: [Option<VertexBuffer<U, D>>; 2],
     grid_cell_size: Option<f64>,
 }
 
@@ -2446,7 +2446,13 @@ impl<U, const D: usize> fmt::Debug for PreprocessVertices<U, D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PreprocessVertices")
             .field("primary_len", &self.primary.as_ref().map(Vec::len))
-            .field("fallback_len", &self.fallback.as_ref().map(Vec::len))
+            .field(
+                "fallback_lens",
+                &self
+                    .fallbacks
+                    .each_ref()
+                    .map(|order| order.as_ref().map(Vec::len)),
+            )
             .field("has_grid_cell_size", &self.grid_cell_size.is_some())
             .finish()
     }
@@ -2459,9 +2465,61 @@ impl<U, const D: usize> PreprocessVertices<U, D> {
         self.primary.as_deref().unwrap_or(input)
     }
 
-    /// Exposes an alternative vertex order for construction retry fallback.
-    pub(crate) fn fallback_slice(&self) -> Option<&[Vertex<U, D>]> {
-        self.fallback.as_deref()
+    /// Borrows each retained fallback in construction retry order.
+    fn fallback_slices(&self) -> impl Iterator<Item = &[Vertex<U, D>]> {
+        self.fallbacks.iter().filter_map(Option::as_deref)
+    }
+
+    /// Tries the primary order and then every fallback, stopping at the first success.
+    fn try_build<T, E>(
+        &self,
+        input: &[Vertex<U, D>],
+        mut build: impl FnMut(&[Vertex<U, D>]) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let mut result = build(self.primary_slice(input));
+        for fallback in self.fallback_slices() {
+            if result.is_ok() {
+                break;
+            }
+            result = build(fallback);
+        }
+        result
+    }
+
+    /// Preserves statistics from every attempted order, including failed attempts.
+    #[expect(
+        clippy::result_large_err,
+        reason = "Construction failures intentionally retain aggregate statistics by value"
+    )]
+    fn try_build_with_statistics<T>(
+        &self,
+        input: &[Vertex<U, D>],
+        mut build: impl FnMut(
+            &[Vertex<U, D>],
+        ) -> Result<
+            (T, ConstructionStatistics),
+            DelaunayTriangulationConstructionErrorWithStatistics,
+        >,
+    ) -> Result<(T, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
+    {
+        let mut aggregate = ConstructionStatistics::default();
+        let result = self.try_build(input, |order| match build(order) {
+            Ok((value, statistics)) => {
+                aggregate.merge_from(&statistics);
+                Ok(value)
+            }
+            Err(error) => {
+                aggregate.merge_from(&error.statistics);
+                Err(error.error)
+            }
+        });
+        match result {
+            Ok(value) => Ok((value, aggregate)),
+            Err(error) => Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                error,
+                statistics: aggregate,
+            }),
+        }
     }
 
     /// Carries the dedup grid size forward so incremental insertion can reuse a
@@ -5366,9 +5424,6 @@ where
             initial_simplex,
         )?;
         let grid_cell_size = preprocessed.grid_cell_size();
-        let primary_vertices: &[Vertex<U, D>] = preprocessed.primary_slice(vertices);
-        let fallback_vertices = preprocessed.fallback_slice();
-
         let build_with_vertices = |vertices: &[Vertex<U, D>]| {
             match retry_policy {
                 RetryPolicy::Disabled => {}
@@ -5420,12 +5475,7 @@ where
             )
         };
 
-        let mut result = build_with_vertices(primary_vertices);
-        if result.is_err()
-            && let Some(fallback) = fallback_vertices
-        {
-            result = build_with_vertices(fallback);
-        }
+        let mut result = preprocessed.try_build(vertices, build_with_vertices);
 
         if let Ok(workspace) = &mut result {
             workspace.tri.validation_policy = validation_policy;
@@ -5514,10 +5564,6 @@ where
         clippy::result_large_err,
         reason = "Builder statistics terminal intentionally returns by-value construction statistics"
     )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Statistics constructor handles preprocessing, retry, and fallback aggregation"
-    )]
     fn build_workspace_with_kernel_options_and_statistics(
         kernel: &K,
         vertices: &[Vertex<U, D>],
@@ -5563,9 +5609,6 @@ where
         };
         let preprocessing_nanos = duration_nanos_saturating(preprocessing_started.elapsed());
         let grid_cell_size = preprocessed.grid_cell_size();
-        let primary_vertices: &[Vertex<U, D>] = preprocessed.primary_slice(vertices);
-        let fallback_vertices = preprocessed.fallback_slice();
-
         let build_with_vertices = |vertices: &[Vertex<U, D>]| {
             match retry_policy {
                 RetryPolicy::Disabled => {}
@@ -5617,7 +5660,7 @@ where
             )
         };
 
-        match build_with_vertices(primary_vertices) {
+        match preprocessed.try_build_with_statistics(vertices, build_with_vertices) {
             Ok((mut dt, mut stats)) => {
                 dt.tri.validation_policy = validation_policy;
                 stats
@@ -5625,37 +5668,12 @@ where
                     .record_construction_preprocessing_timing(preprocessing_nanos);
                 Ok((dt, stats))
             }
-            Err(mut primary_err) => {
-                let Some(fallback) = fallback_vertices else {
-                    primary_err
-                        .statistics
-                        .telemetry
-                        .record_construction_preprocessing_timing(preprocessing_nanos);
-                    return Err(primary_err);
-                };
-
-                match build_with_vertices(fallback) {
-                    Ok((mut dt, stats)) => {
-                        dt.tri.validation_policy = validation_policy;
-                        let mut aggregate = primary_err.statistics;
-                        aggregate.merge_from(&stats);
-                        aggregate
-                            .telemetry
-                            .record_construction_preprocessing_timing(preprocessing_nanos);
-                        Ok((dt, aggregate))
-                    }
-                    Err(fallback_err) => {
-                        let mut aggregate = primary_err.statistics;
-                        aggregate.merge_from(&fallback_err.statistics);
-                        aggregate
-                            .telemetry
-                            .record_construction_preprocessing_timing(preprocessing_nanos);
-                        Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                            error: fallback_err.error,
-                            statistics: aggregate,
-                        })
-                    }
-                }
+            Err(mut error) => {
+                error
+                    .statistics
+                    .telemetry
+                    .record_construction_preprocessing_timing(preprocessing_nanos);
+                Err(error)
             }
         }
     }
@@ -5706,18 +5724,18 @@ where
             )),
         };
 
-        let (primary, fallback) = match initial_simplex {
-            InitialSimplexStrategy::First => (owned_vertices, None),
+        let (primary, fallbacks) = match initial_simplex {
+            InitialSimplexStrategy::First => (owned_vertices, [None, None]),
             InitialSimplexStrategy::Balanced => {
                 let base = owned_vertices.unwrap_or_else(|| vertices.to_vec());
                 if let Some(indices) = select_balanced_simplex_indices(&base) {
                     if let Some(reordered) = reorder_vertices_for_simplex(&base, &indices) {
-                        (Some(reordered), Some(base))
+                        (Some(reordered), [Some(base), None])
                     } else {
-                        (Some(base), None)
+                        (Some(base), [None, None])
                     }
                 } else {
-                    (Some(base), None)
+                    (Some(base), [None, None])
                 }
             }
             InitialSimplexStrategy::MaxVolume => {
@@ -5727,15 +5745,14 @@ where
                         // A spatially sorted prefix can be coplanar even when
                         // the full input spans D dimensions. Try a different
                         // spread-out seed before falling back to that prefix.
-                        let fallback = select_balanced_simplex_indices(&base)
-                            .and_then(|indices| reorder_vertices_for_simplex(&base, &indices))
-                            .unwrap_or(base);
-                        (Some(reordered), Some(fallback))
+                        let balanced = select_balanced_simplex_indices(&base)
+                            .and_then(|indices| reorder_vertices_for_simplex(&base, &indices));
+                        (Some(reordered), [balanced, Some(base)])
                     } else {
-                        (Some(base), None)
+                        (Some(base), [None, None])
                     }
                 } else {
-                    (Some(base), None)
+                    (Some(base), [None, None])
                 }
             }
         };
@@ -5749,7 +5766,7 @@ where
 
         Ok(PreprocessVertices {
             primary,
-            fallback,
+            fallbacks,
             grid_cell_size,
         })
     }
@@ -6232,6 +6249,24 @@ mod tests {
     use uuid::Uuid;
 
     type TestDelaunay<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
+
+    /// Supplies distinct orders so retry tests can inject failures without geometry hooks.
+    fn preprocess_retry_fixture() -> (Vec<Vertex<(), 2>>, PreprocessVertices<(), 2>) {
+        let vertices = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+        ];
+        let preprocessed = PreprocessVertices {
+            primary: Some(vec![vertices[2], vertices[0], vertices[1]]),
+            fallbacks: [
+                Some(vec![vertices[1], vertices[2], vertices[0]]),
+                Some(vertices.clone()),
+            ],
+            grid_cell_size: None,
+        };
+        (vertices, preprocessed)
+    }
 
     /// Keeps usable simplex candidates when an outlier has no representable distance score.
     fn assert_initial_simplex_sampling_skips_overflow<const D: usize>() {
@@ -7309,7 +7344,7 @@ mod tests {
 
         assert!(preprocess.grid_cell_size().is_some());
         assert_eq!(preprocess.primary_slice(&vertices).len(), vertices.len());
-        assert!(preprocess.fallback_slice().is_none());
+        assert_eq!(preprocess.fallback_slices().count(), 0);
     }
 
     #[test]
@@ -7536,9 +7571,15 @@ mod tests {
         )
         .expect("preprocess failed");
 
-        assert!(preprocess.fallback_slice().is_some());
         assert_eq!(preprocess.primary_slice(&vertices).len(), vertices.len());
-        assert_eq!(preprocess.fallback_slice().unwrap().len(), vertices.len());
+        let fallbacks: Vec<_> = preprocess.fallback_slices().collect();
+        assert_eq!(fallbacks.len(), 1);
+        assert!(
+            fallbacks[0]
+                .iter()
+                .map(Vertex::uuid)
+                .eq(vertices.iter().map(Vertex::uuid))
+        );
         assert!(preprocess.grid_cell_size().is_some());
     }
 
@@ -7582,11 +7623,108 @@ mod tests {
             })
         };
 
-        assert!(preprocess.fallback_slice().is_some());
+        let fallbacks: Vec<_> = preprocess.fallback_slices().collect();
+        assert_eq!(fallbacks.len(), 2);
+        let balanced_indices = select_balanced_simplex_indices(&vertices).unwrap();
+        let balanced = reorder_vertices_for_simplex(&vertices, &balanced_indices).unwrap();
+        assert!(
+            fallbacks[0]
+                .iter()
+                .map(Vertex::uuid)
+                .eq(balanced.iter().map(Vertex::uuid))
+        );
+        assert!(
+            fallbacks[1]
+                .iter()
+                .map(Vertex::uuid)
+                .eq(vertices.iter().map(Vertex::uuid))
+        );
         assert!(first_simplex_contains([0.0, 0.0, 0.0]));
         assert!(first_simplex_contains([10.0, 0.0, 0.0]));
         assert!(first_simplex_contains([0.0, 10.0, 0.0]));
         assert!(first_simplex_contains([0.0, 0.0, 10.0]));
+    }
+
+    #[test]
+    fn preprocessed_orders_reach_base_and_stop_at_first_success() {
+        let (vertices, preprocessed) = preprocess_retry_fixture();
+        let expected = [vertices[2].uuid(), vertices[1].uuid(), vertices[0].uuid()];
+
+        for success_at in 0..=3 {
+            let mut visited = Vec::new();
+            let result = preprocessed.try_build(&vertices, |order| {
+                let attempt = visited.len();
+                visited.push(order[0].uuid());
+                if attempt == success_at {
+                    Ok(attempt)
+                } else {
+                    Err(attempt)
+                }
+            });
+
+            assert_eq!(visited, expected[..(success_at + 1).min(3)]);
+            let expected_result = if success_at < 3 {
+                Ok(success_at)
+            } else {
+                Err(2)
+            };
+            assert_eq!(result, expected_result);
+        }
+    }
+
+    #[test]
+    #[expect(
+        clippy::result_large_err,
+        reason = "Exercises the existing by-value construction-statistics error contract"
+    )]
+    fn preprocessed_orders_aggregate_statistics_through_base() {
+        let (vertices, preprocessed) = preprocess_retry_fixture();
+        let expected = [vertices[2].uuid(), vertices[1].uuid(), vertices[0].uuid()];
+
+        for success_at in 0..=3 {
+            let mut visited = Vec::new();
+            let result = preprocessed.try_build_with_statistics(&vertices, |order| {
+                let attempt = visited.len();
+                visited.push(order[0].uuid());
+                let statistics = ConstructionStatistics {
+                    inserted: attempt + 1,
+                    total_attempts: 10 * (attempt + 1),
+                    max_attempts: attempt + 1,
+                    attempts_histogram: vec![0, attempt + 1],
+                    ..ConstructionStatistics::default()
+                };
+                if attempt == success_at {
+                    Ok((attempt, statistics))
+                } else {
+                    Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                        error: DelaunayTriangulationConstructionError::Level5CertificationDisabled,
+                        statistics,
+                    })
+                }
+            });
+
+            let attempts = (success_at + 1).min(3);
+            assert_eq!(visited, expected[..attempts]);
+            let statistics = match result {
+                Ok((attempt, statistics)) => {
+                    assert_eq!(attempt, success_at);
+                    statistics
+                }
+                Err(error) => {
+                    assert_eq!(success_at, 3);
+                    assert_matches!(
+                        error.error,
+                        DelaunayTriangulationConstructionError::Level5CertificationDisabled
+                    );
+                    error.statistics
+                }
+            };
+            let total = attempts * (attempts + 1) / 2;
+            assert_eq!(statistics.inserted, total);
+            assert_eq!(statistics.total_attempts, 10 * total);
+            assert_eq!(statistics.max_attempts, attempts);
+            assert_eq!(statistics.attempts_histogram, [0, total]);
+        }
     }
 
     #[test]
