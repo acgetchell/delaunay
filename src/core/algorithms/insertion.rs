@@ -19,15 +19,13 @@
 //! *visible* boundary facets using orientation tests:
 //! - A facet is **strictly visible** if the new point and the opposite vertex
 //!   have opposite orientations relative to the facet's supporting hyperplane.
-//! - **Coplanar cases** for the *query point* (orientation == 0) are treated as
-//!   **weakly visible** to avoid missing horizon facets when the point lies on the
-//!   hull plane. In **2D**, collinear cases are handled explicitly:
+//! - **Coplanar cases** for the *query point* are excluded using exact,
+//!   unperturbed orientation: coning them would create zero-volume simplices.
+//!   In **2D**, collinear cases are handled explicitly:
 //!   - on-segment points trigger a boundary-edge split
 //!   - off-segment collinearity is **not** treated as visible (avoids degenerate triangles)
 //!   This still treats degeneracies of the hull facet itself (orientation_with_opposite == 0)
 //!   as non-visible.
-//! - For numerically robust weak visibility beyond coplanar cases, a threshold-based
-//!   approach would be needed (not currently implemented).
 
 #![forbid(unsafe_code)]
 
@@ -2573,6 +2571,7 @@ where
 
         // Add the new vertex as the apex
         new_simplex_vertices.push(new_vertex_key);
+
         // The facet order copied above matches the boundary-simplex facet order.
         // For coherent orientation across that shared facet, odd permutation is required
         // exactly when (facet_idx + apex_idx) is even (apex_idx = D).
@@ -4223,11 +4222,9 @@ fn boundary_edge_split_facet_matches<U, V, const D: usize>(
 ///
 /// **Visibility criterion:**
 /// - **Strictly visible**: Opposite orientations (orientation signs differ)
-/// - **Coplanar** (query orientation == 0): Treated as **weakly visible** to avoid
-///   missing horizon facets when the point lies on the hull plane.
+/// - **Coplanar**: Exact unperturbed orientation excludes zero-volume cones,
+///   even when the kernel supplies a nonzero symbolic tie-break sign.
 /// - **Facet degeneracy** (opposite orientation == 0): Treated as non-visible.
-/// - For numerically robust weak visibility beyond coplanar cases, the orientation
-///   test logic would need an epsilon-based threshold (not currently implemented).
 ///
 /// # Arguments
 /// - `tds` - The triangulation data structure
@@ -4449,6 +4446,17 @@ where
         }
 
         if is_visible {
+            // Only facets supporting a nonzero-volume cone can be handed to
+            // hull-extension wiring. SoS ordering alone does not prove that
+            // the physical apex is outside the facet's supporting plane.
+            let orientation = robust_orientation(&simplex_points).map_err(|source| {
+                InsertionError::HullExtension {
+                    reason: HullExtensionReason::PredicateFailed { source },
+                }
+            })?;
+            if orientation == Orientation::DEGENERATE {
+                continue;
+            }
             visible_facets.push(FacetHandle::from_validated(simplex_key, facet_index));
         }
     }
@@ -4819,7 +4827,7 @@ mod tests {
     use crate::core::tds::GeometricError;
     use crate::core::test_support::{single_simplex_tds, tds_from_specs};
     use crate::core::vertex::Vertex;
-    use crate::geometry::kernel::FastKernel;
+    use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::geometry::traits::coordinate::{
         CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
         InvalidCoordinateValue,
@@ -7019,6 +7027,48 @@ mod tests {
         assert!(repair_neighbor_pointers(tds).unwrap() > 0);
         assert!(tds.is_valid().is_ok());
     }
+
+    fn assert_hull_visibility_excludes_coplanar_facets<const D: usize>() {
+        let mut vertices = vec![vertex!([0.0; D]).unwrap()];
+        for axis in 0..D {
+            let mut coords = [0.0; D];
+            coords[axis] = 1.0;
+            vertices.push(vertex!(coords).unwrap());
+        }
+        let tds = single_simplex_tds(&vertices);
+        let mut exterior = [0.0; D];
+        exterior[D - 1] = -1.0;
+        let point = Point::try_new(exterior).unwrap();
+
+        for visible in [
+            find_visible_boundary_facets(&tds, &FastKernel::<f64>::new(), &point).unwrap(),
+            find_visible_boundary_facets(&tds, &AdaptiveKernel::<f64>::new(), &point).unwrap(),
+        ] {
+            // Only the facet in x[D-1] = 0 faces the exterior point. The other
+            // coordinate-plane facets are coplanar, not full-dimensional cones.
+            assert_eq!(visible.len(), 1);
+            let facet = visible[0];
+            let simplex = tds.simplex(facet.simplex_key()).unwrap();
+            let opposite = simplex.vertices()[usize::from(facet.facet_index())];
+            assert_eq!(tds.vertex(opposite).unwrap().uuid(), vertices[D].uuid());
+        }
+    }
+
+    macro_rules! hull_visibility_coplanar_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<hull_visibility_excludes_coplanar_facets_ $dim d>]() {
+                    assert_hull_visibility_excludes_coplanar_facets::<$dim>();
+                }
+            }
+        };
+    }
+
+    hull_visibility_coplanar_tests!(2);
+    hull_visibility_coplanar_tests!(3);
+    hull_visibility_coplanar_tests!(4);
+    hull_visibility_coplanar_tests!(5);
 
     #[test]
     fn test_extend_hull_adds_simplices_for_exterior_vertex() {

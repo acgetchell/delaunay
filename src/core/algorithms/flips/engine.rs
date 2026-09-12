@@ -1052,6 +1052,102 @@ mod tests {
         }
         vertices
     }
+    fn assert_local_orientation_error_preserves_facet_evidence<const D: usize>() {
+        let mut tds: Tds<(), (), D> = Tds::empty();
+        let vertices = insert_standard_simplex_vertices(&mut tds);
+        let shared_order = vertices[..D].to_vec();
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vertices, None).unwrap())
+            .unwrap();
+
+        let mut reflected = [0.0; D];
+        reflected[D - 1] = -1.0;
+        let opposite_key = tds
+            .insert_vertex_with_mapping(vertex!(reflected).unwrap())
+            .unwrap();
+        let mut neighbor_vertices = shared_order.clone();
+        neighbor_vertices.push(opposite_key);
+        let neighbor_key = tds
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(neighbor_vertices.clone(), None).unwrap(),
+            )
+            .unwrap();
+        let simplex = tds.simplex(simplex_key).unwrap();
+        let neighbor = tds.simplex(neighbor_key).unwrap();
+
+        // Identical facet orderings at equal opposite-vertex indices violate
+        // coherent orientation, even though the shared vertex sets agree.
+        let error = validate_flip_trial_neighbor_orientation(
+            simplex_key,
+            simplex,
+            D,
+            neighbor_key,
+            neighbor,
+            D,
+        )
+        .unwrap_err();
+        let TdsValidationFailure::OrientationViolation {
+            simplex1_key,
+            simplex1_uuid,
+            simplex2_key,
+            simplex2_uuid,
+            simplex1_facet_index,
+            simplex2_facet_index,
+            facet_vertex_orderings,
+            observed_odd_permutation,
+            expected_odd_permutation,
+        } = error
+        else {
+            panic!("expected an orientation violation, got {error:?}");
+        };
+        assert_eq!(
+            (simplex1_key, simplex1_uuid, simplex1_facet_index),
+            (simplex_key, simplex.uuid(), D)
+        );
+        assert_eq!(
+            (simplex2_key, simplex2_uuid, simplex2_facet_index),
+            (neighbor_key, neighbor.uuid(), D)
+        );
+        assert_eq!(
+            *facet_vertex_orderings,
+            [shared_order.clone(), shared_order]
+        );
+        assert!(!observed_odd_permutation);
+        assert!(expected_odd_permutation);
+
+        // Reversing only the shared-facet permutation resolves the violation.
+        neighbor_vertices.swap(0, 1);
+        let coherent_neighbor =
+            Simplex::<(), D>::try_new_with_data(neighbor_vertices, None).unwrap();
+        assert!(
+            validate_flip_trial_neighbor_orientation(
+                simplex_key,
+                simplex,
+                D,
+                neighbor_key,
+                &coherent_neighbor,
+                D,
+            )
+            .is_ok()
+        );
+    }
+
+    macro_rules! local_orientation_evidence_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<local_orientation_error_preserves_facet_evidence_ $dim d>]() {
+                    assert_local_orientation_error_preserves_facet_evidence::<$dim>();
+                }
+            }
+        };
+    }
+
+    local_orientation_evidence_tests!(2);
+    local_orientation_evidence_tests!(3);
+    local_orientation_evidence_tests!(4);
+    local_orientation_evidence_tests!(5);
+
     /// Asserts exact vertex-to-periodic-offset slot pairing independent of simplex orientation.
     fn assert_simplex_offsets_by_vertex<const D: usize>(
         tds: &Tds<(), (), D>,

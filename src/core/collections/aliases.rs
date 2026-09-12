@@ -427,6 +427,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn storage_key_clones_preserve_cursor_and_skip_tombstones() {
+        struct NonClonePayload;
+
+        let mut storage: StorageMap<slotmap::DefaultKey, NonClonePayload> = StorageMap::with_key();
+        let first = storage.insert(NonClonePayload);
+        let removed = storage.insert(NonClonePayload);
+        let middle = storage.insert(NonClonePayload);
+        let last = storage.insert(NonClonePayload);
+        let trailing = storage.insert(NonClonePayload);
+        assert!(storage.tombstone(removed).is_some());
+        assert!(storage.tombstone(trailing).is_some());
+        assert_eq!(storage.len(), 3);
+
+        let mut keys = storage.keys();
+        assert_eq!(keys.next(), Some(first));
+        let mut cloned = keys.clone();
+        assert_eq!(cloned.size_hint(), keys.size_hint());
+
+        assert_eq!(keys.by_ref().collect::<Vec<_>>(), vec![middle, last]);
+        assert!(keys.next().is_none());
+        assert_eq!(cloned.by_ref().collect::<Vec<_>>(), vec![middle, last]);
+        assert!(cloned.next().is_none());
+        assert!(cloned.clone().next().is_none());
+        assert_eq!(
+            storage.keys().collect::<Vec<_>>(),
+            vec![first, middle, last]
+        );
+    }
+
+    #[test]
     fn storage_finalizing_a_live_slot_preserves_value_and_length() {
         let mut storage: StorageMap<slotmap::DefaultKey, String> = StorageMap::with_key();
         let key = storage.insert("live payload".to_string());
