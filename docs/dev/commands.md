@@ -404,8 +404,9 @@ overflow checks remain covered. The nextest `debug` profile preserves the
 default 10-second watchdog, with 60-second overrides for the two periodic
 builder cases whose debug exact-geometry cost is platform-sensitive and the
 optimized 5D intersection agreement checks, which can reach that boundary on
-hosted runners. The randomized 5D full-report agreement check has the same
-focused override across platforms. The translated 5D and complete 6D exact
+hosted runners. The bounded randomized 6D intersection agreement check and
+randomized 5D full-report agreement check have the same focused override across
+platforms. The translated 5D and complete 6D exact
 SoS expansion checks, including the D=6 adaptive-kernel checks that repeat the
 complete expansion, also have a focused 60-second override because their
 irreducible cold-path work can cross the default boundary on hosted runners.
@@ -423,9 +424,10 @@ override because its two complete exact expansions per generated case can also
 cross that boundary on hosted runners. Unaffected tests keep the normal budget.
 `test-cli` owns the feature-gated binary unit and CLI integration tests, and
 `test-rust` composes every Rust test class once.
-The LLVM-instrumented coverage profile retains its 300-second default watchdog
-and grants a 1,200-second override only to the three compact `T^3` builder cases
-that exercise periodic-image construction.
+The LLVM-instrumented coverage profile retains its 300-second default watchdog.
+The compact `T^3` builder case that validates topology and Delaunay has a
+1,800-second override; the reversed-input and orientation-reversing-map cases
+retain their 1,200-second overrides for periodic-image construction.
 
 ```bash
 just ci

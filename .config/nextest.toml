@@ -149,8 +149,8 @@ slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.debug.overrides]]
 # The bounded 6D exact active-set oracle can exceed the debug watchdog on
-# Windows. Preserve its case count and the normal budget on other platforms.
-platform = 'cfg(windows)'
+# hosted Linux and Windows runners. Preserve its case count and give this
+# regression the same headroom across platforms as the 5D agreement checks.
 filter = 'test(=geometry::util::simplex_lp::tests::optimized_intersection_agrees_with_legacy_random_6d)'
 slow-timeout = { period = "60s", terminate-after = 1 }
 

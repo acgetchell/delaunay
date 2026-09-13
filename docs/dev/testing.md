@@ -442,8 +442,9 @@ The periodic T^2 builder smoke test and its matching-explicit-topology variant
 have a 60-second override because debug exact-geometry cost varies materially
 by platform. They remain in the normal suite because they cover distinct public
 builder contracts and are fast in release builds. The optimized 5D intersection
-agreement check receives a platform-neutral 60-second override because it can
-reach the 10-second boundary on hosted runners. The randomized 5D full-report
+agreement checks and bounded randomized 6D agreement check receive
+platform-neutral 60-second overrides because they can reach the 10-second
+boundary on hosted runners. The randomized 5D full-report
 agreement check receives the same focused override across platforms. The
 translated 5D and complete 6D exact SoS expansion checks, including the D=6
 adaptive-kernel checks that repeat the complete expansion, receive a focused
