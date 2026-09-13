@@ -151,6 +151,7 @@ pub(super) type TriangulationBuildWithTopologyEvidence<K, U, V, const D: usize> 
 /// # }
 /// ```
 #[derive(Clone, Debug)]
+#[must_use = "call build to certify and publish the triangulation"]
 pub struct TriangulationBuilder<K, U, V, const D: usize> {
     tds: Tds<U, V, D>,
     kernel: K,
@@ -181,7 +182,6 @@ impl<K, U, V, const D: usize> TriangulationBuilder<K, U, V, D> {
     ///     delaunay::TopologyGuarantee::DEFAULT
     /// );
     /// ```
-    #[must_use]
     pub const fn new(tds: Tds<U, V, D>, kernel: K) -> Self {
         Self {
             tds,
@@ -195,14 +195,12 @@ impl<K, U, V, const D: usize> TriangulationBuilder<K, U, V, D> {
     }
 
     /// Selects the Level 3 topology guarantee proved by [`build`](Self::build).
-    #[must_use]
     pub const fn topology_guarantee(mut self, topology_guarantee: TopologyGuarantee) -> Self {
         self.topology_guarantee = topology_guarantee;
         self
     }
 
     /// Selects the global topology context used by Levels 3–4 validation.
-    #[must_use]
     pub const fn global_topology(mut self, global_topology: GlobalTopology<D>) -> Self {
         self.global_topology = global_topology;
         self
@@ -212,21 +210,18 @@ impl<K, U, V, const D: usize> TriangulationBuilder<K, U, V, D> {
     ///
     /// Compatibility with the selected [`TopologyGuarantee`] is checked by
     /// [`build`](Self::build), keeping this configuration step infallible.
-    #[must_use]
     pub const fn validation_policy(mut self, validation_policy: ValidationPolicy) -> Self {
         self.validation_policy = Some(validation_policy);
         self
     }
 
     /// Selects transactional positive-orientation canonicalization before certification.
-    #[must_use]
     pub const fn canonicalizing(mut self) -> Self {
         self.build_mode = TriangulationBuildMode::Canonicalizing;
         self
     }
 
     /// Attaches proof evidence from a crate-owned topology construction.
-    #[must_use]
     pub(crate) const fn construction_provenance(
         mut self,
         provenance: TopologyConstructionProvenance,

@@ -179,23 +179,19 @@ where
 
     // Iterate through all simplices in original triangulation
     for (orig_key, orig_simplex) in dt_orig.simplices() {
-        let mut orig_uuids = Vec::with_capacity(orig_simplex.number_of_vertices());
-        for &vertex_key in orig_simplex.vertices() {
-            let vertex = dt_orig.vertex(vertex_key).ok_or_else(|| {
-                TestCaseError::fail(format!("missing original vertex {vertex_key:?}"))
-            })?;
-            orig_uuids.push(vertex.uuid());
-        }
-        let transformed_uuids: Vec<_> = orig_uuids
+        let transformed_uuids = orig_simplex
+            .vertices()
             .iter()
-            .filter_map(|uuid| uuid_map.get(uuid))
-            .copied()
-            .collect();
-        prop_assert_eq!(
-            transformed_uuids.len(),
-            orig_uuids.len(),
-            "all original simplex UUIDs should map to transformed UUIDs"
-        );
+            .map(|&vertex_key| {
+                let vertex = dt_orig.vertex(vertex_key).ok_or_else(|| {
+                    TestCaseError::fail(format!("missing original vertex {vertex_key:?}"))
+                })?;
+                let uuid = vertex.uuid();
+                uuid_map.get(&uuid).copied().ok_or_else(|| {
+                    TestCaseError::fail(format!("missing transformed UUID mapping for {uuid}"))
+                })
+            })
+            .collect::<Result<Vec<_>, TestCaseError>>()?;
 
         let mut matched_key = None;
         for (trans_key, trans_simplex) in dt_transformed.simplices() {
@@ -217,11 +213,11 @@ where
             }
         }
 
-        prop_assert!(
-            matched_key.is_some(),
-            "missing transformed simplex matching original simplex {orig_key:?}"
-        );
-        let trans_key = matched_key.expect("matched key was checked above");
+        let trans_key = matched_key.ok_or_else(|| {
+            TestCaseError::fail(format!(
+                "missing transformed simplex matching original simplex {orig_key:?}"
+            ))
+        })?;
         prop_assert!(
             !matched_transformed.contains(&trans_key),
             "transformed simplex {trans_key:?} matched more than one original simplex"
@@ -243,6 +239,89 @@ where
     );
 
     Ok(())
+}
+
+// =============================================================================
+// UUID MAPPING REGRESSIONS
+// =============================================================================
+
+fn assert_transformed_simplex_mapping_contract<const D: usize>()
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
+    let points = well_conditioned_simplex::<D>([0.0; D], [1.0; D], 0.0);
+    let vertices = try_vertices_from_points(&points).expect("finite fixture vertices");
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build()
+        .expect("unit simplex fixture should build");
+    assert_eq!(dt.number_of_simplices(), 1);
+    let mut uuid_map: HashMap<_, _> = dt
+        .vertices()
+        .map(|(_, vertex)| (vertex.uuid(), vertex.uuid()))
+        .collect();
+    let mut compared_pairs = Vec::new();
+
+    compare_transformed_simplices(
+        &dt,
+        &dt,
+        &uuid_map,
+        "UUID mapping",
+        D,
+        |orig, transformed| {
+            compared_pairs.push((orig, transformed));
+            Ok(())
+        },
+    )
+    .expect("complete identity mapping should compare the simplex");
+    assert_eq!(compared_pairs.len(), 1);
+    assert_eq!(compared_pairs[0].0, compared_pairs[0].1);
+
+    let error = compare_transformed_simplices(&dt, &dt, &uuid_map, "UUID mapping", D, |_, _| {
+        Err(TestCaseError::fail("metric comparison failed"))
+    })
+    .unwrap_err();
+    assert!(
+        matches!(error, TestCaseError::Fail(reason) if reason.to_string() == "metric comparison failed")
+    );
+
+    let missing_uuid = vertices[D].uuid();
+    assert!(uuid_map.remove(&missing_uuid).is_some());
+    compared_pairs.clear();
+    let error = compare_transformed_simplices(
+        &dt,
+        &dt,
+        &uuid_map,
+        "UUID mapping",
+        D,
+        |orig, transformed| {
+            compared_pairs.push((orig, transformed));
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(error, TestCaseError::Fail(reason)
+            if reason.to_string() == format!("missing transformed UUID mapping for {missing_uuid}")));
+    assert!(compared_pairs.is_empty());
+}
+
+#[test]
+fn transformed_simplex_mapping_contract_2d() {
+    assert_transformed_simplex_mapping_contract::<2>();
+}
+
+#[test]
+fn transformed_simplex_mapping_contract_3d() {
+    assert_transformed_simplex_mapping_contract::<3>();
+}
+
+#[test]
+fn transformed_simplex_mapping_contract_4d() {
+    assert_transformed_simplex_mapping_contract::<4>();
+}
+
+#[test]
+fn transformed_simplex_mapping_contract_5d() {
+    assert_transformed_simplex_mapping_contract::<5>();
 }
 
 // =============================================================================

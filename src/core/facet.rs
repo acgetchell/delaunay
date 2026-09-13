@@ -79,7 +79,7 @@
 #![forbid(unsafe_code)]
 
 use super::collections::{
-    FacetToSimplicesMap, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+    FacetToSimplicesMap, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, StorageKeys,
     fast_hash_map_with_capacity,
 };
 use super::util::{stable_hash_u64_slice, usize_to_u8};
@@ -1267,11 +1267,20 @@ impl<'tds, U, V, const D: usize> FacetIncidenceView<'_, 'tds, U, V, D> {
 /// triangulation. It also parses raw multiplicities into borrowed
 /// [`FacetIncidenceView`] entries, so public boundary queries can operate on
 /// proof-bearing incidence without detaching it from the producing index.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 #[must_use]
 pub struct FacetToSimplicesIndex<'tds, U, V, const D: usize> {
     tds: &'tds Tds<U, V, D>,
     map: FastHashMap<u64, FacetIncidence>,
+}
+
+impl<U, V, const D: usize> Clone for FacetToSimplicesIndex<'_, U, V, D> {
+    fn clone(&self) -> Self {
+        Self {
+            tds: self.tds,
+            map: self.map.clone(),
+        }
+    }
 }
 
 impl<'tds, U, V, const D: usize> FacetToSimplicesIndex<'tds, U, V, D> {
@@ -1520,12 +1529,22 @@ impl<U, V, const D: usize> Eq for FacetView<'_, U, V, D> {}
 /// # }
 /// ```
 #[must_use]
-#[derive(Clone)]
 pub struct SimplexFacetsIter<'tds, U, V, const D: usize> {
     tds: &'tds Tds<U, V, D>,
     simplex_key: SimplexKey,
     next_facet_index: u16,
     facet_count: u16,
+}
+
+impl<U, V, const D: usize> Clone for SimplexFacetsIter<'_, U, V, D> {
+    fn clone(&self) -> Self {
+        Self {
+            tds: self.tds,
+            simplex_key: self.simplex_key,
+            next_facet_index: self.next_facet_index,
+            facet_count: self.facet_count,
+        }
+    }
 }
 
 impl<'tds, U, V, const D: usize> SimplexFacetsIter<'tds, U, V, D> {
@@ -1639,11 +1658,20 @@ impl<U, V, const D: usize> FusedIterator for SimplexFacetsIter<'_, U, V, D> {}
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone)]
 pub struct AllFacetsIter<'tds, U, V, const D: usize> {
     tds: &'tds Tds<U, V, D>,
-    simplex_keys: crate::core::collections::StorageKeys<'tds, SimplexKey, Simplex<V, D>>,
+    simplex_keys: StorageKeys<'tds, SimplexKey, Simplex<V, D>>,
     state: AllFacetsIterState,
+}
+
+impl<U, V, const D: usize> Clone for AllFacetsIter<'_, U, V, D> {
+    fn clone(&self) -> Self {
+        Self {
+            tds: self.tds,
+            simplex_keys: self.simplex_keys.clone(),
+            state: self.state.clone(),
+        }
+    }
 }
 
 /// Encodes whether facet iteration is between simplices, inside one, or done.
@@ -1925,10 +1953,18 @@ impl<'tds, U, V, const D: usize> Iterator for AllFacetsIter<'tds, U, V, D> {
 /// # }
 /// ```
 #[must_use]
-#[derive(Clone)]
 pub struct BoundaryFacetsIter<'tds, U, V, const D: usize> {
     tds: &'tds Tds<U, V, D>,
     boundary_facet_handles: IntoIter<FacetHandle>,
+}
+
+impl<U, V, const D: usize> Clone for BoundaryFacetsIter<'_, U, V, D> {
+    fn clone(&self) -> Self {
+        Self {
+            tds: self.tds,
+            boundary_facet_handles: self.boundary_facet_handles.clone(),
+        }
+    }
 }
 
 impl<'tds, U, V, const D: usize> BoundaryFacetsIter<'tds, U, V, D> {
@@ -2053,10 +2089,18 @@ impl<U, V, const D: usize> FusedIterator for BoundaryFacetsIter<'_, U, V, D> {}
 /// # }
 /// ```
 #[must_use]
-#[derive(Clone)]
 pub struct OneSidedFacetsIter<'tds, U, V, const D: usize> {
     tds: &'tds Tds<U, V, D>,
     one_sided_facet_handles: IntoIter<FacetHandle>,
+}
+
+impl<U, V, const D: usize> Clone for OneSidedFacetsIter<'_, U, V, D> {
+    fn clone(&self) -> Self {
+        Self {
+            tds: self.tds,
+            one_sided_facet_handles: self.one_sided_facet_handles.clone(),
+        }
+    }
 }
 
 impl<'tds, U, V, const D: usize> OneSidedFacetsIter<'tds, U, V, D> {
@@ -2232,7 +2276,7 @@ pub fn facet_key_from_vertices(vertices: &[VertexKey]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tds::{Tds, VertexKey};
+    use crate::core::tds::{Tds, TdsBuilder, VertexKey};
     use crate::core::test_support::single_simplex_tds;
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::AdaptiveKernel;
@@ -2241,6 +2285,95 @@ mod tests {
     use slotmap::{KeyData, SlotMap};
     use std::assert_matches;
     use std::{collections::HashSet, mem};
+
+    fn assert_facet_iterator_clone_sequence<I>(mut iter: I, expected_count: usize)
+    where
+        I: Iterator<Item = (SimplexKey, u8)> + Clone,
+    {
+        let expected: Vec<_> = iter.clone().collect();
+        assert_eq!(expected.len(), expected_count);
+
+        // Fork at every cursor position, including simplex transitions and exhaustion.
+        // Consuming a fork must neither rewind nor advance the original iterator.
+        for consumed in 0..=expected.len() {
+            let mut fork = iter.clone();
+            assert_eq!(fork.size_hint(), iter.size_hint());
+            assert_eq!(fork.by_ref().collect::<Vec<_>>(), expected[consumed..]);
+            assert!(fork.next().is_none());
+            assert!(fork.clone().next().is_none());
+            assert_eq!(iter.next(), expected.get(consumed).copied());
+        }
+        assert!(iter.clone().next().is_none());
+        assert!(iter.next().is_none());
+    }
+
+    fn assert_facet_iterator_clones_preserve_traversal<const D: usize>() {
+        struct NonClonePayload;
+
+        let mut vertices = vec![vertex!([0.0; D]).unwrap()];
+        for axis in 0..D {
+            let mut coords = [0.0; D];
+            coords[axis] = 1.0;
+            vertices.push(vertex!(coords).unwrap());
+        }
+        let mut reflected = [0.0; D];
+        reflected[D - 1] = -1.0;
+        vertices.push(vertex!(reflected).unwrap());
+
+        // Two simplices glued along one facet form a ball with 2D boundary facets.
+        let first: Vec<_> = (0..=D).collect();
+        let mut second: Vec<_> = (0..D).chain(std::iter::once(D + 1)).collect();
+        second.swap(0, 1);
+        let simplices = [first, second];
+        let tds = TdsBuilder::new(&vertices, &simplices)
+            .simplex_data_type::<NonClonePayload>()
+            .build()
+            .unwrap();
+        assert!(tds.is_valid().is_ok());
+        let index = tds.build_facet_to_simplices_index().unwrap();
+        assert_eq!(index.len(), 2 * D + 1);
+        assert_eq!(index.one_sided_handles().count(), 2 * D);
+
+        assert_facet_iterator_clone_sequence(
+            tds.facets().map(|facet| {
+                let facet = facet.unwrap();
+                (facet.simplex_key(), facet.facet_index())
+            }),
+            2 * (D + 1),
+        );
+        assert_facet_iterator_clone_sequence(
+            OneSidedFacetsIter::try_new(&index).unwrap().map(|facet| {
+                let facet = facet.unwrap();
+                (facet.simplex_key(), facet.facet_index())
+            }),
+            2 * D,
+        );
+        assert_facet_iterator_clone_sequence(
+            BoundaryFacetsIter::try_new(&index, index.one_sided_handles().collect())
+                .unwrap()
+                .map(|facet| {
+                    let facet = facet.unwrap();
+                    (facet.simplex_key(), facet.facet_index())
+                }),
+            2 * D,
+        );
+    }
+
+    macro_rules! facet_iterator_clone_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<facet_iterator_clones_preserve_traversal_ $dim d>]() {
+                    assert_facet_iterator_clones_preserve_traversal::<$dim>();
+                }
+            }
+        };
+    }
+
+    facet_iterator_clone_tests!(2);
+    facet_iterator_clone_tests!(3);
+    facet_iterator_clone_tests!(4);
+    facet_iterator_clone_tests!(5);
 
     // =============================================================================
     // UNIT TESTS FOR HELPER FUNCTIONS

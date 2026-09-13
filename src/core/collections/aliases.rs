@@ -70,9 +70,17 @@ pub struct StorageMap<K: Key, V> {
 /// Transaction tombstones remain allocated in the underlying slot map so that
 /// rollback can restore their exact generational keys. This iterator hides
 /// those tombstones from ordinary topology traversal.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct StorageKeys<'a, K: Key, V> {
     inner: slotmap::dense::Iter<'a, K, Option<V>>,
+}
+
+impl<K: Key, V> Clone for StorageKeys<'_, K, V> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 impl<K: Key, V> Iterator for StorageKeys<'_, K, V> {
@@ -148,7 +156,12 @@ impl<K: Key, V> StorageMap<K, V> {
     }
 
     /// Commits a transaction tombstone and invalidates its key.
+    ///
+    /// Live or missing keys return `false` without changing storage.
     pub(crate) fn finalize_tombstone(&mut self, key: K) -> bool {
+        if !matches!(self.slots.get(key), Some(None)) {
+            return false;
+        }
         matches!(self.slots.remove(key), Some(None))
     }
 
@@ -412,6 +425,125 @@ pub const MAX_PRACTICAL_DIMENSION_SIZE: usize = 8;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_key_clones_preserve_cursor_and_skip_tombstones() {
+        struct NonClonePayload;
+
+        let mut storage: StorageMap<slotmap::DefaultKey, NonClonePayload> = StorageMap::with_key();
+        let first = storage.insert(NonClonePayload);
+        let removed = storage.insert(NonClonePayload);
+        let middle = storage.insert(NonClonePayload);
+        let last = storage.insert(NonClonePayload);
+        let trailing = storage.insert(NonClonePayload);
+        assert!(storage.tombstone(removed).is_some());
+        assert!(storage.tombstone(trailing).is_some());
+        assert_eq!(storage.len(), 3);
+
+        let mut keys = storage.keys();
+        assert_eq!(keys.next(), Some(first));
+        let mut cloned = keys.clone();
+        assert_eq!(cloned.size_hint(), keys.size_hint());
+
+        assert_eq!(keys.by_ref().collect::<Vec<_>>(), vec![middle, last]);
+        assert!(keys.next().is_none());
+        assert_eq!(cloned.by_ref().collect::<Vec<_>>(), vec![middle, last]);
+        assert!(cloned.next().is_none());
+        assert!(cloned.clone().next().is_none());
+        assert_eq!(
+            storage.keys().collect::<Vec<_>>(),
+            vec![first, middle, last]
+        );
+    }
+
+    #[test]
+    fn storage_finalizing_a_live_slot_preserves_value_and_length() {
+        let mut storage: StorageMap<slotmap::DefaultKey, String> = StorageMap::with_key();
+        let key = storage.insert("live payload".to_string());
+
+        assert!(!storage.finalize_tombstone(key));
+
+        assert_eq!(storage.get(key).map(String::as_str), Some("live payload"));
+        assert_eq!(storage.len(), 1);
+        assert_eq!(storage.iter().count(), storage.len());
+        assert_eq!(storage.remove(key).as_deref(), Some("live payload"));
+        assert_eq!(storage.len(), 0);
+    }
+
+    #[test]
+    fn storage_tombstone_restore_preserves_key_payload_and_live_iteration() {
+        let mut storage: StorageMap<slotmap::DefaultKey, String> = StorageMap::with_key();
+        let first = storage.insert("first".to_string());
+        let removed = storage.insert("removed".to_string());
+        let last = storage.insert("last".to_string());
+        let before: Vec<_> = storage
+            .iter()
+            .map(|(key, value)| (key, value.clone()))
+            .collect();
+
+        let payload = storage.tombstone(removed).unwrap();
+        assert_eq!(payload, "removed");
+        assert_eq!(storage.len(), 2);
+        assert!(!storage.contains_key(removed));
+        assert!(storage.get_mut(removed).is_none());
+        assert_eq!(storage.keys().collect::<Vec<_>>(), vec![first, last]);
+        assert_eq!(storage.values().count(), storage.len());
+        assert!(storage.tombstone(removed).is_none());
+
+        storage.restore_tombstone(removed, payload).unwrap();
+
+        assert_eq!(storage.len(), 3);
+        assert_eq!(
+            storage
+                .iter()
+                .map(|(key, value)| (key, value.clone()))
+                .collect::<Vec<_>>(),
+            before
+        );
+    }
+
+    #[test]
+    fn storage_restore_rejects_live_and_missing_keys_without_replacing_payloads() {
+        let mut storage: StorageMap<slotmap::DefaultKey, String> = StorageMap::with_key();
+        let live = storage.insert("live".to_string());
+        let missing = storage.insert("removed".to_string());
+        assert_eq!(storage.remove(missing).as_deref(), Some("removed"));
+
+        for key in [live, missing] {
+            assert_eq!(
+                storage.restore_tombstone(key, "rejected".to_string()),
+                Err("rejected".to_string())
+            );
+            assert_eq!(storage.len(), 1);
+            assert_eq!(storage.get(live).map(String::as_str), Some("live"));
+            assert_eq!(storage.keys().collect::<Vec<_>>(), vec![live]);
+        }
+    }
+
+    #[test]
+    fn storage_finalization_invalidates_old_keys_without_affecting_replacements() {
+        let mut storage: StorageMap<slotmap::DefaultKey, String> = StorageMap::with_key();
+        let old = storage.insert("old".to_string());
+        let payload = storage.tombstone(old).unwrap();
+        assert_eq!(storage.len(), 0);
+        assert!(storage.finalize_tombstone(old));
+        assert!(!storage.finalize_tombstone(old));
+
+        let replacement = storage.insert("replacement".to_string());
+        assert_ne!(old, replacement);
+        assert_eq!(
+            storage.restore_tombstone(old, payload),
+            Err("old".to_string())
+        );
+        assert!(storage.remove(old).is_none());
+        assert!(!storage.finalize_tombstone(old));
+        assert_eq!(
+            storage.get(replacement).map(String::as_str),
+            Some("replacement")
+        );
+        assert_eq!(storage.len(), 1);
+        assert_eq!(storage.iter().count(), storage.len());
+    }
 
     #[test]
     fn test_fast_collections_basic_operations() {

@@ -519,6 +519,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::collections::FastHashMap;
+    use crate::core::tds::TdsBuilder;
     use crate::vertex;
     use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
@@ -532,6 +534,198 @@ mod tests {
             Self(Arc::clone(&self.0))
         }
     }
+
+    /// Independent persisted and runtime state, not the journal's own before-images.
+    #[derive(Debug, PartialEq)]
+    struct OwnerStateEvidence {
+        serialized: serde_json::Value,
+        vertex_hints: Vec<(VertexKey, Option<SimplexKey>)>,
+        simplex_keys: Vec<SimplexKey>,
+        vertex_mapping: FastHashMap<Uuid, VertexKey>,
+        simplex_mapping: FastHashMap<Uuid, SimplexKey>,
+        incidence: FastHashMap<VertexKey, Vec<SimplexKey>>,
+        construction_state: TriangulationConstructionState,
+        generation: u64,
+        identity: Arc<Uuid>,
+    }
+
+    fn owner_snapshot<const D: usize>(tds: &Tds<u32, u32, D>) -> OwnerStateEvidence {
+        OwnerStateEvidence {
+            serialized: serde_json::to_value(tds).unwrap(),
+            vertex_hints: tds
+                .vertices()
+                .map(|(key, vertex)| (key, vertex.incident_simplex()))
+                .collect(),
+            simplex_keys: tds.simplex_keys().collect(),
+            vertex_mapping: tds.uuid_to_vertex_key.clone(),
+            simplex_mapping: tds.uuid_to_simplex_key.clone(),
+            incidence: tds
+                .vertex_to_simplices
+                .as_map()
+                .iter()
+                .map(|(&key, simplices)| (key, simplices.to_vec()))
+                .collect(),
+            construction_state: tds.construction_state.clone(),
+            generation: tds.generation(),
+            identity: Arc::clone(tds.identity()),
+        }
+    }
+
+    fn assert_owner_restored<const D: usize>(tds: &Tds<u32, u32, D>, before: &OwnerStateEvidence) {
+        assert!(Arc::ptr_eq(tds.identity(), &before.identity));
+        assert_eq!(&owner_snapshot(tds), before);
+        tds.validate()
+            .expect("restored owner must satisfy Levels 1-2");
+    }
+
+    fn populated_owner<const D: usize>() -> (Tds<u32, u32, D>, VertexKey) {
+        let vertices: Vec<_> = (0..D + 2)
+            .map(|slot| {
+                let mut coords = [0.0; D];
+                if slot == D + 1 {
+                    coords[0] = -1.0;
+                } else if slot > 0 {
+                    coords[slot - 1] = 1.0;
+                }
+                vertex![coords; data = u32::try_from(slot).unwrap()].unwrap()
+            })
+            .collect();
+        let mut second = vec![0];
+        second.extend(2..=D + 1);
+        let simplices = [(0..=D).collect(), second];
+        let mut tds = TdsBuilder::new(&vertices, &simplices)
+            .simplex_data_type::<u32>()
+            .build()
+            .unwrap();
+        let simplex_keys: Vec<_> = tds.simplex_keys().collect();
+        for (index, key) in simplex_keys.into_iter().enumerate() {
+            tds.set_simplex_data(key, Some(u32::try_from(index).unwrap() + 100))
+                .unwrap();
+        }
+        let removable = tds
+            .vertices()
+            .find(|(_, vertex)| vertex.data() == Some(&1))
+            .map(|(key, _)| key)
+            .unwrap();
+        tds.validate()
+            .expect("populated pre-transaction owner must satisfy Levels 1-2");
+        (tds, removable)
+    }
+
+    fn assert_nested_commit_then_outer_rollback<const D: usize>() {
+        let (mut tds, removable) = populated_owner::<D>();
+        let before = owner_snapshot(&tds);
+        let (parent_key, child_key) = {
+            let mut transaction = TdsRollbackTransaction::begin(&mut tds);
+            let parent_key = transaction
+                .tds_mut()
+                .insert_vertex_with_mapping(vertex![[4.0; D]; data = 90].unwrap())
+                .unwrap();
+            let savepoint = transaction.tds_mut().begin_rollback_savepoint();
+            transaction.tds_mut().remove_vertex(removable).unwrap();
+            transaction.tds_mut().remove_vertex(parent_key).unwrap();
+            let child_key = transaction
+                .tds_mut()
+                .insert_vertex_with_mapping(vertex![[5.0; D]; data = 91].unwrap())
+                .unwrap();
+            transaction.tds_mut().commit_savepoint(savepoint);
+            assert!(transaction.tds_mut().vertex(removable).is_none());
+            assert!(transaction.tds_mut().vertex(parent_key).is_none());
+            assert!(transaction.tds_mut().vertex(child_key).is_some());
+            transaction.tds_mut().validate().unwrap();
+            transaction.rollback();
+            (parent_key, child_key)
+        };
+
+        assert_owner_restored(&tds, &before);
+        assert!(tds.vertex(parent_key).is_none());
+        assert!(tds.vertex(child_key).is_none());
+        assert!(tds.rollback_journals.is_empty());
+    }
+
+    fn assert_restore_then_retry_commits_only_second_attempt<const D: usize>() {
+        let (mut tds, removable) = populated_owner::<D>();
+        let before = owner_snapshot(&tds);
+        let mut transaction = TdsRollbackTransaction::begin(&mut tds);
+        transaction.tds_mut().remove_vertex(removable).unwrap();
+        let rejected_key = transaction
+            .tds_mut()
+            .insert_vertex_with_mapping(vertex![[4.0; D]; data = 90].unwrap())
+            .unwrap();
+
+        transaction.restore();
+        assert_owner_restored(transaction.tds_mut(), &before);
+        assert_eq!(transaction.tds_mut().rollback_journals.len(), 1);
+
+        let committed_key = transaction
+            .tds_mut()
+            .insert_vertex_with_mapping(vertex![[5.0; D]; data = 91].unwrap())
+            .unwrap();
+        assert_ne!(rejected_key, committed_key);
+        let committed = owner_snapshot(transaction.tds_mut());
+        transaction.commit();
+
+        assert_owner_restored(&tds, &committed);
+        assert!(tds.vertex(rejected_key).is_none());
+        assert_eq!(tds.vertex(committed_key).unwrap().data(), Some(&91));
+        assert!(tds.generation() > before.generation);
+        assert!(tds.rollback_journals.is_empty());
+    }
+
+    fn assert_nested_rollback_then_outer_drop<const D: usize>() {
+        let (mut tds, removable) = populated_owner::<D>();
+        let before = owner_snapshot(&tds);
+        let (parent_key, child_key) = {
+            let mut transaction = TdsRollbackTransaction::begin(&mut tds);
+            transaction.tds_mut().remove_vertex(removable).unwrap();
+            let parent_key = transaction
+                .tds_mut()
+                .insert_vertex_with_mapping(vertex![[4.0; D]; data = 90].unwrap())
+                .unwrap();
+            transaction.tds_mut().validate().unwrap();
+            let parent_state = owner_snapshot(transaction.tds_mut());
+            let savepoint = transaction.tds_mut().begin_rollback_savepoint();
+            transaction.tds_mut().remove_vertex(parent_key).unwrap();
+            let child_key = transaction
+                .tds_mut()
+                .insert_vertex_with_mapping(vertex![[5.0; D]; data = 91].unwrap())
+                .unwrap();
+            transaction.tds_mut().rollback_savepoint(savepoint);
+            assert_owner_restored(transaction.tds_mut(), &parent_state);
+            assert_eq!(transaction.tds_mut().rollback_journals.len(), 1);
+            (parent_key, child_key)
+        };
+
+        assert_owner_restored(&tds, &before);
+        assert!(tds.vertex(parent_key).is_none());
+        assert!(tds.vertex(child_key).is_none());
+        assert!(tds.rollback_journals.is_empty());
+    }
+
+    macro_rules! rollback_sequence_tests {
+        ($($dimension:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<nested_commit_then_outer_rollback_restores_populated_owner_ $dimension d>]() {
+                        assert_nested_commit_then_outer_rollback::<$dimension>();
+                    }
+
+                    #[test]
+                    fn [<restore_then_retry_commits_only_second_attempt_ $dimension d>]() {
+                        assert_restore_then_retry_commits_only_second_attempt::<$dimension>();
+                    }
+
+                    #[test]
+                    fn [<nested_rollback_then_outer_drop_restores_populated_owner_ $dimension d>]() {
+                        assert_nested_rollback_then_outer_drop::<$dimension>();
+                    }
+                )+
+            }
+        };
+    }
+
+    rollback_sequence_tests!(2, 3, 4, 5);
 
     #[test]
     fn rollback_restores_exact_key_generation_and_owner_identity() {

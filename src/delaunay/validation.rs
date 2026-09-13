@@ -1092,15 +1092,14 @@ mod tests {
     use crate::core::vertex::Vertex;
     use crate::delaunay_model::EuclideanDelaunayReportDomain;
     use crate::geometry::coordinate_range::CoordinateRange;
-    use crate::geometry::kernel::AdaptiveKernel;
+    use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::CoordinateConversionError;
     use crate::geometry::util::generate_random_points_in_range_seeded;
     use crate::vertex;
     use slotmap::KeyData;
-    use uuid::Uuid;
-
     use std::{assert_matches, error::Error, sync::Once};
+    use uuid::Uuid;
 
     impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
     where
@@ -1218,7 +1217,7 @@ mod tests {
         base_seed: u64,
     ) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>
     where
-        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+        AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         let bounds = CoordinateRange::try_new(-10.0, 10.0).unwrap();
         for offset in 0..32 {
@@ -1242,7 +1241,7 @@ mod tests {
 
     fn shared_facet_flip_adversary<const D: usize>() -> Triangulation<AdaptiveKernel<f64>, (), (), D>
     where
-        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+        AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         let dim = u32::try_from(D).unwrap();
         let high_apex_coordinate = 1.1 / f64::from(dim);
@@ -1269,7 +1268,7 @@ mod tests {
 
     fn assert_randomized_full_report_matches_brute_force<const D: usize>()
     where
-        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+        AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         for seed in [0x483, 0x483_0001, 0x483_0002] {
             let triangulation = randomized_delaunay::<D>(seed);
@@ -1284,7 +1283,7 @@ mod tests {
 
     fn assert_adversarial_full_report_matches_brute_force<const D: usize>()
     where
-        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+        AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         let triangulation = shared_facet_flip_adversary::<D>();
         assert!(

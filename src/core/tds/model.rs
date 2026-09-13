@@ -567,7 +567,9 @@ pub struct Tds<U, V, const D: usize> {
     /// This counter is incremented whenever the triangulation structure is modified
     /// (vertices added, simplices created/removed, etc.), allowing dependent caches to
     /// detect when they need to refresh.
-    /// Uses `Arc<AtomicU64>` for thread-safe operations in concurrent contexts while allowing Clone.
+    /// This atomic is only a version tag: it does not publish topology writes.
+    /// Topology access is synchronized by owner borrows or a caller's lock, so
+    /// relaxed ordering suffices. Clones have independent counters.
     ///
     /// Note: Not serialized - generation is runtime-only.
     pub(in crate::core::tds) generation: Arc<AtomicU64>,
@@ -1536,7 +1538,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// # Thread Safety
     ///
-    /// This method is thread-safe due to the use of `Arc<AtomicU64>`.
+    /// Atomicity applies only to the counter. It does not allow concurrent
+    /// topology mutation or replace exclusive access to the owner. Readers must
+    /// obtain their owner borrow through the same synchronization as its storage.
     #[inline]
     pub(super) fn bump_generation(&self) {
         // Relaxed is fine for an invalidation counter
@@ -1547,6 +1551,13 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// This can be used by external code to detect when the triangulation has changed.
     /// The generation counter is incremented on any structural modification.
+    ///
+    /// # Thread Safety
+    ///
+    /// This is a relaxed version-tag load, not a synchronization barrier for
+    /// topology data. Compare generations only for the same owner identity and
+    /// access the owner through Rust borrows or external locking. Clones have
+    /// independent counters, and a failed mutation may restore its prior value.
     ///
     /// # Returns
     ///

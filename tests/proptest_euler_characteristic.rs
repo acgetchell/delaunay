@@ -16,24 +16,23 @@
 //!
 //! For deterministic tests with known configurations, see `euler_characteristic.rs`.
 
+#[path = "common/full_dimensional_vertices.rs"]
+mod full_dimensional_vertices;
+
 #[macro_use]
 #[path = "common/proptest_config.rs"]
 mod proptest_config;
 
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::generators::try_generate_random_triangulation_with_topology;
-use delaunay::vertex;
+use full_dimensional_vertices::full_dimensional_vertices;
 use proptest::prelude::*;
+use proptest::test_runner::TestCaseError;
 use std::num::NonZeroUsize;
 
 // =============================================================================
 // TEST CONFIGURATION
 // =============================================================================
-
-/// Strategy for generating finite f64 coordinates
-fn finite_coordinate() -> impl Strategy<Value = f64> {
-    (-100.0..100.0).prop_filter("must be finite", |x: &f64| x.is_finite())
-}
 
 /// Builds non-zero point-count literals for deterministic generator checks.
 const fn nonzero(value: usize) -> NonZeroUsize {
@@ -58,9 +57,9 @@ const fn nonzero(value: usize) -> NonZeroUsize {
 /// # Randomness Strategy
 ///
 /// Uses property-based testing (proptest) with:
-/// - Random point coordinates in [-100, 100]
+/// - A fixed full-dimensional simplex plus random coordinates in [-100, 100]
 /// - Variable number of vertices per dimension
-/// - Filters for finite coordinates
+/// - Coordinate-only duplicate rejection before construction
 /// - Automatic shrinking on failure
 macro_rules! test_euler_properties {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
@@ -70,16 +69,14 @@ macro_rules! test_euler_properties {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_euler_matches_classification_ $dim d>](
-                    vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords).unwrap()),
-                        $min_vertices..$max_vertices
-                    )
+                    vertices in full_dimensional_vertices::<$dim>($min_vertices, $max_vertices - 1)
                 ) {
-                    // Attempt to build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices)
+                    let dt = DelaunayTriangulation::builder(&vertices)
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
-                    {
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D construction failed for admitted vertices {vertices:?}: {error:?}", $dim
+                        )))?;
                         // Validate Euler characteristic
                         let result = dt.euler_check()?;
 
@@ -96,22 +93,20 @@ macro_rules! test_euler_properties {
                             result.counts.count(0),
                             result.counts.count($dim)
                         );
-                    }
                 }
 
                 /// Property: Simplex counts are internally consistent
                 $(#[$attr])*
                 #[test]
                 fn [<prop_simplex_counts_consistent_ $dim d>](
-                    vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords).unwrap()),
-                        $min_vertices..$max_vertices
-                    )
+                    vertices in full_dimensional_vertices::<$dim>($min_vertices, $max_vertices - 1)
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices)
+                    let dt = DelaunayTriangulation::builder(&vertices)
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
-                    {
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D construction failed for admitted vertices {vertices:?}: {error:?}", $dim
+                        )))?;
                         let counts = dt.simplex_counts()?;
 
                         // Basic sanity checks
@@ -136,37 +131,26 @@ macro_rules! test_euler_properties {
                             "{}D: Dimension mismatch in simplex counts",
                             $dim
                         );
-                    }
                 }
 
                 /// Property: Classification and expected χ are consistent
                 $(#[$attr])*
                 #[test]
                 fn [<prop_classification_chi_consistent_ $dim d>](
-                    vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords).unwrap()),
-                        $min_vertices..$max_vertices
-                    )
+                    vertices in full_dimensional_vertices::<$dim>($min_vertices, $max_vertices - 1)
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices)
+                    let dt = DelaunayTriangulation::builder(&vertices)
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
-                    {
-                        let result = dt.euler_check()?;
+                        .map_err(|error| TestCaseError::fail(format!(
+                            "{}D construction failed for admitted vertices {vertices:?}: {error:?}", $dim
+                        )))?;
+                    let result = dt.euler_check()?;
 
-                        // If we have an expected χ, computed χ must match
-                        if let Some(expected_chi) = result.expected {
-                            prop_assert_eq!(
-                                result.chi,
-                                expected_chi,
-                                "{}D: Computed χ={} doesn't match expected χ={} for {:?}",
-                                $dim,
-                                result.chi,
-                                expected_chi,
-                                result.classification
-                            );
-                        }
-                    }
+                    // A full-dimensional convex Euclidean cloud is a ball, so
+                    // this oracle does not depend on production classification.
+                    prop_assert_eq!(result.expected, Some(1), "{}D Euclidean ball classification", $dim);
+                    prop_assert_eq!(result.chi, 1, "{}D Euclidean ball Euler characteristic", $dim);
                 }
             }
         }

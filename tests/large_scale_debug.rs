@@ -83,7 +83,7 @@
 //! DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1 \
 //! # Optional: trace cadenced local-repair seed counts, flips, queues, and elapsed time
 //! DELAUNAY_BATCH_REPAIR_TRACE=1 \
-//! # Hard wall-clock cap in seconds before the harness aborts (0 = no cap; default: 600)
+//! # Wall-clock cap before abort, plus up to 100 ms for diagnostics (0 = no cap; default: 600)
 //! DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=600 \
 //! # Optional: emit periodic batch-construction summaries for new()/Hilbert runs.
 //! # This is the canonical batch progress knob and takes precedence over
@@ -116,7 +116,7 @@ use delaunay::prelude::generators::{
     generate_random_points_in_ball_seeded, generate_random_points_in_range_seeded,
 };
 use delaunay::prelude::geometry::{
-    CoordinateRange, ExactPredicates, Kernel, RobustKernel, safe_usize_to_scalar,
+    CoordinateRange, ExactPredicates, RobustKernel, safe_usize_to_scalar,
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::insertion::InsertionResult;
@@ -134,15 +134,18 @@ use std::env;
 use std::fmt;
 use std::io::{self, Write};
 use std::num::NonZeroUsize;
+use std::panic;
 use std::process;
 use std::sync::{
     Once,
     mpsc::{self, RecvTimeoutError, SyncSender},
 };
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-/// Writes the timeout diagnostic synchronously so it survives the watchdog abort.
+const TIMEOUT_REPORT_GRACE: Duration = Duration::from_millis(100);
+
+/// Writes and flushes the diagnostic on the best-effort reporting thread.
 fn write_timeout_abort_message<W: Write>(mut writer: W, max_secs: u64) -> io::Result<()> {
     writeln!(
         writer,
@@ -151,29 +154,91 @@ fn write_timeout_abort_message<W: Write>(mut writer: W, max_secs: u64) -> io::Re
     writer.flush()
 }
 
-/// Installs a per-test wall-clock cap.
+/// Owns watchdog cancellation and completion, including during test unwinding.
 ///
-/// Spawns a watchdog thread that calls [`process::abort`] if `max_secs` elapses.
-/// Returns a [`SyncSender`] whose **drop** cancels the watchdog: when
-/// the sender is dropped (i.e. the test completes normally), the channel disconnects and
-/// the watchdog thread exits without aborting.  This prevents a stale watchdog installed
-/// for one test from firing during a subsequent test.
-fn install_runtime_cap(max_secs: u64) -> SyncSender<()> {
-    let (tx, rx) = mpsc::sync_channel::<()>(0);
-    thread::spawn(move || {
-        match rx.recv_timeout(Duration::from_secs(max_secs)) {
-            // Sender dropped (test finished) or explicit send — exit cleanly.
-            Ok(()) | Err(RecvTimeoutError::Disconnected) => {}
-            // Deadline exceeded — hard abort.
-            Err(RecvTimeoutError::Timeout) => {
-                if let Err(err) = write_timeout_abort_message(io::stderr().lock(), max_secs) {
-                    tracing::warn!(?err, "failed to flush timeout message before abort");
-                }
-                process::abort();
+/// Cancellation disconnects the channel before joining. If the receiver has
+/// already selected the timeout, its callback completes before the join returns;
+/// an already-started process abort cannot be cancelled.
+#[derive(Debug)]
+#[must_use = "dropping the guard cancels and joins the watchdog"]
+struct RuntimeCap {
+    cancel: Option<SyncSender<()>>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl RuntimeCap {
+    fn spawn(timeout: Duration, on_timeout: impl FnOnce() + Send + 'static) -> Self {
+        let started = Instant::now();
+        let (cancel, receiver) = mpsc::sync_channel::<()>(0);
+        let worker = thread::spawn(move || {
+            // Count scheduling delay against the cap, not just time spent waiting.
+            match receiver.recv_timeout(timeout.saturating_sub(started.elapsed())) {
+                Ok(()) | Err(RecvTimeoutError::Disconnected) => {}
+                Err(RecvTimeoutError::Timeout) => on_timeout(),
             }
+        });
+        Self {
+            cancel: Some(cancel),
+            worker: Some(worker),
         }
-    });
-    tx
+    }
+}
+
+impl Drop for RuntimeCap {
+    fn drop(&mut self) {
+        // Joining before disconnecting would wait until the cap expires.
+        drop(self.cancel.take());
+        if let Some(worker) = self.worker.take()
+            && let Err(payload) = worker.join()
+            && !thread::panicking()
+        {
+            // Preserve an existing test panic instead of double-panicking in Drop.
+            // Otherwise a watchdog panic must fail the owning test, not disappear.
+            panic::resume_unwind(payload);
+        }
+    }
+}
+
+/// Runs reporting on a separate thread, waiting only for the given grace period.
+///
+/// The returned reporter may still be running. The hard-abort path must drop
+/// its handle rather than join it: output, panic hooks, or thread-local cleanup
+/// can block. Tests retain the handle to release and join their fake reporters.
+fn report_with_grace_period(
+    grace: Duration,
+    report: impl FnOnce() + Send + 'static,
+) -> io::Result<JoinHandle<()>> {
+    let started = Instant::now();
+    let (completed, completion) = mpsc::sync_channel(1);
+    let reporter = thread::Builder::new()
+        .name("delaunay-timeout-report".to_string())
+        .spawn(move || {
+            report();
+            // A late reporter must not block waiting for an abandoned receiver.
+            let _ = completed.send(());
+        })?;
+
+    // Count spawn/scheduling delay against the grace period. A reporter panic
+    // disconnects the channel; blocked output or a blocked panic hook times out.
+    let _ = completion.recv_timeout(grace.saturating_sub(started.elapsed()));
+    Ok(reporter)
+}
+
+/// Installs a per-test wall-clock cap whose guard cancels and joins on drop.
+///
+/// An expired cap allows at most 100 ms of waiting for diagnostic output before
+/// aborting. A blocked reporter is deliberately detached until process exit.
+fn install_runtime_cap(max_secs: u64) -> RuntimeCap {
+    RuntimeCap::spawn(Duration::from_secs(max_secs), move || {
+        // Neither a spawn failure nor blocked logging may suppress the abort.
+        // Do not join the reporter or log errors from this watchdog thread.
+        drop(report_with_grace_period(TIMEOUT_REPORT_GRACE, move || {
+            if let Err(err) = write_timeout_abort_message(io::stderr().lock(), max_secs) {
+                tracing::warn!(?err, "failed to flush timeout message before abort");
+            }
+        }));
+        process::abort();
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -1252,15 +1317,15 @@ fn print_insertion_summary<const D: usize>(
 )]
 fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usize) -> DebugOutcome
 where
-    RobustKernel<f64>: ExactPredicates<D> + Kernel<D, Scalar = f64>,
+    RobustKernel<f64>: ExactPredicates<D>,
 {
     init_tracing();
 
     // Install a hard wall-clock cap so the harness doesn't hang indefinitely.
     // Override with DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS (0 = no cap).
     let max_runtime_secs = env_usize("DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS").unwrap_or(600);
-    // Hold the sender for the lifetime of this function; dropping it at return
-    // cancels the watchdog thread so it does not outlive this test.
+    // Hold the guard for the lifetime of this function; dropping it at return
+    // cancels and joins the watchdog so it cannot outlive this test.
     let _watchdog = (max_runtime_secs > 0).then(|| install_runtime_cap(max_runtime_secs as u64));
 
     let base_seed = env_u64("DELAUNAY_LARGE_DEBUG_SEED").unwrap_or(42);
@@ -1738,6 +1803,146 @@ impl Write for FailingWriter {
 }
 
 #[test]
+fn runtime_cap_cancellation_joins_worker() {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let cap = RuntimeCap::spawn(Duration::from_secs(3600), move || {
+        sender
+            .send(())
+            .expect("timeout observer should remain alive");
+    });
+
+    drop(cap);
+
+    // Disconnection proves the worker has dropped its callback before we return.
+    assert_eq!(receiver.try_recv(), Err(mpsc::TryRecvError::Disconnected));
+}
+
+#[test]
+fn runtime_cap_unwinding_cancels_and_joins_worker() {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let result = panic::catch_unwind(move || {
+        let _cap = RuntimeCap::spawn(Duration::from_secs(3600), move || {
+            sender
+                .send(())
+                .expect("timeout observer should remain alive");
+        });
+        panic!("owning test failed");
+    });
+
+    let payload = result.expect_err("the owning test panic must be preserved");
+    assert_eq!(payload.downcast_ref::<&str>(), Some(&"owning test failed"));
+    assert_eq!(receiver.try_recv(), Err(mpsc::TryRecvError::Disconnected));
+}
+
+#[test]
+fn runtime_cap_timeout_completes_before_drop_returns() {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let cap = RuntimeCap::spawn(Duration::ZERO, move || {
+        sender
+            .send(())
+            .expect("timeout observer should remain alive");
+    });
+
+    // Coordinate with the selected timeout rather than racing cancellation.
+    receiver
+        .recv_timeout(Duration::from_secs(60))
+        .expect("expired cap should invoke the timeout callback");
+    drop(cap);
+    assert_eq!(receiver.try_recv(), Err(mpsc::TryRecvError::Disconnected));
+}
+
+#[test]
+fn runtime_cap_worker_panic_reaches_owner() {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let cap = RuntimeCap::spawn(Duration::ZERO, move || {
+        sender
+            .send(())
+            .expect("timeout observer should remain alive");
+        panic!("watchdog failed");
+    });
+
+    receiver
+        .recv_timeout(Duration::from_secs(60))
+        .expect("expired cap should invoke the timeout callback");
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| drop(cap)));
+    let payload = result.expect_err("watchdog panic must fail the owning test");
+    assert_eq!(payload.downcast_ref::<&str>(), Some(&"watchdog failed"));
+}
+
+#[test]
+fn timeout_reporter_completes_diagnostic_before_returning() {
+    let (output, observed) = mpsc::sync_channel(1);
+    let reporter = report_with_grace_period(Duration::from_secs(60), move || {
+        let mut message = Vec::new();
+        write_timeout_abort_message(&mut message, 17).expect("diagnostic should be writable");
+        output.send(message).expect("observer should remain alive");
+    })
+    .expect("reporter should spawn");
+
+    // Observe completion before joining; joining must not hide a missing wait.
+    let message = observed.try_recv();
+    reporter.join().expect("reporter should complete normally");
+    assert_eq!(
+        message.expect("diagnostic should complete within the grace period"),
+        "=== TIMEOUT: wall time exceeded 17 seconds — aborting ===\n".as_bytes()
+    );
+}
+
+#[test]
+fn timeout_reporter_does_not_wait_for_blocked_output() {
+    for grace in [Duration::ZERO, TIMEOUT_REPORT_GRACE] {
+        let (release, blocked) = mpsc::sync_channel::<()>(0);
+        let (started, startup) = mpsc::sync_channel(1);
+        let (finished, completion) = mpsc::sync_channel(1);
+
+        let (startup_result, completion_result, reporter) = thread::scope(|scope| {
+            let controller = scope.spawn(move || {
+                let reporter = report_with_grace_period(grace, move || {
+                    started
+                        .send(())
+                        .expect("startup observer should remain alive");
+                    // Simulate blocked output without holding actual process I/O locks.
+                    let _ = blocked.recv();
+                });
+                finished
+                    .send(())
+                    .expect("completion observer should remain alive");
+                reporter
+            });
+
+            let startup_result = startup.recv_timeout(Duration::from_secs(60));
+            let completion_result = completion.recv_timeout(Duration::from_secs(60));
+            // Always unblock before any assertion or join, including on failure.
+            drop(release);
+            let reporter = controller
+                .join()
+                .expect("controller should complete normally");
+            (startup_result, completion_result, reporter)
+        });
+
+        reporter
+            .expect("reporter should spawn")
+            .join()
+            .expect("released reporter should complete normally");
+        assert_eq!(startup_result, Ok(()));
+        assert_eq!(completion_result, Ok(()));
+    }
+}
+
+#[test]
+fn timeout_reporter_panic_does_not_escape_to_watchdog() {
+    let reporter = report_with_grace_period(TIMEOUT_REPORT_GRACE, || {
+        panic!("reporter failed");
+    })
+    .expect("reporter should spawn despite its callback panic");
+
+    let payload = reporter
+        .join()
+        .expect_err("reporter panic must remain observable");
+    assert_eq!(payload.downcast_ref::<&str>(), Some(&"reporter failed"));
+}
+
+#[test]
 fn test_write_timeout_abort_message_flushes_message() {
     let mut output = Vec::new();
 
@@ -1752,8 +1957,7 @@ fn test_write_timeout_abort_message_flushes_message() {
 
 #[test]
 fn test_write_timeout_abort_message_propagates_error() {
-    // `install_runtime_cap` aborts immediately after this helper returns, so the
-    // caller must be able to observe write or flush failures before aborting.
+    // The reporter can observe write or flush failures during the grace period.
     let cases = [
         (FailingWriterMode::Write, io::ErrorKind::BrokenPipe),
         (FailingWriterMode::Flush, io::ErrorKind::WriteZero),

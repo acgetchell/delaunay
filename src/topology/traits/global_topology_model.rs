@@ -20,6 +20,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::geometry::periodic::wrap_coordinate;
 use crate::topology::{
     spaces::spherical::normalize_unit_sphere_coordinates,
     traits::topological_space::{
@@ -112,6 +113,9 @@ pub trait GlobalTopologyModel<const D: usize> {
     }
 
     /// Canonicalizes coordinates according to topology constraints.
+    ///
+    /// The built-in toroidal model validates all coordinates before modifying
+    /// the array, leaving rejected inputs unchanged.
     ///
     /// # Errors
     ///
@@ -263,13 +267,10 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
         &self,
         coords: &mut [f64; D],
     ) -> Result<(), GlobalTopologyModelError> {
+        validate_finite_coordinates(coords)?;
         for (axis, coord_ref) in coords.iter_mut().enumerate() {
             let period = self.domain.periods()[axis];
-            let coord = *coord_ref;
-            if !coord.is_finite() {
-                return Err(GlobalTopologyModelError::NonFiniteCoordinate { axis, value: coord });
-            }
-            *coord_ref = coord.rem_euclid(period);
+            *coord_ref = wrap_coordinate(*coord_ref, period);
         }
         Ok(())
     }
@@ -1515,6 +1516,36 @@ mod tests {
     // =========================================================================
     // f64 coordinate behavior tests
     // =========================================================================
+
+    fn assert_toroidal_canonicalization_contract<const D: usize>() {
+        let model = toroidal_model::<D>([3.0; D], ToroidalConstructionMode::PeriodicImagePoint);
+        let mut coords = [-f64::EPSILON; D];
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        assert_eq!(coords.map(f64::to_bits), [0.0_f64.to_bits(); D]);
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        assert_eq!(coords.map(f64::to_bits), [0.0_f64.to_bits(); D]);
+
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut coords = [3.5; D];
+            coords[D - 1] = invalid;
+            let before = coords.map(f64::to_bits);
+            let error = model.canonicalize_point_in_place(&mut coords).unwrap_err();
+            assert_matches!(
+                error,
+                GlobalTopologyModelError::NonFiniteCoordinate { axis, value }
+                    if axis == D - 1 && value.to_bits() == invalid.to_bits()
+            );
+            assert_eq!(coords.map(f64::to_bits), before);
+        }
+    }
+
+    #[test]
+    fn toroidal_model_preserves_canonicalization_contract() {
+        assert_toroidal_canonicalization_contract::<2>();
+        assert_toroidal_canonicalization_contract::<3>();
+        assert_toroidal_canonicalization_contract::<4>();
+        assert_toroidal_canonicalization_contract::<5>();
+    }
 
     #[test]
     fn toroidal_model_canonicalizes_f64_coordinates() {

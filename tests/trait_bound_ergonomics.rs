@@ -1,8 +1,7 @@
-//! Compile coverage for read-only APIs with non-`DataType` payloads.
+//! Compile coverage for minimal payload bounds on queries, refinement, and borrowed wrappers.
 
 use std::{assert_matches, hash::Hasher, hint::black_box};
 
-use delaunay::DelaunayTriangulation;
 use delaunay::prelude::Triangulation;
 use delaunay::prelude::algorithms::{LocateError, locate, locate_with_stats};
 use delaunay::prelude::construction::{
@@ -13,15 +12,17 @@ use delaunay::prelude::geometry::{
     radius_ratio, surface_measure,
 };
 use delaunay::prelude::query::{
-    ConvexHull, QueryError, TopologyIndexBuildError, extract_edge_set,
+    ConvexHull, ConvexHullFacetView, QueryError, TopologyIndexBuildError, extract_edge_set,
     extract_facet_identifier_set, extract_vertex_coordinate_set,
 };
 use delaunay::prelude::tds::{
-    FacetView, InvariantError, SimplexKey, Tds, TdsBuilder, VertexKey,
+    AllFacetsIter, BoundaryFacetsIter, FacetToSimplicesIndex, FacetView, InvariantError,
+    OneSidedFacetsIter, SimplexFacetsIter, SimplexKey, Tds, TdsBuilder, VertexKey,
     verify_facet_index_consistency,
 };
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
 use delaunay::prelude::{dedup_vertices_exact, filter_vertices_excluding};
+use delaunay::{DelaunayRefinementBuilder, DelaunayTriangulation};
 use uuid::Uuid;
 
 struct Payload;
@@ -206,6 +207,84 @@ fn quality_metrics_do_not_require_kernel_or_payload_bounds() {
 }
 
 #[test]
+fn strict_delaunay_refinement_accepts_opaque_payloads() {
+    fn refine<const D: usize>(tri: Triangulation<FastKernel<f64>, Payload, OpaquePayload, D>) {
+        let _ = DelaunayRefinementBuilder::new(tri).build();
+    }
+
+    black_box((refine::<2>, refine::<3>, refine::<4>, refine::<5>));
+}
+
+#[test]
+fn local_facet_diagnostics_do_not_require_kernel_or_payload_bounds() {
+    fn query<const D: usize>(tri: &Triangulation<NotAKernel, Payload, OpaquePayload, D>) {
+        let _ = tri.has_local_facet_issues(&[]);
+    }
+
+    black_box((query::<2>, query::<3>, query::<4>, query::<5>));
+}
+
+#[test]
+fn borrowed_wrappers_have_payload_agnostic_clone_and_copy_contracts() {
+    fn assert_clone<T: Clone>() {}
+    fn assert_copy<T: Copy>() {}
+
+    fn assert_contracts<const D: usize>() {
+        assert_clone::<FacetToSimplicesIndex<'_, Payload, OpaquePayload, D>>();
+        assert_clone::<SimplexFacetsIter<'_, Payload, OpaquePayload, D>>();
+        assert_clone::<AllFacetsIter<'_, Payload, OpaquePayload, D>>();
+        assert_clone::<BoundaryFacetsIter<'_, Payload, OpaquePayload, D>>();
+        assert_clone::<OneSidedFacetsIter<'_, Payload, OpaquePayload, D>>();
+        assert_copy::<ConvexHullFacetView<'_, Payload, D>>();
+        assert_copy::<TdsBuilder<'_, Payload, D, OpaquePayload>>();
+    }
+
+    assert_contracts::<2>();
+    assert_contracts::<3>();
+    assert_contracts::<4>();
+    assert_contracts::<5>();
+}
+
+#[test]
+fn facet_iterator_and_index_clones_preserve_borrowed_state() {
+    let vertices = [
+        delaunay::vertex![0.0, 0.0; data = ClonePayload("first".to_owned())].unwrap(),
+        delaunay::vertex![1.0, 0.0; data = ClonePayload("second".to_owned())].unwrap(),
+        delaunay::vertex![0.0, 1.0; data = ClonePayload("third".to_owned())].unwrap(),
+    ];
+    let simplices = [vec![0, 1, 2]];
+    let tds = TdsBuilder::new(&vertices, &simplices)
+        .simplex_data_type::<OpaquePayload>()
+        .build()
+        .unwrap();
+    let simplex_key = tds.simplices().next().unwrap().0;
+    let mut facets = tds.try_simplex_facets(simplex_key).unwrap();
+    let first = facets.next().unwrap().unwrap().key();
+    let cloned = facets.clone();
+    let remaining: Vec<_> = facets.map(|facet| facet.unwrap().key()).collect();
+
+    assert_eq!(remaining.len(), 2);
+    assert!(!remaining.contains(&first));
+    assert_eq!(
+        cloned.map(|facet| facet.unwrap().key()).collect::<Vec<_>>(),
+        remaining
+    );
+
+    let index = tds.build_facet_to_simplices_index().unwrap();
+    let cloned_index = index.clone();
+    assert_eq!(index.len(), 3);
+    assert_eq!(cloned_index.len(), index.len());
+    for incidence in index.iter() {
+        let cloned_incidence = cloned_index.get(&incidence.facet_key()).unwrap();
+        assert_eq!(cloned_incidence.incident_simplex_count(), 1);
+        assert_eq!(
+            cloned_incidence.one_sided_handle(),
+            incidence.one_sided_handle()
+        );
+    }
+}
+
+#[test]
 fn tds_builder_clones_non_datatype_vertex_payloads() {
     let vertices = [
         delaunay::vertex![0.0, 0.0; data = ClonePayload("first".to_owned())].unwrap(),
@@ -214,17 +293,18 @@ fn tds_builder_clones_non_datatype_vertex_payloads() {
     ];
     let simplices = [vec![0, 1, 2]];
 
-    let tds: Tds<ClonePayload, OpaquePayload, 2> = TdsBuilder::new(&vertices, &simplices)
-        .simplex_data_type::<OpaquePayload>()
-        .build()
-        .unwrap();
-    let mut payloads: Vec<_> = tds
-        .vertices()
-        .map(|(_, vertex)| vertex.data().map(|payload| payload.0.as_str()))
-        .collect();
-    payloads.sort_unstable();
+    let builder = TdsBuilder::new(&vertices, &simplices).simplex_data_type::<OpaquePayload>();
 
-    assert_eq!(payloads, [Some("first"), Some("second"), Some("third")]);
+    // Reusing the consuming builder copies only its borrowed inputs, not either payload type.
+    for tds in [builder.build().unwrap(), builder.build().unwrap()] {
+        let mut payloads: Vec<_> = tds
+            .vertices()
+            .map(|(_, vertex)| vertex.data().map(|payload| payload.0.as_str()))
+            .collect();
+        payloads.sort_unstable();
+
+        assert_eq!(payloads, [Some("first"), Some("second"), Some("third")]);
+    }
 }
 
 #[test]
@@ -336,6 +416,7 @@ fn delaunay_query_wrappers_accept_non_datatype_payloads() {
         let _ = dt.topology_kind();
         dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
             .unwrap();
+        let _ = dt.try_set_global_topology(GlobalTopology::Euclidean);
         let _ = dt.facets();
         let _ = dt.edges();
         let _ = dt.incident_edges(VertexKey::default());

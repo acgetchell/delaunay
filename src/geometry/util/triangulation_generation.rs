@@ -925,7 +925,7 @@ where
 /// # Ok(())
 /// # }
 /// ```
-#[must_use]
+#[must_use = "call build to generate and construct the triangulation"]
 pub struct RandomTriangulationBuilder<const D: usize, U = (), V = ()> {
     n_points: RandomPointCount<D>,
     bounds: CoordinateRange<f64>,
@@ -1097,6 +1097,9 @@ impl<const D: usize, U, V> RandomTriangulationBuilder<D, U, V> {
 
     /// Sets the insertion order strategy.
     ///
+    /// This overrides the insertion order in the current construction options.
+    /// A later [`construction_options`](Self::construction_options) call replaces it.
+    ///
     /// # Examples
     ///
     /// ```
@@ -1129,6 +1132,9 @@ impl<const D: usize, U, V> RandomTriangulationBuilder<D, U, V> {
     /// Sets the full construction options.
     ///
     /// This provides access to advanced options like deduplication and retry policies.
+    /// It replaces the entire options value, including any earlier
+    /// [`insertion_order`](Self::insertion_order) override. Set full options first,
+    /// then apply individual overrides.
     ///
     /// # Examples
     ///
@@ -1206,6 +1212,9 @@ impl<const D: usize, U, V> RandomTriangulationBuilder<D, U, V> {
     /// Generated vertices are created with `None` payloads. This is useful when
     /// callers want typed vertex storage up front and plan to fill vertex data
     /// later from a secondary map or from geometry-dependent computation.
+    /// This clears any earlier [`vertex_data`](Self::vertex_data) assignment,
+    /// even when the selected payload type is unchanged. Select the type before
+    /// assigning a shared payload value.
     ///
     /// # Examples
     ///
@@ -1389,6 +1398,64 @@ mod tests {
     /// Builds non-zero point-count literals for random triangulation tests.
     const fn nonzero(value: usize) -> NonZeroUsize {
         NonZeroUsize::new(value).expect("test point count must be non-zero")
+    }
+
+    #[test]
+    fn builder_configuration_survives_payload_stages() {
+        let options =
+            ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
+        let builder = RandomTriangulationBuilder::<2>::try_new(nonzero(3), (-1.0, 1.0))
+            .unwrap()
+            .seed(42)
+            .topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .construction_options(options)
+            .vertex_data(7_u8)
+            .simplex_data_type::<u16>();
+
+        assert_eq!(builder.seed, Some(42));
+        assert_eq!(
+            builder.topology_guarantee,
+            TopologyGuarantee::Pseudomanifold
+        );
+        assert_eq!(builder.construction_options, options);
+        assert_eq!(builder.vertex_data, Some(7));
+        assert_eq!(builder.n_points.get(), 3);
+        assert_eq!(builder.bounds, CoordinateRange::try_new(-1.0, 1.0).unwrap());
+
+        let unassigned = builder.vertex_data_type::<u8>();
+        assert_eq!(unassigned.vertex_data, None);
+        assert_eq!(unassigned.seed, Some(42));
+        assert_eq!(
+            unassigned.topology_guarantee,
+            TopologyGuarantee::Pseudomanifold
+        );
+        assert_eq!(unassigned.construction_options, options);
+        assert_eq!(unassigned.n_points.get(), 3);
+        assert_eq!(
+            unassigned.bounds,
+            CoordinateRange::try_new(-1.0, 1.0).unwrap()
+        );
+    }
+
+    #[test]
+    fn construction_options_and_insertion_order_use_last_setting() {
+        let full_options = RandomTriangulationBuilder::<2>::try_new(nonzero(3), (-1.0, 1.0))
+            .unwrap()
+            .insertion_order(InsertionOrderStrategy::Input)
+            .construction_options(ConstructionOptions::default());
+        assert_eq!(
+            full_options.construction_options.insertion_order(),
+            ConstructionOptions::default().insertion_order()
+        );
+
+        let individual_override = RandomTriangulationBuilder::<2>::try_new(nonzero(3), (-1.0, 1.0))
+            .unwrap()
+            .construction_options(ConstructionOptions::default())
+            .insertion_order(InsertionOrderStrategy::Input);
+        assert_eq!(
+            individual_override.construction_options.insertion_order(),
+            InsertionOrderStrategy::Input
+        );
     }
 
     #[test]

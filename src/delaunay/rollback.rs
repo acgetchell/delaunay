@@ -156,7 +156,7 @@ mod tests {
     use crate::core::collections::spatial_hash_grid::test_support::HashGridIndexSnapshot;
     use crate::core::tds::VertexKey;
     use crate::core::vertex::Vertex;
-    use crate::geometry::kernel::AdaptiveKernel;
+    use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates};
     use crate::vertex;
 
     fn simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
@@ -172,7 +172,7 @@ mod tests {
 
     fn test_triangulation<const D: usize>() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>
     where
-        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+        AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         let vertices = simplex_vertices::<D>();
         DelaunayTriangulation::builder(&vertices).build().unwrap()
@@ -213,7 +213,7 @@ mod tests {
 
     fn assert_restore_policy_drop_restores_auxiliary_state<const D: usize>()
     where
-        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+        AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         let mut triangulation = test_triangulation::<D>();
         let report_domain_before = triangulation.euclidean_report_domain;
@@ -241,8 +241,7 @@ mod tests {
             transaction
                 .delaunay_mut()
                 .tri
-                .topology_construction_provenance =
-                crate::triangulation::validation::TopologyConstructionProvenance::Unproven;
+                .topology_construction_provenance = TopologyConstructionProvenance::Unproven;
         }
 
         assert_eq!(triangulation.number_of_vertices(), vertices_before);
@@ -267,7 +266,7 @@ mod tests {
 
     fn assert_invalidate_policy_drop_drops_spatial_index<const D: usize>()
     where
-        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+        AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         let mut triangulation = test_triangulation::<D>();
         let hint_before = triangulation.simplices().next().map(|(key, _)| key);
@@ -299,7 +298,7 @@ mod tests {
 
     fn assert_commit_keeps_mutations<const D: usize>()
     where
-        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+        AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         let mut triangulation = test_triangulation::<D>();
         let hint_before = triangulation.simplices().next().map(|(key, _)| key);
@@ -332,7 +331,7 @@ mod tests {
 
     fn assert_explicit_rollback_restores_auxiliary_state<const D: usize>()
     where
-        AdaptiveKernel<f64>: crate::geometry::kernel::ExactPredicates<D>,
+        AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         let mut triangulation = test_triangulation::<D>();
         let report_domain_before = triangulation.euclidean_report_domain;

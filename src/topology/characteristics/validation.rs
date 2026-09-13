@@ -199,19 +199,11 @@ pub(crate) fn validate_triangulation_euler_with_evidence<U, V, const D: usize>(
         .map_err(|source| TopologyError::BoundaryClassification {
             source: Box::new(source),
         })?;
-    validate_triangulation_euler_from_validated_facet_map_with_evidence(
-        facet_to_simplices,
-        global_topology,
-        evidence,
-    )
+    validate_euler_from_facets_with_evidence(facet_to_simplices, global_topology, evidence)
 }
 
 /// Computes the Euler check using owner-held construction evidence.
-pub(crate) fn validate_triangulation_euler_from_validated_facet_map_with_evidence<
-    U,
-    V,
-    const D: usize,
->(
+pub(crate) fn validate_euler_from_facets_with_evidence<U, V, const D: usize>(
     facet_to_simplices: ValidatedFacetDegreeMap<'_, U, V, D>,
     global_topology: GlobalTopology<D>,
     evidence: EulerClassificationEvidence,
@@ -272,7 +264,6 @@ pub(crate) fn validate_triangulation_euler_from_validated_facet_map_with_evidenc
 mod tests {
     use super::*;
     use crate::core::tds::TdsBuilder;
-    use crate::topology::characteristics::euler::TopologyClassification;
     use crate::vertex;
 
     #[test]

@@ -4,9 +4,9 @@
 
 /// Memory measurement helper for allocation tracking in examples, tests, and benchmarks.
 ///
-/// This utility function provides a consistent interface for measuring memory allocations
-/// across different parts of the codebase. It returns both the result of the closure
-/// and allocation information when the `count-allocations` feature is enabled.
+/// Available only with the `count-allocations` feature, which installs the allocation-counting
+/// global allocator. Measurements cover the calling thread, not work spawned on other threads.
+/// Enabling this feature adds the API without changing an existing function's return type.
 ///
 /// # Arguments
 ///
@@ -14,15 +14,14 @@
 ///
 /// # Returns
 ///
-/// When `count-allocations` feature is enabled: Returns a tuple `(R, AllocationInfo)`
-/// where `R` is the closure result and `AllocationInfo` contains allocation metrics.
-///
-/// When feature is disabled: Returns a tuple `(R, ())` where the allocation info is empty.
+/// Returns `(R, allocation_counter::AllocationInfo)`, containing the closure result and
+/// allocation metrics. There is no no-op fallback that could be mistaken for a measurement.
 ///
 /// # Panics
 ///
 /// Panics if `f` panics. The internal `expect()` call is used because a
-/// normally returning closure is guaranteed to set the result.
+/// normally returning closure is guaranteed to set the result. The profiler also panics
+/// when its supported nesting limit of 64 measurements is exceeded.
 ///
 /// # Examples
 ///
@@ -34,13 +33,8 @@
 /// });
 /// assert_eq!(result, vec![1, 2, 3, 4, 5]);
 ///
-/// #[cfg(feature = "count-allocations")]
 /// assert!(alloc_info.bytes_total > 0);
-///
-/// #[cfg(not(feature = "count-allocations"))]
-/// let _: () = alloc_info;
 /// ```
-#[cfg(feature = "count-allocations")]
 #[cfg_attr(docsrs, doc(cfg(feature = "count-allocations")))]
 pub fn measure_with_result<F, R>(f: F) -> (R, allocation_counter::AllocationInfo)
 where
@@ -53,33 +47,11 @@ where
     (result.expect("Closure should have set result"), info)
 }
 
-/// Memory measurement helper (no-op version when count-allocations feature is disabled).
-///
-/// See [`measure_with_result`] for full documentation.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::tds::measure_with_result;
-///
-/// let (value, alloc) = measure_with_result(|| 7u64);
-/// assert_eq!(value, 7);
-/// let _ = alloc; // () when feature is disabled
-/// ```
-#[cfg(not(feature = "count-allocations"))]
-pub fn measure_with_result<F, R>(f: F) -> (R, ())
-where
-    F: FnOnce() -> R,
-{
-    (f(), ())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::cell::Cell;
 
-    #[cfg(feature = "count-allocations")]
     fn non_negative(value: i64) -> u64 {
         u64::try_from(value.max(0)).unwrap_or(0)
     }
@@ -132,14 +104,14 @@ mod tests {
 
     #[test]
     fn test_measure_with_result_executes_once() {
-        let calls = AtomicUsize::new(0);
+        let calls = Cell::new(0);
         let (result, _alloc_info) = measure_with_result(|| {
-            calls.fetch_add(1, Ordering::SeqCst);
+            calls.set(calls.get() + 1);
             123
         });
 
         assert_eq!(result, 123);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.get(), 1);
     }
 
     #[test]
@@ -155,7 +127,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(feature = "count-allocations")]
     #[test]
     fn test_measure_with_result_allocation_info_structure() {
         // Test that allocation info has expected structure when feature is enabled
@@ -202,7 +173,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "count-allocations")]
     #[test]
     fn test_measure_with_result_no_allocation_invariants() {
         let (_result, alloc_info) = measure_with_result(|| 7usize);
@@ -226,15 +196,5 @@ mod tests {
             alloc_info.count_max >= count_current,
             "Max allocation count should be >= current allocation count"
         );
-    }
-
-    #[cfg(not(feature = "count-allocations"))]
-    #[test]
-    fn test_measure_with_result_no_allocation_feature() {
-        // Test that when feature is disabled, we get unit type
-        let (_result, alloc_info) = measure_with_result(|| vec![0u8; 1024]);
-
-        // Verify that alloc_info is unit type ()
-        let _: () = alloc_info;
     }
 }

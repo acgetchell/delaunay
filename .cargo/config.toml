@@ -1,5 +1,5 @@
 # Cargo configuration for delaunay project
 # All command aliases have been migrated to justfile for better workflow management
 
-[env]
-CRITERION_OUTPUT_FORMAT = "json, html"
+# Criterion report generation is configured through its Cargo features and
+# benchmark setup, not a CRITERION_OUTPUT_FORMAT environment variable.

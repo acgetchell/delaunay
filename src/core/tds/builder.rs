@@ -85,11 +85,19 @@ impl From<ExplicitSimplexParseError> for TdsBuilderError {
 }
 
 /// Parsed explicit TDS input whose simplex indices are locally well formed.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub(crate) struct ParsedTdsInput<'a, U, const D: usize> {
     vertices: &'a [Vertex<U, D>],
     simplices: &'a [Vec<usize>],
 }
+
+impl<U, const D: usize> Clone for ParsedTdsInput<'_, U, D> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<U, const D: usize> Copy for ParsedTdsInput<'_, U, D> {}
 
 impl<'a, U, const D: usize> ParsedTdsInput<'a, U, D> {
     /// Parses raw vertex-index connectivity exactly once at the input boundary.
@@ -134,7 +142,7 @@ impl<'a, U, const D: usize> ParsedTdsInput<'a, U, D> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 enum TdsBuilderInput<'a, U, const D: usize> {
     Raw {
         vertices: &'a [Vertex<U, D>],
@@ -142,6 +150,14 @@ enum TdsBuilderInput<'a, U, const D: usize> {
     },
     Parsed(ParsedTdsInput<'a, U, D>),
 }
+
+impl<U, const D: usize> Clone for TdsBuilderInput<'_, U, D> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<U, const D: usize> Copy for TdsBuilderInput<'_, U, D> {}
 
 impl<'a, U, const D: usize> TdsBuilderInput<'a, U, D> {
     const fn vertices(&self) -> &'a [Vertex<U, D>] {
@@ -307,11 +323,20 @@ pub enum TdsBuilderError {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
+#[must_use = "call build to construct a Tds"]
 pub struct TdsBuilder<'a, U, const D: usize, V = ()> {
     input: TdsBuilderInput<'a, U, D>,
     _simplex_data: PhantomData<V>,
 }
+
+impl<U, V, const D: usize> Clone for TdsBuilder<'_, U, D, V> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<U, V, const D: usize> Copy for TdsBuilder<'_, U, D, V> {}
 
 impl<'a, U, const D: usize> TdsBuilder<'a, U, D> {
     /// Creates an inert explicit-connectivity construction request.
@@ -337,7 +362,6 @@ impl<'a, U, const D: usize> TdsBuilder<'a, U, D> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn new(vertices: &'a [Vertex<U, D>], simplices: &'a [Vec<usize>]) -> Self {
         Self {
             input: TdsBuilderInput::Raw {
@@ -402,7 +426,6 @@ impl<'a, U, V, const D: usize> TdsBuilder<'a, U, D, V> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn simplex_data_type<W>(self) -> TdsBuilder<'a, U, D, W> {
         TdsBuilder {
             input: self.input,

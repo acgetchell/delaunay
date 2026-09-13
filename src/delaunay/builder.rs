@@ -991,6 +991,7 @@ impl From<ExplicitSimplexParseError> for ExplicitConstructionError {
 /// # Ok(())
 /// # }
 /// ```
+#[must_use = "call a build method to construct a triangulation"]
 pub struct DelaunayTriangulationBuilder<'v, U, const D: usize, V = ()> {
     vertices: &'v [Vertex<U, D>],
     /// Topology mode for construction.
@@ -1078,7 +1079,6 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub fn new(vertices: &'v [Vertex<U, D>]) -> Self {
         Self {
             vertices,
@@ -1194,7 +1194,6 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn simplex_data_type<W>(self) -> DelaunayTriangulationBuilder<'v, U, D, W> {
         let Self {
             vertices,
@@ -1310,7 +1309,6 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn toroidal(mut self, domain: ToroidalDomain<D>) -> Self {
         self.topology = BuilderTopology::PeriodicImagePoint(domain);
         self
@@ -1344,7 +1342,6 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn topology_guarantee(mut self, topology_guarantee: TopologyGuarantee) -> Self {
         self.topology_guarantee = topology_guarantee;
         self
@@ -1373,7 +1370,6 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn validation_policy(mut self, validation_policy: ValidationPolicy) -> Self {
         self.requested_validation_policy = Some(validation_policy);
         self
@@ -1429,7 +1425,6 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn global_topology(mut self, global_topology: GlobalTopology<D>) -> Self {
         self.requested_global_topology = Some(global_topology);
         self
@@ -1473,7 +1468,6 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn construction_options(mut self, construction_options: ConstructionOptions) -> Self {
         self.construction_options = construction_options;
         self
@@ -2936,10 +2930,9 @@ where
                         source: Box::new(source),
                     }
                 })?;
-            // The lifted image triangulation is an internal Levels 1–4 workspace,
-            // not a publishable Euclidean owner. Successful flip repair above is
-            // sufficient for selecting periodic quotient representatives; the
-            // quotient receives its own topology-aware Level 5 certification.
+            // The repaired image cover supplies quotient candidates, not a
+            // certificate for the periodic owner. The quotient still receives
+            // its own topology-aware Level 5 certification below.
             Ok(full_triangulation)
         })();
         let full_dt = match relaxed_full_dt {
@@ -2948,12 +2941,23 @@ where
                 source:
                     DelaunayConstructionFailure::DelaunayRepair { .. }
                     | DelaunayConstructionFailure::FinalDelaunayValidation { .. },
-            }) => DelaunayTriangulation::build_triangulation_with_kernel_options(
-                &image_kernel,
-                &expanded,
-                TopologyGuarantee::PLManifold,
-                expanded_options,
-            )?,
+            }) => {
+                // Central-first insertion can leave non-flippable local
+                // violations in the finite 3D cover. Retry with spatial
+                // ordering, still enforcing Delaunay repair and certification.
+                // Canonical-vertex coverage is checked below on either path.
+                let retry_options = if D == 3 {
+                    expanded_options.with_insertion_order(InsertionOrderStrategy::default())
+                } else {
+                    expanded_options
+                };
+                DelaunayTriangulation::build_triangulation_with_kernel_options(
+                    &image_kernel,
+                    &expanded,
+                    TopologyGuarantee::PLManifold,
+                    retry_options,
+                )?
+            }
             Err(error) => return Err(error),
         };
 

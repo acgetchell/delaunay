@@ -2,7 +2,25 @@
 
 #![forbid(unsafe_code)]
 
-use std::{path::PathBuf, process::Command};
+#[cfg(unix)]
+use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+/// Preserve native checkout paths when preparing the isolated Cargo consumer.
+fn downstream_command(repository: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO"));
+    command
+        .args(["run", "--quiet", "--offline", "--locked", "--manifest-path"])
+        .arg(repository.join("tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml"))
+        .env(
+            "CARGO_TARGET_DIR",
+            repository.join("target/checkpoint-no-float-roundtrip"),
+        );
+    command
+}
 
 #[test]
 fn downstream_json_without_float_roundtrip_preserves_checkpoint_bits() {
@@ -16,17 +34,7 @@ fn downstream_json_without_float_roundtrip_preserves_checkpoint_bits() {
         );
         return;
     }
-    let target = repository.join("target/checkpoint-no-float-roundtrip");
-    let output = Command::new(env!("CARGO"))
-        .args([
-            "run",
-            "--quiet",
-            "--offline",
-            "--locked",
-            "--manifest-path",
-            manifest.to_str().expect("fixture path should be UTF-8"),
-        ])
-        .env("CARGO_TARGET_DIR", target)
+    let output = downstream_command(&repository)
         .output()
         .expect("isolated downstream fixture should run");
     assert!(
@@ -34,4 +42,13 @@ fn downstream_json_without_float_roundtrip_preserves_checkpoint_bits() {
         "fixture failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn downstream_command_preserves_non_utf8_checkout_paths() {
+    let repository = PathBuf::from(OsString::from_vec(b"checkout with spaces-\xff".to_vec()));
+    let command = downstream_command(&repository);
+    let manifest = repository.join("tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml");
+    assert_eq!(command.get_args().last(), Some(manifest.as_os_str()));
 }

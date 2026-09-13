@@ -96,10 +96,7 @@ fn degenerate_orientation_points<const D: usize>() -> Vec<Point<D>> {
         points.push(finite_point(coordinates));
     }
     let mut barycenter = [0.0; D];
-    barycenter
-        .iter_mut()
-        .take(D.saturating_sub(1))
-        .for_each(|coordinate| *coordinate = 0.5);
+    barycenter[..D.saturating_sub(1)].fill(0.5);
     points.push(finite_point(barycenter));
     points
 }

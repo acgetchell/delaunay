@@ -132,6 +132,8 @@ static DUPLICATE_DETECTION_METRICS: OnceLock<DuplicateDetectionMetricsState> = O
 static DUPLICATE_DETECTION_ENABLED: OnceLock<bool> = OnceLock::new();
 static RETRYABLE_SKIP_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
 static CAVITY_REDUCTION_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
+// Relaxed swap elects one tracing caller; it publishes no data and does not
+// signal completion. Which caller wins is intentionally scheduling-dependent.
 static CAVITY_REDUCTION_TRACE_EMITTED: AtomicBool = AtomicBool::new(false);
 
 fn duplicate_detection_metrics_enabled() -> bool {
@@ -656,7 +658,7 @@ where
     ///
     /// Higher proof owners use this entry point to keep insertion, perturbation
     /// retries, repair, and postcondition checks inside one owner-level snapshot.
-    pub(crate) fn insert_prepared_with_statistics_seeded_indexed_detailed_in_rollback_window<W>(
+    pub(crate) fn insert_prepared_detailed_in_rollback_window<W>(
         transaction: &mut W,
         prepared: PreparedInsertion<U, D>,
         conflict_simplices: Option<&SimplexKeyBuffer>,

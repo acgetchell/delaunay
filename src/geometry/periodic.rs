@@ -178,6 +178,18 @@ impl<const D: usize> TryFrom<[f64; D]> for ToroidalDomain<D> {
     }
 }
 
+/// Wraps a coordinate into `[0, period)` for a validated finite positive period.
+///
+/// `rem_euclid` can round a tiny negative remainder up to `period`. That endpoint
+/// represents the same periodic position as zero, but is outside the canonical
+/// half-open chart. Non-finite inputs retain the arithmetic's NaN result;
+/// fallible callers must reject them before modifying caller-owned coordinates.
+#[inline]
+pub(crate) fn wrap_coordinate(value: f64, period: f64) -> f64 {
+    let wrapped = value.rem_euclid(period);
+    if wrapped >= period { 0.0 } else { wrapped }
+}
+
 #[cfg(test)]
 mod tests {
     use std::assert_matches;

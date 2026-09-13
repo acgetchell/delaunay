@@ -619,10 +619,9 @@ mod tests {
         let cache = tds
             .build_facet_to_simplices_map()
             .expect("Should build facet map in test");
-        let mut keys_found = 0;
         let mut keys_tested = 0;
 
-        for simplex in tds.simplices().map(|(_, simplex)| simplex) {
+        for (simplex_key, simplex) in tds.simplices() {
             let simplex_vertex_keys = simplex.vertices();
             for skip_vertex_idx in 0..simplex_vertex_keys.len() {
                 let facet_vertex_keys: Vec<_> = simplex_vertex_keys
@@ -632,20 +631,31 @@ mod tests {
                     .map(|(_, &vk)| vk)
                     .collect();
 
-                if !facet_vertex_keys.is_empty() {
-                    let key_result = checked_facet_key_from_vertex_keys::<3>(&facet_vertex_keys);
-                    if let Ok(derived_key) = key_result {
-                        keys_tested += 1;
-                        if cache.contains_key(&derived_key) {
-                            keys_found += 1;
-                        }
-                    }
-                }
+                let derived_key = checked_facet_key_from_vertex_keys::<3>(&facet_vertex_keys)
+                    .expect("every tetrahedron facet must have a canonical key");
+                let incidents = cache
+                    .get(&derived_key)
+                    .expect("every derived facet key must occur in the TDS cache");
+                assert_eq!(
+                    incidents.len(),
+                    1,
+                    "single tetrahedron facets are boundary facets"
+                );
+                assert_eq!(incidents[0].simplex_key(), simplex_key);
+                assert_eq!(usize::from(incidents[0].facet_index()), skip_vertex_idx);
+                keys_tested += 1;
             }
         }
 
-        tracing::debug!("    Found {keys_found}/{keys_tested} derived keys in TDS cache");
-        assert!(keys_tested > 0, "Should have tested some keys");
+        assert_eq!(
+            keys_tested, 4,
+            "all four tetrahedron facets must be checked"
+        );
+        assert_eq!(
+            cache.len(),
+            4,
+            "the cache must contain exactly those facets"
+        );
         tracing::debug!("  ✓ All facet key derivation tests passed");
     }
 

@@ -49,8 +49,7 @@ use crate::tds::{
     TdsMutationError, Vertex,
 };
 use crate::topology::characteristics::validation::{
-    EulerClassificationEvidence,
-    validate_triangulation_euler_from_validated_facet_map_with_evidence,
+    EulerClassificationEvidence, validate_euler_from_facets_with_evidence,
 };
 use crate::topology::manifold::{
     HighDimensionalLinkEvidence, ManifoldError, ValidatedFacetDegreeMap,
@@ -784,7 +783,7 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
         )
         .map_err(intrinsic_manifold_error)?;
 
-        let topology_result = validate_triangulation_euler_from_validated_facet_map_with_evidence(
+        let topology_result = validate_euler_from_facets_with_evidence(
             facet_to_simplices,
             GlobalTopology::Spherical,
             self.construction_provenance.euler_evidence(),
@@ -1067,6 +1066,7 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
 /// # Ok::<(), delaunay::prelude::construction::SphericalDelaunayConstructionError>(())
 /// ```
 #[derive(Clone, Debug)]
+#[must_use = "call build to construct a spherical triangulation"]
 pub struct SphericalDelaunayBuilder<const D: usize> {
     points: Vec<SphericalPoint<D>>,
     radius: f64,
@@ -1245,7 +1245,6 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
     /// assert_eq!(triangulation.number_of_simplices(), 4);
     /// # Ok::<(), SphericalDelaunayConstructionError>(())
     /// ```
-    #[must_use]
     pub const fn construction_options(mut self, options: ConstructionOptions) -> Self {
         self.construction_options = options;
         self

@@ -1150,29 +1150,17 @@ fn bench_bottlenecks(c: &mut Criterion) {
                         let points =
                             gen_points::<3>(count, PointDistribution::Random, DEFAULT_SEED);
                         let vertices = benchmark_vertices_from_generated_points(&points);
-                        DelaunayTriangulationBuilder::new(&vertices).build().ok()
+                        DelaunayTriangulationBuilder::new(&vertices)
+                            .build()
+                            .or_abort()
                     },
                     |dt| {
-                        if let Some(dt) = dt {
-                            let boundary_facet_count = match dt.boundary_facets() {
-                                Ok(mut value) => match value
-                                    .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
-                                {
-                                    Ok(count) => count,
-                                    Err(error) => {
-                                        abort_benchmark(format_args!(
-                                            "boundary_facets failed: {error}"
-                                        ));
-                                    }
-                                },
-                                Err(error) => {
-                                    abort_benchmark(format_args!(
-                                        "boundary_facets failed: {error}"
-                                    ));
-                                }
-                            };
-                            black_box(boundary_facet_count);
-                        }
+                        let boundary_facet_count = dt
+                            .boundary_facets()
+                            .or_abort()
+                            .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                            .or_abort();
+                        black_box(boundary_facet_count);
                     },
                     BatchSize::LargeInput,
                 );
@@ -1189,19 +1177,14 @@ fn bench_bottlenecks(c: &mut Criterion) {
                         let points =
                             gen_points::<3>(count, PointDistribution::Random, DEFAULT_SEED);
                         let vertices = benchmark_vertices_from_generated_points(&points);
-                        DelaunayTriangulationBuilder::new(&vertices).build().ok()
+                        DelaunayTriangulationBuilder::new(&vertices)
+                            .build()
+                            .or_abort()
                     },
                     |dt| {
-                        if let Some(dt) = dt {
-                            let hull =
-                                match ConvexHull::try_from_triangulation(dt.as_triangulation()) {
-                                    Ok(value) => value,
-                                    Err(error) => abort_benchmark(format_args!(
-                                        "convex hull extraction failed: {error}"
-                                    )),
-                                };
-                            let _ = black_box(hull);
-                        }
+                        let hull =
+                            ConvexHull::try_from_triangulation(dt.as_triangulation()).or_abort();
+                        let _ = black_box(hull);
                     },
                     BatchSize::LargeInput,
                 );

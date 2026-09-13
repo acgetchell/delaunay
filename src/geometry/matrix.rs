@@ -327,15 +327,12 @@ mod tests {
     }
 
     #[test]
-    fn stack_matrix_dispatch_error_clones_la_error_source() {
+    fn stack_matrix_dispatch_error_clones_and_displays_la_error_source() {
         let source = LaError::singular_exact(3);
         let error = StackMatrixDispatchError::La { source };
 
         assert_eq!(error.clone(), error);
-        assert_eq!(
-            error.to_string(),
-            StackMatrixDispatchError::La { source }.to_string()
-        );
+        assert_eq!(error.to_string(), source.to_string());
     }
 
     #[test]

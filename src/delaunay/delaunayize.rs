@@ -80,7 +80,7 @@ use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::delaunay_model::DelaunayTriangulation;
 use crate::draft::DelaunayTriangulationDraft;
-use crate::geometry::kernel::ExactPredicates;
+use crate::geometry::kernel::{ExactPredicates, Kernel};
 use crate::refinement::RefinementError;
 use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
 use crate::triangulation::Triangulation;
@@ -163,6 +163,7 @@ pub struct FlipRepairDelaunayRefinement {
 /// }
 /// ```
 #[derive(Clone, Debug)]
+#[must_use = "call build to perform the selected refinement"]
 pub struct DelaunayRefinementBuilder<K, U, V, const D: usize, M = StrictDelaunayRefinement> {
     triangulation: Triangulation<K, U, V, D>,
     mode: M,
@@ -188,7 +189,6 @@ impl<K, U, V, const D: usize> DelaunayRefinementBuilder<K, U, V, D, StrictDelaun
     ///     DelaunayRefinementBuilder::new(triangulation).build()
     /// }
     /// ```
-    #[must_use]
     pub const fn new(triangulation: Triangulation<K, U, V, D>) -> Self {
         Self {
             triangulation,
@@ -197,7 +197,6 @@ impl<K, U, V, const D: usize> DelaunayRefinementBuilder<K, U, V, D, StrictDelaun
     }
 
     /// Selects bounded bistellar-flip repair before Level 5 certification.
-    #[must_use]
     pub fn repair_by_flips(
         self,
     ) -> DelaunayRefinementBuilder<K, U, V, D, FlipRepairDelaunayRefinement> {
@@ -212,9 +211,7 @@ impl<K, U, V, const D: usize> DelaunayRefinementBuilder<K, U, V, D, StrictDelaun
 
 impl<K, U, V, const D: usize> DelaunayRefinementBuilder<K, U, V, D, StrictDelaunayRefinement>
 where
-    K: crate::geometry::kernel::Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
+    K: Kernel<D, Scalar = f64>,
 {
     /// Certifies Level 5 without changing the triangulation.
     ///
@@ -276,21 +273,18 @@ where
 
 impl<K, U, V, const D: usize> DelaunayRefinementBuilder<K, U, V, D, FlipRepairDelaunayRefinement> {
     /// Enables or disables fallback reconstruction after failed flip repair.
-    #[must_use]
     pub const fn fallback_rebuild(mut self, fallback_rebuild: bool) -> Self {
         self.mode.config.fallback_rebuild = fallback_rebuild;
         self
     }
 
     /// Sets the per-attempt bistellar-flip budget cap.
-    #[must_use]
     pub const fn max_flips(mut self, max_flips: usize) -> Self {
         self.mode.config.delaunay_max_flips = Some(max_flips);
         self
     }
 
     /// Clears the explicit flip cap and restores the dimension-dependent bound.
-    #[must_use]
     pub const fn default_flip_budget(mut self) -> Self {
         self.mode.config.delaunay_max_flips = None;
         self
@@ -1371,14 +1365,14 @@ mod tests {
     #[test]
     fn test_simplex_vertex_uuids_missing_vertex() {
         let mut tds: Tds<(), i32, 2> = Tds::empty();
-        let vertex_keys: Vec<_> = [
+        let mut vertex_keys = Vec::with_capacity(3);
+        for vertex in [
             vertex!([0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
-        ]
-        .iter()
-        .map(|vertex| tds.insert_vertex_with_mapping(*vertex).unwrap())
-        .collect();
+        ] {
+            vertex_keys.push(tds.insert_vertex_with_mapping(vertex).unwrap());
+        }
         let missing = vertex_keys[0];
         let simplex = Simplex::try_new_with_data(vertex_keys, Some(7)).unwrap();
         tds.remove_isolated_vertex(missing).unwrap();
@@ -1656,10 +1650,10 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut tds: Tds<(), i32, 2> = Tds::empty();
-        let vertex_keys: Vec<_> = vertices
-            .iter()
-            .map(|vertex| tds.insert_vertex_with_mapping(*vertex).unwrap())
-            .collect();
+        let mut vertex_keys = Vec::with_capacity(vertices.len());
+        for vertex in vertices {
+            vertex_keys.push(tds.insert_vertex_with_mapping(vertex).unwrap());
+        }
 
         let duplicate_a = Simplex::try_new_with_data(vertex_keys.clone(), Some(42)).unwrap();
         let duplicate_b = Simplex::try_new_with_data(vertex_keys, Some(42)).unwrap();

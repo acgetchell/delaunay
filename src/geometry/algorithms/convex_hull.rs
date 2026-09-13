@@ -244,12 +244,20 @@ struct ConvexHullDraft<U, const D: usize> {
 }
 
 /// A borrowed facet view over a self-contained [`ConvexHull`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct ConvexHullFacetView<'hull, U, const D: usize> {
     index: usize,
     facet: &'hull StoredConvexHullFacet<D>,
     vertices: &'hull [ConvexHullVertex<U, D>],
 }
+
+impl<U, const D: usize> Clone for ConvexHullFacetView<'_, U, D> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<U, const D: usize> Copy for ConvexHullFacetView<'_, U, D> {}
 
 impl<'hull, U, const D: usize> ConvexHullFacetView<'hull, U, D> {
     /// Returns this facet's zero-based index in the hull.
@@ -739,13 +747,6 @@ fn distance<const D: usize>(left: &[f64; D], right: &[f64; D]) -> Result<f64, La
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        assert_matches,
-        sync::{Arc, Barrier},
-    };
-
-    use approx::assert_relative_eq;
-
     use super::*;
     use crate::builder::DelaunayTriangulationBuilder;
     use crate::core::tds::TdsBuilder;
@@ -753,6 +754,8 @@ mod tests {
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::triangulation::builder::TriangulationBuilder;
     use crate::vertex;
+    use approx::assert_relative_eq;
+    use std::{assert_matches, sync::Barrier, thread};
 
     macro_rules! simplex_hull_test {
         ($name:ident, $dimension:literal) => {
@@ -787,8 +790,7 @@ mod tests {
     simplex_hull_test!(simplex_hull_4d, 4);
     simplex_hull_test!(simplex_hull_5d, 5);
 
-    fn tetrahedron()
-    -> DelaunayTriangulation<crate::geometry::kernel::AdaptiveKernel<f64>, (), (), 3> {
+    fn tetrahedron() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> {
         let vertices: [Vertex<(), 3>; 4] = [
             vertex![0.0, 0.0, 0.0].unwrap(),
             vertex![1.0, 0.0, 0.0].unwrap(),
@@ -903,39 +905,26 @@ mod tests {
     fn self_contained_queries_are_synchronized_by_immutable_borrows() {
         const WORKERS: usize = 4;
         let dt = tetrahedron();
-        let hull = Arc::new(ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap());
+        let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
         drop(dt);
-        let start = Arc::new(Barrier::new(WORKERS));
+        let start = Barrier::new(WORKERS);
 
-        #[expect(
-            clippy::needless_collect,
-            reason = "all barrier participants must be spawned before any handle is joined"
-        )]
-        let handles: Vec<_> = (0..WORKERS)
-            .map(|worker| {
-                let hull = Arc::clone(&hull);
-                let start = Arc::clone(&start);
-                std::thread::spawn(move || {
+        // Sharing immutable stack borrows requires neither Arc nor 'static.
+        // The scope joins every worker and propagates panics automatically.
+        thread::scope(|scope| {
+            for worker in 0..WORKERS {
+                let hull = &hull;
+                let start = &start;
+                scope.spawn(move || {
                     start.wait();
                     let coordinate = 2.0 + safe_usize_to_scalar(worker).unwrap();
                     let point = Point::try_new([coordinate, 2.0, 2.0]).unwrap();
-                    hull.is_point_outside(&point).unwrap()
-                })
-            })
-            .collect();
-
-        let results: Vec<_> = handles
-            .into_iter()
-            .enumerate()
-            .map(|(worker, handle)| (worker, handle.join()))
-            .collect();
-
-        for (worker, result) in results {
-            let is_outside = result.unwrap_or_else(|payload| std::panic::resume_unwind(payload));
-            assert!(
-                is_outside,
-                "worker {worker} should classify its point as outside"
-            );
-        }
+                    assert!(
+                        hull.is_point_outside(&point).unwrap(),
+                        "worker {worker} should classify its point as outside"
+                    );
+                });
+            }
+        });
     }
 }

@@ -5,6 +5,7 @@
 //! feature flags, or profile isolation.
 
 use delaunay::flips::{BistellarFlips, FlipError, SimplexKey};
+use delaunay::geometry::kernel::{AdaptiveKernel, ExactPredicates};
 use delaunay::prelude::construction::{
     ConstructionOptions, ConstructionStatistics, DelaunayIncrementalBuilder, DelaunayTriangulation,
     DelaunayTriangulationBuilder, InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex,
@@ -20,6 +21,7 @@ use delaunay::prelude::ordering::{
     hilbert_quantize_in_range,
 };
 use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
+use delaunay::prelude::query::{ConvexHull, extract_hull_facet_set};
 use delaunay::prelude::repair::DelaunayRepairError;
 use delaunay::prelude::tds::{InvariantError, Tds, TdsBuilder};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind};
@@ -33,6 +35,177 @@ use delaunay::prelude::validation::{
 };
 use delaunay::vertex;
 use uuid::Uuid;
+
+fn assert_coplanar_hull_extension_and_snapshot_independence<const D: usize>()
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
+    let mut vertices = vec![vertex!([0.0; D]).unwrap()];
+    for axis in 0..D {
+        let mut coords = [0.0; D];
+        coords[axis] = 100.0;
+        vertices.push(vertex!(coords).unwrap());
+    }
+    // Exact coordinates from the minimized Ubuntu PR #611 failure.
+    let mut exterior = [0.0; D];
+    exterior[D - 1] = -20.016_852_110_193_707;
+    vertices.push(vertex!(exterior).unwrap());
+    let mut on_edge = [0.0; D];
+    on_edge[D - 1] = 42.623_854_432_556_19;
+    let inserted_vertex = vertex!(on_edge).unwrap();
+
+    // The default bulk path must retain the CI vertex identities. Its documented
+    // perturbation retries may change coordinates and the exact simplex count.
+    let bulk = DelaunayTriangulationBuilder::new(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
+        .expect("the minimized CI input must construct through the default bulk path");
+    bulk.validate()
+        .expect("bulk construction must preserve Levels 1-5");
+    assert_eq!(bulk.number_of_vertices(), D + 2);
+    for input in &vertices {
+        assert!(
+            bulk.vertices()
+                .any(|(_, vertex)| vertex.uuid() == input.uuid()),
+            "bulk construction must retain vertex {}",
+            input.uuid()
+        );
+    }
+
+    for negative_axis_first in [false, true] {
+        // Publish an explicit basis simplex so bulk seed selection and its
+        // perturbation retries cannot change the geometric insertion oracle.
+        let mut ordered_vertices = vertices.clone();
+        if negative_axis_first {
+            ordered_vertices.swap(D, D + 1);
+        }
+        let simplices = [(0..=D).collect::<Vec<_>>()];
+        let tds = TdsBuilder::new(&ordered_vertices[..=D], &simplices)
+            .build()
+            .unwrap();
+        let tri = TriangulationBuilder::new(tds, AdaptiveKernel::<f64>::new())
+            .canonicalizing()
+            .build()
+            .unwrap();
+        let mut dt = DelaunayRefinementBuilder::new(tri).build().unwrap();
+        dt.insert_vertex(ordered_vertices[D + 1])
+            .expect("coplanar horizon facets must not create flat simplices");
+        dt.validate()
+            .expect("construction must preserve Levels 1-5");
+        assert_eq!(dt.number_of_vertices(), D + 2);
+        for input in &vertices {
+            let (_, actual) = dt
+                .vertices()
+                .find(|(_, vertex)| vertex.uuid() == input.uuid())
+                .expect("construction must retain every vertex identity");
+            assert_eq!(
+                actual.point().coords().map(f64::to_bits),
+                input.point().coords().map(f64::to_bits),
+                "construction changed coordinates from {:?} to {:?}",
+                input.point().coords(),
+                actual.point().coords()
+            );
+        }
+        // Joining the off-axis basis to the two consecutive axis segments
+        // gives exactly two full-dimensional simplices, independently of SoS.
+        assert_eq!(dt.number_of_simplices(), 2);
+
+        let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
+        let original_facets = extract_hull_facet_set(&hull);
+        assert_eq!(hull.number_of_facets(), 2 * D);
+
+        // Boundary-edge insertion may use the documented perturbation retries.
+        // Its contract here is valid publication and independence of the old hull.
+        let inserted_key = dt
+            .insert_vertex(inserted_vertex)
+            .expect("boundary-edge insertion must preserve the published owner");
+        dt.validate()
+            .expect("edge insertion must preserve Levels 1-5");
+        assert_eq!(dt.number_of_vertices(), D + 3);
+        assert_eq!(extract_hull_facet_set(&hull), original_facets);
+        let updated_hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
+        assert!(updated_hull.number_of_facets() > D);
+        let (_, inserted) = dt
+            .vertices()
+            .find(|(key, _)| *key == inserted_key)
+            .expect("successful insertion must return a live vertex key");
+        assert_eq!(inserted.uuid(), inserted_vertex.uuid());
+
+        // Retrying the new point must not perturb or drop any existing vertex.
+        let mut expected: Vec<_> = vertices
+            .iter()
+            .map(|vertex| (vertex.uuid(), vertex.point().coords().map(f64::to_bits)))
+            .collect();
+        let mut actual: Vec<_> = dt
+            .vertices()
+            .filter(|(key, _)| *key != inserted_key)
+            .map(|(_, vertex)| (vertex.uuid(), vertex.point().coords().map(f64::to_bits)))
+            .collect();
+        expected.sort_unstable();
+        actual.sort_unstable();
+        assert_eq!(actual, expected);
+    }
+}
+
+macro_rules! coplanar_hull_regression_tests {
+    ($dim:literal) => {
+        pastey::paste! {
+            #[test]
+            fn [<regression_coplanar_hull_extension_and_snapshot_independence_ $dim d>]() {
+                assert_coplanar_hull_extension_and_snapshot_independence::<$dim>();
+            }
+        }
+    };
+}
+
+coplanar_hull_regression_tests!(2);
+coplanar_hull_regression_tests!(3);
+coplanar_hull_regression_tests!(4);
+coplanar_hull_regression_tests!(5);
+
+#[test]
+fn regression_max_volume_seed_fallback_preserves_hull_snapshot_4d() {
+    // Minimized Codecov input: the cloud spans 4D, but its spatially sorted
+    // prefix need not. A failed max-volume insertion order needs another seed.
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([100.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 100.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 100.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 100.0]).unwrap(),
+        vertex!([0.0, 31.016_630_588_498_18, 0.0, -61.231_812_741_336_89]).unwrap(),
+        vertex!([
+            19.063_652_850_997_748,
+            23.974_022_946_552_093,
+            0.0,
+            -30.579_128_251_134_133
+        ])
+        .unwrap(),
+    ];
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .build()
+        .expect("the full-dimensional CI input must construct");
+    dt.validate()
+        .expect("construction must preserve Levels 1-5");
+    assert_eq!(dt.number_of_vertices(), vertices.len());
+    for input in &vertices {
+        assert!(
+            dt.vertices()
+                .any(|(_, vertex)| vertex.uuid() == input.uuid())
+        );
+    }
+
+    let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
+    let original_facets = extract_hull_facet_set(&hull);
+    dt.insert_vertex(vertex!([0.0, 0.0, 0.0, -89.499_405_743_184]).unwrap())
+        .expect("the CI follow-on insertion must succeed");
+    dt.validate().expect("insertion must preserve Levels 1-5");
+    assert_eq!(dt.number_of_vertices(), vertices.len() + 1);
+    assert_eq!(extract_hull_facet_set(&hull), original_facets);
+    let updated_hull = ConvexHull::try_from_triangulation(dt.as_triangulation())
+        .expect("the updated triangulation must also have a valid hull");
+    assert!(updated_hull.number_of_facets() >= 5);
+}
 
 #[test]
 fn regression_exact_insphere_methods_agree_on_clean_2d_boundary_and_interior() {

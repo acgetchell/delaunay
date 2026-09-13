@@ -17,9 +17,10 @@ use delaunay::flips::BistellarFlips;
 use delaunay::prelude::construction::{
     DelaunayTriangulation, TopologyGuarantee, Triangulation, Vertex,
 };
-use delaunay::prelude::geometry::{AdaptiveKernel, FastKernel, Kernel, Point, RobustKernel};
-use delaunay::try_vertices_from_points;
-use delaunay::vertex;
+use delaunay::prelude::geometry::{
+    AdaptiveKernel, ExactPredicates, FastKernel, Kernel, Point, RobustKernel,
+};
+use delaunay::{try_vertices_from_points, vertex};
 use proptest::prelude::*;
 use std::collections::{BTreeSet, HashMap};
 
@@ -253,8 +254,7 @@ fn check_k1_roundtrip<const D: usize>(
     edge_lengths: [f64; D],
 ) -> Result<(), TestCaseError>
 where
-    delaunay::prelude::geometry::AdaptiveKernel<f64>:
-        delaunay::prelude::geometry::ExactPredicates<D>,
+    AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     let vertices = axis_aligned_simplex_vertices::<D>(origin, edge_lengths);
     let simplex = DelaunayTriangulation::builder(&vertices)

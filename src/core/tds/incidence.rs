@@ -406,6 +406,41 @@ mod tests {
     }
 
     #[test]
+    fn insert_simplex_rejection_at_later_duplicate_restores_full_index_and_allows_retry() {
+        let mut index = VertexIncidenceIndex::default();
+        let first = vertex_key(1);
+        let second = vertex_key(2);
+        let isolated = vertex_key(3);
+        let existing = simplex_key(1);
+        let candidate = simplex_key(2);
+        for vertex in [first, second, isolated] {
+            index.insert_vertex(vertex).unwrap();
+        }
+        index.insert_simplex(existing, &[first, second]).unwrap();
+        index.insert_simplex(candidate, &[second]).unwrap();
+        let before = index.as_map().clone();
+
+        let err = index
+            .insert_simplex(candidate, &[first, second])
+            .unwrap_err();
+
+        assert_matches!(err, TdsError::InconsistentDataStructure { .. });
+        assert_eq!(index.as_map(), &before);
+
+        index.remove_simplex(candidate, &[second]).unwrap();
+        index.insert_simplex(candidate, &[first, second]).unwrap();
+        assert_eq!(
+            index.simplex_keys(first).collect::<Vec<_>>(),
+            vec![existing, candidate]
+        );
+        assert_eq!(
+            index.simplex_keys(second).collect::<Vec<_>>(),
+            vec![existing, candidate]
+        );
+        assert_eq!(index.number_of_simplices(isolated), 0);
+    }
+
+    #[test]
     fn first_simplex_returns_one_incident_simplex_without_scanning() {
         let mut index = VertexIncidenceIndex::default();
         let vertex = vertex_key(1);
@@ -507,6 +542,47 @@ mod tests {
             index.simplex_keys(vertex).collect::<Vec<_>>(),
             before.to_vec()
         );
+    }
+
+    #[test]
+    fn remove_simplex_rejection_at_later_missing_incidence_restores_order_and_allows_retry() {
+        let mut index = VertexIncidenceIndex::default();
+        let first = vertex_key(1);
+        let second = vertex_key(2);
+        let isolated = vertex_key(3);
+        let simplices = [simplex_key(1), simplex_key(2), simplex_key(3)];
+        for vertex in [first, second, isolated] {
+            index.insert_vertex(vertex).unwrap();
+        }
+        for simplex in simplices {
+            index.insert_simplex(simplex, &[first]).unwrap();
+        }
+        index.insert_simplex(simplices[0], &[second]).unwrap();
+        let before = index.as_map().clone();
+
+        let err = index
+            .remove_simplex(simplices[1], &[first, second])
+            .unwrap_err();
+
+        assert_matches!(err, TdsError::InconsistentDataStructure { .. });
+        assert_eq!(index.as_map(), &before);
+
+        index.insert_simplex(simplices[1], &[second]).unwrap();
+        let repaired = index.as_map().clone();
+        let removal = index
+            .remove_simplex(simplices[1], &[first, second])
+            .unwrap();
+        assert_eq!(
+            index.simplex_keys(first).collect::<Vec<_>>(),
+            vec![simplices[0], simplices[2]]
+        );
+        assert_eq!(
+            index.simplex_keys(second).collect::<Vec<_>>(),
+            vec![simplices[0]]
+        );
+        assert_eq!(index.number_of_simplices(isolated), 0);
+        index.rollback_removed_simplex(&removal);
+        assert_eq!(index.as_map(), &repaired);
     }
 
     #[test]

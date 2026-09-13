@@ -19,15 +19,13 @@
 //! *visible* boundary facets using orientation tests:
 //! - A facet is **strictly visible** if the new point and the opposite vertex
 //!   have opposite orientations relative to the facet's supporting hyperplane.
-//! - **Coplanar cases** for the *query point* (orientation == 0) are treated as
-//!   **weakly visible** to avoid missing horizon facets when the point lies on the
-//!   hull plane. In **2D**, collinear cases are handled explicitly:
+//! - **Coplanar cases** for the *query point* are excluded using exact,
+//!   unperturbed orientation: coning them would create zero-volume simplices.
+//!   In **2D**, collinear cases are handled explicitly:
 //!   - on-segment points trigger a boundary-edge split
 //!   - off-segment collinearity is **not** treated as visible (avoids degenerate triangles)
 //!   This still treats degeneracies of the hull facet itself (orientation_with_opposite == 0)
 //!   as non-visible.
-//! - For numerically robust weak visibility beyond coplanar cases, a threshold-based
-//!   approach would be needed (not currently implemented).
 
 #![forbid(unsafe_code)]
 
@@ -67,6 +65,8 @@ use crate::triangulation::realization::TriangulationRealizationValidationError;
 use crate::triangulation::validation::TriangulationValidationError;
 use crate::validation::DelaunayTriangulationValidationError;
 use slotmap::Key;
+#[cfg(debug_assertions)]
+use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -180,7 +180,7 @@ impl fmt::Display for InsertionTopologyValidationContext {
     }
 }
 
-/// Compact, typed summary of a [`TdsError`] used inside insertion-stage errors.
+/// Typed [`TdsError`] diagnostic used inside insertion-stage errors.
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum TdsValidationFailure {
@@ -215,8 +215,8 @@ pub enum TdsValidationFailure {
     /// Coherent orientation was violated between adjacent simplices.
     #[error(
         "orientation invariant violated between simplices {simplex1_uuid} and {simplex2_uuid} \
-         (facet indices {simplex1_facet_index}/{simplex2_facet_index} counts \
-         {facet_vertex_count}/{simplex2_facet_vertex_count}, observed odd permutation \
+         (facet indices {simplex1_facet_index}/{simplex2_facet_index}, vertex orderings \
+         {facet_vertex_orderings:?}, observed odd permutation \
          {observed_odd_permutation}, expected {expected_odd_permutation})"
     )]
     OrientationViolation {
@@ -232,10 +232,10 @@ pub enum TdsValidationFailure {
         simplex1_facet_index: usize,
         /// Facet index in the second simplex.
         simplex2_facet_index: usize,
-        /// Number of vertices in the first facet ordering.
-        facet_vertex_count: usize,
-        /// Number of vertices in the second facet ordering.
-        simplex2_facet_vertex_count: usize,
+        /// Vertex-key orderings for the first and second facets, respectively.
+        ///
+        /// Boxed together to keep nested insertion/construction errors compact.
+        facet_vertex_orderings: Box<[Vec<VertexKey>; 2]>,
         /// Observed permutation parity.
         observed_odd_permutation: bool,
         /// Expected permutation parity.
@@ -245,7 +245,9 @@ pub enum TdsValidationFailure {
     /// Duplicate simplices were detected.
     #[error("duplicate simplices detected: {message}")]
     DuplicateSimplices {
-        /// Duplicate-simplex detail.
+        /// UUID pairs ordered as existing simplex, then duplicate or rejected candidate.
+        simplex_pairs: Vec<[uuid::Uuid; 2]>,
+        /// Supplemental diagnostic detail, not a machine-readable contract.
         message: String,
     },
 
@@ -442,12 +444,18 @@ pub enum TdsValidationFailure {
     },
 
     /// A simplex contains duplicate coordinates.
-    #[error("duplicate coordinates in simplex {simplex_id}: {message}")]
+    #[error(
+        "duplicate coordinates in simplex {simplex_id}: vertices {vertex_uuids:?} (keys {vertex_keys:?}) have identical coordinates {coordinates}"
+    )]
     DuplicateCoordinatesInSimplex {
         /// UUID of the simplex containing duplicates.
         simplex_id: uuid::Uuid,
-        /// Duplicate-coordinate detail.
-        message: String,
+        /// Keys of the two distinct vertices with identical coordinates.
+        vertex_keys: [VertexKey; 2],
+        /// UUIDs corresponding to the two vertex keys, in the same order.
+        vertex_uuids: [uuid::Uuid; 2],
+        /// Shared coordinate tuple, preserved without display-string parsing.
+        coordinates: CoordinateValues,
     },
 }
 
@@ -483,12 +491,17 @@ impl From<TdsError> for TdsValidationFailure {
                 simplex2_uuid,
                 simplex1_facet_index,
                 simplex2_facet_index,
-                facet_vertex_count: facet_vertices.len(),
-                simplex2_facet_vertex_count: simplex2_facet_vertices.len(),
+                facet_vertex_orderings: Box::new([facet_vertices, simplex2_facet_vertices]),
                 observed_odd_permutation,
                 expected_odd_permutation,
             },
-            TdsError::DuplicateSimplices { message } => Self::DuplicateSimplices { message },
+            TdsError::DuplicateSimplices {
+                simplex_pairs,
+                message,
+            } => Self::DuplicateSimplices {
+                simplex_pairs,
+                message,
+            },
             TdsError::DuplicateExplicitSimplices {
                 existing_simplex_index,
                 duplicate_simplex_index,
@@ -606,10 +619,14 @@ impl From<TdsError> for TdsValidationFailure {
             TdsError::FacetError { source } => Self::Facet { source },
             TdsError::DuplicateCoordinatesInSimplex {
                 simplex_id,
-                message,
+                vertex_keys,
+                vertex_uuids,
+                coordinates,
             } => Self::DuplicateCoordinatesInSimplex {
                 simplex_id,
-                message,
+                vertex_keys,
+                vertex_uuids,
+                coordinates,
             },
         }
     }
@@ -2554,6 +2571,7 @@ where
 
         // Add the new vertex as the apex
         new_simplex_vertices.push(new_vertex_key);
+
         // The facet order copied above matches the boundary-simplex facet order.
         // For coherent orientation across that shared facet, odd permutation is required
         // exactly when (facet_idx + apex_idx) is even (apex_idx = D).
@@ -3954,11 +3972,15 @@ fn missing_boundary_vertex(
     })
 }
 
-fn invalid_boundary_facet_index(facet_index: u8, facet_count: usize) -> InsertionError {
-    hull_extension_tds_error(FacetError::InvalidFacetIndex {
-        index: facet_index,
-        facet_count,
-    })
+fn invalid_boundary_facet_index(facet_index: usize, facet_count: usize) -> InsertionError {
+    let source = u8::try_from(facet_index).map_or_else(
+        |_| FacetError::InvalidFacetIndexOverflow {
+            original_index: facet_index,
+            facet_count,
+        },
+        |index| FacetError::InvalidFacetIndex { index, facet_count },
+    );
+    hull_extension_tds_error(source)
 }
 
 /// Preserves the public hull-extension error contract for 2D boundary-edge splits.
@@ -4070,7 +4092,7 @@ fn find_boundary_edge_split_facet_in_simplex<U, V, const D: usize>(
             continue;
         }
         let facet_index = u8::try_from(facet_idx)
-            .map_err(|_| invalid_boundary_facet_index(u8::MAX, facet_count))?;
+            .map_err(|_| invalid_boundary_facet_index(facet_idx, facet_count))?;
         if boundary_edge_split_facet_matches(tds, point, start_simplex, facet_index)? {
             let current_facet = FacetHandle::from_validated(start_simplex, facet_index);
             record_boundary_edge_split_match(&mut match_facet, current_facet)?;
@@ -4131,8 +4153,9 @@ fn boundary_edge_split_facet_matches<U, V, const D: usize>(
         return Ok(false);
     }
 
-    let opposite_point = opposite_point
-        .ok_or_else(|| invalid_boundary_facet_index(facet_index, simplex.vertices().len()))?;
+    let opposite_point = opposite_point.ok_or_else(|| {
+        invalid_boundary_facet_index(usize::from(facet_index), simplex.vertices().len())
+    })?;
 
     let p0 = edge_points[0].coords();
     let p1 = edge_points[1].coords();
@@ -4199,11 +4222,9 @@ fn boundary_edge_split_facet_matches<U, V, const D: usize>(
 ///
 /// **Visibility criterion:**
 /// - **Strictly visible**: Opposite orientations (orientation signs differ)
-/// - **Coplanar** (query orientation == 0): Treated as **weakly visible** to avoid
-///   missing horizon facets when the point lies on the hull plane.
+/// - **Coplanar**: Exact unperturbed orientation excludes zero-volume cones,
+///   even when the kernel supplies a nonzero symbolic tie-break sign.
 /// - **Facet degeneracy** (opposite orientation == 0): Treated as non-visible.
-/// - For numerically robust weak visibility beyond coplanar cases, the orientation
-///   test logic would need an epsilon-based threshold (not currently implemented).
 ///
 /// # Arguments
 /// - `tds` - The triangulation data structure
@@ -4299,8 +4320,9 @@ where
             }
         }
 
-        let opposite_point = opposite_point
-            .ok_or_else(|| invalid_boundary_facet_index(facet_index, simplex.vertices().len()))?;
+        let opposite_point = opposite_point.ok_or_else(|| {
+            invalid_boundary_facet_index(usize::from(facet_index), simplex.vertices().len())
+        })?;
 
         facet_vertex_keys.sort_unstable_by_key(|key| key.data().as_ffi());
         let mut simplex_points =
@@ -4390,14 +4412,14 @@ where
         #[cfg(debug_assertions)]
         if track_orientations {
             match orientation_with_opposite.cmp(&0) {
-                std::cmp::Ordering::Greater => orientation_opposite_positive += 1,
-                std::cmp::Ordering::Less => orientation_opposite_negative += 1,
-                std::cmp::Ordering::Equal => orientation_opposite_zero += 1,
+                Ordering::Greater => orientation_opposite_positive += 1,
+                Ordering::Less => orientation_opposite_negative += 1,
+                Ordering::Equal => orientation_opposite_zero += 1,
             }
             match orientation_with_point.cmp(&0) {
-                std::cmp::Ordering::Greater => orientation_point_positive += 1,
-                std::cmp::Ordering::Less => orientation_point_negative += 1,
-                std::cmp::Ordering::Equal => orientation_point_zero += 1,
+                Ordering::Greater => orientation_point_positive += 1,
+                Ordering::Less => orientation_point_negative += 1,
+                Ordering::Equal => orientation_point_zero += 1,
             }
             if is_strict_visible {
                 visible_facets_strict += 1;
@@ -4424,6 +4446,17 @@ where
         }
 
         if is_visible {
+            // Only facets supporting a nonzero-volume cone can be handed to
+            // hull-extension wiring. SoS ordering alone does not prove that
+            // the physical apex is outside the facet's supporting plane.
+            let orientation = robust_orientation(&simplex_points).map_err(|source| {
+                InsertionError::HullExtension {
+                    reason: HullExtensionReason::PredicateFailed { source },
+                }
+            })?;
+            if orientation == Orientation::DEGENERATE {
+                continue;
+            }
             visible_facets.push(FacetHandle::from_validated(simplex_key, facet_index));
         }
     }
@@ -4794,7 +4827,7 @@ mod tests {
     use crate::core::tds::GeometricError;
     use crate::core::test_support::{single_simplex_tds, tds_from_specs};
     use crate::core::vertex::Vertex;
-    use crate::geometry::kernel::FastKernel;
+    use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::geometry::traits::coordinate::{
         CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
         InvalidCoordinateValue,
@@ -5801,6 +5834,76 @@ mod tests {
     }
 
     #[test]
+    fn tds_validation_failure_preserves_orientation_orderings() {
+        let simplex1_key = SimplexKey::from(KeyData::from_ffi(1));
+        let simplex2_key = SimplexKey::from(KeyData::from_ffi(2));
+        let simplex1_uuid = uuid::Uuid::from_u128(1);
+        let simplex2_uuid = uuid::Uuid::from_u128(2);
+        let first = VertexKey::from(KeyData::from_ffi(3));
+        let second = VertexKey::from(KeyData::from_ffi(4));
+        let source = TdsError::OrientationViolation {
+            simplex1_key,
+            simplex1_uuid,
+            simplex2_key,
+            simplex2_uuid,
+            simplex1_facet_index: 0,
+            simplex2_facet_index: 1,
+            facet_vertices: vec![first, second],
+            simplex2_facet_vertices: vec![second, first],
+            observed_odd_permutation: true,
+            expected_odd_permutation: false,
+        };
+        assert_eq!(
+            TdsValidationFailure::from(source),
+            TdsValidationFailure::OrientationViolation {
+                simplex1_key,
+                simplex1_uuid,
+                simplex2_key,
+                simplex2_uuid,
+                simplex1_facet_index: 0,
+                simplex2_facet_index: 1,
+                facet_vertex_orderings: Box::new([vec![first, second], vec![second, first]]),
+                observed_odd_permutation: true,
+                expected_odd_permutation: false,
+            }
+        );
+    }
+
+    #[test]
+    fn tds_validation_failure_preserves_duplicate_evidence() {
+        let simplex_id = uuid::Uuid::from_u128(1);
+        let duplicate_id = uuid::Uuid::from_u128(2);
+        let duplicate = TdsValidationFailure::from(TdsError::DuplicateSimplices {
+            simplex_pairs: vec![[simplex_id, duplicate_id]],
+            message: "periodic identity collision".to_string(),
+        });
+        assert_matches!(
+            duplicate,
+            TdsValidationFailure::DuplicateSimplices { simplex_pairs, .. }
+                if simplex_pairs == [[simplex_id, duplicate_id]]
+        );
+
+        let vertex_keys = [1, 2].map(|key| VertexKey::from(KeyData::from_ffi(key)));
+        let vertex_uuids = [3, 4].map(uuid::Uuid::from_u128);
+        let coordinates = CoordinateValues::from([0.0, 1.0]);
+        let source = TdsError::DuplicateCoordinatesInSimplex {
+            simplex_id,
+            vertex_keys,
+            vertex_uuids,
+            coordinates: coordinates.clone(),
+        };
+        assert_eq!(
+            TdsValidationFailure::from(source),
+            TdsValidationFailure::DuplicateCoordinatesInSimplex {
+                simplex_id,
+                vertex_keys,
+                vertex_uuids,
+                coordinates,
+            }
+        );
+    }
+
+    #[test]
     fn test_robust_fallback_context_preserves_initial_repair_source() {
         let initial = DelaunayRepairError::PostconditionFailed {
             reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
@@ -6512,6 +6615,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn boundary_facet_index_overflow_preserves_original_index() {
+        assert_matches!(
+            invalid_boundary_facet_index(256, 300),
+            InsertionError::HullExtension {
+                reason: HullExtensionReason::Tds {
+                    source: TdsError::FacetError {
+                        source: FacetError::InvalidFacetIndexOverflow {
+                            original_index: 256,
+                            facet_count: 300,
+                        }
+                    }
+                },
+            }
+        );
+    }
+
     // repair_neighbor_pointers tests
 
     /// Macro to generate `repair_neighbor_pointers` tests for different dimensions
@@ -6907,6 +7027,48 @@ mod tests {
         assert!(repair_neighbor_pointers(tds).unwrap() > 0);
         assert!(tds.is_valid().is_ok());
     }
+
+    fn assert_hull_visibility_excludes_coplanar_facets<const D: usize>() {
+        let mut vertices = vec![vertex!([0.0; D]).unwrap()];
+        for axis in 0..D {
+            let mut coords = [0.0; D];
+            coords[axis] = 1.0;
+            vertices.push(vertex!(coords).unwrap());
+        }
+        let tds = single_simplex_tds(&vertices);
+        let mut exterior = [0.0; D];
+        exterior[D - 1] = -1.0;
+        let point = Point::try_new(exterior).unwrap();
+
+        for visible in [
+            find_visible_boundary_facets(&tds, &FastKernel::<f64>::new(), &point).unwrap(),
+            find_visible_boundary_facets(&tds, &AdaptiveKernel::<f64>::new(), &point).unwrap(),
+        ] {
+            // Only the facet in x[D-1] = 0 faces the exterior point. The other
+            // coordinate-plane facets are coplanar, not full-dimensional cones.
+            assert_eq!(visible.len(), 1);
+            let facet = visible[0];
+            let simplex = tds.simplex(facet.simplex_key()).unwrap();
+            let opposite = simplex.vertices()[usize::from(facet.facet_index())];
+            assert_eq!(tds.vertex(opposite).unwrap().uuid(), vertices[D].uuid());
+        }
+    }
+
+    macro_rules! hull_visibility_coplanar_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<hull_visibility_excludes_coplanar_facets_ $dim d>]() {
+                    assert_hull_visibility_excludes_coplanar_facets::<$dim>();
+                }
+            }
+        };
+    }
+
+    hull_visibility_coplanar_tests!(2);
+    hull_visibility_coplanar_tests!(3);
+    hull_visibility_coplanar_tests!(4);
+    hull_visibility_coplanar_tests!(5);
 
     #[test]
     fn test_extend_hull_adds_simplices_for_exterior_vertex() {

@@ -139,15 +139,14 @@ where
             delaunay.spatial_index.take()
         };
 
-        let result = Triangulation::<K, U, V, D>::
-            insert_prepared_with_statistics_seeded_indexed_detailed_in_rollback_window(
-                transaction,
-                prepared,
-                None,
-                0,
-                spatial_index.as_mut(),
-                None,
-            );
+        let result = Triangulation::<K, U, V, D>::insert_prepared_detailed_in_rollback_window(
+            transaction,
+            prepared,
+            None,
+            0,
+            spatial_index.as_mut(),
+            None,
+        );
         transaction.delaunay_mut().spatial_index = spatial_index;
         result
     }
@@ -933,7 +932,7 @@ mod tests {
         let facet = dt
             .tri
             .facets()
-            .filter_map(Result::ok)
+            .map(|facet| facet.expect("quadrilateral fixture facets should be valid"))
             .find(|facet| {
                 facet
                     .simplex()
