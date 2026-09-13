@@ -178,12 +178,21 @@ retries = 0
 slow-timeout = { period = "300s", terminate-after = 1 }
 
 [[profile.coverage.overrides]]
-# The compact T^3 periodic-image builders can exceed seven minutes even before
-# LLVM coverage instrumentation. Keep the broader coverage watchdog at five
-# minutes and grant only these named tests enough instrumented headroom.
+# This compact T^3 regression passed in 1164 seconds under LLVM coverage,
+# leaving only 36 seconds of headroom before a subsequent 1200-second timeout.
+# Give only this case a finite 30-minute budget for hosted-runner variation.
 filter = '''
 binary(=triangulation_builder)
-& test(/^(test_builder_toroidal_t3_compact_quotient_validates_topology_and_delaunay|test_builder_toroidal_t3_compact_quotient_handles_reversed_input|test_builder_toroidal_t3_compact_quotient_handles_orientation_reversing_map)$/)
+& test(=test_builder_toroidal_t3_compact_quotient_validates_topology_and_delaunay)
+'''
+slow-timeout = { period = "1800s", terminate-after = 1 }
+
+[[profile.coverage.overrides]]
+# The other compact T^3 periodic-image builders retain their existing
+# instrumented budget. The broader coverage watchdog stays at five minutes.
+filter = '''
+binary(=triangulation_builder)
+& test(/^(test_builder_toroidal_t3_compact_quotient_handles_reversed_input|test_builder_toroidal_t3_compact_quotient_handles_orientation_reversing_map)$/)
 '''
 slow-timeout = { period = "1200s", terminate-after = 1 }
 
