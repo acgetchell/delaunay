@@ -353,6 +353,8 @@ def test_performance_row_rejects_markdown_structure(field: str, value: str) -> N
     ("path", "value", "message"),
     [
         (("release", "current"), "0.8.0", "normalized semver"),
+        (("release", "current"), "v0.8.2-01", "normalized semver"),
+        (("release", "baseline"), "v0.8.2-rc.01", "normalized semver"),
         (("current", "source", "commit"), "abc123", "full lowercase Git object ID"),
         (("current", "source", "ref"), "refs/../bad", "supported Git ref"),
         (("current", "source", "revision_timestamp"), "2026-08-23T12:00:00", "include a timezone"),
@@ -394,6 +396,32 @@ def test_configuration_digest_is_provenance_not_a_comparison_blocker() -> None:
     )
 
     assert changed.comparison_blockers == ()
+
+
+@pytest.mark.parametrize("field", ["current", "baseline"])
+@pytest.mark.parametrize("tag", ["v0.8.2-01", "v0.8.2-rc.01", "v0.8.2-1.00+build.01"])
+def test_release_pair_rejects_numeric_prerelease_identifiers_with_leading_zeroes(field: str, tag: str) -> None:
+    """Reject malformed tags during construction, before precedence evaluation."""
+    tags = {"current": "v0.8.2", "baseline": "v0.8.2"}
+    tags[field] = tag
+
+    with pytest.raises(ValueError, match=f"{field} release must be a normalized semver"):
+        ReleasePair(**tags)
+
+
+@pytest.mark.parametrize(
+    "tag",
+    ["v0.8.2-0", "v0.8.2-1", "v0.8.2-10", "v0.8.2-rc.0", "v0.8.2-01alpha", "v0.8.2-01-alpha", "v0.8.2-1+build.01", "v0.8.2+001"],
+)
+def test_bundle_roundtrip_preserves_valid_prerelease_and_build_identifiers(tag: str) -> None:
+    """Keep valid numeric, alphanumeric, and build identifiers intact in artifacts."""
+    csv_payload, provenance_payload = serialize_bundle(bundle(current=tag, baseline=tag))
+
+    loaded = load_bundle_bytes(csv_payload, provenance_payload, source="valid semver")
+
+    assert loaded.context.release.current == tag
+    assert loaded.context.release.baseline == tag
+    assert loaded.context.comparison_blockers == ()
 
 
 @pytest.mark.parametrize(

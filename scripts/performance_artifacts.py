@@ -54,9 +54,10 @@ CSV_COLUMNS = (
     "current_confidence_level",
 )
 
+_SEMVER_PRERELEASE_IDENTIFIER_RE = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
 _SEMVER_TAG_RE = re.compile(
     r"^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
-    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    rf"(?:-{_SEMVER_PRERELEASE_IDENTIFIER_RE}(?:\.{_SEMVER_PRERELEASE_IDENTIFIER_RE})*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
 _GIT_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -213,7 +214,7 @@ class ReleasePair:
     baseline: str
 
     def __post_init__(self) -> None:
-        """Require non-empty identifiers while allowing local same-version runs."""
+        """Require valid SemVer tags while allowing local same-version runs."""
         _require_release_tag("current release", self.current)
         _require_release_tag("baseline release", self.baseline)
 

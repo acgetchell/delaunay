@@ -249,8 +249,14 @@ focused release preparation without feature work.
 
 For a critical fix that must be included, make and commit the fix. If it changes
 measured code, benchmark harnesses, toolchain or dependency inputs, or benchmark
-configuration, rerun `just performance-release "$TAG" "vA.B.C"` with the same
-baseline used for the release comparison, then rerun `just performance-readme`.
+configuration:
+
+- For v0.8.2, rerun `just performance-release` to refresh the absolute baseline
+  measurements. Skip `just performance-readme` for this initial release.
+- For later releases, rerun `just performance-release "$TAG" "vA.B.C"` with the
+  same baseline used for the release comparison, then rerun
+  `just performance-readme`.
+
 Rerun `just changelog-unreleased "$TAG"`, review and stage only the regenerated
 release outputs, commit that update separately, and rerun the final release and
 publish gates.
