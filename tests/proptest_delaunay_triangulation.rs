@@ -1908,7 +1908,8 @@ gen_duplicate_cloud_test!(4, 4);
 gen_duplicate_cloud_test!(5, 5, #[cfg(feature = "slow-tests")]);
 
 #[test]
-fn duplicate_cloud_4d_accepts_global_delaunay_when_inverse_flip_remains() {
+fn duplicate_cloud_4d_ignores_geometrically_unavailable_inverse_flips() {
+    init_tracing();
     let points = [
         [1e-6, -93.508_455_015_806_32, -78.945_537_198_317_24, 1e-6],
         [1e-6, -1e-6, 32.624_409_067_227_11, -91.061_618_050_876_49],
@@ -1950,9 +1951,9 @@ fn duplicate_cloud_4d_accepts_global_delaunay_when_inverse_flip_remains() {
         .build()
         .expect("the globally Delaunay duplicate cloud should publish");
 
-    assert!(
-        dt.verify_via_flip_predicates().is_err(),
-        "the fixture must retain the stronger inverse-flip normal-form mismatch"
-    );
-    assert!(dt.is_valid_delaunay().is_ok());
+    assert_eq!(dt.number_of_vertices(), 7);
+    dt.verify_via_flip_predicates()
+        .expect("inverse moves that invert replacement simplices must not fail verification");
+    dt.validate()
+        .expect("the deduplicated cloud must satisfy Levels 1-5");
 }

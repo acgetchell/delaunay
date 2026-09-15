@@ -163,6 +163,120 @@ coplanar_hull_regression_tests!(3);
 coplanar_hull_regression_tests!(4);
 coplanar_hull_regression_tests!(5);
 
+/// Replays the two minimized snapshot-property failures from PR #612 CI.
+fn assert_ci_hull_snapshot_insertion_4d(
+    exterior: [f64; 4],
+    inserted: [f64; 4],
+    expected_simplices: &[[usize; 5]],
+) {
+    let vertices = [
+        vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([100.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 100.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 100.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 100.0]).unwrap(),
+        vertex!(exterior).unwrap(),
+    ];
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
+        .expect("the minimized CI cloud must construct");
+    dt.validate()
+        .expect("the initial owner must satisfy Levels 1-5");
+    let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
+    let original_facets = extract_hull_facet_set(&hull);
+    let inserted_vertex = vertex!(inserted).unwrap();
+
+    let key = dt
+        .insert_vertex(inserted_vertex)
+        .expect("the CI follow-on insertion must succeed");
+    assert_eq!(dt.number_of_vertices(), vertices.len() + 1);
+    assert_eq!(dt.vertex(key).unwrap().uuid(), inserted_vertex.uuid());
+    dt.validate().expect("insertion must preserve Levels 1-5");
+    assert_eq!(extract_hull_facet_set(&hull), original_facets);
+    let updated_hull = ConvexHull::try_from_triangulation(dt.as_triangulation())
+        .expect("the new boundary must support all source vertices");
+    assert!(updated_hull.number_of_facets() > 4);
+
+    let inputs: Vec<_> = vertices.into_iter().chain([inserted_vertex]).collect();
+    for input in &inputs {
+        let (_, actual) = dt
+            .vertices()
+            .find(|(_, v)| v.uuid() == input.uuid())
+            .unwrap();
+        assert_eq!(
+            actual.point().coords().map(f64::to_bits),
+            input.point().coords().map(f64::to_bits)
+        );
+    }
+    // Independent oracle: enumerate all 21 five-vertex subsets, solve their
+    // circumcenters with exact rational Gaussian elimination on the f64 inputs,
+    // and retain only empty circumspheres. Neither fixture has cospherical ties.
+    let mut actual_simplices: Vec<Vec<_>> = dt
+        .simplices()
+        .map(|(_, simplex)| {
+            let mut indices: Vec<_> = simplex
+                .vertices()
+                .iter()
+                .map(|&key| {
+                    let uuid = dt.vertex(key).unwrap().uuid();
+                    inputs.iter().position(|v| v.uuid() == uuid).unwrap()
+                })
+                .collect();
+            indices.sort_unstable();
+            indices
+        })
+        .collect();
+    actual_simplices.sort_unstable();
+    assert_eq!(actual_simplices, expected_simplices);
+}
+
+#[test]
+fn regression_ci_windows_hull_snapshot_insertion_4d() {
+    assert_ci_hull_snapshot_insertion_4d(
+        [0.0, 0.0, 89.719_977_093_193_66, -35.739_945_416_741_314],
+        [
+            -66.201_838_062_987_39,
+            -82.126_973_661_486_08,
+            -43.503_631_922_452_826,
+            -8.968_496_463_483_41,
+        ],
+        &[
+            [0, 1, 2, 3, 4],
+            [0, 1, 2, 3, 5],
+            [0, 1, 2, 4, 6],
+            [0, 1, 2, 5, 6],
+            [0, 1, 3, 4, 6],
+            [0, 1, 3, 5, 6],
+            [0, 2, 3, 4, 6],
+            [0, 2, 3, 5, 6],
+        ],
+    );
+}
+
+#[test]
+fn regression_ci_coverage_hull_snapshot_insertion_4d() {
+    assert_ci_hull_snapshot_insertion_4d(
+        [
+            -75.903_350_682_511_5,
+            -45.548_262_948_664_21,
+            32.265_115_382_542_43,
+            -40.680_982_453_675_39,
+        ],
+        [0.0, 0.0, -78.835_778_602_878_85, 0.0],
+        &[
+            [0, 1, 2, 3, 4],
+            [0, 1, 2, 3, 5],
+            [0, 1, 2, 4, 6],
+            [0, 1, 2, 5, 6],
+            [0, 1, 3, 4, 5],
+            [0, 1, 4, 5, 6],
+            [0, 2, 3, 4, 5],
+            [0, 2, 4, 5, 6],
+        ],
+    );
+}
+
 #[test]
 fn regression_max_volume_seed_fallback_preserves_hull_snapshot_4d() {
     // Minimized Codecov input: the cloud spans 4D, but its spatially sorted
