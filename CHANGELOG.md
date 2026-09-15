@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.2] - 2026-09-14
+## [0.8.2] - 2026-09-15
 
 ### ⚠️ Breaking Changes
 
@@ -123,6 +123,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Require explicit allocation instrumentation and narrow prelude exports.
   - Reject dangling artifact symlinks, validate release asset sizes and digests, and safely quote stress-runner arguments.
   - Align CI with native Rust hosts, trim unused dependency features, and strengthen independent scientific fixtures and transition coverage.
+- Treat v0.8.2 as the first corrected benchmark baseline [`943933b`](https://github.com/acgetchell/delaunay/commit/943933bf6873609a692594790d0df39afe3ef4b3)
+
+  - Generate absolute measurements for v0.8.2 with performance-release and reject comparisons across the benchmark contract boundary.
+  - Refresh the performance report and exclude historical comparisons from the initial baseline.
+  - Compact generated table input counts to respect the 160-character line limit while preserving benchmark IDs and timings.
+  - Synchronize v0.8.2 package versions, citation metadata, documentation, and generated release notes.
+  - Refresh Rust and Python dependencies, including clap and ty.
 
 ### Maintenance
 
