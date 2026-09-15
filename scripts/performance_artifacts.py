@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
 SCHEMA_VERSION = 3
+BENCHMARK_CONTRACT_START = "v0.8.2"
 SUITES = ("release-signal", "ci", "query", "predicates", "topology")
 SCOPES = ("release-signal", "all-benches")
 COVERAGE_STATES = ("comparable", "not-comparable", "current-only", "baseline-only")
@@ -215,6 +216,25 @@ class ReleasePair:
         """Require non-empty identifiers while allowing local same-version runs."""
         _require_release_tag("current release", self.current)
         _require_release_tag("baseline release", self.baseline)
+
+    @property
+    def benchmark_contract_blockers(self) -> tuple[str, ...]:
+        """Keep historical comparisons separate from the corrected benchmark contract."""
+
+        def release_core(tag: str) -> tuple[int, ...]:
+            core = re.split(r"[-+]", tag.removeprefix("v"), maxsplit=1)[0]
+            return tuple(int(part) for part in core.split("."))
+
+        first = release_core(BENCHMARK_CONTRACT_START)
+        if (release_core(self.current) < first) == (release_core(self.baseline) < first):
+            return ()
+        return (
+            (
+                f"the corrected benchmark contract starts with {BENCHMARK_CONTRACT_START}; "
+                f"{self.current} and {self.baseline} cannot be compared across that boundary. "
+                "Use `just bench-perf-summary` for absolute measurements; release comparisons require two releases under the same contract"
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -447,7 +467,7 @@ class ArtifactContext:
     @property
     def comparison_blockers(self) -> tuple[str, ...]:
         """Return provenance differences that prevent before/after ratios."""
-        blockers: list[str] = []
+        blockers = list(self.release.benchmark_contract_blockers)
         if self.current_source.limitation or self.baseline_source.limitation:
             blockers.append("complete source-state evidence is unavailable")
         if self.current_toolchain.limitation or self.baseline_toolchain.limitation:

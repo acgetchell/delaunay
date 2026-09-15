@@ -1286,6 +1286,104 @@ def test_release_generation_preflights_output_aliases_before_measurement(tmp_pat
         )
 
 
+@pytest.mark.parametrize("success", [True, False])
+def test_first_benchmark_release_generates_absolute_summary_without_release_lookup(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    success: bool,
+) -> None:
+    """v0.8.2 measures only the current checkout, even with no published releases."""
+    (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.2"\n', encoding=UTF8)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    historical = docs / "performance.md"
+    historical.write_text("historical report\n", encoding=UTF8)
+    args = create_argument_parser().parse_args(["performance-release"])
+    with (
+        patch("benchmark_utils.PerformanceSummaryGenerator") as generator,
+        patch("benchmark_utils.run_safe_command") as command,
+        patch("benchmark_utils.run_git_command") as git,
+    ):
+        generator.return_value.generate_summary.return_value = success
+        with pytest.raises(SystemExit) as result:
+            execute_command(args, tmp_path)
+
+    assert result.value.code == (0 if success else 1)
+    generator.assert_called_once_with(tmp_path)
+    generator.return_value.generate_summary.assert_called_once_with(
+        output_path=tmp_path / "benches" / "PERFORMANCE_RESULTS.md",
+        run_benchmarks=True,
+        cargo_profile="perf",
+        bench_timeout=benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS,
+        strict=True,
+    )
+    command.assert_not_called()
+    git.assert_not_called()
+    assert historical.read_text(encoding=UTF8) == "historical report\n"
+    assert not (tmp_path / "target" / "bench-reports").exists()
+    captured = capsys.readouterr()
+    assert "first corrected benchmark baseline" in captured.err
+    assert ("Initial benchmark baseline: v0.8.2" in captured.out) is success
+
+
+@pytest.mark.parametrize("command", ["performance-release", "performance-github-assets"])
+@pytest.mark.parametrize("current", ["v0.8.2", "v0.8.3", "v0.10.0"])
+def test_cross_contract_cli_pair_fails_before_fetch_or_measurement(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    current: str,
+) -> None:
+    """Explicit repair pairs cannot reuse the invalid pre-v0.8.2 baseline."""
+    args = create_argument_parser().parse_args([command, current, "v0.8.1"])
+    with (
+        patch("benchmark_utils.run_safe_command") as safe_command,
+        patch("benchmark_utils.run_git_command") as git,
+        pytest.raises(SystemExit) as result,
+    ):
+        execute_command(args, tmp_path)
+
+    assert result.value.code == 1
+    assert "corrected benchmark contract starts with v0.8.2" in capsys.readouterr().err
+    safe_command.assert_not_called()
+    git.assert_not_called()
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("baseline", ["v0.8.1", "v0.8.2"])
+def test_release_inference_requires_a_baseline_under_the_corrected_contract(tmp_path: Path, baseline: str) -> None:
+    """A later release can use v0.8.2 but cannot fall back across the reset."""
+    (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.3"\n', encoding=UTF8)
+    options = PerformanceRequestOptions(
+        current_tag=None,
+        baseline_tag=None,
+        published_latest=False,
+        infer_release=True,
+        current_vs_latest=False,
+        worktree_ref="HEAD",
+        repo_root=tmp_path,
+    )
+    with patch("benchmark_utils._github_release_list", return_value=[github_release(baseline)]):
+        if baseline == "v0.8.1":
+            with pytest.raises(ValueError, match=r"corrected benchmark contract starts with v0\.8\.2"):
+                resolve_performance_request(options)
+        else:
+            request = resolve_performance_request(options)
+            assert (request.current_tag, request.baseline_tag) == ("v0.8.3", "v0.8.2")
+
+
+def test_cross_contract_direct_generation_never_creates_worktrees(tmp_path: Path) -> None:
+    """Library callers receive the same early rejection as the CLI."""
+    config = ReleaseReportConfig(repo_root=tmp_path, current_tag="v0.8.2", baseline_tag="v0.8.1", worktree_ref="HEAD")
+    with (
+        patch("benchmark_utils.run_git_command") as git,
+        pytest.raises(ValueError, match=r"corrected benchmark contract starts with v0\.8\.2"),
+    ):
+        benchmark_utils._build_performance_bundle_in_temp_worktree(config=config)
+    git.assert_not_called()
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.mark.parametrize("escape", ["traversal", "symlink"])
 def test_release_generation_rejects_archive_escape_before_measurement_or_publication(
     tmp_path: Path,
@@ -5411,6 +5509,35 @@ class TestCompareBaselinesCliFailures:
 class TestPerformanceSummaryGenerator:
     """Test cases for PerformanceSummaryGenerator class."""
 
+    def test_initial_summary_excludes_historical_comparison_file(self, tmp_path: Path) -> None:
+        """Old comparison files must not become v0.8.2 release evidence."""
+        (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.2"\n', encoding=UTF8)
+        benches = tmp_path / "benches"
+        benches.mkdir()
+        historical = benches / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
+        historical.write_text("historical comparison\n", encoding=UTF8)
+        with (
+            patch("benchmark_utils.run_git_command", return_value=completed_process()),
+            patch("benchmark_utils.get_git_commit_hash", return_value="unknown"),
+            patch("benchmark_utils.HardwareInfo") as hardware,
+        ):
+            hardware.return_value.get_hardware_info.return_value = {
+                "CPU": "Test CPU",
+                "CPU_CORES": "4",
+                "MEMORY": "8 GB",
+                "OS": "Test OS",
+                "RUST": "rustc test",
+            }
+            generator = PerformanceSummaryGenerator(tmp_path)
+            with patch.object(generator, "_parse_comparison_results", return_value=["STALE COMPARISON"]) as comparison:
+                content = generator._generate_markdown_content()
+
+        assert "Initial Benchmark Baseline" in content
+        assert "v0.8.2 establishes the corrected benchmark contract" in content
+        assert "STALE COMPARISON" not in content
+        comparison.assert_not_called()
+        assert historical.read_text(encoding=UTF8) == "historical comparison\n"
+
     def test_init(self) -> None:
         """Test PerformanceSummaryGenerator initialization."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -5777,6 +5904,24 @@ OK: Time change -1.8% within acceptable range
             assert "#### Bistellar flips" in content
             assert "`bistellar_flips_4d/k2_roundtrip`" in content
             assert "| `bistellar_flips_4d/k2_roundtrip` | 4D | fixed fixture |" in content
+
+    def test_ci_summary_compacts_input_counts_without_changing_benchmark_ids(self, tmp_path: Path) -> None:
+        """Import rows keep exact IDs and timings within the Markdown line limit."""
+        sizes = ((2, 120, 226), (3, 30, 115), (4, 16, 68), (5, 10, 20))
+        for dimension, vertices, simplices in sizes:
+            benchmark_id = ("explicit_import", f"import_pseudomanifold_{dimension}d", f"vertices_{vertices}_simplices_{simplices}")
+            write_estimate(tmp_path / "target", benchmark_id, 100_000_000.0)
+        generator = PerformanceSummaryGenerator(tmp_path)
+
+        lines = generator._get_ci_performance_suite_results()
+
+        for dimension, vertices, simplices in sizes:
+            expected_id = f"explicit_import/import_pseudomanifold_{dimension}d/vertices_{vertices}_simplices_{simplices}"
+            row = next(line for line in lines if line.startswith(f"| `{expected_id}` |"))
+            assert f"| {dimension}D | {vertices}v/{simplices}s |" in row
+            assert row.endswith("| 100.000 ms | 90.000 ms - 110.000 ms |")
+        assert all(len(line) <= 160 for line in lines)
+        assert any("`v` for vertices and `s` for simplices" in line for line in lines)
 
     def test_get_circumsphere_performance_results(self) -> None:
         """Test getting circumsphere performance results."""

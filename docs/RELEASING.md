@@ -126,20 +126,23 @@ synchronizes the target heading with the intended date recorded in
 not match the Cargo package version. Review the generated changelog and archive
 changes. Do not edit generated changelog files manually.
 
-### 4. Generate the release performance comparison
+### 4. Generate release performance measurements
 
 The corrected proof-aware benchmark contract starts with **v0.8.2**. For that
-first release, after updating package metadata, run `just bench-perf-summary`,
-which preflights the curated fixtures before sampling, to establish fresh
-absolute measurements. Skip the
-release-to-release comparison and README comparison publication in steps 4–5:
+first release, `just performance-release` runs the same fresh, strict absolute
+summary workflow as `just bench-perf-summary`, writing
+`benches/PERFORMANCE_RESULTS.md`. It preflights the curated fixtures before
+sampling and does not fetch or benchmark an earlier release. Skip the
+README comparison publication in step 5:
 v0.8.1's failed fixtures and earlier case names are not a valid baseline for
 this contract. Keep historical reports labeled with their original versions;
 do not relabel them as v0.8.2 evidence. The draft-run-publish workflow below
 attaches the first complete corrected archive to v0.8.2.
 
 From the following release onward, use two comparable releases under the new
-contract for the comparison and README publication steps.
+contract for the comparison and README publication steps. Explicit or inferred
+pairs spanning the v0.8.2 contract boundary are rejected before tag fetches or
+benchmark worktrees are created.
 
 Run this after the package version has been updated:
 
@@ -147,8 +150,8 @@ Run this after the package version has been updated:
 just performance-release
 ```
 
-The no-argument form compares the current package version with the previous
-stable published release. It runs the release-signal Criterion measurements,
+After v0.8.2, the no-argument form compares the current package version with the
+previous stable published release. It runs the release-signal Criterion measurements,
 retains `target/bench-reports/performance.{md,csv,provenance.json}`, validates
 the CSV/provenance pair after reloading it, promotes `docs/performance.md`, and
 archives the prior report plus the exact promoted evidence under

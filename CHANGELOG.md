@@ -5,6 +5,192 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-09-14
+
+### ⚠️ Breaking Changes
+
+- Delegate exact rational algebra to la-stack [#601](https://github.com/acgetchell/delaunay/pull/601)
+- Delegate stable norms to la-stack [#608](https://github.com/acgetchell/delaunay/pull/608)
+- Correct proof fixtures and release publication [#605](https://github.com/acgetchell/delaunay/pull/605)
+- Use scale-aware simplex measure checks [#607](https://github.com/acgetchell/delaunay/pull/607)
+- Harden geometry, rollback, and public API contracts [#611](https://github.com/acgetchell/delaunay/pull/611)
+
+### Merged Pull Requests
+
+- Harden geometry, rollback, and public API contracts [#611](https://github.com/acgetchell/delaunay/pull/611)
+- Extend the periodic T3 coverage timeout [#611](https://github.com/acgetchell/delaunay/pull/611)
+- Improve API navigation and organize scientific documentation [#609](https://github.com/acgetchell/delaunay/pull/609)
+- Delegate stable norms to la-stack [#608](https://github.com/acgetchell/delaunay/pull/608)
+- Use scale-aware simplex measure checks [#607](https://github.com/acgetchell/delaunay/pull/607)
+- Fill math-kernel coverage gaps [#606](https://github.com/acgetchell/delaunay/pull/606)
+- Correct proof fixtures and release publication [#605](https://github.com/acgetchell/delaunay/pull/605)
+- Preflight uv updates and align zizmor audits [#604](https://github.com/acgetchell/delaunay/pull/604)
+- Enforce Python typing and expand triangulation coverage [#603](https://github.com/acgetchell/delaunay/pull/603)
+- Expose Level 4 adapter workflows on Triangulation [#602](https://github.com/acgetchell/delaunay/pull/602)
+- Delegate exact rational algebra to la-stack [#601](https://github.com/acgetchell/delaunay/pull/601)
+- Bump the github-actions group with 4 updates [#599](https://github.com/acgetchell/delaunay/pull/599)
+- Bump the github-actions group with 3 updates [#594](https://github.com/acgetchell/delaunay/pull/594)
+
+### Added
+
+- Expose Level 4 adapter workflows on Triangulation [#602](https://github.com/acgetchell/delaunay/pull/602)
+  [`dfe3465`](https://github.com/acgetchell/delaunay/commit/dfe34657c4e9b7a43da12de7b577182f65faab34)
+
+  - Share visualization export between Triangulation and Delaunay owners.
+  - Add exact UUID snapshots that preserve topology context and payloads without requiring Clone for serialization.
+  - Expose transactional Euclidean insertion and deletion with typed failures and complete rollback.
+  - Document toroidal Pachner composition and persistence limits while keeping Level 5 refinement explicit.
+  - Add CodeRabbit review recipes for branch and uncommitted changes, and require review of substantive changes before final validation.
+
+### Changed
+
+- [**breaking**] Delegate exact rational algebra to la-stack [#601](https://github.com/acgetchell/delaunay/pull/601)
+  [`b288faf`](https://github.com/acgetchell/delaunay/commit/b288faf39d9c6958bb285fca4ff380547f8a98ee)
+
+  - Adopt la-stack 0.4.6 rational determinants and solves for in-sphere predicates, circumcenters, and exact LP certification.
+  - Remove duplicate rational elimination and binary64 round-trip adapters.
+  - Round only final circumcenter coordinates and preserve indexed conversion errors.
+  - Refresh Rust and Python dependencies, development tools, and CI action references; simplify temporary-file cleanup in support scripts.
+  - Clarify fast iteration and final PR validation requirements.
+- Fill math-kernel coverage gaps [#606](https://github.com/acgetchell/delaunay/pull/606)
+  [`2618816`](https://github.com/acgetchell/delaunay/commit/26188165ddd1c88985ecd6c3af754c29eb7ca36d)
+
+  - Add 82 targeted 2D–5D benchmarks for orientation, geometry, and topology kernels with analytical fixtures and certified filter paths.
+  - Document kernel coverage, diagnostic workflows, and release-suite membership in the benchmark coverage audit.
+  - Preserve complete cross-dimension Criterion group summaries.
+  - Update ty from 0.0.79 to 0.0.80.
+- [**breaking**] Delegate stable norms to la-stack [#608](https://github.com/acgetchell/delaunay/pull/608)
+  [`7b2e610`](https://github.com/acgetchell/delaunay/commit/7b2e610f0fa82ac998617f984def3593e42a8502)
+
+  - Use checked vectors for distance, circumsphere, measure, quality, sampling, hull, and repair calculations while preserving typed backend
+    errors and exact predicate lifting.
+  - Preserve finite distances when squares overflow and correct subnormal deduplication, extreme-radius ball sampling, overflowing edge means,
+    and normalized-volume calculations.
+  - Share validated ToroidalDomain values across geometry and topology, avoiding repeated period validation during realization checks.
+  - Reject spherical normalization that cannot preserve direction at the requested radius, leaving in-place inputs unchanged on failure.
+  - Remove redundant coordinate conversions and quality-metric kernel bounds, and use fixed-size workspaces for facets and separator rays.
+  - Require explicit authorization for CodeRabbit reviews, fix README links in rustdoc, and refresh dependency locks and tool pins.
+
+### Documentation
+
+- Improve API navigation and organize scientific documentation [#609](https://github.com/acgetchell/delaunay/pull/609)
+  [`f817d25`](https://github.com/acgetchell/delaunay/commit/f817d25df0bb422c7337cc3a463c49bed98eb72d)
+
+  - Add a capability-to-API map and stable README anchors for docs.rs.
+  - Introduce a scientific-basis overview and clarify documentation ownership while preserving bibliography keys and existing anchors.
+  - Adopt uppercase task-guide and lowercase technical-document names; update links and performance tooling while preserving historical
+    evidence URLs.
+  - Align AI guidance with la-stack and clarify that CodeRabbit review requires explicit authorization.
+  - Expand overflow, periodic-chart, and simplex-intersection regression coverage, including certified separation and exact fallbacks through 6D.
+  - Add single-shared-vertex realization benchmarks across 2D–5D.
+  - Update cargo-nextest to 0.9.144 and pure-eval to 0.2.4.
+
+### Fixed
+
+- Preflight uv updates and align zizmor audits [#604](https://github.com/acgetchell/delaunay/pull/604)
+  [`b616da3`](https://github.com/acgetchell/delaunay/commit/b616da334e67644dc172a2262b3ac3073140071d)
+
+  - Reject unsupported uv versions before dependency or Cargo tool updates, while allowing newer stable versions to become the reconciled pin.
+  - Share the pinned zizmor version and regular persona between local audits and the GitHub SARIF workflow.
+  - Resolve local audit credentials from environment variables or GitHub CLI authentication, with an explicit offline fallback.
+  - Add Semgrep guards for explicit zizmor versions and disabled setup-uv caching in release workflows.
+  - Update zizmor to 1.30.1, zizmor-action to 0.6.4, and Polars to 1.44.2.
+  - Clarify Python fixture lint requirements in the development guidance.
+- [**breaking**] Correct proof fixtures and release publication [#605](https://github.com/acgetchell/delaunay/pull/605)
+  [`75f783c`](https://github.com/acgetchell/delaunay/commit/75f783c4930c5736cbcd4207eabd8588c714f217)
+
+  - Separate pseudomanifold import and promotion from PL-manifold certification that retains construction provenance.
+  - Calibrate fixtures, preflight every curated target before sampling, and always print fatal benchmark errors.
+  - Align manifests and reports with canonical Criterion IDs, fixture sizes, and all curated benchmark groups.
+  - Benchmark the exact stable tag on a mutable draft, verify the uploaded archive's SHA-256, and publish only after success. Reject existing baseline assets
+    and published-release reruns.
+- [**breaking**] Use scale-aware simplex measure checks [#607](https://github.com/acgetchell/delaunay/pull/607)
+  [`f7b2182`](https://github.com/acgetchell/delaunay/commit/f7b2182ec93ae4d20237316805aebd271771e5f6)
+
+  - Delegate simplex and facet Gram construction to la-stack while preserving geometric edge validation and typed failures.
+  - Scale LDLT pivot tolerances with the Gram matrix and prevent degeneracy-threshold overflow on large finite inputs.
+  - Return typed errors for zero-dimensional inradius/facet requests, measure underflow to zero, and overflowing facet sums.
+  - Remove per-facet heap allocations from inradius and surface_measure.
+  - Extend geometry benchmarks through 6D with direct facet and surface measure coverage.
+- [**breaking**] Harden geometry, rollback, and public API contracts [#611](https://github.com/acgetchell/delaunay/pull/611)
+  [`afabb8e`](https://github.com/acgetchell/delaunay/commit/afabb8e7618caa14356915ac4d846f09067ad29e)
+
+  - Stabilize spherical distances near coincident and antipodal points.
+  - Make toroidal canonicalization failure-atomic and preserve half-open coordinate bounds.
+  - Deserialize exact-length numeric Point tuples without deserialize_any.
+  - Preserve live storage on rejected tombstone finalization and retain structured duplicate-simplex, coordinate, and orientation diagnostics.
+  - Preserve owner lifetimes in borrowed views, relax payload bounds, and reduce excessive edge-set reservations.
+  - Require explicit allocation instrumentation and narrow prelude exports.
+  - Reject dangling artifact symlinks, validate release asset sizes and digests, and safely quote stress-runner arguments.
+  - Align CI with native Rust hosts, trim unused dependency features, and strengthen independent scientific fixtures and transition coverage.
+
+### Maintenance
+
+- Bump the github-actions group with 3 updates [#594](https://github.com/acgetchell/delaunay/pull/594)
+  [`48e02e5`](https://github.com/acgetchell/delaunay/commit/48e02e5726c3d5ab398bae1ae3fbbac0061472f6)
+
+  Bumps the github-actions group with 3 updates: [github/codeql-action/upload-sarif](https://github.com/github/codeql-action),
+  [github/codeql-action/init](https://github.com/github/codeql-action) and [github/codeql-action/analyze](https://github.com/github/codeql-action).
+
+  Updates `github/codeql-action/upload-sarif` from 4.37.7 to 4.37.8
+
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd...db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28)
+
+  Updates `github/codeql-action/init` from 4.37.7 to 4.37.8
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd...db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28)
+
+  Updates `github/codeql-action/analyze` from 4.37.7 to 4.37.8
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd...db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28)
+- Bump the github-actions group with 4 updates [#599](https://github.com/acgetchell/delaunay/pull/599)
+  [`2b7017b`](https://github.com/acgetchell/delaunay/commit/2b7017bb3981babed2aab64826282bb06ac0e312)
+
+  Bumps the github-actions group with 4 updates: [github/codeql-action/upload-sarif](https://github.com/github/codeql-action),
+  [github/codeql-action/init](https://github.com/github/codeql-action), [github/codeql-action/analyze](https://github.com/github/codeql-action) and
+  [zizmorcore/zizmor-action](https://github.com/zizmorcore/zizmor-action).
+
+  Updates `github/codeql-action/upload-sarif` from 4.37.8 to 4.37.9
+
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28...cdf488f595d80d6e07e03d4674febd5ab45fa938)
+
+  Updates `github/codeql-action/init` from 4.37.8 to 4.37.9
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28...cdf488f595d80d6e07e03d4674febd5ab45fa938)
+
+  Updates `github/codeql-action/analyze` from 4.37.8 to 4.37.9
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28...cdf488f595d80d6e07e03d4674febd5ab45fa938)
+
+  Updates `zizmorcore/zizmor-action` from 0.6.2 to 0.6.3
+  - [Release notes](https://github.com/zizmorcore/zizmor-action/releases)
+  - [Commits](https://github.com/zizmorcore/zizmor-action/compare/3dc1ecc9bcb9e94e9b2c709687979e1298497054...70fb788f84895a7701f5643d103d587e460b5c99)
+- Enforce Python typing and expand triangulation coverage [#603](https://github.com/acgetchell/delaunay/pull/603)
+  [`0b137a3`](https://github.com/acgetchell/delaunay/commit/0b137a303cadf7522e3f3fd76c51e757683ae7fa)
+
+  - Apply complete annotation requirements and shared, filename-safe formatting, linting, and type checks across Python sources.
+  - Add full-policy Semgrep fixture linting to CI while preserving deliberate violations through narrow exceptions.
+  - Exclude Semgrep fixtures from general CodeRabbit review and delegate Python docstring policy to Ruff.
+  - Expand triangulation rollback and snapshot coverage for payload, topology, and validation-policy contracts.
+  - Document mandatory Level 4 validation for fallback vertex removal and include src/lib.rs in coverage reporting.
+- Extend the periodic T3 coverage timeout [#611](https://github.com/acgetchell/delaunay/pull/611)
+  [`37ab5df`](https://github.com/acgetchell/delaunay/commit/37ab5df81ea96d5dc4165776b1a5902c2de3c6b0)
+
+  - Allow 30 minutes for the compact T^3 topology-and-Delaunay coverage regression.
+  - Preserve all assertions and the existing timeouts for other tests and profiles.
+- Prevent 6D debug agreement timeouts across platforms [`6a73d22`](https://github.com/acgetchell/delaunay/commit/6a73d221f064558630549186df1d5925b7755be0)
+
+  - Apply the existing 60-second timeout to the randomized 6D intersection agreement test on all platforms.
+  - Update debug timeout guidance and correct the documented T^3 coverage timeouts.
+
 ## [0.8.1] - 2026-08-28
 
 ### ⚠️ Breaking Changes
@@ -242,6 +428,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/github/codeql-action/releases)
   - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/github/codeql-action/compare/5595ccaf912efad79be6eef63a5619ff05969be3...ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd)
+- Refresh v0.8.1 metadata and tools [`8343567`](https://github.com/acgetchell/delaunay/commit/8343567573e0fdcf6470cb718a05ac03c8a6c763)
 
 ### Performance
 
@@ -1076,5 +1263,6 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archive/changelog/0.3.md)
 - [0.2.x](docs/archive/changelog/0.2.md)
 
+[0.8.2]: https://github.com/acgetchell/delaunay/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/acgetchell/delaunay/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/acgetchell/delaunay/compare/v0.7.8...v0.8.0

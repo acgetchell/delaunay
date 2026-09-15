@@ -588,6 +588,14 @@ promote one curated comparison into `docs/performance.md`, archiving the
 previous report and exact promoted CSV/provenance bytes under
 `docs/archive/performance/`.
 
+The corrected benchmark contract starts with v0.8.2. For that initial release,
+the no-argument `just performance-release` instead runs fresh, strict absolute
+measurements into `benches/PERFORMANCE_RESULTS.md`, using the same summary path
+as `just bench-perf-summary`. It requires no previous release or tag fetch.
+Skip `performance-doc` and `performance-readme` for v0.8.2. Comparisons across
+the v0.8.2 contract boundary are rejected before measurement or acquisition;
+historical reports retain their original release labels.
+
 Use `just performance-doc` to retry rendering or promotion from an existing
 retained CSV/provenance pair. It runs no Cargo benchmarks or measurement
 worktrees and rejects incomplete, invalid, stale, same-version, or

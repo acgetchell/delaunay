@@ -396,6 +396,30 @@ def test_configuration_digest_is_provenance_not_a_comparison_blocker() -> None:
     assert changed.comparison_blockers == ()
 
 
+@pytest.mark.parametrize(
+    ("current", "baseline", "blocked"),
+    [
+        ("v0.8.2", "v0.8.1", True),
+        ("v0.10.0", "v0.8.1", True),
+        ("v0.8.1", "v0.8.2", True),
+        ("v0.8.2+build.1", "v0.8.1", True),
+        ("v0.8.3", "v0.8.2", False),
+        ("v0.8.1", "v0.8.0", False),
+    ],
+)
+def test_release_contract_boundary_blocks_ratios_even_with_matching_provenance(current: str, baseline: str, blocked: bool) -> None:
+    """Matching hashes cannot override the documented reset; history stays readable."""
+    measured = context(current=current, baseline=baseline)
+    if blocked:
+        assert len(measured.comparison_blockers) == 1
+        assert "corrected benchmark contract starts with v0.8.2" in measured.comparison_blockers[0]
+        with pytest.raises(ValueError, match="compatible measurement provenance"):
+            PerformanceBundle(context=measured, rows=(bundle().rows[0],))
+    else:
+        assert measured.comparison_blockers == ()
+        PerformanceBundle(context=measured, rows=(bundle().rows[0],)).require_promotable()
+
+
 def test_measurement_plan_difference_blocks_comparable_rows() -> None:
     original = bundle()
     changed = replace(
