@@ -403,8 +403,17 @@ def test_configuration_digest_is_provenance_not_a_comparison_blocker() -> None:
         ("v0.10.0", "v0.8.1", True),
         ("v0.8.1", "v0.8.2", True),
         ("v0.8.2+build.1", "v0.8.1", True),
+        ("v0.8.2", "v0.8.2-rc.1", True),
+        ("v0.8.2-rc.1", "v0.8.2", True),
+        ("v0.8.2+build.1", "v0.8.2-rc.1+build.2", True),
+        ("v0.8.2", "v0.8.2-0", True),
+        ("v0.8.3-rc.1", "v0.8.2-rc.1", True),
         ("v0.8.3", "v0.8.2", False),
         ("v0.8.1", "v0.8.0", False),
+        ("v0.8.2-rc.1", "v0.8.1", False),
+        ("v0.8.2-rc.10", "v0.8.2-rc.2", False),
+        ("v0.8.3-rc.1", "v0.8.2", False),
+        ("v0.8.2+build-with-hyphens", "v0.8.2", False),
     ],
 )
 def test_release_contract_boundary_blocks_ratios_even_with_matching_provenance(current: str, baseline: str, blocked: bool) -> None:

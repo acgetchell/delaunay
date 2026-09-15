@@ -1328,14 +1328,16 @@ def test_first_benchmark_release_generates_absolute_summary_without_release_look
 
 @pytest.mark.parametrize("command", ["performance-release", "performance-github-assets"])
 @pytest.mark.parametrize("current", ["v0.8.2", "v0.8.3", "v0.10.0"])
+@pytest.mark.parametrize("baseline", ["v0.8.1", "v0.8.2-rc.1", "v0.8.2-rc.1+build.2"])
 def test_cross_contract_cli_pair_fails_before_fetch_or_measurement(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     command: str,
     current: str,
+    baseline: str,
 ) -> None:
     """Explicit repair pairs cannot reuse the invalid pre-v0.8.2 baseline."""
-    args = create_argument_parser().parse_args([command, current, "v0.8.1"])
+    args = create_argument_parser().parse_args([command, current, baseline])
     with (
         patch("benchmark_utils.run_safe_command") as safe_command,
         patch("benchmark_utils.run_git_command") as git,
@@ -1372,9 +1374,10 @@ def test_release_inference_requires_a_baseline_under_the_corrected_contract(tmp_
             assert (request.current_tag, request.baseline_tag) == ("v0.8.3", "v0.8.2")
 
 
-def test_cross_contract_direct_generation_never_creates_worktrees(tmp_path: Path) -> None:
+@pytest.mark.parametrize("baseline", ["v0.8.1", "v0.8.2-rc.1"])
+def test_cross_contract_direct_generation_never_creates_worktrees(tmp_path: Path, baseline: str) -> None:
     """Library callers receive the same early rejection as the CLI."""
-    config = ReleaseReportConfig(repo_root=tmp_path, current_tag="v0.8.2", baseline_tag="v0.8.1", worktree_ref="HEAD")
+    config = ReleaseReportConfig(repo_root=tmp_path, current_tag="v0.8.2", baseline_tag=baseline, worktree_ref="HEAD")
     with (
         patch("benchmark_utils.run_git_command") as git,
         pytest.raises(ValueError, match=r"corrected benchmark contract starts with v0\.8\.2"),

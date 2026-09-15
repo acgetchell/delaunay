@@ -221,12 +221,15 @@ class ReleasePair:
     def benchmark_contract_blockers(self) -> tuple[str, ...]:
         """Keep historical comparisons separate from the corrected benchmark contract."""
 
-        def release_core(tag: str) -> tuple[int, ...]:
-            core = re.split(r"[-+]", tag.removeprefix("v"), maxsplit=1)[0]
-            return tuple(int(part) for part in core.split("."))
+        def release_precedence(tag: str) -> tuple[tuple[int, ...], tuple[tuple[int, int, str], ...]]:
+            """Order SemVer identifiers numerically or lexically, ignoring build metadata."""
+            core, separator, prerelease = tag.removeprefix("v").split("+", 1)[0].partition("-")
+            # Numeric identifiers precede text; stable releases follow all prereleases.
+            prerelease_key = tuple((0, int(part), "") if part.isdecimal() else (1, 0, part) for part in prerelease.split(".")) if separator else ((2, 0, ""),)
+            return tuple(int(part) for part in core.split(".")), prerelease_key
 
-        first = release_core(BENCHMARK_CONTRACT_START)
-        if (release_core(self.current) < first) == (release_core(self.baseline) < first):
+        first = release_precedence(BENCHMARK_CONTRACT_START)
+        if (release_precedence(self.current) < first) == (release_precedence(self.baseline) < first):
             return ()
         return (
             (
