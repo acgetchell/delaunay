@@ -27,7 +27,7 @@ use super::{
     non_convergent_error, pop_queue, removed_simplex_frame, repair_flip_is_unavailable,
     repair_ridge_debug_enabled, repair_trace_enabled, ridge_vertices_from_simplex,
     run_next_edge_repair_step, run_next_facet_repair_step, run_next_ridge_repair_step,
-    run_next_triangle_repair_step, seed_repair_queues, validate_bistellar_flip_dynamic,
+    run_next_triangle_repair_step, seed_repair_queues, validate_delaunay_flip_dynamic,
 };
 
 /// Run a single flip-repair attempt using k=2 (and k=3 in 3D+).
@@ -1851,8 +1851,8 @@ where
         }
 
         let inverse_kind = BistellarFlipKind::from_validated(2, D).inverse();
-        match validate_bistellar_flip_dynamic(tds, inverse_kind.k(), &context) {
-            Ok(_) => {
+        match validate_delaunay_flip_dynamic(tds, inverse_kind.k(), &context) {
+            Ok(()) => {
                 if repair_trace_enabled() {
                     tracing::debug!(
                         "[repair] postcondition inverse k=2 flip still applicable (edge={edge:?})"
@@ -1952,8 +1952,8 @@ where
         }
 
         let inverse_kind = BistellarFlipKind::from_validated(3, D).inverse();
-        match validate_bistellar_flip_dynamic(tds, inverse_kind.k(), &context) {
-            Ok(_) => {
+        match validate_delaunay_flip_dynamic(tds, inverse_kind.k(), &context) {
+            Ok(()) => {
                 if repair_trace_enabled() {
                     tracing::debug!(
                         "[repair] postcondition inverse k=3 flip still applicable (triangle={triangle:?})"

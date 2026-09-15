@@ -100,6 +100,27 @@ pub(crate) fn validate_bistellar_flip_dynamic<U, V, const D: usize>(
     .into_feasibility())
 }
 
+/// Checks repair feasibility with the same positive-geometry policy as execution.
+///
+/// A topologically legal inverse move can invert the cavity's realization, so
+/// repair postconditions must not require every move accepted by the raw API.
+pub(super) fn validate_delaunay_flip_dynamic<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    k_move: usize,
+    context: &FlipContextDyn<D>,
+) -> Result<(), FlipError> {
+    prepare_bistellar_flip(
+        tds,
+        k_move,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+        &context.removed_simplices,
+        context.direction,
+        ReplacementOrientationPolicy::RequirePositive,
+    )?;
+    Ok(())
+}
+
 /// Apply a k=2 Delaunay-repair move with positive replacement geometry.
 pub(super) fn apply_delaunay_flip_k2<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
