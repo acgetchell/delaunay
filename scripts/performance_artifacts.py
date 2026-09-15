@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
 SCHEMA_VERSION = 3
+BENCHMARK_CONTRACT_START = "v0.8.2"
 SUITES = ("release-signal", "ci", "query", "predicates", "topology")
 SCOPES = ("release-signal", "all-benches")
 COVERAGE_STATES = ("comparable", "not-comparable", "current-only", "baseline-only")
@@ -53,9 +54,10 @@ CSV_COLUMNS = (
     "current_confidence_level",
 )
 
+_SEMVER_PRERELEASE_IDENTIFIER_RE = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
 _SEMVER_TAG_RE = re.compile(
     r"^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
-    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    rf"(?:-{_SEMVER_PRERELEASE_IDENTIFIER_RE}(?:\.{_SEMVER_PRERELEASE_IDENTIFIER_RE})*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
 _GIT_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -212,9 +214,31 @@ class ReleasePair:
     baseline: str
 
     def __post_init__(self) -> None:
-        """Require non-empty identifiers while allowing local same-version runs."""
+        """Require valid SemVer tags while allowing local same-version runs."""
         _require_release_tag("current release", self.current)
         _require_release_tag("baseline release", self.baseline)
+
+    @property
+    def benchmark_contract_blockers(self) -> tuple[str, ...]:
+        """Keep historical comparisons separate from the corrected benchmark contract."""
+
+        def release_precedence(tag: str) -> tuple[tuple[int, ...], tuple[tuple[int, int, str], ...]]:
+            """Order SemVer identifiers numerically or lexically, ignoring build metadata."""
+            core, separator, prerelease = tag.removeprefix("v").split("+", 1)[0].partition("-")
+            # Numeric identifiers precede text; stable releases follow all prereleases.
+            prerelease_key = tuple((0, int(part), "") if part.isdecimal() else (1, 0, part) for part in prerelease.split(".")) if separator else ((2, 0, ""),)
+            return tuple(int(part) for part in core.split(".")), prerelease_key
+
+        first = release_precedence(BENCHMARK_CONTRACT_START)
+        if (release_precedence(self.current) < first) == (release_precedence(self.baseline) < first):
+            return ()
+        return (
+            (
+                f"the corrected benchmark contract starts with {BENCHMARK_CONTRACT_START}; "
+                f"{self.current} and {self.baseline} cannot be compared across that boundary. "
+                "Use `just bench-perf-summary` for absolute measurements; release comparisons require two releases under the same contract"
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -447,7 +471,7 @@ class ArtifactContext:
     @property
     def comparison_blockers(self) -> tuple[str, ...]:
         """Return provenance differences that prevent before/after ratios."""
-        blockers: list[str] = []
+        blockers = list(self.release.benchmark_contract_blockers)
         if self.current_source.limitation or self.baseline_source.limitation:
             blockers.append("complete source-state evidence is unavailable")
         if self.current_toolchain.limitation or self.baseline_toolchain.limitation:

@@ -1,6 +1,6 @@
 [package]
 name = "delaunay"
-version = "0.8.1"
+version = "0.8.2"
 edition = "2024"
 rust-version = "1.98.1"
 autobins = false
@@ -59,7 +59,7 @@ rustdoc-args = [ "--cfg", "docsrs" ]
 [dependencies]
 allocation-counter = { version = "0.8.1", optional = true } # for memory profiling
 ciborium = { version = "0.2.2", default-features = false }
-clap = { version = "4.6.6", features = [ "derive" ], optional = true }
+clap = { version = "4.6.7", features = [ "derive" ], optional = true }
 la-stack = { version = "0.4.6", default-features = false, features = [ "exact" ] }
 tracing = { version = "0.1.44", default-features = false, features = [ "std" ] }
 rustc-hash = "2.1.3" # Fast non-cryptographic hashing for performance
