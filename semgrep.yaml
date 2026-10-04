@@ -2932,7 +2932,7 @@ rules:
       exclude:
         - "/tests/semgrep/**"
     patterns:
-      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@(?![a-fA-F0-9]{40}(?:\s+#|$))[^\s#]+' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@(?![a-fA-F0-9]{40}(?:\s+#|$))[^\s#]+' # yamllint disable-line rule:line-length
 
   - id: delaunay.github-actions.external-action-approved-allowlist
     languages:
@@ -2950,7 +2950,7 @@ rules:
       exclude:
         - "/tests/semgrep/**"
     patterns:
-      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)(?!(?:actions/checkout|actions/cache|actions/upload-artifact|actions/download-artifact|actions/github-script|actions/setup-python|actions-rust-lang/setup-rust-toolchain|astral-sh/setup-uv|taiki-e/cache-cargo-install-action|github/codeql-action/(?:upload-sarif|init|analyze)|codecov/codecov-action|codacy/codacy-coverage-reporter-action|codacy/codacy-analysis-cli-action|zizmorcore/zizmor-action)@)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)(?!(?:actions/checkout|actions/cache|actions/upload-artifact|actions/download-artifact|actions/github-script|actions/setup-python|actions-rust-lang/setup-rust-toolchain|astral-sh/setup-uv|taiki-e/cache-cargo-install-action|github/codeql-action/(?:upload-sarif|init|analyze)|codecov/codecov-action|codacy/codacy-coverage-reporter-action|codacy/codacy-analysis-cli-action|zizmorcore/zizmor-action|acgetchell/research-repo-tools/\.github/workflows/dependabot-approve\.yml)@)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@' # yamllint disable-line rule:line-length
 
   - id: delaunay.github-actions.external-action-version-comment
     languages:
@@ -2968,7 +2968,7 @@ rules:
       exclude:
         - "/tests/semgrep/**"
     patterns:
-      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@[a-fA-F0-9]{40}\s*$' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@[a-fA-F0-9]{40}\s*$' # yamllint disable-line rule:line-length
 
   - id: delaunay.github-actions.checkout-persist-credentials-false
     languages:

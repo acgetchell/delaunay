@@ -69,6 +69,25 @@ The direct setup contract also ran in that temporary consumer with isolated uv
 tool directories already on PATH, verifying its persistent Just installation
 without changing user shell startup files.
 
+## Dependabot automation
+
+The Dependabot caller uses the same reusable workflow revision as la-stack and
+MCMC: `cbb2ea6dee8866b3f0547bca935aef48fdd71707` from
+`acgetchell/research-repo-tools`. This workflow pin is independent of the PyPI
+package pin. Its reviewed `pull_request_target` job runs from trusted base
+definitions without checking out or executing PR code and receives no repository
+secrets. The local policy lists exact Cargo, uv, workflow, and composite-action
+files, including both checkpoint fixture resolution files.
+
+The shared workflow verifies signed Dependabot metadata, PR identity and current
+head, commit ancestry, and the complete changed-file list before approving an
+eligible update and enabling native squash auto-merge. GitHub Actions must be
+allowed to approve PRs. Active branch rules require an approval, dismissal of
+stale approvals on push, resolved review threads, and strict required checks.
+Existing CI, Codacy, and CodeRabbit status requirements continue to gate merging.
+The old review-token request and CodeRabbit approval polling are removed; local
+consumer tests cover policy wiring, while the shared suite owns approval logic.
+
 ## Platform evidence
 
 The managed inventory was installed and verified on native aarch64 macOS,

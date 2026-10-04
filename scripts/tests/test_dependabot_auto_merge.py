@@ -1,117 +1,59 @@
-"""Exercise the actual approval step with local transports and runner shell flags."""
+"""Check the consumer boundary of the shared Dependabot approval workflow."""
 
 import json
-import os
+import re
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-import pytest
 import yaml
 
-from subprocess_utils import run_safe_command
-
-if TYPE_CHECKING:
-    import subprocess
-
-WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "dependabot-auto-merge.yml"
-HEAD_SHA = "a" * 40
-APPROVAL = {"user": {"login": "coderabbitai[bot]"}, "commit_id": HEAD_SHA, "state": "APPROVED"}
+ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW = ROOT / ".github/workflows/dependabot-auto-merge.yml"
+CONFIG = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+JOB = CONFIG["jobs"]["approve-and-enable-auto-merge"]
+POLICY = json.loads(JOB["with"]["policy"])
 
 
-@pytest.fixture(scope="module")
-def approval_script() -> str:
-    """Load the production step and require GitHub's explicit Bash semantics."""
-    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    steps = workflow["jobs"]["review-and-enable-auto-merge"]["steps"]
-    step = next(step for step in steps if step.get("id") == "coderabbit-approval")
-    assert step["shell"] == "bash"
-    script = step["run"]
-    assert isinstance(script, str)
-    return script
+def test_approval_runs_from_trusted_base_without_consumer_code() -> None:
+    """Privileged automation can only call the reviewed shared workflow."""
+    assert set(CONFIG["on"]) == {"pull_request_target"}
+    event = CONFIG["on"]["pull_request_target"]
+    assert event["branches"] == ["main"]
+    assert set(event["types"]) == {"opened", "reopened", "ready_for_review", "synchronize"}
+    assert CONFIG["permissions"] == {}
+    assert set(CONFIG["jobs"]) == {"approve-and-enable-auto-merge"}
+    assert set(JOB) == {"permissions", "uses", "with"}
+    assert JOB["permissions"] == {"contents": "write", "pull-requests": "write"}
+    reference, revision = JOB["uses"].rsplit("@", 1)
+    assert reference == "acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml"
+    assert re.fullmatch(r"[0-9a-f]{40}", revision)
+    assert set(JOB["with"]) == {"repository", "policy"}
+    assert JOB["with"]["repository"] == "acgetchell/delaunay"
 
 
-@pytest.fixture
-def review_env(tmp_path: Path) -> dict[str, str]:
-    """Replace GitHub access and polling delays with bounded, observable fakes."""
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    gh = fake_bin / "gh"
-    gh.write_text(
-        """#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> "$FAKE_ROOT/calls"
-case "$*" in
-    *'/reviews?per_page=100'*)
-        cat "$FAKE_ROOT/reviews.json"
-        exit "$REVIEWS_STATUS" ;;
-    'api repos/owner/repo/pulls/123 --jq .head.sha')
-        printf '%s\\n' "$PR_HEAD_SHA" ;;
-    *) exit 99 ;;
-esac
-""",
-        encoding="utf-8",
-    )
-    sleep = fake_bin / "sleep"
-    sleep.write_text("#!/usr/bin/env bash\nexit 91\n", encoding="utf-8")
-    gh.chmod(0o755)
-    sleep.chmod(0o755)
-    (tmp_path / "reviews.json").write_text(json.dumps([APPROVAL]), encoding="utf-8")
-    return {
-        **{key: value for key, value in os.environ.items() if key not in {"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS"}},
-        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
-        "FAKE_ROOT": str(tmp_path),
-        "GITHUB_OUTPUT": str(tmp_path / "output"),
-        "PR_HEAD_SHA": HEAD_SHA,
-        "PR_NUMBER": "123",
-        "REPOSITORY": "owner/repo",
-        "REVIEWS_STATUS": "0",
+def test_dependency_policy_covers_declared_ecosystems_and_resolution_roots() -> None:
+    """Dependency approval includes the isolated checkpoint Cargo root."""
+    dependabot = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text(encoding="utf-8"))
+    ecosystems = {update["package-ecosystem"].replace("-", "_") for update in dependabot["updates"]}
+    assert set(POLICY) == ecosystems
+    assert set(POLICY["cargo"]["files"]) == {
+        "Cargo.toml",
+        "Cargo.lock",
+        "tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml",
+        "tests/fixtures/checkpoint_no_float_roundtrip/Cargo.lock",
     }
+    assert set(POLICY["uv"]["files"]) == {"pyproject.toml", "uv.lock"}
 
 
-def run_approval(tmp_path: Path, env: dict[str, str], script: str) -> subprocess.CompletedProcess[str]:
-    """Model shell: bash on a GitHub runner without executing any live Actions."""
-    return run_safe_command("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", script], cwd=tmp_path, env=env, check=False, timeout=10)
-
-
-def test_successful_approval_binds_the_current_head(tmp_path: Path, review_env: dict[str, str], approval_script: str) -> None:
-    result = run_approval(tmp_path, review_env, approval_script)
-    assert result.returncode == 0, result.stderr
-    assert (tmp_path / "output").read_text(encoding="utf-8") == f"approved_head_sha={HEAD_SHA}\n"
-
-
-def test_partial_approval_followed_by_api_failure_never_authorizes_merge(tmp_path: Path, review_env: dict[str, str], approval_script: str) -> None:
-    review_env["REVIEWS_STATUS"] = "57"
-    result = run_approval(tmp_path, review_env, approval_script)
-    assert result.returncode == 57
-    assert not (tmp_path / "output").exists()
-
-
-@pytest.mark.parametrize("response", ["", "[]", "[null]"])
-def test_empty_or_missing_review_state_never_authorizes_merge(tmp_path: Path, review_env: dict[str, str], approval_script: str, response: str) -> None:
-    (tmp_path / "reviews.json").write_text(response, encoding="utf-8")
-    result = run_approval(tmp_path, review_env, approval_script)
-    assert result.returncode == 91
-    assert not (tmp_path / "output").exists()
-
-
-def test_malformed_reviews_abort_before_polling(tmp_path: Path, review_env: dict[str, str], approval_script: str) -> None:
-    (tmp_path / "reviews.json").write_text("[", encoding="utf-8")
-    result = run_approval(tmp_path, review_env, approval_script)
-    assert result.returncode not in {0, 91}
-    assert not (tmp_path / "output").exists()
-
-
-def test_later_review_page_overrides_earlier_approval(tmp_path: Path, review_env: dict[str, str], approval_script: str) -> None:
-    pages = json.dumps([APPROVAL]) + "\n" + json.dumps([{**APPROVAL, "state": "CHANGES_REQUESTED"}])
-    (tmp_path / "reviews.json").write_text(pages, encoding="utf-8")
-    result = run_approval(tmp_path, review_env, approval_script)
-    assert result.returncode == 91
-    assert not (tmp_path / "output").exists()
-
-
-@pytest.mark.parametrize("review", [{**APPROVAL, "commit_id": "b" * 40}, {**APPROVAL, "user": {"login": "someone-else"}}])
-def test_unrelated_approval_never_authorizes_merge(tmp_path: Path, review_env: dict[str, str], approval_script: str, review: dict[str, object]) -> None:
-    (tmp_path / "reviews.json").write_text(json.dumps([review]), encoding="utf-8")
-    result = run_approval(tmp_path, review_env, approval_script)
-    assert result.returncode == 91
-    assert not (tmp_path / "output").exists()
+def test_actions_policy_covers_consumer_workflows_and_composite_actions() -> None:
+    """Every Actions dependency is covered by an exact existing file path."""
+    paths = {
+        path.relative_to(ROOT).as_posix()
+        for directory in (ROOT / ".github/workflows", ROOT / ".github/actions")
+        for path in directory.rglob("*")
+        if path.suffix in {".yml", ".yaml"} and (directory.name == "workflows" or path.stem == "action")
+    }
+    assert set(POLICY["github_actions"]["files"]) == paths
+    for ecosystem in POLICY.values():
+        files = ecosystem["files"]
+        assert len(files) == len(set(files))
+        assert all((ROOT / path).is_file() for path in files)
