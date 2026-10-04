@@ -81,7 +81,9 @@ env:
 jobs:
   papers:
     runs-on: macos-latest
-    timeout-minutes: 30
+    # A cold managed-tool installation took 53 minutes on the macOS CI runner.
+    # Allow bootstrap and artifact checks to finish without relying on a cache.
+    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
