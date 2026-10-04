@@ -20,11 +20,12 @@ Set the target tag once:
 
 ```bash
 TAG=vX.Y.Z
+DATE=YYYY-MM-DD
 ```
 
-No `VERSION`, previous-tag, or release-date variable is required. The release
-tooling derives the version history from `TAG` and published GitHub Releases
-and records the current UTC date when release metadata is updated.
+Choose the UTC release date explicitly. Metadata preparation can discover the
+predecessor from published GitHub history; changelog generation always receives
+`TAG` and `DATE` separately.
 
 Verify GitHub authentication and the repository remotes, then synchronize
 `main`:
@@ -36,14 +37,13 @@ git switch main
 git pull --ff-only
 ```
 
-Install or verify the development tools before running maintenance recipes.
-`just setup` requires `uv`, `jq`, `rustup`, Cargo, `chktex`, and GitHub CLI
-(`gh`) on `PATH`. Setup installs the pinned Rust CLI tools and the intentionally
-unpinned `cargo-update` bootstrap package that provides `cargo-install-update`
-for `just update`, then verifies both `gh` and `cargo-install-update`:
+Install the declared uv version and platform prerequisites, then initialize the
+shared PyPI toolchain. See [development commands](dev/commands.md#justfile-usage)
+for native libraries, managed installation ownership, and update policies:
 
 ```bash
-just setup
+source scripts/tectonic_native_dependencies.sh
+uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
 Refresh Cargo dependency requirements, exact direct Python development-tool
@@ -54,14 +54,11 @@ release branch:
 just update
 ```
 
-`just update` resolves exact pins under `[dependency-groups].dev` together for
-the repository's supported Python version before refreshing `uv.lock`. Its
-Cargo update also refreshes the root package and the isolated
-`tests/fixtures/checkpoint_no_float_roundtrip/` manifest and lockfile. It does
-not change ranged Python development requirements, runtime or optional
-dependencies, or `[build-system].requires` through that exact-pin step. Its
-`cargo-install-update` preflight runs before either dependency updater can
-change declarations or lockfiles.
+`just update` upgrades uv through its installation owner and managed Cargo tool
+pins before updating dependencies. It advances exact direct dev pins, retains the
+shared tooling constraint, refreshes the full Python lock, and syncs dev with
+managed Rust. Cargo updates retain both the root and checkpoint fixture resolution
+roots. Failures stop later steps; completed updates remain for review and retry.
 
 Review any tracked dependency or tool changes and land them separately before
 continuing with the release PR, then synchronize `main` again. Dependency and
@@ -86,7 +83,7 @@ git switch -c "release/$TAG"
 ### 2. Update release metadata
 
 ```bash
-just update-version "$TAG"
+just update-version "$TAG" --date "$DATE"
 ```
 
 The recipe requires one stable `vX.Y.Z` target that is not older than a
@@ -94,10 +91,9 @@ published stable GitHub Release and that has at least one earlier stable
 release. It infers the previous release and atomically synchronizes:
 
 - `Cargo.toml`, `Cargo.lock`, `pyproject.toml`, and `uv.lock` package versions;
-- `CITATION.cff` version and current UTC `date-released`;
+- `CITATION.cff` version and the selected UTC `date-released`;
 - README dependency examples and non-performance tag-pinned links;
-- active documentation dependency, `cargo add`, and explicit performance-pair
-  examples; and
+- active documentation dependency and `cargo add` examples; and
 - the target changelog heading date when that generated heading already
   exists.
 
@@ -109,21 +105,21 @@ upgrade dependencies.
 
 Review the resulting metadata diff before continuing.
 
-If the publication day changes, rerun this step and
-`just changelog-unreleased "$TAG"`, then amend the release PR before merging.
+If the publication day changes, set `DATE` to the new UTC day, rerun this step and
+`just changelog-release "$TAG" "$DATE"`, then amend the release PR before merging.
 Never keep a stale date merely to preserve an earlier run.
 
 ### 3. Generate the release changelog
 
 ```bash
-just changelog-unreleased "$TAG"
+just changelog-release "$TAG" "$DATE"
 ```
 
 This generates `CHANGELOG.md` as though the target tag already existed,
-archives completed minor series under `docs/archive/changelog/`, and
-synchronizes the target heading with the intended date recorded in
-`CITATION.cff`. Before writing, it rejects a non-stable tag or a tag that does
-not match the Cargo package version. Review the generated changelog and archive
+archives completed minor series under `docs/archives/changelog/`, and
+uses the explicit UTC date supplied by `DATE`. Metadata preparation is separate;
+run the final version check after generation to verify the target heading matches
+Cargo metadata and the citation date. Review the generated changelog and archive
 changes. Do not edit generated changelog files manually.
 
 ### 4. Generate release performance measurements
@@ -203,7 +199,7 @@ just publish-check
 
 `just ci` includes lockfile, citation, documentation, Python tooling, tests,
 and benchmark-compilation checks. `release-version-check` invokes the strict
-`check-docs-version-sync --final-release` gate, requiring exactly one current
+`research-repo-tools release check --final-release` gate, requiring exactly one current
 changelog heading whose date matches `CITATION.cff`. `publish-check` validates
 crates.io metadata and dry-runs the exact package from the intentionally dirty
 release worktree.
@@ -257,7 +253,7 @@ configuration:
   same baseline used for the release comparison, then rerun
   `just performance-readme`.
 
-Rerun `just changelog-unreleased "$TAG"`, review and stage only the regenerated
+Rerun `just changelog-release "$TAG" "$DATE"`, review and stage only the regenerated
 release outputs, commit that update separately, and rerun the final release and
 publish gates.
 
@@ -265,8 +261,8 @@ For a non-critical fix, file an issue and defer it. Do not hand-edit the
 generated changelog to add a known-issue note.
 
 Retries on the same UTC day keep the recorded release date unchanged. If
-publication moves to a different UTC day, rerun `just update-version "$TAG"`
-and `just changelog-unreleased "$TAG"`, then rerun the final release and
+publication moves to a different UTC day, update `DATE`, rerun `just update-version "$TAG" --date "$DATE"`
+and `just changelog-release "$TAG" "$DATE"`, then rerun the final release and
 publish checks before merge or publication.
 
 ## Step 2: Publish after the PR is merged
@@ -291,7 +287,7 @@ the matching active or archived changelog section. For a changelog larger than
 before any Git tag query or mutation unless the `CITATION.cff` intended
 publication date equals the current UTC day. If the day changed after the
 original PR merged, prepare and merge a corrective release-metadata PR by
-rerunning `just update-version "$TAG"` on the new UTC day, then resynchronize
+setting `DATE` to the new UTC day and rerunning `just update-version "$TAG" --date "$DATE"`, then resynchronize
 local `main` and rerun the gates before tagging. Do not force the stale date
 through.
 

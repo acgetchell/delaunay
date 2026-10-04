@@ -7,36 +7,19 @@ import shutil
 import subprocess
 import sys
 from collections import defaultdict
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
-import update_cargo_tool_pins
 from subprocess_utils import run_safe_command
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 JUSTFILE = REPO_ROOT / "justfile"
 HELPER_JUSTFILE = REPO_ROOT / "just" / "helpers.just"
-JUST_BOOTSTRAP = REPO_ROOT / "scripts" / "bootstrap_just.sh"
-JUST_VERSION_RESOLVER = REPO_ROOT / ".github" / "actions" / "setup-just" / "resolve-version.sh"
 RECIPE_DECLARATION = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)(?:\s+.*?)?:(?=\s|$)", re.MULTILINE)
-WORKFLOW_VERSION_LOOKUP = re.compile(r"just --evaluate ([a-z0-9_]+_version)")
 UNLOCKED_UV_RUN = re.compile(r"\buv\s+run\b(?!\s+--locked\b)")
-
-
-@dataclass(frozen=True, kw_only=True)
-class ZizmorAuthCase:
-    """Synthetic credential sources and the token expected at the scanner boundary."""
-
-    tokens: dict[str, str]
-    expected_value: str
-    gh_available: bool = True
-    gh_stdout: str = ""
-    gh_returncode: int = 0
-    trace: bool = False
 
 
 def run_just(*args: str) -> subprocess.CompletedProcess[str]:
@@ -57,7 +40,6 @@ def run_python_source_probe(tmp_path: Path, paths: list[str], *, git_returncode:
     """Exercise the rendered recipe with isolated Git output and a tool-argument recorder."""
     git_output = tmp_path / "git-output.bin"
     git_output.write_bytes(b"".join(path.encode("utf-8") + b"\0" for path in paths))
-    version = run_just("--evaluate", "uv_version").stdout.strip()
     rendered = run_just("--dry-run", "_python-tool", "ruff check")
     expected_git_args = "--no-pager ls-files --cached --others --exclude-standard --deduplicate -z -- *.py *.pyi"
     script = f"""
@@ -70,8 +52,8 @@ git() {{
     return {git_returncode}
 }}
 uv() {{
-    if [[ "$*" == "--version" ]]; then
-        printf '%s\\n' {shlex.quote("uv " + version)}
+    if [[ "$*" == "run --locked --no-sync --no-python-downloads research-repo-tools --version" ]]; then
+        return 0
     else
         printf '%s\\0' "$@"
     fi
@@ -95,6 +77,11 @@ def run_pachner_stress_probe(tmp_path: Path, args: list[str]) -> subprocess.Comp
     """Capture literal artifact and Cargo arguments without running a stress workload."""
     rendered = run_just("--dry-run", "_pachner-stress-dim", *args)
     script = f"""
+uv() {{
+    while [[ "$1" != "--" ]]; do shift; done
+    shift
+    "$@"
+}}
 cargo() {{
     printf '%s\\0' "$@" > {shlex.quote((tmp_path / "cargo-args").as_posix())}
 }}
@@ -104,52 +91,6 @@ mkdir() {{
 {rendered.stdout}{rendered.stderr}
 """
     return run_safe_command("bash", ["-c", script], cwd=tmp_path, check=False, timeout=30)
-
-
-def run_zizmor_probe(
-    tmp_path: Path,
-    case: ZizmorAuthCase,
-    scan_returncode: int,
-) -> subprocess.CompletedProcess[str]:
-    """Exercise the rendered recipe with fake authentication and scanner commands."""
-    version = run_just("--evaluate", "zizmor_version").stdout.strip()
-    rendered = run_just("--dry-run", "zizmor")
-    exports = "\n".join(f"export {name}={shlex.quote(value)}" for name, value in case.tokens.items())
-    script = f"""
-unset ZIZMOR_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN GH_HOST ZIZMOR_OFFLINE ZIZMOR_NO_ONLINE_AUDITS
-{exports}
-command() {{
-    if [[ "$*" == "-v gh" ]]; then
-        return {0 if case.gh_available else 1}
-    fi
-    builtin command "$@"
-}}
-gh() {{
-    printf '%s\\n' "$*" >> {shlex.quote((tmp_path / "gh.log").as_posix())}
-    printf '%s\\n' {shlex.quote(case.gh_stdout)}
-    echo "fixture-auth-diagnostic" >&2
-    return {case.gh_returncode}
-}}
-zizmor() {{
-    if [[ "$*" == "--version" ]]; then
-        printf '%s\\n' {shlex.quote("zizmor " + version)}
-        return 0
-    fi
-    if [[ "${{ZIZMOR_GITHUB_TOKEN:-}}" != {shlex.quote(case.expected_value)} ]]; then
-        echo "Unexpected scanner credential" >&2
-        return 97
-    fi
-    if [[ -n "${{GH_TOKEN:-}}" || -n "${{GITHUB_TOKEN:-}}" ]]; then
-        echo "Conflicting scanner credential" >&2
-        return 98
-    fi
-    printf 'scan:%s\\n' "$*"
-    return {scan_returncode}
-}}
-{"set -x" if case.trace else ""}
-{rendered.stdout}{rendered.stderr}
-"""
-    return run_safe_command("bash", ["-c", script], cwd=REPO_ROOT, check=False, timeout=30)
 
 
 def workflow_trigger_paths(path: Path) -> tuple[set[str], set[str]]:
@@ -178,34 +119,15 @@ def test_bare_just_shows_curated_help() -> None:
     assert "Use 'just --list' for the complete grouped recipe reference." in result.stdout
 
 
-def test_local_and_ci_just_bootstrap_share_the_pinned_version_resolver() -> None:
-    """Docs, local bootstrap, and CI should install the exact Justfile pin."""
-    bash = shutil.which("bash")
-    assert bash is not None
-    resolved = subprocess.run(  # noqa: S603 - executable and script are repository-controlled.
-        [bash, str(JUST_VERSION_RESOLVER)],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        encoding="utf-8",
-    ).stdout.strip()
-    expected = run_just("--evaluate", "just_version").stdout.strip()
+def test_local_and_ci_setup_use_the_locked_package() -> None:
+    """Local setup and CI consume the same pinned PyPI dependency group."""
     action = (REPO_ROOT / ".github" / "actions" / "setup-just" / "action.yml").read_text(encoding="utf-8")
-    bootstrap = JUST_BOOTSTRAP.read_text(encoding="utf-8")
-    bootstrap_command = "bash scripts/bootstrap_just.sh"
-    inline_install_command = 'cargo install --locked --version "$(bash .github/actions/setup-just/resolve-version.sh)" just'
-
-    assert resolved == expected
-    assert "bash .github/actions/setup-just/resolve-version.sh" in action
-    assert "declaration_re=" not in action
-    assert 'resolver="$repo_root/.github/actions/setup-just/resolve-version.sh"' in bootstrap
-    assert 'pinned_version="$(bash "$resolver" "$repo_root/justfile")"' in bootstrap
-    assert '[[ "$installed_version" == "just $pinned_version" ]]' in bootstrap
-    assert 'cargo install --locked --version "$pinned_version" just' in bootstrap
-    assert bootstrap_command in (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    assert bootstrap_command in (REPO_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
-    assert inline_install_command not in (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    assert inline_install_command not in (REPO_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert "version-file: pyproject.toml" in action
+    assert "research-repo-tools toolchain sync" in action
+    assert "research-repo-tools toolchain export" in action
+    assert "cargo install" not in action
+    for name in ("README.md", "CONTRIBUTING.md"):
+        assert "uv run --locked --managed-python --only-group tooling research-repo-tools setup" in (REPO_ROOT / name).read_text(encoding="utf-8")
     for workflow_name in ("audit.yml", "benchmarks.yml", "papers.yml"):
         pull_request_paths, push_paths = workflow_trigger_paths(REPO_ROOT / ".github" / "workflows" / workflow_name)
         assert ".github/actions/setup-just/**" in pull_request_paths
@@ -291,7 +213,9 @@ def test_ci_directly_lints_python_fixtures_with_full_ruff_policy() -> None:
     recipes = just_recipes()
     dependencies = {dependency["recipe"] for dependency in recipes["ci"]["dependencies"]}
     result = run_just("--dry-run", "python-fixture-lint")
-    commands = [shlex.split(line) for line in (result.stdout + result.stderr).splitlines() if line.startswith("uv run ")]
+    commands = [
+        shlex.split(line) for line in (result.stdout + result.stderr).splitlines() if line.startswith("uv run ") and "research-repo-tools --version" not in line
+    ]
 
     assert "python-fixture-lint" in dependencies
     assert commands == [["uv", "run", "--locked", "ruff", "check", "tests/semgrep/"]]
@@ -475,47 +399,28 @@ def test_canonical_performance_recipes_shell_quote_tag_arguments() -> None:
         assert shlex.split(baseline_assignment) == ["baseline_tag=v0.8.0"]
 
 
-def test_release_metadata_recipe_uses_the_current_utc_date_internally() -> None:
-    """Release preparation accepts only the target tag from the caller."""
+def test_release_recipes_forward_shared_policy_arguments() -> None:
+    """Release preparation exposes explicit dates and shared consistency gates."""
     recipes = just_recipes()
-    parameters = recipes["update-version"]["parameters"]
-
-    assert [parameter["name"] for parameter in parameters] == ["tag"]
-    command = run_just("--dry-run", "update-version", "v0.8.1")
+    assert [parameter["name"] for parameter in recipes["update-version"]["parameters"]] == ["tag", "args"]
+    command = run_just("--dry-run", "update-version", "v0.9.0", "--date", "2026-10-04", "--dry-run")
     rendered = command.stdout + command.stderr
-    assert "update-release-version 'v0.8.1'" in rendered
-    assert "--release-date" not in rendered
-    assert "check-docs-version-sync" in rendered
-    assert "just update-version <tag>" in run_just().stdout
-
-
-def test_release_workflows_fail_closed_before_writes_or_tag_mutation() -> None:
-    """Release recipes should expose their non-mutating metadata gates."""
-    recipes = just_recipes()
+    assert 'research-repo-tools release update "$@"' in rendered
+    assert "research-repo-tools release check" in rendered
     strict_check = run_just("--dry-run", "release-version-check")
-    assert "check-docs-version-sync --final-release" in strict_check.stdout + strict_check.stderr
-
+    assert "research-repo-tools release check --final-release" in strict_check.stdout + strict_check.stderr
     for name in ("tag", "tag-force"):
         dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
         assert "release-version-check" in dependencies
-
         injected = "v0.8.0; echo INJECTED"
         command = run_just("--dry-run", name, injected)
-        rendered = command.stdout + command.stderr
-        tag_command = next(line for line in rendered.splitlines() if line.startswith("uv run --locked tag-release "))
-        expected = ["uv", "run", "--locked", "tag-release", injected]
+        tag_command = next(line for line in (command.stdout + command.stderr).splitlines() if "research-repo-tools changelog tag " in line)
+        expected = ["uv", "run", "--locked", "--group", "dev", "research-repo-tools", "changelog", "tag", injected]
         if name == "tag-force":
             expected.append("--force")
         assert shlex.split(tag_command) == expected
-
-    changelog = run_just("--dry-run", "changelog-unreleased", "v0.8.1")
-    rendered = changelog.stdout + changelog.stderr
-    metadata_index = rendered.index("cargo metadata --locked --format-version 1 --no-deps")
-    release_lookup_index = rendered.index('update-release-version "$version" --print-previous-release')
-    cliff_index = rendered.index('git-cliff --tag "$version" -o CHANGELOG.md')
-    assert metadata_index < release_lookup_index < cliff_index
-    assert '[[ "$version" != "v$package_version" ]]' in rendered
-    assert '--sync-changelog-date --previous-release "$previous_release"' in rendered
+    command = run_just("--dry-run", "changelog-unreleased", "v0.9.0", "2026-10-04")
+    assert "--tag 'v0.9.0' --date '2026-10-04'" in command.stdout + command.stderr
 
 
 def test_release_benchmark_summary_recipe_requires_strict_fresh_evidence() -> None:
@@ -575,7 +480,7 @@ def test_canonical_performance_recipes_reject_partial_tag_pairs_before_dispatch(
 
 
 def test_cargo_tool_guards_reuse_pinned_helper() -> None:
-    """Named Cargo-tool guards should share one exact-version implementation."""
+    """Named tool guards delegate verification to the shared inventory."""
     recipes = just_recipes()
     guard_names = (
         "_ensure-cargo-edit",
@@ -595,7 +500,7 @@ def test_cargo_tool_guards_reuse_pinned_helper() -> None:
 
     for name in guard_names:
         dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
-        assert "_ensure-pinned-cargo-tool" in dependencies, name
+        assert dependencies == {"_ensure-toolchain"}, name
 
 
 def test_public_recipes_have_one_group_and_a_description() -> None:
@@ -628,61 +533,17 @@ def test_public_recipes_do_not_duplicate_exact_behavior() -> None:
     assert duplicates == []
 
 
-def test_uv_backed_recipes_reuse_pinned_guard() -> None:
-    """Local uv consumers should enforce the same pin consumed by workflows."""
+def test_uv_backed_recipes_reuse_locked_guard() -> None:
+    """Local uv consumers enforce the TOML pin through the installed package."""
     recipes = just_recipes()
     ensure_uv_body = json.dumps(recipes["_ensure-uv"]["body"])
-
-    assert "uv --version" in ensure_uv_body
-    assert "uv_version" in ensure_uv_body
-    assert {dependency["recipe"] for dependency in recipes["_ensure-uv"]["dependencies"]} == {"_ensure-uv-available"}
-    for name in ("_ensure-actionlint", "_ensure-shellcheck", "_ensure-shfmt", "_ensure-yamllint", "setup-tools"):
+    assert "uv run --locked --no-sync --no-python-downloads research-repo-tools --version" in ensure_uv_body
+    for name in ("_ensure-actionlint", "_ensure-shellcheck", "_ensure-shfmt", "_ensure-yamllint"):
         dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
         assert "_ensure-uv" in dependencies, name
-
-    stable_dependencies = {dependency["recipe"] for dependency in recipes["_ensure-uv-stable"]["dependencies"]}
-    assert stable_dependencies == {"_ensure-uv-available"}
-
-
-@pytest.mark.parametrize("recipe", ["update", "update-cargo-tools", "update-dependencies", "update-python-dependencies"])
-def test_update_preflights_stable_uv_before_mutations(recipe: str) -> None:
-    """Reject unsupported uv output before dependency or installed-tool updates."""
-    rendered_result = run_just("--dry-run", recipe)
-    rendered = rendered_result.stdout + rendered_result.stderr
-    preflight = "uv run --locked --no-sync --no-python-downloads python scripts/update_cargo_tool_pins.py --check-uv"
-
-    assert rendered.count(preflight) == 1
-    assert rendered.index("uv --version") < rendered.index(preflight)
-    if recipe in {"update", "update-cargo-tools"}:
-        assert rendered.index(preflight) < rendered.index("cargo install-update --locked")
-    if recipe in {"update", "update-dependencies"}:
-        assert rendered.index(preflight) < rendered.index("cargo upgrade --incompatible allow")
-    if recipe in {"update", "update-dependencies", "update-python-dependencies"}:
-        assert rendered.index(preflight) < rendered.index("uv run --locked update-python-dev-pins")
-        assert rendered.index(preflight) < rendered.index("uv lock --upgrade")
-        assert rendered.index(preflight) < rendered.index("uv sync --locked --group dev")
-    assert "installed_version=" not in rendered.split(preflight)[0]
-
-
-def test_setup_tools_closes_external_and_cargo_update_prerequisites() -> None:
-    """Setup should fail early on gh, then provision and verify its update helper."""
-    recipes = just_recipes()
-    dependencies = [dependency["recipe"] for dependency in recipes["setup-tools"]["dependencies"]]
-    body = json.dumps(recipes["setup-tools"]["body"])
-
-    assert dependencies == ["_ensure-cargo", "_ensure-chktex", "_ensure-gh", "_ensure-jq", "_ensure-rustup", "_ensure-uv"]
-    assert "External prerequisites that must already be on PATH: uv, gh, jq, rustup, cargo, and chktex." in body
-    assert "unpinned cargo-update bootstrap helper" in body
-    assert "cargo install --locked cargo-update" in body
-    assert "cmds=(uv gh jq" in body
-    assert "cmds+=(cargo-install-update" in body
-
-    setup_result = run_just("--dry-run", "setup-tools")
-    rendered = setup_result.stdout + setup_result.stderr
-    first_mutation = rendered.index("uv sync --locked --group dev")
-    for prerequisite in ("cargo", "chktex", "gh", "jq", "rustup"):
-        assert rendered.index(f"command -v {prerequisite}") < first_mutation
-    assert rendered.index("uv --version") < first_mutation
+    setup = json.dumps(recipes["setup-tools"]["body"])
+    assert "source scripts/tectonic_native_dependencies.sh" in setup
+    assert "uv run --locked --managed-python --only-group tooling research-repo-tools setup" in setup
 
 
 def test_validation_and_benchmark_uv_runs_are_locked() -> None:
@@ -759,124 +620,18 @@ def test_ci_composes_non_mutating_canonical_validation_figure_check() -> None:
     assert "docs/assets/validation" in rendered
 
 
-def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
-    """Update recipes should cover repo state without touching unrelated global tools."""
-    recipes = just_recipes()
-    update_dependencies = [dependency["recipe"] for dependency in recipes["update"]["dependencies"]]
-
-    assert update_dependencies == ["_ensure-cargo-install-update", "_ensure-uv-stable", "update-dependencies", "update-cargo-tools"]
-
-    aggregate_result = run_just("--dry-run", "update")
-    aggregate_update = aggregate_result.stdout + aggregate_result.stderr
-    assert aggregate_update.index("command -v cargo-install-update") < aggregate_update.index("cargo upgrade --incompatible allow")
-
-    dependency_result = run_just("--dry-run", "update-dependencies")
-    dependency_update = dependency_result.stdout + dependency_result.stderr
-    dependency_preflights = [dependency["recipe"] for dependency in recipes["update-dependencies"]["dependencies"]]
-    assert dependency_preflights[:2] == ["_ensure-cargo-edit", "_ensure-uv-stable"]
-    assert dependency_update.index("cargo_tool_has_exact_version") < dependency_update.index("cargo upgrade --incompatible allow")
-    assert dependency_update.index("uv --version") < dependency_update.index("cargo upgrade --incompatible allow")
-    assert "cargo upgrade --incompatible allow" in dependency_update
-    fixture_manifest = "tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml"
-    assert f"cargo upgrade --manifest-path {fixture_manifest} --incompatible allow" in dependency_update
-    assert re.search(r"^cargo update$", dependency_update, re.MULTILINE) is not None
-    assert f"cargo update --manifest-path {fixture_manifest}" in dependency_update
-    assert "uv run --locked update-python-dev-pins" in dependency_update
-    assert "uv lock --upgrade" in dependency_update
-    assert dependency_update.index("uv run --locked update-python-dev-pins") < dependency_update.index("uv lock --upgrade")
-    assert "uv sync --locked --group dev" in dependency_update
-    assert "cargo install-update --all" not in dependency_update
-    assert "uv tool upgrade" not in dependency_update
-
-    tool_result = run_just("--dry-run", "update-cargo-tools")
-    tool_update = tool_result.stdout + tool_result.stderr
-    assert "command -v cargo-install-update" in tool_update
-    assert "cargo install-update --locked" in tool_update
-    assert "update-tool-pins" in tool_update
-    assert "cargo install-update --all" not in tool_update
-    assert "uv tool upgrade" not in tool_update
-    package_block = re.search(r"packages=\(\n(?P<packages>.*?)\n\)", tool_update, re.DOTALL)
-    assert package_block is not None
-    updated_packages = set(re.findall(r"^\s+([a-z0-9-]+)$", package_block.group("packages"), re.MULTILINE))
-    assert updated_packages == set(update_cargo_tool_pins.PIN_TO_PACKAGE.values())
-
-
-def test_managed_tool_pins_exist_once_in_root_justfile() -> None:
-    """Every managed Cargo package and uv should map to one root Just pin."""
-    justfile_text = JUSTFILE.read_text(encoding="utf-8")
-
-    for pin in update_cargo_tool_pins.PIN_TO_TOOL:
-        assignments = re.findall(rf"^{re.escape(pin)}\s*:=", justfile_text, re.MULTILINE)
-        assert len(assignments) == 1, pin
-
-
-def test_workflow_tool_version_lookups_resolve_from_just() -> None:
-    """GitHub Actions tool pins should resolve from the shared Just variables."""
+def test_workflows_share_managed_setup_and_online_sarif_policy() -> None:
+    """Workflows inherit managed pins and keep hosted security scans online."""
     workflow_text = "\n".join(path.read_text(encoding="utf-8") for path in sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml")))
-    version_names = sorted(set(WORKFLOW_VERSION_LOOKUP.findall(workflow_text)))
-
-    assert version_names
-    for name in version_names:
-        result = run_just("--evaluate", name)
-        assert result.stdout.strip(), name
-
-
-@pytest.mark.parametrize("scan_returncode", [0, 23])
-@pytest.mark.parametrize(
-    "case",
-    [
-        ZizmorAuthCase(
-            tokens={"ZIZMOR_GITHUB_TOKEN": "fixture-zizmor", "GH_TOKEN": "fixture-gh", "GITHUB_TOKEN": "fixture-github"}, expected_value="fixture-zizmor"
-        ),
-        ZizmorAuthCase(tokens={"GH_TOKEN": "fixture-gh", "GITHUB_TOKEN": "fixture-github"}, expected_value="fixture-gh"),
-        ZizmorAuthCase(tokens={"GITHUB_TOKEN": "fixture-github"}, expected_value="fixture-github"),
-        ZizmorAuthCase(tokens={}, gh_stdout="fixture-auth", expected_value="fixture-auth"),
-        ZizmorAuthCase(tokens={}, gh_stdout="fixture-partial-auth", gh_returncode=1, expected_value=""),
-        ZizmorAuthCase(tokens={}, expected_value=""),
-        ZizmorAuthCase(tokens={}, gh_available=False, expected_value=""),
-        ZizmorAuthCase(tokens={"ZIZMOR_GITHUB_TOKEN": "fixture-traced"}, expected_value="fixture-traced", trace=True),
-    ],
-)
-def test_zizmor_authentication_and_offline_fallback(
-    tmp_path: Path,
-    case: ZizmorAuthCase,
-    scan_returncode: int,
-) -> None:
-    """Select credentials privately, report offline scans, and preserve scanner failures."""
-    result = run_zizmor_probe(tmp_path, case, scan_returncode)
-
-    assert result.returncode == scan_returncode, result.stderr
-    expected_args = "--persona regular .github" if case.expected_value else "--offline --persona regular .github"
-    assert result.stdout == f"scan:{expected_args}\n"
-    assert ("online audits disabled" in result.stderr) == (not case.expected_value)
-    assert "fixture-" not in result.stdout + result.stderr
-    gh_log = tmp_path / "gh.log"
-    if case.gh_available and not case.tokens:
-        assert gh_log.read_text(encoding="utf-8") == "auth token --hostname github.com\n"
-    else:
-        assert not gh_log.exists()
-
-
-def test_zizmor_sarif_workflow_uses_local_pin_and_online_persona(tmp_path: Path) -> None:
-    """The hosted scanner must consume the evaluated local pin with online audits."""
+    assert "just --evaluate" not in workflow_text
+    assert "cargo install" not in workflow_text
     workflow_path = REPO_ROOT / ".github" / "workflows" / "zizmor.yml"
     workflow: Any = yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)  # noqa: S506 - BaseLoader constructs data only.
     steps = workflow["jobs"]["analyze"]["steps"]
     setup = next(step for step in steps if step.get("uses") == "$/.github/actions/setup-just")
-    resolver = next(step for step in steps if step.get("id") == "zizmor_version")
-    scanners = [step for step in steps if step.get("uses", "").startswith("zizmorcore/zizmor-action@")]
-
-    assert len(scanners) == 1
-    scanner = scanners[0]
-    assert steps.index(setup) < steps.index(resolver) < steps.index(scanner)
-    assert scanner["with"]["version"] == "${{ steps.zizmor_version.outputs.version }}"
-    assert scanner["with"]["online-audits"] == "true"
-    assert scanner["with"]["persona"] == "regular"
-    assert scanner["with"]["inputs"] == ".github"
-    assert scanner["with"].get("advanced-security", "true") == "true"
-
-    output_path = tmp_path / "github-output"
-    script = f"export GITHUB_OUTPUT={shlex.quote(output_path.as_posix())}\n{resolver['run']}"
-    run_safe_command("bash", ["-c", script], cwd=REPO_ROOT, timeout=30)
-    expected_version = run_just("--evaluate", "zizmor_version").stdout.strip()
-    assert output_path.read_text(encoding="utf-8") == f"version={expected_version}\n"
+    scanner = next(step for step in steps if "research-repo-tools zizmor check" in step.get("run", ""))
+    assert steps.index(setup) < steps.index(scanner)
+    assert "--require-online --format sarif" in scanner["run"]
+    assert scanner["env"]["GH_TOKEN"] == "${{ github.token }}"  # noqa: S105 - GitHub expression, never a credential.
+    upload = next(step for step in steps if step.get("uses", "").startswith("github/codeql-action/upload-sarif@"))
+    assert upload["with"]["sarif_file"] == "zizmor-results.sarif"

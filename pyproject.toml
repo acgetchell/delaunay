@@ -47,29 +47,20 @@ notebooks = [
 
 # Configure scripts as entry points for command-line usage
 [project.scripts]
-archive-changelog = "archive_changelog:main"
 benchmark-utils = "benchmark_utils:main"
-check-docs-version-sync = "check_docs_version_sync:main"
 hardware-utils = "hardware_utils:main"
 notebook-check = "notebook_check:main"
 paper-pdf-check = "paper_check:main"
 paper-pdf-normalize = "paper_pdf_normalize:main"
 paper-source-date-epoch = "paper_source_date:main"
-postprocess-changelog = "postprocess_changelog:main"
 publish-readme-performance = "publish_readme_performance:main"
-tag-release = "tag_release:main"
-update-tool-pins = "update_cargo_tool_pins:main"
-update-python-dev-pins = "update_python_dev_pins:main"
-update-release-version = "update_release_version:main"
 
 # Configure setuptools to find packages in scripts/ directory
 [tool.setuptools]
 package-dir = { "" = "scripts" }
 py-modules = [
-    "archive_changelog",
     "benchmark_models",
     "benchmark_utils",
-    "check_docs_version_sync",
     "hardware_utils",
     "notebook_check",
     "notebook_utils",
@@ -80,13 +71,8 @@ py-modules = [
     "paper_pdf_normalize",
     "paper_source_date",
     "performance_artifacts",
-    "postprocess_changelog",
     "publish_readme_performance",
     "subprocess_utils",
-    "tag_release",
-    "update_cargo_tool_pins",
-    "update_python_dev_pins",
-    "update_release_version",
 ]
 
 [tool.ruff]
@@ -223,23 +209,16 @@ max-complexity = 10
 # Import sorting and organization configuration
 [tool.ruff.lint.isort]
 known-first-party = [
-    "archive_changelog",
     "benchmark_models",
     "benchmark_utils",
-    "check_docs_version_sync",
     "hardware_utils",
     "notebook_check",
     "paper_check",
     "paper_pdf_normalize",
     "paper_source_date",
     "performance_artifacts",
-    "postprocess_changelog",
     "publish_readme_performance",
     "subprocess_utils",
-    "tag_release",
-    "update_cargo_tool_pins",
-    "update_python_dev_pins",
-    "update_release_version",
 ]
 force-single-line = false
 split-on-trailing-comma = true
@@ -288,7 +267,9 @@ disable = [
 line-length = 160
 
 [dependency-groups]
+tooling = [ "research-repo-tools==0.1.7" ]
 dev = [
+    { include-group = "tooling" },
     "actionlint-py>=1.7.12.24",
     "pytest>=9.1.1",
     "pyyaml>=6.0.3",
@@ -312,6 +293,57 @@ notebooks = [
 ]
 
 [tool.uv]
+required-version = "==0.12.23"
 # Semgrep 1.172.0 still pins vulnerable mcp 1.23.3. Keep the patched override
 # until Semgrep's published dependency constraint moves to mcp 1.28.1 or later.
 override-dependencies = [ "mcp==1.28.1" ]
+
+[tool.research-repo-tools]
+schema = 1
+
+[tool.research-repo-tools.changelog]
+owner = "acgetchell"
+repository = "delaunay"
+formatter = "docs/templates/changelog_format.toml"
+
+[tool.research-repo-tools.toolchain.cargo]
+cargo-audit = "0.22.2"
+cargo-edit = "0.13.13"
+cargo-llvm-cov = "0.9.1"
+cargo-machete = "0.9.2"
+cargo-nextest = "0.9.146"
+clippy-sarif = "0.8.0"
+dprint = "0.60.1"
+git-cliff = "2.14.2"
+rumdl = "0.2.78"
+samply = "0.13.1"
+sarif-fmt = "0.8.0"
+taplo-cli = "0.10.0"
+tectonic = "0.17.0"
+tex-fmt = "0.5.7"
+typos-cli = "1.50.3"
+zizmor = "1.30.1"
+
+[tool.research-repo-tools.semgrep]
+config = "semgrep.yaml"
+fixtures = "tests/semgrep"
+namespace = "delaunay."
+
+[tool.research-repo-tools.zizmor]
+persona = "regular"
+
+[tool.research-repo-tools.release]
+tag-policy = "canonical-stable"
+required-files = [ "Cargo.lock", "pyproject.toml", "uv.lock", "CITATION.cff", "README.md", "REFERENCES.md", "CHANGELOG.md" ]
+exclude = [ "docs/archive/**", "docs/performance.md", "benches/PERFORMANCE_RESULTS.md" ]
+
+[[tool.research-repo-tools.release.rules]]
+path = "CITATION.cff"
+pattern = '^doi: (?P<value>[^\s]+)[ \t]*\r?$'
+value = "10.5281/zenodo.16931097"
+
+[[tool.research-repo-tools.release.rules]]
+path = "README.md"
+pattern = 'https://github\.com/acgetchell/delaunay/blob/(?P<value>v[0-9]+\.[0-9]+\.[0-9]+)/LICENSE'
+source = "tag"
+count = 2

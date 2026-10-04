@@ -4,9 +4,10 @@ This directory contains templates used for automated documentation and changelog
 
 ## Status
 
-This repository uses [`git-cliff`](https://github.com/orhun/git-cliff) for
-changelog generation via `cliff.toml` at the repository root (invoked through
-`just changelog`, `just changelog-unreleased <version>`, and the
-`postprocess-changelog` / `archive-changelog` Python entrypoints).
+The pinned `research-repo-tools` package owns the git-cliff policy and changelog
+normalization, archiving, and release-note extraction. Use `just changelog`,
+`just changelog-unreleased <tag> <date>`, or `just release-notes <tag>`.
 
-There are currently no active template files in this directory.
+`changelog_format.toml` supplies the consumer's generated-history Markdown policy.
+Historical emphasis and list indentation remain exempt from active prose rules;
+archive destinations are created together by the shared transaction.

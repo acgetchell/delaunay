@@ -1,0 +1,11 @@
+# Generated commit bodies retain historical emphasis and list structure.
+# Archive links are checked structurally before the shared transaction creates files.
+# Keep this policy separate from the stricter active-documentation policy.
+[global]
+line-length = 160
+disable = [ "MD007", "MD018", "MD024", "MD029", "MD033", "MD036", "MD037", "MD038", "MD041", "MD057", "MD060" ]
+
+[MD013]
+line-length = 160
+code-blocks = false
+tables = false

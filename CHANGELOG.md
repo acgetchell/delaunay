@@ -1263,12 +1263,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Older releases are archived by minor series:
 
-- [0.7.x](docs/archive/changelog/0.7.md)
-- [0.6.x](docs/archive/changelog/0.6.md)
-- [0.5.x](docs/archive/changelog/0.5.md)
-- [0.4.x](docs/archive/changelog/0.4.md)
-- [0.3.x](docs/archive/changelog/0.3.md)
-- [0.2.x](docs/archive/changelog/0.2.md)
+- [0.7.x](docs/archives/changelog/0.7.md)
+- [0.6.x](docs/archives/changelog/0.6.md)
+- [0.5.x](docs/archives/changelog/0.5.md)
+- [0.4.x](docs/archives/changelog/0.4.md)
+- [0.3.x](docs/archives/changelog/0.3.md)
+- [0.2.x](docs/archives/changelog/0.2.md)
 
 [0.8.2]: https://github.com/acgetchell/delaunay/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/acgetchell/delaunay/compare/v0.8.0...v0.8.1

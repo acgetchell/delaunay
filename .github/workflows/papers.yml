@@ -19,6 +19,7 @@ on:
     paths:
       - ".github/workflows/papers.yml"
       - ".github/actions/setup-just/**"
+      - "scripts/tectonic_native_dependencies.sh"
       - ".python-version"
       - "Cargo.lock"
       - "Cargo.toml"
@@ -48,6 +49,7 @@ on:
     paths:
       - ".github/workflows/papers.yml"
       - ".github/actions/setup-just/**"
+      - "scripts/tectonic_native_dependencies.sh"
       - ".python-version"
       - "Cargo.lock"
       - "Cargo.toml"
@@ -86,62 +88,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
-        with:
-          cache: true
-          cache-bin: false
-
-      - name: Set up just
+      - name: Set up shared tooling
         id: setup_just
         uses: $/.github/actions/setup-just
-
-      - name: Export paper tool versions
-        id: tool_versions
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          resolve_version() {
-            local name="$1"
-            local value
-
-            if ! value="$(just --evaluate "$name")"; then
-              echo "::error::Failed to resolve $name from justfile" >&2
-              return 1
-            fi
-            if [[ -z "$value" ]]; then
-              echo "::error::Resolved empty $name from justfile" >&2
-              return 1
-            fi
-
-            printf '%s\n' "$value"
-          }
-
-          tectonic_version="$(resolve_version tectonic_version)"
-          tex_fmt_version="$(resolve_version tex_fmt_version)"
-          uv_version="$(resolve_version uv_version)"
-
-          {
-            echo "TECTONIC_VERSION=$tectonic_version"
-            echo "TEX_FMT_VERSION=$tex_fmt_version"
-            echo "UV_VERSION=$uv_version"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version-file: ".python-version"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          version: ${{ steps.tool_versions.outputs.UV_VERSION }}
-          enable-cache: true
-          prune-cache: true
-
-      - name: Sync Python tooling
-        run: uv sync --locked --group dev --group notebooks
 
       - name: Cache Homebrew downloads
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -152,12 +101,6 @@ jobs:
 
       - name: Install paper system dependencies
         run: |
-          brew update
-          brew install freetype graphite2 icu4c libpng pkgconf zlib
-          icu_pkg_config="$(brew --prefix icu4c)/lib/pkgconfig"
-          zlib_pkg_config="$(brew --prefix zlib)/lib/pkgconfig"
-          export PKG_CONFIG_PATH="$icu_pkg_config:$zlib_pkg_config${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
           if ! command -v tlmgr >/dev/null; then
             brew install --cask basictex
           fi
@@ -167,11 +110,6 @@ jobs:
             sudo "$(command -v tlmgr)" update --self
             sudo "$(command -v tlmgr)" install chktex
           fi
-
-      - name: Install Tectonic
-        uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3.0.8
-        with:
-          tool: tectonic@${{ steps.tool_versions.outputs.TECTONIC_VERSION }}
 
       - name: Resolve Tectonic bundle cache
         id: tectonic_cache
@@ -190,7 +128,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.tectonic_cache.outputs.path }}
-          key: tectonic-bundle-${{ runner.os }}-${{ runner.arch }}-${{ steps.tool_versions.outputs.TECTONIC_VERSION }}
+          key: tectonic-bundle-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup_just.outputs.tectonic-version }}
 
       - name: Warm Tectonic bundle cache
         shell: bash
@@ -217,11 +155,6 @@ jobs:
             echo "::warning::Tectonic bundle download failed; retrying in ${delay}s."
             sleep "$delay"
           done
-
-      - name: Install tex-fmt
-        uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3.0.8
-        with:
-          tool: tex-fmt@${{ steps.tool_versions.outputs.TEX_FMT_VERSION }}
 
       - name: Build and compare papers
         run: |

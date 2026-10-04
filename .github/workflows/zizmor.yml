@@ -32,25 +32,21 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up just
+      - name: Set up shared tooling
         uses: $/.github/actions/setup-just
 
-      - name: Resolve zizmor version
-        id: zizmor_version
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(just --evaluate zizmor_version)"
-          if [[ -z "$version" ]]; then
-            echo "::error::Could not resolve zizmor_version from justfile"
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
       - name: Run zizmor
-        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --locked --group dev research-repo-tools zizmor check --require-online --format sarif > zizmor-results.sarif
+
+      - name: Upload SARIF results
+        if: >-
+          always() && hashFiles('zizmor-results.sarif') != '' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
-          inputs: .github
-          version: ${{ steps.zizmor_version.outputs.version }}
-          online-audits: true
-          persona: regular
+          sarif_file: zizmor-results.sarif
+          category: zizmor
+          wait-for-processing: true

@@ -28,6 +28,7 @@ engines:
   duplication:
     exclude_paths:
       - "docs/archive/**"
+      - "docs/archives/changelog/**"
       - "target/**"
       - "node_modules/**"
       - ".git/**"
@@ -58,6 +59,7 @@ engines:
       # command blocks; local rumdl intentionally disables MD029 for this.
       - "docs/RELEASING.md"
       - "docs/archive/**"
+      - "docs/archives/changelog/**"
       - "target/**"
       - "node_modules/**"
       - ".git/**"
@@ -79,6 +81,7 @@ exclude_paths:
   # line-length budget; lockfile consistency is checked by uv instead.
   - "uv.lock"
   - "docs/archive/**"
+  - "docs/archives/changelog/**"
   - "scripts/tests/**"
   # Semgrep fixtures intentionally contain bad examples for rule tests.
   - "tests/semgrep/**"

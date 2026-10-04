@@ -34,16 +34,21 @@ Our community is built on:
 
 ## Getting Started
 
-Install [Rust via rustup][rustup], Git, Python, and `uv`. The pinned Rust
-toolchain is declared in `rust-toolchain.toml`; Python development tooling is
-described in [docs/dev/python.md][dev-python] and
-[scripts/README.md][scripts-readme].
+Install Git, the uv version declared in `pyproject.toml`, and the platform
+compiler/linker prerequisites. Provision Tectonic's native libraries as described
+in [the command guide][dev-commands]. The pinned shared package installs Python,
+Rust, Cargo tools, and its own Just dependency directly from PyPI.
 
-From the repository root, install the same Just version used by CI:
+From the repository root, initialize the declared toolchain:
 
 ```bash
-bash scripts/bootstrap_just.sh
+source scripts/tectonic_native_dependencies.sh
+uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
+
+Open a new terminal if setup changed PATH. No shared-package checkout or generated
+bootstrap launcher is needed. Repository Python tooling is described in
+[docs/dev/python.md][dev-python] and [scripts/README.md][scripts-readme].
 
 For the current command list and workflow details, use:
 
@@ -226,4 +231,3 @@ the commands you already tried.
 [releasing]: docs/RELEASING.md
 [maintainer-email]: <mailto:adam@adamgetchell.org>
 [semver]: https://semver.org/
-[rustup]: https://rustup.rs/

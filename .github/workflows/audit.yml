@@ -5,8 +5,13 @@ on:
       # Run if workflow changes
       - .github/workflows/audit.yml
       - .github/actions/setup-just/**
+      - "scripts/tectonic_native_dependencies.sh"
       # Run if tool-version source changes
       - justfile
+      - pyproject.toml
+      - uv.lock
+      - .python-version
+      - rust-toolchain.toml
       # Run on changed dependencies
       - "**/Cargo.toml"
       - "**/Cargo.lock"
@@ -15,8 +20,13 @@ on:
       # Run if workflow changes
       - .github/workflows/audit.yml
       - .github/actions/setup-just/**
+      - "scripts/tectonic_native_dependencies.sh"
       # Run if tool-version source changes
       - justfile
+      - pyproject.toml
+      - uv.lock
+      - .python-version
+      - rust-toolchain.toml
       # Run on changed dependencies
       - "**/Cargo.toml"
       - "**/Cargo.lock"
@@ -40,41 +50,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
-        with:
-          cache: true
-          cache-bin: false
-          # toolchain, components, etc. are specified in rust-toolchain.toml
-
-      - name: Set up just
+      - name: Set up shared tooling
         uses: $/.github/actions/setup-just
-
-      - name: Resolve cargo-audit version
-        id: cargo_audit_version
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          version="$(just --evaluate cargo_audit_version)"
-          if [[ -z "$version" ]]; then
-            echo "::error::Could not resolve cargo_audit_version from justfile"
-            exit 1
-          fi
-
-          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Cache audit database
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cargo/advisory-db
+          path: ${{ env.CARGO_HOME }}/advisory-db
           key: advisory-db-${{ github.ref_name }}-v1
           restore-keys: advisory-db-
-
-      - name: Install cargo-audit
-        uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3.0.8
-        with:
-          tool: cargo-audit@${{ steps.cargo_audit_version.outputs.version }}
 
       - name: Run cargo audit
         run: |

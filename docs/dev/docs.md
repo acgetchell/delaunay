@@ -54,8 +54,9 @@ repository.
   the same patch. `scripts/tests/test_readme_citation_mirror.py` checks the
   normalized text after Markdown links are stripped from the README prose.
   Semgrep also rejects stale public validation-hierarchy wording.
-- `docs/archive/` stores historical plans, completed changelog series, and old
-  design notes. Do not update archived docs as active guidance unless an
+- `docs/archive/` stores historical plans and old design notes;
+  `docs/archives/changelog/` stores completed minor release series.
+  Do not update archived docs as active guidance unless an
   explicit archive-maintenance task asks for it.
 
 ## Navigation and Ordering
@@ -146,12 +147,12 @@ describing algorithms, numerical robustness, or topology guarantees.
 
 ## Changelog Maintenance
 
-- Never edit `CHANGELOG.md` or `docs/archive/changelog/*.md` manually.
+- Never edit `CHANGELOG.md` or `docs/archives/changelog/*.md` manually.
 - Run `just changelog` to regenerate the root changelog and archive files from
   commits.
 - The root `CHANGELOG.md` contains only `Unreleased` plus the active minor
   series.
-- Completed minor series are archived in `docs/archive/changelog/X.Y.md`.
+- Completed minor series are archived in `docs/archives/changelog/X.Y.md`.
 
 Commit-message rules that affect generated changelog text live in
 [`git.md`](git.md).

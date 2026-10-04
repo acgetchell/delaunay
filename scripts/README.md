@@ -7,61 +7,47 @@ directly.
 
 ## Prerequisites
 
-- Python 3.14+
-- `uv`
-
-Install dev dependencies:
+Install the declared uv version, Git, and platform build prerequisites, including
+Tectonic's native libraries. Initialize the pinned PyPI toolchain with:
 
 ```bash
-uv sync --group dev
+source scripts/tectonic_native_dependencies.sh
+uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
-Bootstrap the Just version pinned by the root `justfile`:
-
-```bash
-bash scripts/bootstrap_just.sh
-```
-
-The helper leaves an already-correct installation unchanged and otherwise
-installs the pinned release through Cargo. Local setup and CI share the same
-version resolver under `.github/actions/setup-just/`.
+`pyproject.toml` pins `research-repo-tools==0.1.7` in `tooling`, included by
+`dev`. The shared package owns setup, changelogs, release metadata, dependency
+updates, Semgrep fixture checking, and CodeRabbit orchestration. Use its public
+CLI; internal modules are not consumer interfaces. Retained scripts own scientific
+benchmarks, evidence publication, notebooks, papers, and the Codacy SARIF filter.
+`subprocess_utils.py` remains for those callers.
 
 ## CLI entrypoints
 
-These commands are exposed by `pyproject.toml`; all support `--help`.
+Consumer-owned commands are exposed by `pyproject.toml`; all support `--help`.
 
-### Changelog utilities
+### Shared maintenance
 
 ```bash
 just changelog
-just changelog-unreleased vX.Y.Z
+just changelog-preview
+just changelog-release vX.Y.Z YYYY-MM-DD
+just changelog-archive
+just release-notes vX.Y.Z
+just docs-version-check
 just release-version-check
+just update-version vX.Y.Z --date YYYY-MM-DD --previous-release vA.B.C
 just tag vX.Y.Z
-just update-version vX.Y.Z
-
-uv run --locked check-docs-version-sync --help
-uv run --locked check-docs-version-sync --final-release
-uv run --locked postprocess-changelog --help
-uv run --locked archive-changelog --help
-uv run --locked tag-release vX.Y.Z --help
-uv run --locked update-release-version vX.Y.Z
+uv run --locked --group dev research-repo-tools --help
 ```
 
-`just changelog` runs `git-cliff`, applies markdown hygiene, and archives
-completed minor release series under `docs/archive/changelog/`.
-
-`just docs-version-check` runs `check-docs-version-sync`, which compares the
-Cargo package version against release-facing docs and metadata.
-
-Use `just changelog-unreleased vX.Y.Z` while preparing a release PR before the
-final tag exists. Use `just tag vX.Y.Z` after the release PR is merged to
-create the annotated release tag from the matching changelog section.
-`just update-version vX.Y.Z` infers the previous stable published GitHub
-Release and atomically synchronizes release metadata with the current UTC date.
-Same-day retries are content-idempotent; later-day retries advance citation and
-existing target changelog dates together.
-`just release-version-check` runs the strict final gate, which requires one
-current-version changelog heading whose date matches `CITATION.cff`.
+Changelog generation normalizes history and retains Unreleased and the latest
+minor series in the root, with older series under `docs/archives/changelog/`.
+`changelog-unreleased` aliases `changelog-release` and requires the same explicit
+date. Metadata preparation is separate. `update-version` defaults to UTC today
+and published stable GitHub history; explicit date and predecessor arguments
+allow offline preparation. The final release gate requires a matching changelog
+heading and citation date, while the DOI remains fixed by consumer policy.
 
 ### Notebook utilities
 
@@ -172,31 +158,26 @@ just coverage-ci
 `just coverage-ci` writes the Cobertura XML consumed by CI to
 `coverage/cobertura.xml`.
 
-### Tool-pin maintenance
-
-Prefer the repository recipes for coordinated updates. The direct locked
-Python-pin updater is also available for focused diagnosis:
+### Dependency and tool updates
 
 ```bash
+just update
+just update-dependencies
+just update-cargo-dependencies
 just update-python-dependencies
-uv run --locked update-tool-pins --help
-uv run --locked update-python-dev-pins --help
+just update-tools
+just tools-check
 ```
 
-`just update` upgrades the Cargo CLI packages owned by `setup-tools`, then runs
-`update-tool-pins` to atomically reconcile their installed versions and the
-active uv version with the root `justfile`. The updater validates the complete
-managed package set and uv version before replacing the pin source, so missing
-or malformed tool output leaves the existing declarations unchanged. uv remains
-an external prerequisite: update it through its owning system package manager;
-the repository update records that active version rather than replacing the uv
-installation itself.
-
-Before `uv.lock` is refreshed, `update-python-dev-pins` discovers exact simple
-pins under `[dependency-groups].dev`, resolves their latest mutually compatible
-universal set for the supported Python version, and replaces them together.
-Ranged development requirements and runtime/build requirements remain outside
-that rewrite.
+The aggregate upgrades tools before dependencies and stops on failure. Cargo
+dependency updates retain both resolution roots. Python updates advance direct
+exact dev pins, refresh the full lock, and explicitly sync dev with managed Rust
+available. Included tooling pins stay fixed. Dependency-only recipes preserve
+tool declarations; tool-only recipes preserve dependency requirements and locks.
+uv upgrades through its installation owner. Just follows the shared package's
+`rust-just` pin; managed Cargo upgrades replace cargo-update and the legacy
+Just-variable reconciler. Change the shared package constraint explicitly through
+uv, refresh the lock, review its release notes, and rerun setup.
 
 ## Shell helpers
 
