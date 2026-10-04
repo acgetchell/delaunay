@@ -3081,6 +3081,10 @@ rules:
         - "/.github/workflows/**/*.yaml"
         - "/tests/semgrep/.github/workflows/**/*.yml"
         - "/tests/semgrep/.github/workflows/**/*.yaml"
+      exclude:
+        # Reviewed trusted-base caller; consumer tests forbid PR code or secrets.
+        # SARIF retains nosemgrep results, so use an exact reviewed-path exception.
+        - "/.github/workflows/dependabot-auto-merge.yml"
     pattern-regex: '(?m)^\s*pull_request_target\s*:'
 
   - id: delaunay.github-actions.github-script-no-expression-interpolation

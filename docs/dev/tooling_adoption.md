@@ -87,6 +87,10 @@ stale approvals on push, resolved review threads, and strict required checks.
 Existing CI, Codacy, and CodeRabbit status requirements continue to gate merging.
 The old review-token request and CodeRabbit approval polling are removed; local
 consumer tests cover policy wiring, while the shared suite owns approval logic.
+The trigger rule excludes only this reviewed caller's exact path. Semgrep's SARIF
+formatter retains inline-suppressed results, which GitHub still reports; a
+consumer regression verifies that the reviewed caller produces no SARIF alert
+and the same trigger in another workflow remains a finding.
 
 ## Platform evidence
 

@@ -2,7 +2,7 @@ name: Dependabot approval and auto-merge
 
 # Trusted base-branch policy only; the reusable job never checks out or runs PR code.
 "on": # zizmor: ignore[dangerous-triggers]
-  pull_request_target: # nosemgrep: delaunay.github-actions.no-pull-request-target
+  pull_request_target:
     types:
       - opened
       - reopened
