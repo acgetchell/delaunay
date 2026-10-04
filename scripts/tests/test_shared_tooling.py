@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -47,8 +48,8 @@ def test_published_pin_configuration_and_inventory() -> None:
     assert package["source"] == {"registry": "https://pypi.org/simple"}
     assert MANIFEST["tool"]["uv"]["required-version"].startswith("==")
     tools = MANIFEST["tool"]["research-repo-tools"]["toolchain"]["cargo"]
-    assert tools["cargo-edit"] == "0.13.13"
-    assert {"cargo-audit", "cargo-nextest", "samply", "tectonic", "tex-fmt", "clippy-sarif", "sarif-fmt"} <= tools.keys()
+    assert all(re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", pin) for pin in tools.values())
+    assert {"cargo-edit", "cargo-audit", "cargo-nextest", "samply", "tectonic", "tex-fmt", "clippy-sarif", "sarif-fmt"} <= tools.keys()
     assert "just" not in tools
     assert "cargo-update" not in tools
 

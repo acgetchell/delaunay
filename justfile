@@ -307,7 +307,7 @@ help-workflows:
     @echo "  just ci                 # GitHub-equivalent default validation suite"
     @echo ""
     @echo "Local CodeRabbit review:"
-    @echo "  just review [base]      # Review the branch and local edits; base defaults to main"
+    @echo "  just review [base]      # Review branch and local edits against verified live origin/main; explicit local bases skip verification"
     @echo "  just review-uncommitted # Review only local edits, including new files"
     @echo ""
     @echo "Setup and maintenance:"
@@ -1100,7 +1100,7 @@ python-sync: _ensure-uv
 [group('validation')]
 python-typecheck: (_python-tool "--group notebooks ty check --error all")
 
-# Require final release versions plus matching changelog and citation dates.
+# Print retained release notes for a tag.
 [group('release')]
 release-notes tag:
     {{ rrt }} changelog notes {{ quote(tag) }}

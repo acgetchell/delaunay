@@ -2,6 +2,13 @@
 # Native font and compression dependencies remain consumer-owned.
 # Source this before toolchain sync so Cargo inherits pkg-config discovery.
 
+if [ -z "${BASH_VERSION:-}" ]; then
+	echo "❌ Tectonic native dependency discovery requires Bash." >&2
+	# A directly executed non-Bash shell may reject return.
+	# shellcheck disable=SC2317
+	return 1 2>/dev/null || exit 1
+fi
+
 have() { command -v "$1" >/dev/null 2>&1; }
 
 ensure_tectonic_build_dependencies() {
@@ -16,7 +23,7 @@ ensure_tectonic_build_dependencies() {
 	MINGW* | MSYS* | CYGWIN*)
 		if [[ "${TECTONIC_DEP_BACKEND:-}" != "vcpkg" || ! -d "${VCPKG_ROOT:-}/installed/${VCPKGRS_TRIPLET:-x64-windows-static-md}" ]]; then
 			echo "❌ Configure matching vcpkg libraries and TECTONIC_DEP_BACKEND=vcpkg before setup."
-			exit 1
+			return 1
 		fi
 		return
 		;;
@@ -34,7 +41,7 @@ ensure_tectonic_build_dependencies() {
 
 	if ! have pkg-config; then
 		echo "❌ 'pkg-config' was not found. Install pkgconf or pkg-config before building Tectonic from Cargo."
-		exit 1
+		return 1
 	fi
 
 	shopt -s nullglob
@@ -62,10 +69,15 @@ ensure_tectonic_build_dependencies() {
 	if ((${#missing_pkg_config_packages[@]})); then
 		echo "❌ pkg-config could not resolve: ${missing_pkg_config_packages[*]}"
 		echo "   Install the missing native development files, or add their metadata directories to PKG_CONFIG_PATH."
-		exit 1
+		return 1
 	fi
 	echo "  ✓ pkg-config can resolve Tectonic's native dependencies"
 	echo ""
 }
 
-ensure_tectonic_build_dependencies
+ensure_tectonic_build_dependencies || {
+	tectonic_dependency_status=$?
+	# Return to sourcing callers; direct execution rejects return.
+	# shellcheck disable=SC2317
+	return "$tectonic_dependency_status" 2>/dev/null || exit "$tectonic_dependency_status"
+}
