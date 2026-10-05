@@ -29,7 +29,7 @@ include = [
     "/benches/README.md",
     "/docs/*.md",
     "/docs/architecture/*.md",
-    "/docs/archive/changelog/*.md",
+    "/docs/archives/changelog/*.md",
     "/docs/assets/**/*.png",
     "/docs/dev/*.md",
     "/docs/dev/rust/*.md",
@@ -63,17 +63,17 @@ clap = { version = "4.6.7", features = [ "derive" ], optional = true }
 la-stack = { version = "0.4.6", default-features = false, features = [ "exact" ] }
 tracing = { version = "0.1.44", default-features = false, features = [ "std" ] }
 rustc-hash = "2.1.3" # Fast non-cryptographic hashing for performance
-smallvec = { version = "1.16.1", features = [ "serde" ] } # Stack allocation for small collections
+smallvec = { version = "1.16.2", features = [ "serde" ] } # Stack allocation for small collections
 num-traits = "0.2.19"
 ordered-float = "5.5.0"
-rand = "0.10.2"
+rand = "0.10.3"
 serde = { version = "1.0.229", features = [ "derive" ] }
 serde_json = { version = "1.0.151", optional = true }
 sha2 = { version = "0.11.0", default-features = false }
 same-file = { version = "1.0.6", optional = true }
 slotmap = { version = "1.1.1", features = [ "serde" ] }
-thiserror = "2.0.20"
-uuid = { version = "1.26.1", features = [ "v4", "serde", "fast-rng" ] }
+thiserror = "2.0.21"
+uuid = { version = "1.27.0", features = [ "v4", "serde", "fast-rng" ] }
 
 [dev-dependencies]
 approx = "0.5.1"

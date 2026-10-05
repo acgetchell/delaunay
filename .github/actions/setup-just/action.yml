@@ -1,27 +1,95 @@
-name: Set up just
-description: Resolve the pinned just version from justfile and install it.
+name: Set up shared tooling
+description: Install and verify the locked PyPI package and declared managed tools.
 
 outputs:
-  version:
-    description: Resolved just version from justfile.
-    value: ${{ steps.resolve.outputs.version }}
+  tectonic-version:
+    description: Tectonic pin from the consumer TOML declaration.
+    value: ${{ steps.versions.outputs.tectonic }}
 
 runs:
   using: composite
   steps:
-    - name: Resolve just version
-      id: resolve
+    - name: Install declared uv
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      with:
+        version-file: pyproject.toml
+        enable-cache: false
+
+    - name: Select short Windows installation root
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        $env:RESEARCH_REPO_TOOLS_HOME = "C:/rrt"
+        uv run --locked --managed-python --only-group tooling research-repo-tools ci export RESEARCH_REPO_TOOLS_HOME
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    - name: Cache managed tools
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.os == 'Windows' && 'C:/rrt' || '~/.cache/research-repo-tools' }}
+        key: managed-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pyproject.toml', 'rust-toolchain.toml', '.python-version') }}
+        restore-keys: managed-tools-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Provision Linux native build dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y pkg-config libfontconfig1-dev libfreetype-dev libgraphite2-dev libharfbuzz-dev libicu-dev libpng-dev libssl-dev zlib1g-dev
+
+    - name: Provision macOS native build dependencies
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install freetype graphite2 icu4c libpng pkgconf zlib
+        set -euo pipefail
+        source scripts/tectonic_native_dependencies.sh
+        uv run --locked --managed-python --only-group tooling research-repo-tools ci export PKG_CONFIG_PATH
+
+    - name: Provision Windows native build dependencies
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install fontconfig freetype "harfbuzz[graphite2]" icu libpng openssl zlib --triplet x64-windows-static-md
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $env:TECTONIC_DEP_BACKEND = "vcpkg"
+        $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+        $env:VCPKGRS_TRIPLET = "x64-windows-static-md"
+        uv run --locked --managed-python --only-group tooling research-repo-tools ci export TECTONIC_DEP_BACKEND VCPKG_ROOT VCPKGRS_TRIPLET
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    - name: Install declared tools from the locked package
       shell: bash
       run: |
         set -euo pipefail
-        if ! version="$(bash .github/actions/setup-just/resolve-version.sh)"; then
-          echo "::error::Could not resolve just_version from justfile"
-          exit 1
-        fi
+        uv run --locked --managed-python --only-group tooling research-repo-tools toolchain sync
+        uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain run -- uv sync --locked --managed-python --group dev --group notebooks
+        uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain export
+        uv run --locked --no-sync --no-python-downloads research-repo-tools --version
 
-        echo "version=$version" >> "$GITHUB_OUTPUT"
+    - name: Export typesetting cache version
+      id: versions
+      shell: bash
+      run: |
+        uv run --locked --no-sync python - <<'PY'
+        import os
+        import tomllib
+        from pathlib import Path
 
-    - name: Install just
-      uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3.0.8
+        config = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+        pin = config["tool"]["research-repo-tools"]["toolchain"]["cargo"]["tectonic"]
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+            output.write("tectonic=" + pin + "\n")
+        PY
+
+    - name: Cache consumer Rust builds
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        tool: just@${{ steps.resolve.outputs.version }}
+        path: |
+          target/debug
+          target/release
+          target/perf
+        key: rust-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: rust-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-

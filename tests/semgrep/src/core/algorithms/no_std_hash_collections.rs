@@ -7,6 +7,14 @@ use std::collections::{BTreeMap, HashMap};
 // ruleid: delaunay.rust.no-std-hash-collections-in-hot-src
 use std::collections::{BTreeSet, HashSet};
 
+// ruleid: delaunay.rust.no-std-hash-collections-in-hot-src
+use std::collections::HashMap as AliasedSlowMap;
+// ruleid: delaunay.rust.no-std-hash-collections-in-hot-src
+use std::collections::{BTreeSet as OrderedSet, HashSet as AliasedSlowSet};
+
+// ok: delaunay.rust.no-std-hash-collections-in-hot-src
+use rustc_hash::FxHashMap as AliasedFastMap;
+
 // ok: delaunay.rust.no-std-hash-collections-in-hot-src
 type GoodMap = FastHashMap<u8, u8>;
 // ok: delaunay.rust.no-std-hash-collections-in-hot-src

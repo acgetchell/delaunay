@@ -24,13 +24,17 @@ class CliArgs:
 
 def tracked_semgrep_targets(repo_root: Path) -> tuple[str, ...]:
     """Return the root plus tracked test files Semgrep ignores by default."""
-    result = run_git_command(["ls-files", "-z", *TRACKED_TARGET_PATHSPECS], cwd=repo_root, timeout=30)
+    result = run_git_command(
+        ["ls-files", "--cached", "--others", "--exclude-standard", "--deduplicate", "-z", *TRACKED_TARGET_PATHSPECS],
+        cwd=repo_root,
+        timeout=30,
+    )
     tracked = tuple(path for path in result.stdout.split("\0") if path)
     fixture_paths = tuple(path for path in tracked if path == "tests/semgrep" or path.startswith("tests/semgrep/"))
     if fixture_paths:
         message = f"Semgrep target enumeration included deliberate fixtures: {', '.join(fixture_paths)}"
         raise RuntimeError(message)
-    return (".", *dict.fromkeys(tracked))
+    return (".", *(path for path in dict.fromkeys(tracked) if (repo_root / path).is_file()))
 
 
 def parse_args(argv: list[str]) -> CliArgs:

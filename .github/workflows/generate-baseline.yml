@@ -47,36 +47,9 @@ jobs:
           fetch-depth: 0 # Full history for tag operations
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
-        with:
-          cache: false
-          cache-bin: false
-          # Toolchain from rust-toolchain.toml
-
-      - name: Set up just
+      - name: Set up shared tooling
         id: setup_just
         uses: $/.github/actions/setup-just
-
-      - name: Resolve uv version
-        id: uv_version
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          version="$(just --evaluate uv_version)"
-          if [[ -z "$version" ]]; then
-            echo "::error::Could not resolve uv_version from justfile"
-            exit 1
-          fi
-
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Install uv (Python package manager)
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          version: ${{ steps.uv_version.outputs.version }}
-          enable-cache: false
 
       - name: Verify uv installation
         run: uv --version

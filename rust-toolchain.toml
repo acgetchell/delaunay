@@ -9,6 +9,7 @@ components = [
     "clippy", # Linting (you use strict pedantic mode)
     "rustfmt", # Code formatting (you use cargo fmt --all)
     "rust-src", # Source code for IDEs and local diagnostics
+    "llvm-tools-preview", # Coverage through cargo-llvm-cov
 ]
 
 # Keep host toolchain installs small; GitHub workflows install cross targets

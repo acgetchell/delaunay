@@ -24,8 +24,27 @@ def test_targets_include_tracked_python_and_rust_tests_once(monkeypatch: pytest.
         "run_git_command",
         lambda _args, **_kwargs: _git_result("scripts/tests/test_one.py\0tests/cli.rs\0tests/cli.rs\0"),
     )
+    for name in ("scripts/tests/test_one.py", "tests/cli.rs"):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
 
     assert semgrep_targets.tracked_semgrep_targets(tmp_path) == (".", "scripts/tests/test_one.py", "tests/cli.rs")
+
+
+def test_targets_include_new_tests_and_skip_deleted_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """An unstaged migration includes new tests without passing missing paths."""
+    calls: list[list[str]] = []
+
+    def git(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return _git_result("scripts/tests/deleted.py\0tests/new.rs\0")
+
+    monkeypatch.setattr(semgrep_targets, "run_git_command", git)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/new.rs").write_text("", encoding="utf-8")
+    assert semgrep_targets.tracked_semgrep_targets(tmp_path) == (".", "tests/new.rs")
+    assert calls[0][:6] == ["ls-files", "--cached", "--others", "--exclude-standard", "--deduplicate", "-z"]
 
 
 def test_targets_fail_closed_if_deliberate_fixtures_escape_exclusion(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

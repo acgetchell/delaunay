@@ -390,7 +390,8 @@ Quick local workflow:
 ```bash
 git clone https://github.com/acgetchell/delaunay.git
 cd delaunay
-bash scripts/bootstrap_just.sh
+source scripts/tectonic_native_dependencies.sh
+uv run --locked --managed-python --only-group tooling research-repo-tools setup
 just setup
 just check
 just test

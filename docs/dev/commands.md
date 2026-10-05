@@ -137,8 +137,8 @@ checks pass. Assess each finding against the repository's contracts, fix valid
 issues, and run the affected checks.
 
 ```bash
-just review                  # Complete branch diff against local main
-just review origin/main      # Use a different locally available PR base
+just review                  # Branch and local changes against verified origin/main
+just review main             # Explicit local base override
 just review-uncommitted      # Only staged, unstaged, and new files
 ```
 
@@ -146,15 +146,19 @@ just review-uncommitted      # Only staged, unstaged, and new files
 `just review-uncommitted` excludes already committed changes. Both include
 non-ignored untracked files and pass `AGENTS.md` and `.coderabbit.yml` as
 additional review instructions. Inspect the intended diff before invoking
-either recipe. The base defaults to local `main`; choose the actual PR base
-and ensure it is current. These commands do not fetch or change Git state.
+either recipe. The default `origin/main` must match the live remote at invocation.
+The shared CLI checks with `git ls-remote`, then compares the local cached ref.
+Missing, stale, or unreachable remote bases fail before CodeRabbit starts. Refresh
+stale refs yourself with `git fetch origin`, then retry when authorized. Explicit
+local bases and uncommitted-only reviews skip remote freshness checks. The wrapper
+never fetches or changes Git state.
 
-The recipes use CodeRabbit's `--agent` output so agents can read structured
-findings. Install the [CodeRabbit CLI](https://docs.coderabbit.ai/cli) separately
-and authenticate with `coderabbit auth login` before the first review. The
-required scope flags are supported by CLI 0.7.6; consult
-`coderabbit review --help` when using another version. CodeRabbit is an
-external prerequisite, separate from the tools managed by `just setup-tools`.
+Both recipes call the locked shared CLI and stream CodeRabbit's structured
+`--agent` output. Instruction discovery requires root `AGENTS.md` and exactly
+one of `.coderabbit.yml` or `.coderabbit.yaml`. Install the
+[CodeRabbit CLI](https://docs.coderabbit.ai/cli) separately and authenticate with
+`coderabbit auth login`. It remains an external prerequisite; setup does not
+install or authenticate it, enable paid credits, or retry reviews.
 
 CodeRabbit review is separate from `just check` and `just ci`: it uses a remote
 service, authentication, and review allowances. CLI failures propagate through
@@ -183,45 +187,55 @@ public recipe owns one distinct operation; broader workflows compose those
 recipes instead of repeating their commands. Shared private guards and
 parameterized implementation helpers live in `just/helpers.just`.
 
-Tool-version variables in the root `justfile` are the source of truth for both
-local setup and GitHub Actions. Before the first `just` invocation, run
-`bash scripts/bootstrap_just.sh`; it installs the pinned Just release only when
-that exact version is not already available. `just setup-tools` then installs
-or synchronizes the repository toolchain. It requires `uv`, `gh`, `jq`,
-`rustup`, Cargo, and `chktex` on `PATH`, installs the pinned Rust CLI tools, and
-provisions the unpinned `cargo-update` bootstrap package that supplies
-`cargo-install-update`. Its final inventory verifies both `gh` and
-`cargo-install-update`. Private `_ensure-*` dependencies fail fast when a
-required tool or pinned version is unavailable during an individual recipe.
-`just setup` composes `setup-tools` with the development build.
+Tool declarations live in their authoritative consumer files: exact uv and Cargo
+tool pins in `pyproject.toml`, Python in `.python-version`, and Rust plus components
+in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.1.7` from PyPI
+and is included by `dev`. Before the first Just invocation, run:
 
-Use `just update` for deliberate dependency and tool maintenance. It composes
-`just update-dependencies`, which advances compatible and incompatible Cargo
-requirements and lockfiles for both the root package and the isolated
-`tests/fixtures/checkpoint_no_float_roundtrip/` resolution root, resolves any
-exact direct pins under
-`[dependency-groups].dev` as one universal set for the supported Python
-version, then upgrades `uv.lock`, with
-`just update-cargo-tools`, which upgrades only the locally installed Cargo CLI
-packages owned by `setup-tools` and atomically reconciles their root `justfile`
-pins plus the active uv version after every requested package updates
-successfully. uv remains an external prerequisite managed outside this
-repository; the update workflow accepts its active stable `X.Y.Z` version long enough to
-record the new pin but does not replace the uv installation. Ordinary uv-backed
-recipes continue to require the exact reconciled pin. The Cargo tool updater
-requires `cargo-install-update` from the `cargo-update` package and does not
-touch other Cargo-installed executables or uv's user-global tool environments.
-`setup-tools` and CI consume the reconciled declarations. The exact-pin step
-leaves ranged development requirements, project/runtime dependencies, optional
-dependencies, build requirements, and intentional uv overrides unchanged.
-The aggregate `just update` runs its `cargo-install-update` and stable-uv
-preflights before either dependency updater can change declarations or
-lockfiles. Direct `just update-dependencies`, `just update-python-dependencies`,
-and `just update-cargo-tools` also check stable uv before their updates.
-These entry points reuse the pin reconciler's version parser without requiring
-uv to match the tracked pin. This check uses an already installed Python
-interpreter with dependency syncing and Python downloads disabled; invalid uv
-output fails before updates begin.
+```bash
+source scripts/tectonic_native_dependencies.sh
+uv run --locked --managed-python --only-group tooling research-repo-tools setup
+```
+
+Provision Git, a POSIX shell, platform compiler/linker prerequisites, and Tectonic's
+native libraries first. Shared setup installs and verifies declared versions,
+installs Just through its pinned `rust-just` dependency, configures shell PATH,
+and synchronizes dev with managed Rust available. Open a new terminal if PATH
+changed. `just setup-tools` repeats that setup after checking consumer native
+libraries. GitHub CLI, jq, chktex, and CodeRabbit remain system prerequisites for
+the recipes that need them. No sibling checkout, local wheel override, generated
+launcher, or editable shared-package install is used.
+
+The source command above is for Bash, including Git Bash on Windows. PowerShell
+users configure `TECTONIC_DEP_BACKEND=vcpkg`, `VCPKG_ROOT`, and a matching
+`VCPKGRS_TRIPLET` before invoking the same uv command directly. Windows CI selects
+`x64-windows-static-md`, which avoids requiring native dependency DLLs on PATH;
+see [vcpkg's Rust linking contract](https://docs.rs/vcpkg/latest/vcpkg/).
+
+Managed Rust and Cargo tools live in the shared package's versioned cache.
+Recipes select them with `toolchain run`, which verifies versions and fails when
+an installation is incomplete; an ambient executable cannot satisfy a managed
+pin. `just tools-check` inspects without syncing or downloading Python.
+`just tools-export` exports verified paths to GitHub Actions.
+
+`just update` runs `update-tools` before `update-dependencies`, stopping on the
+first failure. Completed package-manager steps remain applied. uv upgrades through
+its installation owner; managed Cargo upgrades publish verified exact TOML pins.
+Just follows the shared package pin and is not upgraded independently through
+Cargo. These policies replace cargo-update and the legacy Just-variable reconciler.
+An unsupported uv installation owner produces a diagnostic; update through that
+owner and reconcile `tool.uv.required-version` before retrying.
+
+`update-dependencies` composes Cargo and Python updates while retaining tool pins.
+The Cargo override advances requirements and lockfiles for the root and isolated
+`tests/fixtures/checkpoint_no_float_roundtrip/` resolution roots. Python updates
+advance exact direct dev pins, preserve included tooling constraints and intentional
+ranges, refresh the entire `uv.lock`, and explicitly sync dev with managed Rust
+available, including when `default-groups = []`. `update-python-deps` aliases that
+complete Python workflow. `update-tools` preserves dependency requirements and
+locks. Change the shared package version explicitly through uv, refresh the lock,
+review its release notes, and rerun setup. `deps update-tools` is the separate
+legacy interface for user-installed tools; this repository uses managed TOML pins.
 
 Agents should **prefer running `just` commands instead of invoking the
 underlying tools directly**. The justfile ensures the correct flags,
@@ -327,7 +341,7 @@ After generating a release changelog, run the strict final release gate:
 just release-version-check
 ```
 
-It invokes `check-docs-version-sync --final-release`, requiring exactly one
+It invokes `research-repo-tools release check --final-release`, requiring exactly one
 current-version changelog heading whose date matches `CITATION.cff`.
 
 ---
@@ -874,25 +888,15 @@ byte-identical. `just paper-refresh` runs the basic check before copying the
 target-built PDF to `papers/validation.pdf`. `just papers` refreshes the
 canonical figures and reviewer PDF through those named artifact owners.
 
-Tectonic and `tex-fmt` are pinned Cargo-installed tools. `chktex` comes from a
-TeX distribution or system package manager. Local macOS installations provided
-by MacTeX place commands under `/Library/TeX/texbin`; if a non-interactive shell
-does not load that directory, run paper recipes with
-`PATH=/Library/TeX/texbin:/opt/homebrew/bin:$PATH`. Installing or upgrading
-Tectonic from Cargo also requires a `pkg-config` implementation and development
-headers for its externally resolved native bridge libraries. macOS requires
-FreeType, Graphite2, ICU, libpng, and zlib, but not fontconfig. Non-Apple
-platforms additionally require fontconfig and OpenSSL. The pinned default build vendors
-HarfBuzz. When the pinned Tectonic version is absent, `just setup-tools`
-requires `pkg-config` (commonly installed as `pkgconf`) and checks the
-platform-specific external native dependency set. On macOS it auto-detects
-common Homebrew metadata
-directories, including the active SDK metadata used for system compression
-libraries, before it asks for a manual `PKG_CONFIG_PATH`. An already-correct
-Tectonic installation does not require those native build prerequisites. Paper
-CI installs the platform native package set explicitly, caches Tectonic's
-versioned user bundle directory, and warms a cold bundle cache with bounded
-download retries before starting the paper build.
+Tectonic and `tex-fmt` are pinned managed Cargo tools. `chktex` comes from a
+TeX distribution or system package manager. Local MacTeX commands live under
+`/Library/TeX/texbin`; prepend that directory to PATH when needed.
+`scripts/tectonic_native_dependencies.sh` keeps native library discovery in the
+consumer: pkg-config, FreeType, Graphite2, ICU, libpng, and zlib on macOS;
+fontconfig and OpenSSL additionally on Linux. Windows MSVC uses matching vcpkg
+libraries with `TECTONIC_DEP_BACKEND=vcpkg`. Shared setup passes that native
+environment through to Cargo. Paper CI installs the platform packages explicitly,
+caches the versioned Tectonic bundle, and warms cold bundles with bounded retries.
 
 Reviewer-facing validation diagrams under `docs/assets/validation/` use the
 same deterministic notebook with a separate explicit output switch:
@@ -1018,11 +1022,10 @@ authentication, online audits include action SHA/version-comment checks;
 without it, the recipe reports that it is running offline. Explicit zizmor
 environment settings such as `ZIZMOR_OFFLINE` still apply.
 
-The `zizmor.yml` SARIF workflow reads `zizmor_version` from `justfile` and
-explicitly enables online audits with the same persona. Zizmor resolves action
-SHAs against release tags; repository Semgrep rules require an explicit scanner
-version and disabled setup-uv caching in release workflows without duplicating
-that remote resolution.
+The `zizmor.yml` SARIF workflow runs the pinned shared CLI directly with online
+audits required and the same configured persona. It uploads the resulting SARIF;
+scanner failures remain failures. Local `just zizmor` uses the same implementation
+with the documented unauthenticated offline fallback.
 
 ---
 
@@ -1092,11 +1095,11 @@ The native targets are `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, and
 matrix before running recipes; installing a target alone does not prove that
 Cargo built or tested it. Intel macOS is not a separate native CI cell.
 
-The root `justfile` owns managed tool-version pins. After bootstrapping `just`
-through `.github/actions/setup-just`, workflows resolve those pins with
-`just --evaluate` instead of repeating version literals. Rust workflow caches
-must keep `cache-bin: false`: restoring `${CARGO_HOME}/bin` can replace
-rustup-managed Cargo shims with stale or host-incompatible binaries.
+The composite `.github/actions/setup-just` installs uv from the consumer TOML
+pin, installs the locked PyPI package, provisions native libraries, synchronizes
+managed tools, and exports verified paths. Tool caches are keyed by host and
+consumer declarations, and restored versions are rechecked. Rust workflow caches
+keep `cache-bin: false` to avoid restoring stale Cargo shims.
 
 `.codacy.yml` owns Codacy engine and path policy. Keep Codacy feedback aligned
 with repository validators rather than establishing an independent style or
@@ -1126,33 +1129,27 @@ Regenerate with:
 just changelog
 ```
 
-This runs `git-cliff`, applies the Python postprocessor, archives completed
-minor release series under `docs/archive/changelog/`, and applies `rumdl`
-formatting to the generated changelog files.
+The shared operation generates with its packaged git-cliff policy, normalizes
+history, and rotates completed minor series into `docs/archives/changelog/`.
+`just changelog-preview` performs the same preparation without publishing files.
+`just changelog-archive` repairs rotation/navigation without regenerating commits.
+`just release-notes TAG` reads retained root or archived notes.
 
-For release PRs, generate the changelog for a version before the final tag
-exists with:
-
-```bash
-just changelog-unreleased vX.Y.Z
-```
-
-First set release metadata; the updater records the current UTC date:
+Prepare metadata separately, then generate with an explicit UTC date:
 
 ```bash
-just update-version vX.Y.Z
+just update-version vX.Y.Z --date YYYY-MM-DD --previous-release vA.B.C
+just changelog-release vX.Y.Z YYYY-MM-DD
+just release-version-check
+just publish-check
 ```
 
-Same-day retries are content-idempotent; a retry after UTC midnight updates
-`CITATION.cff` and any existing target changelog heading together.
-`changelog-unreleased` first rejects a non-stable tag or a tag that differs
-from Cargo metadata, before `git-cliff` writes the changelog, then synchronizes
-the generated heading from `CITATION.cff`. Finish with
-`just release-version-check` and `just publish-check` before merge or
-publication.
-
-Create annotated release tags from the generated changelog after the release PR
-is merged with:
+`changelog-unreleased TAG DATE` is an alias for `changelog-release TAG DATE`.
+Metadata updates default to the current UTC date and discover published stable
+GitHub history when the predecessor is omitted. If the date changes, repeat both
+metadata preparation and generation. Final validation requires matching target
+heading and citation dates. Create an annotated local tag only after the release
+PR is merged:
 
 ```bash
 just tag vX.Y.Z

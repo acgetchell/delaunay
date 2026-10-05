@@ -6,31 +6,12 @@
 # Use bash with strict error handling for all recipes
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-home_dir := env_var_or_default("HOME", env_var_or_default("USERPROFILE", ""))
-cargo_home := env_var_or_default("CARGO_HOME", home_dir + "/.cargo")
-path_separator := if os_family() == "windows" { ";" } else { ":" }
-export PATH := cargo_home + "/bin" + path_separator + env_var("PATH")
 binary_extension := if os_family() == "windows" { ".exe" } else { "" }
 perf_delaunay_binary := "target/perf/delaunay" + binary_extension
 
-cargo_audit_version := "0.22.2"
-cargo_edit_version := "0.13.13"
-cargo_llvm_cov_version := "0.9.1"
-cargo_machete_version := "0.9.2"
-clippy_sarif_version := "0.8.0"
-dprint_version := "0.57.4"
-git_cliff_version := "2.14.1"
-just_version := "1.58.0"
-nextest_version := "0.9.144"
-rumdl_version := "0.2.73"
-samply_version := "0.13.1"
-sarif_fmt_version := "0.8.0"
-taplo_version := "0.10.0"
-tectonic_version := "0.17.0"
-tex_fmt_version := "0.5.7"
-typos_version := "1.50.1"
-uv_version := "0.12.13"
-zizmor_version := "1.30.1"
+# Invoke the locked shared CLI; managed execution verifies declared tools first.
+rrt := "uv run --locked --group dev research-repo-tools"
+managed := rrt + " toolchain run --"
 
 # Common cargo-llvm-cov arguments for all coverage runs.
 # Excludes benches/examples from reports while allowing integration tests to
@@ -60,33 +41,33 @@ action-lint: _ensure-actionlint
 # Benchmark recipes that produce performance numbers use Cargo's perf profile.
 [group('benchmarks and performance')]
 bench:
-    cargo bench --workspace --profile perf --features bench
+    {{ managed }} cargo bench --workspace --profile perf --features bench
 
 # Allocation-contract microbenchmarks for public hot paths.
 [group('benchmarks and performance')]
 bench-allocations:
-    cargo bench --profile perf --bench allocation_hot_paths --features count-allocations -- --noplot
+    {{ managed }} cargo bench --profile perf --bench allocation_hot_paths --features count-allocations -- --noplot
 
 # CI regression benchmarks with the perf profile.
 [group('benchmarks and performance')]
 bench-ci:
-    cargo bench --profile perf --bench ci_performance_suite
+    {{ managed }} cargo bench --profile perf --bench ci_performance_suite
 
 # Render a Markdown comparison against a saved Criterion baseline.
 [group('benchmarks and performance')]
 bench-compare baseline="last" suite="release-signal" scope="release-signal": _ensure-uv
-    uv run --locked benchmark-utils bench-compare "{{ baseline }}" --suite "{{ suite }}" --scope "{{ scope }}"
+    {{ managed }} uv run --locked benchmark-utils bench-compare "{{ baseline }}" --suite "{{ suite }}" --scope "{{ scope }}"
 
 # Compile benchmark harnesses without running them.
 [group('benchmarks and performance')]
 bench-compile:
     @echo "Compiling benchmark harnesses without running them; this can take several minutes on Windows/MSVC."
-    cargo bench --workspace --no-run --features bench
+    {{ managed }} cargo bench --workspace --no-run --features bench
 
 # Run the curated release-signal benchmark set and leave Criterion `new` output.
 [group('benchmarks and performance')]
 bench-latest bench_timeout="1800": _ensure-uv
-    uv run --locked benchmark-utils run-release-signal --bench-timeout {{ bench_timeout }}
+    {{ managed }} uv run --locked benchmark-utils run-release-signal --bench-timeout {{ bench_timeout }}
 
 # Run latest measurements and render the latest-vs-last performance report.
 [group('benchmarks and performance')]
@@ -99,12 +80,12 @@ bench-pachner-stress samples="10": (_bench-pachner-stress samples)
 # Generate a release performance summary from fresh perf-profile benchmark runs.
 [group('benchmarks and performance')]
 bench-perf-summary: _ensure-uv
-    uv run --locked benchmark-utils generate-summary --run-benchmarks --profile perf --strict
+    {{ managed }} uv run --locked benchmark-utils generate-summary --run-benchmarks --profile perf --strict
 
 # Execute every curated release fixture once without producing timing evidence.
 [group('benchmarks and performance')]
 bench-preflight bench_timeout="600": _ensure-uv
-    uv run --locked benchmark-utils run-release-signal --preflight-only --bench-timeout {{ bench_timeout }}
+    {{ managed }} uv run --locked benchmark-utils run-release-signal --preflight-only --bench-timeout {{ bench_timeout }}
 
 # Save a Criterion baseline for a Delaunay benchmark suite.
 [group('benchmarks and performance')]
@@ -115,7 +96,7 @@ bench-save-baseline tag suite="release-signal": _ensure-uv
     suite="{{ suite }}"
     case "$suite" in
         release-signal)
-            uv run --locked benchmark-utils run-release-signal --save-baseline "$tag"
+            {{ managed }} uv run --locked benchmark-utils run-release-signal --save-baseline "$tag"
             exit 0
             ;;
         ci)
@@ -136,7 +117,7 @@ bench-save-baseline tag suite="release-signal": _ensure-uv
             ;;
     esac
     for target in "${targets[@]}"; do
-        cargo bench --profile perf --bench "$target" -- --save-baseline "$tag"
+        {{ managed }} cargo bench --profile perf --bench "$target" -- --save-baseline "$tag"
     done
 
 # Smoke-test benchmark harnesses with minimal samples; not for performance data.
@@ -144,58 +125,49 @@ bench-save-baseline tag suite="release-signal": _ensure-uv
 [doc('Smoke-test benchmark harnesses with minimal samples; do not use as performance data.')]
 [group('benchmarks and performance')]
 bench-smoke:
-    CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace --profile perf --features bench
+    CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 {{ managed }} cargo bench --workspace --profile perf --features bench
 
 # Build the crate in the development profile.
 [group('build and setup')]
 build:
-    cargo build
+    {{ managed }} cargo build
 
 # Build the crate in the release profile.
 [group('build and setup')]
 build-release:
-    cargo build --release
+    {{ managed }} cargo build --release
 
 # Check that Cargo.toml and Cargo.lock are synchronized.
 [group('validation')]
 cargo-lock-check:
-    cargo metadata --locked --format-version 1 --no-deps > /dev/null
+    {{ managed }} cargo metadata --locked --format-version 1 --no-deps > /dev/null
 
-# Changelog management (git-cliff + post-processing + archiving + rumdl formatting)
+# Changelog management through the pinned shared package.
 [group('release')]
-changelog: _ensure-git-cliff _ensure-rumdl python-sync
-    #!/usr/bin/env bash
-    set -euo pipefail
-    GIT_CLIFF_OFFLINE=true git-cliff -o CHANGELOG.md
-    uv run --locked postprocess-changelog
-    uv run --locked archive-changelog
-    rumdl fmt --silent CHANGELOG.md docs/archive/changelog/*.md
+changelog:
+    {{ managed }} research-repo-tools changelog generate
 
-# Generate the changelog as if releasing the requested version.
+# Rotate completed minor release series without regenerating history.
 [group('release')]
-changelog-unreleased version: _ensure-gh _ensure-git-cliff _ensure-rumdl python-sync
-    #!/usr/bin/env bash
-    set -euo pipefail
-    version={{ quote(version) }}
-    if [[ ! "$version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-        echo "❌ Release tag must use stable vX.Y.Z form, got: $version" >&2
-        exit 2
-    fi
-    package_version="$(
-        cargo metadata --locked --format-version 1 --no-deps \
-            | uv run --locked python -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])'
-    )"
-    if [[ "$version" != "v$package_version" ]]; then
-        echo "❌ Release tag $version does not match Cargo package version $package_version." >&2
-        echo "   Run 'just update-version $version' before generating the changelog." >&2
-        exit 2
-    fi
-    previous_release="$(uv run --locked update-release-version "$version" --print-previous-release)"
-    GIT_CLIFF_OFFLINE=true git-cliff --tag "$version" -o CHANGELOG.md
-    uv run --locked postprocess-changelog
-    uv run --locked archive-changelog
-    uv run --locked update-release-version "$version" --sync-changelog-date --previous-release "$previous_release"
-    rumdl fmt --silent CHANGELOG.md docs/archive/changelog/*.md
+changelog-archive:
+    {{ rrt }} changelog archive
+
+# Check generated release history and archive links.
+[group('release')]
+changelog-check:
+    {{ rrt }} changelog check
+
+# Preview normalized and rotated history without publishing files.
+[group('release')]
+changelog-preview:
+    {{ managed }} research-repo-tools changelog generate --dry-run
+
+# Generate a prospective release using an explicit UTC date.
+[group('release')]
+changelog-release tag date:
+    {{ managed }} research-repo-tools changelog generate --tag {{ quote(tag) }} --date {{ quote(date) }}
+
+alias changelog-unreleased := changelog-release
 
 # Run every non-mutating validator outside the test suites.
 [group('workflows')]
@@ -217,7 +189,7 @@ check-docs: markdown-check spell-check docs-version-check
 # Fast compile check (no binary produced)
 [group('build and setup')]
 check-fast:
-    cargo check
+    {{ managed }} cargo check
 
 # CI simulation: comprehensive validation.
 [group('workflows')]
@@ -241,7 +213,7 @@ citation-check: _ensure-uv
 # Clean build artifacts
 [group('build and setup')]
 clean:
-    cargo clean
+    {{ managed }} cargo clean
     rm -rf target/llvm-cov
     rm -rf coverage_report
     rm -rf coverage
@@ -249,41 +221,41 @@ clean:
 # Run strict Clippy checks for every target with default and all features.
 [group('validation')]
 clippy:
-    cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
-    cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+    {{ managed }} cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+    {{ managed }} cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
 # Coverage analysis for local development (HTML output)
 [group('tests and coverage')]
 coverage: _ensure-cargo-llvm-cov
     mkdir -p target/llvm-cov
-    cargo llvm-cov {{ _coverage_base_args }} --html --output-dir target/llvm-cov
+    {{ managed }} cargo llvm-cov {{ _coverage_base_args }} --html --output-dir target/llvm-cov
     @echo "📊 Coverage report generated: target/llvm-cov/html/index.html"
 
 # Coverage analysis for CI (XML output for codecov/codacy)
 [group('tests and coverage')]
 coverage-ci: _ensure-cargo-llvm-cov
     mkdir -p coverage
-    cargo llvm-cov nextest {{ _coverage_base_args }} --cobertura --output-path coverage/cobertura.xml -P coverage
+    {{ managed }} cargo llvm-cov nextest {{ _coverage_base_args }} --cobertura --output-path coverage/cobertura.xml -P coverage
 
 # Run the large-scale 2D diagnostic fixture with progress output.
 [group('diagnostics')]
 debug-large-scale-2d n="36000" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_2d -- --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} {{ managed }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_2d -- --exact --nocapture
 
 # Run the large-scale 3D diagnostic fixture with progress output.
 [group('diagnostics')]
 debug-large-scale-3d n="7500" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_3d -- --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} {{ managed }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_3d -- --exact --nocapture
 
 # Run the large-scale 4D diagnostic fixture with progress output.
 [group('diagnostics')]
 debug-large-scale-4d n="800" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_4d -- --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} {{ managed }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_4d -- --exact --nocapture
 
 # Run the large-scale 5D diagnostic fixture with progress output.
 [group('diagnostics')]
 debug-large-scale-5d n="140" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_5d -- --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} {{ managed }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_5d -- --exact --nocapture
 
 # Show the curated workflow guide when `just` is invoked without a recipe.
 [default]
@@ -293,12 +265,12 @@ default: help-workflows
 # Build rustdoc for the workspace and reject warnings.
 [group('validation')]
 doc-check:
-    RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --document-private-items
+    RUSTDOCFLAGS='-D warnings' {{ managed }} cargo doc --workspace --no-deps --document-private-items
 
 # Check release-version references against Cargo.toml.
 [group('validation')]
-docs-version-check: _ensure-uv
-    uv run --locked check-docs-version-sync
+docs-version-check:
+    {{ rrt }} release check
 
 # Build and run every Rust example.
 [group('tests and coverage')]
@@ -313,12 +285,12 @@ fix: justfile-fmt toml-fix fmt python-fix shell-fix markdown-fix yaml-fix
 # Format Rust source files.
 [group('validation')]
 fmt:
-    cargo fmt --all
+    {{ managed }} cargo fmt --all
 
 # Check Rust source formatting without modifying files.
 [group('validation')]
 fmt-check:
-    cargo fmt --all -- --check
+    {{ managed }} cargo fmt --all -- --check
 
 # Run actionlint and zizmor over GitHub Actions workflows.
 [group('validation')]
@@ -335,7 +307,7 @@ help-workflows:
     @echo "  just ci                 # GitHub-equivalent default validation suite"
     @echo ""
     @echo "Local CodeRabbit review:"
-    @echo "  just review [base]      # Review the branch and local edits; base defaults to main"
+    @echo "  just review [base]      # Review branch and local edits against verified live origin/main; explicit local bases skip verification"
     @echo "  just review-uncommitted # Review only local edits, including new files"
     @echo ""
     @echo "Setup and maintenance:"
@@ -441,12 +413,12 @@ markdown-check: _ensure-rumdl
     while IFS= read -r -d '' file; do
         [ -e "$file" ] || continue
         case "$file" in
-            CHANGELOG.md|docs/archive/*) continue ;;
+            CHANGELOG.md|docs/archive/*|docs/archives/changelog/*) continue ;;
         esac
         files+=("$file")
-    done < <(git ls-files -z '*.md')
+    done < <(git --no-pager ls-files --cached --others --exclude-standard --deduplicate -z '*.md')
     if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -n100 rumdl check
+        printf '%s\0' "${files[@]}" | xargs -0 -n100 {{ managed }} rumdl check
         violations=0
         for file in "${files[@]}"; do
             line_number=0
@@ -475,13 +447,13 @@ markdown-fix: _ensure-rumdl
     while IFS= read -r -d '' file; do
         [ -e "$file" ] || continue
         case "$file" in
-            CHANGELOG.md|docs/archive/*) continue ;;
+            CHANGELOG.md|docs/archive/*|docs/archives/changelog/*) continue ;;
         esac
         files+=("$file")
-    done < <(git ls-files -z '*.md')
+    done < <(git --no-pager ls-files --cached --others --exclude-standard --deduplicate -z '*.md')
     if [ "${#files[@]}" -gt 0 ]; then
         echo "📝 rumdl check --fix (${#files[@]} files)"
-        printf '%s\0' "${files[@]}" | xargs -0 -n100 rumdl check --fix
+        printf '%s\0' "${files[@]}" | xargs -0 -n100 {{ managed }} rumdl check --fix
     else
         echo "No markdown files found to format."
     fi
@@ -629,7 +601,7 @@ paper-build paper="validation": _ensure-tectonic _ensure-uv
     mkdir -p "$build_dir"
     source_date_epoch="$(uv run --locked paper-source-date-epoch "$paper_source")"
     export SOURCE_DATE_EPOCH="$source_date_epoch"
-    tectonic --keep-intermediates --keep-logs --outdir "$build_dir" "$paper_source"
+    {{ managed }} tectonic --keep-intermediates --keep-logs --outdir "$build_dir" "$paper_source"
     uv run --locked paper-pdf-normalize "$build_dir/${paper}.pdf" --tex "$paper_source"
     echo "📄 Paper PDF built: $build_dir/${paper}.pdf"
 
@@ -645,7 +617,7 @@ paper-clean:
 # Build the CLI used by paper notebooks before nbconvert starts its execution timer.
 [group('notebooks and papers')]
 paper-cli:
-    cargo build --locked --profile perf --features cli --bin delaunay
+    {{ managed }} cargo build --locked --profile perf --features cli --bin delaunay
 
 # Check the target-built PDF for basic readability.
 [group('notebooks and papers')]
@@ -688,12 +660,12 @@ paper-refresh paper="validation": (paper-check paper)
 # Format publication-facing TeX sources.
 [group('notebooks and papers')]
 paper-tex-fmt: _ensure-tex-fmt
-    tex-fmt papers/*.tex
+    {{ managed }} tex-fmt papers/*.tex
 
 # Check publication-facing TeX formatting without modifying files.
 [group('notebooks and papers')]
 paper-tex-fmt-check: _ensure-tex-fmt
-    tex-fmt --check papers/*.tex
+    {{ managed }} tex-fmt --check papers/*.tex
 
 # Lint publication-facing TeX sources with ChkTeX.
 [group('notebooks and papers')]
@@ -713,19 +685,19 @@ papers: validation-doc-figures (paper-refresh "validation")
 perf-baseline ref="main": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run --locked benchmark-utils generate-ref-baseline --ref "{{ ref }}" --out baseline-artifact --dev
+    {{ managed }} uv run --locked benchmark-utils generate-ref-baseline --ref "{{ ref }}" --out baseline-artifact --dev
 
 # Generate a scratch same-machine baseline at an explicit output path.
 [group('benchmarks and performance')]
 perf-baseline-to out ref="main": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run --locked benchmark-utils generate-ref-baseline --ref "{{ ref }}" --out "{{ out }}" --dev
+    {{ managed }} uv run --locked benchmark-utils generate-ref-baseline --ref "{{ ref }}" --out "{{ out }}" --dev
 
 # Compare the current tree with one dev-mode baseline file.
 [group('benchmarks and performance')]
 perf-compare file threshold="7.5": _ensure-uv
-    uv run --locked benchmark-utils compare --baseline "{{ file }}" --threshold {{ threshold }} --dev
+    {{ managed }} uv run --locked benchmark-utils compare --baseline "{{ file }}" --threshold {{ threshold }} --dev
 
 # Show detailed performance-check, benchmark, and profiling workflows.
 [group('benchmarks and performance')]
@@ -831,7 +803,7 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
             "$n_env=$n_points" \
             DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1 \
             DELAUNAY_LARGE_DEBUG_VALIDATION=construction \
-            cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug "$test_name" -- --exact --nocapture 2>&1 | tee "$log_file"; then
+            {{ managed }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug "$test_name" -- --exact --nocapture 2>&1 | tee "$log_file"; then
             echo "✅ ${dimension} completed within the ${max_secs}s test-runtime cap"
             case_status="PASS"
         else
@@ -879,17 +851,17 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
 # Fast pre-PR performance guard against a cached same-machine main baseline.
 [group('benchmarks and performance')]
 perf-no-regressions threshold="7.5": _ensure-uv
-    uv run --locked benchmark-utils compare-ref --ref main --threshold {{ threshold }} --dev --output benches/worktree_vs_main_compare_results.txt
+    {{ managed }} uv run --locked benchmark-utils compare-ref --ref main --threshold {{ threshold }} --dev --output benches/worktree_vs_main_compare_results.txt
 
 # Compare the current tree against a cached same-machine ref baseline.
 [group('benchmarks and performance')]
 perf-vs-ref ref threshold="7.5": _ensure-uv
-    uv run --locked benchmark-utils compare-ref --ref "{{ ref }}" --threshold {{ threshold }} --dev
+    {{ managed }} uv run --locked benchmark-utils compare-ref --ref "{{ ref }}" --threshold {{ threshold }} --dev
 
 # Promote performance documentation solely from the retained canonical artifacts.
 [group('benchmarks and performance')]
 performance-doc: _ensure-uv
-    uv run --locked benchmark-utils performance-doc
+    {{ managed }} uv run --locked benchmark-utils performance-doc
 
 # Compare stored GitHub Release benchmark assets without local Cargo runs.
 [group('benchmarks and performance')]
@@ -903,15 +875,15 @@ performance-github-assets current_tag="" baseline_tag="": _ensure-uv
         exit 2
     fi
     if [[ "$tag_pair_state" == "explicit" ]]; then
-        uv run --locked benchmark-utils performance-github-assets "$current_tag" "$baseline_tag"
+        {{ managed }} uv run --locked benchmark-utils performance-github-assets "$current_tag" "$baseline_tag"
     else
-        uv run --locked benchmark-utils performance-github-assets
+        {{ managed }} uv run --locked benchmark-utils performance-github-assets
     fi
 
 # Compare the current tree against the latest stable release and retain a bundle.
 [group('benchmarks and performance')]
 performance-local: _ensure-uv
-    uv run --locked benchmark-utils performance-local
+    {{ managed }} uv run --locked benchmark-utils performance-local
 
 # Validate retained release measurements and atomically publish README assets/table.
 [group('benchmarks and performance')]
@@ -930,18 +902,16 @@ performance-release current_tag="" baseline_tag="": _ensure-uv
         exit 2
     fi
     if [[ "$tag_pair_state" == "explicit" ]]; then
-        uv run --locked benchmark-utils performance-release "$current_tag" "$baseline_tag"
+        {{ managed }} uv run --locked benchmark-utils performance-release "$current_tag" "$baseline_tag"
     else
-        uv run --locked benchmark-utils performance-release
+        {{ managed }} uv run --locked benchmark-utils performance-release
     fi
 
 # Run the selected CI benchmark suite for one compiler/code pair.
 [group('benchmarks and performance')]
-profile toolchain="" code_ref="current": _ensure-jq
+profile toolchain="" code_ref="current": _ensure-jq _ensure-toolchain
     #!/usr/bin/env bash
     set -euo pipefail
-
-    command -v rustup >/dev/null || { echo "❌ 'rustup' not found. Install Rust via https://rustup.rs"; exit 1; }
 
     repo_root="$(pwd)"
     requested_toolchain="{{ toolchain }}"
@@ -1002,7 +972,7 @@ profile toolchain="" code_ref="current": _ensure-jq
     echo "📊 Benchmark: ci_performance_suite"
     echo "📁 Results: $run_dir"
 
-    rustup toolchain install "$requested_toolchain" --profile minimal
+    {{ managed }} rustup toolchain install "$requested_toolchain" --profile minimal
 
     {
         echo "# Profile Run"
@@ -1012,7 +982,7 @@ profile toolchain="" code_ref="current": _ensure-jq
         echo "- Commit: $(git -C "$workdir" rev-parse HEAD)"
         echo "- Dirty tree: $(if [[ "$workdir" == "$repo_root" && -n "$(git status --short)" ]]; then echo yes; else echo no; fi)"
         echo "- Requested toolchain: $requested_toolchain"
-        echo "- rustc: $(rustup run "$requested_toolchain" rustc --version)"
+        echo "- rustc: $({{ managed }} rustup run "$requested_toolchain" rustc --version)"
         echo "- cargo: $(rustup run "$requested_toolchain" cargo --version)"
         echo "- Cargo profile: cargo bench --profile perf"
         echo "- Benchmark harness: ci_performance_suite"
@@ -1021,19 +991,19 @@ profile toolchain="" code_ref="current": _ensure-jq
     (
         cd "$workdir"
         CARGO_TARGET_DIR="$run_dir/target" \
-            rustup run "$requested_toolchain" cargo bench --profile perf --bench ci_performance_suite \
+            {{ managed }} rustup run "$requested_toolchain" cargo bench --profile perf --bench ci_performance_suite \
             2>&1 | tee "$run_dir/ci_performance_suite.log"
     )
 
 # Profile 3D construction with Samply in the development configuration.
 [group('benchmarks and performance')]
 profile-dev: _ensure-samply
-    PROFILING_DEV_MODE=1 samply record cargo bench --profile perf --bench profiling_suite -- "construction/3D/5000v/construct"
+    PROFILING_DEV_MODE=1 {{ managed }} samply record {{ managed }} cargo bench --profile perf --bench profiling_suite -- "construction/3D/5000v/construct"
 
 # Profile allocation-heavy construction with Samply.
 [group('benchmarks and performance')]
 profile-mem: _ensure-samply
-    samply record cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
+    {{ managed }} samply record cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
 
 # Pre-publish validation: checks crates.io metadata rules that cargo publish --dry-run does NOT catch
 # Validate crates.io metadata and run cargo publish --dry-run.
@@ -1045,7 +1015,7 @@ publish-check: _ensure-jq
     errors=0
 
     # Keywords: max 5, each ≤20 chars, ASCII alphanumeric/hyphen only
-    keywords=$(cargo metadata --no-deps --format-version=1 2>/dev/null \
+    keywords=$({{ managed }} cargo metadata --no-deps --format-version=1 2>/dev/null \
         | jq -r '.packages[0].keywords[]')
     count=0
     while IFS= read -r kw; do
@@ -1067,7 +1037,7 @@ publish-check: _ensure-jq
     echo "  ✓ keywords ($count): $keywords"
 
     # Categories: max 5
-    cat_count=$(cargo metadata --no-deps --format-version=1 2>/dev/null \
+    cat_count=$({{ managed }} cargo metadata --no-deps --format-version=1 2>/dev/null \
         | jq '.packages[0].categories | length')
     if (( cat_count > 5 )); then
         echo "  ❌ too many categories ($cat_count > 5)"
@@ -1076,7 +1046,7 @@ publish-check: _ensure-jq
     echo "  ✓ categories ($cat_count)"
 
     # Description: required, ≤1000 chars
-    desc=$(cargo metadata --no-deps --format-version=1 2>/dev/null \
+    desc=$({{ managed }} cargo metadata --no-deps --format-version=1 2>/dev/null \
         | jq -r '.packages[0].description // ""')
     if [[ -z "$desc" ]]; then
         echo "  ❌ description is missing"
@@ -1095,7 +1065,7 @@ publish-check: _ensure-jq
 
     echo ""
     echo "📦 Running cargo publish --dry-run..."
-    cargo publish --locked --allow-dirty --dry-run
+    {{ managed }} cargo publish --locked --allow-dirty --dry-run
     echo ""
     echo "✅ Publish check passed!"
 
@@ -1130,23 +1100,30 @@ python-sync: _ensure-uv
 [group('validation')]
 python-typecheck: (_python-tool "--group notebooks ty check --error all")
 
-# Require final release versions plus matching changelog and citation dates.
+# Print retained release notes for a tag.
 [group('release')]
-release-version-check: _ensure-uv
-    uv run --locked check-docs-version-sync --final-release
+release-notes tag:
+    {{ rrt }} changelog notes {{ quote(tag) }}
+
+# Require matching final changelog and citation dates.
+[group('release')]
+release-version-check:
+    {{ rrt }} release check --final-release
 
 # Review committed and local changes against the PR base with CodeRabbit.
 [group('review')]
-review base="main": (_review "branch" base)
+review base="origin/main":
+    {{ rrt }} review branch --base={{ quote(base) }}
 
 # Review staged, unstaged, and new files without committed branch changes.
 [group('review')]
-review-uncommitted: (_review "uncommitted" "")
+review-uncommitted:
+    {{ rrt }} review uncommitted
 
 # Run the opt-in companion binary with the CLI feature and perf profile.
 [group('build and setup')]
 run *args:
-    cargo run --locked --profile perf --features cli --bin delaunay -- {{ args }}
+    {{ managed }} cargo run --locked --profile perf --features cli --bin delaunay -- {{ args }}
 
 # Run the complete non-mutating Rust validation surface.
 [group('validation')]
@@ -1177,32 +1154,7 @@ semgrep-scan sarif_output="": _ensure-uv
 # Test the repository-owned Semgrep rules against their fixtures.
 [group('validation')]
 semgrep-test: _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    config_dir="$(mktemp -d "${TMPDIR:-/tmp}/delaunay-semgrep-config.XXXXXX")"
-    state_root="$(mktemp -d "${TMPDIR:-/tmp}/delaunay-semgrep-state.XXXXXX")"
-    cleanup() {
-        rm -rf "$config_dir" "$state_root"
-    }
-    trap cleanup EXIT
-
-    uv run --locked python scripts/semgrep_fixture_config.py \
-        --check-coverage tests/semgrep "$PWD/semgrep.yaml"
-
-    # Semgrep directory test mode maps fixture paths to config paths, so mirror
-    # each fixture to the shared config while keeping semgrep.yaml authoritative.
-    # Run one fixture/config pair per Semgrep process so Windows does not race
-    # Semgrep's shared settings file across test-mode worker processes.
-    while IFS= read -r -d '' fixture; do
-        rel="${fixture#tests/semgrep/}"
-        config_path="$config_dir/${rel%.*}.yaml"
-        state_dir="$state_root/${rel%.*}"
-        mkdir -p "$(dirname "$config_path")"
-        mkdir -p "$state_dir"
-        uv run --locked python scripts/semgrep_fixture_config.py "$fixture" "$PWD/semgrep.yaml" "$config_path"
-
-        SEMGREP_SEND_METRICS=off SEMGREP_SETTINGS_FILE="$state_dir/settings.yml" uv run --locked semgrep scan --test --strict --config "$config_path" "$fixture"
-    done < <(find tests/semgrep -type f ! -name '*.fixed' -print0)
+    {{ rrt }} semgrep check-fixtures
 
 # Install required tools and build the development profile.
 [group('build and setup')]
@@ -1212,182 +1164,11 @@ setup: setup-tools build
 # Install and verify repository development tools.
 [doc('Install and verify repository development tools.')]
 [group('build and setup')]
-setup-tools: _ensure-cargo _ensure-chktex _ensure-gh _ensure-jq _ensure-rustup _ensure-uv
+setup-tools:
     #!/usr/bin/env bash
     set -euo pipefail
-
-    source scripts/cargo_tool_versions.sh
-
-    echo "🔧 Ensuring tooling required by just recipes is installed..."
-    echo ""
-
-    have() { command -v "$1" >/dev/null 2>&1; }
-
-    ensure_pinned_cargo_tool() {
-        local binary="$1"
-        local package="$2"
-        local expected_version="$3"
-        local cargo_subcommand="${4:-}"
-
-        if ! cargo_tool_has_exact_version "$binary" "$expected_version" "$cargo_subcommand"; then
-            echo "  ⏳ Installing $package $expected_version (cargo)..."
-            cargo install --locked "$package" --version "$expected_version"
-        else
-            echo "  ✓ $binary $expected_version"
-        fi
-    }
-
-    ensure_cargo_install_update() {
-        if ! have cargo-install-update; then
-            echo "  ⏳ Installing cargo-update (cargo)..."
-            cargo install --locked cargo-update
-        else
-            echo "  ✓ cargo-install-update"
-        fi
-    }
-
-    ensure_tectonic_build_dependencies() {
-        echo "Ensuring native dependencies needed to install Tectonic..."
-
-        local candidate homebrew_repository package platform sdk_version
-        local -a missing_pkg_config_packages=()
-        local -a required_pkg_config_packages=(freetype2 graphite2 icu-uc libpng zlib)
-
-        platform="$(uname -s)"
-        if [ "$platform" != "Darwin" ]; then
-            required_pkg_config_packages=(fontconfig freetype2 graphite2 icu-uc libpng openssl zlib)
-        fi
-
-        append_pkg_config_path() {
-            local directory="$1"
-            if [ -d "$directory" ] && [[ ":${PKG_CONFIG_PATH:-}:" != *":$directory:"* ]]; then
-                export PKG_CONFIG_PATH="${PKG_CONFIG_PATH:+$PKG_CONFIG_PATH:}$directory"
-            fi
-        }
-
-        if ! have pkg-config; then
-            echo "❌ 'pkg-config' was not found. Install pkgconf or pkg-config before building Tectonic from Cargo."
-            exit 1
-        fi
-
-        shopt -s nullglob
-        for candidate in \
-            /opt/homebrew/lib/pkgconfig \
-            /opt/homebrew/share/pkgconfig \
-            /opt/homebrew/opt/{fontconfig,freetype,graphite2,icu4c*,libpng}/lib/pkgconfig \
-            /usr/local/lib/pkgconfig \
-            /usr/local/share/pkgconfig \
-            /usr/local/opt/{fontconfig,freetype,graphite2,icu4c*,libpng}/lib/pkgconfig; do
-            append_pkg_config_path "$candidate"
-        done
-        shopt -u nullglob
-
-        if have brew && have xcrun && sdk_version="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null)"; then
-            homebrew_repository="$(brew --repository)"
-            append_pkg_config_path "$homebrew_repository/Library/Homebrew/os/mac/pkgconfig/${sdk_version%%.*}"
-        fi
-
-        for package in "${required_pkg_config_packages[@]}"; do
-            if ! pkg-config --exists "$package"; then
-                missing_pkg_config_packages+=("$package")
-            fi
-        done
-        if (( ${#missing_pkg_config_packages[@]} )); then
-            echo "❌ pkg-config could not resolve: ${missing_pkg_config_packages[*]}"
-            echo "   Install the missing native development files, or add their metadata directories to PKG_CONFIG_PATH."
-            exit 1
-        fi
-        echo "  ✓ pkg-config can resolve Tectonic's native dependencies"
-        echo ""
-    }
-
-    ensure_pinned_tectonic() {
-        local expected_version="{{ tectonic_version }}"
-
-        if cargo_tool_has_exact_version tectonic "$expected_version"; then
-            echo "  ✓ tectonic $expected_version"
-            return
-        fi
-
-        ensure_tectonic_build_dependencies
-        echo "  ⏳ Installing tectonic $expected_version (cargo)..."
-        cargo install --locked tectonic --version "$expected_version"
-    }
-
-    echo "This recipe installs pinned Rust CLI tools and the unpinned cargo-update bootstrap helper through cargo."
-    echo "External prerequisites that must already be on PATH: uv, gh, jq, rustup, cargo, and chktex."
-    echo "pkg-config, plus native development files, is required only when the pinned Tectonic version must be installed."
-    echo ""
-
-    echo "Ensuring uv-managed Python tooling..."
-    uv sync --locked --group dev
-    echo ""
-
-    echo "Ensuring Rust toolchain + components..."
-    if ! have rustup; then
-        echo "❌ 'rustup' not found. Install Rust via https://rustup.rs and re-run: just setup-tools"
-        exit 1
-    fi
-    rustup component add clippy rustfmt rust-docs rust-src
-    echo ""
-
-    echo "Ensuring cargo tools..."
-    if ! rustup component list --installed | grep -q '^llvm-tools'; then
-        echo "  ⏳ Installing llvm-tools-preview (rustup)..."
-        rustup component add llvm-tools-preview
-    else
-        echo "  ✓ llvm-tools-preview"
-    fi
-
-    ensure_cargo_install_update
-    ensure_pinned_cargo_tool cargo-llvm-cov cargo-llvm-cov "{{ cargo_llvm_cov_version }}" llvm-cov
-    ensure_pinned_cargo_tool cargo-upgrade cargo-edit "{{ cargo_edit_version }}" upgrade
-    ensure_pinned_cargo_tool cargo-machete cargo-machete "{{ cargo_machete_version }}"
-    ensure_pinned_cargo_tool cargo-nextest cargo-nextest "{{ nextest_version }}"
-    ensure_pinned_cargo_tool dprint dprint "{{ dprint_version }}"
-    ensure_pinned_cargo_tool git-cliff git-cliff "{{ git_cliff_version }}"
-    ensure_pinned_cargo_tool just just "{{ just_version }}"
-    ensure_pinned_cargo_tool rumdl rumdl "{{ rumdl_version }}"
-    ensure_pinned_cargo_tool samply samply "{{ samply_version }}"
-    ensure_pinned_cargo_tool taplo taplo-cli "{{ taplo_version }}"
-    ensure_pinned_tectonic
-    ensure_pinned_cargo_tool tex-fmt tex-fmt "{{ tex_fmt_version }}"
-    ensure_pinned_cargo_tool typos typos-cli "{{ typos_version }}"
-    ensure_pinned_cargo_tool zizmor zizmor "{{ zizmor_version }}"
-
-    echo ""
-    echo "Verifying required commands are available..."
-    missing=0
-
-    cmds=(uv gh jq taplo dprint tectonic tex-fmt rumdl git-cliff typos zizmor chktex samply)
-    cmds+=(cargo-install-update cargo-nextest cargo-llvm-cov cargo-upgrade cargo-machete)
-
-    for cmd in "${cmds[@]}"; do
-        if have "$cmd"; then
-            echo "  ✓ $cmd"
-        else
-            echo "  ✗ $cmd"
-            missing=1
-        fi
-    done
-
-    for cmd in actionlint shellcheck shfmt yamllint; do
-        if uv run --locked "$cmd" --version >/dev/null 2>&1 || uv run --locked "$cmd" -version >/dev/null 2>&1; then
-            echo "  ✓ $cmd (uv)"
-        else
-            echo "  ✗ $cmd (uv)"
-            missing=1
-        fi
-    done
-    if [ "$missing" -ne 0 ]; then
-        echo ""
-        echo "❌ Some required tools are still missing."
-        echo "Install the missing prerequisites or cargo tools, then re-run: just setup-tools"
-        exit 1
-    fi
-
-    echo ""
-    echo "✅ Tooling setup complete."
+    source scripts/tectonic_native_dependencies.sh
+    uv run --locked --managed-python --only-group tooling research-repo-tools setup
 
 # Run ShellCheck and verify shfmt formatting.
 [group('validation')]
@@ -1459,7 +1240,7 @@ spell-check: _ensure-typos
     done < <(git ls-files -z --cached --others --exclude-standard)
     if [ "${#files[@]}" -gt 0 ]; then
         # Exclude typos.toml itself: it intentionally contains allowlisted fragments.
-        printf '%s\0' "${files[@]}" | xargs -0 -n100 typos --config typos.toml --force-exclude --exclude typos.toml --
+        printf '%s\0' "${files[@]}" | xargs -0 -n100 {{ managed }} typos --config typos.toml --force-exclude --exclude typos.toml --
     else
         echo "No repository files to spell-check."
     fi
@@ -1473,13 +1254,13 @@ spherical-readme-hero: _ensure-uv paper-cli
 
 # Create an annotated git tag from the CHANGELOG.md section for the given version
 [group('release')]
-tag version: python-sync release-version-check
-    uv run --locked tag-release {{ quote(version) }}
+tag version: release-version-check
+    {{ rrt }} changelog tag {{ quote(version) }}
 
 # Replace an existing annotated tag from the CHANGELOG.md section.
 [group('release')]
-tag-force version: python-sync release-version-check
-    uv run --locked tag-release {{ quote(version) }} --force
+tag-force version: release-version-check
+    {{ rrt }} changelog tag {{ quote(version) }} --force
 
 # Run every default Rust and Python test bucket once.
 [group('workflows')]
@@ -1489,33 +1270,33 @@ test: test-rust test-python
 # Run public allocation-contract integration tests.
 [group('tests and coverage')]
 test-allocation: _ensure-nextest
-    cargo nextest run --profile ci --test allocation_api --features count-allocations -- --nocapture
+    {{ managed }} cargo nextest run --profile ci --test allocation_api --features count-allocations -- --nocapture
 
 # Run CLI-feature binary unit and integration tests in the release profile.
 [group('tests and coverage')]
 test-cli: _ensure-nextest
-    cargo nextest run --release --profile ci --features cli --bin delaunay --bin pachner-stress --test cli
+    {{ managed }} cargo nextest run --release --profile ci --features cli --bin delaunay --bin pachner-stress --test cli
 
 # Run diagnostics-feature integration tests with captured output.
 [group('diagnostics')]
 test-diagnostics: _ensure-nextest
-    cargo nextest run --profile ci --test circumsphere_debug_tools --features diagnostics -- --nocapture
+    {{ managed }} cargo nextest run --profile ci --test circumsphere_debug_tools --features diagnostics -- --nocapture
 
 # Run Rust doctests in the release profile.
 [group('tests and coverage')]
 test-doc:
-    cargo test --doc --release --verbose
+    {{ managed }} cargo test --doc --release --verbose
 
 # Run default integration tests in release mode under the normal 10-second budget.
 # Narrow test-specific overrides grant headroom to boundary-running cases.
 [group('tests and coverage')]
 test-integration: _ensure-nextest
-    cargo nextest run --release --profile ci --test '*'
+    {{ managed }} cargo nextest run --release --profile ci --test '*'
 
 # Compile release integration tests without running them.
 [group('tests and coverage')]
 test-integration-compile: _ensure-nextest
-    cargo nextest run --release --test '*' --no-run
+    {{ managed }} cargo nextest run --release --test '*' --no-run
 
 # test-integration-fast: runs integration tests but skips proptests (tests prefixed with `prop_`)
 #
@@ -1526,7 +1307,7 @@ test-integration-compile: _ensure-nextest
 [doc('Run release integration tests while skipping property tests.')]
 [group('tests and coverage')]
 test-integration-fast: _ensure-nextest
-    cargo nextest run --release --profile ci --test '*' -- --skip prop_
+    {{ managed }} cargo nextest run --release --profile ci --test '*' -- --skip prop_
 
 # Run Python support-script tests with pytest.
 [group('tests and coverage')]
@@ -1544,14 +1325,14 @@ test-rust: test-unit test-integration test-cli test-doc
 [doc('Run release correctness tests that exceed the default per-test budget.')]
 [group('tests and coverage')]
 test-slow: _ensure-nextest
-    cargo nextest run --release --profile slow --features slow-tests
-    cargo test --doc --release --features slow-tests
+    {{ managed }} cargo nextest run --release --profile slow --features slow-tests
+    {{ managed }} cargo test --doc --release --features slow-tests
 
 # Run Rust lib unit tests in debug and release profiles.
 [group('tests and coverage')]
 test-unit: _ensure-nextest
-    cargo nextest run --profile debug --lib
-    cargo nextest run --release --profile ci --lib
+    {{ managed }} cargo nextest run --profile debug --lib
+    {{ managed }} cargo nextest run --release --profile ci --lib
 
 # Run TOML parsing, lint, and formatting checks.
 [group('validation')]
@@ -1565,10 +1346,11 @@ toml-fix: _ensure-taplo
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
+        [ -f "$file" ] || continue
         files+=("$file")
-    done < <(git ls-files -z '*.toml')
+    done < <(git --no-pager ls-files --cached --others --exclude-standard --deduplicate -z '*.toml')
     if [ "${#files[@]}" -gt 0 ]; then
-        taplo fmt "${files[@]}"
+        {{ managed }} taplo fmt "${files[@]}"
     else
         echo "No TOML files found to format."
     fi
@@ -1580,10 +1362,11 @@ toml-fmt-check: _ensure-taplo
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
+        [ -f "$file" ] || continue
         files+=("$file")
-    done < <(git ls-files -z '*.toml')
+    done < <(git --no-pager ls-files --cached --others --exclude-standard --deduplicate -z '*.toml')
     if [ "${#files[@]}" -gt 0 ]; then
-        taplo fmt --check "${files[@]}"
+        {{ managed }} taplo fmt --check "${files[@]}"
     else
         echo "No TOML files found to check."
     fi
@@ -1595,10 +1378,11 @@ toml-lint: _ensure-taplo
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
+        [ -f "$file" ] || continue
         files+=("$file")
-    done < <(git ls-files -z '*.toml')
+    done < <(git --no-pager ls-files --cached --others --exclude-standard --deduplicate -z '*.toml')
     if [ "${#files[@]}" -gt 0 ]; then
-        taplo lint "${files[@]}"
+        {{ managed }} taplo lint "${files[@]}"
     else
         echo "No TOML files found to lint."
     fi
@@ -1610,79 +1394,82 @@ toml-parse-check: _ensure-uv
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
+        [ -f "$file" ] || continue
         files+=("$file")
-    done < <(git ls-files -z '*.toml')
+    done < <(git --no-pager ls-files --cached --others --exclude-standard --deduplicate -z '*.toml')
     if [ "${#files[@]}" -gt 0 ]; then
         printf '%s\0' "${files[@]}" | xargs -0 -I {} uv run --locked python -c "import sys, tomllib; exec(\"with open(sys.argv[1], 'rb') as f:\\n    tomllib.load(f)\"); print(f'{sys.argv[1]} is valid TOML')" {}
     else
         echo "No TOML files found to check."
     fi
 
+# Inspect declared tools without installing or synchronizing dependencies.
+[group('build and setup')]
+tools-check:
+    uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain check
+
+# Export verified managed paths for GitHub Actions.
+[group('build and setup')]
+tools-export:
+    uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain export
+
 # Check for unused direct Cargo dependencies.
 [group('validation')]
 unused-deps: _ensure-cargo-machete
-    cargo machete
+    {{ managed }} cargo machete
 
 # Update dependency requirements, locks, managed Cargo tools, and the active uv pin.
 [group('build and setup')]
-update: _ensure-cargo-install-update _ensure-uv-stable update-dependencies update-cargo-tools
+update: update-tools update-dependencies
     @echo "✅ Repository dependencies and tools updated."
 
 # Advance Cargo dependency declarations and lockfile entries for every resolution root.
 [doc('Update repository Cargo dependency requirements and lockfiles.')]
 [group('build and setup')]
-update-cargo-dependencies: _ensure-cargo-edit
-    cargo upgrade --incompatible allow
-    cargo upgrade --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml --incompatible allow
-    cargo update
-    cargo update --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml
+update-cargo-dependencies:
+    uv run --locked --only-group tooling --inexact research-repo-tools toolchain run -- cargo upgrade --incompatible allow
+    uv run --locked --only-group tooling --inexact research-repo-tools toolchain run -- cargo upgrade --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml --incompatible allow
+    uv run --locked --only-group tooling --inexact research-repo-tools toolchain run -- cargo update
+    uv run --locked --only-group tooling --inexact research-repo-tools toolchain run -- cargo update --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml
 
-# Update locally installed Cargo CLI tools and reconcile their pins plus the active uv version.
-[doc('Update managed Cargo CLI tools and reconcile all root justfile tool pins.')]
+# Upgrade declared Cargo tools and publish verified exact TOML pins.
+[doc('Upgrade only declared managed Cargo tools.')]
 [group('build and setup')]
-update-cargo-tools: _ensure-cargo-install-update _ensure-uv-stable
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    packages=(
-        cargo-edit
-        cargo-llvm-cov
-        cargo-machete
-        cargo-nextest
-        dprint
-        git-cliff
-        just
-        rumdl
-        samply
-        taplo-cli
-        tectonic
-        tex-fmt
-        typos-cli
-        zizmor
-    )
-    cargo install-update --locked "${packages[@]}"
-    uv run --locked update-tool-pins
+update-cargo-tools:
+    uv run --locked --only-group tooling --inexact research-repo-tools toolchain upgrade
 
 # Advance Cargo and exact Python development requirements plus their lockfiles.
 [doc('Update Cargo and Python development requirements plus all Cargo/uv locked dependencies.')]
 [group('build and setup')]
-update-dependencies: _ensure-cargo-edit _ensure-uv-stable update-cargo-dependencies update-python-dependencies
+update-dependencies: update-cargo-dependencies update-python-dependencies
 
 # Resolve latest exact Python development tools, retain ranged requirements, and sync.
 [doc('Update exact dependency-groups.dev pins and uv.lock through uv.')]
 [group('build and setup')]
-update-python-dependencies: _ensure-uv-stable
-    uv run --locked update-python-dev-pins
+update-python-dependencies:
+    uv run --locked --only-group tooling --inexact research-repo-tools deps update-python
     uv lock --upgrade
-    uv sync --locked --group dev
+    uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain run -- uv sync --locked --managed-python --group dev
 
-# Update release metadata with the current UTC date and infer the prior stable published release.
+alias update-python-deps := update-python-dependencies
+
+# Upgrade uv and managed Cargo tools, then synchronize the declared environment.
+[group('build and setup')]
+update-tools: update-uv update-cargo-tools setup-tools
+
+# Upgrade uv through its installation owner and reconcile the project declaration.
+[group('build and setup')]
+update-uv:
+    uv run --no-config --no-sync --no-python-downloads research-repo-tools deps update-uv
+
+# Update release metadata; optional date and predecessor arguments support offline preparation.
 [doc('Update package, citation, lockfile, and non-artifact documentation release versions.')]
 [group('release')]
-update-version tag: _ensure-gh _ensure-uv
-    uv run --locked update-release-version {{ quote(tag) }}
-    cargo metadata --locked --format-version 1 --no-deps > /dev/null
-    uv run --locked check-docs-version-sync
+[positional-arguments]
+update-version tag *args: _ensure-gh
+    {{ rrt }} release update "$@"
+    {{ managed }} cargo metadata --locked --format-version 1 --no-deps > /dev/null
+    {{ rrt }} release check
 
 # Refresh reviewer-facing validation diagrams from the reproducible notebook.
 [group('notebooks and papers')]
@@ -1744,7 +1531,7 @@ yaml-fix: _ensure-dprint
     done < <(git ls-files -z '*.yml' '*.yaml' 'CITATION.cff')
     if [ "${#files[@]}" -gt 0 ]; then
         echo "📝 dprint fmt (YAML/CFF, ${#files[@]} files)"
-        dprint fmt --incremental=false "${files[@]}"
+        {{ managed }} dprint fmt --incremental=false "${files[@]}"
     else
         echo "No YAML files found to format."
     fi
@@ -1760,7 +1547,7 @@ yaml-fmt-check: _ensure-dprint
     done < <(git ls-files -z '*.yml' '*.yaml' 'CITATION.cff')
     if [ "${#files[@]}" -gt 0 ]; then
         echo "🔍 dprint check (YAML/CFF, ${#files[@]} files)"
-        dprint check --incremental=false "${files[@]}"
+        {{ managed }} dprint check --incremental=false "${files[@]}"
     else
         echo "No YAML files found to check."
     fi
@@ -1783,21 +1570,5 @@ yaml-lint: _ensure-yamllint
 
 # Audit GitHub Actions workflows with zizmor.
 [group('validation')]
-zizmor: _ensure-zizmor
-    #!/usr/bin/env bash
-    set +x
-    set -euo pipefail
-    zizmor_token="${ZIZMOR_GITHUB_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
-    if [[ -z "$zizmor_token" ]] && command -v gh >/dev/null; then
-        if resolved_token="$(gh auth token --hostname "${GH_HOST:-github.com}" 2>/dev/null)"; then
-            zizmor_token="$resolved_token"
-        fi
-    fi
-    if [[ -n "$zizmor_token" ]]; then
-        # Honor our token precedence regardless of zizmor's environment lookup order.
-        unset GH_TOKEN GITHUB_TOKEN
-        ZIZMOR_GITHUB_TOKEN="$zizmor_token" zizmor --persona regular .github
-    else
-        echo "No GitHub token available; running zizmor offline (online audits disabled)." >&2
-        zizmor --offline --persona regular .github
-    fi
+zizmor:
+    {{ rrt }} zizmor check

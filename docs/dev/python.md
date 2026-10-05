@@ -3,8 +3,9 @@
 Guidance for repository-owned Python, including automation under `scripts/`
 and static-analysis fixtures under `tests/semgrep/`.
 
-The Rust library is the primary product, but the Python benchmark, changelog,
-hardware, and release utilities are part of the trusted development workflow.
+The Rust library is the primary product. Consumer-owned Python benchmarks,
+hardware, notebook, paper, and evidence utilities remain in this repository.
+Common maintenance belongs to the pinned research-repo-tools package.
 Keep them typed and predictable so failures are visible in CI instead of being
 hidden behind loose mocks or broad exception handling.
 

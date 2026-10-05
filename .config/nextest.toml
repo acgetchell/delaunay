@@ -178,6 +178,17 @@ retries = 0
 slow-timeout = { period = "300s", terminate-after = 1 }
 
 [[profile.coverage.overrides]]
+# CI's named 60-second overrides take precedence over this profile's base
+# timeout. Restore the five-minute instrumented budget for these properties.
+filter = '''
+(binary(=proptest_delaunay_triangulation)
+& test(=prop_on_suspicion_validates_cospherical_3d_sequences))
+| (binary(=proptest_sos)
+& test(=prop_sos_insphere_deterministic_5d))
+'''
+slow-timeout = { period = "300s", terminate-after = 1 }
+
+[[profile.coverage.overrides]]
 # This compact T^3 regression passed in 1164 seconds under LLVM coverage,
 # leaving only 36 seconds of headroom before a subsequent 1200-second timeout.
 # Give only this case a finite 30-minute budget for hosted-runner variation.

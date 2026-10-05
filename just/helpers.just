@@ -23,32 +23,18 @@ _bench-pachner-stress samples:
 
     echo "Pachner stress Criterion fixture benchmark: ${samples} samples."
     env CRIT_SAMPLE_SIZE="$samples" \
-        cargo bench --locked --profile perf --features bench --bench pachner_stress -- --noplot
+        {{ managed }} cargo bench --locked --profile perf --features bench --bench pachner_stress -- --noplot
 
 _ensure-actionlint: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     uv run --locked actionlint -version >/dev/null
 
-_ensure-cargo:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v cargo >/dev/null || { echo "❌ 'cargo' not found. Install Rust via https://rustup.rs and ensure cargo is on PATH."; exit 1; }
+_ensure-cargo-edit: _ensure-toolchain
 
-_ensure-cargo-edit: (_ensure-pinned-cargo-tool "cargo-upgrade" "cargo-edit" cargo_edit_version "upgrade")
+_ensure-cargo-llvm-cov: _ensure-toolchain
 
-_ensure-cargo-install-update:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v cargo-install-update >/dev/null || {
-        echo "❌ 'cargo-install-update' not found. Run 'just setup-tools' or install it with:"
-        echo "   cargo install --locked cargo-update"
-        exit 1
-    }
-
-_ensure-cargo-llvm-cov: (_ensure-pinned-cargo-tool "cargo-llvm-cov" "cargo-llvm-cov" cargo_llvm_cov_version "llvm-cov")
-
-_ensure-cargo-machete: (_ensure-pinned-cargo-tool "cargo-machete" "cargo-machete" cargo_machete_version)
+_ensure-cargo-machete: _ensure-toolchain
 
 _ensure-chktex:
     #!/usr/bin/env bash
@@ -58,55 +44,25 @@ _ensure-chktex:
         exit 1
     }
 
-_ensure-coderabbit:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v coderabbit >/dev/null || {
-        echo "CodeRabbit CLI is required for local review. Install it from https://docs.coderabbit.ai/cli and ensure coderabbit is on PATH." >&2
-        exit 1
-    }
-
-_ensure-dprint: (_ensure-pinned-cargo-tool "dprint" "dprint" dprint_version)
+_ensure-dprint: _ensure-toolchain
 
 _ensure-gh:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v gh >/dev/null || { echo "❌ 'gh' not found. Install GitHub CLI and ensure it is on PATH."; exit 1; }
 
-_ensure-git-cliff: (_ensure-pinned-cargo-tool "git-cliff" "git-cliff" git_cliff_version)
+_ensure-git-cliff: _ensure-toolchain
 
 _ensure-jq:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v jq >/dev/null || { echo "❌ 'jq' not found. Install jq and ensure it is on PATH."; exit 1; }
 
-_ensure-nextest: (_ensure-pinned-cargo-tool "cargo-nextest" "cargo-nextest" nextest_version)
+_ensure-nextest: _ensure-toolchain
 
-_ensure-pinned-cargo-tool binary package version cargo_subcommand="":
-    #!/usr/bin/env bash
-    set -euo pipefail
+_ensure-rumdl: _ensure-toolchain
 
-    source scripts/cargo_tool_versions.sh
-
-    binary="{{ binary }}"
-    package="{{ package }}"
-    version="{{ version }}"
-    cargo_subcommand="{{ cargo_subcommand }}"
-
-    if ! cargo_tool_has_exact_version "$binary" "$version" "$cargo_subcommand"; then
-        echo "❌ '$binary' $version not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked $package --version $version"
-        exit 1
-    fi
-
-_ensure-rumdl: (_ensure-pinned-cargo-tool "rumdl" "rumdl" rumdl_version)
-
-_ensure-rustup:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v rustup >/dev/null || { echo "❌ 'rustup' not found. Install Rust via https://rustup.rs and ensure rustup is on PATH."; exit 1; }
-
-_ensure-samply: (_ensure-pinned-cargo-tool "samply" "samply" samply_version)
+_ensure-samply: _ensure-toolchain
 
 _ensure-shellcheck: _ensure-uv
     #!/usr/bin/env bash
@@ -118,43 +74,26 @@ _ensure-shfmt: _ensure-uv
     set -euo pipefail
     uv run --locked shfmt --version >/dev/null
 
-_ensure-taplo: (_ensure-pinned-cargo-tool "taplo" "taplo-cli" taplo_version)
+_ensure-taplo: _ensure-toolchain
 
-_ensure-tectonic: (_ensure-pinned-cargo-tool "tectonic" "tectonic" tectonic_version)
+_ensure-tectonic: _ensure-toolchain
 
-_ensure-tex-fmt: (_ensure-pinned-cargo-tool "tex-fmt" "tex-fmt" tex_fmt_version)
+_ensure-tex-fmt: _ensure-toolchain
 
-_ensure-typos: (_ensure-pinned-cargo-tool "typos" "typos-cli" typos_version)
+_ensure-toolchain:
+    uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain check
 
-_ensure-uv: _ensure-uv-available
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version="$(uv --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    if [[ "$installed_version" != "{{ uv_version }}" ]]; then
-        echo "❌ 'uv' {{ uv_version }} not found (found: ${installed_version:-missing})."
-        echo "   Install the pinned external prerequisite from https://github.com/astral-sh/uv"
-        exit 1
-    fi
+_ensure-typos: _ensure-toolchain
 
-_ensure-uv-available:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v uv >/dev/null || {
-        echo "❌ 'uv' not found. Install it from https://github.com/astral-sh/uv" >&2
-        exit 1
-    }
-    uv --version >/dev/null
-
-_ensure-uv-stable: _ensure-uv-available
-    # Check the reconciler's contract without syncing dependencies or installing Python.
-    uv run --locked --no-sync --no-python-downloads python scripts/update_cargo_tool_pins.py --check-uv
+_ensure-uv:
+    uv run --locked --no-sync --no-python-downloads research-repo-tools --version > /dev/null
 
 _ensure-yamllint: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     uv run --locked yamllint --version >/dev/null
 
-_ensure-zizmor: (_ensure-pinned-cargo-tool "zizmor" "zizmor" zizmor_version)
+_ensure-zizmor: _ensure-toolchain
 
 [private]
 _pachner-stress-dim label vertices attempts validate_every output_dir mode:
@@ -192,7 +131,7 @@ _pachner-stress-dim label vertices attempts validate_every output_dir mode:
 
     echo "Pachner stress ${label}/${mode}: ${vertices} vertices, ${attempts} workload steps."
     echo "Validation scope: topology (Levels 1-3; Level 4 realization overlap scan deferred to #482)."
-    cargo run --locked --profile perf --features cli --bin pachner-stress -- \
+    {{ managed }} cargo run --locked --profile perf --features cli --bin pachner-stress -- \
         --dimension "$label" \
         --mode "$mode" \
         --vertices "$vertices" \
@@ -239,17 +178,6 @@ _python-tool command: _ensure-uv
     uv run --locked {{ command }} -- "${python_files[@]}"
 
 [private]
-_review scope base: _ensure-coderabbit
-    #!/usr/bin/env bash
-    set -euo pipefail
-    args=(review --agent --include-untracked -c AGENTS.md .coderabbit.yml)
-    case {{ quote(scope) }} in
-        branch) args+=(--base {{ quote(base) }}) ;;
-        uncommitted) args+=(--uncommitted) ;;
-        *) echo "Unsupported review scope: "{{ quote(scope) }} >&2; exit 2 ;;
-    esac
-    exec coderabbit "${args[@]}"
-
 _validation-doc-figures-check-if-canonical:
     #!/usr/bin/env bash
     set -euo pipefail

@@ -173,8 +173,6 @@ rules:
       - pattern-either:
           - pattern: use std::collections::HashMap;
           - pattern: use std::collections::HashSet;
-          - pattern-regex: '^\s*use\s+std::collections::\{[^;\n]*\bHashMap\b[^;\n]*\};'
-          - pattern-regex: '^\s*use\s+std::collections::\{[^;\n]*\bHashSet\b[^;\n]*\};'
           - pattern: std::collections::HashMap::new()
           - pattern: std::collections::HashSet::new()
           - pattern: std::collections::HashMap::default()
@@ -610,6 +608,7 @@ rules:
         - "/README.md"
       exclude:
         - "/docs/archive/**"
+        - "/docs/archives/changelog/**"
     pattern-regex: >-
       \b(?:Point\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Vertex\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,[^>\n,]+,\s*[^>\n]+>|VertexBuilder\s*::\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Tds\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Simplex\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|DelaunayTriangulationBuilder\s*<\s*(?:'[^,]+,\s*)?(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|ConvexHull\s*<\s*(?:[^,\n]+|FastKernel\s*<[^>\n]+>|AdaptiveKernel\s*<[^>\n]+>)\s*,[^>\n,]+,\s*[^>\n]+>|Point::new\s*\()
 
@@ -705,6 +704,7 @@ rules:
         - "/README.md"
       exclude:
         - "/docs/archive/**"
+        - "/docs/archives/changelog/**"
     pattern-either:
       - pattern-regex: >-
           \bDelaunayTriangulation\b\s*(?:::\s*<[^;\n]+>\s*)?::\s*(?:new|new_with_(?:construction_statistics|options(?:_and_construction_statistics)?|topology_guarantee)|with_(?:kernel|topology_guarantee(?:_and_options)?|options_and_statistics))\s*\(
@@ -737,6 +737,7 @@ rules:
         - "/tests/semgrep/src/project_rules/rust_style.rs"
       exclude:
         - "/docs/archive/**"
+        - "/docs/archives/changelog/**"
     pattern-regex: >-
       \b(?:[A-Za-z_][A-Za-z0-9_]*DelaunayTriangulation|DelaunayTriangulation)\b\s*(?:::\s*<[^;\n]+>\s*)?::\s*try_(?:new(?:_with_(?:construction_statistics|options(?:_and_construction_statistics)?|topology_guarantee))?|with_(?:kernel|topology_guarantee(?:_and_options)?|options_and_statistics))\s*\(
 
@@ -760,6 +761,7 @@ rules:
         - "/tests/semgrep/src/project_rules/rust_style.rs"
       exclude:
         - "/docs/archive/**"
+        - "/docs/archives/changelog/**"
     patterns:
       - pattern-either:
           - pattern-inside: |
@@ -1311,6 +1313,7 @@ rules:
         - "/tests/semgrep/docs/**/*.md"
       exclude:
         - "/docs/archive/**"
+        - "/docs/archives/changelog/**"
     pattern-regex: '\.tds\s*\('
 
   - id: delaunay.rust.no-as-triangulation-storage-reach-through
@@ -1336,6 +1339,7 @@ rules:
         - "/docs/**/*.md"
       exclude:
         - "/docs/archive/**"
+        - "/docs/archives/changelog/**"
     pattern-regex: 'as_triangulation\s*\(\s*\)\s*(?:\n\s*)?\.\s*(?:tds|kernel)\b'
 
   - id: delaunay.rust.no-as-triangulation-clone
@@ -1361,6 +1365,7 @@ rules:
         - "/docs/**/*.md"
       exclude:
         - "/docs/archive/**"
+        - "/docs/archives/changelog/**"
     pattern-regex: 'as_triangulation\s*\(\s*\)\s*(?:\n\s*)?\.\s*clone\s*\('
 
   - id: delaunay.rust.no-raw-tds-flip-predicate-verifier-outside-core-flips
@@ -1665,6 +1670,7 @@ rules:
         - "/tests/semgrep/docs/**/*.md"
       exclude:
         - "/docs/archive/**"
+        - "/docs/archives/changelog/**"
     pattern-regex: '\.(?:unwrap(?:_[A-Za-z0-9_]+)?|expect)\s*\('
 
   - id: delaunay.rust.no-box-dyn-error-in-doctests
@@ -2840,6 +2846,7 @@ rules:
         - "/tests/semgrep/docs/**/*.md"
       exclude:
         - "/docs/archive/**"
+        - "/docs/archives/changelog/**"
     pattern-regex: >-
       (?i)(?:\b4-level validation hierarchy\b|\bfour levels of validation\b|\blevel 4:\s*delaunay
       property\b|\bdelaunay property\s*\(level 4\)|\bdelaunay level 4 validation\b|\brepair\s*/\s*verify\b[^\n]*\bdelaunay property\b)
@@ -2873,6 +2880,7 @@ rules:
         - "/scripts/**/*.md"
       exclude:
         - "/docs/archive/**"
+        - "/docs/archives/changelog/**"
     pattern-either:
       - pattern-regex: '(?im)^.*?\b(?:[23]D|(?:two|three)[ -]dimensional)\s+(?:(?:periodic|compact|unit|square|cube|cubic|rectangular)\s+){0,4}(?:toroidal|torus)\b' # yamllint disable-line rule:line-length
       - pattern-regex: '(?im)^.*?\btoroidal\s+(?:construction|quotient|path|case|input|domain|fixture|triangulation|build)[^,;\n]{0,60}\b[23]D\b' # yamllint disable-line rule:line-length
@@ -2924,7 +2932,7 @@ rules:
       exclude:
         - "/tests/semgrep/**"
     patterns:
-      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@(?![a-fA-F0-9]{40}(?:\s+#|$))[^\s#]+' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@(?![a-fA-F0-9]{40}(?:\s+#|$))[^\s#]+' # yamllint disable-line rule:line-length
 
   - id: delaunay.github-actions.external-action-approved-allowlist
     languages:
@@ -2942,7 +2950,7 @@ rules:
       exclude:
         - "/tests/semgrep/**"
     patterns:
-      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)(?!(?:actions/checkout|actions/cache|actions/upload-artifact|actions/download-artifact|actions/github-script|actions/setup-python|actions-rust-lang/setup-rust-toolchain|astral-sh/setup-uv|taiki-e/cache-cargo-install-action|github/codeql-action/(?:upload-sarif|init|analyze)|codecov/codecov-action|codacy/codacy-coverage-reporter-action|codacy/codacy-analysis-cli-action|zizmorcore/zizmor-action)@)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)(?!(?:actions/checkout|actions/cache|actions/upload-artifact|actions/download-artifact|actions/github-script|actions/setup-python|actions-rust-lang/setup-rust-toolchain|astral-sh/setup-uv|taiki-e/cache-cargo-install-action|github/codeql-action/(?:upload-sarif|init|analyze)|codecov/codecov-action|codacy/codacy-coverage-reporter-action|codacy/codacy-analysis-cli-action|zizmorcore/zizmor-action|acgetchell/research-repo-tools/\.github/workflows/dependabot-approve\.yml)@)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@' # yamllint disable-line rule:line-length
 
   - id: delaunay.github-actions.external-action-version-comment
     languages:
@@ -2960,7 +2968,7 @@ rules:
       exclude:
         - "/tests/semgrep/**"
     patterns:
-      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@[a-fA-F0-9]{40}\s*$' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@[a-fA-F0-9]{40}\s*$' # yamllint disable-line rule:line-length
 
   - id: delaunay.github-actions.checkout-persist-credentials-false
     languages:
@@ -3073,6 +3081,10 @@ rules:
         - "/.github/workflows/**/*.yaml"
         - "/tests/semgrep/.github/workflows/**/*.yml"
         - "/tests/semgrep/.github/workflows/**/*.yaml"
+      exclude:
+        # Reviewed trusted-base caller; consumer tests forbid PR code or secrets.
+        # SARIF retains nosemgrep results, so use an exact reviewed-path exception.
+        - "/.github/workflows/dependabot-auto-merge.yml"
     pattern-regex: '(?m)^\s*pull_request_target\s*:'
 
   - id: delaunay.github-actions.github-script-no-expression-interpolation

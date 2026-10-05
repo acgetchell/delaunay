@@ -46,6 +46,8 @@ delaunay/
 │   ├── archive/
 │   │   └── performance/
 │   │       └── data/
+│   ├── archives/
+│   │   └── changelog/
 │   ├── dev/
 │   ├── templates/
 │   ├── RELEASING.md
@@ -77,16 +79,14 @@ delaunay/
 ├── scripts/
 │   ├── ci/
 │   ├── tests/
-│   ├── archive_changelog.py
 │   ├── benchmark_models.py
 │   ├── benchmark_utils.py
 │   ├── hardware_utils.py
 │   ├── notebook_check.py
 │   ├── paper_check.py
 │   ├── performance_artifacts.py
-│   ├── postprocess_changelog.py
 │   ├── subprocess_utils.py
-│   └── tag_release.py
+│   └── tectonic_native_dependencies.sh
 ├── src/
 │   ├── bin/
 │   │   ├── delaunay/
@@ -163,8 +163,8 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
 - `docs/dev/` contains operational rules for agents and contributors, indexed
   by [`../dev/README.md`](../dev/README.md).
 - `docs/architecture/` contains focused architecture references.
-- `scripts/` contains typed Python utilities for changelog, benchmark,
-  hardware, paper/PDF, SARIF, subprocess, and release workflows.
+- `scripts/` contains consumer-owned benchmark, hardware, notebook, paper/PDF,
+  evidence publication, SARIF, subprocess, and native prerequisite utilities.
 - `.github/` contains issue templates, workflow definitions, and
   repository-integrated automation.
 
@@ -179,8 +179,10 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
   GitHub/Zenodo release snapshot.
 - `rust-toolchain.toml` pins the MSRV toolchain and uses a lean profile with
   only repository-required components.
-- `pyproject.toml` owns Python support-tooling dependencies and validation
-  configuration.
+- `pyproject.toml` owns Python dependencies, the exact shared tooling pin,
+  uv/Cargo tool declarations, and consumer validation/release configuration.
+  The pinned PyPI package owns common maintenance implementations and regression
+  tests; local recipes retain the consumer command surface.
 - `justfile` is the command entry point. Architecture docs should link to
   [`../dev/README.md`](../dev/README.md) or
   [`../dev/commands.md`](../dev/commands.md) rather than repeating command
@@ -190,7 +192,8 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
 
 - `tests/semgrep/` mirrors repository-owned rule fixtures. Normal Semgrep scans
   exclude those fixture violations; `just semgrep-test` validates the rules.
-- `docs/archive/` stores historical plans, completed changelog series, and old
+- `docs/archives/changelog/` stores completed minor release series.
+- `docs/archive/` stores historical plans, performance evidence, and old
   design notes. Do not update archived docs as active guidance unless an
   explicit archive-maintenance task asks for it.
 - `baseline-artifact/` and `baseline-artifacts/` are ignored local benchmark
