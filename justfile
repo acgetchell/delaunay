@@ -1051,7 +1051,7 @@ semgrep-scan sarif_output="": _ensure-uv
     while IFS= read -r -d '' file; do
         semgrep_targets+=("$file")
     done < "$target_list"
-    semgrep_args=(--error --strict --timeout 120 --jobs 1 --config semgrep.yaml)
+    semgrep_args=(--error --strict --timeout 120 --jobs 1 --config semgrep.yaml --exclude 'tests/semgrep/**')
     if [[ -n "$output" ]]; then
         semgrep_args+=(--sarif --output "$output")
     fi

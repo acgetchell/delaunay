@@ -62,6 +62,9 @@ runs:
 
     - name: Install declared tools from the locked package
       shell: bash
+      env:
+        # Authenticate managed-binary release lookups to avoid shared runner rate limits.
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
         uv run --locked --managed-python --only-group tooling research-repo-tools toolchain sync
