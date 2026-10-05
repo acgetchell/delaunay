@@ -5,17 +5,18 @@ import hashlib
 import io
 import json
 import math
-import os
 import re
-import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
+from uuid import uuid4
+
+from research_repo_tools.files import replace_many
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
+    from pathlib import Path
 
 SCHEMA_VERSION = 3
 BENCHMARK_CONTRACT_START = "v0.8.2"
@@ -1199,26 +1200,20 @@ def load_bundle(paths: ArtifactPaths) -> PerformanceBundle:
     return load_bundle_bytes(csv_payload, provenance_payload, source=str(paths.csv.parent))
 
 
-def _stage_payload(path: Path, payload: bytes) -> Path:
-    """Write one durable same-directory temporary payload."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("wb", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as handle:
-        handle.write(payload)
-        handle.flush()
-        os.fsync(handle.fileno())
-        return Path(handle.name)
-
-
-def _restore_path(path: Path, payload: bytes | None) -> None:
-    """Restore one exact prior payload or prior absence."""
+def restore_artifact_snapshot(path: Path, payload: bytes | None) -> None:
+    """Restore prior artifact bytes or absence, retaining recovery bytes on failure."""
     if payload is None:
         path.unlink(missing_ok=True)
         return
-    staged = _stage_payload(path, payload)
     try:
-        staged.replace(path)
-    finally:
-        staged.unlink(missing_ok=True)
+        replace_many({path: payload})
+    except (OSError, ExceptionGroup) as error:
+        recovery = path.with_name(f".{path.name}.{uuid4().hex}.recovery")
+        try:
+            replace_many({recovery: payload})
+        except (OSError, ExceptionGroup) as recovery_error:
+            raise ExceptionGroup(f"Could not restore {path} or save its prior bytes for recovery", [error, recovery_error]) from None
+        raise ExceptionGroup(f"Could not restore {path}; prior bytes retained at {recovery}", [error]) from None
 
 
 @contextmanager
@@ -1227,31 +1222,23 @@ def publish_bundle(paths: ArtifactPaths, bundle: PerformanceBundle) -> Iterator[
     csv_payload, provenance_payload = serialize_bundle(bundle)
     prior_csv = paths.csv.read_bytes() if paths.csv.exists() else None
     prior_provenance = paths.provenance.read_bytes() if paths.provenance.exists() else None
-    staged_csv = _stage_payload(paths.csv, csv_payload)
-    staged_provenance = _stage_payload(paths.provenance, provenance_payload)
+    replace_many({paths.csv: csv_payload, paths.provenance: provenance_payload})
     try:
-        staged_csv.replace(paths.csv)
-        staged_provenance.replace(paths.provenance)
         if load_bundle(paths) != PerformanceBundle(context=bundle.context, rows=bundle.sorted_rows):
             msg = "reloaded performance bundle does not match published bundle"
             raise ValueError(msg)
-        try:
-            yield
-        except BaseException:
-            _restore_path(paths.csv, prior_csv)
-            _restore_path(paths.provenance, prior_provenance)
-            raise
-    except BaseException:
-        observed_csv = paths.csv.read_bytes() if paths.csv.exists() else None
-        observed_provenance = paths.provenance.read_bytes() if paths.provenance.exists() else None
-        if observed_csv != prior_csv:
-            _restore_path(paths.csv, prior_csv)
-        if observed_provenance != prior_provenance:
-            _restore_path(paths.provenance, prior_provenance)
+        yield
+    except BaseException as primary:
+        failures: list[Exception] = []
+        for path, prior in ((paths.csv, prior_csv), (paths.provenance, prior_provenance)):
+            try:
+                restore_artifact_snapshot(path, prior)
+            except (OSError, ExceptionGroup) as error:
+                failures.append(error)
+        if failures:
+            message = "Performance bundle publication and rollback failed"
+            raise BaseExceptionGroup(message, [primary, *failures]) from None
         raise
-    finally:
-        staged_csv.unlink(missing_ok=True)
-        staged_provenance.unlink(missing_ok=True)
 
 
 def write_bundle(paths: ArtifactPaths, bundle: PerformanceBundle) -> None:

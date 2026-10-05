@@ -3,10 +3,11 @@
 import math
 import os
 import shutil
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from subprocess_utils import run_safe_command
+from research_repo_tools.process import run_command as run_safe_command
 
 if TYPE_CHECKING:
     import subprocess
@@ -167,14 +168,13 @@ def run_command(command: list[str], *, cwd: Path, timeout: int) -> subprocess.Co
         command[0],
         command[1:],
         cwd=cwd,
-        capture_output=True,
         timeout=timeout,
         check=False,
     )
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
-        print(result.stderr, end="")
+        print(result.stderr, end="", file=sys.stderr)
     if result.returncode != 0:
         raise RuntimeError(f"command failed with exit code {result.returncode}: {' '.join(command)}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
     return result

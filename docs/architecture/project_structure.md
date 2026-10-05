@@ -82,10 +82,8 @@ delaunay/
 │   ├── benchmark_models.py
 │   ├── benchmark_utils.py
 │   ├── hardware_utils.py
-│   ├── notebook_check.py
 │   ├── paper_check.py
 │   ├── performance_artifacts.py
-│   ├── subprocess_utils.py
 │   └── tectonic_native_dependencies.sh
 ├── src/
 │   ├── bin/
@@ -114,6 +112,9 @@ delaunay/
 │   ├── pachner_roundtrip.rs
 │   ├── prelude_exports.rs
 │   └── regressions.rs
+├── tooling/
+│   ├── README.md
+│   └── examples.toml
 ├── AGENTS.md
 ├── Cargo.toml
 ├── Cargo.lock
@@ -143,6 +144,7 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
 
 ## Top-Level Areas
 
+- `tooling/` declares shared command workflows; consumer policy tests remain in `scripts/tests/`.
 - `src/` contains the Rust library plus feature-gated artifact and diagnostic binaries.
   See [`module_map.md`](module_map.md) for ownership and layering.
 - `tests/` contains integration tests, property tests, regression tests, and
@@ -164,7 +166,8 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
   by [`../dev/README.md`](../dev/README.md).
 - `docs/architecture/` contains focused architecture references.
 - `scripts/` contains consumer-owned benchmark, hardware, notebook, paper/PDF,
-  evidence publication, SARIF, subprocess, and native prerequisite utilities.
+  evidence publication, SARIF, and native prerequisite adapters. Generic
+  infrastructure uses the pinned shared package's public APIs.
 - `.github/` contains issue templates, workflow definitions, and
   repository-integrated automation.
 

@@ -3455,7 +3455,7 @@ rules:
     languages:
       - python
     severity: WARNING
-    message: "Use subprocess_utils command wrappers instead of spawning a process directly."
+    message: "Use research_repo_tools.process command runners instead of spawning a process directly."
     metadata:
       category: security
       rationale: >-
@@ -3467,7 +3467,6 @@ rules:
         - "/scripts/**/*.py"
         - "/tests/semgrep/scripts/tests/**/*.py"
       exclude:
-        - "/scripts/subprocess_utils.py"
         - "/scripts/tests/**/*.py"
     pattern-either:
       - pattern: subprocess.run(...)

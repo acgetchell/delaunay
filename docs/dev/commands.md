@@ -28,6 +28,7 @@ Agents must run appropriate checks after modifying code.
 - [Paper Build](#paper-build)
 - [CITATION.cff Validation](#citationcff-validation)
 - [GitHub Actions Validation](#github-actions-validation)
+- [Dependency and Secret Scanning](#dependency-and-secret-scanning)
 - [Recommended Command Matrix](#recommended-command-matrix)
 - [CI Expectations](#ci-expectations)
 - [Changelog](#changelog)
@@ -367,7 +368,7 @@ This runs:
 - JSON/TOML/YAML/CFF checks
 - Python formatting, full-policy lint, and type checks across tracked and new sources
 - direct Python Semgrep fixture lint
-- notebook hygiene and extracted-code checks
+- notebook hygiene and native notebook code checks
 - canonical validation-figure currentness on macOS
 - shell script formatting and lint checks
 - Rust core lint, documentation, and Semgrep checks
@@ -804,7 +805,7 @@ diagnostic.
 
 Notebook policy for cell identity, source hygiene, deliberate execution, and
 tracked artifacts lives in [`notebooks.md`](notebooks.md). Notebook code is
-extracted and checked with Ruff and ty so `.ipynb` cells follow the same Python
+checked directly by Ruff and ty so `.ipynb` cells follow the same Python
 standards as repository scripts.
 
 Commands:
@@ -816,9 +817,12 @@ just notebook-clear-outputs-all
 just notebook-reset-from-git
 ```
 
-`notebook-check` runs notebook hygiene and extracted-code checks without
-executing notebooks. Explicit notebook execution writes the executed notebook
-and generated artifacts under `target/notebooks/<notebook-stem>/` while leaving
+`notebook-check` runs notebook hygiene and native notebook code checks without
+executing notebooks. It calls shared lint/advice directly and runs the consumer
+cell-ID policy test. Explicit notebook execution writes the executed notebook
+under `target/notebooks/notebooks/<notebook-stem>.ipynb` with an adjacent
+`.report.json`. Generated figures/data stay under
+`target/notebooks/<notebook-stem>/`, leaving
 the source notebook unchanged. The
 quickstart Euclidean hero preview also defaults to
 `target/notebooks/00_quickstart/delaunay_3d_readme.png` and is not a tracked
@@ -1029,11 +1033,43 @@ with the documented unauthenticated offline fallback.
 
 ---
 
+## Dependency and Secret Scanning
+
+`just security` composes `just audit` and `just security-secrets`, using the
+published shared scanner commands. Exact Gitleaks and OSV-Scanner versions live
+in `tool.research-repo-tools.toolchain.binaries`; `just setup-tools` installs and
+verifies them. These network/full-history gates run separately from `just check`
+and the platform `just ci` matrix.
+
+`just audit` scans `uv.lock`, `Cargo.lock`, and
+`tests/fixtures/checkpoint_no_float_roundtrip/Cargo.lock`. Advisory queries need
+network access. Go/Rust call analysis is disabled, so the audit does not execute
+dependency build code. The existing Cargo audit workflow checks RustSec
+advisories separately.
+
+`just security-secrets` scans all reachable Git history plus tracked/nonignored
+working files, including new files. Full history is required. Shared defaults
+exclude environment/build directories; ignored untracked files, unreachable
+objects, binary blobs, archives, and nested repositories are outside the scan.
+The shared command redacts secret values and adjacent match text and disables
+inline and ambient-ignore bypasses.
+
+The `osv.yml` and `gitleaks.yml` workflows call these same recipes on pull
+requests, pushes to `main`, weekly schedules, and manual dispatch. Gitleaks
+checks out full history with `fetch-depth: 0`. Both workflows use read-only
+repository permissions, fail on findings or incomplete scans, and retain
+JSON/SARIF reports from `target/security/` for seven days, including on findings.
+
+---
+
 ## Recommended Command Matrix
 
 | Task | Command |
 |-----|-----|
 | Run lints | `just check` |
+| Audit dependencies and scan for secrets | `just security` |
+| Audit maintained Python and Rust lockfiles | `just audit` |
+| Scan Git history and current files for secrets | `just security-secrets` |
 | Fast compile check | `just check-fast` |
 | CodeRabbit review of a branch and local edits, when explicitly authorized | `just review [base]` |
 | CodeRabbit review of only local edits and new files, when explicitly authorized | `just review-uncommitted` |
@@ -1078,7 +1114,7 @@ CI enforces:
 - `Cargo.toml`/`Cargo.lock` synchronization
 - Python formatting, full-policy lint, type checks, and tests
 - direct Python Semgrep fixture lint
-- notebook hygiene and extracted-code checks
+- notebook hygiene and native notebook code checks
 - shell script formatting and lint checks
 - core Rust formatting, Clippy, rustdoc, and Semgrep checks
 - Rust unit, doctest, and integration tests

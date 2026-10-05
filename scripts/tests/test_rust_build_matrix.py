@@ -5,8 +5,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-
-from subprocess_utils import run_safe_command
+from research_repo_tools.process import run_command as run_safe_command
 
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
 NATIVE_TARGETS = {

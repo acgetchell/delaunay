@@ -6,14 +6,15 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tomllib
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
-
-from subprocess_utils import run_safe_command
+from research_repo_tools.process import run_command as run_safe_command
+from research_repo_tools.selection import select_files
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 JUSTFILE = REPO_ROOT / "justfile"
@@ -34,34 +35,6 @@ def run_just(*args: str) -> subprocess.CompletedProcess[str]:
         encoding="utf-8",
         timeout=30,
     )
-
-
-def run_python_source_probe(tmp_path: Path, paths: list[str], *, git_returncode: int = 0) -> subprocess.CompletedProcess[str]:
-    """Exercise the rendered recipe with isolated Git output and a tool-argument recorder."""
-    git_output = tmp_path / "git-output.bin"
-    git_output.write_bytes(b"".join(path.encode("utf-8") + b"\0" for path in paths))
-    rendered = run_just("--dry-run", "_python-tool", "ruff check")
-    expected_git_args = "--no-pager ls-files --cached --others --exclude-standard --deduplicate -z -- *.py *.pyi"
-    script = f"""
-git() {{
-    if [[ "$*" != {shlex.quote(expected_git_args)} ]]; then
-        echo "Unexpected Git arguments: $*" >&2
-        return 2
-    fi
-    cat {shlex.quote(git_output.as_posix())}
-    return {git_returncode}
-}}
-uv() {{
-    if [[ "$*" == "run --locked --no-sync --no-python-downloads research-repo-tools --version" ]]; then
-        return 0
-    else
-        printf '%s\\0' "$@"
-    fi
-}}
-TMPDIR="$PWD"
-{rendered.stdout}{rendered.stderr}
-"""
-    return run_safe_command("bash", ["-c", script], cwd=tmp_path, check=False, timeout=30)
 
 
 def just_recipes() -> dict[str, dict[str, Any]]:
@@ -109,6 +82,17 @@ def test_recipe_declarations_are_lexicographically_sorted() -> None:
         names = RECIPE_DECLARATION.findall(path.read_text(encoding="utf-8"))
 
         assert names == sorted(names), path
+
+
+def test_security_audit_covers_every_maintained_lockfile() -> None:
+    """New isolated packages must not silently escape the dependency audit."""
+    result = run_just("--dry-run", "security")
+    commands = [shlex.split(line) for line in (result.stdout + result.stderr).splitlines() if line.startswith("uv run ")]
+    audit, secrets = commands
+    assert audit[:8] == ["uv", "run", "--locked", "--group", "dev", "research-repo-tools", "security", "osv"]
+    maintained = select_files(REPO_ROOT, include=("uv.lock", "Cargo.lock", "**/Cargo.lock"))
+    assert set(audit[8:]) == set(maintained)
+    assert secrets[-2:] == ["security", "secrets"]
 
 
 def test_bare_just_shows_curated_help() -> None:
@@ -208,6 +192,33 @@ def test_check_code_includes_dependency_hygiene() -> None:
     assert "unused-deps" in dependencies
 
 
+def test_example_configuration_covers_cargo_targets_and_feature_builds() -> None:
+    """New Cargo examples cannot silently escape the shared execution inventory."""
+    metadata = json.loads(run_safe_command("cargo", ["metadata", "--locked", "--no-deps", "--format-version=1"], cwd=REPO_ROOT).stdout)
+    package = next(package for package in metadata["packages"] if package["name"] == "delaunay")
+    examples = {target["name"] for target in package["targets"] if "example" in target["kind"]}
+    configuration = tomllib.loads((REPO_ROOT / "tooling/examples.toml").read_text(encoding="utf-8"))
+    checks = configuration["checks"]
+    assert configuration["schema"] == 1
+    assert configuration["prerequisites"] == ["cargo"]
+    assert checks[0]["name"] == "build-default"
+    assert checks[0]["command"] == ["cargo", "build", "--locked", "--release", "--examples"]
+    assert checks[-2]["name"] == "build-diagnostics"
+    assert checks[-2]["command"] == ["cargo", "build", "--locked", "--release", "--features", "diagnostics", "--example", "diagnostics"]
+    executions = [*checks[1:-2], checks[-1]]
+    assert len(executions) == len(examples)
+    assert {check["name"] for check in executions} == examples
+    for check in executions:
+        assert check["command"] == [f"target/release/examples/{check['name']}"]
+        assert check["timeout"] == 600
+        assert check["expect"]
+    assert checks[-1]["name"] == "diagnostics"
+    assert "Diagnostics feature example" in checks[-1]["expect"]
+    rendered = run_just("--dry-run", "examples").stderr
+    assert "toolchain run -- research-repo-tools validation run tooling/examples.toml" in rendered
+    assert "examples" in {item["recipe"] for item in just_recipes()["ci"]["dependencies"]}
+
+
 def test_ci_directly_lints_python_fixtures_with_full_ruff_policy() -> None:
     """CI must not drop fixture lint or replace configured rules with a subset."""
     recipes = just_recipes()
@@ -235,53 +246,10 @@ def test_python_checks_and_fixer_share_source_discovery() -> None:
         rendered = result.stdout + result.stderr
         assert {dependency["recipe"] for dependency in recipes[name]["dependencies"]} == {"_python-tool"}
         for command in commands:
-            assert f'uv run --locked {command} -- "${{python_files[@]}}"' in rendered
+            assert f"files run --include '*.py' --include '*.pyi' -- uv run --locked {command} --" in rendered
 
 
-def test_python_source_discovery_preserves_paths_and_skips_deleted_files(tmp_path: Path) -> None:
-    """Git-selected sources must reach the tool as paths, including leading dashes."""
-    paths = ["scripts/owned.py", "tests/semgrep/scripts/tests/python_style.py", "new module.py", "new module.pyi", "--new.py"]
-    for name in paths:
-        path = tmp_path / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text('"""Source discovery probe."""\n', encoding="utf-8")
-
-    result = run_python_source_probe(tmp_path, [*paths, "deleted.py"])
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.split("\0") == ["run", "--locked", "ruff", "check", "--", *paths, ""]
-    assert not list(tmp_path.glob("delaunay-python-sources.*"))
-
-
-def test_python_source_discovery_rejects_an_empty_file_set(tmp_path: Path) -> None:
-    """Empty discovery must not let the tool fall back to an implicit root scan."""
-    result = run_python_source_probe(tmp_path, [])
-
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert "No Python source files found" in result.stderr
-    assert not list(tmp_path.glob("delaunay-python-sources.*"))
-
-
-def test_python_source_discovery_stops_after_partial_git_failure(tmp_path: Path) -> None:
-    """A failing Git listing must stop before a partial source set reaches the tool."""
-    (tmp_path / "partial.py").write_text('"""Partial listing probe."""\n', encoding="utf-8")
-    result = run_python_source_probe(tmp_path, ["partial.py"], git_returncode=128)
-
-    assert result.returncode == 128
-    assert result.stdout == ""
-    assert not list(tmp_path.glob("delaunay-python-sources.*"))
-
-
-@pytest.mark.parametrize(
-    "filename",
-    [
-        "scripts/typing_probe.py",
-        "tests/semgrep/scripts/tests/python_exceptions.py",
-        "tests/semgrep/scripts/tests/python_parse_boundaries.py",
-        "tests/semgrep/scripts/tests/python_style.py",
-    ],
-)
+@pytest.mark.parametrize("filename", ["scripts/typing_probe.py", "tests/semgrep/scripts/tests/python_exceptions.py"])
 def test_full_ruff_typing_policy_reaches_scripts_and_fixtures(filename: str) -> None:
     """Negative probes prove annotation and import guards remain blocking."""
     # Keep deliberately untyped probe text distinct from actual definitions so
@@ -442,8 +410,8 @@ def test_local_and_sarif_semgrep_scans_share_target_enumeration() -> None:
     sarif_rendered = sarif.stdout + sarif.stderr
     workflow = (REPO_ROOT / ".github" / "workflows" / "semgrep-sarif.yml").read_text(encoding="utf-8")
 
-    assert "scripts/semgrep_targets.py --null" in local_rendered
-    assert "scripts/semgrep_targets.py --null" in sarif_rendered
+    assert "files list --include 'scripts/tests/*.py' --include 'tests/*.rs' --exclude 'tests/semgrep/**' --null" in local_rendered
+    assert "files list --include 'scripts/tests/*.py' --include 'tests/*.rs' --exclude 'tests/semgrep/**' --null" in sarif_rendered
     assert "--sarif --output" in sarif_rendered
     output_assignment = next(line for line in sarif_rendered.splitlines() if line.startswith("output="))
     assert shlex.split(output_assignment) == ["output=semgrep-results.sarif"]
@@ -452,12 +420,12 @@ def test_local_and_sarif_semgrep_scans_share_target_enumeration() -> None:
 
 
 def test_shared_semgrep_target_pathspecs_cover_both_test_languages_and_exclude_fixtures() -> None:
-    """The target owner keeps ignored tests visible without scanning annotated violations."""
-    target_source = (REPO_ROOT / "scripts" / "semgrep_targets.py").read_text(encoding="utf-8")
-
-    assert '"scripts/tests/*.py"' in target_source
-    assert '"tests/*.rs"' in target_source
-    assert '":(exclude)tests/semgrep/**"' in target_source
+    """Repository pathspecs keep tests visible without scanning annotated violations."""
+    targets = select_files(REPO_ROOT, include=("scripts/tests/*.py", "tests/*.rs"), exclude=("tests/semgrep/**",))
+    relative = set(targets)
+    assert "scripts/tests/test_benchmark_utils.py" in relative
+    assert "tests/proptest_sos.rs" in relative
+    assert all(not path.startswith("tests/semgrep/") for path in relative)
 
 
 def test_canonical_performance_recipes_reject_partial_tag_pairs_before_dispatch() -> None:
@@ -571,7 +539,6 @@ def test_performance_workflow_tracks_every_harness_input() -> None:
         "scripts/performance_artifacts.py",
         "scripts/benchmark_utils.py",
         "scripts/hardware_utils.py",
-        "scripts/subprocess_utils.py",
         "uv.lock",
     )
 
@@ -592,7 +559,6 @@ def test_paper_workflow_tracks_validation_figure_producers() -> None:
         "just/**",
         "rust-toolchain.toml",
         "scripts/notebook_validation_rendering.py",
-        "scripts/subprocess_utils.py",
         "src/**",
     )
 

@@ -4,8 +4,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-
-from subprocess_utils import run_safe_command
+from research_repo_tools.process import run_command as run_safe_command
 
 SCRIPT = Path(__file__).resolve().parents[1] / "tectonic_native_dependencies.sh"
 

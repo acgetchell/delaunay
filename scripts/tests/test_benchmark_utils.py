@@ -15,6 +15,7 @@ import logging
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -28,6 +29,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 from unittest.mock import Mock, patch
 
 import pytest
+from research_repo_tools.process import run_command as run_safe_command, run_command_bytes
 
 import benchmark_utils
 import performance_artifacts
@@ -86,12 +88,11 @@ from benchmark_utils import (
     resolve_performance_request,
     write_criterion_comparison_report,
 )
-from subprocess_utils import run_safe_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractContextManager
-    from typing import IO
+    from typing import IO, NoReturn
     from unittest.mock import MagicMock
 
 
@@ -561,8 +562,10 @@ def test_release_measurement_plan_matches_workflow_and_just_recipe() -> None:
 
 
 @patch("benchmark_utils.run_cargo_command")
-def test_release_measurement_plan_runner_executes_exact_target_order(mock_cargo: MagicMock, tmp_path: Path) -> None:
+@patch("benchmark_utils.run_cargo_live")
+def test_release_measurement_plan_runner_executes_exact_target_order(mock_live: MagicMock, mock_cargo: MagicMock, tmp_path: Path) -> None:
     """The executable plan should be the only owner of release target order."""
+    mock_live.side_effect = mock_cargo
     mock_cargo.return_value = completed_process(stdout=CI_MANIFEST_STDOUT)
 
     outputs = benchmark_utils.run_release_signal_measurement_plan(tmp_path, bench_timeout=3600)
@@ -578,8 +581,10 @@ def test_release_measurement_plan_runner_executes_exact_target_order(mock_cargo:
 
 
 @patch("benchmark_utils.run_cargo_command")
-def test_release_measurement_plan_runner_stops_at_first_failed_target(mock_cargo: MagicMock, tmp_path: Path) -> None:
+@patch("benchmark_utils.run_cargo_live")
+def test_release_measurement_plan_runner_stops_at_first_failed_target(mock_live: MagicMock, mock_cargo: MagicMock, tmp_path: Path) -> None:
     """A failed planned target must prevent later measurements from running."""
+    mock_live.side_effect = mock_cargo
     mock_cargo.side_effect = [
         *[completed_process() for _ in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN],
         completed_process(returncode=101, stderr="benchmark failed"),
@@ -592,7 +597,9 @@ def test_release_measurement_plan_runner_stops_at_first_failed_target(mock_cargo
 
 
 @patch("benchmark_utils.run_cargo_command")
-def test_release_preflight_runs_every_target_without_writing_evidence(mock_cargo: MagicMock, tmp_path: Path) -> None:
+@patch("benchmark_utils.run_cargo_live")
+def test_release_preflight_runs_every_target_without_writing_evidence(mock_live: MagicMock, mock_cargo: MagicMock, tmp_path: Path) -> None:
+    mock_live.side_effect = mock_cargo
     mock_cargo.return_value = completed_process(stdout=CI_MANIFEST_STDOUT)
     assert benchmark_utils.run_release_signal_measurement_plan(tmp_path, preflight_only=True) == {}
     assert [call.args[0] for call in mock_cargo.call_args_list] == [
@@ -602,7 +609,9 @@ def test_release_preflight_runs_every_target_without_writing_evidence(mock_cargo
 
 
 @patch("benchmark_utils.run_cargo_command")
-def test_failed_preflight_prevents_all_sampling(mock_cargo: MagicMock, tmp_path: Path) -> None:
+@patch("benchmark_utils.run_cargo_live")
+def test_failed_preflight_prevents_all_sampling(mock_live: MagicMock, mock_cargo: MagicMock, tmp_path: Path) -> None:
+    mock_live.side_effect = mock_cargo
     mock_cargo.side_effect = [completed_process(), subprocess.CalledProcessError(1, ["cargo", "bench"])]
     with pytest.raises(subprocess.CalledProcessError):
         benchmark_utils.run_release_signal_measurement_plan(tmp_path)
@@ -865,7 +874,7 @@ def test_run_tool_can_stream_long_running_command_output(tmp_path: Path, monkeyp
         observed_kwargs.update(kwargs)
         return completed_process()
 
-    monkeypatch.setattr(benchmark_utils, "run_safe_command", fake_run)
+    monkeypatch.setattr(benchmark_utils, "run_command_live", fake_run)
 
     benchmark_utils._run_tool(
         "cargo",
@@ -877,7 +886,6 @@ def test_run_tool_can_stream_long_running_command_output(tmp_path: Path, monkeyp
         ),
     )
 
-    assert observed_kwargs["capture_output"] is False
     assert observed_kwargs["timeout"] == benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS
 
 
@@ -893,7 +901,6 @@ def test_run_tool_captures_short_command_output_by_default(tmp_path: Path, monke
 
     benchmark_utils._run_tool("gh", ["release", "download"], cwd=tmp_path)
 
-    assert observed_kwargs["capture_output"] is True
     assert observed_kwargs["timeout"] == benchmark_utils.RELEASE_COMMAND_TIMEOUT_SECONDS
 
 
@@ -903,7 +910,7 @@ def test_collect_criterion_comparisons_rejects_invalid_point_estimates(tmp_path:
     write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "new", point_estimate)
     write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "last", 2_000_000.0)
 
-    with pytest.raises(ValueError, match="positive finite"):
+    with pytest.raises(ValueError, match=r"finite|positive|JSON"):
         collect_criterion_comparisons(tmp_path / "criterion", "last")
 
 
@@ -1219,6 +1226,54 @@ def test_promote_performance_report_rolls_back_every_destination_on_failure(
     assert not archived.exists()
     assert not durable.csv.exists()
     assert not durable.provenance.exists()
+
+
+@pytest.mark.parametrize("retained", [False, True])
+def test_report_rollback_retains_prior_bytes_and_original_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retained: bool) -> None:
+    """Both report entry points keep the original report recoverable after a locked-file failure."""
+    output = tmp_path / "report.md"
+    prior = b"prior report\r\n"
+    output.write_bytes(prior)
+    artifacts = performance_artifacts.ArtifactPaths(csv=output.with_suffix(".csv"), provenance=output.with_suffix(".provenance.json"))
+    bundle = retained_performance_bundle()
+    performance_artifacts.write_bundle(artifacts, bundle)
+    evidence = (artifacts.csv.read_bytes(), artifacts.provenance.read_bytes())
+    destinations = benchmark_utils.PerformancePromotionDestinations(
+        project_root=tmp_path,
+        current=tmp_path / "docs" / "performance.md",
+        archive_dir=tmp_path / "docs" / "archive" / "performance",
+    )
+    primary = OSError("promotion failed")
+
+    def fail_promotion(**_kwargs: object) -> NoReturn:
+        raise primary
+
+    real_replace = Path.replace
+
+    def fail_report_restore(source: Path, destination: Path) -> Path:
+        if destination == output and source.read_bytes() == prior:
+            message = "report destination locked during rollback"
+            raise OSError(message)
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(benchmark_utils, "promote_performance_report", fail_promotion)
+    monkeypatch.setattr(Path, "replace", fail_report_restore)
+    if retained:
+        with pytest.raises(ExceptionGroup) as failure:
+            benchmark_utils.render_and_promote_performance_artifacts(
+                output=output, artifacts=artifacts, destinations=destinations, expected_current_tag="v0.8.0"
+            )
+    else:
+        with pytest.raises(ExceptionGroup) as failure:
+            benchmark_utils._publish_performance_bundle(
+                bundle=bundle, output=output, current=destinations.current, archive_dir=destinations.archive_dir, project_root=tmp_path
+            )
+
+    assert failure.value.exceptions[0] is primary
+    backups = list(tmp_path.glob(".report.md.*.recovery"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == prior
+    assert (artifacts.csv.read_bytes(), artifacts.provenance.read_bytes()) == evidence
 
 
 def test_promote_performance_report_rejects_conflicting_existing_archive_before_mutation(tmp_path: Path) -> None:
@@ -1637,7 +1692,7 @@ def test_safe_extract_tar_rejects_path_traversal(tmp_path: Path) -> None:
     with tarfile.open(archive, "w:gz") as tar:
         tar.addfile(info, BytesIO(payload))
 
-    with pytest.raises(ValueError, match="refusing to extract unsafe archive member"):
+    with pytest.raises(ValueError, match=r"unsafe.*archive path"):
         _safe_extract_tar(archive, tmp_path / "extract")
 
     assert not (tmp_path / "escape.txt").exists()
@@ -1985,22 +2040,102 @@ def test_apply_current_diff_indexes_added_files_in_temporary_worktree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[list[str], str]] = []
-    monkeypatch.setattr(
-        benchmark_utils,
-        "run_git_command",
-        lambda *_args, **_kwargs: completed_process("diff --git a/new.py b/new.py\nnew file mode 100644\n"),
-    )
+    """Binary diff bytes reach indexed Git apply without text decoding."""
+    calls: list[tuple[list[str], bytes]] = []
+    diff = b"diff --git a/new.py b/new.py\nnew file mode 100644\n\xff"
 
-    def record_apply(args: list[str], input_data: str, **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        calls.append((args, input_data))
-        return completed_process()
+    def record_git(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        if args[0] == "diff":
+            assert args == ["diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD", "--"]
+            return run_command_bytes(sys.executable, ["-c", f"import sys; sys.stdout.buffer.write({diff!r})"])
+        result = run_command_bytes(sys.executable, ["-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"], input=kwargs["input"])
+        calls.append((args, result.stdout))
+        return result
 
-    monkeypatch.setattr(benchmark_utils, "run_git_command_with_input", record_apply)
-
+    monkeypatch.setattr(benchmark_utils, "run_git_bytes", record_git)
     benchmark_utils._apply_current_diff_to_worktree(repo_root=tmp_path / "repo", worktree=tmp_path / "worktree")
+    assert calls == [(["apply", "--index", "--binary"], diff)]
 
-    assert calls == [(["apply", "--index", "--binary"], "diff --git a/new.py b/new.py\nnew file mode 100644\n")]
+
+@pytest.mark.parametrize("diff", [b"line\r\nnext\n", b"non-UTF-8: \xff\r\n"])
+def test_source_state_hashes_exact_git_pipe_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, diff: bytes) -> None:
+    """The source fingerprint uses the same untranslated bytes as indexed apply."""
+    commit = "a" * 40
+
+    def capture_git(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        assert args == ["diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD", "--"]
+        return run_command_bytes(sys.executable, ["-c", f"import sys; sys.stdout.buffer.write({diff!r})"], cwd=tmp_path)
+
+    def text_git(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "rev-parse":
+            return completed_process(commit)
+        if args[0] == "show":
+            return completed_process("2026-08-01T00:00:00Z")
+        if args[0] == "status":
+            return completed_process(" M fixture.dat\n")
+        return completed_process(diff.decode("utf-8"))
+
+    monkeypatch.setattr(benchmark_utils, "run_git_bytes", capture_git)
+    monkeypatch.setattr(benchmark_utils, "run_git_command", text_git)
+    source = benchmark_utils._source_state(tmp_path, version="v0.8.2", ref="HEAD")
+    assert source.source_state_sha256 == hashlib.sha256(b"commit " + commit.encode("ascii") + b"\n" + diff).hexdigest()
+    assert source.git_clean is False
+
+
+@pytest.mark.parametrize("fail_cleanup", [False, True])
+def test_performance_worktree_failure_preserves_recovery_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_cleanup: bool) -> None:
+    """Exercise the installed worktree lifecycle without mutating any Git repository."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    monkeypatch.setattr(benchmark_utils, "run_git_command", lambda *_args, **_kwargs: completed_process("a" * 40))
+    observed: list[Path] = []
+
+    def git_boundary(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        assert args[:3] == ["--no-pager", "--no-replace-objects", "worktree"]
+        destination = Path(args[-2] if args[3] == "add" else args[-1])
+        if args[3] == "add":
+            assert args[-1] == "a" * 40
+            destination.mkdir()
+            (destination / "Cargo.toml").write_text('[package]\nversion = "0.9.0"\n', encoding=UTF8)
+            observed.append(destination)
+        elif fail_cleanup:
+            raise subprocess.CalledProcessError(1, args, stderr=b"locked checkout")
+        else:
+            shutil.rmtree(destination)
+        return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("research_repo_tools.worktrees.run_git_bytes", git_boundary)
+    config = ReleaseReportConfig(repo_root=tmp_path, current_tag="v0.8.3", baseline_tag="v0.8.2", worktree_ref="a" * 40, apply_current_diff=False)
+    if fail_cleanup:
+        with pytest.raises(ExceptionGroup) as failure:
+            benchmark_utils._build_performance_bundle_in_temp_worktree(config=config)
+        assert "does not match requested release" in str(failure.value.exceptions[0])
+        assert "retained checkout" in str(failure.value.exceptions[1])
+        assert (observed[0] / "Cargo.toml").is_file()
+    else:
+        with pytest.raises(ValueError, match="does not match requested release"):
+            benchmark_utils._build_performance_bundle_in_temp_worktree(config=config)
+        assert observed
+        assert not list(scratch.iterdir())
+
+
+@pytest.mark.parametrize("output", ["", "HEAD", "a" * 39, "a" * 40 + "\n" + "b" * 40])
+def test_worktree_revision_rejects_empty_or_malformed_git_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str) -> None:
+    monkeypatch.setattr(benchmark_utils, "run_git_command", lambda *_args, **_kwargs: completed_process(output))
+    with pytest.raises(ValueError, match="full commit ID"):
+        benchmark_utils._resolve_worktree_revision(tmp_path, "HEAD")
+
+
+def test_run_tool_preserves_timeout_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def timeout(*_args: object, **_kwargs: object) -> NoReturn:
+        raise subprocess.TimeoutExpired(["cargo", "bench"], 30, output=b"last completed case\r\n", stderr=b"worker stalled\xff")
+
+    monkeypatch.setattr(benchmark_utils, "run_safe_command", timeout)
+    with pytest.raises(RuntimeError, match="timed out after 30 seconds") as failure:
+        benchmark_utils._run_tool("cargo", ["bench"], cwd=tmp_path)
+    assert "last completed case" in str(failure.value)
+    assert "worker stalled" in str(failure.value)
 
 
 def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_baseline(  # noqa: C901, PLR0915
@@ -2020,16 +2155,20 @@ def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_base
 
     def fake_run_git(args: list[str], cwd: Path | None = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(("git", tuple(args), cwd))
+        if args[0] == "rev-parse":
+            return completed_process(("b" if args[-1] == "v0.7.8^{commit}" else "a") * 40)
         if args[:3] == ["worktree", "add", "--detach"]:
-            version = "0.7.8" if args[4] == "v0.7.8" else "0.8.0"
+            version = "0.7.8" if args[4] == "b" * 40 else "0.8.0"
             write_manifest(Path(args[3]), version)
+        if args[:3] == ["worktree", "remove", "--force"]:
+            shutil.rmtree(args[3])
         if args == ["diff", "--binary", "HEAD"]:
             return completed_process("")
         return completed_process()
 
-    def fake_run_git_with_input(args: list[str], input_data: str, cwd: Path | None = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def fake_run_git_with_input(args: list[str], cwd: Path | None = None, **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         calls.append(("git-stdin", tuple(args), cwd))
-        return completed_process()
+        return subprocess.CompletedProcess(args, 0, stdout=b"")
 
     def fake_run_safe(command: str, args: list[str], cwd: Path | None = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append((command, tuple(args), cwd))
@@ -2045,8 +2184,15 @@ def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_base
             report.write_text(delaunay_report("0.8.0", "v0.7.8"), encoding=UTF8)
         return completed_process()
 
+    def fake_worktree_git(args: list[str], cwd: Path | None = None, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        assert args[:2] == ["--no-pager", "--no-replace-objects"]
+        fake_run_git(args[2:], cwd=cwd)
+        return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("research_repo_tools.worktrees.run_git_bytes", fake_worktree_git)
+    monkeypatch.setattr(benchmark_utils, "run_command_live", fake_run_safe)
     monkeypatch.setattr(benchmark_utils, "run_git_command", fake_run_git)
-    monkeypatch.setattr(benchmark_utils, "run_git_command_with_input", fake_run_git_with_input)
+    monkeypatch.setattr(benchmark_utils, "run_git_bytes", fake_run_git_with_input)
     monkeypatch.setattr(benchmark_utils, "run_safe_command", fake_run_safe)
 
     def fake_revision_evidence(
@@ -2116,8 +2262,8 @@ def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_base
     assert retained.context.baseline_measurement_host == host
     assert retained.context.current_artifact.sample_name == "new"
     assert retained.context.baseline_artifact.sample_name == "v0.7.8"
-    assert any(kind == "git" and args[:3] == ("worktree", "add", "--detach") and args[4] == "HEAD" for kind, args, _ in calls)
-    assert any(kind == "git" and args[:3] == ("worktree", "add", "--detach") and args[4] == "v0.7.8" for kind, args, _ in calls)
+    assert any(kind == "git" and args[:3] == ("worktree", "add", "--detach") and args[4] == "a" * 40 for kind, args, _ in calls)
+    assert any(kind == "git" and args[:3] == ("worktree", "add", "--detach") and args[4] == "b" * 40 for kind, args, _ in calls)
     assert any(kind == "cargo" and "--save-baseline" in args for kind, args, _ in calls)
     assert any(kind == "cargo" and "--save-baseline" not in args for kind, args, _ in calls)
     assert not any(kind == "uv" for kind, _, _ in calls)
@@ -2145,7 +2291,7 @@ def sample_benchmark_data() -> dict[str, BenchmarkData]:
 
 
 @pytest.mark.parametrize("binary", [False, True])
-@pytest.mark.parametrize("operation", ["temporary-file", "fsync", "replace"])
+@pytest.mark.parametrize("operation", ["fsync", "replace"])
 def test_atomic_write_failure_preserves_original_and_cleans_temporary_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, binary: bool, operation: str
 ) -> None:
@@ -2157,9 +2303,7 @@ def test_atomic_write_failure_preserves_original_and_cleans_temporary_file(
         message = "simulated atomic write failure"
         raise OSError(message)
 
-    if operation == "temporary-file":
-        monkeypatch.setattr(benchmark_utils.tempfile, "NamedTemporaryFile", fail)
-    elif operation == "fsync":
+    if operation == "fsync":
         monkeypatch.setattr(benchmark_utils.os, "fsync", fail)
     else:
         monkeypatch.setattr(Path, "replace", fail)
@@ -3016,7 +3160,6 @@ Time: [1.0, 1.0, 1.0] µs
                 for arg in DEV_MODE_BENCH_ARGS:
                     assert arg in args
             # And output is captured
-            assert mock_cargo.call_args.kwargs.get("capture_output") is True
 
     def test_write_performance_comparison_detects_individual_regression(self, comparator: PerformanceComparator) -> None:
         """Test strict performance comparison fails for individual regressions even when total time is fine."""
@@ -3590,7 +3733,7 @@ class TestBaselineGenerator:
         original_replace = Path.replace
 
         def fail_metadata_publish(source: Path, target: Path) -> Path:
-            if source == staged_metadata and Path(target) == metadata_file:
+            if Path(target) == metadata_file and source.read_bytes() == staged_metadata.read_bytes():
                 msg = "injected metadata publish failure"
                 raise OSError(msg)
             return original_replace(source, target)

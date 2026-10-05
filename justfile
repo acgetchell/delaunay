@@ -26,17 +26,12 @@ import 'just/helpers.just'
 # GitHub Actions workflow validation
 [group('validation')]
 action-lint: _ensure-actionlint
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < <(git ls-files -z '.github/workflows/*.yml' '.github/workflows/*.yaml')
-    if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 uv run --locked actionlint
-    else
-        echo "No workflow files found to lint."
-    fi
+    {{ rrt }} files run --include '.github/workflows/*.yml' --include '.github/workflows/*.yaml' -- uv run --locked actionlint
+
+# Audit every maintained Python and Rust lockfile without executing dependency code.
+[group('security')]
+audit:
+    {{ rrt }} security osv uv.lock Cargo.lock tests/fixtures/checkpoint_no_float_roundtrip/Cargo.lock
 
 # Benchmark recipes that produce performance numbers use Cargo's perf profile.
 [group('benchmarks and performance')]
@@ -274,8 +269,8 @@ docs-version-check:
 
 # Build and run every Rust example.
 [group('tests and coverage')]
-examples:
-    ./scripts/run_all_examples.sh
+examples: _ensure-uv
+    {{ managed }} research-repo-tools validation run tooling/examples.toml
 
 # Fix (mutating): apply formatters/auto-fixes
 [group('workflows')]
@@ -305,6 +300,7 @@ help-workflows:
     @echo "  just fix                # Apply repository formatters and safe auto-fixes"
     @echo "  just test               # Default Rust and Python test buckets"
     @echo "  just ci                 # GitHub-equivalent default validation suite"
+    @echo "  just security           # Network dependency audit and full-history secret scan"
     @echo ""
     @echo "Local CodeRabbit review:"
     @echo "  just review [base]      # Review branch and local edits against verified live origin/main; explicit local bases skip verification"
@@ -321,7 +317,7 @@ help-workflows:
     @echo "  just check-docs         # Markdown, spelling, and version references"
     @echo "  just rust-core-check    # Rust fmt, Clippy, rustdoc, and Semgrep"
     @echo "  just python-check       # Ruff formatting/lint plus ty type checking"
-    @echo "  just notebook-check     # Notebook hygiene and extracted-code checks"
+    @echo "  just notebook-check     # Notebook hygiene and native notebook code checks"
     @echo "  just shell-check        # ShellCheck plus shfmt verification"
     @echo ""
     @echo "Focused tests:"
@@ -380,17 +376,7 @@ help-workflows:
 # Check JSON files parse cleanly.
 [group('validation')]
 json-check: _ensure-jq
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        [ -f "$file" ] && files+=("$file")
-    done < <(git ls-files -z '*.json')
-    if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -n1 jq empty
-    else
-        echo "No JSON files found to check."
-    fi
+    {{ rrt }} files run --include '*.json' --batch-size 1 -- jq empty
 
 # Format the root and helper justfiles.
 [group('validation')]
@@ -409,16 +395,15 @@ justfile-fmt-check:
 markdown-check: _ensure-rumdl
     #!/usr/bin/env bash
     set -euo pipefail
+    target_list="$(mktemp "${TMPDIR:-/tmp}/delaunay-markdown-targets.XXXXXX")"
+    trap 'rm -f "$target_list"' EXIT
+    {{ rrt }} files list --include '*.md' --exclude CHANGELOG.md --exclude 'docs/archive/**' --exclude 'docs/archives/changelog/**' --null > "$target_list"
     files=()
     while IFS= read -r -d '' file; do
-        [ -e "$file" ] || continue
-        case "$file" in
-            CHANGELOG.md|docs/archive/*|docs/archives/changelog/*) continue ;;
-        esac
         files+=("$file")
-    done < <(git --no-pager ls-files --cached --others --exclude-standard --deduplicate -z '*.md')
+    done < "$target_list"
     if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -n100 {{ managed }} rumdl check
+        {{ managed }} research-repo-tools files run --include '*.md' --exclude CHANGELOG.md --exclude 'docs/archive/**' --exclude 'docs/archives/changelog/**' -- rumdl check
         violations=0
         for file in "${files[@]}"; do
             line_number=0
@@ -441,22 +426,7 @@ markdown-check: _ensure-rumdl
 # Apply automatic Markdown fixes.
 [group('validation')]
 markdown-fix: _ensure-rumdl
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        [ -e "$file" ] || continue
-        case "$file" in
-            CHANGELOG.md|docs/archive/*|docs/archives/changelog/*) continue ;;
-        esac
-        files+=("$file")
-    done < <(git --no-pager ls-files --cached --others --exclude-standard --deduplicate -z '*.md')
-    if [ "${#files[@]}" -gt 0 ]; then
-        echo "📝 rumdl check --fix (${#files[@]} files)"
-        printf '%s\0' "${files[@]}" | xargs -0 -n100 {{ managed }} rumdl check --fix
-    else
-        echo "No markdown files found to format."
-    fi
+    {{ managed }} research-repo-tools files run --include '*.md' --exclude CHANGELOG.md --exclude 'docs/archive/**' --exclude 'docs/archives/changelog/**' -- rumdl check --fix
 
 # Launch one source notebook in JupyterLab.
 [group('notebooks and papers')]
@@ -470,47 +440,29 @@ notebook notebook="notebooks/00_quickstart.ipynb": _ensure-uv
 # Run routine non-executing notebook validation.
 [group('notebooks and papers')]
 notebook-check: _ensure-uv
-    uv run --locked --group dev --group notebooks notebook-check lint --repo-root .
-    @echo "📓 Notebook checks complete!"
+    uv run --locked --group dev --group notebooks research-repo-tools files run --include 'notebooks/*.ipynb' --exclude '**/.ipynb_checkpoints/**' -- uv run --locked --group dev --group notebooks research-repo-tools notebooks lint
+    uv run --locked --group dev --group notebooks research-repo-tools files run --include 'notebooks/*.ipynb' --exclude '**/.ipynb_checkpoints/**' -- uv run --locked --group dev --group notebooks research-repo-tools notebooks advise
+    uv run --locked --group dev pytest scripts/tests/test_notebook_policy.py
 
 # Clear outputs from one source notebook in place.
 [group('notebooks and papers')]
 notebook-clear-outputs notebook="notebooks/00_quickstart.ipynb": _ensure-uv
-    uv run --locked --group notebooks jupyter nbconvert --clear-output --inplace "{{ notebook }}"
+    uv run --locked --group dev --group notebooks research-repo-tools notebooks clear {{ quote(notebook) }}
 
 # Clear outputs from every source notebook in place.
 [group('notebooks and papers')]
 notebook-clear-outputs-all: _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ ! -d notebooks ]; then
-        echo "No notebooks found to clear."
-        exit 0
-    fi
-    found=0
-    while IFS= read -r notebook; do
-        found=1
-        uv run --locked --group notebooks jupyter nbconvert --clear-output --inplace "$notebook"
-    done < <(find notebooks -type f -name '*.ipynb' ! -path '*/.ipynb_checkpoints/*' | sort)
-    if [ "$found" -eq 0 ]; then
-        echo "No notebooks found to clear."
-    fi
+    uv run --locked --group dev --group notebooks research-repo-tools files run --include 'notebooks/*.ipynb' --exclude '**/.ipynb_checkpoints/**' -- uv run --locked --group dev --group notebooks research-repo-tools notebooks clear
 
 # Execute one notebook into target/notebooks without modifying its source.
 [group('notebooks and papers')]
 notebook-execute notebook="notebooks/00_quickstart.ipynb" output_dir="target/notebooks" timeout="600": _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    output_path="$(pwd)/{{ output_dir }}"
-    notebook_stem="$(basename "{{ notebook }}" .ipynb)"
-    notebook_output_dir="$output_path/$notebook_stem"
-    mkdir -p "$output_path/.ipython" "$output_path/.matplotlib" "$notebook_output_dir"
-    MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --locked --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout={{ timeout }} --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "$notebook_output_dir" "{{ notebook }}"
+    uv run --locked --group dev --group notebooks research-repo-tools notebooks execute {{ quote(notebook) }} --output-dir {{ quote(output_dir) }} --timeout {{ quote(timeout) }}
 
-# Check notebook structure and output hygiene without extracted-code linting.
+# Check notebook structure and output hygiene without code linting.
 [group('notebooks and papers')]
 notebook-output-check: _ensure-uv
-    uv run --locked --group dev --group notebooks notebook-check lint --repo-root . --no-ruff --no-format --no-ty
+    uv run --locked --group dev --group notebooks research-repo-tools files run --include 'notebooks/*.ipynb' --exclude '**/.ipynb_checkpoints/**' -- uv run --locked --group dev --group notebooks research-repo-tools notebooks check
 
 # Restore tracked source notebooks and remove generated notebook artifacts.
 [group('notebooks and papers')]
@@ -548,7 +500,7 @@ notebook-reset-from-git source="index":
 # Install the optional notebook dependency group.
 [group('notebooks and papers')]
 notebook-setup: _ensure-uv
-    uv sync --locked --group notebooks
+    uv run --locked --group dev --group notebooks research-repo-tools notebooks sync
 
 # Run one 3D and one 4D direct Pachner stress workload with topology-scope reports enabled.
 [group('benchmarks and performance')]
@@ -1008,66 +960,9 @@ profile-mem: _ensure-samply
 # Pre-publish validation: checks crates.io metadata rules that cargo publish --dry-run does NOT catch
 # Validate crates.io metadata and run cargo publish --dry-run.
 [group('release')]
-publish-check: _ensure-jq
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "🔍 Validating crates.io metadata..."
-    errors=0
-
-    # Keywords: max 5, each ≤20 chars, ASCII alphanumeric/hyphen only
-    keywords=$({{ managed }} cargo metadata --no-deps --format-version=1 2>/dev/null \
-        | jq -r '.packages[0].keywords[]')
-    count=0
-    while IFS= read -r kw; do
-        [[ -z "$kw" ]] && continue
-        count=$((count + 1))
-        if (( ${#kw} > 20 )); then
-            echo "  ❌ keyword '${kw}' exceeds 20-char limit (${#kw} chars)"
-            errors=1
-        fi
-        if ! [[ "$kw" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-            echo "  ❌ keyword '${kw}' contains invalid characters"
-            errors=1
-        fi
-    done <<< "$keywords"
-    if (( count > 5 )); then
-        echo "  ❌ too many keywords ($count > 5)"
-        errors=1
-    fi
-    echo "  ✓ keywords ($count): $keywords"
-
-    # Categories: max 5
-    cat_count=$({{ managed }} cargo metadata --no-deps --format-version=1 2>/dev/null \
-        | jq '.packages[0].categories | length')
-    if (( cat_count > 5 )); then
-        echo "  ❌ too many categories ($cat_count > 5)"
-        errors=1
-    fi
-    echo "  ✓ categories ($cat_count)"
-
-    # Description: required, ≤1000 chars
-    desc=$({{ managed }} cargo metadata --no-deps --format-version=1 2>/dev/null \
-        | jq -r '.packages[0].description // ""')
-    if [[ -z "$desc" ]]; then
-        echo "  ❌ description is missing"
-        errors=1
-    elif (( ${#desc} > 1000 )); then
-        echo "  ❌ description exceeds 1000-char limit (${#desc} chars)"
-        errors=1
-    fi
-    echo "  ✓ description (${#desc} chars)"
-
-    if (( errors )); then
-        echo ""
-        echo "❌ Metadata validation failed. Fix Cargo.toml before publishing."
-        exit 1
-    fi
-
-    echo ""
-    echo "📦 Running cargo publish --dry-run..."
+publish-check: _ensure-toolchain
+    {{ managed }} research-repo-tools validation cargo-metadata --package delaunay
     {{ managed }} cargo publish --locked --allow-dirty --dry-run
-    echo ""
-    echo "✅ Publish check passed!"
 
 # Run every non-mutating Python source check.
 [group('validation')]
@@ -1130,6 +1025,15 @@ run *args:
 rust-core-check: fmt-check clippy doc-check semgrep semgrep-test
     @echo "✅ Rust core checks complete!"
 
+# Run the network-dependent vulnerability and full-history secret gates.
+[group('security')]
+security: audit security-secrets
+
+# Scan reachable Git history and current files with redacted reports.
+[group('security')]
+security-secrets:
+    {{ rrt }} security secrets
+
 # Repository-owned Semgrep rules for project-specific Rust diagnostics.
 [group('validation')]
 semgrep: (semgrep-scan "")
@@ -1140,10 +1044,13 @@ semgrep-scan sarif_output="": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     output={{ quote(sarif_output) }}
-    semgrep_targets=()
+    target_list="$(mktemp "${TMPDIR:-/tmp}/delaunay-semgrep-targets.XXXXXX")"
+    trap 'rm -f "$target_list"' EXIT
+    {{ rrt }} files list --include 'scripts/tests/*.py' --include 'tests/*.rs' --exclude 'tests/semgrep/**' --null > "$target_list"
+    semgrep_targets=(.)
     while IFS= read -r -d '' file; do
         semgrep_targets+=("$file")
-    done < <(uv run --locked python scripts/semgrep_targets.py --null)
+    done < "$target_list"
     semgrep_args=(--error --strict --timeout 120 --jobs 1 --config semgrep.yaml)
     if [[ -n "$output" ]]; then
         semgrep_args+=(--sarif --output "$output")
@@ -1178,72 +1085,22 @@ shell-check: shell-lint shell-fmt-check
 # Format tracked and new shell scripts with shfmt.
 [group('validation')]
 shell-fix: _ensure-shfmt
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        [ -e "$file" ] || continue
-        files+=("$file")
-    done < <(git --no-pager ls-files --cached --others --exclude-standard -z '*.sh')
-    if [ "${#files[@]}" -gt 0 ]; then
-        echo "🧹 shfmt -w (${#files[@]} files)"
-        printf '%s\0' "${files[@]}" | xargs -0 uv run --locked shfmt -w
-    else
-        echo "No shell files found to format."
-    fi
-    # Note: justfiles are not shell scripts and are excluded from shellcheck
+    {{ rrt }} files run --include '*.sh' -- uv run --locked shfmt -w
 
 # Check tracked and new shell-script formatting with shfmt.
 [group('validation')]
 shell-fmt-check: _ensure-shfmt
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        [ -e "$file" ] || continue
-        files+=("$file")
-    done < <(git --no-pager ls-files --cached --others --exclude-standard -z '*.sh')
-    if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 uv run --locked shfmt -d
-    else
-        echo "No shell files found to check."
-    fi
+    {{ rrt }} files run --include '*.sh' -- uv run --locked shfmt -d
 
 # Lint tracked and new shell scripts with ShellCheck.
 [group('validation')]
 shell-lint: _ensure-shellcheck
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        [ -e "$file" ] || continue
-        files+=("$file")
-    done < <(git --no-pager ls-files --cached --others --exclude-standard -z '*.sh')
-    if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -n4 uv run --locked shellcheck -x
-    else
-        echo "No shell files found to lint."
-    fi
+    {{ rrt }} files run --include '*.sh' --batch-size 4 -- uv run --locked shellcheck -x
 
 # Spell check (typos)
 [group('validation')]
 spell-check: _ensure-typos
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    # Check the complete repository surface in clean CI while including new,
-    # unignored files during local iteration.
-    while IFS= read -r -d '' filename; do
-        [ -e "$filename" ] || continue
-        [ "$filename" = "typos.toml" ] && continue
-        files+=("$filename")
-    done < <(git ls-files -z --cached --others --exclude-standard)
-    if [ "${#files[@]}" -gt 0 ]; then
-        # Exclude typos.toml itself: it intentionally contains allowlisted fragments.
-        printf '%s\0' "${files[@]}" | xargs -0 -n100 {{ managed }} typos --config typos.toml --force-exclude --exclude typos.toml --
-    else
-        echo "No repository files to spell-check."
-    fi
+    {{ managed }} research-repo-tools files run --exclude typos.toml -- typos --config typos.toml --force-exclude --exclude typos.toml --
 
 # Deliberately refresh the slow notebook-backed spherical README hero.
 [group('notebooks and papers')]
@@ -1342,66 +1199,22 @@ toml-check: toml-parse-check toml-lint toml-fmt-check
 # Format tracked TOML files with Taplo.
 [group('validation')]
 toml-fix: _ensure-taplo
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        [ -f "$file" ] || continue
-        files+=("$file")
-    done < <(git --no-pager ls-files --cached --others --exclude-standard --deduplicate -z '*.toml')
-    if [ "${#files[@]}" -gt 0 ]; then
-        {{ managed }} taplo fmt "${files[@]}"
-    else
-        echo "No TOML files found to format."
-    fi
+    {{ managed }} research-repo-tools files run --include '*.toml' -- taplo fmt
 
 # Check tracked TOML formatting with Taplo.
 [group('validation')]
 toml-fmt-check: _ensure-taplo
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        [ -f "$file" ] || continue
-        files+=("$file")
-    done < <(git --no-pager ls-files --cached --others --exclude-standard --deduplicate -z '*.toml')
-    if [ "${#files[@]}" -gt 0 ]; then
-        {{ managed }} taplo fmt --check "${files[@]}"
-    else
-        echo "No TOML files found to check."
-    fi
+    {{ managed }} research-repo-tools files run --include '*.toml' -- taplo fmt --check
 
 # Lint tracked TOML files with Taplo.
 [group('validation')]
 toml-lint: _ensure-taplo
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        [ -f "$file" ] || continue
-        files+=("$file")
-    done < <(git --no-pager ls-files --cached --others --exclude-standard --deduplicate -z '*.toml')
-    if [ "${#files[@]}" -gt 0 ]; then
-        {{ managed }} taplo lint "${files[@]}"
-    else
-        echo "No TOML files found to lint."
-    fi
+    {{ managed }} research-repo-tools files run --include '*.toml' -- taplo lint
 
 # Check that tracked TOML files parse cleanly.
 [group('validation')]
 toml-parse-check: _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        [ -f "$file" ] || continue
-        files+=("$file")
-    done < <(git --no-pager ls-files --cached --others --exclude-standard --deduplicate -z '*.toml')
-    if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -I {} uv run --locked python -c "import sys, tomllib; exec(\"with open(sys.argv[1], 'rb') as f:\\n    tomllib.load(f)\"); print(f'{sys.argv[1]} is valid TOML')" {}
-    else
-        echo "No TOML files found to check."
-    fi
+    {{ rrt }} files run --include '*.toml' --batch-size 1 -- uv run --locked python -c 'import pathlib, sys, tomllib; tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))'
 
 # Inspect declared tools without installing or synchronizing dependencies.
 [group('build and setup')]
@@ -1523,50 +1336,17 @@ yaml-check: yaml-fmt-check yaml-lint
 # Format tracked YAML/CFF files with dprint.
 [group('validation')]
 yaml-fix: _ensure-dprint
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < <(git ls-files -z '*.yml' '*.yaml' 'CITATION.cff')
-    if [ "${#files[@]}" -gt 0 ]; then
-        echo "📝 dprint fmt (YAML/CFF, ${#files[@]} files)"
-        {{ managed }} dprint fmt --incremental=false "${files[@]}"
-    else
-        echo "No YAML files found to format."
-    fi
+    {{ managed }} research-repo-tools files run --include '*.yml' --include '*.yaml' --include CITATION.cff -- dprint fmt --incremental=false
 
 # Check tracked YAML/CFF formatting with dprint.
 [group('validation')]
 yaml-fmt-check: _ensure-dprint
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < <(git ls-files -z '*.yml' '*.yaml' 'CITATION.cff')
-    if [ "${#files[@]}" -gt 0 ]; then
-        echo "🔍 dprint check (YAML/CFF, ${#files[@]} files)"
-        {{ managed }} dprint check --incremental=false "${files[@]}"
-    else
-        echo "No YAML files found to check."
-    fi
+    {{ managed }} research-repo-tools files run --include '*.yml' --include '*.yaml' --include CITATION.cff -- dprint check --incremental=false
 
 # Lint tracked YAML/CFF files with yamllint.
 [group('validation')]
 yaml-lint: _ensure-yamllint
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < <(git ls-files -z '*.yml' '*.yaml' 'CITATION.cff')
-    if [ "${#files[@]}" -gt 0 ]; then
-        echo "🔍 yamllint (${#files[@]} YAML/CFF files)"
-        uv run --locked yamllint --strict -c .yamllint "${files[@]}"
-    else
-        echo "No YAML files found to lint."
-    fi
+    {{ rrt }} files run --include '*.yml' --include '*.yaml' --include CITATION.cff -- uv run --locked yamllint --strict -c .yamllint
 
 # Audit GitHub Actions workflows with zizmor.
 [group('validation')]

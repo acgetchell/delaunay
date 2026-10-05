@@ -15,12 +15,13 @@ source scripts/tectonic_native_dependencies.sh
 uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
-`pyproject.toml` pins `research-repo-tools==0.1.7` in `tooling`, included by
-`dev`. The shared package owns setup, changelogs, release metadata, dependency
-updates, Semgrep fixture checking, and CodeRabbit orchestration. Use its public
-CLI; internal modules are not consumer interfaces. Retained scripts own scientific
-benchmarks, evidence publication, notebooks, papers, and the Codacy SARIF filter.
-`subprocess_utils.py` remains for those callers.
+The installed package and tooling/notebook groups pin
+`research-repo-tools==0.1.7`. Shared CLI commands and documented Python APIs own
+setup, maintenance, source inventory, subprocesses, archive extraction, worktree
+lifecycle, Criterion parsing, file transactions and notebook infrastructure.
+Retained adapters own Delaunay science and policy. The
+[adoption inventory](../docs/dev/tooling_adoption.md#remaining-shared-tool-gaps)
+links the remaining reusable gaps to v0.1.8 issues and their consumer follow-ups.
 
 ## CLI entrypoints
 
@@ -56,14 +57,16 @@ just notebook-check
 just notebook-execute notebooks/00_quickstart.ipynb
 just notebook-reset-from-git
 just validation-doc-figures-check
-uv run --locked --group dev --group notebooks notebook-check --help
+uv run --locked --group dev --group notebooks research-repo-tools notebooks --help
 ```
 
-`notebook-check` validates notebook JSON, rejects committed outputs and
-execution counts, and extracts code cells for Ruff and ty without executing
-notebooks. `just notebook-execute` runs one notebook headlessly, writes the
-executed notebook and generated artifacts under
-`target/notebooks/<notebook-stem>/`, and leaves the source notebook unchanged.
+`just notebook-check` invokes shared JSON/output validation, native Ruff and ty
+notebook checks, and advice directly, then runs the lowercase kebab-case ID policy
+test in `scripts/tests/test_notebook_policy.py`. The Python CLI wrapper is deleted.
+It never executes cells. `just notebook-execute` uses the shared locked kernel,
+writes `target/notebooks/notebooks/<notebook-stem>.ipynb` and an adjacent
+`.report.json`, and leaves the source notebook unchanged. Notebook-generated
+figures and data retain `target/notebooks/<notebook-stem>/`.
 `just notebook-reset-from-git` restores tracked source notebooks from the Git
 index, or from an explicit source such as `HEAD`, and removes generated
 notebook artifacts and Jupyter checkpoints.
@@ -74,7 +77,7 @@ documentation artifacts without publishing changes. The canonical byte check
 is composed into `just ci` on macOS.
 
 `delaunay-scripts` is repository-internal and is not distributed as a PyPI
-tool. Run `notebook-check` through the locked project environment or the `just`
+tool. Run shared notebook commands through the locked project environment or the `just`
 recipes above. The repository-managed `dev` and `notebooks` dependency groups
 provide its Ruff, ty, and nbclient backends. Notebook-specific imports used by
 the notebook being executed remain the notebook author's responsibility.
@@ -179,14 +182,16 @@ uv upgrades through its installation owner. Just follows the shared package's
 Just-variable reconciler. Change the shared package constraint explicitly through
 uv, refresh the lock, review its release notes, and rerun setup.
 
-## Shell helpers
+## Declarative example checks
 
 ```bash
-./scripts/run_all_examples.sh
+just examples
 ```
 
-Shell scripts use strict mode and should be linted through the repository
-validation commands.
+The shared validator consumes [`tooling/examples.toml`](../tooling/examples.toml),
+which declares the release builds, feature policy, per-command timeouts, and
+expected output. A Cargo metadata test keeps the example inventory complete.
+See [`tooling/README.md`](../tooling/README.md) for the configuration contract.
 
 ## Linting and tests
 
@@ -200,7 +205,9 @@ just python-fix
 ## Maintenance expectations
 
 - Keep scripts typed and covered by focused pytest tests.
-- Prefer `subprocess_utils.py` wrappers for subprocess execution.
+- Use documented `research_repo_tools.process` runners; byte-preserving Git
+  transport is required for binary diffs. Use shared diagnostic formatting for
+  captured failures, whose streams may be bytes.
 - Use `subprocess.CompletedProcess[str]` in tests instead of ad hoc mocks.
 - Catch specific recoverable exception families; avoid broad
   `except Exception`.

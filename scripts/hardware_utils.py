@@ -19,17 +19,11 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
-if TYPE_CHECKING:
-    from subprocess_utils import ExceptionFamily, ExecutableNotFoundError, run_safe_command
-else:
-    try:
-        # When executed as a script from scripts/
-        from subprocess_utils import ExceptionFamily, ExecutableNotFoundError, run_safe_command
-    except ModuleNotFoundError:
-        # When imported as a module (e.g., scripts.hardware_utils)
-        from scripts.subprocess_utils import ExceptionFamily, ExecutableNotFoundError, run_safe_command
+from research_repo_tools.process import ExecutableNotFoundError, run_command as run_safe_command
+
+type ExceptionFamily = tuple[type[BaseException], ...]
 
 # Configure a module-level logger
 logger = logging.getLogger(__name__)
@@ -482,7 +476,8 @@ class HardwareInfo:
         command_name = cmd[0]
         args = cmd[1:] if len(cmd) > 1 else []
 
-        result = run_safe_command(command_name, args, cwd=cwd, capture_output=True, text=True, check=True)
+        environment = {**os.environ, "LC_ALL": "C", "LANG": "C"}
+        result = run_safe_command(command_name, args, cwd=cwd, env=environment, timeout=30, check=True)
 
         return result.stdout.strip()
 

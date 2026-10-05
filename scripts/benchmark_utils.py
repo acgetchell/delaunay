@@ -23,14 +23,14 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 import tomllib
 from collections.abc import Mapping
-from contextlib import ExitStack, suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from itertools import product
 from pathlib import Path
 from shutil import copy2 as copyfile  # NOTE: Use copy2 (metadata-preserving) under the 'copyfile' alias for tests/patching convenience.
@@ -39,6 +39,41 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from packaging.version import InvalidVersion, Version
+from research_repo_tools.archives import extract_archive as _safe_extract_tar
+from research_repo_tools.criterion import read_estimate
+from research_repo_tools.files import replace_many
+from research_repo_tools.process import ExecutableNotFoundError, format_exception_diagnostics, run_command as run_safe_command, run_command_live, run_git_bytes
+from research_repo_tools.worktrees import temporary_worktree
+
+from benchmark_models import (
+    BenchmarkData,
+    CircumspherePerformanceData,
+    CircumsphereTestCase,
+    extract_benchmark_data,
+    format_benchmark_tables,
+)
+from hardware_utils import HardwareComparator, HardwareInfo
+from performance_artifacts import (
+    BENCHMARK_CONTRACT_START,
+    ArtifactContext,
+    ArtifactPaths,
+    HostIdentity,
+    MeasurementArtifact,
+    PerformanceBundle,
+    PerformanceRow,
+    ReleasePair,
+    SourceState,
+    TimingEstimate,
+    ToolchainState,
+    ensure_distinct_paths,
+    load_bundle,
+    publish_bundle,
+    restore_artifact_snapshot,
+    serialize_bundle,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -71,123 +106,36 @@ class BaselineArtifactMetadata:
         )
 
 
-if TYPE_CHECKING:
-    from benchmark_models import (
-        BenchmarkData,
-        CircumspherePerformanceData,
-        CircumsphereTestCase,
-        extract_benchmark_data,
-        format_benchmark_tables,
-    )
-    from hardware_utils import HardwareComparator, HardwareInfo
-    from performance_artifacts import (
-        BENCHMARK_CONTRACT_START,
-        ArtifactContext,
-        ArtifactPaths,
-        HostIdentity,
-        MeasurementArtifact,
-        PerformanceBundle,
-        PerformanceRow,
-        ReleasePair,
-        SourceState,
-        TimingEstimate,
-        ToolchainState,
-        ensure_distinct_paths,
-        load_bundle,
-        publish_bundle,
-        serialize_bundle,
-    )
-    from subprocess_utils import (
-        ExceptionFamily,
-        ExecutableNotFoundError,
-        ProjectRootNotFoundError,
-        find_project_root,
-        get_git_commit_hash,
-        get_git_remote_url,
-        run_cargo_command,
-        run_git_command,
-        run_git_command_with_input,
-        run_safe_command,
-    )
-else:
-    try:
-        # When executed as a script from scripts/
-        from benchmark_models import (
-            BenchmarkData,
-            CircumspherePerformanceData,
-            CircumsphereTestCase,
-            extract_benchmark_data,
-            format_benchmark_tables,
-        )
-        from hardware_utils import HardwareComparator, HardwareInfo
-        from performance_artifacts import (
-            BENCHMARK_CONTRACT_START,
-            ArtifactContext,
-            ArtifactPaths,
-            HostIdentity,
-            MeasurementArtifact,
-            PerformanceBundle,
-            PerformanceRow,
-            ReleasePair,
-            SourceState,
-            TimingEstimate,
-            ToolchainState,
-            ensure_distinct_paths,
-            load_bundle,
-            publish_bundle,
-            serialize_bundle,
-        )
-        from subprocess_utils import (
-            ExceptionFamily,
-            ExecutableNotFoundError,
-            ProjectRootNotFoundError,
-            find_project_root,
-            get_git_commit_hash,
-            get_git_remote_url,
-            run_cargo_command,
-            run_git_command,
-            run_git_command_with_input,
-            run_safe_command,
-        )
-    except ModuleNotFoundError:
-        # When imported as a module (e.g., scripts.benchmark_utils)
-        from scripts.benchmark_models import (
-            BenchmarkData,
-            CircumspherePerformanceData,
-            CircumsphereTestCase,
-            extract_benchmark_data,
-            format_benchmark_tables,
-        )
-        from scripts.hardware_utils import HardwareComparator, HardwareInfo
-        from scripts.performance_artifacts import (
-            BENCHMARK_CONTRACT_START,
-            ArtifactContext,
-            ArtifactPaths,
-            HostIdentity,
-            MeasurementArtifact,
-            PerformanceBundle,
-            PerformanceRow,
-            ReleasePair,
-            SourceState,
-            TimingEstimate,
-            ToolchainState,
-            ensure_distinct_paths,
-            load_bundle,
-            publish_bundle,
-            serialize_bundle,
-        )
-        from scripts.subprocess_utils import (
-            ExceptionFamily,
-            ExecutableNotFoundError,
-            ProjectRootNotFoundError,
-            find_project_root,
-            get_git_commit_hash,
-            get_git_remote_url,
-            run_cargo_command,
-            run_git_command,
-            run_git_command_with_input,
-            run_safe_command,
-        )
+type ExceptionFamily = tuple[type[BaseException], ...]
+
+run_cargo_command = partial(run_safe_command, "cargo")
+run_cargo_live = partial(run_command_live, "cargo")
+run_git_command = partial(run_safe_command, "git")
+
+
+class ProjectRootNotFoundError(Exception):
+    """The benchmark command was invoked outside a Cargo repository."""
+
+
+def find_project_root() -> Path:
+    """Find the enclosing Cargo repository for benchmark commands."""
+    current = Path.cwd()
+    for candidate in (current, *current.parents):
+        if (candidate / "Cargo.toml").is_file():
+            return candidate
+    message = "Could not locate Cargo.toml to determine project root"
+    raise ProjectRootNotFoundError(message)
+
+
+def get_git_commit_hash(cwd: Path | None = None) -> str:
+    """Read the measured checkout's source identity."""
+    return run_git_command(["rev-parse", "HEAD"], cwd=cwd).stdout.strip()
+
+
+def get_git_remote_url(remote: str = "origin", cwd: Path | None = None) -> str:
+    """Read the consumer-selected benchmark baseline remote."""
+    return run_git_command(["remote", "get-url", remote], cwd=cwd).stdout.strip()
+
 
 _RECOVERABLE_CLI_ERRORS: ExceptionFamily = (
     ExecutableNotFoundError,
@@ -201,7 +149,6 @@ _RECOVERABLE_CLI_ERRORS: ExceptionFamily = (
 )
 _CI_PERFORMANCE_METRIC_PARSE_ERRORS: ExceptionFamily = (KeyError, ValueError)
 _CI_PERFORMANCE_SIDECAR_LOAD_ERRORS: ExceptionFamily = (OSError, json.JSONDecodeError)
-_CRITERION_ESTIMATE_PARSE_ERRORS: ExceptionFamily = (KeyError, TypeError, ValueError)
 _NUMERICAL_ACCURACY_PARSE_ERRORS: ExceptionFamily = (IndexError, TypeError, ValueError)
 _CARGO_MANIFEST_LOAD_ERRORS: ExceptionFamily = (OSError, tomllib.TOMLDecodeError)
 _LOCAL_RUSTC_VERSION_ERRORS: ExceptionFamily = (ExecutableNotFoundError, OSError, subprocess.SubprocessError)
@@ -1007,11 +954,6 @@ def _ci_performance_sidecar_timestamp(criterion_dir: Path) -> str | None:
     return datetime.fromtimestamp(max(timestamps), UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-def is_valid_criterion_estimate(mean_ns: float, low_ns: float, high_ns: float) -> bool:
-    """Return whether Criterion estimate values are finite and ordered."""
-    return all(math.isfinite(value) and value > 0 for value in (mean_ns, low_ns, high_ns)) and low_ns <= high_ns
-
-
 def _is_object_mapping(value: object) -> TypeIs[Mapping[object, object]]:
     """Return whether a raw value can be treated as an object-keyed mapping."""
     return isinstance(value, Mapping)
@@ -1024,45 +966,15 @@ def _require_positive_int_field(name: str, value: object) -> None:
         raise ValueError(msg)
 
 
-def _criterion_float(value: object) -> float:
-    """Convert a raw Criterion JSON scalar into a float."""
-    if isinstance(value, bool) or not isinstance(value, str | int | float):
-        msg = f"expected numeric Criterion estimate value, got {value!r}"
-        raise TypeError(msg)
-    return float(value)
-
-
-def _parse_criterion_estimate(data: object) -> CriterionEstimate | None:
-    """Parse raw Criterion estimates.json data into a validated estimate."""
-    if not _is_object_mapping(data):
-        return None
-    mean_data = data.get("mean", {})
-    if not _is_object_mapping(mean_data):
-        return None
-    confidence_interval = mean_data.get("confidence_interval", {})
-    if not _is_object_mapping(confidence_interval):
-        return None
-
-    try:
-        mean_ns = _criterion_float(mean_data["point_estimate"])
-        low_ns = _criterion_float(confidence_interval["lower_bound"])
-        high_ns = _criterion_float(confidence_interval["upper_bound"])
-    except _CRITERION_ESTIMATE_PARSE_ERRORS:
-        return None
-
-    if not is_valid_criterion_estimate(mean_ns, low_ns, high_ns):
-        return None
-    return CriterionEstimate(mean_ns=mean_ns, low_ns=low_ns, high_ns=high_ns)
-
-
 def _load_criterion_estimate(estimates_path: Path) -> CriterionEstimate | None:
-    """Load and validate a Criterion estimates.json file."""
+    """Load shared Criterion data with the summary's required interval bounds."""
     try:
-        with estimates_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-    except _CI_PERFORMANCE_SIDECAR_LOAD_ERRORS:
+        estimate = read_estimate(estimates_path, statistic="mean")
+    except OSError, ValueError:
         return None
-    return _parse_criterion_estimate(data)
+    if estimate.lower is None or estimate.upper is None:
+        return None
+    return CriterionEstimate(mean_ns=estimate.point, low_ns=estimate.lower, high_ns=estimate.upper)
 
 
 def _collect_ci_suite_estimates(criterion_dir: Path) -> list[tuple[tuple[str, ...], Path]]:
@@ -1263,11 +1175,10 @@ def preflight_release_signal(project_root: Path, *, cargo_profile: str, bench_ti
     """Execute every fixture once; do not publish timing or measurement metadata."""
     for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN:
         print(f"🔎 Preflight release-signal target {measurement.target}...", flush=True)
-        run_cargo_command(
+        run_cargo_live(
             ["bench", "--profile", cargo_profile, "--bench", measurement.target, "--", "--test"],
             cwd=project_root,
             timeout=min(bench_timeout, RELEASE_PREFLIGHT_TIMEOUT_SECONDS),
-            capture_output=False,
         )
 
 
@@ -1301,7 +1212,6 @@ def run_release_signal_measurement_plan(
             cargo_args,
             cwd=project_root,
             timeout=bench_timeout,
-            capture_output=True,
             check=False,
         )
         if result.stdout:
@@ -1325,10 +1235,6 @@ def run_release_signal_measurement_plan(
             )
 
     return outputs
-
-
-# Use the shared secure wrapper from subprocess_utils
-# ProjectRootNotFoundError and find_project_root are imported from subprocess_utils
 
 
 # =============================================================================
@@ -1741,7 +1647,6 @@ class PerformanceSummaryGenerator:
                 cargo_args,
                 cwd=self.project_root,
                 timeout=240,  # 4 minute timeout for quick benchmarks
-                capture_output=True,
             )
 
             # Parse numerical accuracy data from stdout
@@ -1789,7 +1694,6 @@ class PerformanceSummaryGenerator:
                 cargo_args,
                 cwd=self.project_root,
                 timeout=bench_timeout,
-                capture_output=True,
                 check=False,
             )
             if result.returncode != 0:
@@ -3093,44 +2997,13 @@ def _read_text(path: Path) -> str:
 
 
 def _write_text_atomic(path: Path, text: str) -> None:
-    """Write UTF-8 text through a same-directory temporary file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with ExitStack() as cleanup:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as tmp:
-            tmp_path = Path(tmp.name)
-            cleanup.callback(tmp_path.unlink, missing_ok=True)
-            tmp.write(text)
-            tmp.flush()
-            os.fsync(tmp.fileno())
-        tmp_path.replace(path)
+    """Publish UTF-8 report bytes through the shared transaction."""
+    replace_many({path: text.encode("utf-8")})
 
 
 def _write_bytes_atomic(path: Path, payload: bytes) -> None:
-    """Write bytes through a durable same-directory temporary file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with ExitStack() as cleanup:
-        with tempfile.NamedTemporaryFile("wb", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-            cleanup.callback(tmp_path.unlink, missing_ok=True)
-            tmp.write(payload)
-            tmp.flush()
-            os.fsync(tmp.fileno())
-        tmp_path.replace(path)
-
-
-def _restore_file_snapshot(path: Path, payload: bytes | None) -> None:
-    """Restore one prior file payload or prior absence."""
-    if payload is None:
-        path.unlink(missing_ok=True)
-    else:
-        _write_bytes_atomic(path, payload)
+    """Publish retained bytes through the shared transaction."""
+    replace_many({path: payload})
 
 
 def _read_cargo_package_version(repo_root: Path) -> str:
@@ -3214,47 +3087,14 @@ def _format_pct_change(percent: float) -> str:
     return f"{percent:+.1f}%"
 
 
-def _criterion_numeric_field(obj: Mapping[str, object], field: str, estimates_json: Path, stat: str) -> float:
-    """Read one numeric field from Criterion estimates JSON."""
-    value = obj.get(field)
-    if isinstance(value, bool) or not isinstance(value, int | float | str):
-        msg = f"field {field!r} for stat {stat!r} in {estimates_json} is not numeric: {value!r}"
-        raise TypeError(msg)
-    try:
-        numeric = float(value)
-    except ValueError as exc:
-        msg = f"field {field!r} for stat {stat!r} in {estimates_json} is not numeric: {value!r}"
-        raise ValueError(msg) from exc
-    if not math.isfinite(numeric) or numeric <= 0.0:
-        msg = f"field {field!r} for stat {stat!r} in {estimates_json} must be a positive finite number: {value!r}"
-        raise ValueError(msg)
-    return numeric
-
-
 def _read_criterion_timing_estimate(estimates_json: Path, stat: str) -> TimingEstimate:
-    """Read a Criterion point estimate and confidence interval in nanoseconds."""
-    try:
-        data = json.loads(_read_text(estimates_json))
-    except json.JSONDecodeError as exc:
-        msg = f"malformed Criterion estimates JSON in {estimates_json}: {exc}"
-        raise ValueError(msg) from exc
-    if not isinstance(data, dict):
-        msg = f"expected JSON object in {estimates_json}"
-        raise TypeError(msg)
-    stat_obj = data.get(stat)
-    if not isinstance(stat_obj, Mapping):
-        msg = f"stat {stat!r} not found in {estimates_json}"
-        raise KeyError(msg)
-    confidence_interval = stat_obj.get("confidence_interval")
-    if not isinstance(confidence_interval, Mapping):
-        msg = f"confidence_interval for stat {stat!r} in {estimates_json} is not an object"
-        raise TypeError(msg)
-    return TimingEstimate(
-        median_ns=_criterion_numeric_field(stat_obj, "point_estimate", estimates_json, stat),
-        ci_lower_ns=_criterion_numeric_field(confidence_interval, "lower_bound", estimates_json, stat),
-        ci_upper_ns=_criterion_numeric_field(confidence_interval, "upper_bound", estimates_json, stat),
-        confidence_level=_criterion_numeric_field(confidence_interval, "confidence_level", estimates_json, stat),
-    )
+    """Read shared Criterion data and require the consumer's complete interval."""
+    if stat not in {"mean", "median"}:
+        raise ValueError(f"unsupported Criterion statistic: {stat!r}")
+    estimate = read_estimate(estimates_json, statistic=stat)
+    if estimate.lower is None or estimate.upper is None or estimate.confidence_level is None:
+        raise ValueError(f"Criterion estimate requires confidence bounds and confidence_level: {estimates_json}")
+    return TimingEstimate(estimate.point, estimate.lower, estimate.upper, estimate.confidence_level)
 
 
 def _read_criterion_point_estimate(estimates_json: Path, stat: str) -> float:
@@ -4040,8 +3880,8 @@ def _apply_performance_promotion(plan: PerformancePromotionPlan, *, current: Pat
         restore_errors: list[BaseException] = []
         for path, payload in reversed(snapshots):
             try:
-                _restore_file_snapshot(path, payload)
-            except OSError as restore_exc:
+                restore_artifact_snapshot(path, payload)
+            except (OSError, ExceptionGroup) as restore_exc:
                 restore_errors.append(restore_exc)
         if restore_errors:
             msg = "performance report promotion and rollback both failed"
@@ -4071,30 +3911,14 @@ def promote_performance_report(
     return plan.report_id
 
 
-def _format_command_failure(command: list[str], exc: subprocess.CalledProcessError) -> str:
-    """Return a readable command failure with captured output."""
-    parts = [f"command failed ({exc.returncode}): {' '.join(command)}"]
-    if exc.stdout:
-        parts.append(f"stdout:\n{exc.stdout.strip()}")
-    if exc.stderr:
-        parts.append(f"stderr:\n{exc.stderr.strip()}")
-    return "\n".join(parts)
-
-
 def _run_tool(command: str, args: list[str], *, cwd: Path, options: ToolRunOptions | None = None) -> None:
     """Run a support command and translate subprocess failures."""
     resolved_options = options or ToolRunOptions()
     try:
-        run_safe_command(
-            command,
-            args,
-            cwd=cwd,
-            timeout=resolved_options.timeout,
-            env=resolved_options.env,
-            capture_output=not resolved_options.stream_output,
-        )
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(_format_command_failure([command, *args], exc)) from exc
+        runner = run_command_live if resolved_options.stream_output else run_safe_command
+        runner(command, args, cwd=cwd, timeout=resolved_options.timeout, env=resolved_options.env)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(format_exception_diagnostics(exc)) from exc
 
 
 def _progress(message: str) -> None:
@@ -4106,8 +3930,8 @@ def _run_git(args: list[str], *, cwd: Path, timeout: int = RELEASE_COMMAND_TIMEO
     """Run a git command and translate subprocess failures."""
     try:
         run_git_command(args, cwd=cwd, timeout=timeout)
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(_format_command_failure(["git", *args], exc)) from exc
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(format_exception_diagnostics(exc)) from exc
 
 
 def _github_release_list(repo_root: Path) -> object:
@@ -4122,8 +3946,8 @@ def _github_release_list(repo_root: Path) -> object:
     ]
     try:
         result = run_safe_command("gh", command, cwd=repo_root, timeout=RELEASE_COMMAND_TIMEOUT_SECONDS)
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(_format_command_failure(["gh", *command], exc)) from exc
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(format_exception_diagnostics(exc)) from exc
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -4323,8 +4147,8 @@ def _run_tool_output(
     """Run a support command and return non-empty stripped stdout."""
     try:
         result = run_safe_command(command, args, cwd=cwd, timeout=timeout, env=env)
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(_format_command_failure([command, *args], exc)) from exc
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(format_exception_diagnostics(exc)) from exc
     output = result.stdout.strip()
     if not output:
         msg = f"command produced empty stdout: {command} {' '.join(args)}"
@@ -4537,13 +4361,13 @@ def _source_state(checkout: Path, *, version: str, ref: str) -> SourceState:
         cwd=checkout,
         timeout=RELEASE_COMMAND_TIMEOUT_SECONDS,
     ).stdout.strip()
-    diff = run_git_command(["diff", "--binary", "HEAD"], cwd=checkout, timeout=RELEASE_COMMAND_TIMEOUT_SECONDS).stdout
+    diff = run_git_bytes(["diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD", "--"], cwd=checkout, timeout=RELEASE_COMMAND_TIMEOUT_SECONDS).stdout
     status = run_git_command(
         ["status", "--short", "--untracked-files=no"],
         cwd=checkout,
         timeout=RELEASE_COMMAND_TIMEOUT_SECONDS,
     ).stdout
-    state_digest = hashlib.sha256(f"commit {commit}\n".encode() + diff.encode("utf-8")).hexdigest()
+    state_digest = hashlib.sha256(f"commit {commit}\n".encode("ascii") + diff).hexdigest()
     return SourceState(
         version=normalize_release_tag(version),
         commit=commit,
@@ -4605,13 +4429,13 @@ def _recorded_host_identity(repo_root: Path) -> HostIdentity:
 
 def _apply_current_diff_to_worktree(*, repo_root: Path, worktree: Path) -> None:
     """Apply the current tracked diff to a temporary worktree."""
-    diff = run_git_command(["diff", "--binary", "HEAD"], cwd=repo_root, timeout=RELEASE_COMMAND_TIMEOUT_SECONDS).stdout
+    diff = run_git_bytes(["diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD", "--"], cwd=repo_root, timeout=RELEASE_COMMAND_TIMEOUT_SECONDS).stdout
     if not diff.strip():
         return
     try:
-        run_git_command_with_input(["apply", "--index", "--binary"], diff, cwd=worktree, timeout=RELEASE_COMMAND_TIMEOUT_SECONDS)
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(_format_command_failure(["git", "apply", "--index", "--binary"], exc)) from exc
+        run_git_bytes(["apply", "--index", "--binary"], cwd=worktree, input=diff, timeout=RELEASE_COMMAND_TIMEOUT_SECONDS)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(format_exception_diagnostics(exc)) from exc
 
 
 def _cargo_manifest_bench_targets(worktree: Path) -> set[str]:
@@ -4741,8 +4565,8 @@ def _generate_local_baseline_into_worktree(
     """Generate a local baseline and return its complete revision evidence."""
     baseline_worktree = tmp_dir / "baseline-worktree"
     _progress(f"preparing baseline worktree for {config.baseline_tag}")
-    _run_git(["worktree", "add", "--detach", str(baseline_worktree), config.baseline_tag], cwd=config.repo_root)
-    try:
+    revision = _resolve_worktree_revision(config.repo_root, config.baseline_tag)
+    with temporary_worktree(config.repo_root, baseline_worktree, revision, allow_git_mutations=True):
         observed_baseline_tag = _current_package_tag(baseline_worktree)
         if observed_baseline_tag != config.baseline_tag:
             msg = f"prepared baseline checkout version {observed_baseline_tag} does not match requested release {config.baseline_tag}"
@@ -4779,24 +4603,6 @@ def _generate_local_baseline_into_worktree(
                 comparison_targets=comparison_targets,
             ),
         )
-    finally:
-        try:
-            _run_git(["worktree", "remove", "--force", str(baseline_worktree)], cwd=config.repo_root)
-        except RuntimeError as exc:
-            print(f"benchmark-utils: failed to remove baseline worktree: {exc}", file=sys.stderr)
-
-
-def _safe_extract_tar(archive: Path, target_dir: Path) -> None:
-    """Extract a tar.gz archive without allowing path traversal."""
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target_root = target_dir.resolve()
-    with tarfile.open(archive, "r:gz") as tar:
-        for member in tar.getmembers():
-            member_path = (target_dir / member.name).resolve()
-            if not member_path.is_relative_to(target_root):
-                msg = f"refusing to extract unsafe archive member {member.name!r}"
-                raise ValueError(msg)
-        tar.extractall(target_dir, filter="data")
 
 
 def _source_state_payload(source: SourceState) -> dict[str, object]:
@@ -4915,18 +4721,22 @@ def _release_metadata_commands(value: object, *, source: Path) -> tuple[tuple[st
     return tuple(commands)
 
 
-def _expected_tag_commit(repo_root: Path, tag: str) -> str:
-    """Resolve one requested release tag to its peeled commit object."""
-    normalized_tag = normalize_release_tag(tag)
+def _resolve_worktree_revision(repo_root: Path, ref: str) -> str:
+    """Resolve a caller-selected ref to the shared worktree API's commit identity."""
     commit = run_git_command(
-        ["rev-parse", f"{normalized_tag}^{{commit}}"],
+        ["rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"],
         cwd=repo_root,
         timeout=RELEASE_COMMAND_TIMEOUT_SECONDS,
     ).stdout.strip()
     if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit) is None:
-        msg = f"could not resolve release tag {normalized_tag} to a full commit ID"
+        msg = f"could not resolve Git ref {ref!r} to a full commit ID"
         raise ValueError(msg)
     return commit
+
+
+def _expected_tag_commit(repo_root: Path, tag: str) -> str:
+    """Resolve one requested release tag to its peeled commit object."""
+    return _resolve_worktree_revision(repo_root, normalize_release_tag(tag))
 
 
 def _legacy_release_asset_evidence(
@@ -5267,6 +5077,7 @@ def _prepare_github_release_assets(
     """Prepare release-asset samples and return current/baseline measurement evidence."""
     baseline_download = _download_release_baseline(tag=config.baseline_tag, download_dir=tmp_dir, repo_root=config.repo_root)
     current_download = _download_release_baseline(tag=config.current_tag, download_dir=tmp_dir, repo_root=config.repo_root)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
     baseline_extract = tmp_dir / "baseline-asset"
     current_extract = tmp_dir / "current-asset"
     _safe_extract_tar(baseline_download.archive, baseline_extract)
@@ -5312,16 +5123,28 @@ def _prepare_github_release_assets(
     return current_evidence, baseline_evidence
 
 
+@contextmanager
+def _performance_workspace() -> Iterator[Path]:
+    """Retain the containing workspace when Git cannot remove either checkout."""
+    directory = Path(tempfile.mkdtemp(prefix="delaunay-performance-")).resolve()
+    try:
+        yield directory
+    finally:
+        if any((directory / name).exists() for name in ("worktree", "baseline-worktree")):
+            _progress(f"retained performance workspace for recovery: {directory}")
+        else:
+            shutil.rmtree(directory)
+
+
 def _build_performance_bundle_in_temp_worktree(*, config: ReleaseReportConfig) -> PerformanceBundle:
     """Measure or load a comparison in temporary worktrees and return trusted data."""
     _require_release_benchmark_contract(config.current_tag, config.baseline_tag)
-    with tempfile.TemporaryDirectory(prefix="delaunay-performance-") as tmp:
-        tmp_dir = Path(tmp)
+    with _performance_workspace() as tmp_dir:
         worktree = tmp_dir / "worktree"
 
         _progress(f"preparing current worktree for {config.current_tag}")
-        _run_git(["worktree", "add", "--detach", str(worktree), config.worktree_ref], cwd=config.repo_root)
-        try:
+        revision = _resolve_worktree_revision(config.repo_root, config.worktree_ref)
+        with temporary_worktree(config.repo_root, worktree, revision, allow_git_mutations=True):
             if config.apply_current_diff:
                 _apply_current_diff_to_worktree(repo_root=config.repo_root, worktree=worktree)
             observed_current_tag = _current_package_tag(worktree)
@@ -5405,11 +5228,6 @@ def _build_performance_bundle_in_temp_worktree(*, config: ReleaseReportConfig) -
                 comparison_note=comparison_note,
             )
             return PerformanceBundle(context=context, rows=rows)
-        finally:
-            try:
-                _run_git(["worktree", "remove", "--force", str(worktree)], cwd=config.repo_root)
-            except RuntimeError as exc:
-                print(f"benchmark-utils: failed to remove temporary worktree: {exc}", file=sys.stderr)
 
 
 def _artifact_paths_for_output(output: Path) -> ArtifactPaths:
@@ -5519,8 +5337,12 @@ def _publish_performance_bundle(
                     expected=report_id,
                 )
             return report_id
-    except BaseException:
-        _restore_file_snapshot(output, prior_output)
+    except BaseException as primary:
+        try:
+            restore_artifact_snapshot(output, prior_output)
+        except (OSError, ExceptionGroup) as rollback_error:
+            message = "Performance report publication and rollback failed"
+            raise BaseExceptionGroup(message, [primary, rollback_error]) from None
         raise
 
 
@@ -5648,8 +5470,12 @@ def render_and_promote_performance_artifacts(
             destinations=destinations,
             expected=report_id,
         )
-    except BaseException:
-        _restore_file_snapshot(output, prior_output)
+    except BaseException as primary:
+        try:
+            restore_artifact_snapshot(output, prior_output)
+        except (OSError, ExceptionGroup) as rollback_error:
+            message = "Performance report promotion and rollback failed"
+            raise BaseExceptionGroup(message, [primary, rollback_error]) from None
         raise
 
 
@@ -5741,14 +5567,12 @@ class BaselineGenerator:
                     ],
                     cwd=self.project_root,
                     timeout=bench_timeout,
-                    capture_output=True,
                 )
             else:
                 result = run_cargo_command(
                     ["bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", "ci_performance_suite"],
                     cwd=self.project_root,
                     timeout=bench_timeout,
-                    capture_output=True,
                 )
             _write_ci_performance_manifest_ids(self.project_root, result.stdout)
 
@@ -5770,16 +5594,8 @@ class BaselineGenerator:
             logger.debug("TimeoutExpired: %s", e)
             return False
         except subprocess.CalledProcessError as e:
-            # Print captured stderr/stdout from cargo bench failure
             print("❌ Cargo bench failed with exit code:", e.returncode, file=sys.stderr)
-            if e.stderr:
-                print("\n=== cargo bench stderr ===", file=sys.stderr)
-                print(e.stderr, file=sys.stderr)
-                print("=== end stderr ===\n", file=sys.stderr)
-            if e.stdout:
-                print("\n=== cargo bench stdout ===", file=sys.stderr)
-                print(e.stdout, file=sys.stderr)
-                print("=== end stdout ===\n", file=sys.stderr)
+            print(format_exception_diagnostics(e), file=sys.stderr)
             logger.exception("Error in generate_baseline")
             return False
         except _RECOVERABLE_CLI_ERRORS:
@@ -5862,77 +5678,9 @@ class LocalRefBaselineGenerator:
         self.remote = remote
 
     @staticmethod
-    def _restore_artifact_pair(
-        published_files: tuple[tuple[bool, Path], ...],
-        backups: tuple[tuple[bool, Path, Path], ...],
-    ) -> list[OSError]:
-        """Restore the prior artifact pair and return any rollback failures."""
-        rollback_errors: list[OSError] = []
-        for published, live_file in published_files:
-            if published:
-                try:
-                    live_file.unlink(missing_ok=True)
-                except OSError as rollback_error:
-                    rollback_errors.append(rollback_error)
-
-        for backed_up, backup_file, live_file in backups:
-            if backed_up:
-                try:
-                    backup_file.replace(live_file)
-                except OSError as rollback_error:
-                    rollback_errors.append(rollback_error)
-
-        return rollback_errors
-
-    @staticmethod
-    def _publish_artifact_pair(
-        staged_results: Path,
-        staged_metadata: Path,
-        output_file: Path,
-        metadata_file: Path,
-    ) -> None:
-        """Publish a staged baseline/metadata pair, restoring the prior pair on failure."""
-        backup_dir = Path(tempfile.mkdtemp(prefix=".delaunay-baseline-backup-", dir=output_file.parent))
-        backup_results = backup_dir / output_file.name
-        backup_metadata = backup_dir / metadata_file.name
-        backed_up_results = False
-        backed_up_metadata = False
-        published_results = False
-        published_metadata = False
-
-        try:
-            if output_file.exists():
-                output_file.replace(backup_results)
-                backed_up_results = True
-            if metadata_file.exists():
-                metadata_file.replace(backup_metadata)
-                backed_up_metadata = True
-
-            staged_results.replace(output_file)
-            published_results = True
-            staged_metadata.replace(metadata_file)
-            published_metadata = True
-        except OSError as publish_error:
-            rollback_errors = LocalRefBaselineGenerator._restore_artifact_pair(
-                (
-                    (published_results, output_file),
-                    (published_metadata, metadata_file),
-                ),
-                (
-                    (backed_up_results, backup_results, output_file),
-                    (backed_up_metadata, backup_metadata, metadata_file),
-                ),
-            )
-
-            if rollback_errors:
-                details = "; ".join(str(error) for error in rollback_errors)
-                msg = f"Failed to publish baseline artifacts and restore the prior pair: {details}"
-                raise RuntimeError(msg) from publish_error
-
-            shutil.rmtree(backup_dir, ignore_errors=True)
-            raise
-
-        shutil.rmtree(backup_dir, ignore_errors=True)
+    def _publish_artifact_pair(staged_results: Path, staged_metadata: Path, output_file: Path, metadata_file: Path) -> None:
+        """Publish the baseline and metadata together through the shared transaction."""
+        replace_many({output_file: staged_results.read_bytes(), metadata_file: staged_metadata.read_bytes()})
 
     def generate_for_ref(
         self,
@@ -6406,14 +6154,12 @@ class PerformanceComparator:
                     ],
                     cwd=self.project_root,
                     timeout=bench_timeout,
-                    capture_output=True,
                 )
             else:
                 result = run_cargo_command(
                     ["bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", "ci_performance_suite"],
                     cwd=self.project_root,
                     timeout=bench_timeout,
-                    capture_output=True,
                 )
             _write_ci_performance_manifest_ids(self.project_root, result.stdout)
 
@@ -6450,16 +6196,8 @@ class PerformanceComparator:
             self._write_error_file(output_file, "Benchmark execution timeout", f"{e} (timeout after {bench_timeout} seconds)")
             return False, False
         except subprocess.CalledProcessError as e:
-            # Print captured stderr/stdout from cargo bench failure
             print("❌ Cargo bench failed with exit code:", e.returncode, file=sys.stderr)
-            if e.stderr:
-                print("\n=== cargo bench stderr ===", file=sys.stderr)
-                print(e.stderr, file=sys.stderr)
-                print("=== end stderr ===\n", file=sys.stderr)
-            if e.stdout:
-                print("\n=== cargo bench stdout ===", file=sys.stderr)
-                print(e.stdout, file=sys.stderr)
-                print("=== end stdout ===\n", file=sys.stderr)
+            print(format_exception_diagnostics(e), file=sys.stderr)
             self._write_error_file(output_file, "Benchmark execution error", str(e))
             logger.exception("Error in compare_with_baseline")
             return False, False
@@ -7856,8 +7594,6 @@ class GitHubBaselineFetcher:
                 str(out_dir),
             ],
             check=False,
-            capture_output=True,
-            text=True,
         )
 
         if result.returncode == 0:
@@ -7881,8 +7617,6 @@ class GitHubBaselineFetcher:
                 f"ref={ref_name}",
             ],
             check=False,
-            capture_output=True,
-            text=True,
         )
 
         if result.returncode != 0:
@@ -8349,10 +8083,7 @@ def configure_logging(*, verbose: bool) -> None:
 
 def _exit_called_process_error(error: subprocess.CalledProcessError) -> NoReturn:
     print(f"❌ Git command failed with exit code {error.returncode}: {error.cmd}", file=sys.stderr)
-    if error.stderr:
-        print(error.stderr, file=sys.stderr)
-    if error.stdout:
-        print(error.stdout, file=sys.stderr)
+    print(format_exception_diagnostics(error), file=sys.stderr)
     sys.exit(1)
 
 
@@ -9078,7 +8809,11 @@ def main() -> None:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(2)
 
-    execute_command(args, project_root)
+    try:
+        execute_command(args, project_root)
+    except ExceptionGroup as error:
+        print(f"benchmark-utils: {format_exception_diagnostics(error)}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

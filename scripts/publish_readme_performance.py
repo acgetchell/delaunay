@@ -2,19 +2,16 @@
 
 import argparse
 import math
-import os
 import sys
-import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+from research_repo_tools.process import format_exception_diagnostics
+from research_repo_tools.publication import MarkerPair, plan_publication, publish_publication
 
 from benchmark_utils import DOCS_PERFORMANCE_REPORT, render_performance_bundle
-from performance_artifacts import ArtifactPaths, PerformanceBundle, PerformanceRow, load_bundle
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
+from performance_artifacts import ArtifactPaths, PerformanceBundle, PerformanceRow, load_bundle_bytes
 
 _MARKER_BEGIN = "<!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->"
 _MARKER_END = "<!-- PERFORMANCE_RELEASE_TABLE:END -->"
@@ -31,16 +28,16 @@ class PublicationSummary:
     changed_paths: tuple[Path, ...]
 
 
-def _cargo_package_tag(cargo_toml: Path) -> str:
+def _cargo_package_tag(payload: bytes) -> str:
     """Return the stable tag implied by Cargo package metadata."""
-    data = tomllib.loads(cargo_toml.read_text(encoding="utf-8"))
+    data = tomllib.loads(payload.decode("utf-8"))
     package = data.get("package")
     if not isinstance(package, dict):
-        msg = f"{cargo_toml} is missing a [package] table"
+        msg = "Cargo.toml is missing a [package] table"
         raise TypeError(msg)
     version = package.get("version")
     if not isinstance(version, str):
-        msg = f"{cargo_toml} [package] is missing a string version"
+        msg = "Cargo.toml [package] is missing a string version"
         raise TypeError(msg)
     return f"v{version.removeprefix('v')}"
 
@@ -116,70 +113,15 @@ def render_readme_block(bundle: PerformanceBundle) -> str:
     return "\n".join(lines)
 
 
-def _replace_marked_block(readme: str, replacement: str) -> str:
-    """Replace exactly one ordered README publication block."""
-    begin_count = readme.count(_MARKER_BEGIN)
-    end_count = readme.count(_MARKER_END)
-    if begin_count != 1 or end_count != 1:
-        msg = f"README performance markers must be unique (begin={begin_count}, end={end_count})"
-        raise ValueError(msg)
-    begin = readme.index(_MARKER_BEGIN)
-    end = readme.index(_MARKER_END, begin) + len(_MARKER_END)
-    return f"{readme[:begin]}{replacement}{readme[end:]}"
-
-
-def _write_bytes_atomic(path: Path, payload: bytes) -> None:
-    """Replace one file atomically while preserving its existing mode."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(payload)
-        temporary.chmod(path.stat().st_mode if path.exists() else 0o644)
-        temporary.replace(path)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
-
-
-def _publish_transaction(payloads: dict[Path, bytes], validate: Callable[[], None]) -> tuple[Path, ...]:
-    """Publish changed payloads together and roll back caught failures."""
-    originals = {path: path.read_bytes() if path.exists() else None for path in payloads}
-    changed = tuple(sorted((path for path, payload in payloads.items() if payload != originals[path]), key=str))
-    replaced: list[Path] = []
-    try:
-        for path in changed:
-            _write_bytes_atomic(path, payloads[path])
-            replaced.append(path)
-        validate()
-    except BaseException as primary:
-        rollback_errors: list[str] = []
-        for path in reversed(replaced):
-            try:
-                original = originals[path]
-                if original is None:
-                    path.unlink(missing_ok=True)
-                else:
-                    _write_bytes_atomic(path, original)
-            except OSError as error:
-                rollback_errors.append(f"{path}: {error}")
-        if rollback_errors:
-            msg = f"README performance publication failed ({primary}); rollback also failed: {'; '.join(rollback_errors)}"
-            raise RuntimeError(msg) from primary
-        raise
-    return changed
-
-
 def _contained_destination(root: Path, path: Path, *, label: str) -> Path:
-    """Resolve one write destination and require repository containment."""
+    """Check containment while preserving symlink spelling for shared validation."""
     resolved = path.resolve()
     try:
         resolved.relative_to(root)
     except ValueError as error:
         msg = f"{label} must be contained by repository root {root}, got {resolved}"
         raise ValueError(msg) from error
-    return resolved
+    return path.absolute()
 
 
 def publish_readme_performance(
@@ -195,9 +137,13 @@ def publish_readme_performance(
         provenance=resolved_root / "target/bench-reports/performance.provenance.json",
     )
     readme_path = _contained_destination(resolved_root, readme or resolved_root / "README.md", label="README destination")
-    bundle = load_bundle(source)
+    source_csv = source.csv.read_bytes()
+    source_provenance = source.provenance.read_bytes()
+    cargo_path = resolved_root / "Cargo.toml"
+    cargo_payload = cargo_path.read_bytes()
+    bundle = load_bundle_bytes(source_csv, source_provenance, source=str(source.csv))
     bundle.require_promotable()
-    expected_current = _cargo_package_tag(resolved_root / "Cargo.toml")
+    expected_current = _cargo_package_tag(cargo_payload)
     if bundle.context.release.current != expected_current:
         msg = (
             f"retained performance data is for {bundle.context.release.current}, but Cargo.toml is {expected_current}; "
@@ -228,14 +174,14 @@ def publish_readme_performance(
         resolved_root / DOCS_PERFORMANCE_REPORT,
         label="promoted performance report",
     )
-    source_csv = source.csv.read_bytes()
-    source_provenance = source.provenance.read_bytes()
     missing_durable = [path for path in (durable.csv, durable.provenance) if not path.is_file()]
     if missing_durable:
         rendered = ", ".join(path.relative_to(resolved_root).as_posix() for path in missing_durable)
         msg = f"promoted performance evidence is missing: {rendered}; run `just performance-release` before publishing the README snapshot"
         raise ValueError(msg)
-    if durable.csv.read_bytes() != source_csv or durable.provenance.read_bytes() != source_provenance:
+    durable_csv = durable.csv.read_bytes()
+    durable_provenance = durable.provenance.read_bytes()
+    if durable_csv != source_csv or durable_provenance != source_provenance:
         msg = "retained performance data does not match the exact bundle promoted by `just performance-release`"
         raise ValueError(msg)
 
@@ -248,11 +194,11 @@ def publish_readme_performance(
         provenance=durable.provenance.relative_to(resolved_root),
     )
     expected_report = render_performance_bundle(bundle, evidence_paths=durable_evidence, evidence_state="promoted")
-    if performance_report.read_text(encoding="utf-8") != expected_report:
+    report_payload = performance_report.read_bytes()
+    if report_payload.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n") != expected_report:
         msg = f"{DOCS_PERFORMANCE_REPORT.as_posix()} is not the canonical rendering of the retained and promoted performance bundle"
         raise ValueError(msg)
 
-    updated_readme = _replace_marked_block(readme_path.read_text(encoding="utf-8"), render_readme_block(bundle))
     asset_paths = ArtifactPaths(
         csv=_contained_destination(resolved_root, resolved_root / _ASSET_CSV, label="README CSV asset destination"),
         provenance=_contained_destination(
@@ -261,21 +207,27 @@ def publish_readme_performance(
             label="README provenance asset destination",
         ),
     )
-    payloads = {
-        asset_paths.csv: source_csv,
-        asset_paths.provenance: source_provenance,
-        readme_path: updated_readme.encode("utf-8"),
+    inputs = {
+        source.csv.relative_to(resolved_root).as_posix(): source_csv,
+        source.provenance.relative_to(resolved_root).as_posix(): source_provenance,
+        durable.csv.relative_to(resolved_root).as_posix(): durable_csv,
+        durable.provenance.relative_to(resolved_root).as_posix(): durable_provenance,
+        performance_report.relative_to(resolved_root).as_posix(): report_payload,
+        cargo_path.relative_to(resolved_root).as_posix(): cargo_payload,
     }
-
-    def validate() -> None:
-        if load_bundle(asset_paths) != bundle:
-            msg = "published README performance assets do not round-trip to the retained bundle"
-            raise ValueError(msg)
-        if readme_path.read_text(encoding="utf-8") != updated_readme:
-            msg = "published README performance block does not match the validated plan"
-            raise ValueError(msg)
-
-    changed = _publish_transaction(payloads, validate)
+    block = render_readme_block(bundle).removeprefix(_MARKER_BEGIN).removesuffix(_MARKER_END).strip("\n")
+    plan = plan_publication(
+        resolved_root,
+        readme_path.relative_to(resolved_root).as_posix(),
+        MarkerPair(_MARKER_BEGIN, _MARKER_END),
+        block,
+        inputs=inputs,
+        figures={
+            asset_paths.csv.relative_to(resolved_root).as_posix(): source_csv,
+            asset_paths.provenance.relative_to(resolved_root).as_posix(): source_provenance,
+        },
+    )
+    changed = publish_publication(plan)
     return PublicationSummary(current_tag=current, baseline_tag=baseline, changed_paths=changed)
 
 
@@ -306,8 +258,8 @@ def main(argv: list[str] | None = None) -> int:
             ),
             readme=_under_root(root, args.readme),
         )
-    except (OSError, RuntimeError, TypeError, ValueError, tomllib.TOMLDecodeError) as error:
-        print(f"performance-readme: {error}", file=sys.stderr)
+    except (OSError, RuntimeError, TypeError, ValueError, ExceptionGroup) as error:
+        print(f"performance-readme: {format_exception_diagnostics(error)}", file=sys.stderr)
         return 1
 
     if summary.changed_paths:

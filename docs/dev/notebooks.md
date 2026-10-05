@@ -20,6 +20,8 @@ Every markdown, code, and raw cell must have a unique, stable, descriptive
 - preserve an existing ID when editing a cell unless its purpose changes
 
 `just notebook-check` enforces presence, uniqueness, and lowercase kebab-case.
+Shared lint/advice owns notebook validation; `scripts/tests/test_notebook_policy.py`
+enforces the consumer's spelling rule without a local orchestration script.
 Stable IDs make notebook diffs, review comments, and nbformat validation easier
 to follow.
 
@@ -36,8 +38,13 @@ Routine validation is lint-only:
 just notebook-check
 ```
 
-This command validates notebook structure and metadata, extracts code cells,
-and runs Ruff and ty without executing notebooks.
+This command uses shared notebook structure/output checks, native Ruff and ty
+notebook support, and advice, followed by the local ID spelling rule. It does
+not extract cells into temporary Python files or execute them.
+
+Consumer Ruff policy rejects `subprocess.Popen`, including aliases. Use
+`subprocess.run(..., timeout=...)` in notebook cells so each process has a
+bounded lifetime; reusable support scripts use the shared process runner.
 
 The canonical macOS leg of `just ci` additionally runs
 `just validation-doc-figures-check`. That named check executes only the
@@ -61,9 +68,11 @@ Exact command behavior and validator selection live in
 
 ## Generated And Tracked Artifacts
 
-Ordinary notebook execution writes the executed notebook and generated files
-under `target/notebooks/<notebook-stem>/`. Treat that directory as disposable
-scratch output and leave the source notebook unchanged.
+Shared execution writes `target/notebooks/notebooks/<notebook-stem>.ipynb`
+and an adjacent `.report.json` with source/lock hashes and execution status.
+Notebook-generated figures and data stay under
+`target/notebooks/<notebook-stem>/`. Treat both as disposable scratch output;
+the source notebook remains unchanged.
 
 Tracked artifacts are refreshed only when the task explicitly includes the
 artifact and through a named recipe. Current named workflows include:

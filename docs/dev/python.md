@@ -21,7 +21,7 @@ just test-python
 ```
 
 `just python-check` runs Ruff formatting checks, Ruff linting, and
-`just python-typecheck`. All three checks share a Git-derived list of tracked
+`just python-typecheck`. All three checks use shared `files run` batching over tracked
 Python files plus new, unignored `.py` and `.pyi` files, including files outside
 `scripts/`. Deleted files are skipped. The fixer uses the same list.
 `ty check --error all` is the type-checking authority. Prefer reducing untyped
@@ -61,7 +61,14 @@ treating `.ipynb` files as ordinary Python scripts.
 
 ---
 
-## Subprocess Mocks
+## Subprocess Execution And Mocks
+
+Use the documented `research_repo_tools.process` APIs for executable discovery,
+captured/live commands, timeouts, and failure diagnostics. `run_command` captures
+text; `run_command_live` inherits streams; `run_git_bytes` transports binary
+Git output/input without decoding. Checked failures and timeouts may carry bytes,
+so use `format_exception_diagnostics` when presenting their captured output.
+No repository-owned generic subprocess wrapper remains.
 
 When mocking command wrappers such as `run_git_command()`,
 `run_cargo_command()`, or `run_safe_command()`, prefer real typed subprocess

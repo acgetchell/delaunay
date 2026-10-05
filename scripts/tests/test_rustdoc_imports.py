@@ -3,61 +3,25 @@
 import re
 from pathlib import Path
 
+from research_repo_tools.semgrep_docs import rust_blocks
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = REPO_ROOT / "src"
 ROOT_PRELUDE_IMPORT = re.compile(r"\buse\s+delaunay\s*::\s*prelude\s*::\s*\*\s*;")
-RUSTDOC_RUST_FENCE_TAGS = frozenset(
-    {
-        "compile_fail",
-        "edition2015",
-        "edition2018",
-        "edition2021",
-        "edition2024",
-        "ignore",
-        "no_run",
-        "rust",
-        "should_panic",
-    }
-)
 
 
 def rustdoc_root_prelude_violations(path: Path) -> list[str]:
-    """Return kitchen-sink imports or unterminated public Rustdoc fences."""
-    violations: list[str] = []
-    in_fence = False
-    rust_fence = False
-    fence_start = 0
-
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        stripped = line.lstrip()
-        if not stripped.startswith(("///", "//!")):
-            if in_fence:
-                violations.append(f"{path}:{fence_start}: unterminated Rustdoc code fence")
-                in_fence = False
-                rust_fence = False
-            continue
-
-        doc_line = stripped[3:].lstrip()
-        if doc_line.startswith("```"):
-            if in_fence:
-                in_fence = False
-                rust_fence = False
-                continue
-
-            fence_start = line_number
-            fence_info = doc_line[3:].strip()
-            fence_tags = {tag.strip() for tag in fence_info.split(",") if tag.strip()}
-            in_fence = True
-            rust_fence = not fence_tags or bool(fence_tags & RUSTDOC_RUST_FENCE_TAGS)
-            continue
-
-        if rust_fence and ROOT_PRELUDE_IMPORT.search(doc_line):
-            violations.append(f"{path}:{line_number}: public Rustdoc must use focused preludes")
-
-    if in_fence:
-        violations.append(f"{path}:{fence_start}: unterminated Rustdoc code fence")
-
-    return violations
+    """Apply the focused-prelude policy to shared, line-preserving Rustdoc extraction."""
+    try:
+        blocks = rust_blocks(path)
+    except ValueError as exc:
+        return [str(exc)]
+    return [
+        f"{path}:{line_number}: public Rustdoc must use focused preludes"
+        for block in blocks
+        for line_number, line in enumerate(block.splitlines(), start=1)
+        if ROOT_PRELUDE_IMPORT.search(line)
+    ]
 
 
 def test_public_rustdoc_uses_focused_preludes() -> None:
@@ -94,7 +58,7 @@ def test_detector_rejects_unterminated_rustdoc_fence(tmp_path: Path) -> None:
     source = tmp_path / "example.rs"
     source.write_text("/// ```rust\n/// let value = 1;\n", encoding="utf-8")
 
-    assert rustdoc_root_prelude_violations(source) == [f"{source}:1: unterminated Rustdoc code fence"]
+    assert rustdoc_root_prelude_violations(source) == [f"unclosed Rust documentation fence: {source}"]
 
 
 def test_detector_rejects_hidden_root_prelude_import(tmp_path: Path) -> None:
