@@ -46,6 +46,8 @@ jobs:
             ".github/workflows/codeql.yml",
             ".github/workflows/dependabot-auto-merge.yml",
             ".github/workflows/generate-baseline.yml",
+            ".github/workflows/gitleaks.yml",
+            ".github/workflows/osv.yml",
             ".github/workflows/papers.yml",
             ".github/workflows/profiling-benchmarks.yml",
             ".github/workflows/release-benchmarks.yml",

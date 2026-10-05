@@ -4,3 +4,7 @@ paths:
   .github/workflows/*.yml:
     ignore:
       - '^specifying action "\$/\.github/actions/setup-just" in invalid format because ref is missing\.'
+  # Shared files run prefixes paths with ./ to keep leading dashes literal.
+  ./.github/workflows/*.yml:
+    ignore:
+      - '^specifying action "\$/\.github/actions/setup-just" in invalid format because ref is missing\.'

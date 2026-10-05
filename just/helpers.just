@@ -36,27 +36,18 @@ _ensure-cargo-llvm-cov: _ensure-toolchain
 
 _ensure-cargo-machete: _ensure-toolchain
 
-_ensure-chktex:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v chktex >/dev/null || {
-        echo "❌ 'chktex' not found. Install a TeX distribution or package manager copy of chktex and ensure it is on PATH."
-        exit 1
-    }
+_ensure-chktex: _ensure-uv
+    {{ rrt }} validation require chktex
 
 _ensure-dprint: _ensure-toolchain
 
-_ensure-gh:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v gh >/dev/null || { echo "❌ 'gh' not found. Install GitHub CLI and ensure it is on PATH."; exit 1; }
+_ensure-gh: _ensure-uv
+    {{ rrt }} validation require gh
 
 _ensure-git-cliff: _ensure-toolchain
 
-_ensure-jq:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v jq >/dev/null || { echo "❌ 'jq' not found. Install jq and ensure it is on PATH."; exit 1; }
+_ensure-jq: _ensure-uv
+    {{ rrt }} validation require jq
 
 _ensure-nextest: _ensure-toolchain
 
@@ -159,23 +150,7 @@ _performance-tag-pair-state current_tag baseline_tag:
 # Run a Python tool over tracked sources plus new, unignored sources.
 [private]
 _python-tool command: _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source_list="$(mktemp "${TMPDIR:-/tmp}/delaunay-python-sources.XXXXXX")"
-    trap 'rm -f "$source_list"' EXIT
-    git --no-pager ls-files --cached --others --exclude-standard --deduplicate -z -- '*.py' '*.pyi' > "$source_list"
-    python_files=()
-    while IFS= read -r -d '' file; do
-        # A tracked file may have been deleted in the working tree.
-        if [[ -f "$file" ]]; then
-            python_files+=("$file")
-        fi
-    done < "$source_list"
-    if [[ ${#python_files[@]} -eq 0 ]]; then
-        echo "No Python source files found" >&2
-        exit 1
-    fi
-    uv run --locked {{ command }} -- "${python_files[@]}"
+    {{ rrt }} files run --include '*.py' --include '*.pyi' -- uv run --locked {{ command }} --
 
 [private]
 _validation-doc-figures-check-if-canonical:

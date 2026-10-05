@@ -134,11 +134,9 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
     repository = Path(__file__).parents[2]
     wheel_path, configuration = _build_support_wheel(repository, tmp_path)
     assert set(configuration["project"]["optional-dependencies"]["notebooks"]) == {
-        "ipykernel>=7.3.0",
-        "nbclient>=0.11.0",
-        "nbformat>=5.10.4",
-        "ruff>=0.16.1",
-        "ty>=0.0.66",
+        "research-repo-tools[notebooks]==0.1.7",
+        "ruff>=0.16.8",
+        "ty>=0.0.82",
     }
     with zipfile.ZipFile(wheel_path) as wheel:
         metadata_path = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))
@@ -149,27 +147,28 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
 
     uv = shutil.which("uv")
     assert uv is not None
-    venv = tmp_path / "installed"
-    subprocess.run(  # noqa: S603 - executable is resolved and arguments are test-owned paths.
-        [uv, "venv", "--python", sys.executable, str(venv)],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    python = _venv_executable(venv, "python")
-    subprocess.run(  # noqa: S603 - executable is resolved and the wheel is a test-built local artifact.
-        [uv, "pip", "install", "--no-cache", "--python", str(python), f"{wheel_path}[notebooks]"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-
     consumer = tmp_path / "consumer"
     consumer.mkdir()
-    (consumer / "pyproject.toml").write_text('[project]\nname = "wheel-consumer"\nversion = "0.0.0"\nrequires-python = ">=3.14"\n', encoding="utf-8")
-    notebook = consumer / "smoke.ipynb"
+    (consumer / ".python-version").write_bytes((repository / ".python-version").read_bytes())
+    (consumer / "pyproject.toml").write_text(
+        '[project]\nname = "wheel-consumer"\nversion = "0.0.0"\nrequires-python = ">=3.14"\n'
+        f"dependencies = [{json.dumps(f'delaunay-scripts[notebooks] @ {wheel_path.as_uri()}')}]\n"
+        "[dependency-groups]\nnotebooks = []\n"
+        '[tool.research-repo-tools.notebooks]\ngroup = "notebooks"\n'
+        f"[tool.uv]\nrequired-version = {json.dumps(configuration['tool']['uv']['required-version'])}\n",
+        encoding="utf-8",
+    )
+    subprocess.run(  # noqa: S603 - resolved executable installs a test-built wheel in a disposable project.
+        [uv, "sync", "--python", sys.executable],
+        cwd=consumer,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    venv = consumer / ".venv"
+    notebook = consumer / "notebooks" / "smoke.ipynb"
+    notebook.parent.mkdir()
     notebook.write_text(
         json.dumps(
             {
@@ -180,7 +179,7 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
                         "id": "installed-smoke",
                         "metadata": {},
                         "outputs": [],
-                        "source": "value: int = 1\nprint(value)\n",
+                        "source": "value: int = 1\nprint(value)",
                     },
                 ],
                 "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}},
@@ -190,13 +189,13 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
         ),
         encoding="utf-8",
     )
-    notebook_check = _venv_executable(venv, "notebook-check")
+    shared_cli = _venv_executable(venv, "research-repo-tools")
     environment = os.environ.copy()
-    environment["PATH"] = f"{notebook_check.parent}{os.pathsep}{environment.get('PATH', '')}"
+    environment["PATH"] = f"{shared_cli.parent}{os.pathsep}{environment.get('PATH', '')}"
     environment.pop("PYTHONPATH", None)
 
     lint = subprocess.run(  # noqa: S603 - executable and inputs come from the isolated test installation.
-        [str(notebook_check), "lint", str(notebook), "--repo-root", str(consumer)],
+        [str(shared_cli), "--root", str(consumer), "notebooks", "lint", str(notebook)],
         cwd=consumer,
         env=environment,
         check=False,
@@ -205,7 +204,7 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
         timeout=120,
     )
     execute = subprocess.run(  # noqa: S603 - executable and inputs come from the isolated test installation.
-        [str(notebook_check), "execute", str(notebook), "--repo-root", str(consumer), "--timeout", "30"],
+        [str(shared_cli), "--root", str(consumer), "notebooks", "execute", str(notebook), "--timeout", "30"],
         cwd=consumer,
         env=environment,
         check=False,
@@ -220,3 +219,7 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
     assert execute.returncode == 0, execute.stderr
     assert "Traceback" not in execute.stderr
     assert "OK executed" in execute.stdout
+    report = json.loads((consumer / "target/notebooks/notebooks/smoke.report.json").read_bytes())
+    assert report["status"] == "passed"
+    assert (consumer / "target/notebooks/notebooks/smoke.ipynb").is_file()
+    assert json.loads(notebook.read_bytes())["cells"][0]["outputs"] == []

@@ -7,8 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-
-from subprocess_utils import run_safe_command
+from research_repo_tools.process import run_command as run_safe_command
 
 if TYPE_CHECKING:
     import subprocess

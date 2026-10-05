@@ -12,7 +12,7 @@ import tempfile
 # ok: delaunay.python.no-future-annotations-on-python314
 from typing import TYPE_CHECKING, Protocol
 
-from subprocess_utils import run_safe_command
+from research_repo_tools.process import run_command as run_safe_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable

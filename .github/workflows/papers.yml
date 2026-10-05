@@ -33,7 +33,6 @@ on:
       - "scripts/paper_check.py"
       - "scripts/paper_pdf_normalize.py"
       - "scripts/paper_source_date.py"
-      - "scripts/subprocess_utils.py"
       - "scripts/notebook_utils.py"
       - "scripts/notebook_validation.py"
       - "scripts/notebook_validation_rendering.py"
@@ -63,7 +62,6 @@ on:
       - "scripts/paper_check.py"
       - "scripts/paper_pdf_normalize.py"
       - "scripts/paper_source_date.py"
-      - "scripts/subprocess_utils.py"
       - "scripts/notebook_utils.py"
       - "scripts/notebook_validation.py"
       - "scripts/notebook_validation_rendering.py"
@@ -102,16 +100,22 @@ jobs:
           restore-keys: homebrew-papers-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install paper system dependencies
+        shell: bash
         run: |
-          if ! command -v tlmgr >/dev/null; then
-            brew install --cask basictex
-          fi
+          set -euo pipefail
           export PATH="/Library/TeX/texbin:$PATH"
           echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
           if ! command -v chktex >/dev/null; then
-            sudo "$(command -v tlmgr)" update --self
-            sudo "$(command -v tlmgr)" install chktex
+            if ! command -v tlmgr >/dev/null; then
+              brew install --cask basictex
+            fi
+            # Keep both operations on one mirror; CTAN redirects can select different revisions.
+            texlive_repository="https://ctan.math.illinois.edu/systems/texlive/tlnet"
+            tlmgr_path="$(command -v tlmgr)"
+            sudo "$tlmgr_path" --repository "$texlive_repository" update --self
+            sudo "$tlmgr_path" --repository "$texlive_repository" install chktex
           fi
+          chktex --version
 
       - name: Resolve Tectonic bundle cache
         id: tectonic_cache

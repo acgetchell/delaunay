@@ -5,10 +5,12 @@ import hashlib
 import io
 import json
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
+import performance_artifacts
 from performance_artifacts import (
     CSV_COLUMNS,
     ArtifactContext,
@@ -30,7 +32,6 @@ from performance_artifacts import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64
@@ -336,6 +337,59 @@ def test_publish_bundle_restores_prior_absence_when_consumer_fails(tmp_path: Pat
     assert not paths.csv.exists()
     assert not paths.provenance.exists()
     assert not list(tmp_path.glob(".performance.*.tmp"))
+
+
+def test_bundle_rollback_continues_after_failure_and_retains_prior_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """One locked destination must not prevent restoring its companion sidecar."""
+    paths = ArtifactPaths(csv=tmp_path / "performance.csv", provenance=tmp_path / "performance.provenance.json")
+    write_bundle(paths, bundle(current="v0.7.8", baseline="v0.7.7"))
+    old_csv, old_provenance = paths.csv.read_bytes(), paths.provenance.read_bytes()
+    real_replace = Path.replace
+    replacement = replace(bundle(), rows=(replace(bundle().rows[0], current=estimate(900_000.0)), bundle().rows[1]))
+
+    def fail_csv_restore(source: Path, destination: Path) -> Path:
+        if destination == paths.csv and source.read_bytes() == old_csv:
+            msg = "CSV destination locked during rollback"
+            raise OSError(msg)
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(Path, "replace", fail_csv_restore)
+    primary = RuntimeError("consumer promotion failed")
+    with pytest.raises(ExceptionGroup) as failure, publish_bundle(paths, replacement):
+        raise primary
+
+    assert failure.value.exceptions[0] is primary
+    assert "prior bytes retained" in str(failure.value.exceptions[1])
+    assert paths.provenance.read_bytes() == old_provenance
+    backups = list(tmp_path.glob(".performance.csv.*.recovery"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == old_csv
+
+
+def test_bundle_rollback_preserves_primary_and_recovery_write_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    paths = ArtifactPaths(csv=tmp_path / "performance.csv", provenance=tmp_path / "performance.provenance.json")
+    write_bundle(paths, bundle(current="v0.7.8", baseline="v0.7.7"))
+    old_csv, old_provenance = paths.csv.read_bytes(), paths.provenance.read_bytes()
+    replace_many = performance_artifacts.replace_many
+    replacement = replace(bundle(), rows=(replace(bundle().rows[0], current=estimate(900_000.0)), bundle().rows[1]))
+
+    def fail_old_csv_write(updates: dict[Path, bytes]) -> None:
+        if old_csv in updates.values():
+            msg = "storage cannot accept prior CSV"
+            raise OSError(msg)
+        replace_many(updates)
+
+    primary = RuntimeError("consumer failed")
+    monkeypatch.setattr(performance_artifacts, "replace_many", fail_old_csv_write)
+    with pytest.raises(ExceptionGroup) as failure, publish_bundle(paths, replacement):
+        raise primary
+
+    assert failure.value.exceptions[0] is primary
+    recovery = failure.value.exceptions[1]
+    assert isinstance(recovery, ExceptionGroup)
+    assert "or save its prior bytes" in recovery.message
+    assert len(recovery.exceptions) == 2
+    assert paths.provenance.read_bytes() == old_provenance
 
 
 @pytest.mark.parametrize(

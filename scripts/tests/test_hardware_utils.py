@@ -6,6 +6,7 @@ Tests hardware information detection and comparison functionality
 across different platforms with proper mocking.
 """
 
+import os
 import platform
 import subprocess
 import sys
@@ -13,9 +14,9 @@ from typing import TYPE_CHECKING
 from unittest.mock import mock_open, patch
 
 import pytest
+from research_repo_tools.process import ExecutableNotFoundError
 
 from hardware_utils import HardwareComparator, HardwareInfo, main
-from subprocess_utils import ExecutableNotFoundError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,6 +27,14 @@ if TYPE_CHECKING:
 def hardware() -> HardwareInfo:
     """Fixture for HardwareInfo instance."""
     return HardwareInfo()
+
+
+def test_hardware_probe_locale_is_fixed_without_losing_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LC_ALL", "fr_FR.UTF-8")
+    monkeypatch.setenv("LANG", "fr_FR.UTF-8")
+    monkeypatch.setenv("DELAUNAY_PROBE_TEST", "preserved")
+    command = [sys.executable, "-c", "import os; print(os.environ['LC_ALL'], os.environ['LANG'], os.environ['DELAUNAY_PROBE_TEST'])"]
+    assert HardwareInfo()._run_command(command, cwd=tmp_path) == "C C preserved"
 
 
 class TestHardwareInfo:
@@ -65,8 +74,8 @@ class TestHardwareInfo:
             "echo",
             ["test"],
             cwd=None,
-            capture_output=True,
-            text=True,
+            env={**os.environ, "LC_ALL": "C", "LANG": "C"},
+            timeout=30,
             check=True,
         )
 

@@ -1,6 +1,7 @@
 """Tests for README publication from retained performance evidence."""
 
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -9,7 +10,9 @@ import performance_artifacts
 import publish_readme_performance
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from typing import NoReturn
+
+    from research_repo_tools.publication import PublicationPlan
 
 
 def _bundle(
@@ -322,6 +325,27 @@ def test_publish_readme_performance_rejects_symlinked_asset_destination(
     assert list(outside.iterdir()) == []
 
 
+@pytest.mark.parametrize("destination", ["README.md", "docs/assets/bench/release-performance.csv"])
+def test_publish_readme_rejects_internal_output_symlinks(tmp_path: Path, destination: str) -> None:
+    """Canonicalizing a destination must not bypass shared symlink rejection."""
+    source = _write_project(tmp_path)
+    original = (tmp_path / "README.md").read_bytes()
+    linked = tmp_path / destination
+    linked.parent.mkdir(parents=True, exist_ok=True)
+    target = linked.with_name("unrelated.txt")
+    target.write_bytes(original if destination == "README.md" else b"unrelated bytes\n")
+    linked.unlink(missing_ok=True)
+    linked.symlink_to(target)
+    before = target.read_bytes()
+
+    with pytest.raises(ValueError, match="symlink"):
+        publish_readme_performance.publish_readme_performance(tmp_path, artifacts=source)
+
+    assert linked.is_symlink()
+    assert target.read_bytes() == before
+    assert (tmp_path / "README.md").read_bytes() == original
+
+
 def test_geometric_mean_speedup_is_stable_for_reciprocal_extreme_ratios() -> None:
     bundle = _bundle()
     row = bundle.rows[0]
@@ -344,22 +368,22 @@ def test_publish_readme_performance_rolls_back_all_destinations(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The consumer's three outputs use the shared publication transaction."""
     source = _write_project(tmp_path)
     readme = tmp_path / "README.md"
     original = readme.read_bytes()
-    real_write = publish_readme_performance._write_bytes_atomic
+    real_replace = Path.replace
     failed = False
 
-    def fail_once(path: Path, payload: bytes) -> None:
+    def fail_once(path: Path, target: Path) -> Path:
         nonlocal failed
-        if path.name == "release-performance.provenance.json" and not failed:
+        if Path(target).name == "release-performance.provenance.json" and not failed:
             failed = True
             msg = "simulated publication failure"
             raise OSError(msg)
-        real_write(path, payload)
+        return real_replace(path, target)
 
-    monkeypatch.setattr(publish_readme_performance, "_write_bytes_atomic", fail_once)
-
+    monkeypatch.setattr(Path, "replace", fail_once)
     with pytest.raises(OSError, match="simulated publication failure"):
         publish_readme_performance.publish_readme_performance(tmp_path, artifacts=source, readme=readme)
 
@@ -368,66 +392,44 @@ def test_publish_readme_performance_rolls_back_all_destinations(
     assert not (tmp_path / "docs/assets/bench/release-performance.provenance.json").exists()
 
 
-def test_publish_readme_performance_rolls_back_post_write_validation_failure(
+@pytest.mark.parametrize("changed_input", ["source", "durable", "report", "manifest"])
+def test_publish_readme_performance_rejects_changed_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    changed_input: str,
 ) -> None:
+    """Every scientific input must retain its validated bytes until publication."""
     source = _write_project(tmp_path)
     readme = tmp_path / "README.md"
-    assets = tmp_path / "docs/assets/bench"
-    assets.mkdir(parents=True)
-    csv = assets / "release-performance.csv"
-    provenance = assets / "release-performance.provenance.json"
-    csv.write_bytes(b"old csv\n")
-    provenance.write_bytes(b"old provenance\n")
-    originals = {path: path.read_bytes() for path in (readme, csv, provenance)}
-    real_load = publish_readme_performance.load_bundle
-    calls = 0
+    original = readme.read_bytes()
+    real_publish = publish_readme_performance.publish_publication
 
-    def fail_published_readback(paths: performance_artifacts.ArtifactPaths) -> performance_artifacts.PerformanceBundle:
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            msg = "simulated post-write validation failure"
-            raise ValueError(msg)
-        return real_load(paths)
+    def change_evidence(plan: PublicationPlan) -> tuple[Path, ...]:
+        candidates = {
+            "source": source.csv,
+            "durable": tmp_path / "docs/archive/performance/data/v0.8.1-vs-v0.8.0.csv",
+            "report": tmp_path / "docs/performance.md",
+            "manifest": tmp_path / "Cargo.toml",
+        }
+        candidates[changed_input].write_bytes(b"changed after validation")
+        return real_publish(plan)
 
-    monkeypatch.setattr(publish_readme_performance, "load_bundle", fail_published_readback)
-
-    with pytest.raises(ValueError, match="simulated post-write validation failure"):
+    monkeypatch.setattr(publish_readme_performance, "publish_publication", change_evidence)
+    with pytest.raises(ValueError, match="changed"):
         publish_readme_performance.publish_readme_performance(tmp_path, artifacts=source, readme=readme)
+    assert readme.read_bytes() == original
+    assert not (tmp_path / "docs/assets/bench/release-performance.csv").exists()
 
-    assert {path: path.read_bytes() for path in originals} == originals
 
+def test_main_reports_every_publication_recovery_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    def fail_publication(*_args: object, **_kwargs: object) -> NoReturn:
+        message = "Original bytes retained at recovery.bak"
+        raise ExceptionGroup(message, [OSError("publish failed"), OSError("rollback failed")])
 
-def test_publish_readme_performance_reports_post_validation_and_rollback_failures(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = _write_project(tmp_path)
-    real_load = publish_readme_performance.load_bundle
-    real_write = publish_readme_performance._write_bytes_atomic
-    load_calls = 0
-    write_calls = 0
-
-    def fail_published_readback(paths: performance_artifacts.ArtifactPaths) -> performance_artifacts.PerformanceBundle:
-        nonlocal load_calls
-        load_calls += 1
-        if load_calls == 2:
-            msg = "simulated post-write validation failure"
-            raise ValueError(msg)
-        return real_load(paths)
-
-    def fail_first_rollback(path: Path, payload: bytes) -> None:
-        nonlocal write_calls
-        write_calls += 1
-        if write_calls == 4:
-            msg = "simulated rollback failure"
-            raise OSError(msg)
-        real_write(path, payload)
-
-    monkeypatch.setattr(publish_readme_performance, "load_bundle", fail_published_readback)
-    monkeypatch.setattr(publish_readme_performance, "_write_bytes_atomic", fail_first_rollback)
-
-    with pytest.raises(RuntimeError, match=r"post-write validation failure.*rollback also failed.*rollback failure"):
-        publish_readme_performance.publish_readme_performance(tmp_path, artifacts=source, readme=tmp_path / "README.md")
+    monkeypatch.setattr(publish_readme_performance, "publish_readme_performance", fail_publication)
+    assert publish_readme_performance.main(["--root", str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "publish failed" in captured.err
+    assert "rollback failed" in captured.err
+    assert "recovery.bak" in captured.err

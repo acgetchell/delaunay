@@ -1,0 +1,66 @@
+schema = 1
+prerequisites = [ "cargo" ]
+
+[[checks]]
+name = "build-default"
+command = [ "cargo", "build", "--locked", "--release", "--examples" ]
+timeout = 1800
+
+[[checks]]
+name = "data_and_serialization"
+command = [ "target/release/examples/data_and_serialization" ]
+expect = [ "Validated Levels 1-4 JSON round-trip:", "Level 5 choices:" ]
+timeout = 600
+
+[[checks]]
+name = "delaunayize_repair"
+command = [ "target/release/examples/delaunayize_repair" ]
+expect = [ "Example completed successfully!" ]
+timeout = 600
+
+[[checks]]
+name = "dynamic_lifecycle"
+command = [ "target/release/examples/dynamic_lifecycle" ]
+expect = [ "point location after insertion:", "Deleted the vertex" ]
+timeout = 600
+
+[[checks]]
+name = "numerical_robustness"
+command = [ "target/release/examples/numerical_robustness" ]
+expect = [ "Near-coplanar circumcenter:", "Collinear orientation:", "Cospherical insphere query:" ]
+timeout = 600
+
+[[checks]]
+name = "spherical_construction"
+command = [ "target/release/examples/spherical_construction" ]
+expect = [ "S^2 Delaunay triangulation:", "S^3 Delaunay triangulation:" ]
+timeout = 600
+
+[[checks]]
+name = "topology_editing"
+command = [ "target/release/examples/topology_editing" ]
+expect = [ "PART 1: 2D TRIANGULATION", "PART 2: 3D TRIANGULATION", "Example complete!" ]
+timeout = 600
+
+[[checks]]
+name = "toroidal_construction"
+command = [ "target/release/examples/toroidal_construction" ]
+expect = [ "Periodic T^2 image-point quotient:", "Periodic T^3 image-point quotient:" ]
+timeout = 600
+
+[[checks]]
+name = "triangulation_and_hull"
+command = [ "target/release/examples/triangulation_and_hull" ]
+expect = [ "3D Delaunay triangulation", "4D Delaunay triangulation", "5D Delaunay triangulation" ]
+timeout = 600
+
+[[checks]]
+name = "build-diagnostics"
+command = [ "cargo", "build", "--locked", "--release", "--features", "diagnostics", "--example", "diagnostics" ]
+timeout = 1800
+
+[[checks]]
+name = "diagnostics"
+command = [ "target/release/examples/diagnostics" ]
+expect = [ "Diagnostics feature example", "Valid 3D triangulation:", "Explicit non-Delaunay 2D triangulation:" ]
+timeout = 600
