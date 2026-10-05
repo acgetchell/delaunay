@@ -1588,21 +1588,21 @@ mod tests {
 
         let empty = generate_random_points_in_range::<3>(0, range)
             .expect("validated range should generate finite points");
-        assert!(empty.is_empty());
+        assert_eq!(empty.as_slice(), []);
 
         let seeded_empty = generate_random_points_in_range_seeded::<3>(0, range, 42)
             .expect("validated range should generate finite points");
-        assert!(seeded_empty.is_empty());
+        assert_eq!(seeded_empty.as_slice(), []);
 
         let poisson = generate_poisson_points_in_range::<2>(8, range, 0.1, 42).unwrap();
-        assert!(!poisson.is_empty());
+        assert_ne!(poisson.as_slice(), []);
 
         let unconstrained_poisson =
             generate_poisson_points_in_range::<2>(8, range, 0.0, 42).unwrap();
         assert_eq!(unconstrained_poisson.len(), 8);
 
         let empty_poisson = generate_poisson_points_in_range::<2>(0, range, 0.1, 42).unwrap();
-        assert!(empty_poisson.is_empty());
+        assert_eq!(empty_poisson.as_slice(), []);
 
         let invalid_empty_poisson = generate_poisson_points_in_range::<2>(0, range, f64::NAN, 42);
         assert_matches!(
@@ -1971,7 +1971,7 @@ mod tests {
     #[test]
     fn test_generate_random_points_periodic_zero_points() {
         let points = generate_random_points_periodic::<4>(0, [1.0, 2.0, 3.0, 4.0], 9).unwrap();
-        assert!(points.is_empty());
+        assert_eq!(points.as_slice(), []);
     }
 
     // =============================================================================
@@ -2037,13 +2037,13 @@ mod tests {
     #[test]
     fn test_generate_random_points_in_ball_zero_points() {
         let points = generate_random_points_in_ball::<4>(0, 1.0).unwrap();
-        assert!(points.is_empty());
+        assert_eq!(points.as_slice(), []);
     }
 
     #[test]
     fn test_generate_random_points_in_ball_seeded_zero_points() {
         let points = generate_random_points_in_ball_seeded::<4>(0, 1.0, 7).unwrap();
-        assert!(points.is_empty());
+        assert_eq!(points.as_slice(), []);
     }
 
     #[test]
@@ -2428,7 +2428,7 @@ mod tests {
         let points = try_generate_poisson_points::<2>(50, (0.0, 10.0), 0.5, 42).unwrap();
 
         // Should generate some points (exact count depends on spacing constraints)
-        assert!(!points.is_empty());
+        assert_ne!(points.as_slice(), []);
         assert!(points.len() <= 50); // May be less than requested due to spacing constraints
 
         // Check that all points are within bounds
@@ -2460,7 +2460,7 @@ mod tests {
         // Test 3D Poisson disk sampling
         let points = try_generate_poisson_points::<3>(30, (-1.0, 1.0), 0.2, 123).unwrap();
 
-        assert!(!points.is_empty());
+        assert_ne!(points.as_slice(), []);
 
         // Check bounds and minimum distance
         for point in &points {
@@ -2493,7 +2493,7 @@ mod tests {
         // Test 4D Poisson disk sampling
         let points = try_generate_poisson_points::<4>(15, (0.0, 5.0), 0.5, 333).unwrap();
 
-        assert!(!points.is_empty());
+        assert_ne!(points.as_slice(), []);
 
         for point in &points {
             let coords = *point.coords();
@@ -2526,7 +2526,7 @@ mod tests {
         // Test 5D Poisson disk sampling
         let points = try_generate_poisson_points::<5>(10, (-2.0, 2.0), 0.4, 777).unwrap();
 
-        assert!(!points.is_empty());
+        assert_ne!(points.as_slice(), []);
 
         for point in &points {
             let coords = *point.coords();
@@ -2669,13 +2669,13 @@ mod tests {
         // Test cases that would cause potential memory issues in grid point calculation
         // Generate small grid to test the function works
         let points = generate_grid_points::<2>(nonzero(10), 0.1, [0.0, 0.0]).unwrap();
-        assert!(!points.is_empty());
+        assert_ne!(points.as_slice(), []);
 
         // Test very fine spacing which would generate lots of points
         let result = generate_grid_points::<2>(nonzero(1000), 0.0001, [0.0, 0.0]);
         // Should either succeed or fail gracefully
         if let Ok(points) = result {
-            assert!(!points.is_empty());
+            assert_ne!(points.as_slice(), []);
         }
         // Expected to fail with large point counts
     }
@@ -2685,14 +2685,14 @@ mod tests {
         // Test very small spacing with valid number of points
         let result = try_generate_poisson_points::<2>(100, (0.0, 1.0), 0.001, 42);
         if let Ok(points) = result {
-            assert!(!points.is_empty());
+            assert_ne!(points.as_slice(), []);
         }
         // May fail due to too many points
 
         // Test with zero points (should succeed with empty result)
         let result = try_generate_poisson_points::<2>(0, (0.0, 1.0), 0.1, 42);
         if let Ok(points) = result {
-            assert!(points.is_empty());
+            assert_eq!(points.as_slice(), []);
         }
         // Also acceptable if Err
 

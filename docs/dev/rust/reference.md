@@ -12,6 +12,7 @@ Agents must follow these rules when modifying or adding Rust code.
 - [Safety](#safety)
 - [Dimension Generic Architecture](#dimension-generic-architecture)
 - [Numeric Conversions](#numeric-conversions)
+- [Floating-Point Arithmetic](#floating-point-arithmetic)
 - [Borrowing and Ownership](#borrowing-and-ownership)
 - [Error Handling](#error-handling)
 - [Fluent Workflow APIs](#fluent-workflow-apis)
@@ -126,6 +127,21 @@ Avoid fallback conversions such as `unwrap_or(f64::NAN)`,
 `unwrap_or(f64::INFINITY)`, or silently clamping failed conversions. These hide
 the numerical state that geometric predicates and validation layers need in
 order to fail explicitly.
+
+---
+
+## Floating-Point Arithmetic
+
+Prefer explicit `mul_add` for multiply-add expressions when its single rounding
+is compatible with the algorithm. It provides correctly rounded IEEE-754 fused
+arithmetic and does not permit arbitrary algebraic reassociation. The
+`algebraic_*` operations remain forbidden by `AGENTS.md`.
+
+Before applying a `clippy::suboptimal_flops` suggestion, check any error bound,
+error-free transformation, or required bitwise compatibility that depends on
+separate rounding. Keep exact integer and rational paths exact. Suppress the
+lint only with a specific mathematical or compatibility justification;
+determinism alone does not require separate multiplication and addition.
 
 ---
 
@@ -1086,6 +1102,11 @@ When suppressing a lint, use `#[expect(...)]` instead of `#[allow(...)]`.
 
 `expect` causes a compiler warning if the lint is no longer triggered,
 ensuring suppressions are removed when they become unnecessary.
+
+Cargo enables Clippy's `allow_attributes_without_reason` lint to enforce
+documented suppressions, including multiline attributes. Semgrep retains the
+narrow ban on Clippy `allow` attributes; shared benchmark fixtures may need
+documented `allow(dead_code)` because usage varies between including targets.
 
 Always include a `reason`:
 

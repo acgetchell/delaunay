@@ -1201,7 +1201,7 @@ fn simplex_quality_score<U, V, const D: usize>(tds: &Tds<U, V, D>, simplex_key: 
             };
             let delta = len - mean;
             mean += delta / current_edge_count;
-            sum_squared_deviations += delta * (len - mean);
+            sum_squared_deviations = delta.mul_add(len - mean, sum_squared_deviations);
             edge_count_scalar = current_edge_count;
             min_edge = min_edge.min(len);
             max_edge = max_edge.max(len);
@@ -1221,7 +1221,7 @@ fn simplex_quality_score<U, V, const D: usize>(tds: &Tds<U, V, D>, simplex_key: 
         return f64::MAX;
     }
     // Primary: aspect ratio; secondary: edge-length variance as tiebreaker.
-    let score = (max_edge / min_edge) + variance * 1e-12;
+    let score = variance.mul_add(1e-12, max_edge / min_edge);
     if score.is_finite() { score } else { f64::MAX }
 }
 
@@ -1346,6 +1346,48 @@ mod tests {
         let _ = tracing_subscriber::fmt::try_init();
     }
 
+    fn assert_simplex_quality_score<const D: usize>() {
+        let mut vertices = vec![vertex!([0.0; D]).unwrap()];
+        for axis in 0..D {
+            let mut coordinates = [0.0; D];
+            coordinates[axis] = 1.0;
+            vertices.push(vertex!(coordinates).unwrap());
+        }
+        let tds = single_simplex_tds(&vertices);
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        let score = simplex_quality_score(&tds, simplex_key);
+
+        // A unit right simplex has D edges of length 1 and D(D - 1)/2 of sqrt(2).
+        // Use the two-value population variance as an independent closed-form oracle.
+        let vertex_count: f64 = u32::try_from(D + 1).unwrap().into();
+        let unit_edge_fraction = 2.0 / vertex_count;
+        let variance =
+            unit_edge_fraction * (1.0 - unit_edge_fraction) * (2.0_f64.sqrt() - 1.0).powi(2);
+        let expected_score = variance.mul_add(1e-12, 2.0_f64.sqrt());
+        approx::assert_ulps_eq!(score, expected_score, epsilon = 0.0, max_ulps = 2);
+        assert_eq!(
+            score.to_bits(),
+            simplex_quality_score(&tds, simplex_key).to_bits()
+        );
+
+        let invalid_score =
+            simplex_quality_score(&tds, SimplexKey::from(KeyData::from_ffi(u64::MAX)));
+        assert_eq!(invalid_score.to_bits(), f64::MAX.to_bits());
+    }
+
+    macro_rules! simplex_quality_score_tests {
+        ($($dim:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<simplex_quality_score_matches_closed_form_ $dim d>]() {
+                        assert_simplex_quality_score::<$dim>();
+                    }
+                )+
+            }
+        };
+    }
+
     // =============================================================================
     // CONFIG DEFAULT TESTS
     // =============================================================================
@@ -1366,7 +1408,7 @@ mod tests {
 
         assert_eq!(stats.iterations, 0);
         assert!(stats.removed_simplices.is_empty());
-        assert!(stats.removed_vertices.is_empty());
+        assert_eq!(stats.removed_vertices.as_slice(), []);
 
         let metadata = NonDataType("owned metadata".to_string());
         assert_eq!(metadata.0, "owned metadata");
@@ -1830,8 +1872,8 @@ mod tests {
 
         assert_eq!(removed, 0);
         assert_eq!(stats.simplices_removed, 0);
-        assert!(stats.removed_simplices.is_empty());
-        assert!(stats.removed_vertices.is_empty());
+        assert_eq!(stats.removed_simplices.as_slice(), []);
+        assert_eq!(stats.removed_vertices.as_slice(), []);
     }
 
     /// Assert that a targeted violation fails before removal when simplex budget is zero.
@@ -2187,30 +2229,7 @@ mod tests {
     // QUALITY SCORE TESTS
     // =============================================================================
 
-    /// Verify that `simplex_quality_score` returns a finite, positive value for a
-    /// valid simplex and is deterministic across calls.
-    #[test]
-    fn test_simplex_quality_score_finite_and_deterministic() {
-        init_tracing();
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let tds = single_simplex_tds(&vertices);
-        let simplex_key = tds.simplex_keys().next().unwrap();
-
-        let score1 = simplex_quality_score(&tds, simplex_key);
-        let score2 = simplex_quality_score(&tds, simplex_key);
-
-        assert!(score1.is_finite(), "Score should be finite, got {score1}");
-        assert!(score1 > 0.0, "Score should be positive, got {score1}");
-        approx::assert_relative_eq!(score1, score2, epsilon = 0.0);
-        let invalid_score =
-            simplex_quality_score(&tds, SimplexKey::from(KeyData::from_ffi(u64::MAX)));
-        assert_eq!(invalid_score.to_bits(), f64::MAX.to_bits());
-    }
+    simplex_quality_score_tests!(2, 3, 4, 5);
 
     #[test]
     fn simplex_quality_score_ranks_degenerate_geometry_as_worst() {

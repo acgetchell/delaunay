@@ -28,7 +28,10 @@
 //! documented scale. Broader high-dimensional Level 4 and Level 5 validation
 //! work remains tracked by #482 and #483 for v0.8.1.
 
-#![cfg_attr(not(feature = "slow-tests"), allow(dead_code))]
+#![cfg_attr(
+    not(feature = "slow-tests"),
+    expect(dead_code, reason = "large-scale helpers are used only by slow-tests")
+)]
 //!
 //! Each should insert all vertices with zero skips, run final repair, and pass
 //! `validation_report` for Levels 1–5. Use local harness output for exact

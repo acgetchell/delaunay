@@ -3591,7 +3591,7 @@ mod tests {
         let neighbors_dt: Vec<_> = dt.simplex_neighbors(simplex_key).collect();
         let neighbors_tri: Vec<_> = tri.simplex_neighbors(simplex_key).collect();
         assert_eq!(neighbors_dt, neighbors_tri);
-        assert!(neighbors_dt.is_empty());
+        assert_eq!(neighbors_dt.as_slice(), []);
 
         let neighbor_index_dt = dt.build_simplex_neighbor_index().unwrap();
         let neighbor_index_tri = tri.build_simplex_neighbor_index().unwrap();

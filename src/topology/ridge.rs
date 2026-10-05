@@ -438,6 +438,7 @@ impl<'tds, U, V, const D: usize> RidgeQuery<'tds, U, V, D> {
 
     /// Returns the validated ridge candidate represented by this query.
     #[inline]
+    #[must_use]
     pub const fn ridge_candidate(&self) -> &RidgeCandidate<D> {
         &self.ridge_candidate
     }
@@ -621,6 +622,7 @@ impl<'tds, U, V, const D: usize> RidgeView<'tds, U, V, D> {
 
     /// Returns the validated ridge candidate represented by this view.
     #[inline]
+    #[must_use]
     pub const fn ridge_candidate(&self) -> &RidgeCandidate<D> {
         &self.ridge_candidate
     }
@@ -789,12 +791,14 @@ pub struct RidgeLinkView<'tds, U, V, const D: usize> {
 impl<U, V, const D: usize> RidgeLinkView<'_, U, V, D> {
     /// Returns the quotient-space ridge candidate that produced this link.
     #[inline]
+    #[must_use]
     pub const fn quotient_ridge_candidate(&self) -> &RidgeCandidate<D> {
         &self.quotient_ridge_candidate
     }
 
     /// Returns the lifted ridge vertices for this particular link image.
     #[inline]
+    #[must_use]
     pub fn lifted_ridge_vertices(&self) -> &[LiftedVertexId] {
         &self.lifted_ridge_vertices
     }
@@ -808,6 +812,7 @@ impl<U, V, const D: usize> RidgeLinkView<'_, U, V, D> {
 
     /// Returns lifted edges in this ridge's 1-dimensional link.
     #[inline]
+    #[must_use]
     pub fn edges(&self) -> &[LiftedLinkEdge] {
         &self.link_edges
     }
@@ -1730,7 +1735,7 @@ mod tests {
 
         let ridge_candidate = RidgeCandidate::<2>::try_from_vertices([v0]).unwrap();
         let ridge_query = ridge_candidate.query(&tds).unwrap();
-        assert!(ridge_query.incident_simplices().is_empty());
+        assert_eq!(ridge_query.incident_simplices(), []);
         assert!(ridge_query.links().unwrap().is_empty());
         match ridge_candidate.view(&tds) {
             Err(ManifoldError::RidgeNotFound { ridge_vertices }) => {
@@ -2508,8 +2513,8 @@ mod tests {
         let link = links[0].clone();
         assert_eq!(link, link.clone());
         assert_eq!(link.quotient_ridge_candidate(), view.ridge_candidate());
-        assert!(!link.incident_simplices().is_empty());
-        assert!(!link.edges().is_empty());
+        assert_ne!(link.incident_simplices(), []);
+        assert_ne!(link.edges(), []);
         assert!(format!("{link:?}").contains("RidgeLinkView"));
     }
 

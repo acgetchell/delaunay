@@ -104,7 +104,7 @@ workflow references do not need to be loaded preemptively.
 
 - **Language**: Rust
 - **Project**: d-dimensional Delaunay triangulation library
-- **MSRV**: 1.98.1
+- **MSRV**: 1.99.0
 - **Edition**: 2024
 - **Primary architecture hub**: `docs/code_organization.md`
 

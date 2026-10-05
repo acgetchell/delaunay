@@ -959,7 +959,7 @@ fn test_builder_build_with_kernel_and_statistics_rejects_disabled_level_five() {
     );
     assert_eq!(error.statistics.inserted, 0);
     assert_eq!(error.statistics.total_attempts, 0);
-    assert!(error.statistics.attempts_histogram.is_empty());
+    assert_eq!(error.statistics.attempts_histogram, [] as [usize; 0]);
 }
 
 /// Explicit construction normalizes incoherent local simplex orderings.

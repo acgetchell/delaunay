@@ -39,7 +39,7 @@ fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestErr
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    assert!(!boundary_facets.is_empty());
+    assert_ne!(boundary_facets.as_slice(), []);
 
     let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     assert_eq!(hull.number_of_facets(), boundary_facets.len());

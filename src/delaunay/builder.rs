@@ -4131,7 +4131,7 @@ mod tests {
         assert_eq!(err.statistics.skipped_duplicate, 0);
         assert_eq!(err.statistics.skipped_degeneracy, 0);
         assert_eq!(err.statistics.total_attempts, 0);
-        assert!(err.statistics.attempts_histogram.is_empty());
+        assert_eq!(err.statistics.attempts_histogram, [] as [usize; 0]);
         assert!(err.statistics.slow_insertions.is_empty());
         assert!(err.statistics.skip_samples.is_empty());
         assert_eq!(err.statistics.telemetry.insertion_wall_time_calls, 0);

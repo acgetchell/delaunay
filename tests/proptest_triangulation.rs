@@ -301,7 +301,7 @@ where
     .unwrap_err();
     assert!(matches!(error, TestCaseError::Fail(reason)
             if reason.to_string() == format!("missing transformed UUID mapping for {missing_uuid}")));
-    assert!(compared_pairs.is_empty());
+    assert_eq!(compared_pairs.as_slice(), []);
 }
 
 #[test]

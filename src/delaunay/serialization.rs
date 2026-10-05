@@ -4544,7 +4544,7 @@ mod tests {
 
         let json = serde_json::to_string(&dt).unwrap();
 
-        assert!(!json.is_empty());
+        assert_ne!(json, "");
     }
 
     #[test]

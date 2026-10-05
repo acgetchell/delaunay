@@ -5,7 +5,7 @@
 //! paths may run local flip repair, while [`DelaunayCheckPolicy`] controls
 //! global Level 5 Delaunay validation cadence without mutating topology.
 //!
-//! Import these APIs through [`crate::prelude::repair`](crate::prelude::repair)
+//! Import these APIs through [`crate::prelude::repair`]
 //! for downstream examples, tests, and applications.
 
 #![forbid(unsafe_code)]

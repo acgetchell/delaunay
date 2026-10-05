@@ -273,7 +273,6 @@ impl<'hull, U, const D: usize> ConvexHullFacetView<'hull, U, D> {
     }
 
     /// Iterates over the facet's owned snapshot vertices.
-    #[must_use]
     pub fn vertices(self) -> impl ExactSizeIterator<Item = &'hull ConvexHullVertex<U, D>> + 'hull {
         self.facet
             .vertex_indices
@@ -356,7 +355,6 @@ impl<U, const D: usize> ConvexHull<U, D> {
     }
 
     /// Iterates over all facets as owner-bound views.
-    #[must_use]
     pub fn facets(&self) -> impl ExactSizeIterator<Item = ConvexHullFacetView<'_, U, D>> + '_ {
         self.facets
             .iter()

@@ -858,7 +858,7 @@ where
                             -perturbation_scale
                         }
                     };
-                    *coord += signed_perturbation * coord_scale;
+                    *coord = signed_perturbation.mul_add(coord_scale, *coord);
                 }
 
                 let perturbed_point = Point::try_new(perturbed_coords)
