@@ -60,11 +60,41 @@ runs:
         uv run --locked --managed-python --only-group tooling research-repo-tools ci export TECTONIC_DEP_BACKEND VCPKG_ROOT VCPKGRS_TRIPLET
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    - name: Install declared tools from the locked package
+    - name: Install the locked tooling package
+      shell: bash
+      run: uv sync --locked --managed-python --only-group tooling
+
+    - name: Install managed release binaries
       shell: bash
       env:
-        # Authenticate managed-binary release lookups to avoid shared runner rate limits.
+        # Only the release API lookup receives this token; child processes do not.
         GH_TOKEN: ${{ github.token }}
+      run: |
+        uv run --locked --no-sync --no-python-downloads --no-env-file python -I - <<'PY'
+        import os
+        import subprocess
+
+        from research_repo_tools import config, toolchain_config
+        from research_repo_tools.prebuilt_tools import install, version_at
+        from research_repo_tools.process import ExecutableNotFoundError
+        from research_repo_tools.toolchain import Runtime
+
+        environment = dict(os.environ)
+        for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+            environment.pop(name, None)
+        runtime = Runtime(toolchain_config.load(config.load()))
+        for tool in runtime.plan.binaries:
+            destination = runtime.binary_path(tool)
+            try:
+                if version_at(destination, tool, cwd=runtime.plan.root, env=environment) == tool.version:
+                    continue
+            except (ExecutableNotFoundError, OSError, ValueError, subprocess.SubprocessError):
+                pass
+            install(tool, runtime.host, destination, cwd=runtime.plan.root, env=environment)
+        PY
+
+    - name: Install declared tools from the locked package
+      shell: bash
       run: |
         set -euo pipefail
         uv run --locked --managed-python --only-group tooling research-repo-tools toolchain sync
