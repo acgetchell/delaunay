@@ -27,7 +27,7 @@ jobs:
   semgrep-sarif:
     name: Repository Rule SARIF Analysis
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60 # Cold managed-tool builds can take 35 minutes after a Rust upgrade.
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

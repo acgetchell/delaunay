@@ -10,8 +10,6 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
-#![allow(unused_imports)] // Imports used in macro expansion
-
 #[macro_use]
 #[path = "common/proptest_config.rs"]
 mod proptest_config;

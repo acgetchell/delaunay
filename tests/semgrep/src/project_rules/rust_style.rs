@@ -497,6 +497,16 @@ mod correctly_scoped_test_support {
     fn helper() {}
 }
 
+// ok: delaunay.rust.no-cfg-test-items-outside-test-modules
+#[cfg(test)]
+#[expect(
+    clippy::similar_names,
+    reason = "test module labels cases by scalar type and dimension"
+)]
+mod correctly_scoped_test_support_with_attribute {
+    fn helper() {}
+}
+
 // ruleid: delaunay.rust.no-dead-code-suppressions-in-src
 #[expect(
     dead_code,
@@ -551,6 +561,16 @@ fn safe_f64(_value: u64) -> Option<f64> {
 pub fn safe_conversion_fallback(value: u64) -> f64 {
     // ruleid: delaunay.rust.no-silent-conversion-fallbacks, delaunay.rust.no-silent-conversion-fallbacks-in-public-samples
     safe_f64(value).unwrap_or(0.0)
+}
+
+pub fn safe_conversion_lazy_fallback(value: u64) -> f64 {
+    // ruleid: delaunay.rust.no-silent-conversion-fallbacks, delaunay.rust.no-silent-conversion-fallbacks-in-public-samples
+    safe_f64(value).unwrap_or_else(|| 0.0)
+}
+
+pub fn safe_conversion_propagated(value: u64) -> Option<f64> {
+    // ok: delaunay.rust.no-silent-conversion-fallbacks, delaunay.rust.no-silent-conversion-fallbacks-in-public-samples
+    safe_f64(value)
 }
 
 pub fn public_sample_silent_conversion_fallback(value: u64) -> f64 {
@@ -634,12 +654,12 @@ pub fn simplex_frontier_buffer_fixture(pending_seed_simplices: &mut SimplexKeyBu
 }
 
 pub fn public_unwrap_bypass(value: Option<u8>) -> u8 {
-    // ruleid: delaunay.rust.no-production-unwrap-panic, delaunay.rust.no-public-surface-unwrap-panic, delaunay.rust.no-unwrap-expect-in-benches-examples
+    // ruleid: delaunay.rust.no-production-unwrap-panic, delaunay.rust.no-public-surface-unwrap-panic
     value.unwrap()
 }
 
 pub fn public_expect_bypass(value: Option<u8>) -> u8 {
-    // ruleid: delaunay.rust.no-production-unwrap-panic, delaunay.rust.no-public-surface-unwrap-panic, delaunay.rust.no-unwrap-expect-in-benches-examples
+    // ruleid: delaunay.rust.no-production-unwrap-panic, delaunay.rust.no-public-surface-unwrap-panic
     value.expect("public APIs should return typed errors instead")
 }
 
@@ -1749,7 +1769,7 @@ impl CratePrivateVertexUuidConstructorFixture {
 
 fn private_documented_invariant(value: Option<u8>) -> u8 {
     // ok: delaunay.rust.no-production-unwrap-panic
-    // ruleid: delaunay.rust.no-public-surface-unwrap-panic, delaunay.rust.no-unwrap-expect-in-benches-examples
+    // ruleid: delaunay.rust.no-public-surface-unwrap-panic
     value.expect("private helper documents an internal invariant")
 }
 
@@ -1801,6 +1821,27 @@ pub fn env_gated_stdio() {
 #[allow(clippy::too_many_lines)]
 fn clippy_allow_fixture() {}
 
+// ruleid: delaunay.rust.no-clippy-allow-lints
+#[allow(
+    clippy::too_many_lines,
+    reason = "multiline Clippy suppressions should also use expect"
+)]
+fn multiline_clippy_allow_fixture() {}
+
+// ruleid: delaunay.rust.no-clippy-allow-lints
+#[allow(unused_variables, clippy::too_many_lines, reason = "mixed lint list")]
+fn mixed_clippy_allow_fixture() {}
+
+mod inner_clippy_allow_fixture {
+    // ruleid: delaunay.rust.no-clippy-allow-lints
+    #![allow(clippy::too_many_lines, reason = "module suppression")]
+}
+
+// ok: delaunay.rust.no-clippy-allow-lints
+// ruleid: delaunay.rust.no-dead-code-suppressions-in-src
+#[allow(dead_code, reason = "shared fixture usage varies between targets")]
+fn shared_dead_code_fixture() {}
+
 // ruleid: delaunay.rust.no-ignored-tests
 #[ignore = "Slow (>10s); use the slow-tests feature instead"]
 fn slow_ignore_fixture() {}
@@ -1808,14 +1849,6 @@ fn slow_ignore_fixture() {}
 // ok: delaunay.rust.no-ignored-tests
 #[cfg(feature = "slow-tests")]
 fn slow_cfg_fixture() {}
-
-// ruleid: delaunay.rust.expect-requires-reason
-#[expect(clippy::too_many_lines)]
-fn expect_without_reason_fixture() {}
-
-// ok: delaunay.rust.expect-requires-reason
-#[expect(clippy::too_many_lines, reason = "fixture documents the suppression")]
-fn expect_with_reason_fixture() {}
 
 // ruleid: delaunay.rust.no-box-dyn-error-in-src, delaunay.rust.no-box-dyn-error-in-examples-benches
 type ProductionBoxedError = Box<dyn std::error::Error>;

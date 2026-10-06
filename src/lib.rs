@@ -93,7 +93,7 @@
 //!
 //! The low-level implementation namespace is private. The public low-level
 //! surface is exposed through curated modules:
-//! [`tds`](crate::tds), [`collections`],
+//! [`tds`], [`collections`],
 //! [`algorithms`], and [`query`], plus the
 //! matching focused preludes. These names describe the data structures and
 //! workflows users compose without colliding with Rust's standard `core`
@@ -324,13 +324,13 @@
 //! In addition to explicit validation calls, post-construction insertion through
 //! [`DelaunayTriangulation::insert_vertex`] can run an automatic **global
 //! Levels 1–4** validation pass, controlled by
-//! [`ValidationPolicy`](crate::prelude::validation::ValidationPolicy).
+//! [`ValidationPolicy`].
 //! [`DelaunayIncrementalBuilder`] carries the same policy across its first
 //! publication boundary and later insertions into its private proof-bearing
 //! owner; its pre-publication bootstrap remains a construction workflow.
 //!
 //! The initial policy is derived from the active topology guarantee. The default
-//! [`TopologyGuarantee::PLManifold`](crate::prelude::TopologyGuarantee::PLManifold)
+//! [`TopologyGuarantee::PLManifold`]
 //! uses [`ValidationPolicy::ExplicitOnly`]:
 //! mandatory changed-scope topology and realization checks still run during insertion, while automatic
 //! full-complex validation is a caller-owned explicit checkpoint.
@@ -372,11 +372,11 @@
 //! definitions and rationale live in `docs/invariants.md`.
 //!
 //! Level 3 Intrinsic PL Topology validation is parameterized by
-//! [`TopologyGuarantee`](crate::prelude::construction::TopologyGuarantee). This is separate from
+//! [`TopologyGuarantee`]. This is separate from
 //! `ValidationPolicy`: it controls *what* invariants Level 3 enforces, not *when* automatic
 //! validation runs.
 //!
-//! - [`TopologyGuarantee::PLManifold`](crate::prelude::construction::TopologyGuarantee::PLManifold)
+//! - [`TopologyGuarantee::PLManifold`]
 //!   (default): enforces manifold facet degree, boundary closure, connectedness, Euler characteristic,
 //!   and link-based manifold conditions. Mutation paths preserve scoped postconditions, and full
 //!   Level 3 audits always include ridge- and vertex-link validation.

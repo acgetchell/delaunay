@@ -7241,7 +7241,7 @@ mod tests {
         let point = Point::try_new([0.2, 0.2]).expect("finite point coordinates"); // inside simplex
 
         let visible = find_visible_boundary_facets(&dt, &kernel, &point).unwrap();
-        assert!(visible.is_empty());
+        assert_eq!(visible.as_slice(), []);
     }
 
     #[test]
@@ -7256,7 +7256,7 @@ mod tests {
         let point = Point::try_new([3.0, 3.0]).expect("finite point coordinates"); // clearly outside
 
         let visible = find_visible_boundary_facets(&dt, &kernel, &point).unwrap();
-        assert!(!visible.is_empty());
+        assert_ne!(visible.as_slice(), []);
         assert!(visible.len() <= 3);
     }
 

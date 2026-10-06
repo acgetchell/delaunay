@@ -76,7 +76,7 @@ pub fn run(config: &SphericalHeroConfig) -> Result<(), CliError> {
         .map(|index| {
             let position = f64::from(index) + 0.5;
             let z = 1.0 - 2.0 * position / count;
-            let radial = (1.0 - z * z).sqrt();
+            let radial = (-z).mul_add(z, 1.0).sqrt();
             let azimuth = golden_angle * f64::from(index);
             [radial * azimuth.cos(), radial * azimuth.sin(), z]
         })

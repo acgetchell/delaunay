@@ -256,6 +256,43 @@ def test_active_document_rules_exclude_migrated_history(tmp_path: Path, monkeypa
     assert {Path(finding["path"]).resolve() for finding in findings} == {active.resolve()}
 
 
+@pytest.mark.parametrize(
+    ("source_path", "rule"),
+    [
+        ("src/triangulation/numeric_conversions.rs", "delaunay.rust.no-silent-conversion-fallbacks"),
+        ("src/core/tds/hash_collections.rs", "delaunay.rust.no-std-hash-collections-in-hot-src"),
+    ],
+)
+def test_rust_policy_rules_cover_split_modules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_path: str, rule: str) -> None:
+    """Production path filters must retain guards after the module splits."""
+    target = tmp_path / source_path
+    target.parent.mkdir(parents=True)
+    target.write_text((ROOT / "tests/semgrep" / source_path).read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setenv("SEMGREP_SETTINGS_FILE", str(tmp_path / "semgrep-settings.yml"))
+    result = run_safe_command(
+        "semgrep",
+        [
+            "scan",
+            "--config",
+            str(ROOT / "semgrep.yaml"),
+            "--json",
+            "--error",
+            "--metrics=off",
+            "--disable-version-check",
+            "--no-git-ignore",
+            "--no-rewrite-rule-ids",
+            str(target),
+        ],
+        cwd=tmp_path,
+        check=False,
+    )
+    assert result.returncode == 1, result.stderr
+    findings = json.loads(result.stdout)["results"]
+    assert len(findings) == 2
+    assert {finding["check_id"] for finding in findings} == {rule}
+    assert {Path(finding["path"]).resolve() for finding in findings} == {target.resolve()}
+
+
 def test_archive_notes_are_available_from_installed_cli(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--root", str(ROOT), "changelog", "notes", "v0.7.5"]) == 0
     assert "0.7.5" in capsys.readouterr().out

@@ -597,7 +597,7 @@ fn open_cdt_strip_vertex(
         } else {
             -1.0
         };
-        f64::from(index).mul_add(spacing, side_jitter) + sign * interior_jitter
+        interior_jitter.mul_add(sign, f64::from(index).mul_add(spacing, side_jitter))
     };
     let spatial_index = f64::from(index);
     let arc = vertical_jitter * spatial_index * f64::from(vertices_per_slice - 1 - index)

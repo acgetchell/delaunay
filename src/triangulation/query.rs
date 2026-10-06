@@ -181,7 +181,6 @@ impl<'tri, K, U, V, const D: usize> ConflictRegion<'tri, K, U, V, D> {
     }
 
     /// Iterates over owner-bound conflict simplices.
-    #[must_use]
     pub fn simplices(&self) -> impl ExactSizeIterator<Item = ConflictSimplexView<'tri, V, D>> + '_ {
         self.simplices.iter().copied()
     }
@@ -3447,7 +3446,7 @@ mod tests {
         assert!(tri.simplex_neighbors(simplex_key).next().is_some());
 
         let incident_edges: Vec<_> = tri.incident_edges(vertex_key).collect();
-        assert!(!incident_edges.is_empty());
+        assert_ne!(incident_edges.as_slice(), []);
         assert_eq!(
             tri.number_of_incident_edges(vertex_key),
             incident_edges.len()

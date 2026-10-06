@@ -49,7 +49,6 @@
 //! triangulations from vertices or explicit index lists through the builder APIs
 //! rather than manufacturing standalone simplex records.
 
-#![allow(clippy::similar_names)]
 #![forbid(unsafe_code)]
 
 // =============================================================================
@@ -3101,7 +3100,7 @@ mod tests {
         // Verify debug output contains basic simplex information.
         // Use structural checks rather than brittle string matching
         assert!(debug_str.contains("Simplex"));
-        assert!(!simplex.vertices().is_empty());
+        assert_ne!(simplex.vertices(), []);
         assert!(!simplex.uuid().is_nil());
         assert_eq!(simplex.data.unwrap(), 42);
     }

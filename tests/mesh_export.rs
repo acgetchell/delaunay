@@ -243,7 +243,7 @@ fn mesh_export_json_contains_schema_ids_and_connectivity() -> Result<(), MeshExp
     assert_eq!(export.metadata.simplex_count, export.simplices.len());
     export.validate()?;
     assert_eq!(export.vertices.len(), 4);
-    assert!(!export.simplices.is_empty());
+    assert_ne!(export.simplices.as_slice(), []);
     assert_eq!(export.adjacency.len(), export.simplices.len() * 3);
 
     assert_connectivity_ids_exist(&export);

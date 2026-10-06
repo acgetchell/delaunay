@@ -72,7 +72,7 @@ env:
 jobs:
   performance-regression:
     runs-on: ubuntu-latest
-    timeout-minutes: 45 # Allow 30min benchmark timeout + 15min for setup/teardown
+    timeout-minutes: 90 # Allow cold tool setup/compilation plus the 30min benchmark timeout.
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

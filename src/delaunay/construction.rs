@@ -1,14 +1,14 @@
 //! Batch construction options, errors, statistics, and policy helpers.
 //!
 //! This module contains the configuration surface used by
-//! [`DelaunayTriangulationBuilder`](crate::builder::DelaunayTriangulationBuilder)
+//! [`DelaunayTriangulationBuilder`]
 //! and its batch-construction terminals.
 //! Use it when you need deterministic insertion ordering, duplicate handling,
 //! initial-simplex selection, retry behavior, or construction telemetry without
 //! importing flip editing or validation-only APIs.
 //!
 //! Most examples should import these items through
-//! [`crate::prelude::construction`](crate::prelude::construction), which
+//! [`crate::prelude::construction`], which
 //! bundles the builder, construction options, construction errors, and
 //! [`Vertex`](crate::prelude::Vertex).
 //!

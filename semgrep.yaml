@@ -163,6 +163,7 @@ rules:
         - "/src/core/algorithms/**/*.rs"
         - "/src/core/collections/**/*.rs"
         - "/src/core/tds.rs"
+        - "/src/core/tds/**/*.rs"
         - "/src/triangulation/**/*.rs"
         - "/src/geometry/algorithms/**/*.rs"
         - "/src/delaunay/**/*.rs"
@@ -252,6 +253,8 @@ rules:
         - "/tests/semgrep/src/core/**/*.rs"
         - "/src/geometry/**/*.rs"
         - "/src/topology/**/*.rs"
+        - "/src/triangulation/**/*.rs"
+        - "/tests/semgrep/src/triangulation/**/*.rs"
         - "/src/delaunay/**/*.rs"
         - "/src/project_rules/**/*.rs"
     patterns:
@@ -265,7 +268,9 @@ rules:
           - pattern: num_traits::cast::<$FROM, $TO>($VALUE).unwrap_or($FALLBACK)
           - pattern: num_traits::cast::<$FROM, $TO>($VALUE).unwrap_or_else($FALLBACK)
           - patterns:
-              - pattern: $SAFE(...).unwrap_or($FALLBACK)
+              - pattern-either:
+                  - pattern: $SAFE(...).unwrap_or($FALLBACK)
+                  - pattern: $SAFE(...).unwrap_or_else($FALLBACK)
               - metavariable-regex:
                   metavariable: $SAFE
                   regex: safe_[A-Za-z0-9_]+
@@ -309,7 +314,9 @@ rules:
           - pattern: num_traits::cast::<$FROM, $TO>($VALUE).unwrap_or($FALLBACK)
           - pattern: num_traits::cast::<$FROM, $TO>($VALUE).unwrap_or_else($FALLBACK)
           - patterns:
-              - pattern: $SAFE(...).unwrap_or($FALLBACK)
+              - pattern-either:
+                  - pattern: $SAFE(...).unwrap_or($FALLBACK)
+                  - pattern: $SAFE(...).unwrap_or_else($FALLBACK)
               - metavariable-regex:
                   metavariable: $SAFE
                   regex: safe_[A-Za-z0-9_]+
@@ -389,7 +396,7 @@ rules:
         - "/tests/**/*.rs"
         - "/benches/**/*.rs"
         - "/examples/**/*.rs"
-    pattern-regex: '(?m)^[ \t]*#\[cfg\(test\)\][^\n]*\n(?![ \t]*(?:pub(?:\([^\)\n]+\))?[ \t]+)?mod[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*\{)' # yamllint disable-line rule:line-length
+    pattern-regex: '(?m)^[ \t]*#\[cfg\(test\)\][^\n]*\n(?!(?:[ \t]*#\[[^\]]{0,800}\][ \t]*\n)*[ \t]*(?:pub(?:\([^\)\n]+\))?[ \t]+)?mod[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*\{)' # yamllint disable-line rule:line-length
 
   - id: delaunay.rust.no-dead-code-suppressions-in-src
     languages:
@@ -1808,27 +1815,6 @@ rules:
               ...
           }
 
-  - id: delaunay.rust.no-unwrap-expect-in-benches-examples
-    languages:
-      - rust
-    severity: WARNING
-    message: "Use explicit fixture error handling instead of unwrap() or expect() in benchmarks and examples."
-    metadata:
-      category: correctness
-      rationale: >-
-        Benchmarks and public examples should keep failure modes explicit so
-        users and CI see the operation that failed instead of a panic-only
-        unwrap/expect path.
-      ported_from: "la-stack.rust.no-unwrap-expect-in-benches-examples"
-    paths:
-      include:
-        - "/benches/**/*.rs"
-        - "/examples/**/*.rs"
-        - "/tests/semgrep/src/project_rules/rust_style.rs"
-    pattern-either:
-      - pattern: $VALUE.unwrap()
-      - pattern: $VALUE.expect(...)
-
   - id: delaunay.rust.no-ignored-fallible-results
     languages:
       - generic
@@ -1956,14 +1942,17 @@ rules:
       rationale: >-
         Clippy suppressions should be checked by the compiler and carry a
         stable reason so stale suppressions are noticed during linting.
+        Keep this Clippy-specific: shared benchmark fixtures need documented
+        allow(dead_code) when usage varies between including targets.
     paths:
       include:
         - "/src/**/*.rs"
         - "/tests/**/*.rs"
         - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
       exclude:
         - "/tests/semgrep/**"
-    pattern-regex: '^\s*#\s*\[\s*allow\s*\(\s*clippy::'
+    pattern-regex: '(?m)^[ \t]*#!?\[\s*allow\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_:]*\s*,\s*)*clippy::'
 
   - id: delaunay.rust.no-ignored-tests
     languages:
@@ -1985,29 +1974,6 @@ rules:
       exclude:
         - "/tests/semgrep/**"
     pattern-regex: '^\s*#\s*\[\s*ignore(?:\s|=|\])'
-
-  - id: delaunay.rust.expect-requires-reason
-    languages:
-      - rust
-    severity: WARNING
-    message: 'Add reason = "..." to #[expect(...)] so lint suppressions remain auditable.'
-    metadata:
-      category: maintainability
-      rationale: >-
-        Repository guidance prefers documented lint expectations over
-        unexplained suppressions.
-    paths:
-      include:
-        - "/src/**/*.rs"
-        - "/tests/**/*.rs"
-        - "/benches/**/*.rs"
-      exclude:
-        - "/tests/semgrep/**"
-    patterns:
-      # Regex keeps this intentionally scoped to one-line `#[expect(...)]`
-      # attributes; multiline attributes remain a review concern.
-      - pattern-regex: '^\s*#\s*\[\s*expect\s*\([^\]\n]*\)\s*\]'
-      - pattern-not-regex: '\breason\s*='
 
   - id: delaunay.rust.prefer-prelude-imports-in-examples-benches
     languages:

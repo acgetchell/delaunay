@@ -1321,7 +1321,7 @@ fn assert_edge_view_exports<K>(
     assert_eq!(query_edge_key, edge_key);
     assert_eq!(edge_view.key(), edge_key);
     assert_eq!(query_edge_view.key(), edge_key);
-    assert!(!edge_view.incident_simplices().is_empty());
+    assert_ne!(edge_view.incident_simplices(), []);
     Ok(())
 }
 
@@ -2437,7 +2437,7 @@ where
     let ridge_query = dt.ridge_query(&ridge)?;
     let star = ridge_query.incident_simplices();
 
-    assert!(!star.is_empty());
+    assert_ne!(star, []);
     Ok(())
 }
 

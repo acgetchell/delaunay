@@ -1273,7 +1273,7 @@ mod tests {
                 actual: 1,
             }
         );
-        assert!(adjacency.is_empty());
+        assert_eq!(adjacency.as_slice(), []);
     }
 
     #[test]
@@ -1301,7 +1301,7 @@ mod tests {
                 facet_index: 0,
             }
         );
-        assert!(adjacency.is_empty());
+        assert_eq!(adjacency.as_slice(), []);
     }
 
     #[test]
@@ -1331,6 +1331,6 @@ mod tests {
                 neighbor_key,
             }
         );
-        assert!(adjacency.is_empty());
+        assert_eq!(adjacency.as_slice(), []);
     }
 }

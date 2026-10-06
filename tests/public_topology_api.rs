@@ -343,7 +343,7 @@ fn split_topology_indexes_on_double_tetrahedron() -> Result<(), PublicTopologyAp
     // Shared vertex should have at least 3 incident edges (degree depends on geometry);
     // ensure the list is non-empty and contains canonical edges.
     let incident_edges: Vec<_> = edge_index.incident_edges(shared_vertex_key).collect();
-    assert!(!incident_edges.is_empty());
+    assert_ne!(incident_edges.as_slice(), []);
     assert!(incident_edges.iter().all(|e| e.v0() <= e.v1()));
 
     // Each simplex should appear with exactly one neighbor in the neighbor index.

@@ -1285,7 +1285,8 @@ fn certified_dot_difference_lower_bound<const D: usize>(
     }
 
     let operation_count = f64::from(u32::try_from(2 * D).ok()?);
-    let denominator = 1.0 - operation_count * f64::EPSILON;
+    // The u32 count times 2^-52 is exact, so fusion preserves this bound's denominator.
+    let denominator = (-operation_count).mul_add(f64::EPSILON, 1.0);
     if denominator <= 0.0 {
         return None;
     }

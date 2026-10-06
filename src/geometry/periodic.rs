@@ -1,6 +1,6 @@
 //! Validated periodic domains shared by geometry and topology.
 //!
-//! [`ToroidalDomain`](crate::geometry::periodic::ToroidalDomain) stores one finite,
+//! [`ToroidalDomain`] stores one finite,
 //! strictly positive period per coordinate
 //! axis, in the same units as the chart coordinates. Parse raw periods once
 //! with [`ToroidalDomain::try_new`](crate::geometry::periodic::ToroidalDomain::try_new),
@@ -9,7 +9,7 @@
 //! For chart-local geometry, use
 //! [`LabeledSimplexRealization::try_translated`](crate::geometry::realization::LabeledSimplexRealization::try_translated)
 //! to shift a simplex by integer periods and
-//! [`periodic_simplex_span`](crate::geometry::realization::periodic_simplex_span)
+//! [`periodic_simplex_span`]
 //! to find an axis spanning at least a full period. The domain proves period
 //! validity; translations still check newly computed coordinate representability.
 

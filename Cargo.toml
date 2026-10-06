@@ -2,7 +2,7 @@
 name = "delaunay"
 version = "0.8.2"
 edition = "2024"
-rust-version = "1.98.1"
+rust-version = "1.99.0"
 autobins = false
 authors = [ "Adam Getchell <adam@adamgetchell.org>" ]
 homepage = "https://github.com/acgetchell/delaunay"
@@ -209,7 +209,9 @@ unexpected_cfgs = { level = "warn", check-cfg = [ "cfg(docsrs)" ] }
 [lints.rustdoc]
 bare_urls = "deny"
 broken_intra_doc_links = "deny"
+unused_footnote_definition = "deny"
 
 [lints.clippy]
+allow_attributes_without_reason = "warn"
 extra_unused_type_parameters = "warn"
 pedantic = { level = "warn", priority = -1 }

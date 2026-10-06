@@ -874,7 +874,6 @@ impl<'tds, U, V, const D: usize> FacetView<'tds, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub fn vertices(&self) -> impl ExactSizeIterator<Item = &'tds Vertex<U, D>> + '_ {
         self.vertices.iter().copied()
     }

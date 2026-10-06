@@ -148,7 +148,7 @@ mod cli_tests {
         let simplex_vertices = cbor_field(&tds, "simplex_vertices")
             .as_map()
             .expect("triangulation JSON should include simplex vertex references");
-        assert!(!simplex_vertices.is_empty());
+        assert_ne!(simplex_vertices.as_slice(), []);
         for (_, references) in simplex_vertices {
             let references = references
                 .as_array()
@@ -304,7 +304,7 @@ mod cli_tests {
             json["facet_count"].as_u64(),
             Some(u64::try_from(facets.len()).expect("facet count should fit in u64"))
         );
-        assert!(!facets.is_empty());
+        assert_ne!(facets.as_slice(), [] as [Value; 0]);
     }
 
     #[test]
@@ -334,7 +334,7 @@ mod cli_tests {
         assert_eq!(metadata["schema_version"], 1);
         assert_eq!(metadata["dimension"], 3);
         assert_eq!(metadata["vertex_count"], 6);
-        assert!(!simplices.is_empty());
+        assert_ne!(simplices.as_slice(), [] as [Value; 0]);
         assert_eq!(adjacency.len(), simplices.len() * 4);
         assert!(
             json["vertices"]

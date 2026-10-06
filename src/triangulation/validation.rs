@@ -449,7 +449,6 @@ impl OrientationWitness<'_> {
     }
 
     /// Iterates over simplex keys and their required reversal states.
-    #[must_use]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (SimplexKey, bool)> + '_ {
         self.assignments
             .iter()

@@ -188,6 +188,7 @@ impl LiftedLinkEdge {
 
     /// Returns the lifted endpoints in canonical order.
     #[inline]
+    #[must_use]
     pub const fn endpoints(&self) -> (&LiftedVertexId, &LiftedVertexId) {
         (&self.endpoints.0, &self.endpoints.1)
     }
@@ -451,6 +452,7 @@ impl<const D: usize> ToroidalSpace<D> {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub const fn domain(&self) -> &ToroidalDomain<D> {
         &self.domain
     }
@@ -566,7 +568,7 @@ mod tests {
 
         assert_eq!(explicit_zero.vertex_key(), vertex_key);
         assert!(explicit_zero.is_base());
-        assert!(explicit_zero.offset().is_empty());
+        assert_eq!(explicit_zero.offset(), [] as [i16; 0]);
         assert_eq!(shifted.vertex_key(), vertex_key);
         assert!(!shifted.is_base());
         assert_eq!(shifted.offset(), &[0, 1, 0]);

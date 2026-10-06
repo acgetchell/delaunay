@@ -151,7 +151,7 @@ cargo add delaunay@0.8.2
 
 Use `cargo add delaunay` instead if you want Cargo to select the newest published release.
 
-- Rust 1.98.1 or newer. The minimum supported version is declared in
+- Rust 1.99.0 or newer. The minimum supported version is declared in
   `Cargo.toml`, while `rust-toolchain.toml` pins the exact repository toolchain.
 - `f64` coordinates for caller-facing construction, predicate, validation, and generator APIs.
 

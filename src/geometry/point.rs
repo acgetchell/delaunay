@@ -2,7 +2,6 @@
 //!
 //! Points are validated domain values: every stored coordinate is a finite `f64`.
 
-#![allow(clippy::similar_names)]
 #![forbid(unsafe_code)]
 
 use crate::geometry::traits::coordinate::{
@@ -468,6 +467,10 @@ impl<const D: usize> From<&Point<D>> for [f64; D] {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::similar_names,
+    reason = "conversion tests label coordinates and points by scalar type and dimension"
+)]
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
@@ -2329,7 +2332,7 @@ mod tests {
 
         // Test Debug trait
         let debug_output = format!("{point:?}");
-        assert!(!debug_output.is_empty());
+        assert_ne!(debug_output, "");
         assert!(debug_output.contains("Point"));
 
         // Test Default trait
