@@ -1,7 +1,8 @@
-# Scripts Directory
+# Python tooling
 
-This directory contains Python and shell tooling used by the `delaunay`
-repository. Prefer `just` recipes for validation and tests, and use the
+This directory contains Delaunay-specific Python modules. Shared infrastructure
+comes from the pinned `research-repo-tools` package; shell scripts live in
+`../../scripts/`. Prefer `just` recipes for validation and tests, and use the
 `uv run --locked ...` entrypoints documented here when invoking an individual utility
 directly.
 
@@ -11,17 +12,18 @@ Install the declared uv version, Git, and platform build prerequisites, includin
 Tectonic's native libraries. Initialize the pinned PyPI toolchain with:
 
 ```bash
-source scripts/tectonic_native_dependencies.sh
+tectonic_environment="$(uv run --locked --managed-python --only-group tooling research-repo-tools tectonic discover --format shell)"
+eval "$tectonic_environment"
 uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
 The installed package and tooling/notebook groups pin
-`research-repo-tools==0.1.7`. Shared CLI commands and documented Python APIs own
+`research-repo-tools==0.1.8`. Shared CLI commands and documented Python APIs own
 setup, maintenance, source inventory, subprocesses, archive extraction, worktree
 lifecycle, Criterion parsing, file transactions and notebook infrastructure.
 Retained adapters own Delaunay science and policy. The
-[adoption inventory](../docs/dev/tooling_adoption.md#remaining-shared-tool-gaps)
-links the remaining reusable gaps to v0.1.8 issues and their consumer follow-ups.
+[adoption inventory](../../docs/dev/tooling_adoption.md#remaining-shared-tool-gaps)
+records the completed v0.1.8 integrations and remaining performance contracts.
 
 ## CLI entrypoints
 
@@ -61,8 +63,8 @@ uv run --locked --group dev --group notebooks research-repo-tools notebooks --he
 ```
 
 `just notebook-check` invokes shared JSON/output validation, native Ruff and ty
-notebook checks, and advice directly, then runs the lowercase kebab-case ID policy
-test in `scripts/tests/test_notebook_policy.py`. The Python CLI wrapper is deleted.
+notebook checks, advice, and the declared lowercase kebab-case ID pattern directly.
+The Python CLI wrapper is deleted.
 It never executes cells. `just notebook-execute` uses the shared locked kernel,
 writes `target/notebooks/notebooks/<notebook-stem>.ipynb` and an adjacent
 `.report.json`, and leaves the source notebook unchanged. Notebook-generated
@@ -70,6 +72,8 @@ figures and data retain `target/notebooks/<notebook-stem>/`.
 `just notebook-reset-from-git` restores tracked source notebooks from the Git
 index, or from an explicit source such as `HEAD`, and removes generated
 notebook artifacts and Jupyter checkpoints.
+`just notebook` launches JupyterLab with shared launch policy and scratch caches
+under `target/notebooks/jupyter`.
 
 `just validation-doc-figures-check` executes the validation notebook into
 `target/` and compares its complete generated PNG set with the tracked
@@ -85,9 +89,6 @@ the notebook being executed remain the notebook author's responsibility.
 ### Benchmark utilities
 
 ```bash
-uv run --locked benchmark-utils generate-baseline
-uv run --locked benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt
-uv run --locked benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 uv run --locked benchmark-utils bench-compare last
 uv run --locked benchmark-utils run-release-signal
 uv run --locked benchmark-utils generate-summary --run-benchmarks --profile perf
@@ -98,20 +99,18 @@ uv run --locked benchmark-utils performance-doc
 uv run --locked publish-readme-performance
 ```
 
-`benchmark-utils` handles Criterion baseline generation and packaging,
-comparison, saved Criterion baseline reports, and release performance summaries.
+`benchmark-utils` selects Delaunay workloads, validates scientific coverage,
+renders saved Criterion diagnostics and retains shared-format comparison evidence.
 `run-release-signal` executes the frozen target/section/group plan used by local
 Just recipes, release CI, retained metadata, and strict summary coverage.
 It formats and compares benchmark evidence; the harnesses being run are
 responsible for failing before timings are published when scientific invariants
 are violated.
-Published releases package `baseline_results.txt` with raw Criterion data as a
-GitHub Release asset for Ubuntu GitHub Actions comparisons. Local timing records
-should stay in the ignored `baseline-artifact/` or `baseline-artifacts/`
-directories. `bench-compare` renders `target/bench-reports/performance.md` from
+Published releases retain raw Criterion data and versioned metadata as GitHub
+Release assets. `bench-compare` renders `target/bench-reports/performance.md` from
 existing Criterion `new` data and a saved baseline such as `last`.
 `performance-local` and `performance-github-assets` generate isolated
-release-to-release Markdown reports plus adjacent CSV and provenance JSON under
+release-to-release Markdown reports plus adjacent shared comparison JSON and evidence under
 `target/bench-reports/`. New GitHub-asset reports require versioned measurement
 metadata bound to the requested clean tag; existing legacy assets remain
 loadable as provenance-limited absolute timing evidence. Acquisition is retained
@@ -119,38 +118,40 @@ separately from measurement provenance, and ratios are suppressed for these
 separate hosted measurement sessions.
 `performance-release` retains and reload-validates the local bundle before
 promoting the curated report into `docs/performance.md`, archiving the previous
-report, and copying the exact CSV/provenance bytes into
+report, and copying the exact comparison JSON/evidence bytes into
 `docs/archive/performance/data/`. `performance-doc` consumes an existing
-validated CSV/JSON pair and performs the same promotion without Cargo or
+validated shared JSON evidence pair and performs the same promotion without Cargo or
 measurement worktrees; incomplete, invalid, stale, same-version, and
 scientifically non-comparable pairs are rejected before documentation changes.
 Promotion uses per-file atomic replacement with caught-failure rollback, so a
 hard interruption requires inspection and an idempotent rerun. These release reports are evidence, not
-routine pre-`just ci` checks; temp-worktree generation applies tracked checkout
-changes but ignores untracked files. The default comparison report for release
-baselines is `benches/main_vs_release_compare_results.txt`; the ref-comparison
-guard writes `benches/worktree_vs_<ref>_compare_results.txt` and fails only on
-total matched-time regressions or execution errors.
+routine pre-`just ci` checks; temp-worktree generation uses the shared snapshot
+API for tracked changes and nonignored new files, with exact bytes and permissions.
 
-The versioned CSV is the canonical tabular release artifact: the datasets are
-small, human-diffable audit records and remain usable without a dataframe
-runtime. Jupyter notebooks may materialize derived Parquet caches for larger
-analyses, but those caches are not promotion inputs and must be reproducible
-from the validated CSV. Raw Criterion data remains in the release
-`delaunay-vX.Y.Z-criterion-baseline.tar.gz` assets.
+The canonical timing payload is the shared `research-repo-tools/criterion-comparison/v1`
+JSON, paired with its digest-bound evidence envelope. Delaunay's context records
+coverage and scientific eligibility. Ratios require matching measured harnesses,
+plans, toolchains, confidence levels, and hosts. Timing changes are descriptive;
+marginal timing intervals are not ratio intervals or significance tests.
+
+Historical CSV/text files stay unchanged as records. Their readers and writers
+are retired. New reports use `.comparison.json` and `.evidence.json`; old files
+cannot be passed to the new promotion commands.
 
 `publish-readme-performance` consumes the retained bundle after promotion and
 atomically publishes the compact README table plus the canonical
-`docs/assets/bench/release-performance.{csv,provenance.json}` pair. It never
+`docs/assets/bench/release-performance.{comparison.json,evidence.json}` pair. It never
 runs Cargo or Criterion.
 
 ### Hardware utilities
 
 ```bash
-uv run --locked hardware-utils info
-uv run --locked hardware-utils kv
-uv run --locked hardware-utils info --json
+uv run --locked research-repo-tools performance host --output target/host.json
 ```
+
+The standalone `hardware-utils` command is retired. The shared command captures
+versioned host observations. The local hardware module and historical text/tolerance
+rules are retired; measurement reports call the shared capture API directly.
 
 ### Coverage workflow
 
@@ -188,10 +189,10 @@ uv, refresh the lock, review its release notes, and rerun setup.
 just examples
 ```
 
-The shared validator consumes [`tooling/examples.toml`](../tooling/examples.toml),
+The shared validator consumes [`tooling/examples.toml`](../examples.toml),
 which declares the release builds, feature policy, per-command timeouts, and
 expected output. A Cargo metadata test keeps the example inventory complete.
-See [`tooling/README.md`](../tooling/README.md) for the configuration contract.
+See [`tooling/README.md`](../README.md) for the configuration contract.
 
 ## Linting and tests
 

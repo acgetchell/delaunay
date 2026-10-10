@@ -1,18 +1,15 @@
 """Tests for retained performance CSV and provenance artifacts."""
 
-import csv
-import hashlib
-import io
 import json
 from dataclasses import replace
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from research_repo_tools.criterion import COMPARISON_SCHEMA, parse_comparison
+from research_repo_tools.evidence import parse_evidence, sha256
 
-import performance_artifacts
 from performance_artifacts import (
-    CSV_COLUMNS,
+    POLICY_CONTEXT,
     ArtifactContext,
     ArtifactPaths,
     HostIdentity,
@@ -25,13 +22,12 @@ from performance_artifacts import (
     ToolchainState,
     load_bundle,
     load_bundle_bytes,
-    publish_bundle,
     serialize_bundle,
     write_bundle,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from pathlib import Path
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64
@@ -128,42 +124,26 @@ def bundle(*, current: str = "v0.8.0", baseline: str = "v0.7.8") -> PerformanceB
     )
 
 
-def replace_csv_rows(csv_payload: bytes, transform: Callable[[list[dict[str, str]]], None]) -> bytes:
-    reader = csv.DictReader(io.StringIO(csv_payload.decode("utf-8"), newline=""))
-    rows = [dict(row) for row in reader]
-    transform(rows)
-    output = io.StringIO(newline="")
-    writer = csv.DictWriter(output, fieldnames=CSV_COLUMNS, lineterminator="\n")
-    writer.writeheader()
-    writer.writerows(rows)
-    return output.getvalue().encode("utf-8")
-
-
-def bind_csv(provenance_payload: bytes, csv_payload: bytes, *, row_count: int | None = None) -> bytes:
-    data = json.loads(provenance_payload)
-    data["csv_sha256"] = hashlib.sha256(csv_payload).hexdigest()
-    if row_count is not None:
-        data["csv_row_count"] = row_count
-    return (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
-
-
 def test_artifact_round_trip_preserves_comparable_and_one_sided_rows() -> None:
+    """The published parser must accept new consumer artifacts without legacy CSV."""
     original = bundle()
-    csv_payload, provenance_payload = serialize_bundle(original)
+    payload, manifest = serialize_bundle(original)
+    evidence = parse_evidence(payload, manifest)
+    comparison = parse_comparison(evidence.payload)
 
-    parsed = load_bundle_bytes(csv_payload, provenance_payload, source="round-trip fixture")
-
-    assert parsed == PerformanceBundle(context=original.context, rows=original.sorted_rows)
-    assert csv_payload.startswith(",".join(CSV_COLUMNS).encode())
-    assert csv_payload.endswith(b"\n")
-    assert provenance_payload.endswith(b"\n")
+    assert evidence.payload_schema == COMPARISON_SCHEMA
+    assert comparison.missing_baseline == ("validation/new_case/750",)
+    assert dict(comparison.baseline.estimates)["validation/validate_3d/750"].point == 2_000_000
+    assert load_bundle_bytes(payload, manifest, source="round-trip fixture") == PerformanceBundle(context=original.context, rows=original.sorted_rows)
+    assert b'"speedup"' not in payload
+    assert b'"percent_reduction"' not in payload
 
 
 def test_artifact_round_trip_allows_same_version_local_comparison() -> None:
     original = bundle(current="v0.8.0", baseline="v0.8.0")
-    csv_payload, provenance_payload = serialize_bundle(original)
+    payload, provenance_payload = serialize_bundle(original)
 
-    parsed = load_bundle_bytes(csv_payload, provenance_payload, source="same-version fixture")
+    parsed = load_bundle_bytes(payload, provenance_payload, source="same-version fixture")
 
     assert parsed.context.release == ReleasePair(current="v0.8.0", baseline="v0.8.0")
 
@@ -173,23 +153,6 @@ def test_artifact_serialization_sorts_rows_deterministically() -> None:
     reordered = PerformanceBundle(context=original.context, rows=tuple(reversed(original.rows)))
 
     assert serialize_bundle(original) == serialize_bundle(reordered)
-
-
-@pytest.mark.parametrize("value", [0.0, -1.0, float("nan"), float("inf")])
-def test_timing_estimate_rejects_non_positive_or_non_finite_values(value: float) -> None:
-    with pytest.raises(ValueError, match="finite and positive"):
-        TimingEstimate(median_ns=value, ci_lower_ns=1.0, ci_upper_ns=2.0, confidence_level=0.95)
-
-
-def test_timing_estimate_accepts_ordered_interval_that_excludes_point_estimate() -> None:
-    estimate = TimingEstimate(median_ns=3.0, ci_lower_ns=1.0, ci_upper_ns=2.0, confidence_level=0.95)
-
-    assert estimate.median_ns == 3.0
-
-
-def test_timing_estimate_rejects_reversed_interval() -> None:
-    with pytest.raises(ValueError, match="confidence interval must be ordered"):
-        TimingEstimate(median_ns=2.0, ci_lower_ns=3.0, ci_upper_ns=1.0, confidence_level=0.95)
 
 
 def test_performance_row_rejects_coverage_presence_mismatch() -> None:
@@ -207,189 +170,13 @@ def test_performance_row_rejects_coverage_presence_mismatch() -> None:
         )
 
 
-def test_loader_rejects_unsupported_provenance_schema() -> None:
-    csv_payload, provenance_payload = serialize_bundle(bundle())
-    data = json.loads(provenance_payload)
-    data["schema_version"] = 4
-
-    with pytest.raises(ValueError, match="unsupported provenance schema version"):
-        load_bundle_bytes(csv_payload, json.dumps(data).encode(), source="future schema")
-
-
-@pytest.mark.parametrize("schema_version", [True, 2.0, "2"])
-def test_loader_rejects_non_integer_provenance_schema(schema_version: object) -> None:
-    csv_payload, provenance_payload = serialize_bundle(bundle())
-    data = json.loads(provenance_payload)
-    data["schema_version"] = schema_version
-
-    with pytest.raises(ValueError, match="unsupported provenance schema version"):
-        load_bundle_bytes(csv_payload, json.dumps(data).encode(), source="invalid schema type")
-
-
-def test_loader_rejects_missing_provenance_field() -> None:
-    csv_payload, provenance_payload = serialize_bundle(bundle())
-    data = json.loads(provenance_payload)
-    del data["baseline"]["toolchain"]["harness_sha256"]
-
-    with pytest.raises(ValueError, match="fields do not match schema"):
-        load_bundle_bytes(csv_payload, json.dumps(data).encode(), source="incomplete provenance")
-
-
-def test_loader_rejects_csv_digest_mismatch() -> None:
-    csv_payload, provenance_payload = serialize_bundle(bundle())
-
-    with pytest.raises(ValueError, match="CSV SHA-256 does not match"):
-        load_bundle_bytes(csv_payload + b"\n", provenance_payload, source="digest mismatch")
-
-
-def test_loader_rejects_unknown_coverage_state() -> None:
-    csv_payload, provenance_payload = serialize_bundle(bundle())
-    changed = replace_csv_rows(csv_payload, lambda rows: rows[0].__setitem__("coverage_status", "unknown"))
-
-    with pytest.raises(ValueError, match="unsupported coverage status"):
-        load_bundle_bytes(changed, bind_csv(provenance_payload, changed), source="unknown coverage")
-
-
-def test_loader_rejects_partial_timing_triple() -> None:
-    csv_payload, provenance_payload = serialize_bundle(bundle())
-
-    def remove_comparable_bound(rows: list[dict[str, str]]) -> None:
-        comparable = next(row for row in rows if row["coverage_status"] == "comparable")
-        comparable["baseline_ci_upper_ns"] = ""
-
-    changed = replace_csv_rows(csv_payload, remove_comparable_bound)
-
-    with pytest.raises(ValueError, match="partial baseline timing"):
-        load_bundle_bytes(changed, bind_csv(provenance_payload, changed), source="partial timing")
-
-
-def test_loader_rejects_duplicate_benchmark_ids() -> None:
-    csv_payload, provenance_payload = serialize_bundle(bundle())
-
-    def duplicate_first(rows: list[dict[str, str]]) -> None:
-        rows.append(dict(rows[0]))
-
-    changed = replace_csv_rows(csv_payload, duplicate_first)
-    rebound = bind_csv(provenance_payload, changed, row_count=3)
-
-    with pytest.raises(ValueError, match="duplicate benchmark_id"):
-        load_bundle_bytes(changed, rebound, source="duplicate rows")
-
-
 def test_write_bundle_publishes_pair_and_validates_reload(tmp_path: Path) -> None:
-    paths = ArtifactPaths(csv=tmp_path / "performance.csv", provenance=tmp_path / "performance.provenance.json")
+    paths = ArtifactPaths(payload=tmp_path / "performance.comparison.json", provenance=tmp_path / "performance.evidence.json")
 
     write_bundle(paths, bundle())
 
     assert load_bundle(paths) == PerformanceBundle(context=bundle().context, rows=bundle().sorted_rows)
     assert not list(tmp_path.glob(".performance.*.tmp"))
-
-
-def test_loader_rejects_semantically_equivalent_noncanonical_bytes() -> None:
-    csv_payload, provenance_payload = serialize_bundle(bundle())
-    compact_provenance = json.dumps(json.loads(provenance_payload), sort_keys=True).encode()
-
-    with pytest.raises(ValueError, match="provenance payload is not in canonical serialized form"):
-        load_bundle_bytes(csv_payload, compact_provenance, source="compact provenance")
-
-    crlf_csv = csv_payload.replace(b"\n", b"\r\n")
-    rebound_provenance = bind_csv(provenance_payload, crlf_csv, row_count=len(bundle().rows))
-
-    with pytest.raises(ValueError, match="CSV payload is not in canonical serialized form"):
-        load_bundle_bytes(crlf_csv, rebound_provenance, source="CRLF CSV")
-
-
-def test_publish_bundle_rolls_back_pair_when_consumer_fails(tmp_path: Path) -> None:
-    paths = ArtifactPaths(csv=tmp_path / "performance.csv", provenance=tmp_path / "performance.provenance.json")
-    old_bundle = bundle(current="v0.7.8", baseline="v0.7.7")
-    write_bundle(paths, old_bundle)
-    old_csv = paths.csv.read_bytes()
-    old_provenance = paths.provenance.read_bytes()
-
-    msg = "consumer failed"
-
-    def fail_after_observing_new_bundle() -> None:
-        with publish_bundle(paths, bundle()):
-            assert load_bundle(paths) == PerformanceBundle(context=bundle().context, rows=bundle().sorted_rows)
-            raise RuntimeError(msg)
-
-    with pytest.raises(RuntimeError, match=msg):
-        fail_after_observing_new_bundle()
-
-    assert paths.csv.read_bytes() == old_csv
-    assert paths.provenance.read_bytes() == old_provenance
-    assert load_bundle(paths) == PerformanceBundle(context=old_bundle.context, rows=old_bundle.sorted_rows)
-    assert not list(tmp_path.glob(".performance.*.tmp"))
-
-
-def test_publish_bundle_restores_prior_absence_when_consumer_fails(tmp_path: Path) -> None:
-    paths = ArtifactPaths(csv=tmp_path / "performance.csv", provenance=tmp_path / "performance.provenance.json")
-    msg = "consumer failed"
-
-    def fail_after_observing_new_bundle() -> None:
-        with publish_bundle(paths, bundle()):
-            assert load_bundle(paths).context.release.current == "v0.8.0"
-            raise RuntimeError(msg)
-
-    with pytest.raises(RuntimeError, match=msg):
-        fail_after_observing_new_bundle()
-
-    assert not paths.csv.exists()
-    assert not paths.provenance.exists()
-    assert not list(tmp_path.glob(".performance.*.tmp"))
-
-
-def test_bundle_rollback_continues_after_failure_and_retains_prior_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """One locked destination must not prevent restoring its companion sidecar."""
-    paths = ArtifactPaths(csv=tmp_path / "performance.csv", provenance=tmp_path / "performance.provenance.json")
-    write_bundle(paths, bundle(current="v0.7.8", baseline="v0.7.7"))
-    old_csv, old_provenance = paths.csv.read_bytes(), paths.provenance.read_bytes()
-    real_replace = Path.replace
-    replacement = replace(bundle(), rows=(replace(bundle().rows[0], current=estimate(900_000.0)), bundle().rows[1]))
-
-    def fail_csv_restore(source: Path, destination: Path) -> Path:
-        if destination == paths.csv and source.read_bytes() == old_csv:
-            msg = "CSV destination locked during rollback"
-            raise OSError(msg)
-        return real_replace(source, destination)
-
-    monkeypatch.setattr(Path, "replace", fail_csv_restore)
-    primary = RuntimeError("consumer promotion failed")
-    with pytest.raises(ExceptionGroup) as failure, publish_bundle(paths, replacement):
-        raise primary
-
-    assert failure.value.exceptions[0] is primary
-    assert "prior bytes retained" in str(failure.value.exceptions[1])
-    assert paths.provenance.read_bytes() == old_provenance
-    backups = list(tmp_path.glob(".performance.csv.*.recovery"))
-    assert len(backups) == 1
-    assert backups[0].read_bytes() == old_csv
-
-
-def test_bundle_rollback_preserves_primary_and_recovery_write_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    paths = ArtifactPaths(csv=tmp_path / "performance.csv", provenance=tmp_path / "performance.provenance.json")
-    write_bundle(paths, bundle(current="v0.7.8", baseline="v0.7.7"))
-    old_csv, old_provenance = paths.csv.read_bytes(), paths.provenance.read_bytes()
-    replace_many = performance_artifacts.replace_many
-    replacement = replace(bundle(), rows=(replace(bundle().rows[0], current=estimate(900_000.0)), bundle().rows[1]))
-
-    def fail_old_csv_write(updates: dict[Path, bytes]) -> None:
-        if old_csv in updates.values():
-            msg = "storage cannot accept prior CSV"
-            raise OSError(msg)
-        replace_many(updates)
-
-    primary = RuntimeError("consumer failed")
-    monkeypatch.setattr(performance_artifacts, "replace_many", fail_old_csv_write)
-    with pytest.raises(ExceptionGroup) as failure, publish_bundle(paths, replacement):
-        raise primary
-
-    assert failure.value.exceptions[0] is primary
-    recovery = failure.value.exceptions[1]
-    assert isinstance(recovery, ExceptionGroup)
-    assert "or save its prior bytes" in recovery.message
-    assert len(recovery.exceptions) == 2
-    assert paths.provenance.read_bytes() == old_provenance
 
 
 @pytest.mark.parametrize(
@@ -413,21 +200,22 @@ def test_performance_row_rejects_markdown_structure(field: str, value: str) -> N
         (("current", "source", "ref"), "refs/../bad", "supported Git ref"),
         (("current", "source", "revision_timestamp"), "2026-08-23T12:00:00", "include a timezone"),
         (("current", "source", "revision_timestamp"), "2026-08-23\n12:00:00+00:00", "Markdown-safe"),
-        (("current", "source", "revision_timestamp"), "2026-08-23`12:00:00+00:00", "Markdown-safe"),
         (("current", "source", "revision_timestamp"), "2026-08-23 12:00:00+00:00", "canonical 'T'"),
         (("current", "toolchain", "cargo_profile"), "release", "must be 'perf'"),
     ],
 )
 def test_loader_rejects_malformed_invariant_provenance(path: tuple[str, ...], value: object, message: str) -> None:
-    csv_payload, provenance_payload = serialize_bundle(bundle())
-    data = json.loads(provenance_payload)
-    target = data
+    payload, manifest = serialize_bundle(bundle())
+    data = json.loads(manifest)
+    policy = json.loads(data["sources"]["current"]["context"][POLICY_CONTEXT])
+    target = policy["context"]
     for component in path[:-1]:
         target = target[component]
     target[path[-1]] = value
+    data["sources"]["current"]["context"][POLICY_CONTEXT] = json.dumps(policy, separators=(",", ":"))
 
     with pytest.raises(ValueError, match=message):
-        load_bundle_bytes(csv_payload, json.dumps(data).encode(), source="malformed provenance")
+        load_bundle_bytes(payload, json.dumps(data).encode(), source="malformed consumer policy")
 
 
 def test_bundle_requires_comparable_complete_release_signal_coverage_for_promotion() -> None:
@@ -469,9 +257,9 @@ def test_release_pair_rejects_numeric_prerelease_identifiers_with_leading_zeroes
 )
 def test_bundle_roundtrip_preserves_valid_prerelease_and_build_identifiers(tag: str) -> None:
     """Keep valid numeric, alphanumeric, and build identifiers intact in artifacts."""
-    csv_payload, provenance_payload = serialize_bundle(bundle(current=tag, baseline=tag))
+    payload, provenance_payload = serialize_bundle(bundle(current=tag, baseline=tag))
 
-    loaded = load_bundle_bytes(csv_payload, provenance_payload, source="valid semver")
+    loaded = load_bundle_bytes(payload, provenance_payload, source="valid semver")
 
     assert loaded.context.release.current == tag
     assert loaded.context.release.baseline == tag
@@ -498,17 +286,12 @@ def test_bundle_roundtrip_preserves_valid_prerelease_and_build_identifiers(tag: 
         ("v0.8.2+build-with-hyphens", "v0.8.2", False),
     ],
 )
-def test_release_contract_boundary_blocks_ratios_even_with_matching_provenance(current: str, baseline: str, blocked: bool) -> None:
-    """Matching hashes cannot override the documented reset; history stays readable."""
+def test_fresh_evidence_uses_harness_identity_instead_of_historical_release_boundary(current: str, baseline: str, blocked: bool) -> None:
+    """Fresh matching workloads can cross the old boundary; archive policy still records it."""
     measured = context(current=current, baseline=baseline)
-    if blocked:
-        assert len(measured.comparison_blockers) == 1
-        assert "corrected benchmark contract starts with v0.8.2" in measured.comparison_blockers[0]
-        with pytest.raises(ValueError, match="compatible measurement provenance"):
-            PerformanceBundle(context=measured, rows=(bundle().rows[0],))
-    else:
-        assert measured.comparison_blockers == ()
-        PerformanceBundle(context=measured, rows=(bundle().rows[0],)).require_promotable()
+    assert bool(measured.release.benchmark_contract_blockers) is blocked
+    assert measured.comparison_blockers == ()
+    PerformanceBundle(context=measured, rows=(bundle().rows[0],)).require_promotable()
 
 
 def test_measurement_plan_difference_blocks_comparable_rows() -> None:
@@ -604,7 +387,70 @@ def test_github_assets_are_always_separate_measurement_sessions() -> None:
 
 
 def test_artifact_paths_reject_aliases(tmp_path: Path) -> None:
-    target = tmp_path / "performance.csv"
+    target = tmp_path / "performance.comparison.json"
 
     with pytest.raises(ValueError, match="must use distinct paths"):
-        ArtifactPaths(csv=target, provenance=target)
+        ArtifactPaths(payload=target, provenance=target)
+
+
+def test_shared_payload_integrity_is_checked_before_consumer_policy() -> None:
+    """A retained hash mismatch must fail before timing interpretation."""
+    payload, manifest = serialize_bundle(bundle())
+    with pytest.raises(ValueError, match="recorded SHA-256"):
+        load_bundle_bytes(payload + b" ", manifest, source="changed timing payload")
+
+
+def test_loader_requires_recorded_confidence_intervals() -> None:
+    """Shared optional intervals cannot weaken Delaunay's recorded-interval gate."""
+    payload, manifest = serialize_bundle(bundle())
+    timings = json.loads(payload)
+    row = timings["baseline"][0]
+    row["lower"] = row["upper"] = row["confidence_level"] = None
+    changed = json.dumps(timings).encode()
+    metadata = json.loads(manifest)
+    metadata["payload_sha256"] = sha256(changed)
+    with pytest.raises(ValueError, match="complete confidence intervals"):
+        load_bundle_bytes(changed, json.dumps(metadata).encode(), source="missing marginal interval")
+
+
+def test_loader_requires_policy_inventory_to_match_both_samples() -> None:
+    """The policy may not hide an added or removed measurement."""
+    payload, manifest = serialize_bundle(bundle())
+    data = json.loads(manifest)
+    policy = json.loads(data["sources"]["current"]["context"][POLICY_CONTEXT])
+    policy["rows"].pop()
+    data["sources"]["current"]["context"][POLICY_CONTEXT] = json.dumps(policy, separators=(",", ":"))
+    with pytest.raises(ValueError, match="complete shared benchmark inventory"):
+        load_bundle_bytes(payload, json.dumps(data).encode(), source="hidden measurement")
+
+
+def test_loader_binds_shared_revision_to_consumer_policy() -> None:
+    """A valid but different envelope revision cannot replace the measured source."""
+    payload, manifest = serialize_bundle(bundle())
+    data = json.loads(manifest)
+    data["sources"]["current"]["revision"] = "c" * 40
+    with pytest.raises(ValueError, match="does not match Delaunay source identity"):
+        load_bundle_bytes(payload, json.dumps(data).encode(), source="changed source identity")
+
+
+def test_separate_sessions_remain_non_comparable_after_shared_round_trip() -> None:
+    """Shared serialization must not turn archive measurements into paired timings."""
+    original = bundle()
+    host = original.context.publication_host
+    archive = replace(
+        original.context,
+        measurement_mode="github-assets",
+        current_acquisition_commands=(("gh", "release", "download", "v0.8.0"),),
+        baseline_acquisition_commands=(("gh", "release", "download", "v0.7.8"),),
+        current_artifact=MeasurementArtifact(origin="release-archive", content_sha256=SHA_B, sample_name="new", archive_sha256=SHA_A),
+        baseline_artifact=MeasurementArtifact(origin="release-archive", content_sha256=SHA_C, sample_name="new", archive_sha256=SHA_A),
+        current_measurement_host=host,
+        baseline_measurement_host=host,
+    )
+    row = replace(original.rows[0], coverage_status="not-comparable", coverage_note="release archives were measured in separate sessions")
+    payload, manifest = serialize_bundle(PerformanceBundle(archive, (row,)))
+    loaded = load_bundle_bytes(payload, manifest, source="separate archive sessions")
+    assert loaded.rows[0].coverage_status == "not-comparable"
+    assert "release archives were measured in separate sessions" in loaded.context.comparison_blockers
+    with pytest.raises(ValueError, match="not promotable"):
+        loaded.require_promotable()

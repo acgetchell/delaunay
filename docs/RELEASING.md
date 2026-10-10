@@ -42,7 +42,8 @@ shared PyPI toolchain. See [development commands](dev/commands.md#justfile-usage
 for native libraries, managed installation ownership, and update policies:
 
 ```bash
-source scripts/tectonic_native_dependencies.sh
+tectonic_environment="$(uv run --locked --managed-python --only-group tooling research-repo-tools tectonic discover --format shell)"
+eval "$tectonic_environment"
 uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
@@ -124,21 +125,12 @@ changes. Do not edit generated changelog files manually.
 
 ### 4. Generate release performance measurements
 
-The corrected proof-aware benchmark contract starts with **v0.8.2**. For that
-first release, `just performance-release` runs the same fresh, strict absolute
-summary workflow as `just bench-perf-summary`, writing
-`benches/PERFORMANCE_RESULTS.md`. It preflights the curated fixtures before
-sampling and does not fetch or benchmark an earlier release. Skip the
-README comparison publication in step 5:
-v0.8.1's failed fixtures and earlier case names are not a valid baseline for
-this contract. Keep historical reports labeled with their original versions;
-do not relabel them as v0.8.2 evidence. The draft-run-publish workflow below
-attaches the first complete corrected archive to v0.8.2.
-
-From the following release onward, use two comparable releases under the new
-contract for the comparison and README publication steps. Explicit or inferred
-pairs spanning the v0.8.2 contract boundary are rejected before tag fetches or
-benchmark worktrees are created.
+Fresh comparisons establish workload identity from recorded harness and
+measurement-plan evidence. Benchmark fixtures must pass their scientific
+checks before timings are used. If the baseline fails those checks or its
+harness differs, generate absolute results with `just bench-perf-summary` and
+skip comparison/README publication. Historical reports keep their original
+labels and measurements.
 
 Run this after the package version has been updated:
 
@@ -146,10 +138,10 @@ Run this after the package version has been updated:
 just performance-release
 ```
 
-After v0.8.2, the no-argument form compares the current package version with the
+The no-argument form compares the current package version with the
 previous stable published release. It runs the release-signal Criterion measurements,
-retains `target/bench-reports/performance.{md,csv,provenance.json}`, validates
-the CSV/provenance pair after reloading it, promotes `docs/performance.md`, and
+retains `target/bench-reports/performance.{md,comparison.json,evidence.json}`, validates
+the comparison JSON/evidence pair after reloading it, promotes `docs/performance.md`, and
 archives the prior report plus the exact promoted evidence under
 `docs/archive/performance/`.
 
@@ -161,12 +153,12 @@ measurements; they are not expected runtimes. A timeout in any target means the
 measurement failed: rerun the complete `just performance-release` command
 instead of promoting a partial run.
 
-The temporary current worktree includes staged and unstaged changes to tracked
-files but excludes untracked files. Stage any new benchmark-relevant file
-before running the comparison. Do not run `just clean` or `cargo clean` until
+The temporary current worktree includes staged and unstaged tracked changes
+and nonignored new files through the shared snapshot API. Keep source inputs
+stable during capture and measurement. Do not run `just clean` or `cargo clean` until
 the retained inputs have been reviewed and the README publication succeeds.
 
-If measurement succeeded, the retained CSV/provenance pair reload-validates,
+If measurement succeeded, the retained comparison JSON/evidence pair reload-validates,
 and only report promotion must be retried, use `just performance-doc`. It reads
 that pair and runs no Cargo benchmarks or measurement worktrees. Explicit
 current/baseline tag pairs are reserved for repair paths and must always be
@@ -185,7 +177,7 @@ just performance-readme
 This command consumes the validated bundle retained and promoted by
 `performance-release`; it never invokes Cargo or Criterion. It atomically
 updates the compact group-level table in `README.md` and the exact canonical
-CSV/provenance pair under `docs/assets/bench/`. README links are pinned to
+comparison JSON/evidence pair under `docs/assets/bench/`. README links are pinned to
 `TAG`, so they resolve to the reviewed release artifacts after the tag is
 published. Caught publication failures restore every prior README-owned file.
 
@@ -247,11 +239,9 @@ For a critical fix that must be included, make and commit the fix. If it changes
 measured code, benchmark harnesses, toolchain or dependency inputs, or benchmark
 configuration:
 
-- For v0.8.2, rerun `just performance-release` to refresh the absolute baseline
-  measurements. Skip `just performance-readme` for this initial release.
-- For later releases, rerun `just performance-release "$TAG" "vA.B.C"` with the
-  same baseline used for the release comparison, then rerun
-  `just performance-readme`.
+Rerun `just performance-release "$TAG" "vA.B.C"` with the same baseline,
+then rerun `just performance-readme`. When the release has only absolute
+measurements, rerun `just bench-perf-summary` instead.
 
 Rerun `just changelog-release "$TAG" "$DATE"`, review and stage only the regenerated
 release outputs, commit that update separately, and rerun the final release and

@@ -190,11 +190,12 @@ parameterized implementation helpers live in `just/helpers.just`.
 
 Tool declarations live in their authoritative consumer files: exact uv and Cargo
 tool pins in `pyproject.toml`, Python in `.python-version`, and Rust plus components
-in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.1.7` from PyPI
+in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.1.8` from PyPI
 and is included by `dev`. Before the first Just invocation, run:
 
 ```bash
-source scripts/tectonic_native_dependencies.sh
+tectonic_environment="$(uv run --locked --managed-python --only-group tooling research-repo-tools tectonic discover --format shell)"
+eval "$tectonic_environment"
 uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
@@ -403,10 +404,11 @@ other notebooks deliberately with `just notebook-execute` or use a named
 artifact-refresh recipe. There is no aggregate recipe that executes every
 notebook.
 
-`just semgrep` scans repository-owned Rust under `src/`, `examples/`, and
-`benches/`. Because Semgrep's default ignore policy excludes test directories,
-the shared target enumerator also supplies tracked Python and Rust tests to
-both local validation and the hosted SARIF workflow. Deliberate violations
+`just semgrep` scans explicit repository rule scopes, including Rust, Python,
+workflow YAML, documentation, notebooks and paper sources. Shared enumeration
+keeps tracked Python and Rust tests visible to both local validation and the
+hosted SARIF workflow. The paired reports require complete selected-input
+coverage and matching active findings. Deliberate violations
 under `tests/semgrep/` remain excluded from repository scans and are exercised
 only by `just semgrep-test`.
 
@@ -470,10 +472,7 @@ just performance-github-assets
 just performance-release
 just performance-doc
 just performance-readme
-just perf-baseline
-just perf-compare
-just perf-vs-ref
-just perf-no-regressions
+just performance-local
 just bench-perf-summary
 just bench-pachner-stress
 cargo bench --profile perf --bench ci_performance_suite
@@ -537,7 +536,7 @@ regenerates `benches/PERFORMANCE_RESULTS.md`.
 
 Use `just bench-latest` when you need the curated release-signal Criterion
 suite for local saved-baseline comparisons. The recipe executes the immutable
-target/section/group plan in `scripts/benchmark_utils.py`, leaving
+target/section/group plan in `tooling/python/benchmark_utils.py`, leaving
 `target/criterion/new` data suitable for `just bench-compare`; release CI and
 strict summary generation consume that same plan. The manual
 `topology_guarantee_construction` suite remains
@@ -589,8 +588,7 @@ already present under `target/criterion/`.
 
 Use `just performance-local` for an isolated temp-worktree comparison of the
 current package version against the latest stable published release. It runs
-local benchmarks and retains adjacent Markdown, versioned CSV, and provenance
-JSON under `target/bench-reports/` without changing tracked docs. Use
+local benchmarks and retains adjacent Markdown, shared comparison JSON, and evidence under `target/bench-reports/` without changing tracked docs. Use
 `just performance-github-assets` to retain a provenance-validated bundle from
 stored GitHub Release benchmark assets without local Cargo runs. Supported
 archives carry versioned source, command, toolchain, completed-target,
@@ -600,19 +598,17 @@ provenance-limited absolute timing evidence. GitHub-asset ratios are always
 suppressed because the archives came from separate measurement sessions. Use
 `just performance-release` in release PRs to measure, retain, reload-validate, and
 promote one curated comparison into `docs/performance.md`, archiving the
-previous report and exact promoted CSV/provenance bytes under
+previous report and exact promoted comparison JSON/evidence bytes under
 `docs/archive/performance/`.
 
-The corrected benchmark contract starts with v0.8.2. For that initial release,
-the no-argument `just performance-release` instead runs fresh, strict absolute
-measurements into `benches/PERFORMANCE_RESULTS.md`, using the same summary path
-as `just bench-perf-summary`. It requires no previous release or tag fetch.
-Skip `performance-doc` and `performance-readme` for v0.8.2. Comparisons across
-the v0.8.2 contract boundary are rejected before measurement or acquisition;
-historical reports retain their original release labels.
+Fresh comparisons use the recorded harness and measurement plan to establish workload
+identity, including comparisons across older release labels. Failed scientific fixtures
+invalidate a run; incompatible harnesses suppress ratios. When no comparable baseline
+exists, use `just bench-perf-summary` for absolute results and skip comparison publication.
+Historical reports retain their original release labels.
 
 Use `just performance-doc` to retry rendering or promotion from an existing
-retained CSV/provenance pair. It runs no Cargo benchmarks or measurement
+retained comparison JSON/evidence pair. It runs no Cargo benchmarks or measurement
 worktrees and rejects incomplete, invalid, stale, same-version, or
 scientifically non-comparable pairs. Promotion uses per-file atomic replacement
 with rollback for caught failures; after a hard interruption, inspect the
@@ -620,26 +616,31 @@ destinations and rerun the idempotent command. The GitHub
 asset and release-promotion recipes accept explicit `<current-tag>
 <baseline-tag>` pairs for repair paths, but both tags must be supplied together
 before any fetch or benchmark side effect. Temp-worktree release commands apply
-tracked checkout changes by default; untracked files must be added to git before
-they affect the generated report.
+the shared exact snapshot by default, including nonignored new files and their
+permissions. Snapshot application requires the captured checkout revision.
 
 Use `just performance-readme` after `performance-release` to validate that the
 retained bundle exactly matches the promoted durable evidence, then publish a
-compact group-level README table and the canonical CSV/provenance pair under
+compact group-level README table and the canonical comparison JSON/evidence pair under
 `docs/assets/bench/`. It runs no benchmarks, updates tag-pinned evidence links,
 and rolls back every README-owned destination on caught failures.
 
-Scratch Markdown identifies the adjacent CSV/provenance pair under
+Scratch Markdown identifies the adjacent comparison JSON/evidence pair under
 `target/bench-reports/`. A promoted report instead identifies the exact durable
 pair copied under `docs/archive/performance/data/`. Broad configuration digests
 remain recorded provenance; cross-release comparability uses the normalized
 measurement plan, harness identity, toolchain, completed targets, host, and
 confidence level.
 
-CSV is canonical because the comparison is a small, deterministic, diffable
-audit record. Notebooks may derive disposable Parquet caches from it for larger
-analyses, but `performance-doc` accepts only the validated CSV and provenance
-JSON pair. Raw Criterion data remains in the release `.tar.gz` assets.
+The canonical timing payload is the shared `research-repo-tools/criterion-comparison/v1`
+JSON, paired with its digest-bound evidence envelope. Delaunay's context records
+coverage and scientific eligibility. Ratios require matching measured harnesses,
+plans, toolchains, confidence levels, and hosts. Timing changes are descriptive;
+marginal timing intervals are not ratio intervals or significance tests.
+
+Historical CSV/text files stay unchanged as records. Their readers and writers
+are retired. New reports use `.comparison.json` and `.evidence.json`; old files
+cannot be passed to the new promotion commands.
 
 Before pushing core Rust/Cargo or public-behavior changes, complete final
 comprehensive validation:
@@ -657,7 +658,7 @@ just perf-large-scale-smoke
 For performance-sensitive changes and PR-ready work, also run:
 
 ```bash
-just perf-no-regressions
+just performance-local
 ```
 
 ## Slow Correctness Tests
@@ -679,70 +680,17 @@ run. When adding or removing a gate, compare nextest discovery with and without
 `--features slow-tests` so the slow-only case is demonstrably owned by this
 lane.
 
-`just perf-no-regressions` is the fuller local PR guard. It runs
-`ci_performance_suite` with the shared dev-mode Criterion arguments against a
-same-machine baseline generated from the current GitHub `main` ref. The guard
-reuses a local cache under `baseline-artifacts/perf-no-regressions/` keyed by
-the resolved `origin/main` commit and local Rust compiler version, and refreshes
-that baseline when `main` or the compiler changes, or when the cached artifact
-does not match the benchmark contract. The current worktree benchmark still runs
-fresh each time so repeated comparisons can catch local performance drift.
-The comparison report is written to
-`benches/worktree_vs_main_compare_results.txt` by default so it is visibly a
-branch/PR-vs-main check. The local guard exits nonzero only when benchmark
-execution fails or total matched benchmark mean time regresses beyond the
-threshold; individual benchmark regressions are warnings in the report. The
-report also lists total, geomean, median, top regressions, and top improvements,
-and the command prints a short terminal status with the report path.
-`just clean` removes Criterion data under `target/`, but it does not remove this
-local baseline cache.
+`just performance-local` measures the current checkout and the latest published stable
+release freshly on this machine, retaining evidence under `target/bench-reports/`.
+The CI performance job uses the same command and retains the same JSON pair. It
+fails on execution or invalid evidence, and reports descriptive timing changes without
+an arbitrary regression threshold. It suppresses ratios for differing harnesses,
+measurement plans, toolchains, confidence levels, or host identities.
 
-```bash
-just perf-no-regressions
-```
-
-To compare the current branch against a specific local release/ref baseline,
-use `just perf-vs-ref`:
-
-```bash
-just perf-vs-ref v0.7.8
-```
-
-It uses the same cached same-machine baseline flow as `just perf-no-regressions`
-but resolves and caches the requested ref, writes a
-`benches/worktree_vs_<ref>_compare_results.txt` report, and treats overall total
-matched-time regressions as failures while keeping individual benchmark
-regressions as report warnings.
-
-`just perf-baseline` is optional and intentionally persistent: use it only when
-you want to create or refresh `baseline-artifact/baseline_results.txt` for later
-manual same-machine comparisons. `baseline-artifact/` and
-`baseline-artifacts/` are ignored by git so local timing records stay local. CI
-regression checks now download the latest stable GitHub Release asset,
-`delaunay-vX.Y.Z-criterion-baseline.tar.gz`, and compare the current
-`ubuntu-latest` GitHub Actions run against that released-version Ubuntu
-baseline.
-`just perf-compare <file>` still writes
-`benches/main_vs_release_compare_results.txt` by default. It follows the same
-terminal-status convention, but remains stricter: individual benchmark
-regressions still make release-style comparisons fail.
-
-For lower-level workflows, `uv run --locked benchmark-utils ensure-ref-baseline --ref
-<ref> --dev` prints the cached/generated same-machine baseline path for a branch
-or version tag, and `uv run --locked benchmark-utils fetch-baseline --ref <ref>` downloads
-the manual compatibility GitHub Actions artifact instead. Use the generated
-local baseline for same-machine regression checks; use the downloaded artifact
-only when you explicitly want CI-runner parity. `uv run --locked benchmark-utils
-compare-ref --ref <ref>` writes
-`benches/worktree_vs_<ref>_compare_results.txt` unless `--output` is supplied.
-
-To generate a scratch baseline without replacing the default artifact, write it
-somewhere else and compare directly:
-
-```bash
-just perf-baseline-to /tmp/delaunay-main-baseline
-just perf-compare /tmp/delaunay-main-baseline/baseline_results.txt
-```
+The text-baseline, cached-ref, artifact-polling and threshold commands are retired.
+For a chosen saved Criterion baseline, use `just bench-save-baseline <name>` and
+`just bench-compare <name>`; review workload identity before interpreting those
+lower-level diagnostic comparisons.
 
 ---
 
@@ -818,8 +766,11 @@ just notebook-reset-from-git
 ```
 
 `notebook-check` runs notebook hygiene and native notebook code checks without
-executing notebooks. It calls shared lint/advice directly and runs the consumer
-cell-ID policy test. Explicit notebook execution writes the executed notebook
+executing notebooks. Shared lint/advice enforces the configured cell-ID pattern.
+`just notebook` launches JupyterLab with caches under `target/notebooks/jupyter`;
+additional arguments pass to the shared launch command. Reset is explicit:
+`just notebook-reset-from-git` applies the configured index restore and scratch
+cleanup; pass `HEAD` to restore that revision instead. Explicit notebook execution writes the executed notebook
 under `target/notebooks/notebooks/<notebook-stem>.ipynb` with an adjacent
 `.report.json`. Generated figures/data stay under
 `target/notebooks/<notebook-stem>/`, leaving
@@ -895,8 +846,8 @@ canonical figures and reviewer PDF through those named artifact owners.
 Tectonic and `tex-fmt` are pinned managed Cargo tools. `chktex` comes from a
 TeX distribution or system package manager. Local MacTeX commands live under
 `/Library/TeX/texbin`; prepend that directory to PATH when needed.
-`scripts/tectonic_native_dependencies.sh` keeps native library discovery in the
-consumer: pkg-config, FreeType, Graphite2, ICU, libpng, and zlib on macOS;
+`research-repo-tools tectonic discover` owns native library discovery:
+pkg-config, FreeType, Graphite2, ICU, libpng, and zlib on macOS;
 fontconfig and OpenSSL additionally on Linux. Windows MSVC uses matching vcpkg
 libraries with `TECTONIC_DEP_BACKEND=vcpkg`. Shared setup passes that native
 environment through to Cargo. Paper CI installs the platform packages explicitly,

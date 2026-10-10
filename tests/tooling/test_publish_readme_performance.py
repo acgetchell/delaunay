@@ -99,20 +99,20 @@ def _write_project(root: Path, *, bundle: performance_artifacts.PerformanceBundl
         encoding="utf-8",
     )
     source = performance_artifacts.ArtifactPaths(
-        csv=root / "target/bench-reports/performance.csv",
-        provenance=root / "target/bench-reports/performance.provenance.json",
+        payload=root / "target/bench-reports/performance.comparison.json",
+        provenance=root / "target/bench-reports/performance.evidence.json",
     )
     performance_artifacts.write_bundle(source, retained)
     archive_stem = f"{retained.context.release.current}-vs-{retained.context.release.baseline}"
     durable = performance_artifacts.ArtifactPaths(
-        csv=root / "docs/archive/performance/data" / f"{archive_stem}.csv",
-        provenance=root / "docs/archive/performance/data" / f"{archive_stem}.provenance.json",
+        payload=root / "docs/archive/performance/data" / f"{archive_stem}.comparison.json",
+        provenance=root / "docs/archive/performance/data" / f"{archive_stem}.evidence.json",
     )
     performance_artifacts.write_bundle(durable, retained)
     report = publish_readme_performance.render_performance_bundle(
         retained,
         evidence_paths=performance_artifacts.ArtifactPaths(
-            csv=durable.csv.relative_to(root),
+            payload=durable.payload.relative_to(root),
             provenance=durable.provenance.relative_to(root),
         ),
         evidence_state="promoted",
@@ -133,12 +133,12 @@ def test_publish_readme_performance_uses_retained_bundle_without_measurement_com
     assert "**v0.8.1 vs v0.8.0**" in readme
     assert "| `validation` | 1 | 2.000x |" in readme
     assert "blob/v0.8.1/docs/performance.md" in readme
-    assert "blob/v0.8.1/docs/assets/bench/release-performance.csv" in readme
+    assert "blob/v0.8.1/docs/assets/bench/release-performance.comparison.json" in readme
     published = performance_artifacts.ArtifactPaths(
-        csv=tmp_path / "docs/assets/bench/release-performance.csv",
-        provenance=tmp_path / "docs/assets/bench/release-performance.provenance.json",
+        payload=tmp_path / "docs/assets/bench/release-performance.comparison.json",
+        provenance=tmp_path / "docs/assets/bench/release-performance.evidence.json",
     )
-    assert published.csv.read_bytes() == source.csv.read_bytes()
+    assert published.payload.read_bytes() == source.payload.read_bytes()
     assert published.provenance.read_bytes() == source.provenance.read_bytes()
     assert performance_artifacts.load_bundle(published) == _bundle()
 
@@ -183,7 +183,7 @@ def test_publish_readme_performance_rejects_stale_current_release_before_writing
 @pytest.mark.parametrize("artifact", ["csv", "provenance"])
 def test_publish_readme_performance_requires_complete_promoted_bundle(tmp_path: Path, artifact: str) -> None:
     source = _write_project(tmp_path)
-    suffix = ".csv" if artifact == "csv" else ".provenance.json"
+    suffix = ".comparison.json" if artifact == "csv" else ".evidence.json"
     durable = tmp_path / "docs/archive/performance/data" / f"v0.8.1-vs-v0.8.0{suffix}"
     durable.unlink()
     original = (tmp_path / "README.md").read_bytes()
@@ -198,7 +198,7 @@ def test_publish_readme_performance_requires_complete_promoted_bundle(tmp_path: 
 @pytest.mark.parametrize("artifact", ["csv", "provenance"])
 def test_publish_readme_performance_requires_exact_promoted_bundle(tmp_path: Path, artifact: str) -> None:
     source = _write_project(tmp_path)
-    suffix = ".csv" if artifact == "csv" else ".provenance.json"
+    suffix = ".comparison.json" if artifact == "csv" else ".evidence.json"
     durable = tmp_path / "docs/archive/performance/data" / f"v0.8.1-vs-v0.8.0{suffix}"
     durable.write_text(f"not the retained {artifact}\n", encoding="utf-8")
     original = (tmp_path / "README.md").read_bytes()
@@ -215,14 +215,14 @@ def test_publish_readme_performance_rejects_external_durable_symlink(tmp_path: P
     root = tmp_path / "repo"
     root.mkdir()
     source = _write_project(root)
-    suffix = ".csv" if artifact == "csv" else ".provenance.json"
+    suffix = ".comparison.json" if artifact == "csv" else ".evidence.json"
     durable = root / "docs/archive/performance/data" / f"v0.8.1-vs-v0.8.0{suffix}"
     outside = tmp_path / f"outside{suffix}"
     outside.write_bytes(durable.read_bytes())
     durable.unlink()
     durable.symlink_to(outside)
     original = (root / "README.md").read_bytes()
-    label = "CSV" if artifact == "csv" else artifact
+    label = "payload" if artifact == "csv" else artifact
 
     with pytest.raises(ValueError, match=rf"promoted performance {label}.*must be contained"):
         publish_readme_performance.publish_readme_performance(root, artifacts=source)
@@ -292,8 +292,8 @@ def test_main_rejects_external_readme_before_any_write(
         [
             "--root",
             str(root),
-            "--artifact-csv",
-            str(source.csv),
+            "--artifact-payload",
+            str(source.payload),
             "--artifact-provenance",
             str(source.provenance),
             "--readme",
@@ -325,7 +325,7 @@ def test_publish_readme_performance_rejects_symlinked_asset_destination(
     assert list(outside.iterdir()) == []
 
 
-@pytest.mark.parametrize("destination", ["README.md", "docs/assets/bench/release-performance.csv"])
+@pytest.mark.parametrize("destination", ["README.md", "docs/assets/bench/release-performance.comparison.json"])
 def test_publish_readme_rejects_internal_output_symlinks(tmp_path: Path, destination: str) -> None:
     """Canonicalizing a destination must not bypass shared symlink rejection."""
     source = _write_project(tmp_path)
@@ -377,7 +377,7 @@ def test_publish_readme_performance_rolls_back_all_destinations(
 
     def fail_once(path: Path, target: Path) -> Path:
         nonlocal failed
-        if Path(target).name == "release-performance.provenance.json" and not failed:
+        if Path(target).name == "release-performance.evidence.json" and not failed:
             failed = True
             msg = "simulated publication failure"
             raise OSError(msg)
@@ -388,8 +388,8 @@ def test_publish_readme_performance_rolls_back_all_destinations(
         publish_readme_performance.publish_readme_performance(tmp_path, artifacts=source, readme=readme)
 
     assert readme.read_bytes() == original
-    assert not (tmp_path / "docs/assets/bench/release-performance.csv").exists()
-    assert not (tmp_path / "docs/assets/bench/release-performance.provenance.json").exists()
+    assert not (tmp_path / "docs/assets/bench/release-performance.comparison.json").exists()
+    assert not (tmp_path / "docs/assets/bench/release-performance.evidence.json").exists()
 
 
 @pytest.mark.parametrize("changed_input", ["source", "durable", "report", "manifest"])
@@ -406,8 +406,8 @@ def test_publish_readme_performance_rejects_changed_evidence(
 
     def change_evidence(plan: PublicationPlan) -> tuple[Path, ...]:
         candidates = {
-            "source": source.csv,
-            "durable": tmp_path / "docs/archive/performance/data/v0.8.1-vs-v0.8.0.csv",
+            "source": source.payload,
+            "durable": tmp_path / "docs/archive/performance/data/v0.8.1-vs-v0.8.0.comparison.json",
             "report": tmp_path / "docs/performance.md",
             "manifest": tmp_path / "Cargo.toml",
         }
@@ -418,7 +418,7 @@ def test_publish_readme_performance_rejects_changed_evidence(
     with pytest.raises(ValueError, match="changed"):
         publish_readme_performance.publish_readme_performance(tmp_path, artifacts=source, readme=readme)
     assert readme.read_bytes() == original
-    assert not (tmp_path / "docs/assets/bench/release-performance.csv").exists()
+    assert not (tmp_path / "docs/assets/bench/release-performance.comparison.json").exists()
 
 
 def test_main_reports_every_publication_recovery_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

@@ -38,12 +38,12 @@ def write_stub(directory: Path, name: str, source: str) -> None:
 
 def test_published_pin_configuration_and_inventory() -> None:
     groups = MANIFEST["dependency-groups"]
-    assert groups["tooling"] == ["research-repo-tools==0.1.7"]
+    assert groups["tooling"] == ["research-repo-tools[python-tools]==0.1.8"]
     assert {"include-group": "tooling"} in groups["dev"]
-    assert version("research-repo-tools") == "0.1.7"
+    assert version("research-repo-tools") == "0.1.8"
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     package = next(item for item in lock["package"] if item["name"] == "research-repo-tools")
-    assert package["version"] == "0.1.7"
+    assert package["version"] == "0.1.8"
     assert package["source"] == {"registry": "https://pypi.org/simple"}
     assert MANIFEST["tool"]["uv"]["required-version"].startswith("==")
     tools = MANIFEST["tool"]["research-repo-tools"]["toolchain"]["cargo"]
@@ -58,9 +58,6 @@ def recording_recipes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Execute the merged Justfile with local recording processes only."""
     (tmp_path / "justfile").write_bytes((ROOT / "justfile").read_bytes())
     shutil.copytree(ROOT / "just", tmp_path / "just")
-    (tmp_path / "scripts").mkdir()
-    # Native dependency provisioning is checked separately by managed setup.
-    (tmp_path / "scripts" / "tectonic_native_dependencies.sh").write_text("# Fixture native dependencies are available.\n", encoding="utf-8")
     for name in ("pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".python-version"):
         (tmp_path / name).write_bytes((ROOT / name).read_bytes())
     fixture = tmp_path / FIXTURE_MANIFEST
@@ -95,6 +92,7 @@ def update_commands(recipe: str) -> list[list[str]]:
     tools = [
         ["run", "--no-config", "--no-sync", "--no-python-downloads", "research-repo-tools", "deps", "update-uv"],
         [*UPDATE_PREFIX, "toolchain", "upgrade"],
+        ["run", "--locked", "--managed-python", "--only-group", "tooling", "research-repo-tools", "tectonic", "discover", "--format", "shell"],
         ["run", "--locked", "--managed-python", "--only-group", "tooling", "research-repo-tools", "setup"],
     ]
     cargo = [
@@ -150,7 +148,7 @@ def test_update_composition_and_boundaries(recording_recipes: Path, recipe: str)
     assert {path: path.read_bytes() for path in files} == before
 
 
-@pytest.mark.parametrize("step", range(1, 11))
+@pytest.mark.parametrize("step", range(1, 12))
 def test_update_failure_stops_later_steps(recording_recipes: Path, monkeypatch: pytest.MonkeyPatch, step: int) -> None:
     monkeypatch.setenv("FAIL_STEP", str(step))
     result, calls = invoke_recipe(recording_recipes, "update")

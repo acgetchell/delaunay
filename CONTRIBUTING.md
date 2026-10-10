@@ -42,13 +42,14 @@ Rust, Cargo tools, and its own Just dependency directly from PyPI.
 From the repository root, initialize the declared toolchain:
 
 ```bash
-source scripts/tectonic_native_dependencies.sh
+tectonic_environment="$(uv run --locked --managed-python --only-group tooling research-repo-tools tectonic discover --format shell)"
+eval "$tectonic_environment"
 uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
 Open a new terminal if setup changed PATH. No shared-package checkout or generated
 bootstrap launcher is needed. Repository Python tooling is described in
-[docs/dev/python.md][dev-python] and [scripts/README.md][scripts-readme].
+[docs/dev/python.md][dev-python] and [tooling/python/README.md][python-readme].
 
 For the current command list and workflow details, use:
 
@@ -138,7 +139,7 @@ in this guide:
 | Command recipes and validation workflow | [docs/dev/commands.md][dev-commands], `just --list` |
 | Rust style, docs, and API expectations | [docs/dev/rust.md][dev-rust] |
 | Testing conventions and adversarial input guidance | [docs/dev/testing.md][dev-testing] |
-| Python tooling and support scripts | [docs/dev/python.md][dev-python], [scripts/README.md][scripts-readme] |
+| Python tooling and support scripts | [docs/dev/python.md][dev-python], [tooling/python/README.md][python-readme] |
 | Project layout and module architecture | [docs/code_organization.md][code-organization] |
 | Examples | [examples/README.md][examples-readme] |
 | Benchmarks, baselines, and performance workflows | [benches/README.md][benches-readme] |
@@ -218,7 +219,7 @@ the commands you already tried.
 [changelog]: CHANGELOG.md
 [examples-readme]: examples/README.md
 [benches-readme]: benches/README.md
-[scripts-readme]: scripts/README.md
+[python-readme]: tooling/python/README.md
 [code-organization]: docs/code_organization.md
 [dev-commands]: docs/dev/commands.md
 [dev-python]: docs/dev/python.md

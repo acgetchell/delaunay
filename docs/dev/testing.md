@@ -549,7 +549,7 @@ just test-slow
 
 Public documentation examples must compile.
 Public Rustdoc code fences must also use focused workflow preludes instead of
-`use delaunay::prelude::*`; `scripts/tests/test_rustdoc_imports.py` scans only
+`use delaunay::prelude::*`; `tests/tooling/test_rustdoc_imports.py` scans only
 repository-owned Rust sources under `src/` and fails on both kitchen-sink
 imports and unterminated documentation fences.
 

@@ -57,10 +57,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Set up declared uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          python-version-file: ".python-version"
+          version-file: pyproject.toml
+          enable-cache: false
+
+      - name: Install the locked tooling package
+        run: uv sync --locked --managed-python --only-group tooling
 
       - name: Set Codacy paths
         run: |
@@ -68,7 +72,6 @@ jobs:
           {
             echo "CODACY_WORKDIR=$RUNNER_TEMP/codacy-src"
             echo "CODACY_SARIF=$RUNNER_TEMP/results-${{ matrix.tool }}.sarif"
-            echo "CODACY_HAS_UPLOADABLE_SARIF=false"
           } >> "$GITHUB_ENV"
 
       - name: Prepare workspace copy without .git
@@ -104,14 +107,16 @@ jobs:
           max-allowed-issues: 2147483647
 
       - name: Split SARIF runs for upload
+        id: sarif
         run: |
           set -euo pipefail
-          python3 scripts/ci/filter_codacy_sarif.py "$CODACY_SARIF" "$RUNNER_TEMP/codacy-sarif"
+          uv run --locked --no-sync --no-python-downloads research-repo-tools sarif split "$CODACY_SARIF" \
+            --output "$RUNNER_TEMP/codacy-sarif" --github-output "$GITHUB_OUTPUT"
 
       - name: Upload split SARIF files
-        if: env.CODACY_HAS_UPLOADABLE_SARIF == 'true'
+        if: steps.sarif.outputs.SARIF_HAS_UPLOADABLE_RUNS == 'true'
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
-          sarif_file: ${{ env.CODACY_SPLIT_SARIF_DIR }}
+          sarif_file: ${{ steps.sarif.outputs.SARIF_DIRECTORY }}
           category: codacy-${{ matrix.tool }}
           wait-for-processing: true

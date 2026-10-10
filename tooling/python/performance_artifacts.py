@@ -1,24 +1,28 @@
-"""Schema-versioned performance comparison CSV and provenance artifacts."""
+"""Delaunay measurement policy over shared Criterion and evidence formats."""
 
-import csv
-import hashlib
-import io
 import json
-import math
 import re
-from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, cast
-from uuid import uuid4
 
-from research_repo_tools.files import replace_many
+from research_repo_tools.criterion import (
+    COMPARISON_SCHEMA,
+    ComparisonSet,
+    Estimate,
+    Sample,
+    compare_samples,
+    parse_comparison,
+    serialize_comparison,
+)
+from research_repo_tools.evidence import Evidence, Provenance, parse_evidence, publish_evidence, serialize_evidence
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Mapping
     from pathlib import Path
 
-SCHEMA_VERSION = 3
+POLICY_SCHEMA = "delaunay/performance-policy/v1"
+POLICY_CONTEXT = "delaunay.performance-policy"
 BENCHMARK_CONTRACT_START = "v0.8.2"
 SUITES = ("release-signal", "ci", "query", "predicates", "topology")
 SCOPES = ("release-signal", "all-benches")
@@ -35,25 +39,6 @@ RELEASE_SIGNAL_TARGETS = (
 type CoverageState = Literal["comparable", "not-comparable", "current-only", "baseline-only"]
 type MeasurementMode = Literal["local-worktrees", "github-assets"]
 type HostStatus = Literal["recorded", "unavailable"]
-
-CSV_COLUMNS = (
-    "schema_version",
-    "suite",
-    "scope",
-    "benchmark_id",
-    "group",
-    "benchmark",
-    "coverage_status",
-    "coverage_note",
-    "baseline_median_ns",
-    "baseline_ci_lower_ns",
-    "baseline_ci_upper_ns",
-    "baseline_confidence_level",
-    "current_median_ns",
-    "current_ci_lower_ns",
-    "current_ci_upper_ns",
-    "current_confidence_level",
-)
 
 _SEMVER_PRERELEASE_IDENTIFIER_RE = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
 _SEMVER_TAG_RE = re.compile(
@@ -123,20 +108,7 @@ class TimingEstimate:
 
     def __post_init__(self) -> None:
         """Reject non-finite, non-positive, or reversed timings."""
-        for field, value in (
-            ("median_ns", self.median_ns),
-            ("ci_lower_ns", self.ci_lower_ns),
-            ("ci_upper_ns", self.ci_upper_ns),
-        ):
-            if not math.isfinite(value) or value <= 0:
-                msg = f"{field} must be finite and positive: {value!r}"
-                raise ValueError(msg)
-        if self.ci_lower_ns > self.ci_upper_ns:
-            msg = f"confidence interval must be ordered: {self.ci_lower_ns} <= {self.ci_upper_ns}"
-            raise ValueError(msg)
-        if not math.isfinite(self.confidence_level) or not 0.0 < self.confidence_level < 1.0:
-            msg = f"confidence_level must be finite and strictly between zero and one: {self.confidence_level!r}"
-            raise ValueError(msg)
+        Estimate(self.median_ns, self.ci_lower_ns, self.ci_upper_ns, self.confidence_level)
 
 
 @dataclass(frozen=True, slots=True)
@@ -472,7 +444,9 @@ class ArtifactContext:
     @property
     def comparison_blockers(self) -> tuple[str, ...]:
         """Return provenance differences that prevent before/after ratios."""
-        blockers = list(self.release.benchmark_contract_blockers)
+        # Fresh measurements certify workload identity from recorded digests.
+        # The historical release boundary applies only to imported archives.
+        blockers = list(self.release.benchmark_contract_blockers) if self.measurement_mode == "github-assets" else []
         if self.current_source.limitation or self.baseline_source.limitation:
             blockers.append("complete source-state evidence is unavailable")
         if self.current_toolchain.limitation or self.baseline_toolchain.limitation:
@@ -644,16 +618,16 @@ class PerformanceBundle:
 
 @dataclass(frozen=True, slots=True)
 class ArtifactPaths:
-    """Adjacent CSV and JSON provenance destinations."""
+    """Adjacent shared comparison payload and evidence manifest destinations."""
 
-    csv: Path
+    payload: Path
     provenance: Path
 
     def __post_init__(self) -> None:
         """Require distinct adjacent artifact paths."""
-        ensure_distinct_paths({"CSV": self.csv, "provenance": self.provenance})
-        if self.csv.resolve(strict=False).parent != self.provenance.resolve(strict=False).parent:
-            msg = "CSV and provenance sidecar must be adjacent"
+        ensure_distinct_paths({"payload": self.payload, "provenance": self.provenance})
+        if self.payload.resolve(strict=False).parent != self.provenance.resolve(strict=False).parent:
+            msg = "payload and provenance sidecar must be adjacent"
             raise ValueError(msg)
 
 
@@ -674,138 +648,80 @@ def ensure_distinct_paths(paths: Mapping[str, Path]) -> None:
                 raise ValueError(msg)
 
 
-def _timing_fields(prefix: str, estimate: TimingEstimate | None) -> dict[str, str]:
-    """Serialize optional timing values into one CSV row fragment."""
-    if estimate is None:
+def comparison_for_bundle(bundle: PerformanceBundle) -> ComparisonSet:
+    """Use shared inventories and arithmetic without inferring scientific eligibility."""
+
+    def sample(side: Literal["baseline", "current"]) -> Sample:
+        estimates = []
+        for row in bundle.rows:
+            timing = row.baseline if side == "baseline" else row.current
+            if timing is not None:
+                estimates.append((row.benchmark_id, Estimate(timing.median_ns, timing.ci_lower_ns, timing.ci_upper_ns, timing.confidence_level)))
+        return Sample(tuple(estimates), "median", "ns")
+
+    return compare_samples(sample("baseline"), sample("current"))
+
+
+def _context_payload(context: ArtifactContext) -> dict[str, object]:
+    """Keep the Delaunay selection and comparability contract in consumer context."""
+
+    def side(name: Literal["current", "baseline"]) -> dict[str, object]:
         return {
-            f"{prefix}_median_ns": "",
-            f"{prefix}_ci_lower_ns": "",
-            f"{prefix}_ci_upper_ns": "",
-            f"{prefix}_confidence_level": "",
+            "source": asdict(context.current_source if name == "current" else context.baseline_source),
+            "measurement_commands": list(context.current_commands if name == "current" else context.baseline_commands),
+            "completed_targets": list(context.current_completed_targets if name == "current" else context.baseline_completed_targets),
+            "acquisition_commands": list(context.current_acquisition_commands if name == "current" else context.baseline_acquisition_commands),
+            "toolchain": asdict(context.current_toolchain if name == "current" else context.baseline_toolchain),
+            "measurement_host": asdict(context.current_measurement_host if name == "current" else context.baseline_measurement_host),
+            "artifact": asdict(context.current_artifact if name == "current" else context.baseline_artifact),
         }
+
     return {
-        f"{prefix}_median_ns": format(estimate.median_ns, ".17g"),
-        f"{prefix}_ci_lower_ns": format(estimate.ci_lower_ns, ".17g"),
-        f"{prefix}_ci_upper_ns": format(estimate.ci_upper_ns, ".17g"),
-        f"{prefix}_confidence_level": format(estimate.confidence_level, ".17g"),
-    }
-
-
-def _row_to_csv(row: PerformanceRow) -> dict[str, str]:
-    """Serialize one trusted row into the versioned CSV shape."""
-    return {
-        "schema_version": str(SCHEMA_VERSION),
-        "suite": row.suite,
-        "scope": row.scope,
-        "benchmark_id": row.benchmark_id,
-        "group": row.group,
-        "benchmark": row.benchmark,
-        "coverage_status": row.coverage_status,
-        "coverage_note": row.coverage_note,
-        **_timing_fields("baseline", row.baseline),
-        **_timing_fields("current", row.current),
-    }
-
-
-def _serialize_csv(bundle: PerformanceBundle) -> bytes:
-    """Serialize deterministic RFC 4180-style UTF-8 CSV bytes."""
-    output = io.StringIO(newline="")
-    writer = csv.DictWriter(output, fieldnames=CSV_COLUMNS, lineterminator="\n")
-    writer.writeheader()
-    writer.writerows(_row_to_csv(row) for row in bundle.sorted_rows)
-    return output.getvalue().encode("utf-8")
-
-
-def _source_payload(source: SourceState) -> dict[str, object]:
-    """Convert trusted source metadata to its JSON transport shape."""
-    return {
-        "version": source.version,
-        "commit": source.commit,
-        "ref": source.ref,
-        "revision_timestamp": source.revision_timestamp,
-        "git_clean": source.git_clean,
-        "source_state_sha256": source.source_state_sha256,
-        "limitation": source.limitation,
-    }
-
-
-def _toolchain_payload(toolchain: ToolchainState) -> dict[str, str | None]:
-    """Convert trusted toolchain metadata to its JSON transport shape."""
-    return {
-        "rustc": toolchain.rustc,
-        "criterion_version": toolchain.criterion_version,
-        "cargo_profile": toolchain.cargo_profile,
-        "cargo_lock_sha256": toolchain.cargo_lock_sha256,
-        "harness_sha256": toolchain.harness_sha256,
-        "configuration_sha256": toolchain.configuration_sha256,
-        "measurement_plan_sha256": toolchain.measurement_plan_sha256,
-        "limitation": toolchain.limitation,
-    }
-
-
-def _host_payload(host: HostIdentity) -> dict[str, str]:
-    """Convert trusted host metadata to its JSON transport shape."""
-    return {
-        "status": host.status,
-        "cpu": host.cpu,
-        "operating_system": host.operating_system,
-        "architecture": host.architecture,
-        "reason": host.reason,
-    }
-
-
-def _artifact_payload(artifact: MeasurementArtifact) -> dict[str, str | None]:
-    """Convert a trusted measurement-artifact identity to JSON."""
-    return {
-        "origin": artifact.origin,
-        "content_sha256": artifact.content_sha256,
-        "sample_name": artifact.sample_name,
-        "archive_sha256": artifact.archive_sha256,
-    }
-
-
-def _side_payload(context: ArtifactContext, side: Literal["current", "baseline"]) -> dict[str, object]:
-    """Convert one complete revision's evidence to JSON."""
-    source = context.current_source if side == "current" else context.baseline_source
-    measurement_commands = context.current_commands if side == "current" else context.baseline_commands
-    completed_targets = context.current_completed_targets if side == "current" else context.baseline_completed_targets
-    acquisition_commands = context.current_acquisition_commands if side == "current" else context.baseline_acquisition_commands
-    toolchain = context.current_toolchain if side == "current" else context.baseline_toolchain
-    measurement_host = context.current_measurement_host if side == "current" else context.baseline_measurement_host
-    artifact = context.current_artifact if side == "current" else context.baseline_artifact
-    return {
-        "source": _source_payload(source),
-        "measurement_commands": [list(command) for command in measurement_commands],
-        "completed_targets": list(completed_targets),
-        "acquisition_commands": [list(command) for command in acquisition_commands],
-        "toolchain": _toolchain_payload(toolchain),
-        "measurement_host": _host_payload(measurement_host),
-        "artifact": _artifact_payload(artifact),
-    }
-
-
-def _serialize_provenance(bundle: PerformanceBundle, csv_payload: bytes) -> bytes:
-    """Serialize deterministic provenance bound to the exact CSV payload."""
-    context = bundle.context
-    payload = {
-        "schema_version": SCHEMA_VERSION,
-        "csv_sha256": hashlib.sha256(csv_payload).hexdigest(),
-        "csv_row_count": len(bundle.rows),
-        "csv_columns": list(CSV_COLUMNS),
-        "release": {"current": context.release.current, "baseline": context.release.baseline},
+        "release": asdict(context.release),
         "selection": {"statistic": context.statistic, "suite": context.suite, "scope": context.scope},
         "measurement_mode": context.measurement_mode,
-        "current": _side_payload(context, "current"),
-        "baseline": _side_payload(context, "baseline"),
-        "publication_host": _host_payload(context.publication_host),
+        "current": side("current"),
+        "baseline": side("baseline"),
+        "publication_host": asdict(context.publication_host),
     }
-    return (json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def evidence_for_bundle(bundle: PerformanceBundle) -> Evidence:
+    """Retain shared timing samples with independently validated Delaunay policy.
+
+    Existing source-state, harness and sample-tree digests have consumer-defined
+    framing. Keep them in that policy; do not relabel them as shared file hashes
+    or claim that summary estimates are complete raw-sample runs.
+    """
+    policy = {
+        "schema": POLICY_SCHEMA,
+        "context": _context_payload(bundle.context),
+        "rows": [
+            {
+                "benchmark_id": row.benchmark_id,
+                "group": row.group,
+                "benchmark": row.benchmark,
+                "coverage_status": row.coverage_status,
+                "coverage_note": row.coverage_note,
+            }
+            for row in bundle.sorted_rows
+        ],
+    }
+    policy_text = json.dumps(policy, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    context = bundle.context
+    return Evidence(
+        serialize_comparison(comparison_for_bundle(bundle)),
+        COMPARISON_SCHEMA,
+        (
+            ("baseline", Provenance(context.baseline_source.commit, context=(("release", context.release.baseline),))),
+            ("current", Provenance(context.current_source.commit, context=(("release", context.release.current), (POLICY_CONTEXT, policy_text)))),
+        ),
+    )
 
 
 def serialize_bundle(bundle: PerformanceBundle) -> tuple[bytes, bytes]:
-    """Return deterministic CSV and provenance bytes for a trusted bundle."""
-    csv_payload = _serialize_csv(bundle)
-    return csv_payload, _serialize_provenance(bundle, csv_payload)
+    """Delegate timing serialization, provenance envelopes and integrity to the package."""
+    return serialize_evidence(evidence_for_bundle(bundle))
 
 
 def _require_exact_keys(data: Mapping[str, object], expected: frozenset[str], *, source: str) -> None:
@@ -1006,38 +922,13 @@ def _parse_side(
     )
 
 
-def _parse_context(data: Mapping[str, object], *, source: str) -> tuple[ArtifactContext, str, int, tuple[str, ...]]:
-    """Parse provenance JSON into trusted context plus CSV binding metadata."""
-    expected = frozenset(
-        {
-            "schema_version",
-            "csv_sha256",
-            "csv_row_count",
-            "csv_columns",
-            "release",
-            "selection",
-            "measurement_mode",
-            "current",
-            "baseline",
-            "publication_host",
-        }
+def _parse_context(data: Mapping[str, object], *, source: str) -> ArtifactContext:
+    """Parse only Delaunay's selection, comparability and publication policy."""
+    _require_exact_keys(
+        data,
+        frozenset({"release", "selection", "measurement_mode", "current", "baseline", "publication_host"}),
+        source=source,
     )
-    _require_exact_keys(data, expected, source=source)
-    schema_version = data.get("schema_version")
-    if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != SCHEMA_VERSION:
-        msg = f"unsupported provenance schema version: {data.get('schema_version')!r}"
-        raise ValueError(msg)
-    csv_sha256 = _required_string(data, "csv_sha256", source=source)
-    _require_sha256("csv_sha256", csv_sha256)
-    row_count = data.get("csv_row_count")
-    if isinstance(row_count, bool) or not isinstance(row_count, int) or row_count <= 0:
-        msg = f"{source}.csv_row_count must be a positive integer"
-        raise ValueError(msg)
-    columns = data.get("csv_columns")
-    if not isinstance(columns, list) or not all(isinstance(column, str) for column in columns):
-        msg = f"{source}.csv_columns must be a string array"
-        raise TypeError(msg)
-
     release_data = _required_object(data, "release", source=source)
     _require_exact_keys(release_data, frozenset({"current", "baseline"}), source=f"{source}.release")
     selection = _required_object(data, "selection", source=source)
@@ -1059,7 +950,7 @@ def _parse_context(data: Mapping[str, object], *, source: str) -> tuple[Artifact
         _required_object(data, "baseline", source=source),
         source=f"{source}.baseline",
     )
-    context = ArtifactContext(
+    return ArtifactContext(
         release=ReleasePair(
             current=_required_string(release_data, "current", source=f"{source}.release"),
             baseline=_required_string(release_data, "baseline", source=f"{source}.release"),
@@ -1084,164 +975,110 @@ def _parse_context(data: Mapping[str, object], *, source: str) -> tuple[Artifact
         baseline_artifact=baseline_artifact,
         publication_host=_parse_host(_required_object(data, "publication_host", source=source), source=f"{source}.publication_host"),
     )
-    return context, csv_sha256, row_count, tuple(cast("list[str]", columns))
 
 
-def _parse_float(value: str, field: str, *, row_number: int, source: str) -> float:
-    """Parse one required finite timing number from CSV."""
-    if not value:
-        msg = f"missing {field} at {source} row {row_number}"
-        raise ValueError(msg)
-    try:
-        return float(value)
-    except ValueError as exc:
-        msg = f"invalid {field} at {source} row {row_number}: {value!r}"
-        raise ValueError(msg) from exc
-
-
-def _parse_timing(row: Mapping[str, str], prefix: str, *, row_number: int, source: str) -> TimingEstimate | None:
-    """Parse an all-present or all-absent timing triple."""
-    fields = (f"{prefix}_median_ns", f"{prefix}_ci_lower_ns", f"{prefix}_ci_upper_ns", f"{prefix}_confidence_level")
-    values = tuple(row[field] for field in fields)
-    if not any(values):
+def _complete_timing(estimate: Estimate | None) -> TimingEstimate | None:
+    """Require recorded marginal intervals for Delaunay timing reports."""
+    if estimate is None:
         return None
-    if not all(values):
-        msg = f"partial {prefix} timing at {source} row {row_number}"
+    if estimate.lower is None or estimate.upper is None or estimate.confidence_level is None:
+        msg = "Delaunay performance evidence requires complete confidence intervals"
         raise ValueError(msg)
-    return TimingEstimate(
-        median_ns=_parse_float(values[0], fields[0], row_number=row_number, source=source),
-        ci_lower_ns=_parse_float(values[1], fields[1], row_number=row_number, source=source),
-        ci_upper_ns=_parse_float(values[2], fields[2], row_number=row_number, source=source),
-        confidence_level=_parse_float(values[3], fields[3], row_number=row_number, source=source),
-    )
+    return TimingEstimate(estimate.point, estimate.lower, estimate.upper, estimate.confidence_level)
 
 
-def _parse_rows(csv_payload: bytes, *, source: str) -> tuple[PerformanceRow, ...]:
-    """Parse exact-schema CSV bytes into trusted rows."""
-    try:
-        text = csv_payload.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        msg = f"{source} CSV is not UTF-8"
-        raise ValueError(msg) from exc
-    reader = csv.DictReader(io.StringIO(text, newline=""))
-    if tuple(reader.fieldnames or ()) != CSV_COLUMNS:
-        msg = f"unsupported CSV columns in {source}: {reader.fieldnames!r}"
+def _load_policy(evidence: Evidence, *, source: str) -> Mapping[str, object]:
+    """Read the consumer policy stored in shared provenance context."""
+    sources = dict(evidence.sources)
+    if set(sources) != {"baseline", "current"}:
+        msg = "Delaunay performance evidence requires baseline and current sources"
         raise ValueError(msg)
-    rows: list[PerformanceRow] = []
-    for row_number, raw in enumerate(reader, start=2):
-        if None in raw or any(value is None for value in raw.values()):
-            msg = f"malformed CSV field count at {source} row {row_number}"
+    policy_text = dict(sources["current"].context).get(POLICY_CONTEXT)
+    if policy_text is None:
+        msg = "shared evidence is missing the Delaunay performance policy"
+        raise ValueError(msg)
+    policy = json.loads(policy_text)
+    if not isinstance(policy, dict):
+        msg = "Delaunay performance policy must be an object"
+        raise TypeError(msg)
+    _require_exact_keys(policy, frozenset({"schema", "context", "rows"}), source=source)
+    if policy["schema"] != POLICY_SCHEMA:
+        msg = f"unsupported Delaunay performance policy: {policy['schema']!r}"
+        raise ValueError(msg)
+    return policy
+
+
+def _verify_source_binding(evidence: Evidence, context: ArtifactContext) -> None:
+    """Bind public provenance revisions to the consumer's measured source states."""
+    sources = dict(evidence.sources)
+    for side, state in (("baseline", context.baseline_source), ("current", context.current_source)):
+        recorded = sources[side]
+        if recorded.revision != state.commit or dict(recorded.context).get("release") != state.version:
+            msg = f"{side} shared provenance does not match Delaunay source identity"
             raise ValueError(msg)
-        row = cast("dict[str, str]", raw)
-        if row["schema_version"] != str(SCHEMA_VERSION):
-            msg = f"unsupported CSV schema version at {source} row {row_number}: {row['schema_version']!r}"
+        if recorded.source_sha256 is not None or recorded.harness_sha256 is not None:
+            msg = "consumer-framed fingerprints must not be relabeled as shared file fingerprints"
             raise ValueError(msg)
-        coverage = row["coverage_status"]
-        if coverage not in COVERAGE_STATES:
-            msg = f"unsupported coverage status at {source} row {row_number}: {coverage!r}"
+
+
+def load_bundle_bytes(payload: bytes, provenance_payload: bytes, *, source: str) -> PerformanceBundle:
+    """Verify shared evidence before interpreting its Delaunay policy and timings."""
+    evidence = parse_evidence(payload, provenance_payload)
+    if evidence.payload_schema != COMPARISON_SCHEMA:
+        msg = f"unsupported performance payload schema in {source}: {evidence.payload_schema!r}"
+        raise ValueError(msg)
+    comparison = parse_comparison(evidence.payload)
+    if comparison.baseline.statistic != "median" or comparison.baseline.unit != "ns":
+        msg = "Delaunay performance evidence requires median timings in nanoseconds"
+        raise ValueError(msg)
+    policy = _load_policy(evidence, source=source)
+    context = _parse_context(_required_object(policy, "context", source=source), source=source)
+    _verify_source_binding(evidence, context)
+    descriptors = policy["rows"]
+    if not isinstance(descriptors, list):
+        msg = "Delaunay row policy must be an array"
+        raise TypeError(msg)
+    baseline, current = dict(comparison.baseline.estimates), dict(comparison.current.estimates)
+    rows = []
+    for raw in descriptors:
+        if not isinstance(raw, dict):
+            msg = "Delaunay row policy must contain objects"
+            raise TypeError(msg)
+        _require_exact_keys(raw, frozenset({"benchmark_id", "group", "benchmark", "coverage_status", "coverage_note"}), source=source)
+        name = _required_string(raw, "benchmark_id", source=source)
+        coverage = _required_string(raw, "coverage_status", source=source)
+        if coverage not in COVERAGE_STATES or not isinstance(raw["coverage_note"], str):
+            msg = "unsupported Delaunay coverage policy"
             raise ValueError(msg)
         rows.append(
             PerformanceRow(
-                suite=row["suite"],
-                scope=row["scope"],
-                benchmark_id=row["benchmark_id"],
-                group=row["group"],
-                benchmark=row["benchmark"],
+                suite=context.suite,
+                scope=context.scope,
+                benchmark_id=name,
+                group=_required_string(raw, "group", source=source),
+                benchmark=_required_string(raw, "benchmark", source=source),
                 coverage_status=coverage,
-                coverage_note=row["coverage_note"],
-                baseline=_parse_timing(row, "baseline", row_number=row_number, source=source),
-                current=_parse_timing(row, "current", row_number=row_number, source=source),
+                coverage_note=raw["coverage_note"],
+                baseline=_complete_timing(baseline.get(name)),
+                current=_complete_timing(current.get(name)),
             )
         )
-    return tuple(rows)
-
-
-def load_bundle_bytes(csv_payload: bytes, provenance_payload: bytes, *, source: str) -> PerformanceBundle:
-    """Parse and cross-validate one in-memory CSV/provenance pair."""
-    try:
-        raw = json.loads(provenance_payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        msg = f"malformed provenance JSON in {source}: {exc}"
-        raise ValueError(msg) from exc
-    if not isinstance(raw, dict) or not all(isinstance(key, str) for key in raw):
-        msg = f"provenance in {source} must be a JSON object"
-        raise TypeError(msg)
-    context, expected_sha256, expected_count, expected_columns = _parse_context(cast("dict[str, object]", raw), source=source)
-    if expected_columns != CSV_COLUMNS:
-        msg = f"provenance CSV columns do not match schema in {source}"
+    if {row.benchmark_id for row in rows} != baseline.keys() | current.keys():
+        msg = "Delaunay row policy does not match the complete shared benchmark inventory"
         raise ValueError(msg)
-    observed_sha256 = hashlib.sha256(csv_payload).hexdigest()
-    if observed_sha256 != expected_sha256:
-        msg = f"CSV SHA-256 does not match provenance in {source}"
-        raise ValueError(msg)
-    rows = _parse_rows(csv_payload, source=source)
-    if len(rows) != expected_count:
-        msg = f"CSV row count does not match provenance in {source}: {len(rows)} != {expected_count}"
-        raise ValueError(msg)
-    bundle = PerformanceBundle(context=context, rows=rows)
-    canonical_csv, canonical_provenance = serialize_bundle(bundle)
-    if csv_payload != canonical_csv:
-        msg = f"CSV payload is not in canonical serialized form in {source}"
-        raise ValueError(msg)
-    if provenance_payload != canonical_provenance:
-        msg = f"provenance payload is not in canonical serialized form in {source}"
-        raise ValueError(msg)
-    return bundle
+    return PerformanceBundle(context=context, rows=tuple(rows))
 
 
 def load_bundle(paths: ArtifactPaths) -> PerformanceBundle:
-    """Load and validate an adjacent artifact pair from disk."""
-    try:
-        csv_payload = paths.csv.read_bytes()
-        provenance_payload = paths.provenance.read_bytes()
-    except OSError as exc:
-        msg = f"could not read performance artifacts {paths.csv} and {paths.provenance}: {exc}"
-        raise OSError(msg) from exc
-    return load_bundle_bytes(csv_payload, provenance_payload, source=str(paths.csv.parent))
-
-
-def restore_artifact_snapshot(path: Path, payload: bytes | None) -> None:
-    """Restore prior artifact bytes or absence, retaining recovery bytes on failure."""
-    if payload is None:
-        path.unlink(missing_ok=True)
-        return
-    try:
-        replace_many({path: payload})
-    except (OSError, ExceptionGroup) as error:
-        recovery = path.with_name(f".{path.name}.{uuid4().hex}.recovery")
-        try:
-            replace_many({recovery: payload})
-        except (OSError, ExceptionGroup) as recovery_error:
-            raise ExceptionGroup(f"Could not restore {path} or save its prior bytes for recovery", [error, recovery_error]) from None
-        raise ExceptionGroup(f"Could not restore {path}; prior bytes retained at {recovery}", [error]) from None
-
-
-@contextmanager
-def publish_bundle(paths: ArtifactPaths, bundle: PerformanceBundle) -> Iterator[None]:
-    """Publish, reload-validate, and roll back a bundle if its consumer fails."""
-    csv_payload, provenance_payload = serialize_bundle(bundle)
-    prior_csv = paths.csv.read_bytes() if paths.csv.exists() else None
-    prior_provenance = paths.provenance.read_bytes() if paths.provenance.exists() else None
-    replace_many({paths.csv: csv_payload, paths.provenance: provenance_payload})
-    try:
-        if load_bundle(paths) != PerformanceBundle(context=bundle.context, rows=bundle.sorted_rows):
-            msg = "reloaded performance bundle does not match published bundle"
-            raise ValueError(msg)
-        yield
-    except BaseException as primary:
-        failures: list[Exception] = []
-        for path, prior in ((paths.csv, prior_csv), (paths.provenance, prior_provenance)):
-            try:
-                restore_artifact_snapshot(path, prior)
-            except (OSError, ExceptionGroup) as error:
-                failures.append(error)
-        if failures:
-            message = "Performance bundle publication and rollback failed"
-            raise BaseExceptionGroup(message, [primary, *failures]) from None
-        raise
+    """Read the new shared evidence pair without consulting historical CSV writers."""
+    return load_bundle_bytes(paths.payload.read_bytes(), paths.provenance.read_bytes(), source=str(paths.payload.parent))
 
 
 def write_bundle(paths: ArtifactPaths, bundle: PerformanceBundle) -> None:
-    """Publish one validated bundle transactionally."""
-    with publish_bundle(paths, bundle):
-        pass
+    """Publish validated shared evidence through the package's transaction."""
+    evidence = evidence_for_bundle(bundle)
+    payload, manifest = serialize_evidence(evidence)
+    if load_bundle_bytes(payload, manifest, source="new shared bundle") != PerformanceBundle(context=bundle.context, rows=bundle.sorted_rows):
+        msg = "serialized performance bundle does not match validated measurements"
+        raise ValueError(msg)
+    publish_evidence(evidence, paths.payload, paths.provenance)

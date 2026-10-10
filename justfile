@@ -191,10 +191,6 @@ check-fast:
 ci: _validation-doc-figures-check-if-canonical check python-fixture-lint test bench-compile examples
     @echo "🎯 CI checks complete!"
 
-# CI followed by an explicit persistent local baseline refresh.
-[group('workflows')]
-ci-baseline ref="main": ci && (perf-baseline ref)
-
 # CI plus the explicit slow correctness bucket.
 [group('workflows')]
 ci-slow: ci test-slow
@@ -270,7 +266,7 @@ docs-version-check:
 # Build and run every Rust example.
 [group('tests and coverage')]
 examples: _ensure-uv
-    {{ managed }} research-repo-tools validation run tooling/examples.toml
+    {{ managed }} research-repo-tools validation cargo-examples tooling/examples.toml
 
 # Fix (mutating): apply formatters/auto-fixes
 [group('workflows')]
@@ -332,7 +328,7 @@ help-workflows:
     @echo "  just examples           # Build and run every Rust example"
     @echo ""
     @echo "Notebooks and papers:"
-    @echo "  just notebook           # Launch the default source notebook"
+    @echo "  just notebook           # Launch JupyterLab with repository scratch caches"
     @echo "  just notebook-execute   # Execute one notebook under target/notebooks"
     @echo "  just validation-doc-figures # Refresh canonical validation figures"
     @echo "  just validation-doc-figures-check # Verify canonical figures without publishing"
@@ -345,12 +341,10 @@ help-workflows:
     @echo "  just performance-local  # Measure current tree vs latest release; retain bundle"
     @echo "  just performance-release # Measure, retain, validate, and promote release docs"
     @echo "  just performance-readme # Publish retained release data to README assets/table"
-    @echo "  just performance-doc    # Promote docs from retained CSV/JSON; no benchmarks"
+    @echo "  just performance-doc    # Promote docs from retained comparison JSON/evidence; no benchmarks"
     @echo "  just performance-github-assets # Compare stored release assets; retain bundle"
     @echo ""
     @echo "Delaunay-specific performance checks (perf-*):"
-    @echo "  just perf-no-regressions # Fast guard against the cached main baseline"
-    @echo "  just perf-vs-ref <ref>  # Compare against another cached Git ref"
     @echo "  just perf-large-scale-smoke # Bounded 2D-5D wall-clock guard"
     @echo "  just perf-help          # Detailed performance and profiling commands"
     @echo ""
@@ -368,7 +362,6 @@ help-workflows:
     @echo "  just release-version-check # Require final changelog/citation synchronization"
     @echo "  just update-version <tag>        # Synchronize release metadata using the current UTC date"
     @echo "  just ci-slow            # Default CI plus slow correctness tests"
-    @echo "  just ci-baseline        # Default CI plus persistent perf baseline refresh"
     @echo "  just coverage           # Generate local HTML coverage"
     @echo ""
     @echo "Use 'just --list' for the complete grouped recipe reference."
@@ -393,56 +386,25 @@ justfile-fmt-check:
 # Check Markdown formatting and raw line length.
 [group('validation')]
 markdown-check: _ensure-rumdl
-    #!/usr/bin/env bash
-    set -euo pipefail
-    target_list="$(mktemp "${TMPDIR:-/tmp}/delaunay-markdown-targets.XXXXXX")"
-    trap 'rm -f "$target_list"' EXIT
-    {{ rrt }} files list --include '*.md' --exclude CHANGELOG.md --exclude 'docs/archive/**' --exclude 'docs/archives/changelog/**' --null > "$target_list"
-    files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < "$target_list"
-    if [ "${#files[@]}" -gt 0 ]; then
-        {{ managed }} research-repo-tools files run --include '*.md' --exclude CHANGELOG.md --exclude 'docs/archive/**' --exclude 'docs/archives/changelog/**' -- rumdl check
-        violations=0
-        for file in "${files[@]}"; do
-            line_number=0
-            while IFS= read -r line || [[ -n "$line" ]]; do
-                line_number=$((line_number + 1))
-                if [ "${#line}" -gt 160 ]; then
-                    printf '%s:%d: line length %d exceeds 160\n' "$file" "$line_number" "${#line}" >&2
-                    violations=$((violations + 1))
-                fi
-            done < "$file"
-        done
-        if [ "$violations" -gt 0 ]; then
-            echo "Markdown raw line-length check failed." >&2
-            exit 1
-        fi
-    else
-        echo "No markdown files found to check."
-    fi
+    {{ rrt }} files check-lines
+    {{ managed }} research-repo-tools files run --include '*.md' --exclude CHANGELOG.md --exclude 'docs/archive/**' --exclude 'docs/archives/changelog/**' -- rumdl check
 
 # Apply automatic Markdown fixes.
 [group('validation')]
 markdown-fix: _ensure-rumdl
     {{ managed }} research-repo-tools files run --include '*.md' --exclude CHANGELOG.md --exclude 'docs/archive/**' --exclude 'docs/archives/changelog/**' -- rumdl check --fix
 
-# Launch one source notebook in JupyterLab.
+# Launch configured JupyterLab with private session caches.
 [group('notebooks and papers')]
-notebook notebook="notebooks/00_quickstart.ipynb": _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    notebook_cache="$(pwd)/target/notebooks"
-    mkdir -p "$notebook_cache/.ipython" "$notebook_cache/.matplotlib"
-    MPLBACKEND=Agg IPYTHONDIR="$notebook_cache/.ipython" MPLCONFIGDIR="$notebook_cache/.matplotlib" uv run --locked --group notebooks jupyter lab --ServerApp.open_browser=True --LabApp.open_browser=True "{{ notebook }}"
+[positional-arguments]
+notebook *args: _ensure-uv
+    uv run --locked --group dev --group notebooks research-repo-tools notebooks launch "$@"
 
 # Run routine non-executing notebook validation.
 [group('notebooks and papers')]
 notebook-check: _ensure-uv
     uv run --locked --group dev --group notebooks research-repo-tools files run --include 'notebooks/*.ipynb' --exclude '**/.ipynb_checkpoints/**' -- uv run --locked --group dev --group notebooks research-repo-tools notebooks lint
     uv run --locked --group dev --group notebooks research-repo-tools files run --include 'notebooks/*.ipynb' --exclude '**/.ipynb_checkpoints/**' -- uv run --locked --group dev --group notebooks research-repo-tools notebooks advise
-    uv run --locked --group dev pytest scripts/tests/test_notebook_policy.py
 
 # Clear outputs from one source notebook in place.
 [group('notebooks and papers')]
@@ -469,33 +431,12 @@ notebook-output-check: _ensure-uv
 notebook-reset-from-git source="index":
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ ! -d notebooks ]; then
-        echo "No source notebooks directory found."
-        exit 0
-    fi
-
-    tracked_notebooks=()
-    while IFS= read -r notebook; do
-        tracked_notebooks+=("$notebook")
-    done < <(git ls-files -- notebooks | grep '\.ipynb$' || true)
-
-    tracked_count="${#tracked_notebooks[@]}"
-    if [ "$tracked_count" -eq 0 ]; then
-        echo "No tracked source notebooks found."
-        exit 0
-    fi
-
-    if [ "{{ source }}" = "index" ]; then
-        git restore --worktree -- "${tracked_notebooks[@]}"
-        restored_from="index"
+    source={{ quote(source) }}
+    if [[ "$source" == index ]]; then
+        {{ rrt }} notebooks reset --apply
     else
-        git restore --source="{{ source }}" --worktree -- "${tracked_notebooks[@]}"
-        restored_from="{{ source }}"
+        {{ rrt }} notebooks reset --revision "$source" --apply
     fi
-
-    rm -rf target/notebooks
-    find notebooks -type d -name .ipynb_checkpoints -prune -exec rm -rf {} +
-    printf 'Restored %s tracked source notebook(s) from %s and removed target/notebooks.\n' "$tracked_count" "$restored_from"
 
 # Install the optional notebook dependency group.
 [group('notebooks and papers')]
@@ -527,7 +468,7 @@ paper-artifact-check paper="validation": (paper-check paper)
             exit 1
             ;;
     esac
-    uv run --locked paper-pdf-check "target/papers/${paper}/${paper}.pdf" \
+    {{ rrt }} papers check --paper "$paper" \
         --reference "papers/${paper}.pdf"
 
 # Compile one paper with Tectonic under target/papers/.
@@ -551,10 +492,10 @@ paper-build paper="validation": _ensure-tectonic _ensure-uv
     fi
     rm -rf "$build_dir"
     mkdir -p "$build_dir"
-    source_date_epoch="$(uv run --locked paper-source-date-epoch "$paper_source")"
+    source_date_epoch="$({{ rrt }} papers source-date --paper "$paper")"
     export SOURCE_DATE_EPOCH="$source_date_epoch"
     {{ managed }} tectonic --keep-intermediates --keep-logs --outdir "$build_dir" "$paper_source"
-    uv run --locked paper-pdf-normalize "$build_dir/${paper}.pdf" --tex "$paper_source"
+    {{ rrt }} papers normalize --paper "$paper"
     echo "📄 Paper PDF built: $build_dir/${paper}.pdf"
 
 # Compile and check one paper without refreshing tracked artifacts.
@@ -584,12 +525,7 @@ paper-pdf-check paper="validation": _ensure-uv
             exit 1
             ;;
     esac
-    uv run --locked paper-pdf-check "target/papers/${paper}/${paper}.pdf" \
-        --min-pages 1 \
-        --require-text "Validation Architecture in delaunay" \
-        --require-text "REFERENCES" \
-        --forbid-text "\\today" \
-        --forbid-text "Manuscript submitted to ACM"
+    {{ rrt }} papers check --paper "$paper"
 
 # Refresh one tracked reviewer PDF after its non-mutating checks pass.
 [group('notebooks and papers')]
@@ -604,9 +540,8 @@ paper-refresh paper="validation": (paper-check paper)
             exit 1
             ;;
     esac
-    source_pdf="target/papers/${paper}/${paper}.pdf"
     reviewer_pdf="papers/${paper}.pdf"
-    cp "$source_pdf" "$reviewer_pdf"
+    {{ rrt }} papers normalize --paper "$paper" --output "$reviewer_pdf"
     echo "📄 Reviewer PDF refreshed: $reviewer_pdf"
 
 # Format publication-facing TeX sources.
@@ -632,25 +567,6 @@ paper-tex-lint: _ensure-chktex
 papers: validation-doc-figures (paper-refresh "validation")
     @echo "📚 Paper workflow complete!"
 
-# Generate a same-machine dev-mode baseline for a GitHub ref.
-[group('benchmarks and performance')]
-perf-baseline ref="main": _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    {{ managed }} uv run --locked benchmark-utils generate-ref-baseline --ref "{{ ref }}" --out baseline-artifact --dev
-
-# Generate a scratch same-machine baseline at an explicit output path.
-[group('benchmarks and performance')]
-perf-baseline-to out ref="main": _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    {{ managed }} uv run --locked benchmark-utils generate-ref-baseline --ref "{{ ref }}" --out "{{ out }}" --dev
-
-# Compare the current tree with one dev-mode baseline file.
-[group('benchmarks and performance')]
-perf-compare file threshold="7.5": _ensure-uv
-    {{ managed }} uv run --locked benchmark-utils compare --baseline "{{ file }}" --threshold {{ threshold }} --dev
-
 # Show detailed performance-check, benchmark, and profiling workflows.
 [group('benchmarks and performance')]
 perf-help:
@@ -663,14 +579,9 @@ perf-help:
     @echo "  just performance-local    # Compare current tree against latest release locally"
     @echo "  just performance-github-assets # Compare stored GitHub Release benchmark assets"
     @echo "  just performance-release  # Measure, retain, and promote release performance docs"
-    @echo "  just performance-doc      # Promote docs from retained CSV/JSON without benchmarks"
+    @echo "  just performance-doc      # Promote docs from retained comparison JSON/evidence without benchmarks"
     @echo "  just performance-readme   # Publish retained release data to README assets/table"
     @echo "  just perf-large-scale-smoke # Quick pre-push 2D-5D wall-clock smoke guard"
-    @echo "  just perf-no-regressions   # Fast pre-PR guard with a cached same-machine main baseline"
-    @echo "  just perf-vs-ref <ref> [threshold] # Compare current tree vs a cached same-machine ref baseline"
-    @echo "  just perf-baseline [ref]    # Persist/update baseline-artifact for a GitHub ref (default: main)"
-    @echo "  just perf-baseline-to <out> [ref] # Generate a scratch baseline artifact without replacing the default"
-    @echo "  just perf-compare <file> [threshold] # Compare current tree with a specific dev-mode baseline"
     @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
     @echo ""
     @echo "Profiling Commands:"
@@ -682,19 +593,13 @@ perf-help:
     @echo ""
     @echo "Benchmark System (Delaunay-specific):"
     @echo "  just perf-large-scale-smoke # Pre-push guard using debug-large-scale 2D-5D with a short cap"
-    @echo "  just perf-no-regressions   # Reuse cached main baseline, compare current tree"
-    @echo "  just perf-vs-ref <ref>     # Reuse cached ref baseline, compare current tree"
-    @echo "  just perf-baseline [ref]   # Persist baseline-artifact/baseline_results.txt from a GitHub ref"
-    @echo "  just perf-baseline-to <out> [ref] # Generate an alternate local baseline artifact directory"
-    @echo "  just perf-compare <file>   # Compare against a specific dev-mode baseline"
     @echo "  just bench                 # Full benchmark suite with perf profile"
     @echo "  just bench-ci              # CI benchmark suite with perf profile"
     @echo "  just bench-allocations     # Allocation-contract microbenchmarks"
-    @echo "  just pachner-stress        # 3D+4D direct Pachner CLI stress with CSV/JSON artifacts"
+    @echo "  just pachner-stress        # 3D+4D direct Pachner CLI stress with comparison JSON/evidence artifacts"
     @echo "  just pachner-stress-3d     # 3D Pachner CLI stress (100 steps, 9K vertices)"
     @echo "  just pachner-stress-4d     # 4D Pachner CLI stress (100 steps, 1K vertices)"
     @echo "  just bench-pachner-stress  # Criterion timing for Pachner move/round-trip stress"
-    @echo "  just perf-no-regressions   # Fast pre-PR 2D-5D regression guard"
     @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
     @echo ""
     @echo "Environment Variables (Benchmark Configuration):"
@@ -705,15 +610,10 @@ perf-help:
     @echo ""
     @echo "Examples:"
     @echo "  just perf-large-scale-smoke # Run before pushing to catch obvious performance drift"
-    @echo "  just perf-no-regressions   # Recommended local PR performance guard"
-    @echo "  just perf-vs-ref v0.7.8    # Compare current branch against the v0.7.8 release locally"
-    @echo "  just perf-baseline         # Persist/update default local baseline for GitHub main"
-    @echo "  just perf-baseline v0.7.5  # Persist/update default local baseline for a release tag"
-    @echo "  just perf-baseline-to /tmp/delaunay-main-baseline"
     @echo "                              # Generate scratch main baseline without overwriting baseline-artifact"
     @echo "  CRIT_SAMPLE_SIZE=100 just bench  # Custom sample size"
     @echo "  just pachner-stress-4d 100000 1000 1000 target/pachner_stress/4d random-walk"
-    @echo "                              # 4D random-walk Pachner diagnostics with CSV/JSON artifacts"
+    @echo "                              # 4D random-walk Pachner diagnostics with comparison JSON/evidence artifacts"
     @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
     @echo "  just profile v0.7.5        # v0.7.5 code on its declared Rust toolchain"
     @echo "  just profile 1.99.0        # Current tree on Rust 1.99.0"
@@ -799,16 +699,6 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
 
     echo ""
     echo "✅ Large-scale smoke guard passed for 2D-5D"
-
-# Fast pre-PR performance guard against a cached same-machine main baseline.
-[group('benchmarks and performance')]
-perf-no-regressions threshold="7.5": _ensure-uv
-    {{ managed }} uv run --locked benchmark-utils compare-ref --ref main --threshold {{ threshold }} --dev --output benches/worktree_vs_main_compare_results.txt
-
-# Compare the current tree against a cached same-machine ref baseline.
-[group('benchmarks and performance')]
-perf-vs-ref ref threshold="7.5": _ensure-uv
-    {{ managed }} uv run --locked benchmark-utils compare-ref --ref "{{ ref }}" --threshold {{ threshold }} --dev
 
 # Promote performance documentation solely from the retained canonical artifacts.
 [group('benchmarks and performance')]
@@ -966,12 +856,14 @@ publish-check: _ensure-toolchain
 
 # Run every non-mutating Python source check.
 [group('validation')]
-python-check: python-format-check python-lint python-typecheck
+python-check: _ensure-uv
+    uv run --locked --group dev --group notebooks research-repo-tools python check
     @echo "✅ Python source checks complete!"
 
 # Apply Ruff lint fixes and formatting to Python source.
 [group('validation')]
-python-fix: (_python-tool "ruff check --fix") (_python-tool "ruff format")
+python-fix: _ensure-uv
+    {{ rrt }} python fix
 
 # Lint deliberate Python fixtures with the full configured Ruff policy.
 [group('validation')]
@@ -980,11 +872,13 @@ python-fixture-lint: _ensure-uv
 
 # Check Python formatting with Ruff.
 [group('validation')]
-python-format-check: (_python-tool "ruff format --check")
+python-format-check: _ensure-uv
+    {{ rrt }} files run --include '*.py' --include '*.pyi' -- uv run --locked ruff format --check --
 
 # Lint Python source with Ruff.
 [group('validation')]
-python-lint: (_python-tool "ruff check")
+python-lint: _ensure-uv
+    {{ rrt }} files run --include '*.py' --include '*.pyi' -- uv run --locked ruff check --
 
 # Synchronize development Python dependencies from the lockfile.
 [group('build and setup')]
@@ -993,7 +887,8 @@ python-sync: _ensure-uv
 
 # Type-check Python support code with ty.
 [group('validation')]
-python-typecheck: (_python-tool "--group notebooks ty check --error all")
+python-typecheck: _ensure-uv
+    uv run --locked --group dev --group notebooks research-repo-tools python typecheck
 
 # Print retained release notes for a tag.
 [group('release')]
@@ -1036,27 +931,16 @@ security-secrets:
 
 # Repository-owned Semgrep rules for project-specific Rust diagnostics.
 [group('validation')]
-semgrep: (semgrep-scan "")
+semgrep: semgrep-scan
 
 # Run the shared repository Semgrep target set, optionally emitting SARIF.
 [private]
-semgrep-scan sarif_output="": _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    output={{ quote(sarif_output) }}
-    target_list="$(mktemp "${TMPDIR:-/tmp}/delaunay-semgrep-targets.XXXXXX")"
-    trap 'rm -f "$target_list"' EXIT
-    {{ rrt }} files list --include 'scripts/tests/*.py' --include 'tests/*.rs' --exclude 'tests/semgrep/**' --null > "$target_list"
-    semgrep_targets=(.)
-    while IFS= read -r -d '' file; do
-        semgrep_targets+=("$file")
-    done < "$target_list"
-    semgrep_args=(--error --strict --timeout 120 --jobs 1 --config semgrep.yaml --exclude 'tests/semgrep/**')
-    if [[ -n "$output" ]]; then
-        semgrep_args+=(--sarif --output "$output")
-    fi
-    # Serialize repository scans to avoid Semgrep shared-state races across workers.
-    uv run --locked semgrep "${semgrep_args[@]}" "${semgrep_targets[@]}"
+semgrep-scan output="target/semgrep": _ensure-uv
+    {{ rrt }} semgrep scan --include '*.rs' --include 'tooling/python/*.py' --include 'tests/tooling/*.py' \
+        --include '.github/workflows/*.yml' --include '.github/workflows/*.yaml' \
+        --include '*.md' --include CITATION.cff --include justfile \
+        --include 'notebooks/*.ipynb' --include 'papers/*.tex' --include 'doctests/*.txt' \
+        --exclude 'tests/semgrep/**' --output {{ quote(output) }}
 
 # Test the repository-owned Semgrep rules against their fixtures.
 [group('validation')]
@@ -1074,7 +958,8 @@ setup: setup-tools build
 setup-tools:
     #!/usr/bin/env bash
     set -euo pipefail
-    source scripts/tectonic_native_dependencies.sh
+    tectonic_environment="$(uv run --locked --managed-python --only-group tooling research-repo-tools tectonic discover --format shell)"
+    eval "$tectonic_environment"
     uv run --locked --managed-python --only-group tooling research-repo-tools setup
 
 # Run ShellCheck and verify shfmt formatting.

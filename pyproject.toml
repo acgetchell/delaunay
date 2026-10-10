@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "delaunay-scripts"
 version = "0.8.2"
-description = "Python utility scripts for the delaunay Rust library"
-readme = "scripts/README.md"
+description = "Scientific Python tooling for the delaunay Rust library"
+readme = "tooling/python/README.md"
 requires-python = ">=3.14"
 license = "BSD-3-Clause"
 license-files = [ "LICENSE" ]
@@ -27,15 +27,12 @@ classifiers = [
 # Project dependencies
 dependencies = [
     "packaging>=26.2",
-    "research-repo-tools==0.1.7",
-    "pypdf>=6.0.0",
+    "research-repo-tools[papers]==0.1.8",
 ]
 
 [project.optional-dependencies]
 notebooks = [
-    "research-repo-tools[notebooks]==0.1.7",
-    "ruff>=0.16.8",
-    "ty>=0.0.82",
+    "research-repo-tools[notebooks,python-tools]==0.1.8",
 ]
 
 [project.urls]
@@ -47,33 +44,27 @@ notebooks = [
 # Configure scripts as entry points for command-line usage
 [project.scripts]
 benchmark-utils = "benchmark_utils:main"
-hardware-utils = "hardware_utils:main"
-paper-pdf-check = "paper_check:main"
-paper-pdf-normalize = "paper_pdf_normalize:main"
-paper-source-date-epoch = "paper_source_date:main"
+delaunay-profile-metadata = "profiling_metadata:main"
 publish-readme-performance = "publish_readme_performance:main"
 
-# Configure setuptools to find packages in scripts/ directory
+# Package the retained scientific modules from tooling/python/.
 [tool.setuptools]
-package-dir = { "" = "scripts" }
+package-dir = { "" = "tooling/python" }
 py-modules = [
     "benchmark_models",
     "benchmark_utils",
-    "hardware_utils",
     "notebook_utils",
     "notebook_validation",
     "notebook_validation_rendering",
     "notebook_visualization",
-    "paper_check",
-    "paper_pdf_normalize",
-    "paper_source_date",
     "performance_artifacts",
+    "profiling_metadata",
     "publish_readme_performance",
 ]
 
 [tool.ruff]
 line-length = 160
-src = [ "scripts" ]
+src = [ "tooling/python", "tests/tooling" ]
 # Notebooks use the shared native Ruff/ty notebook validator.
 include = [ "*.py", "*.pyi" ]
 
@@ -183,10 +174,10 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Test names and class groupings already document behavior; avoid requiring
 # docstrings for each pytest case while still checking production scripts.
-"**/tests/test_*.py" = [ "S101", "SLF001", "D101", "D102", "D103" ]
+"tests/tooling/test_*.py" = [ "S101", "SLF001", "D101", "D102", "D103" ]
 # Standalone static-analysis fixtures are not packages or public APIs. Keep
 # exception/process/write violations intact, without disabling typing or imports.
-"tests/semgrep/scripts/tests/python_exceptions.py" = [
+"tests/semgrep/tests/tooling/python_exceptions.py" = [
     "INP001",
     "D103",
     "BLE001",
@@ -196,8 +187,8 @@ ignore = [
     "SIM105",
     "TRY002",
 ]
-"tests/semgrep/scripts/tests/python_parse_boundaries.py" = [ "INP001", "D103" ]
-"tests/semgrep/scripts/tests/python_style.py" = [ "INP001", "S202", "S605", "S607", "SIM115", "TID251", "UP015" ]
+"tests/semgrep/tests/tooling/python_parse_boundaries.py" = [ "INP001", "D103" ]
+"tests/semgrep/tests/tooling/python_style.py" = [ "INP001", "S202", "S605", "S607", "SIM115", "TID251", "UP015" ]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # Preserve the notebook Popen prohibition after adopting shared native lint.
@@ -212,11 +203,8 @@ max-complexity = 10
 known-first-party = [
     "benchmark_models",
     "benchmark_utils",
-    "hardware_utils",
-    "paper_check",
-    "paper_pdf_normalize",
-    "paper_source_date",
     "performance_artifacts",
+    "profiling_metadata",
     "publish_readme_performance",
 ]
 force-single-line = false
@@ -244,7 +232,7 @@ line-ending = "auto"
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = [ "-ra", "--strict-markers", "--strict-config", "--color=yes" ]
-testpaths = [ "scripts/tests" ]
+testpaths = [ "tests/tooling" ]
 python_files = [ "test_*.py", "*_test.py" ]
 python_classes = [ "Test*" ]
 python_functions = [ "test_*" ]
@@ -266,21 +254,18 @@ disable = [
 line-length = 160
 
 [dependency-groups]
-tooling = [ "research-repo-tools==0.1.7" ]
+tooling = [ "research-repo-tools[python-tools]==0.1.8" ]
 dev = [
     { include-group = "tooling" },
     "actionlint-py>=1.7.12.24",
-    "pytest>=9.1.1",
     "pyyaml>=6.0.3",
-    "ruff>=0.16.8",
     "semgrep>=1.172.0",
     "shellcheck-py>=0.11.0.1",
     "shfmt-py>=4.0.0",
-    "ty>=0.0.82",
     "yamllint>=1.38.0",
 ]
 notebooks = [
-    "research-repo-tools[notebooks]==0.1.7",
+    "research-repo-tools[notebooks,python-tools]==0.1.8",
     "ipykernel>=7.3.0",
     "jupyterlab>=4.6.2",
     "matplotlib>=3.11.1",
@@ -293,7 +278,7 @@ notebooks = [
 ]
 
 [tool.uv]
-required-version = "==0.12.23"
+required-version = "==0.13.0"
 # Semgrep 1.172.0 still pins vulnerable mcp 1.23.3. Keep the patched override
 # until Semgrep's published dependency constraint moves to mcp 1.28.1 or later.
 override-dependencies = [ "mcp==1.28.1" ]
@@ -312,6 +297,7 @@ formatter = "docs/templates/changelog_format.toml"
 
 [tool.research-repo-tools.toolchain]
 inherit-python = true
+inherit-python-tools = true
 
 [tool.research-repo-tools.toolchain.binaries]
 gitleaks = "8.30.1"
@@ -322,17 +308,17 @@ cargo-audit = "0.22.2"
 cargo-edit = "0.13.13"
 cargo-llvm-cov = "0.9.1"
 cargo-machete = "0.9.2"
-cargo-nextest = "0.9.146"
+cargo-nextest = "0.9.148"
 clippy-sarif = "0.8.0"
-dprint = "0.60.1"
+dprint = "0.61.1"
 git-cliff = "2.14.2"
-rumdl = "0.2.78"
+rumdl = "0.2.79"
 samply = "0.13.1"
 sarif-fmt = "0.8.0"
 taplo-cli = "0.10.0"
 tectonic = "0.17.0"
 tex-fmt = "0.5.7"
-typos-cli = "1.50.3"
+typos-cli = "1.51.1"
 zizmor = "1.30.1"
 
 [tool.research-repo-tools.notebooks]
@@ -341,15 +327,52 @@ cwd = "."
 output-dir = "target/notebooks"
 timeout = 600
 outputs = "clear"
+id-pattern = '[a-z0-9]+(?:-[a-z0-9]+)*'
 
 [tool.research-repo-tools.notebooks.advice]
 descriptive-ids = true
 subprocess-timeout = true
 
+[tool.research-repo-tools.notebooks.lab]
+browser = true
+scratch-dir = "target/notebooks/jupyter"
+
+[tool.research-repo-tools.notebooks.reset]
+sources = [ "notebooks" ]
+scratch = [ "target/notebooks" ]
+checkpoints = [ "notebooks/.ipynb_checkpoints" ]
+
+[tool.research-repo-tools.papers.documents.validation]
+tex = "papers/validation.tex"
+pdf = "target/papers/validation/validation.pdf"
+identity = "papers/validation.tex"
+min-pages = 1
+require-text = [ "Validation Architecture in delaunay", "REFERENCES" ]
+forbid-text = [ '\today', "Manuscript submitted to ACM" ]
+
+[tool.research-repo-tools.text]
+line-limit = 160
+include = [ "*.md" ]
+exclude = [ "CHANGELOG.md", "docs/archive/**", "docs/archives/changelog/**" ]
+
+[tool.research-repo-tools.sarif]
+category-prefix = "codacy"
+
+[tool.research-repo-tools.sarif.drivers]
+opengrep = [ "delaunay." ]
+Opengrep = [ "delaunay." ]
+OpenGrep = [ "delaunay." ]
+
 [tool.research-repo-tools.semgrep]
 config = "semgrep.yaml"
 fixtures = "tests/semgrep"
 namespace = "delaunay."
+inline-suppressions = true
+jobs = 1
+target-timeout = 120
+timeout = 600
+report-category = "semgrep-repository-rules"
+report-layout = "aggregate"
 
 [tool.research-repo-tools.zizmor]
 persona = "regular"

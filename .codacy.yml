@@ -24,7 +24,7 @@
 engines:
   bandit:
     include_paths:
-      - "scripts/**/*.py"
+      - "tooling/python/**/*.py"
   duplication:
     exclude_paths:
       - "docs/archive/**"
@@ -45,9 +45,9 @@ engines:
   lizard:
     include_paths:
       - "src/**/*.rs"
-      - "scripts/**/*.py"
+      - "tooling/python/**/*.py"
     exclude_paths:
-      - "scripts/tests/**"
+      - "tests/tooling/**"
       - "target/**"
       - "node_modules/**"
       - ".git/**"
@@ -68,7 +68,7 @@ engines:
       - "src/**/*.rs"
   ruff:
     include_paths:
-      - "scripts/**/*.py"
+      - "tooling/python/**/*.py"
   shellcheck:
     include_paths:
       - "scripts/**/*.sh"
@@ -82,6 +82,6 @@ exclude_paths:
   - "uv.lock"
   - "docs/archive/**"
   - "docs/archives/changelog/**"
-  - "scripts/tests/**"
+  - "tests/tooling/**"
   # Semgrep fixtures intentionally contain bad examples for rule tests.
   - "tests/semgrep/**"

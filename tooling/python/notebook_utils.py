@@ -3,14 +3,7 @@
 import math
 import os
 import shutil
-import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-from research_repo_tools.process import run_command as run_safe_command
-
-if TYPE_CHECKING:
-    import subprocess
 
 
 def find_repo_root(start: Path) -> Path:
@@ -156,25 +149,3 @@ def delaunay_command_prefix(root: Path, *, require_built_binary: bool = False) -
         message = "cargo executable was not found on PATH; set DELAUNAY_BINARY to a built binary"
         raise RuntimeError(message)
     return [cargo, "run", "--locked", "--profile", "perf", "--features", "cli", "--bin", "delaunay", "--"]
-
-
-def run_command(command: list[str], *, cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
-    """Run one argv command with captured output, a timeout, and actionable failure context."""
-    if not command:
-        message = "command must contain an executable"
-        raise ValueError(message)
-    print("$", " ".join(command))
-    result = run_safe_command(
-        command[0],
-        command[1:],
-        cwd=cwd,
-        timeout=timeout,
-        check=False,
-    )
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
-    if result.returncode != 0:
-        raise RuntimeError(f"command failed with exit code {result.returncode}: {' '.join(command)}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
-    return result

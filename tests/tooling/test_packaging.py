@@ -51,13 +51,14 @@ def _build_support_wheel(repository: Path, tmp_path: Path) -> tuple[Path, dict[s
     """Build the support wheel from a clean copied source tree."""
     configuration = tomllib.loads((repository / "pyproject.toml").read_text(encoding="utf-8"))
     source = tmp_path / "source"
-    scripts = source / "scripts"
-    scripts.mkdir(parents=True)
+    module_path = Path(configuration["tool"]["setuptools"]["package-dir"][""])
+    modules = source / module_path
+    modules.mkdir(parents=True)
     for filename in ("LICENSE", "pyproject.toml", "uv.lock"):
         shutil.copy2(repository / filename, source / filename)
-    shutil.copy2(repository / "scripts" / "README.md", scripts / "README.md")
+    shutil.copy2(repository / configuration["project"]["readme"], source / configuration["project"]["readme"])
     for module in configuration["tool"]["setuptools"]["py-modules"]:
-        shutil.copy2(repository / "scripts" / f"{module}.py", scripts / f"{module}.py")
+        shutil.copy2(repository / module_path / f"{module}.py", modules / f"{module}.py")
 
     uv = shutil.which("uv")
     assert uv is not None
@@ -95,8 +96,8 @@ def test_local_imports_follows_package_level_imports(tmp_path: Path) -> None:
 def test_console_entry_point_import_closure_is_packaged() -> None:
     """Every local module reachable from a console entry point ships in the wheel."""
     repository = Path(__file__).parents[2]
-    scripts_dir = repository / "scripts"
     configuration = tomllib.loads((repository / "pyproject.toml").read_text(encoding="utf-8"))
+    scripts_dir = repository / configuration["tool"]["setuptools"]["package-dir"][""]
     packaged_modules = set(configuration["tool"]["setuptools"]["py-modules"])
     entry_modules = {target.partition(":")[0] for target in configuration["project"]["scripts"].values()}
     local_modules = {path.stem for path in scripts_dir.glob("*.py")}
@@ -118,7 +119,7 @@ def test_support_package_uses_its_own_readme(tmp_path: Path) -> None:
     repository = Path(__file__).parents[2]
     wheel_path, configuration = _build_support_wheel(repository, tmp_path)
 
-    assert configuration["project"]["readme"] == "scripts/README.md"
+    assert configuration["project"]["readme"] == "tooling/python/README.md"
     with zipfile.ZipFile(wheel_path) as wheel:
         metadata_paths = [name for name in wheel.namelist() if name.endswith(".dist-info/METADATA")]
         assert len(metadata_paths) == 1
@@ -126,7 +127,7 @@ def test_support_package_uses_its_own_readme(tmp_path: Path) -> None:
 
     _headers, separator, description = metadata.partition("\n\n")
     assert separator
-    assert description.startswith("# Scripts Directory\n")
+    assert description.startswith("# Python tooling\n")
 
 
 def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_path: Path) -> None:
@@ -134,9 +135,7 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
     repository = Path(__file__).parents[2]
     wheel_path, configuration = _build_support_wheel(repository, tmp_path)
     assert set(configuration["project"]["optional-dependencies"]["notebooks"]) == {
-        "research-repo-tools[notebooks]==0.1.7",
-        "ruff>=0.16.8",
-        "ty>=0.0.82",
+        "research-repo-tools[notebooks,python-tools]==0.1.8",
     }
     with zipfile.ZipFile(wheel_path) as wheel:
         metadata_path = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))

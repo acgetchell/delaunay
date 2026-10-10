@@ -15,8 +15,8 @@ from performance_artifacts import ArtifactPaths, PerformanceBundle, PerformanceR
 
 _MARKER_BEGIN = "<!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->"
 _MARKER_END = "<!-- PERFORMANCE_RELEASE_TABLE:END -->"
-_ASSET_CSV = Path("docs/assets/bench/release-performance.csv")
-_ASSET_PROVENANCE = Path("docs/assets/bench/release-performance.provenance.json")
+_ASSET_PAYLOAD = Path("docs/assets/bench/release-performance.comparison.json")
+_ASSET_PROVENANCE = Path("docs/assets/bench/release-performance.evidence.json")
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +103,7 @@ def render_readme_block(bundle: PerformanceBundle) -> str:
             "",
             (
                 f"[Full report]({asset_base}/{DOCS_PERFORMANCE_REPORT.as_posix()}) · "
-                f"[CSV]({asset_base}/{_ASSET_CSV.as_posix()}) · "
+                f"[timing evidence]({asset_base}/{_ASSET_PAYLOAD.as_posix()}) · "
                 f"[provenance]({asset_base}/{_ASSET_PROVENANCE.as_posix()})"
             ),
             "",
@@ -133,15 +133,15 @@ def publish_readme_performance(
     """Validate retained evidence and publish README-owned files transactionally."""
     resolved_root = root.resolve()
     source = artifacts or ArtifactPaths(
-        csv=resolved_root / "target/bench-reports/performance.csv",
-        provenance=resolved_root / "target/bench-reports/performance.provenance.json",
+        payload=resolved_root / "target/bench-reports/performance.comparison.json",
+        provenance=resolved_root / "target/bench-reports/performance.evidence.json",
     )
     readme_path = _contained_destination(resolved_root, readme or resolved_root / "README.md", label="README destination")
-    source_csv = source.csv.read_bytes()
+    source_evidence = source.payload.read_bytes()
     source_provenance = source.provenance.read_bytes()
     cargo_path = resolved_root / "Cargo.toml"
     cargo_payload = cargo_path.read_bytes()
-    bundle = load_bundle_bytes(source_csv, source_provenance, source=str(source.csv))
+    bundle = load_bundle_bytes(source_evidence, source_provenance, source=str(source.payload))
     bundle.require_promotable()
     expected_current = _cargo_package_tag(cargo_payload)
     if bundle.context.release.current != expected_current:
@@ -158,14 +158,14 @@ def publish_readme_performance(
     baseline = bundle.context.release.baseline
     archive_stem = f"{current}-vs-{baseline}"
     durable = ArtifactPaths(
-        csv=_contained_destination(
+        payload=_contained_destination(
             resolved_root,
-            resolved_root / "docs/archive/performance/data" / f"{archive_stem}.csv",
-            label="promoted performance CSV",
+            resolved_root / "docs/archive/performance/data" / f"{archive_stem}.comparison.json",
+            label="promoted performance payload",
         ),
         provenance=_contained_destination(
             resolved_root,
-            resolved_root / "docs/archive/performance/data" / f"{archive_stem}.provenance.json",
+            resolved_root / "docs/archive/performance/data" / f"{archive_stem}.evidence.json",
             label="promoted performance provenance",
         ),
     )
@@ -174,14 +174,14 @@ def publish_readme_performance(
         resolved_root / DOCS_PERFORMANCE_REPORT,
         label="promoted performance report",
     )
-    missing_durable = [path for path in (durable.csv, durable.provenance) if not path.is_file()]
+    missing_durable = [path for path in (durable.payload, durable.provenance) if not path.is_file()]
     if missing_durable:
         rendered = ", ".join(path.relative_to(resolved_root).as_posix() for path in missing_durable)
         msg = f"promoted performance evidence is missing: {rendered}; run `just performance-release` before publishing the README snapshot"
         raise ValueError(msg)
-    durable_csv = durable.csv.read_bytes()
+    durable_payload = durable.payload.read_bytes()
     durable_provenance = durable.provenance.read_bytes()
-    if durable_csv != source_csv or durable_provenance != source_provenance:
+    if durable_payload != source_evidence or durable_provenance != source_provenance:
         msg = "retained performance data does not match the exact bundle promoted by `just performance-release`"
         raise ValueError(msg)
 
@@ -190,7 +190,7 @@ def publish_readme_performance(
         msg = f"{report_label} is missing; run `just performance-release` before publishing the README snapshot"
         raise ValueError(msg)
     durable_evidence = ArtifactPaths(
-        csv=durable.csv.relative_to(resolved_root),
+        payload=durable.payload.relative_to(resolved_root),
         provenance=durable.provenance.relative_to(resolved_root),
     )
     expected_report = render_performance_bundle(bundle, evidence_paths=durable_evidence, evidence_state="promoted")
@@ -200,7 +200,7 @@ def publish_readme_performance(
         raise ValueError(msg)
 
     asset_paths = ArtifactPaths(
-        csv=_contained_destination(resolved_root, resolved_root / _ASSET_CSV, label="README CSV asset destination"),
+        payload=_contained_destination(resolved_root, resolved_root / _ASSET_PAYLOAD, label="README payload asset destination"),
         provenance=_contained_destination(
             resolved_root,
             resolved_root / _ASSET_PROVENANCE,
@@ -208,9 +208,9 @@ def publish_readme_performance(
         ),
     )
     inputs = {
-        source.csv.relative_to(resolved_root).as_posix(): source_csv,
+        source.payload.relative_to(resolved_root).as_posix(): source_evidence,
         source.provenance.relative_to(resolved_root).as_posix(): source_provenance,
-        durable.csv.relative_to(resolved_root).as_posix(): durable_csv,
+        durable.payload.relative_to(resolved_root).as_posix(): durable_payload,
         durable.provenance.relative_to(resolved_root).as_posix(): durable_provenance,
         performance_report.relative_to(resolved_root).as_posix(): report_payload,
         cargo_path.relative_to(resolved_root).as_posix(): cargo_payload,
@@ -223,7 +223,7 @@ def publish_readme_performance(
         block,
         inputs=inputs,
         figures={
-            asset_paths.csv.relative_to(resolved_root).as_posix(): source_csv,
+            asset_paths.payload.relative_to(resolved_root).as_posix(): source_evidence,
             asset_paths.provenance.relative_to(resolved_root).as_posix(): source_provenance,
         },
     )
@@ -235,8 +235,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="repository root (default: current directory)")
-    parser.add_argument("--artifact-csv", type=Path, default=Path("target/bench-reports/performance.csv"))
-    parser.add_argument("--artifact-provenance", type=Path, default=Path("target/bench-reports/performance.provenance.json"))
+    parser.add_argument("--artifact-payload", type=Path, default=Path("target/bench-reports/performance.comparison.json"))
+    parser.add_argument("--artifact-provenance", type=Path, default=Path("target/bench-reports/performance.evidence.json"))
     parser.add_argument("--readme", type=Path, default=Path("README.md"))
     return parser.parse_args(argv)
 
@@ -253,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
         summary = publish_readme_performance(
             root,
             artifacts=ArtifactPaths(
-                csv=_under_root(root, args.artifact_csv),
+                payload=_under_root(root, args.artifact_payload),
                 provenance=_under_root(root, args.artifact_provenance),
             ),
             readme=_under_root(root, args.readme),

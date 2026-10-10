@@ -1,94 +1,49 @@
 # Shared tooling adoption
 
-Issues [#615](https://github.com/acgetchell/delaunay/issues/615) and
-[#616](https://github.com/acgetchell/delaunay/issues/616) adopt the published
-`research-repo-tools==0.1.7` PyPI distribution. The exact requirement lives in
-runtime dependencies, `tooling` (included by `dev`), and the notebook extra;
-`uv.lock` records registry artifacts and hashes. All declarations select the same
-published version.
-Python inherits the shared 3.14 baseline, uv is declared in `tool.uv.required-version`, and managed
-Cargo tools are declared in `tool.research-repo-tools.toolchain.cargo`.
-OSV-Scanner and Gitleaks use exact managed pins in `tool.research-repo-tools.toolchain.binaries`.
+The repository now pins the published
+[research-repo-tools v0.1.8](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.1.8)
+PyPI distribution in runtime dependencies, the tooling/dev groups, and the
+notebook extra/group. `uv.lock` records exact registry artifacts and hashes.
+Python retains the inherited 3.14 floor. Ruff, ty and pytest inherit exact
+versions from the package's `python-tools` extra; no independent floating
+requirements remain. The uv declaration is 0.12.24, matching the installed
+manager used for the lock and consumer checks.
 
 ## Ownership
 
-The installed package owns setup, managed installations, dependency pin updates,
-release metadata planning and checks, git-cliff policy, changelog normalization,
-archive rotation, notes and tags, Semgrep fixture execution, zizmor authentication,
-and opt-in CodeRabbit orchestration. Consumers call its public CLI and documented
-Python APIs. The expanded adoption also delegates file inventory and batching,
-process execution, safe archive extraction, temporary worktree lifecycle,
-Criterion estimate parsing, atomic file replacement, README publication,
-Rustdoc fence extraction, and notebook infrastructure.
+Consumers call the public CLI and documented Python APIs. Shared ownership now
+includes managed setup and credential isolation, dependency updates, release
+metadata, changelog policy, file discovery/batching, process execution, safe
+archive extraction, worktree lifecycle, Criterion parsing, file publication,
+notebook infrastructure, paper checks and native Tectonic discovery.
 
-The MCMC-style security workflow also uses shared commands: `just security`
-composes OSV audits of all three maintained lockfiles and Gitleaks scans of
-reachable history and current files. Separate Actions workflows call the same
-recipes and retain redacted reports. The existing Cargo audit workflow remains
-the RustSec-specific check; security scans are separate from the local default
-validation tiers. See [dependency and secret scanning](commands.md#dependency-and-secret-scanning).
-
-The current published setup contract installs Just through the package's
-`rust-just` dependency and exposes `research-repo-tools setup` directly. It
-supersedes the generated shell/PowerShell launchers described in the original
-issue. No package checkout, editable install, local wheel, copied cliff template,
-or generated launcher is required.
-
-Consumer ownership remains with scientific validation, geometry/rendering,
-benchmark selection and eligibility, retained schema-v3 evidence, and repository
-policy. The local process wrapper and Semgrep target script are deleted.
-The notebook wrapper and shell example runner are also deleted. Notebook lint
-and advice call the shared CLI directly; a consumer test retains the lowercase
-kebab-case cell-ID rule. `tooling/examples.toml` declares the complete example
-inventory, build/feature order, output markers and portable deadlines, checked
-against Cargo metadata. Native tools retain their repository configuration;
-shared file selection replaces the repeated shell discovery loops. `docs/templates/changelog_format.toml` is an explicit local
-formatting policy for historical commit bodies; active prose keeps its existing
-stricter policy.
-
-Completed changelog series moved from `docs/archive/changelog/` to
-`docs/archives/changelog/`. Their generated bodies were migrated through the
-shared normalizer and scoped formatter so repeat generation can compare them
-canonically. All 29 archived release dates and all 732 existing commit, PR, and
-comparison links were retained. Historical API names remain historical. The
-current release snapshot retains its existing body and repairs archive navigation.
-Scientific reports and their evidence archives retain their existing ownership.
+Delaunay retains scientific geometry, topology, workloads, benchmark eligibility,
+construction metrics, complete confidence intervals, provenance-based
+comparability, report interpretation, and geometric-mean README summaries. Publication prose under `papers/` remains author-owned.
+No scientific report, CSV/JSON baseline, tracked notebook, PDF, or figure was
+regenerated in this adoption patch.
 
 ## Remaining shared-tool gaps
 
-Every reusable gap has a v0.1.8 upstream issue and a consumer adoption issue
-with native blocked-by dependencies. Adoption requires a published package pin,
-deleting the superseded implementation and generic tests, and preserving the
-consumer's scientific and failure contracts.
-Example discovery/live output and declarative cell-ID spelling are remaining
-enhancements; they no longer block deleting their former wrapper scripts.
+The v0.1.8 implementation is adopted for issues #625–#630, #632–#634 and #636.
+Their native Linux/Windows consumer results remain pending hosted CI.
+Issue #631 is partially implemented; it must remain open until the remaining
+performance contracts can be replaced without changing scientific behavior.
 
-| Reusable capability | Upstream v0.1.8 | Adoption here |
+| Adoption | Published integration | Remaining ownership |
 |-----|-----|-----|
-| Paper/PDF checks and Tectonic discovery | [#70][rrt70] | [#625][d625] |
-| Runtime Cargo example discovery and live output | [#71][rrt71] | [#626][d626] |
-| SARIF filtering and complete-directory publication | [#72][rrt72] | [#627][d627] |
-| Notebook cell-ID spelling policy | [#73][rrt73] | [#628][d628] |
-| Batched Semgrep scans and suppression policy | [#74][rrt74] | [#629][d629] |
-| Benchmark host and profiling metadata | [#75][rrt75] | [#630][d630] |
-| Complete performance workflows and immutable retention | [#64][rrt64] | [#631][d631] |
-| Python commands, pins, notebook and Just test helpers | [#56][rrt56], [#57][rrt57], [#58][rrt58], [#59][rrt59] | [#632][d632] |
-| Raw Markdown line-length validation | [#76][rrt76] | [#633][d633] |
-| JupyterLab launch and explicit notebook reset | [#77][rrt77] | [#634][d634] |
+| [#625][d625] | Paper/PDF policy, dates, normalization, Tectonic discovery/export | Native libraries and explicit paper recipes |
+| [#626][d626] | Live Cargo discovery, feature groups, locked builds and output | Nine example assertions and diagnostics feature |
+| [#627][d627] | SARIF split/GitHub outputs and complete-directory publication | Opengrep policy and exact six scientific PNG images |
+| [#628][d628] | Declared lowercase kebab-case notebook ID pattern | Stable descriptive cell names |
+| [#629][d629] | Paired Semgrep scan, suppressions, aggregate SARIF and budgets | Repository rules/scopes and fixture exclusion |
+| [#630][d630] | Nullable host, native TOML and profiling source capture | Scientific eligibility and dynamic profiling labels |
+| [#631][d631] | Shared comparison JSON/evidence, release selection, asset downloads, publication | Mixed sampling and canonical Criterion IDs; see below |
+| [#632][d632] | Python commands/pins, Just inspection, notebook test project | Lint policy and installed-wheel smoke test |
+| [#633][d633] | Shared raw all-lines 160-character Markdown gate | Explicit changelog/history exclusions |
+| [#634][d634] | Shared JupyterLab launch and explicit index/revision reset plan | Declared scratch/checkpoint paths; reset remains opt-in |
+| [#636][d636] | Public `toolchain sync-binaries` | Token-free package/Cargo/dev steps and existing native CI matrix |
 
-[rrt70]: https://github.com/acgetchell/research-repo-tools/issues/70
-[rrt71]: https://github.com/acgetchell/research-repo-tools/issues/71
-[rrt72]: https://github.com/acgetchell/research-repo-tools/issues/72
-[rrt73]: https://github.com/acgetchell/research-repo-tools/issues/73
-[rrt74]: https://github.com/acgetchell/research-repo-tools/issues/74
-[rrt75]: https://github.com/acgetchell/research-repo-tools/issues/75
-[rrt76]: https://github.com/acgetchell/research-repo-tools/issues/76
-[rrt77]: https://github.com/acgetchell/research-repo-tools/issues/77
-[rrt64]: https://github.com/acgetchell/research-repo-tools/issues/64
-[rrt56]: https://github.com/acgetchell/research-repo-tools/issues/56
-[rrt57]: https://github.com/acgetchell/research-repo-tools/issues/57
-[rrt58]: https://github.com/acgetchell/research-repo-tools/issues/58
-[rrt59]: https://github.com/acgetchell/research-repo-tools/issues/59
 [d625]: https://github.com/acgetchell/delaunay/issues/625
 [d626]: https://github.com/acgetchell/delaunay/issues/626
 [d627]: https://github.com/acgetchell/delaunay/issues/627
@@ -99,37 +54,123 @@ enhancements; they no longer block deleting their former wrapper scripts.
 [d632]: https://github.com/acgetchell/delaunay/issues/632
 [d633]: https://github.com/acgetchell/delaunay/issues/633
 [d634]: https://github.com/acgetchell/delaunay/issues/634
+[d636]: https://github.com/acgetchell/delaunay/issues/636
 
-Retained implementations are `paper_check.py`, `paper_pdf_normalize.py`,
+Retired production helpers are `paper_check.py`, `paper_pdf_normalize.py`,
 `paper_source_date.py`, `tectonic_native_dependencies.sh`,
-`ci/filter_codacy_sarif.py`, and `hardware_utils.py`.
-The native Semgrep recipe
-retains reviewed suppressions, aggregate SARIF, jobs and timeout settings.
-Benchmark orchestration in `benchmark_utils.py`, `performance_artifacts.py`
-and `release_benchmarks.sh` still requires frozen target completeness,
-historical schema support, immutable retention and nested promotion rollback.
-Markdown file selection and batching are shared; its all-lines 160-character
-gate remains local. JupyterLab cache/launch setup and the explicitly invoked
-Git reset/scratch cleanup recipe also await shared workflow support.
+`ci/filter_codacy_sarif.py`, and `ci/capture_profiling_metadata.sh`.
+Their generic regression suites are retired. `hardware_utils.py` and its tests
+are now deleted entirely; consumers use the public `capture_host` API directly.
+The legacy text parser/writer, warm baseline cache, artifact polling, hardware
+text/tolerance rules, threshold CLI, and manual `generate-baseline.yml` workflow
+are retired. `benchmark_models.py` now contains only circumsphere rankings.
+Notebook cells call the shared live process runner without a local wrapper.
+The shared snapshot API replaces local Git patch copying, includes nonignored
+new files and modes, and rejects application to a different checkout revision.
+Consumer source identity binds those new file bytes and modes too.
+The inline private binary setup adapter, Python command loop, Markdown line
+loop, notebook spelling test, figure swap/rollback, local GitHub release DTOs,
+release-list parsing, and nested performance publication rollback are removed.
+Saved-baseline pairing and ratio arithmetic now use the shared `Sample`,
+`Comparison`, and `compare_samples` APIs; local code selects Delaunay workloads
+and retains its report presentation and complete-interval requirement.
 
-The MCMC-style declarative layout is adopted where published commands cover the
-workflow. Shared measurement currently collects one statistic from each
-revision's own harness, and report promotion retains evidence by release pair.
-Delaunay requires a frozen target/section/group inventory, strict completeness
-and eligibility checks, retained schema-v3 identities, and rollback across
-retention plus promotion. Replacing that orchestration requires [#64][rrt64];
-moving Python into `tooling/` would not remove it. README publication also retains
-the consumer's geometric-mean group summaries and exact promoted-bundle checks.
+Declarative workflow inputs live under `tooling/`, following the same boundary
+as la-stack and markov-chain-monte-carlo. The remaining scientific Python modules
+are packaged from `tooling/python/`, with consumer tests in `tests/tooling/` and
+mirrored fixtures in `tests/semgrep/tests/tooling/`. `scripts/` contains only
+`release_benchmarks.sh`. The package boundary remains `tooling/python/`; `scripts/` contains only shell
+scripts. Legacy benchmark CLI commands and recipes are deliberately removed.
+The retained `performance-*` commands use new shared evidence paths.
 
-The Codacy adapter runs in a minimal scanner job; it cannot import the package
-until that workflow provisions it. Benchmark models, notebook input parsing,
-scientific validation/rendering, the README/citation mirror, and focused-prelude
-policy are Delaunay responsibilities. They are not generic migration targets.
-Publication uses shared file transactions now; consumer callbacks still own
-scientific reload validation and promotion rollback until the full workflow
-contract can replace them. Tracked historical evidence is unchanged.
+Performance retention uses the shared Criterion comparison JSON and evidence
+envelope. The envelope retains Delaunay coverage and comparability policy in
+consumer context; full commits bind the outer provenance to measured source
+identity. The shared parser validates payload integrity, and the consumer
+requires complete intervals and the union of both benchmark inventories.
+Promotions pass evidence, Markdown, archives and navigation to one shared
+publication transaction. Historical CSV/text records stay byte-for-byte intact;
+new `.comparison.json` and `.evidence.json` paths distinguish the new contract.
+Retired comparison formats are no longer accepted as promotion inputs.
+
+### Performance deletion gates
+
+Published `CompletePolicy` has one sample count for a whole phase, and the
+common-harness plan requires the same count for both phases. Delaunay's actual
+release-signal plan intentionally combines 10, 15, 20, 25 and default 100-sample
+groups. A valid two-case fixture with 10 and 100 raw samples is rejected under
+both uniform policies by the installed v0.1.8 package. This verified gap is
+[research-repo-tools #101](https://github.com/acgetchell/research-repo-tools/issues/101),
+recorded as a native blocked-by dependency of [#631][d631].
+
+Consequently, release-signal execution and provenance orchestration remain in
+`benchmark_utils.py`. They preserve target/section/group selection, independent
+scientific preflight, exact Criterion IDs, incomplete coverage and hosted-session
+ratio suppression. Native reports use recorded harness and measurement-plan
+identity rather than the historical v0.8.2 label boundary. Differing workload,
+host or compiler evidence prevents ratios. Same-version scratch comparisons
+are supported; publication still requires distinct releases and valid coverage.
+The CI performance job now measures both revisions freshly in one job and
+retains descriptive evidence without threshold classification.
+Changing sample sizes, synthesizing samples or weakening completeness is not
+an acceptable migration.
+
+`release_benchmarks.sh` also retains the preflight release ID/tag-commit binding
+across long benchmark runs. The published upload API cannot carry that binding;
+the existing upstream
+[#94](https://github.com/acgetchell/research-repo-tools/issues/94)
+tracks the required replacement. Generic Criterion inventory discovery and
+saved-baseline verification are tracked by
+[#98](https://github.com/acgetchell/research-repo-tools/issues/98).
+Full common-harness execution remains blocked by the verified mixed-sampling
+gap. New shared comparison reports already use separate paths; history is kept
+as a record rather than reinterpreted as newly certified evidence.
+
+## v0.1.8 consumer evidence
+
+Production/test counts cover `.py` and `.sh` under the owning directories,
+counting physical lines including blanks. The baseline is Git HEAD's `scripts/`
+before this patch; current production spans `tooling/python/` and `scripts/`,
+and current tests live in `tests/tooling/`. Generated files, static-analysis
+fixtures and `__pycache__` are excluded.
+
+| Surface | Before files / lines | After files / lines |
+|-----|-----|-----|
+| Production helpers | 16 / 14,864 | 10 / 8,720 |
+| Consumer tests | 25 / 14,228 | 20 / 7,463 |
+
+The installed PyPI package passed 181 upstream toolchain tests and three subtests
+on native aarch64 macOS, including cold, warm and damaged-cache credential
+models with real child-environment probes. Synthetic authenticated discovery
+stubs are boundary models; this is not evidence of live GitHub downloads on all
+three native platforms. The consumer action uses no private package APIs and
+keeps release credentials on its binary-discovery step only.
+
+The earlier v0.1.8 adoption pass validated 829 tests, notebook lint, configuration,
+shell, Semgrep, examples and paper artifact checks. The subsequent format and
+legacy-workflow retirement uses the focused validators recorded below; its
+smaller consumer suite retains scientific geometry, coverage, malformed
+evidence and publication regressions. Generic retired implementations no longer
+need local mirror tests; shared format and process behavior belongs upstream.
+
+The retirement pass passed all 527 consumer tests, including installed-wheel
+and isolated notebook smoke checks, plus `just python-check`,
+`just python-fixture-lint`, `just notebook-check`, `just check-config`,
+`just check-docs`, and `just shell-check`. Native Semgrep reported zero findings
+and zero errors across 323 inputs. All execution was on aarch64 macOS.
+The system uv changed to 0.13.0 during validation; the final checks used an
+isolated 0.12.24 installation under `/private/tmp/`, preserving repository pins
+and the user's global tools. No live benchmark or hosted CI run was performed.
+
+No benchmark timings, scientific notebook execution or tracked figure/PDF
+refresh was performed during this migration. Git commits, tags, pushes,
+CodeRabbit review and issue closure were not requested. Native Linux/Windows
+results remain for hosted CI; local tests do not establish those results.
 
 ## Regression ownership and consumer evidence
+
+The following records describe the earlier v0.1.7 migration and remain as
+historical validation evidence, separate from the v0.1.8 results above.
 
 The [published package's regression suites](https://github.com/acgetchell/research-repo-tools/tree/v0.1.7/tests)
 own the common cases formerly tested by the deleted maintenance helpers:
@@ -145,7 +186,7 @@ own the common cases formerly tested by the deleted maintenance helpers:
 
 These suites ran against the installed PyPI package on this Mac: 767 passed,
 13 subtests passed, and 32 skipped because disposable Git mutations were
-explicitly disabled. Consumer regressions in `scripts/tests/test_shared_tooling.py`
+explicitly disabled. Consumer regressions in `tests/tooling/test_shared_tooling.py`
 exercise actual recipe composition, both Cargo resolution roots, every update
 failure boundary, exact package provenance, real declarative release checks,
 prospective dates and Rust code, and review commands with local executable stubs.

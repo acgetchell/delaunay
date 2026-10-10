@@ -1,6 +1,5 @@
 """Tests for shared notebook boundary helpers."""
 
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -104,18 +103,3 @@ def test_delaunay_command_prefix_rejects_missing_cargo_fallback(tmp_path: Path, 
 
     with pytest.raises(RuntimeError, match="cargo executable was not found"):
         notebook_utils.delaunay_command_prefix(tmp_path)
-
-
-def test_run_command_rejects_nonzero_exit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    completed = subprocess.CompletedProcess(args=["tool"], returncode=7, stdout="out", stderr="err")
-
-    def fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        return completed
-
-    monkeypatch.setattr(notebook_utils, "run_safe_command", fake_run)
-
-    with pytest.raises(RuntimeError, match="exit code 7"):
-        notebook_utils.run_command(["tool"], cwd=tmp_path, timeout=1)
-    captured = capsys.readouterr()
-    assert captured.out == "$ tool\nout"
-    assert captured.err == "err"

@@ -12,9 +12,13 @@ The benchmark system answers three different questions:
    gate, invariant tests, and known-answer checks. Benchmark harnesses should
    fail before publishing timings when the measured workflow violates
    triangulation, predicate, topology, or diagnostic invariants.
-2. **Did this change move performance?** Use same-machine local comparisons and
-   targeted benchmarks while developing.
-3. **What can we say about a release?** Use release-signal benchmarks, durable
+2. **Did this change move performance?** Use `just performance-local` for branch and PR work. It measures both the
+current checkout and the latest published stable release freshly in isolated
+worktrees on this machine, and retains shared JSON evidence under `target/`.
+The CI performance job runs the same command; ratios require compatible
+harness, measurement-plan, compiler, confidence-level and host evidence.
+
+Use release-signal benchmarks, durable
    release artifacts, environment metadata, and one curated committed report.
 
 This split is the reusable pattern for Delaunay and sibling scientific crates:
@@ -29,11 +33,10 @@ catches formatting, lint, test, documentation, example, and benchmark-harness
 compile errors. It does not publish benchmark data and does not replace
 measured before/after evidence for performance-sensitive code.
 
-Use same-machine local comparisons for branch and PR work. `just
-perf-no-regressions` and `just perf-vs-ref <ref>` run the dev-mode
-`ci_performance_suite`, generate or reuse text baselines, and write reports
-under `benches/`. These commands are intentionally cheaper and less formal than
-the release-signal workflow.
+Use `just performance-local` for branch and PR work. It measures both revisions
+freshly in isolated worktrees on this machine and retains shared JSON evidence
+under `target/`. The CI performance job uses the same command. Ratios require
+compatible harness, measurement-plan, toolchain, confidence-level and host evidence.
 
 Use release-signal benchmarks for release evidence. They are slower, more
 formal, and tied to release artifacts and report metadata. Create a draft GitHub
@@ -41,14 +44,14 @@ Release for an existing stable tag, then dispatch
 `.github/workflows/release-benchmarks.yml` with that `tag`. It validates the
 mutable draft, benchmarks the exact tag commit, attaches and digest-verifies
 `delaunay-vX.Y.Z-criterion-baseline.tar.gz`, and publishes only after success. That archive
-contains `PERFORMANCE_RESULTS.md`, `baseline_results.txt`, raw Criterion data
+contains `PERFORMANCE_RESULTS.md`, raw Criterion data
 under `criterion/`, and `metadata.json`.
 
 Common maintainer flows:
 
 - Before committing or handing off code: run `just ci`.
 - Before pushing performance-sensitive Rust or benchmark changes: run
-  `just perf-large-scale-smoke`, then `just perf-no-regressions` when the work
+  `just perf-large-scale-smoke`, then `just performance-local` when the work
   is PR-ready.
 - During release PR preparation: run `just performance-release`, then
   `just performance-readme`, to update the curated report, archive its
@@ -79,17 +82,17 @@ can be retried with the same tag. If an archive is already attached, inspect it
 and remove it from the mutable draft before rerunning; published releases are
 always rejected. Follow the full [draft-run-publish sequence](../docs/RELEASING.md).
 
-The corrected proof-aware contract begins at v0.8.2. Establish that release's
-absolute baseline with `just bench-perf-summary` after updating release
-metadata; begin release-to-release comparisons once two comparable releases
-under the new contract exist. Historical reports keep their original version
-labels and are not converted into new-contract evidence.
+Historical reports retain their original release labels and measurements.
+Fresh comparisons establish workload identity from harness and measurement-plan
+evidence rather than a hard-coded version boundary. Failed scientific fixtures
+invalidate measurements. If no scientifically comparable baseline exists, use
+`just bench-perf-summary` for absolute results and skip comparison publication.
 
 The canonical `performance-*` release recipes consume local worktrees,
 published release assets, or retained inputs:
 
 - `just performance-local` runs local release-signal benchmarks in isolated
-  temporary worktrees and retains a Markdown/CSV/provenance bundle under
+  temporary worktrees and retains a Markdown/comparison JSON/evidence bundle under
   `target/bench-reports/performance.*` without promoting documentation.
 - `just performance-github-assets` compares stored GitHub Release assets
   without local Cargo benchmark runs and retains
@@ -100,14 +103,14 @@ published release assets, or retained inputs:
   hosted release runs are separate measurement sessions.
 - `just performance-release` performs the local measurement and retention
   workflow, reload-validates the pair, promotes `docs/performance.md`, and
-  archives both the prior report and the exact promoted CSV/provenance pair.
-- `just performance-doc` reloads a retained CSV/provenance pair and performs
+  archives both the prior report and the exact promoted comparison JSON/evidence pair.
+- `just performance-doc` reloads a retained comparison JSON/evidence pair and performs
   only the documentation promotion. It runs no Cargo benchmarks or measurement
   worktrees and rejects incomplete, invalid, stale, same-version, or
   scientifically non-comparable inputs.
 - `just performance-readme` validates the retained promoted bundle, then
   atomically publishes a compact README table and the canonical README-owned
-  CSV/provenance pair. It runs no benchmarks.
+  comparison JSON/evidence pair. It runs no benchmarks.
 
 Promotion uses per-file atomic replacement and rolls back caught failures. A
 hard process or machine interruption can stop between replacements. Inspect
@@ -130,9 +133,9 @@ just performance-release "$TAG" "$PREVIOUS_TAG"
 ```
 
 Do not use release-comparison commands as a routine pre-`just ci` step.
-Temp-worktree commands apply tracked changes from the current checkout by
-default; untracked benchmark or script files must be added to git before they
-can affect the generated report.
+Temp-worktree commands use the shared snapshot API for tracked changes and
+nonignored new files, including binary bytes and file permissions. The snapshot
+must match the isolated checkout's commit; concurrent source edits are rejected.
 
 ## Release Comparison Artifacts
 
@@ -141,26 +144,26 @@ Artifact ownership is deliberately narrow:
 | Path | Tracked | Producer | Role |
 |------|---------|----------|------|
 | `target/bench-reports/performance.md` | No | `performance-local`, `performance-release`, `performance-doc` | Rendered local or release comparison |
-| `target/bench-reports/performance.csv` | No | `performance-local`, `performance-release` | Scratch copy of canonical versioned timing and coverage data |
-| `target/bench-reports/performance.provenance.json` | No | `performance-local`, `performance-release` | Scratch provenance and CSV binding evidence |
+| `target/bench-reports/performance.comparison.json` | No | Local/release measurement | Shared median timing payload |
+| `target/bench-reports/performance.evidence.json` | No | `performance-local`, `performance-release` | Shared provenance envelope binding the timing payload |
 | `target/bench-reports/github-assets-performance.*` | No | `performance-github-assets` | Provenance-validated bundle sourced from release archives |
 | `docs/performance.md` | Yes | `performance-release`, `performance-doc` | Latest curated distinct-release report |
 | `docs/archive/performance/` | Yes | `performance-release`, `performance-doc` | Older curated distinct-release reports |
-| `docs/archive/performance/data/` | Yes | `performance-release`, `performance-doc` | Exact CSV/provenance evidence for each new promoted report |
+| `docs/archive/performance/data/` | Yes | `performance-release`, `performance-doc` | Exact shared JSON pair for each new promoted report |
 | `README.md` | Yes | `performance-readme` | Compact snapshot of the latest retained and promoted comparison |
-| `docs/assets/bench/release-performance.*` | Yes | `performance-readme` | Exact README-owned CSV/provenance snapshot |
+| `docs/assets/bench/release-performance.*` | Yes | `performance-readme` | Exact README-owned comparison JSON/evidence snapshot |
 | `delaunay-vX.Y.Z-criterion-baseline.tar.gz` | Release asset | release benchmark workflow | Raw Criterion data and versioned measurement metadata |
 
-CSV, not Parquet, is canonical for the retained comparison because this dataset
-is a small audit record that should remain reviewable in diffs and readable
-without Polars or PyArrow. Jupyter notebooks may derive Parquet caches when that
-materially helps larger analyses, but those caches are disposable and must be
-reproducible from the validated CSV; `performance-doc` does not accept them.
+The canonical timing payload is the shared `research-repo-tools/criterion-comparison/v1`
+JSON, paired with its digest-bound evidence envelope. Delaunay's context records
+coverage and scientific eligibility. Ratios require matching measured harnesses,
+plans, toolchains, confidence levels, and hosts. Timing changes are descriptive;
+marginal timing intervals are not ratio intervals or significance tests.
 
-The CSV schema is versioned and deterministic. The provenance JSON binds its
-exact digest and row count to the release pair, suite/scope selection, commands,
-source states, toolchains, separate per-revision host identities, confidence
-levels, Criterion content digests, sample names, and any acquisition commands.
+Historical CSV/text files stay unchanged as records. Their readers and writers
+are retired. New reports use `.comparison.json` and `.evidence.json`; old files
+cannot be passed to the new promotion commands.
+
 One-sided and environmentally non-comparable coverage is retained explicitly
 rather than silently dropped. Ratios require compatible hosts, toolchains,
 harnesses, normalized measurement plans, completed-target manifests, and
@@ -184,7 +187,7 @@ release membership and the role of targeted diagnostics.
 
 ## Math-Kernel Coverage Audit (#513)
 
-The release plan in `scripts/benchmark_utils.py` selects exactly five targets:
+The release plan in `tooling/python/benchmark_utils.py` selects exactly five targets:
 `ci_performance_suite`, `circumsphere_containment`, `cold_path_predicates`,
 `locate`, and `realization_validation`. Every other target in the overview below
 is excluded from `bench-latest`. This audit keeps that plan unchanged: the new
@@ -324,7 +327,7 @@ operations abort on error so a failed path cannot silently publish a fast result
 |-----------|---------|-------|-----------------|---------|
 | `allocation_hot_paths.rs` | Bootstrap/insert/query/barycenter allocations | Calibrated 2D-5D canaries | ~1-2 min | Manual allocation checks |
 | `checkpoint_serialization.rs` | Manifest and JSON checkpoint write/load | 64-vertex 2D owner | <1 min | Checkpoint tuning |
-| `ci_performance_suite.rs` | Public workflow regression contract | Calibrated 2D-5D canaries | ~5-10 min | CI, baselines, `just perf-no-regressions` |
+| `ci_performance_suite.rs` | Public workflow regression contract | Calibrated 2D-5D canaries | ~5-10 min | CI, baselines, `just performance-local` |
 | `circumsphere_containment.rs` | Circumsphere predicates and solves | 2D-5D predicates, 3D LU/exact solves | ~5 min | Predicate/circumcenter tuning |
 | `cold_path_predicates.rs` | Track predicate paths | Hot, centered, and certified exact cases in 2D-5D | ~2-5 min | Predicate tuning |
 | `delaunay_repair.rs` | Flip-based Delaunay repair plus transaction-pressure cases | 2D-5D repair-convergent fixtures | ~2-5 min | Repair tuning |
@@ -356,8 +359,6 @@ a fresh `u32-payloads-v1` baseline before drawing performance conclusions.
 | Final local invariant validation gate | `just ci` |
 | Measure checkpoint manifest and JSON write/load paths | `cargo bench --bench checkpoint_serialization --features bench -- --noplot` |
 | Quick local large-scale wall-clock guard | `just perf-large-scale-smoke` |
-| Fast local PR performance guard with cached same-machine main baseline | `just perf-no-regressions` |
-| Compare current branch against a local release/ref baseline | `just perf-vs-ref v0.7.8` |
 | Full CI benchmark suite only | `just bench-ci` |
 | Run curated release-signal Criterion measurements | `just bench-latest` |
 | Compare latest measurements against saved `last` Criterion baseline | `just bench-latest-vs-last` |
@@ -368,12 +369,8 @@ a fresh `u32-payloads-v1` baseline before drawing performance conclusions.
 | Compare stored GitHub Release benchmark assets | `just performance-github-assets [current-tag baseline-tag]` |
 | Measure, retain, validate, and promote release docs | `just performance-release [current-tag baseline-tag]` |
 | Publish the retained comparison snapshot to the README | `just performance-readme` |
-| Promote docs from a retained CSV/provenance pair | `just performance-doc` |
+| Promote docs from a retained comparison JSON/evidence pair | `just performance-doc` |
 | Allocation-contract microbenchmarks | `just bench-allocations` |
-| Persist/update the default local baseline artifact | `just perf-baseline` |
-| Generate a scratch baseline without replacing the default | `just perf-baseline-to <out> [ref]` |
-| Persist/update the default local baseline from a release/ref | `just perf-baseline v0.7.5` |
-| Compare against an existing baseline | `just perf-compare <file>` |
 | Release performance summary | `just bench-perf-summary` |
 | Durable latest-version benchmark baseline | GitHub Release asset `delaunay-vX.Y.Z-criterion-baseline.tar.gz` |
 | Smoke-test benchmark harnesses | `just bench-smoke` |
@@ -408,9 +405,7 @@ Benchmarks that publish or compare performance data use Cargo's `perf` profile:
 ```bash
 just bench
 just bench-ci
-just perf-baseline
-just perf-compare
-just perf-no-regressions
+just performance-local
 cargo bench --profile perf --bench ci_performance_suite
 ```
 
@@ -441,47 +436,10 @@ just ci
 just perf-large-scale-smoke
 ```
 
-`just perf-no-regressions [threshold]` is the fuller branch-vs-main comparison
-for performance-sensitive changes and PR-ready work:
-
-```bash
-just perf-no-regressions
-```
-
-The recipe resolves the current GitHub `main` ref, reuses or refreshes a
-cached same-machine dev-mode baseline under
-`baseline-artifacts/perf-no-regressions/`, then runs `ci_performance_suite` for
-the current checkout with the shared dev-mode Criterion settings
-(`--sample-size 10 --measurement-time 2 --warm-up-time 1 --noplot`) and compares
-the two at the default 7.5% threshold. The cache is keyed by the resolved
-`main` commit and local Rust compiler, so repeated checks do not rerun the
-baseline unless `main`, the compiler, or the benchmark contract changes.
-
-To compare the current branch against a specific release or ref, use
-`just perf-vs-ref`:
-
-```bash
-just perf-vs-ref v0.7.8
-```
-
-This reuses the same cached same-machine baseline flow as
-`just perf-no-regressions`, but keys the cache and report path by the requested
-ref. It reports overall performance using the total matched benchmark time,
-while individual benchmark regressions remain warnings in the report.
-
-`just perf-baseline` is optional: use it only when you intentionally want to
-persist or refresh `baseline-artifact/baseline_results.txt` for later manual
-same-machine comparisons. Local baseline directories are ignored by git, so
-they are the right place to keep developer-machine numbers without mixing them
-with Ubuntu GitHub Actions release baselines.
-
-To generate a local baseline without replacing the default persistent artifact,
-write it to another directory and compare directly:
-
-```bash
-just perf-baseline-to /tmp/delaunay-main-baseline
-just perf-compare /tmp/delaunay-main-baseline/baseline_results.txt
-```
+Use `just performance-local` for fresh same-machine comparisons. Legacy text
+baselines, warm caches, GitHub Actions baseline-artifact polling and numeric
+warning thresholds are retired. A saved Criterion baseline remains available
+for targeted diagnostics through `bench-save-baseline` and `bench-compare`.
 
 Use `just bench-smoke` only to check that benchmark harnesses still compile and
 run with minimal samples. Smoke output is not performance data.
@@ -523,8 +481,8 @@ just performance-doc
 just performance-release "$TAG" "$PREVIOUS_TAG"
 ```
 
-`performance-local` and `performance-github-assets` retain Markdown, CSV, and
-provenance JSON bundles without changing tracked documentation.
+`performance-local` and `performance-github-assets` retain Markdown, shared comparison JSON, and
+evidence bundles without changing tracked documentation.
 `performance-release` measures locally, retains and reload-validates the bundle,
 then promotes tracked docs. The canonical release flow immediately follows it
 with `performance-readme` to publish the matching README table and durable
@@ -842,15 +800,12 @@ available for manual topology-policy work.
 
 ## Generated Summaries
 
-`benches/PERFORMANCE_RESULTS.md` is generated by `benchmark-utils` and is used
-for release-oriented summaries. Durable per-version comparison baselines are
-stored as GitHub Release assets named
-`delaunay-vX.Y.Z-criterion-baseline.tar.gz`; the performance-regression
-workflow downloads the latest stable release asset and compares the current
-Ubuntu GitHub Actions run against that released-version Ubuntu baseline. Use
-local baselines for developer-machine comparisons, and use `docs/performance.md`
-for the single curated release-to-release comparison that should stay visible in
-active docs.
+`benches/PERFORMANCE_RESULTS.md` is generated by `benchmark-utils` for absolute
+release summaries. Durable release archives contain raw Criterion data and
+versioned metadata. The CI comparison measures both revisions in one job;
+imported release archives provide absolute timings and suppress ratios because
+they come from separate sessions. `docs/performance.md` owns the curated
+release comparison when retained evidence satisfies publication policy.
 
 ```bash
 uv run --locked benchmark-utils generate-summary
@@ -860,19 +815,11 @@ uv run --locked benchmark-utils performance-local
 uv run --locked benchmark-utils performance-github-assets
 uv run --locked benchmark-utils performance-release
 uv run --locked benchmark-utils performance-doc
-uv run --locked benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt
-uv run --locked benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
-uv run --locked benchmark-utils compare-tags --old-tag vX.Y.Z --new-tag vA.B.C
 ```
 
-Generated summaries should come from fresh perf-profile runs when they are used
-as release evidence. For routine PR work, use `just ci` plus
-`just perf-no-regressions`. Release-baseline comparisons write
-`benches/main_vs_release_compare_results.txt`; PR/ref comparisons write
-`benches/worktree_vs_<ref>_compare_results.txt`. The comparison commands print
-a short pass/regression/error status and the report path before exiting. The
-local PR/ref guard fails on total matched-time regressions, while individual
-regressions and improvements are surfaced in the report.
+Generated summaries must come from fresh perf-profile runs when used as release
+evidence. Use `just performance-local` for a retained comparison. The report
+keeps missing and non-comparable rows visible and applies no regression threshold.
 
 Direct `bench-compare` reports describe the local raw Criterion path and live
 host memory/target information. Retained artifact-backed reports instead carry
@@ -881,8 +828,5 @@ Cargo profile, OS, CPU, architecture, rustc and Criterion versions, harness and
 configuration digests, Criterion sample/content identity, confidence levels,
 and release-archive digests when applicable.
 
-The generated `Triangulation Data Structure Performance` section is intentionally
-first: it is built from the current `target/criterion` construction results,
-the `ci_performance_suite` metric sidecar, and the latest run metadata sidecar.
-That makes the Criterion run date and generated simplex counts apply to the
-public API tables that follow.
+The public-API summary uses the current `ci_performance_suite` metrics and run
+metadata to display generated simplex counts beside construction timings.

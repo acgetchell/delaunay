@@ -336,59 +336,6 @@ def test_render_serialization_failure_preserves_previous_complete_sets(tmp_path:
     assert directory_snapshot(tracked) == tracked_before
 
 
-def test_staging_write_failure_preserves_previous_complete_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A copy failure leaves the published directory and obsolete files intact."""
-    staged = tmp_path / "staged"
-    destination = tmp_path / "published"
-    write_validation_figure_set(staged, b"new")
-    write_validation_figure_set(destination, b"old", obsolete=True)
-    before = directory_snapshot(destination)
-    original_copy = rendering_module._copy_file
-    copy_count = 0
-
-    def fail_third_copy(source: Path, target: Path) -> None:
-        nonlocal copy_count
-        copy_count += 1
-        if copy_count == 3:
-            message = "injected staged write failure"
-            raise OSError(message)
-        original_copy(source, target)
-
-    monkeypatch.setattr(rendering_module, "_copy_file", fail_third_copy)
-
-    with pytest.raises(OSError, match="staged write failure"):
-        publish_validation_figure_set(staged, destination)
-
-    assert directory_snapshot(destination) == before
-
-
-def test_replace_failure_rolls_back_previous_complete_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A failed candidate swap restores the exact previous publication."""
-    staged = tmp_path / "staged"
-    destination = tmp_path / "published"
-    write_validation_figure_set(staged, b"new")
-    write_validation_figure_set(destination, b"old", obsolete=True)
-    before = directory_snapshot(destination)
-    original_replace = rendering_module._replace_path
-    replace_count = 0
-
-    def fail_candidate_replace(source: Path, target: Path) -> None:
-        nonlocal replace_count
-        replace_count += 1
-        if replace_count == 2:
-            message = "injected candidate replace failure"
-            raise OSError(message)
-        original_replace(source, target)
-
-    monkeypatch.setattr(rendering_module, "_replace_path", fail_candidate_replace)
-
-    with pytest.raises(OSError, match="candidate replace failure"):
-        publish_validation_figure_set(staged, destination)
-
-    assert replace_count == 3
-    assert directory_snapshot(destination) == before
-
-
 def test_successful_publication_replaces_complete_set_and_removes_obsolete_names(tmp_path: Path) -> None:
     """Obsolete owned names disappear only after the complete candidate swaps in."""
     staged = tmp_path / "staged"
