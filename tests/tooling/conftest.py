@@ -17,11 +17,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from contextlib import AbstractContextManager
 
-# Ensure `scripts/` is on sys.path for test imports
+# Ensure the scientific module source is on sys.path for test imports.
 # This must be done before importing any local modules
-_scripts = Path(__file__).resolve().parents[1]
-if str(_scripts) not in sys.path:
-    sys.path.insert(0, str(_scripts))
+_modules = Path(__file__).resolve().parents[2] / "tooling" / "python"
+if str(_modules) not in sys.path:
+    sys.path.insert(0, str(_modules))
 
 
 @pytest.fixture

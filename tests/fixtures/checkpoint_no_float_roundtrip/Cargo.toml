@@ -7,6 +7,6 @@ publish = false
 
 [dependencies]
 delaunay = { path = "../../.." }
-serde_json = { version = "1.0.151", default-features = true }
+serde_json = { version = "1.0.152", default-features = true }
 
 [workspace]

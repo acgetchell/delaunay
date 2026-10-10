@@ -1,24 +1,18 @@
 """Repository notebook policy, independent of shared lint mechanics."""
 
 import json
-import re
 import sys
 from pathlib import Path
 
 import pytest
+from research_repo_tools.config import load
 from research_repo_tools.process import run_safe_command
-from research_repo_tools.selection import select_files
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-NOTEBOOKS = select_files(REPO_ROOT, include=("notebooks/*.ipynb",), exclude=("**/.ipynb_checkpoints/**",))
 
 
-@pytest.mark.parametrize("name", NOTEBOOKS)
-def test_notebook_cell_ids_use_lowercase_kebab_case(name: str) -> None:
-    """Check every current source cell without executing or modifying the notebook."""
-    notebook = json.loads((REPO_ROOT / name).read_bytes())
-    for index, cell in enumerate(notebook["cells"], start=1):
-        assert re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", cell["id"]), f"{name}: cell {index}: {cell['id']!r} must use lowercase kebab-case"
+def test_notebook_spelling_is_declared_to_shared_lint() -> None:
+    assert load(root=REPO_ROOT).notebooks.id_pattern == r"[a-z0-9]+(?:-[a-z0-9]+)*"
 
 
 @pytest.mark.parametrize(

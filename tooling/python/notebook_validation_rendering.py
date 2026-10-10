@@ -10,6 +10,8 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from research_repo_tools.files import publish_directory
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -115,40 +117,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _copy_file(source: Path, destination: Path) -> None:
-    """Copy one staged figure through a focused failure-injection seam."""
-    shutil.copyfile(source, destination)
-
-
-def _replace_path(source: Path, destination: Path) -> None:
-    """Atomically replace one path through a focused failure-injection seam."""
-    source.replace(destination)
-
-
 def publish_validation_figure_set(staged_directory: Path, destination: Path) -> tuple[Path, ...]:
     """Transactionally replace a complete validation figure directory."""
     staged_paths = validate_validation_figure_set(staged_directory)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=f".{destination.name}-publish-", dir=destination.parent) as temporary_name:
-        transaction_root = Path(temporary_name)
-        candidate = transaction_root / "candidate"
-        backup = transaction_root / "previous"
-        candidate.mkdir()
+    with publish_directory(destination) as candidate:
         for source in staged_paths:
-            _copy_file(source, candidate / source.name)
+            shutil.copyfile(source, candidate / source.name)
         validate_validation_figure_set(candidate)
-
-        had_destination = destination.exists()
-        if had_destination:
-            if not destination.is_dir():
-                raise NotADirectoryError(f"validation figure destination must be a directory: {destination}")
-            _replace_path(destination, backup)
-        try:
-            _replace_path(candidate, destination)
-        except OSError:
-            if had_destination:
-                _replace_path(backup, destination)
-            raise
     return tuple(destination / name for name in EXPECTED_VALIDATION_FIGURE_NAMES)
 
 

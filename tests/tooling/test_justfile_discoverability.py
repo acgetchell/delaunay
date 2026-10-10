@@ -13,6 +13,8 @@ from typing import Any
 
 import pytest
 import yaml
+from research_repo_tools.cargo_examples import discover_examples
+from research_repo_tools.just_inspect import dry_run, inspect_justfile
 from research_repo_tools.process import run_command as run_safe_command
 from research_repo_tools.selection import select_files
 
@@ -23,32 +25,9 @@ RECIPE_DECLARATION = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)(?:\s+.*?)?:(?=\s|$)
 UNLOCKED_UV_RUN = re.compile(r"\buv\s+run\b(?!\s+--locked\b)")
 
 
-def run_just(*args: str) -> subprocess.CompletedProcess[str]:
-    """Run the repository's installed Just executable without a shell."""
-    executable = shutil.which("just")
-    assert executable is not None
-    return subprocess.run(  # noqa: S603 - executable is resolved; arguments come from repository files.
-        [executable, *args],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        encoding="utf-8",
-        timeout=30,
-    )
-
-
-def just_recipes() -> dict[str, dict[str, Any]]:
-    """Return parsed recipe metadata from the pinned Just executable."""
-    result = run_just("--dump", "--dump-format", "json")
-    document = json.loads(result.stdout)
-    recipes = document["recipes"]
-    assert isinstance(recipes, dict)
-    return recipes
-
-
 def run_pachner_stress_probe(tmp_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     """Capture literal artifact and Cargo arguments without running a stress workload."""
-    rendered = run_just("--dry-run", "_pachner-stress-dim", *args)
+    rendered = dry_run(REPO_ROOT, "_pachner-stress-dim", args)
     script = f"""
 uv() {{
     while [[ "$1" != "--" ]]; do shift; done
@@ -86,7 +65,7 @@ def test_recipe_declarations_are_lexicographically_sorted() -> None:
 
 def test_security_audit_covers_every_maintained_lockfile() -> None:
     """New isolated packages must not silently escape the dependency audit."""
-    result = run_just("--dry-run", "security")
+    result = dry_run(REPO_ROOT, "security")
     commands = [shlex.split(line) for line in (result.stdout + result.stderr).splitlines() if line.startswith("uv run ")]
     audit, secrets = commands
     assert audit[:8] == ["uv", "run", "--locked", "--group", "dev", "research-repo-tools", "security", "osv"]
@@ -97,7 +76,7 @@ def test_security_audit_covers_every_maintained_lockfile() -> None:
 
 def test_bare_just_shows_curated_help() -> None:
     """Invoking Just without a recipe should never run a validation command."""
-    result = run_just()
+    result = run_safe_command("just", [], cwd=REPO_ROOT)
 
     assert result.stdout.startswith("Recommended workflows:\n")
     assert "Use 'just --list' for the complete grouped recipe reference." in result.stdout
@@ -120,7 +99,7 @@ def test_local_and_ci_setup_use_the_locked_package() -> None:
 
 def test_run_recipe_uses_the_repository_lockfile() -> None:
     """The companion CLI should never resolve a different dependency graph."""
-    result = run_just("--dry-run", "run")
+    result = dry_run(REPO_ROOT, "run")
     command = result.stdout + result.stderr
 
     assert "cargo run --locked --profile perf --features cli --bin delaunay --" in command
@@ -128,7 +107,7 @@ def test_run_recipe_uses_the_repository_lockfile() -> None:
 
 def test_cli_recipe_runs_binary_unit_and_integration_targets() -> None:
     """The maintained CLI lane should execute both feature-gated test targets."""
-    result = run_just("--dry-run", "test-cli")
+    result = dry_run(REPO_ROOT, "test-cli")
     command = result.stdout + result.stderr
 
     assert ("cargo nextest run --release --profile ci --features cli --bin delaunay --bin pachner-stress --test cli") in command
@@ -187,43 +166,35 @@ def test_pachner_stress_recipe_rejects_literal_invalid_arguments(tmp_path: Path,
 
 def test_check_code_includes_dependency_hygiene() -> None:
     """The comprehensive code check should include unused dependency analysis."""
-    dependencies = {dependency["recipe"] for dependency in just_recipes()["check-code"]["dependencies"]}
+    dependencies = {dependency["recipe"] for dependency in inspect_justfile(REPO_ROOT).recipes["check-code"]["dependencies"]}
 
     assert "unused-deps" in dependencies
 
 
 def test_example_configuration_covers_cargo_targets_and_feature_builds() -> None:
     """New Cargo examples cannot silently escape the shared execution inventory."""
-    metadata = json.loads(run_safe_command("cargo", ["metadata", "--locked", "--no-deps", "--format-version=1"], cwd=REPO_ROOT).stdout)
-    package = next(package for package in metadata["packages"] if package["name"] == "delaunay")
-    examples = {target["name"] for target in package["targets"] if "example" in target["kind"]}
+    examples = {example.name for example in discover_examples(REPO_ROOT, package="delaunay")}
     configuration = tomllib.loads((REPO_ROOT / "tooling/examples.toml").read_text(encoding="utf-8"))
-    checks = configuration["checks"]
     assert configuration["schema"] == 1
-    assert configuration["prerequisites"] == ["cargo"]
-    assert checks[0]["name"] == "build-default"
-    assert checks[0]["command"] == ["cargo", "build", "--locked", "--release", "--examples"]
-    assert checks[-2]["name"] == "build-diagnostics"
-    assert checks[-2]["command"] == ["cargo", "build", "--locked", "--release", "--features", "diagnostics", "--example", "diagnostics"]
-    executions = [*checks[1:-2], checks[-1]]
-    assert len(executions) == len(examples)
-    assert {check["name"] for check in executions} == examples
-    for check in executions:
-        assert check["command"] == [f"target/release/examples/{check['name']}"]
-        assert check["timeout"] == 600
-        assert check["expect"]
-    assert checks[-1]["name"] == "diagnostics"
-    assert "Diagnostics feature example" in checks[-1]["expect"]
-    rendered = run_just("--dry-run", "examples").stderr
-    assert "toolchain run -- research-repo-tools validation run tooling/examples.toml" in rendered
-    assert "examples" in {item["recipe"] for item in just_recipes()["ci"]["dependencies"]}
+    assert configuration["package"] == "delaunay"
+    assert configuration["profile"] == "release"
+    assert configuration["build-timeout"] == 1800
+    assert configuration["timeout"] == 600
+    assert "include" not in configuration
+    assert "exclude" not in configuration
+    assert set(configuration["examples"]) == examples
+    assert configuration["examples"]["diagnostics"]["features"] == ["diagnostics"]
+    assert all(policy["expect"] for policy in configuration["examples"].values())
+    rendered = dry_run(REPO_ROOT, "examples").stderr
+    assert "toolchain run -- research-repo-tools validation cargo-examples tooling/examples.toml" in rendered
+    assert "examples" in {item["recipe"] for item in inspect_justfile(REPO_ROOT).recipes["ci"]["dependencies"]}
 
 
 def test_ci_directly_lints_python_fixtures_with_full_ruff_policy() -> None:
     """CI must not drop fixture lint or replace configured rules with a subset."""
-    recipes = just_recipes()
+    recipes = inspect_justfile(REPO_ROOT).recipes
     dependencies = {dependency["recipe"] for dependency in recipes["ci"]["dependencies"]}
-    result = run_just("--dry-run", "python-fixture-lint")
+    result = dry_run(REPO_ROOT, "python-fixture-lint")
     commands = [
         shlex.split(line) for line in (result.stdout + result.stderr).splitlines() if line.startswith("uv run ") and "research-repo-tools --version" not in line
     ]
@@ -234,22 +205,15 @@ def test_ci_directly_lints_python_fixtures_with_full_ruff_policy() -> None:
 
 def test_python_checks_and_fixer_share_source_discovery() -> None:
     """Every Python tool should consume the same file inventory."""
-    recipes = just_recipes()
-    expected_commands = {
-        "python-format-check": ["ruff format --check"],
-        "python-lint": ["ruff check"],
-        "python-typecheck": ["--group notebooks ty check --error all"],
-        "python-fix": ["ruff check --fix", "ruff format"],
-    }
-    for name, commands in expected_commands.items():
-        result = run_just("--dry-run", name)
-        rendered = result.stdout + result.stderr
-        assert {dependency["recipe"] for dependency in recipes[name]["dependencies"]} == {"_python-tool"}
-        for command in commands:
-            assert f"files run --include '*.py' --include '*.pyi' -- uv run --locked {command} --" in rendered
+    for name, action in (("python-check", "check"), ("python-fix", "fix"), ("python-typecheck", "typecheck")):
+        result = dry_run(REPO_ROOT, name)
+        assert f"research-repo-tools python {action}" in result.stdout + result.stderr
+    for name in ("python-format-check", "python-lint"):
+        result = dry_run(REPO_ROOT, name)
+        assert "files run --include '*.py' --include '*.pyi'" in result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("filename", ["scripts/typing_probe.py", "tests/semgrep/scripts/tests/python_exceptions.py"])
+@pytest.mark.parametrize("filename", ["tooling/python/typing_probe.py", "tests/semgrep/tests/tooling/python_exceptions.py"])
 def test_full_ruff_typing_policy_reaches_scripts_and_fixtures(filename: str) -> None:
     """Negative probes prove annotation and import guards remain blocking."""
     # Keep deliberately untyped probe text distinct from actual definitions so
@@ -297,9 +261,9 @@ def test_full_ruff_typing_policy_reaches_scripts_and_fixtures(filename: str) -> 
 
 def test_release_signal_benchmark_recipes_match_python_runner() -> None:
     """Just should delegate release measurements and baselines to the Python plan."""
-    latest = run_just("--dry-run", "bench-latest")
+    latest = dry_run(REPO_ROOT, "bench-latest")
     latest_command = latest.stdout + latest.stderr
-    saved = run_just("--dry-run", "bench-save-baseline", "last")
+    saved = dry_run(REPO_ROOT, "bench-save-baseline", ("last",))
     saved_command = saved.stdout + saved.stderr
 
     assert "uv run --locked benchmark-utils run-release-signal" in latest_command
@@ -326,7 +290,7 @@ def test_checkpoint_baseline_replacement_and_full_report_are_discoverable() -> N
 
 def test_canonical_performance_recipes_share_the_cross_repository_contract() -> None:
     """Canonical release workflows should expose stable names and positional arguments."""
-    recipes = just_recipes()
+    recipes = inspect_justfile(REPO_ROOT).recipes
     assert {"performance-local", "performance-release", "performance-readme", "performance-doc", "performance-github-assets"} <= recipes.keys()
     assert {"perf-local", "perf-release", "perf-github-assets"}.isdisjoint(recipes)
 
@@ -334,7 +298,7 @@ def test_canonical_performance_recipes_share_the_cross_repository_contract() -> 
     assert [parameter["name"] for parameter in bench_parameters] == ["baseline", "suite", "scope"]
     assert [parameter["default"] for parameter in bench_parameters] == ["last", "release-signal", "release-signal"]
 
-    command = run_just("--dry-run", "bench-compare", "v0.7.8", "query", "all-benches")
+    command = dry_run(REPO_ROOT, "bench-compare", ("v0.7.8", "query", "all-benches"))
     rendered = command.stdout + command.stderr
     assert 'bench-compare "v0.7.8" --suite "query" --scope "all-benches"' in rendered
 
@@ -343,13 +307,13 @@ def test_canonical_performance_recipes_share_the_cross_repository_contract() -> 
         assert [parameter["name"] for parameter in parameters] == ["current_tag", "baseline_tag"]
         assert [parameter["default"] for parameter in parameters] == ["", ""]
 
-        command = run_just("--dry-run", name, "v0.8.0", "v0.7.8")
+        command = dry_run(REPO_ROOT, name, ("v0.8.0", "v0.7.8"))
         rendered = command.stdout + command.stderr
         assert f'benchmark-utils {name} "$current_tag" "$baseline_tag"' in rendered
         assert "current_tag='v0.8.0'" in rendered
         assert "baseline_tag='v0.7.8'" in rendered
 
-    readme_command = run_just("--dry-run", "performance-readme")
+    readme_command = dry_run(REPO_ROOT, "performance-readme")
     assert "uv run --locked publish-readme-performance" in readme_command.stdout + readme_command.stderr
 
 
@@ -358,7 +322,7 @@ def test_canonical_performance_recipes_shell_quote_tag_arguments() -> None:
     injected = 'v0.8.1"; printf injected; # '
 
     for recipe in ("performance-github-assets", "performance-release", "_performance-tag-pair-state"):
-        command = run_just("--dry-run", recipe, injected, "v0.8.0")
+        command = dry_run(REPO_ROOT, recipe, (injected, "v0.8.0"))
         rendered = command.stdout + command.stderr
         current_assignment = next(line for line in rendered.splitlines() if line.startswith("current_tag="))
         baseline_assignment = next(line for line in rendered.splitlines() if line.startswith("baseline_tag="))
@@ -369,31 +333,31 @@ def test_canonical_performance_recipes_shell_quote_tag_arguments() -> None:
 
 def test_release_recipes_forward_shared_policy_arguments() -> None:
     """Release preparation exposes explicit dates and shared consistency gates."""
-    recipes = just_recipes()
+    recipes = inspect_justfile(REPO_ROOT).recipes
     assert [parameter["name"] for parameter in recipes["update-version"]["parameters"]] == ["tag", "args"]
-    command = run_just("--dry-run", "update-version", "v0.9.0", "--date", "2026-10-04", "--dry-run")
+    command = dry_run(REPO_ROOT, "update-version", ("v0.9.0", "--date", "2026-10-04", "--dry-run"))
     rendered = command.stdout + command.stderr
     assert 'research-repo-tools release update "$@"' in rendered
     assert "research-repo-tools release check" in rendered
-    strict_check = run_just("--dry-run", "release-version-check")
+    strict_check = dry_run(REPO_ROOT, "release-version-check")
     assert "research-repo-tools release check --final-release" in strict_check.stdout + strict_check.stderr
     for name in ("tag", "tag-force"):
         dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
         assert "release-version-check" in dependencies
         injected = "v0.8.0; echo INJECTED"
-        command = run_just("--dry-run", name, injected)
+        command = dry_run(REPO_ROOT, name, (injected,))
         tag_command = next(line for line in (command.stdout + command.stderr).splitlines() if "research-repo-tools changelog tag " in line)
         expected = ["uv", "run", "--locked", "--group", "dev", "research-repo-tools", "changelog", "tag", injected]
         if name == "tag-force":
             expected.append("--force")
         assert shlex.split(tag_command) == expected
-    command = run_just("--dry-run", "changelog-unreleased", "v0.9.0", "2026-10-04")
+    command = dry_run(REPO_ROOT, "changelog-unreleased", ("v0.9.0", "2026-10-04"))
     assert "--tag 'v0.9.0' --date '2026-10-04'" in command.stdout + command.stderr
 
 
 def test_release_benchmark_summary_recipe_requires_strict_fresh_evidence() -> None:
     """The release summary recipe must propagate both freshness and strictness."""
-    command = run_just("--dry-run", "bench-perf-summary")
+    command = dry_run(REPO_ROOT, "bench-perf-summary")
     rendered = command.stdout + command.stderr
 
     assert "benchmark-utils generate-summary" in rendered
@@ -402,28 +366,36 @@ def test_release_benchmark_summary_recipe_requires_strict_fresh_evidence() -> No
     assert "--strict" in rendered
 
 
+def test_notebook_launch_and_reset_use_declared_shared_policies() -> None:
+    """Launch provisions notebook backends; reset applies only through the explicit recipe."""
+    launch = dry_run(REPO_ROOT, "notebook", ("--no-browser",))
+    assert '--group dev --group notebooks research-repo-tools notebooks launch "$@"' in launch.stdout + launch.stderr
+    reset = dry_run(REPO_ROOT, "notebook-reset-from-git", ("HEAD",))
+    assert 'notebooks reset --revision "$source" --apply' in reset.stdout + reset.stderr
+    assert "git restore" not in reset.stdout + reset.stderr
+
+
 def test_local_and_sarif_semgrep_scans_share_target_enumeration() -> None:
     """Hosted uploads must scan the same tracked Python and Rust tests as local CI."""
-    local = run_just("--dry-run", "semgrep")
+    local = dry_run(REPO_ROOT, "semgrep")
     local_rendered = local.stdout + local.stderr
-    sarif = run_just("--dry-run", "semgrep-scan", "semgrep-results.sarif")
+    sarif = dry_run(REPO_ROOT, "semgrep-scan", ("target/semgrep",))
     sarif_rendered = sarif.stdout + sarif.stderr
     workflow = (REPO_ROOT / ".github" / "workflows" / "semgrep-sarif.yml").read_text(encoding="utf-8")
 
-    assert "files list --include 'scripts/tests/*.py' --include 'tests/*.rs' --exclude 'tests/semgrep/**' --null" in local_rendered
-    assert "files list --include 'scripts/tests/*.py' --include 'tests/*.rs' --exclude 'tests/semgrep/**' --null" in sarif_rendered
-    assert "--sarif --output" in sarif_rendered
-    output_assignment = next(line for line in sarif_rendered.splitlines() if line.startswith("output="))
-    assert shlex.split(output_assignment) == ["output=semgrep-results.sarif"]
-    assert "just semgrep-scan semgrep-results.sarif" in workflow
+    command = "semgrep scan --include '*.rs' --include 'tooling/python/*.py' --include 'tests/tooling/*.py'"
+    assert command in local_rendered
+    assert command in sarif_rendered
+    assert "just semgrep-scan target/semgrep" in workflow
+    assert "target/semgrep/semgrep.sarif" in workflow
     assert "git ls-files" not in workflow
 
 
 def test_shared_semgrep_target_pathspecs_cover_both_test_languages_and_exclude_fixtures() -> None:
     """Repository pathspecs keep tests visible without scanning annotated violations."""
-    targets = select_files(REPO_ROOT, include=("scripts/tests/*.py", "tests/*.rs"), exclude=("tests/semgrep/**",))
+    targets = select_files(REPO_ROOT, include=("*.rs", "tooling/python/*.py", "tests/tooling/*.py", ".github/workflows/*.yml"), exclude=("tests/semgrep/**",))
     relative = set(targets)
-    assert "scripts/tests/test_benchmark_utils.py" in relative
+    assert "tests/tooling/test_benchmark_utils.py" in relative
     assert "tests/proptest_sos.rs" in relative
     assert all(not path.startswith("tests/semgrep/") for path in relative)
 
@@ -449,7 +421,7 @@ def test_canonical_performance_recipes_reject_partial_tag_pairs_before_dispatch(
 
 def test_cargo_tool_guards_reuse_pinned_helper() -> None:
     """Named tool guards delegate verification to the shared inventory."""
-    recipes = just_recipes()
+    recipes = inspect_justfile(REPO_ROOT).recipes
     guard_names = (
         "_ensure-cargo-edit",
         "_ensure-cargo-llvm-cov",
@@ -473,7 +445,7 @@ def test_cargo_tool_guards_reuse_pinned_helper() -> None:
 
 def test_public_recipes_have_one_group_and_a_description() -> None:
     """Every listed recipe should explain its purpose in one stable section."""
-    for name, recipe in just_recipes().items():
+    for name, recipe in inspect_justfile(REPO_ROOT).recipes.items():
         if recipe["private"]:
             continue
         groups = [attribute["group"] for attribute in recipe["attributes"] if "group" in attribute]
@@ -484,7 +456,7 @@ def test_public_recipes_have_one_group_and_a_description() -> None:
 def test_public_recipes_do_not_duplicate_exact_behavior() -> None:
     """Public recipe names should not expose byte-for-byte duplicate implementations."""
     signatures: defaultdict[str, list[str]] = defaultdict(list)
-    for name, recipe in just_recipes().items():
+    for name, recipe in inspect_justfile(REPO_ROOT).recipes.items():
         if recipe["private"]:
             continue
         signature = json.dumps(
@@ -503,14 +475,14 @@ def test_public_recipes_do_not_duplicate_exact_behavior() -> None:
 
 def test_uv_backed_recipes_reuse_locked_guard() -> None:
     """Local uv consumers enforce the TOML pin through the installed package."""
-    recipes = just_recipes()
+    recipes = inspect_justfile(REPO_ROOT).recipes
     ensure_uv_body = json.dumps(recipes["_ensure-uv"]["body"])
     assert "uv run --locked --no-sync --no-python-downloads research-repo-tools --version" in ensure_uv_body
     for name in ("_ensure-actionlint", "_ensure-shellcheck", "_ensure-shfmt", "_ensure-yamllint"):
         dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
         assert "_ensure-uv" in dependencies, name
     setup = json.dumps(recipes["setup-tools"]["body"])
-    assert "source scripts/tectonic_native_dependencies.sh" in setup
+    assert "research-repo-tools tectonic discover --format shell" in setup
     assert "uv run --locked --managed-python --only-group tooling research-repo-tools setup" in setup
 
 
@@ -519,7 +491,6 @@ def test_validation_and_benchmark_uv_runs_are_locked() -> None:
     paths = (
         HELPER_JUSTFILE,
         REPO_ROOT / ".github" / "workflows" / "benchmarks.yml",
-        REPO_ROOT / ".github" / "workflows" / "generate-baseline.yml",
         REPO_ROOT / ".github" / "workflows" / "release-benchmarks.yml",
     )
 
@@ -535,10 +506,9 @@ def test_performance_workflow_tracks_every_harness_input() -> None:
         ".python-version",
         "pyproject.toml",
         "rust-toolchain.toml",
-        "scripts/benchmark_models.py",
-        "scripts/performance_artifacts.py",
-        "scripts/benchmark_utils.py",
-        "scripts/hardware_utils.py",
+        "tooling/python/benchmark_models.py",
+        "tooling/python/performance_artifacts.py",
+        "tooling/python/benchmark_utils.py",
         "uv.lock",
     )
 
@@ -558,7 +528,7 @@ def test_paper_workflow_tracks_validation_figure_producers() -> None:
         "Cargo.toml",
         "just/**",
         "rust-toolchain.toml",
-        "scripts/notebook_validation_rendering.py",
+        "tooling/python/notebook_validation_rendering.py",
         "src/**",
     )
 
@@ -573,11 +543,11 @@ def test_paper_workflow_tracks_validation_figure_producers() -> None:
 
 def test_ci_composes_non_mutating_canonical_validation_figure_check() -> None:
     """The local CI contract should catch stale tracked figures on canonical macOS."""
-    recipes = just_recipes()
+    recipes = inspect_justfile(REPO_ROOT).recipes
     ci_dependencies = [dependency["recipe"] for dependency in recipes["ci"]["dependencies"]]
     assert ci_dependencies[0] == "_validation-doc-figures-check-if-canonical"
 
-    rendered_result = run_just("--dry-run", "validation-doc-figures-check")
+    rendered_result = dry_run(REPO_ROOT, "validation-doc-figures-check")
     rendered = rendered_result.stdout + rendered_result.stderr
     assert 'check_root="target/docs/validation-figure-check"' in rendered
     assert 'generated_dir="target/notebooks/01_validation/validation_figures"' in rendered

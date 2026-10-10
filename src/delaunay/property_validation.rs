@@ -12,8 +12,8 @@ use crate::core::collections::{NeighborBuffer, SimplexVertexKeyBuffer, Violation
 use crate::core::simplex::{NeighborSlot, SimplexValidationError};
 use crate::core::tds::{SimplexKey, Tds, TdsError, VertexKey};
 use crate::geometry::point::Point;
-use crate::geometry::predicates::InSphere;
-use crate::geometry::robust_predicates::robust_insphere;
+use crate::geometry::predicates::{InSphere, circumsphere_coordinate_bounds};
+use crate::geometry::robust_predicates::{robust_insphere, strict_insphere_consistency_enabled};
 use crate::geometry::traits::coordinate::CoordinateConversionError;
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -212,9 +212,10 @@ fn validate_simplex_delaunay<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     simplex_vertex_points: &mut SmallVec<[Point<D>; 8]>,
+    use_bounds: bool,
 ) -> Result<Option<SimplexKey>, DelaunayValidationError> {
     Ok(
-        first_delaunay_violation_witness(tds, simplex_key, simplex_vertex_points)?
+        first_delaunay_violation_witness(tds, simplex_key, simplex_vertex_points, use_bounds)?
             .map(|_| simplex_key),
     )
 }
@@ -224,6 +225,7 @@ fn first_delaunay_violation_witness<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     simplex_vertex_points: &mut SmallVec<[Point<D>; 8]>,
+    use_bounds: bool,
 ) -> Result<Option<VertexKey>, DelaunayValidationError> {
     let Some(simplex) = tds.simplex(simplex_key) else {
         // Simplex doesn't exist (possibly removed), skip validation
@@ -256,10 +258,25 @@ fn first_delaunay_violation_witness<U, V, const D: usize>(
         simplex_vertex_points.push(*v.point());
     }
 
-    // Check if any OTHER vertex is inside this simplex's circumsphere
+    let bounds = use_bounds
+        .then(|| circumsphere_coordinate_bounds(simplex_vertex_points))
+        .flatten();
+
+    // Check every external vertex, excluding only certified outside points.
     for (test_vkey, test_vertex) in tds.vertices() {
         // Skip if this vertex is part of the simplex
         if simplex_vertex_keys.contains(&test_vkey) {
+            continue;
+        }
+
+        if bounds.as_ref().is_some_and(|bounds| {
+            test_vertex
+                .point()
+                .coords()
+                .iter()
+                .zip(bounds)
+                .any(|(&coordinate, &[lower, upper])| coordinate < lower || coordinate > upper)
+        }) {
             continue;
         }
 
@@ -283,6 +300,22 @@ fn first_delaunay_violation_witness<U, V, const D: usize>(
     Ok(None)
 }
 
+/// Preserve numeric-error and opt-in diagnostic behavior of exhaustive scans.
+fn can_bound_circumsphere_scan<U, V, const D: usize>(tds: &Tds<U, V, D>) -> bool {
+    // D<=6 is the exact predicate envelope. This conservative coordinate cap
+    // ensures every relative squared norm is representable (<=24e300), so
+    // excluding a far-away point cannot hide a lifted-coordinate overflow.
+    (1..=6).contains(&D)
+        && !strict_insphere_consistency_enabled()
+        && tds.vertices().all(|(_, vertex)| {
+            vertex
+                .point()
+                .coords()
+                .iter()
+                .all(|coordinate| coordinate.is_finite() && coordinate.abs() <= 1.0e150)
+        })
+}
+
 /// Internal helper: validate the Delaunay empty-circumsphere property only.
 ///
 /// This performs the expensive geometric check but intentionally does **not** run
@@ -299,11 +332,12 @@ pub fn is_delaunay_property_only<U, V, const D: usize>(
 ) -> Result<(), DelaunayValidationError> {
     // Reusable buffer to minimize allocations
     let mut simplex_vertex_points: SmallVec<[Point<D>; 8]> = SmallVec::with_capacity(D + 1);
+    let use_bounds = can_bound_circumsphere_scan(tds);
 
     // Check each simplex using the shared validation helper
     for simplex_key in tds.simplex_keys() {
         if let Some(violating_simplex) =
-            validate_simplex_delaunay(tds, simplex_key, &mut simplex_vertex_points)?
+            validate_simplex_delaunay(tds, simplex_key, &mut simplex_vertex_points, use_bounds)?
         {
             let detail = build_violation_detail(tds, violating_simplex).unwrap_or_else(|| {
                 DelaunayViolationDetail {
@@ -372,6 +406,7 @@ pub fn find_delaunay_violations<U, V, const D: usize>(
 ) -> Result<ViolationBuffer, DelaunayValidationError> {
     let mut violating_simplices = ViolationBuffer::new();
     let mut simplex_vertex_points: SmallVec<[Point<D>; 8]> = SmallVec::with_capacity(D + 1);
+    let use_bounds = can_bound_circumsphere_scan(tds);
 
     #[cfg(any(test, debug_assertions))]
     if let Some(keys) = simplices_to_check {
@@ -394,7 +429,7 @@ pub fn find_delaunay_violations<U, V, const D: usize>(
         }
 
         if let Some(violating_simplex) =
-            validate_simplex_delaunay(tds, simplex_key, &mut simplex_vertex_points)?
+            validate_simplex_delaunay(tds, simplex_key, &mut simplex_vertex_points, use_bounds)?
         {
             violating_simplices.push(violating_simplex);
         }
@@ -512,9 +547,14 @@ fn first_offending_vertex<U, V, const D: usize>(
     simplex_key: SimplexKey,
 ) -> Option<VertexKey> {
     let mut simplex_vertex_points: SmallVec<[Point<D>; 8]> = SmallVec::with_capacity(D + 1);
-    first_delaunay_violation_witness(tds, simplex_key, &mut simplex_vertex_points)
-        .ok()
-        .flatten()
+    first_delaunay_violation_witness(
+        tds,
+        simplex_key,
+        &mut simplex_vertex_points,
+        can_bound_circumsphere_scan(tds),
+    )
+    .ok()
+    .flatten()
 }
 
 impl From<DelaunayViolationDetail> for DelaunayValidationError {
@@ -715,6 +755,118 @@ mod tests {
 
     fn test_vertex<const D: usize>(coords: [f64; D]) -> Vertex<(), D> {
         vertex!(coords).unwrap()
+    }
+
+    fn assert_bounded_scan_preserves_witness<const D: usize>() {
+        let mut tds: Tds<(), (), D> = Tds::empty();
+        let mut simplex_vertices = vec![
+            tds.insert_vertex_with_mapping(test_vertex([0.0; D]))
+                .unwrap(),
+        ];
+        for axis in 0..D {
+            let mut coordinate = [0.0; D];
+            coordinate[axis] = 1.0;
+            simplex_vertices.push(
+                tds.insert_vertex_with_mapping(test_vertex(coordinate))
+                    .unwrap(),
+            );
+        }
+        let simplex = tds
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(simplex_vertices, None).unwrap(),
+            )
+            .unwrap();
+        for distance in 10..30 {
+            tds.insert_vertex_with_mapping(test_vertex([f64::from(distance); D]))
+                .unwrap();
+        }
+        let mut buffer = SmallVec::new();
+        assert_eq!(
+            first_delaunay_violation_witness(&tds, simplex, &mut buffer, true).unwrap(),
+            None
+        );
+        assert_eq!(
+            first_delaunay_violation_witness(&tds, simplex, &mut buffer, false).unwrap(),
+            None
+        );
+        // Deliberately unused vertices also participate in the global property;
+        // the optimization makes no connectivity or convex-hull assumption.
+        let boundary = tds
+            .insert_vertex_with_mapping(test_vertex([1.0; D]))
+            .unwrap();
+        assert_eq!(
+            first_delaunay_violation_witness(&tds, simplex, &mut buffer, true).unwrap(),
+            None
+        );
+        assert_eq!(
+            first_delaunay_violation_witness(&tds, simplex, &mut buffer, false).unwrap(),
+            None
+        );
+        let inside = tds
+            .insert_vertex_with_mapping(test_vertex([0.5; D]))
+            .unwrap();
+        assert_eq!(
+            first_delaunay_violation_witness(&tds, simplex, &mut buffer, true).unwrap(),
+            Some(inside)
+        );
+        assert_eq!(
+            first_delaunay_violation_witness(&tds, simplex, &mut buffer, false).unwrap(),
+            Some(inside)
+        );
+        let report = delaunay_violation_report(&tds, None).unwrap();
+        assert_eq!(report.checked_simplices, 1);
+        assert_eq!(report.violating_simplices.as_slice(), &[simplex]);
+        assert_eq!(
+            report.first_violation().unwrap().offending_vertex,
+            Some(inside)
+        );
+        assert_ne!(inside, boundary);
+    }
+
+    macro_rules! gen_bounded_scan_tests {
+        ($dimension:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<bounded_global_scan_preserves_witness_ $dimension d>]() {
+                    assert_bounded_scan_preserves_witness::<$dimension>();
+                }
+            }
+        };
+    }
+
+    gen_bounded_scan_tests!(2);
+    gen_bounded_scan_tests!(3);
+    gen_bounded_scan_tests!(4);
+    gen_bounded_scan_tests!(5);
+    gen_bounded_scan_tests!(6);
+
+    #[test]
+    fn bounded_scan_retains_exhaustive_path_for_extreme_coordinates() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let keys: Vec<_> = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
+            .into_iter()
+            .map(|coords| tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap())
+            .collect();
+        let simplex = tds
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(keys, None).unwrap())
+            .unwrap();
+        tds.insert_vertex_with_mapping(test_vertex([1.0e308, 0.0]))
+            .unwrap();
+        assert!(!can_bound_circumsphere_scan(&tds));
+        let mut buffer = SmallVec::new();
+        let exhaustive = first_delaunay_violation_witness(&tds, simplex, &mut buffer, false);
+        assert_eq!(
+            first_delaunay_violation_witness(
+                &tds,
+                simplex,
+                &mut buffer,
+                can_bound_circumsphere_scan(&tds)
+            ),
+            exhaustive,
+        );
+        // The existing exact-rational predicate can represent this squared
+        // norm even though it overflows binary64; retain that behavior too.
+        assert_eq!(exhaustive.unwrap(), None);
     }
 
     #[test]

@@ -12,7 +12,7 @@ from research_repo_tools.process import run_command as run_safe_command
 if TYPE_CHECKING:
     import subprocess
 
-SCRIPT = Path(__file__).resolve().parents[1] / "release_benchmarks.sh"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "release_benchmarks.sh"
 COMMIT = "a" * 40
 ASSET = "delaunay-v0.8.2-criterion-baseline.tar.gz"
 

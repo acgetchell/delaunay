@@ -2843,7 +2843,7 @@ rules:
         - "/examples/**/*.md"
         - "/benches/**/*.rs"
         - "/benches/**/*.md"
-        - "/scripts/**/*.md"
+        - "/tooling/**/*.md"
       exclude:
         - "/docs/archive/**"
         - "/docs/archives/changelog/**"
@@ -3120,7 +3120,8 @@ rules:
         of swallowing unrelated errors.
     paths:
       include:
-        - "/scripts/**/*.py"
+        - "/tooling/python/**/*.py"
+        - "/tests/tooling/**/*.py"
       exclude:
         - "/tests/semgrep/**"
     pattern-regex: '^\s*except\s+(?:Exception|\([^)]*\bException\b[^)]*\))(?:\s+as\s+\w+)?\s*:'
@@ -3142,8 +3143,9 @@ rules:
         can obscure the runtime annotation semantics.
     paths:
       include:
-        - "/scripts/**/*.py"
-        - "/tests/semgrep/scripts/tests/python_style.py"
+        - "/tooling/python/**/*.py"
+        - "/tests/tooling/**/*.py"
+        - "/tests/semgrep/tests/tooling/python_style.py"
     pattern: from __future__ import annotations
 
   - id: delaunay.notebook.no-pandas-table-engine
@@ -3304,7 +3306,7 @@ rules:
       rationale: "Typed exceptions make test failures and expected errors easier to diagnose."
     paths:
       include:
-        - "/scripts/tests/**/*.py"
+        - "/tests/tooling/**/*.py"
       exclude:
         - "/tests/semgrep/**"
     pattern: raise Exception(...)
@@ -3321,8 +3323,8 @@ rules:
         while failing on Windows when benchmark output contains Unicode symbols.
     paths:
       include:
-        - "/scripts/tests/**/*.py"
-        - "/tests/semgrep/scripts/tests/**/*.py"
+        - "/tests/tooling/**/*.py"
+        - "/tests/semgrep/tests/tooling/**/*.py"
     patterns:
       - pattern-either:
           - patterns:
@@ -3348,7 +3350,7 @@ rules:
         mocks stay aligned with production subprocess APIs.
     paths:
       include:
-        - "/scripts/tests/**/*.py"
+        - "/tests/tooling/**/*.py"
       exclude:
         - "/tests/semgrep/**"
     pattern-either:
@@ -3430,10 +3432,10 @@ rules:
         applies to every direct process-spawning API, not only subprocess.run.
     paths:
       include:
-        - "/scripts/**/*.py"
-        - "/tests/semgrep/scripts/tests/**/*.py"
+        - "/tooling/python/**/*.py"
+        - "/tests/semgrep/tests/tooling/**/*.py"
       exclude:
-        - "/scripts/tests/**/*.py"
+        - "/tests/tooling/**/*.py"
     pattern-either:
       - pattern: subprocess.run(...)
       - pattern: subprocess.Popen(...)
@@ -3459,10 +3461,10 @@ rules:
         checks.
     paths:
       include:
-        - "/scripts/**/*.py"
-        - "/tests/semgrep/scripts/tests/python_style.py"
+        - "/tooling/python/**/*.py"
+        - "/tests/semgrep/tests/tooling/python_style.py"
       exclude:
-        - "/scripts/tests/**/*.py"
+        - "/tests/tooling/**/*.py"
     pattern-either:
       - patterns:
           - pattern: $TAR.extractall(...)
@@ -3485,8 +3487,8 @@ rules:
         validation step, or process fails.
     paths:
       include:
-        - "/scripts/performance_artifacts.py"
-        - "/tests/semgrep/scripts/tests/python_style.py"
+        - "/tooling/python/performance_artifacts.py"
+        - "/tests/semgrep/tests/tooling/python_style.py"
     pattern-either:
       - pattern: $PATH.write_text(...)
       - pattern: $PATH.write_bytes(...)
@@ -3530,8 +3532,8 @@ rules:
         the canonical CSV rather than accepting a second input contract.
     paths:
       include:
-        - "/scripts/performance_artifacts.py"
-        - "/tests/semgrep/scripts/tests/python_style.py"
+        - "/tooling/python/performance_artifacts.py"
+        - "/tests/semgrep/tests/tooling/python_style.py"
     pattern-either:
       - pattern: $READER.read_parquet(...)
       - pattern: read_parquet(...)
@@ -3552,7 +3554,8 @@ rules:
       rationale: "Typed script helpers are easier for ty and reviewers to reason about."
     paths:
       include:
-        - "/scripts/**/*.py"
+        - "/tooling/python/**/*.py"
+        - "/tests/tooling/**/*.py"
       exclude:
         - "/tests/semgrep/**"
     # Regex catches obvious unannotated definitions while avoiding a custom
@@ -3573,8 +3576,8 @@ rules:
         before constructing typed boundary models.
     paths:
       include:
-        - "/scripts/ci/**/*.py"
-        - "/tests/semgrep/scripts/tests/python_parse_boundaries.py"
+        - "/tooling/python/ci/**/*.py"
+        - "/tests/semgrep/tests/tooling/python_parse_boundaries.py"
     patterns:
       - pattern-either:
           - pattern: json.loads(...)
@@ -3595,8 +3598,8 @@ rules:
         strict JSON on output and fail instead of serializing NaN or infinity.
     paths:
       include:
-        - "/scripts/ci/**/*.py"
-        - "/tests/semgrep/scripts/tests/python_parse_boundaries.py"
+        - "/tooling/python/ci/**/*.py"
+        - "/tests/semgrep/tests/tooling/python_parse_boundaries.py"
     patterns:
       - pattern-either:
           - pattern: json.dumps(...)
@@ -3618,6 +3621,6 @@ rules:
         meaningful baseline inputs.
     paths:
       include:
-        - "/scripts/benchmark_utils.py"
-        - "/tests/semgrep/scripts/tests/python_parse_boundaries.py"
+        - "/tooling/python/benchmark_utils.py"
+        - "/tests/semgrep/tests/tooling/python_parse_boundaries.py"
     pattern-regex: '\b(?:vertices|simplices)\s*<\s*0\b'

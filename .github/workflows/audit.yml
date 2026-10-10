@@ -5,7 +5,6 @@ on:
       # Run if workflow changes
       - .github/workflows/audit.yml
       - .github/actions/setup-just/**
-      - "scripts/tectonic_native_dependencies.sh"
       # Run if tool-version source changes
       - justfile
       - pyproject.toml
@@ -20,7 +19,6 @@ on:
       # Run if workflow changes
       - .github/workflows/audit.yml
       - .github/actions/setup-just/**
-      - "scripts/tectonic_native_dependencies.sh"
       # Run if tool-version source changes
       - justfile
       - pyproject.toml
