@@ -25,7 +25,7 @@ static PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
 ///
 /// Production code reads `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` once per
 /// process.
-fn strict_insphere_consistency_enabled() -> bool {
+pub(crate) fn strict_insphere_consistency_enabled() -> bool {
     *PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY
 }
 

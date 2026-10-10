@@ -472,7 +472,6 @@ just performance-github-assets
 just performance-release
 just performance-doc
 just performance-readme
-just performance-local
 just bench-perf-summary
 just bench-pachner-stress
 cargo bench --profile perf --bench ci_performance_suite

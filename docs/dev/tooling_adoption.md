@@ -6,7 +6,7 @@ PyPI distribution in runtime dependencies, the tooling/dev groups, and the
 notebook extra/group. `uv.lock` records exact registry artifacts and hashes.
 Python retains the inherited 3.14 floor. Ruff, ty and pytest inherit exact
 versions from the package's `python-tools` extra; no independent floating
-requirements remain. The uv declaration is 0.12.24, matching the installed
+requirements remain. The uv declaration is 0.13.0, matching the installed
 manager used for the lock and consumer checks.
 
 ## Ownership
@@ -34,7 +34,7 @@ performance contracts can be replaced without changing scientific behavior.
 |-----|-----|-----|
 | [#625][d625] | Paper/PDF policy, dates, normalization, Tectonic discovery/export | Native libraries and explicit paper recipes |
 | [#626][d626] | Live Cargo discovery, feature groups, locked builds and output | Nine example assertions and diagnostics feature |
-| [#627][d627] | SARIF split/GitHub outputs and complete-directory publication | Opengrep policy and exact six scientific PNG images |
+| [#627][d627] | SARIF split/GitHub outputs and complete-directory publication | Codacy legacy indices, Opengrep policy and six scientific images |
 | [#628][d628] | Declared lowercase kebab-case notebook ID pattern | Stable descriptive cell names |
 | [#629][d629] | Paired Semgrep scan, suppressions, aggregate SARIF and budgets | Repository rules/scopes and fixture exclusion |
 | [#630][d630] | Nullable host, native TOML and profiling source capture | Scientific eligibility and dynamic profiling labels |
@@ -74,6 +74,16 @@ release-list parsing, and nested performance publication rollback are removed.
 Saved-baseline pairing and ratio arithmetic now use the shared `Sample`,
 `Comparison`, and `compare_samples` APIs; local code selects Delaunay workloads
 and retains its report presentation and complete-interval requirement.
+
+The pinned Codacy Analysis CLI 7.9.25 emits category-local rule indices and
+`-1` for findings without descriptors. A narrow inline compatibility step in
+`.github/workflows/codacy.yml` reconstructs those legacy references from rule
+IDs before shared SARIF validation. The configured driver name includes Codacy's
+`(reported by Codacy)` suffix. The adapter preserves findings and metadata;
+the shared splitter still owns namespace selection, validation, reindexing and
+publication. Consumer regressions execute the workflow's actual adapter and
+verify that unrelated malformed indices remain errors. Retire the adapter when
+Codacy or the shared package supports this producer format directly.
 
 Declarative workflow inputs live under `tooling/`, following the same boundary
 as la-stack and markov-chain-monte-carlo. The remaining scientific Python modules
@@ -158,9 +168,9 @@ and isolated notebook smoke checks, plus `just python-check`,
 `just python-fixture-lint`, `just notebook-check`, `just check-config`,
 `just check-docs`, and `just shell-check`. Native Semgrep reported zero findings
 and zero errors across 323 inputs. All execution was on aarch64 macOS.
-The system uv changed to 0.13.0 during validation; the final checks used an
-isolated 0.12.24 installation under `/private/tmp/`, preserving repository pins
-and the user's global tools. No live benchmark or hosted CI run was performed.
+The system uv changed to 0.13.0 during validation. Initial checks used an
+isolated 0.12.24 installation under `/private/tmp/`; final checks use the pinned
+0.13.0 manager. No live benchmark or hosted CI run was performed.
 
 No benchmark timings, scientific notebook execution or tracked figure/PDF
 refresh was performed during this migration. Git commits, tags, pushes,

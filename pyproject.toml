@@ -362,6 +362,7 @@ category-prefix = "codacy"
 opengrep = [ "delaunay." ]
 Opengrep = [ "delaunay." ]
 OpenGrep = [ "delaunay." ]
+"Opengrep (reported by Codacy)" = [ "delaunay." ]
 
 [tool.research-repo-tools.semgrep]
 config = "semgrep.yaml"

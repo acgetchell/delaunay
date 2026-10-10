@@ -21,7 +21,8 @@ Every markdown, code, and raw cell must have a unique, stable, descriptive
 
 `just notebook-check` enforces presence, uniqueness, and lowercase kebab-case.
 Shared lint/advice owns notebook validation; `tests/tooling/test_notebook_policy.py`
-enforces the consumer's spelling rule without a local orchestration script.
+asserts the configured `id_pattern` value. Shared lint validates that spelling
+on notebook cells without a local orchestration script.
 Stable IDs make notebook diffs, review comments, and nbformat validation easier
 to follow.
 

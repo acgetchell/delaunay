@@ -12,13 +12,13 @@ The benchmark system answers three different questions:
    gate, invariant tests, and known-answer checks. Benchmark harnesses should
    fail before publishing timings when the measured workflow violates
    triangulation, predicate, topology, or diagnostic invariants.
-2. **Did this change move performance?** Use `just performance-local` for branch and PR work. It measures both the
-current checkout and the latest published stable release freshly in isolated
-worktrees on this machine, and retains shared JSON evidence under `target/`.
-The CI performance job runs the same command; ratios require compatible
-harness, measurement-plan, compiler, confidence-level and host evidence.
-
-Use release-signal benchmarks, durable
+2. **Did this change move performance?** Use `just performance-local` for branch
+   and PR work. It measures both the current checkout and the latest published
+   stable release freshly in isolated worktrees on this machine, and retains
+   shared JSON evidence under `target/`. The CI performance job runs the same
+   command; ratios require compatible harness, measurement-plan, compiler,
+   confidence-level and host evidence.
+3. **Are we publishing release evidence?** Use release-signal benchmarks, durable
    release artifacts, environment metadata, and one curated committed report.
 
 This split is the reusable pattern for Delaunay and sibling scientific crates:

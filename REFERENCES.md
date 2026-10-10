@@ -293,6 +293,12 @@ These references ensure the library's geometric computations are mathematically 
 - Lévy, Bruno, and Yang Liu. "Lp Centroidal Voronoi Tessellation and Its Applications."
   *ACM Transactions on Graphics* 29, no. 4 (July 26, 2010): 119:1-119:11.
   DOI: [10.1145/1778765.1778856](https://doi.org/10.1145/1778765.1778856)
+- Moore, Ramon E., R. Baker Kearfott, and Michael J. Cloud. *Introduction to Interval Analysis*.
+  SIAM, 2009. DOI: [10.1137/1.9780898717716](https://doi.org/10.1137/1.9780898717716)
+
+  Outward-rounded interval arithmetic encloses the circumcenter and radius in
+  the Level 5 scan's conservative coordinate-box broad phase. Inconclusive
+  interval systems retain exhaustive robust insphere evaluation.
 
 ### Exact Determinant Sign Computation
 
