@@ -1,0 +1,8 @@
+schema = 1
+command = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "profiling_suite" ]
+sources = [ "src/**/*.rs" ]
+harness = [ "benches/profiling_suite.rs", "benches/common/**/*.rs", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml" ]
+
+[probes]
+cargo = [ "cargo", "--version" ]
+rustc = [ "rustc", "--version", "--verbose" ]

@@ -190,7 +190,7 @@ just notebook
 ```
 
 `just notebook-setup` installs the uv-managed notebook dependency group, and `just notebook`
-launches JupyterLab with [`notebooks/00_quickstart.ipynb`][quickstart-notebook]. The
+launches JupyterLab at the repository root. Open [`notebooks/00_quickstart.ipynb`][quickstart-notebook]; the
 notebook uses the opt-in `delaunay` binary as the engine, loads generic simplicial-complex
 visualization and convex-hull JSON, and writes a transparent preview under
 `target/notebooks/00_quickstart/`.
@@ -335,7 +335,7 @@ just ci
 Performance-sensitive work uses Criterion suites and same-machine baselines:
 
 ```bash
-just perf-no-regressions
+just performance-local
 just bench-ci
 just bench-perf-summary
 ```
@@ -346,7 +346,7 @@ for benchmark selection, fixture sizes, baseline workflows, and large-scale
 profiling guidance.
 
 Release PRs publish a compact group-level snapshot from the validated retained
-CSV/provenance bundle. The geometric-mean ratios are descriptive summaries;
+`.comparison.json`/`.evidence.json` bundle. The geometric-mean ratios are descriptive summaries;
 the generated full report retains every benchmark result represented in that
 bundle.
 
@@ -390,7 +390,8 @@ Quick local workflow:
 ```bash
 git clone https://github.com/acgetchell/delaunay.git
 cd delaunay
-source scripts/tectonic_native_dependencies.sh
+tectonic_environment="$(uv run --locked --managed-python --only-group tooling research-repo-tools tectonic discover --format shell)"
+eval "$tectonic_environment"
 uv run --locked --managed-python --only-group tooling research-repo-tools setup
 just setup
 just check

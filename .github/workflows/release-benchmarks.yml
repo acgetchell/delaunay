@@ -71,9 +71,6 @@ jobs:
           uv run --locked benchmark-utils generate-summary \
             --strict \
             --output release-benchmark-artifacts/PERFORMANCE_RESULTS.md
-          uv run --locked benchmark-utils write-baseline \
-            --ref "$RELEASE_TAG" \
-            --output release-benchmark-artifacts/baseline_results.txt
 
       - name: Package release Criterion baseline
         id: package-baseline
@@ -130,7 +127,6 @@ jobs:
             echo "The archive contains:"
             echo ""
             echo "- \`PERFORMANCE_RESULTS.md\`"
-            echo "- \`baseline_results.txt\`"
             echo "- raw release-signal Criterion data under \`criterion/\`"
             echo "- \`metadata.json\`"
           } >> "$GITHUB_STEP_SUMMARY"

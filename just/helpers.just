@@ -147,11 +147,6 @@ _performance-tag-pair-state current_tag baseline_tag:
         echo "inferred"
     fi
 
-# Run a Python tool over tracked sources plus new, unignored sources.
-[private]
-_python-tool command: _ensure-uv
-    {{ rrt }} files run --include '*.py' --include '*.pyi' -- uv run --locked {{ command }} --
-
 [private]
 _validation-doc-figures-check-if-canonical:
     #!/usr/bin/env bash

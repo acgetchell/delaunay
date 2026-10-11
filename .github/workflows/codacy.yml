@@ -57,10 +57,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Set up declared uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          python-version-file: ".python-version"
+          version-file: pyproject.toml
+          enable-cache: false
+
+      - name: Install the locked tooling package
+        run: uv sync --locked --managed-python --only-group tooling
 
       - name: Set Codacy paths
         run: |
@@ -68,7 +72,6 @@ jobs:
           {
             echo "CODACY_WORKDIR=$RUNNER_TEMP/codacy-src"
             echo "CODACY_SARIF=$RUNNER_TEMP/results-${{ matrix.tool }}.sarif"
-            echo "CODACY_HAS_UPLOADABLE_SARIF=false"
           } >> "$GITHUB_ENV"
 
       - name: Prepare workspace copy without .git
@@ -103,15 +106,50 @@ jobs:
           # This will handover control about PR rejection to the GitHub side
           max-allowed-issues: 2147483647
 
-      - name: Split SARIF runs for upload
+      # Codacy 7.9.25 indexes security and non-security rules separately and
+      # emits -1 for repository rules without a pattern description. Repair
+      # those legacy references by ruleId; leave all other SARIF validation to
+      # the shared splitter. No findings or metadata are discarded here.
+      - name: Normalize Codacy SARIF rule indices
         run: |
           set -euo pipefail
-          python3 scripts/ci/filter_codacy_sarif.py "$CODACY_SARIF" "$RUNNER_TEMP/codacy-sarif"
+          uv run --locked --no-sync --no-python-downloads python - "$CODACY_SARIF" "$RUNNER_TEMP/normalized-codacy.sarif" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          document = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          for run in document["runs"]:
+              driver = run["tool"]["driver"]
+              if driver["name"] != "Opengrep (reported by Codacy)":
+                  continue
+              rules = driver.get("rules", [])
+              indices = {rule["id"]: index for index, rule in enumerate(rules)}
+              for result in run.get("results", []):
+                  old_index = result.get("ruleIndex")
+                  rule_id = result.get("ruleId")
+                  if type(old_index) is not int or not -1 <= old_index < len(rules):
+                      continue
+                  if not isinstance(rule_id, str) or not rule_id.strip():
+                      continue
+                  if rule_id in indices:
+                      result["ruleIndex"] = indices[rule_id]
+                  elif old_index == -1:
+                      del result["ruleIndex"]
+          Path(sys.argv[2]).write_text(json.dumps(document, allow_nan=False), encoding="utf-8")
+          PY
+
+      - name: Split SARIF runs for upload
+        id: sarif
+        run: |
+          set -euo pipefail
+          uv run --locked --no-sync --no-python-downloads research-repo-tools sarif split "$RUNNER_TEMP/normalized-codacy.sarif" \
+            --output "$RUNNER_TEMP/codacy-sarif" --github-output "$GITHUB_OUTPUT"
 
       - name: Upload split SARIF files
-        if: env.CODACY_HAS_UPLOADABLE_SARIF == 'true'
+        if: steps.sarif.outputs.SARIF_HAS_UPLOADABLE_RUNS == 'true'
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
-          sarif_file: ${{ env.CODACY_SPLIT_SARIF_DIR }}
+          sarif_file: ${{ steps.sarif.outputs.SARIF_DIRECTORY }}
           category: codacy-${{ matrix.tool }}
           wait-for-processing: true

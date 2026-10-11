@@ -20,8 +20,9 @@ Every markdown, code, and raw cell must have a unique, stable, descriptive
 - preserve an existing ID when editing a cell unless its purpose changes
 
 `just notebook-check` enforces presence, uniqueness, and lowercase kebab-case.
-Shared lint/advice owns notebook validation; `scripts/tests/test_notebook_policy.py`
-enforces the consumer's spelling rule without a local orchestration script.
+Shared lint/advice owns notebook validation; `tests/tooling/test_notebook_policy.py`
+asserts the configured `id_pattern` value. Shared lint validates that spelling
+on notebook cells without a local orchestration script.
 Stable IDs make notebook diffs, review comments, and nbformat validation easier
 to follow.
 
@@ -39,12 +40,18 @@ just notebook-check
 ```
 
 This command uses shared notebook structure/output checks, native Ruff and ty
-notebook support, and advice, followed by the local ID spelling rule. It does
+notebook support, advice, and the configured lowercase kebab-case ID pattern. It does
 not extract cells into temporary Python files or execute them.
 
-Consumer Ruff policy rejects `subprocess.Popen`, including aliases. Use
-`subprocess.run(..., timeout=...)` in notebook cells so each process has a
-bounded lifetime; reusable support scripts use the shared process runner.
+`just notebook` launches shared JupyterLab with declared caches under
+`target/notebooks/jupyter`. `just notebook-reset-from-git` explicitly applies the
+shared reset from the index and removes configured scratch/checkpoints; an
+optional revision such as `HEAD` selects another source. The shared reset CLI
+previews its plan when called without `--apply`.
+
+Consumer Ruff policy rejects `subprocess.Popen`, including aliases. Use the shared `research_repo_tools.process.run_command_live` API with an
+explicit timeout in notebook cells so each process has a bounded lifetime.
+Reusable support scripts use the same shared process APIs.
 
 The canonical macOS leg of `just ci` additionally runs
 `just validation-doc-figures-check`. That named check executes only the

@@ -1,0 +1,1131 @@
+"""Delaunay measurement policy over shared Criterion and evidence formats."""
+
+import json
+import re
+from dataclasses import asdict, dataclass, field as dataclass_field
+from datetime import datetime
+from typing import TYPE_CHECKING, Literal, cast
+
+from research_repo_tools.criterion import (
+    COMPARISON_SCHEMA,
+    ComparisonSet,
+    Estimate,
+    Sample,
+    compare_samples,
+    parse_comparison,
+    serialize_comparison,
+)
+from research_repo_tools.evidence import Evidence, Provenance, parse_evidence, publish_evidence, serialize_evidence, sha256
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from pathlib import Path
+
+POLICY_SCHEMA = "delaunay/performance-policy/v1"
+POLICY_CONTEXT = "delaunay.performance-policy"
+BENCHMARK_CONTRACT_START = "v0.8.2"
+SUITES = ("release-signal", "ci", "query", "predicates", "topology")
+SCOPES = ("release-signal", "all-benches")
+COVERAGE_STATES = ("comparable", "not-comparable", "current-only", "baseline-only")
+MEASUREMENT_MODES = ("local-worktrees", "github-assets")
+RELEASE_SIGNAL_TARGETS = (
+    "ci_performance_suite",
+    "circumsphere_containment",
+    "cold_path_predicates",
+    "locate",
+    "realization_validation",
+)
+RELEASE_SIGNAL_GROUPS_BY_TARGET = {
+    "ci_performance_suite": (
+        "tds_new_",
+        "boundary_facets",
+        "convex_hull",
+        "convex_hull_queries",
+        "validation",
+        "incremental_insert",
+        "explicit_import",
+        "proof_boundaries",
+        "bistellar_flips_",
+    ),
+    "circumsphere_containment": ("random", "2d", "3d", "4d", "5d", "edge_cases_", "circumcenter"),
+    "cold_path_predicates": ("predicates",),
+    "locate": ("locate",),
+    "realization_validation": ("realization_",),
+}
+
+
+def _benchmark_target(group: str) -> str | None:
+    """Identify a row's measurement owner before allowing target transitions."""
+    top_level = group.split("/", 1)[0]
+    owners = [
+        target
+        for target, prefixes in RELEASE_SIGNAL_GROUPS_BY_TARGET.items()
+        if any(top_level.startswith(prefix) if prefix.endswith("_") else top_level == prefix for prefix in prefixes)
+    ]
+    return owners[0] if len(owners) == 1 else None
+
+
+type CoverageState = Literal["comparable", "not-comparable", "current-only", "baseline-only"]
+type MeasurementMode = Literal["local-worktrees", "github-assets"]
+type HostStatus = Literal["recorded", "unavailable"]
+
+_SEMVER_PRERELEASE_IDENTIFIER_RE = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+_SEMVER_TAG_RE = re.compile(
+    r"^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    rf"(?:-{_SEMVER_PRERELEASE_IDENTIFIER_RE}(?:\.{_SEMVER_PRERELEASE_IDENTIFIER_RE})*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
+_GIT_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+_GIT_REF_RE = re.compile(r"^(?:HEAD|[A-Za-z0-9][A-Za-z0-9._/+-]*)$")
+_RUSTC_RE = re.compile(r"^rustc\s+[0-9]+\.[0-9]+\.[0-9]+(?:[-+][^\s]+)?(?:\s+.*)?$")
+_VERSION_RE = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$")
+
+
+def _require_non_empty(field: str, value: str) -> None:
+    """Reject an empty invariant-bearing string."""
+    if not value.strip():
+        msg = f"{field} must not be empty"
+        raise ValueError(msg)
+
+
+def _require_markdown_text(field: str, value: str) -> None:
+    """Reject text that can escape one Markdown heading or table cell."""
+    _require_non_empty(field, value)
+    if "|" in value or "`" in value or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        msg = f"{field} must be single-line Markdown-safe text"
+        raise ValueError(msg)
+
+
+def _require_release_tag(field: str, value: str) -> None:
+    """Require one normalized semver release tag."""
+    if _SEMVER_TAG_RE.fullmatch(value) is None:
+        msg = f"{field} must be a normalized semver tag beginning with 'v': {value!r}"
+        raise ValueError(msg)
+
+
+def _require_timestamp(field: str, value: str) -> None:
+    """Require a timezone-bearing ISO-8601 timestamp."""
+    _require_markdown_text(field, value)
+    if len(value) < 11 or value[10] != "T":
+        msg = f"{field} must use the canonical 'T' date/time separator: {value!r}"
+        raise ValueError(msg)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        msg = f"{field} must be an ISO-8601 timestamp: {value!r}"
+        raise ValueError(msg) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        msg = f"{field} must include a timezone: {value!r}"
+        raise ValueError(msg)
+
+
+def _require_sha256(field: str, value: str) -> None:
+    """Reject a value that is not a lowercase SHA-256 digest."""
+    if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+        msg = f"{field} must be a lowercase SHA-256 digest"
+        raise ValueError(msg)
+
+
+@dataclass(frozen=True, slots=True)
+class TimingEstimate:
+    """A finite positive median and its complete confidence interval."""
+
+    median_ns: float
+    ci_lower_ns: float
+    ci_upper_ns: float
+    confidence_level: float
+
+    def __post_init__(self) -> None:
+        """Reject non-finite, non-positive, or reversed timings."""
+        Estimate(self.median_ns, self.ci_lower_ns, self.ci_upper_ns, self.confidence_level)
+
+
+@dataclass(frozen=True, slots=True)
+class PerformanceRow:
+    """One validated row in a performance comparison dataset."""
+
+    suite: str
+    scope: str
+    benchmark_id: str
+    group: str
+    benchmark: str
+    coverage_status: CoverageState
+    coverage_note: str
+    baseline: TimingEstimate | None
+    current: TimingEstimate | None
+
+    def __post_init__(self) -> None:
+        """Preserve benchmark identity and coverage-state invariants."""
+        if self.suite not in SUITES:
+            msg = f"unsupported suite: {self.suite!r}"
+            raise ValueError(msg)
+        if self.scope not in SCOPES:
+            msg = f"unsupported scope: {self.scope!r}"
+            raise ValueError(msg)
+        for field, value in (
+            ("benchmark_id", self.benchmark_id),
+            ("group", self.group),
+            ("benchmark", self.benchmark),
+        ):
+            _require_markdown_text(field, value)
+        expected_id = f"{self.group}/{self.benchmark}"
+        if self.benchmark_id != expected_id:
+            msg = f"benchmark_id must be {expected_id!r}, got {self.benchmark_id!r}"
+            raise ValueError(msg)
+        _validate_row_coverage(self.coverage_status, self.coverage_note, self.baseline, self.current)
+
+
+def _validate_row_coverage(
+    coverage_status: CoverageState,
+    coverage_note: str,
+    baseline: TimingEstimate | None,
+    current: TimingEstimate | None,
+) -> None:
+    """Validate timing presence, notes, and confidence-level compatibility."""
+    if coverage_status not in COVERAGE_STATES:
+        msg = f"unsupported coverage status: {coverage_status!r}"
+        raise ValueError(msg)
+    expected_presence = {
+        "comparable": (True, True),
+        "not-comparable": (True, True),
+        "current-only": (False, True),
+        "baseline-only": (True, False),
+    }[coverage_status]
+    observed_presence = (baseline is not None, current is not None)
+    if observed_presence != expected_presence:
+        msg = f"coverage status {coverage_status!r} requires baseline/current presence {expected_presence}, got {observed_presence}"
+        raise ValueError(msg)
+    if coverage_status == "comparable" and coverage_note:
+        msg = "comparable rows must not contain a coverage note"
+        raise ValueError(msg)
+    if coverage_status != "comparable" and not coverage_note.strip():
+        msg = f"{coverage_status} rows require a coverage note"
+        raise ValueError(msg)
+    if coverage_note:
+        _require_markdown_text("coverage_note", coverage_note)
+    if coverage_status == "comparable" and baseline is not None and current is not None and baseline.confidence_level != current.confidence_level:
+        msg = "comparable rows require equal confidence levels"
+        raise ValueError(msg)
+
+
+@dataclass(frozen=True, slots=True)
+class ReleasePair:
+    """The current and baseline package identifiers represented by a report."""
+
+    current: str
+    baseline: str
+
+    def __post_init__(self) -> None:
+        """Require valid SemVer tags while allowing local same-version runs."""
+        _require_release_tag("current release", self.current)
+        _require_release_tag("baseline release", self.baseline)
+
+    @property
+    def benchmark_contract_blockers(self) -> tuple[str, ...]:
+        """Keep historical comparisons separate from the corrected benchmark contract."""
+
+        def release_precedence(tag: str) -> tuple[tuple[int, ...], tuple[tuple[int, int, str], ...]]:
+            """Order SemVer identifiers numerically or lexically, ignoring build metadata."""
+            core, separator, prerelease = tag.removeprefix("v").split("+", 1)[0].partition("-")
+            # Numeric identifiers precede text; stable releases follow all prereleases.
+            prerelease_key = tuple((0, int(part), "") if part.isdecimal() else (1, 0, part) for part in prerelease.split(".")) if separator else ((2, 0, ""),)
+            return tuple(int(part) for part in core.split(".")), prerelease_key
+
+        first = release_precedence(BENCHMARK_CONTRACT_START)
+        if (release_precedence(self.current) < first) == (release_precedence(self.baseline) < first):
+            return ()
+        return (
+            (
+                f"the corrected benchmark contract starts with {BENCHMARK_CONTRACT_START}; "
+                f"{self.current} and {self.baseline} cannot be compared across that boundary. "
+                "Use `just bench-perf-summary` for absolute measurements; release comparisons require two releases under the same contract"
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceState:
+    """One measured source revision and its complete tracked-file state."""
+
+    version: str
+    commit: str
+    ref: str
+    revision_timestamp: str
+    git_clean: bool | None
+    source_state_sha256: str | None
+    limitation: str = ""
+
+    def __post_init__(self) -> None:
+        """Reject incomplete or weakly identified source state."""
+        _require_release_tag("source version", self.version)
+        if _GIT_OBJECT_ID_RE.fullmatch(self.commit) is None:
+            msg = f"source commit must be a full lowercase Git object ID: {self.commit!r}"
+            raise ValueError(msg)
+        if _GIT_REF_RE.fullmatch(self.ref) is None or ".." in self.ref or "@{" in self.ref or self.ref.endswith(("/", ".")):
+            msg = f"source ref is not a supported Git ref: {self.ref!r}"
+            raise ValueError(msg)
+        _require_timestamp("source revision_timestamp", self.revision_timestamp)
+        if self.limitation:
+            _require_markdown_text("source limitation", self.limitation)
+            if self.git_clean is not None or self.source_state_sha256 is not None:
+                msg = "limited source evidence must leave clean state and source-state digest unavailable"
+                raise ValueError(msg)
+        else:
+            if not isinstance(self.git_clean, bool) or self.source_state_sha256 is None:
+                msg = "complete source evidence requires clean state and source-state digest"
+                raise ValueError(msg)
+            _require_sha256("source_state_sha256", self.source_state_sha256)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolchainState:
+    """Toolchain and harness identity for one measured source state."""
+
+    rustc: str | None
+    criterion_version: str | None
+    cargo_profile: str
+    cargo_lock_sha256: str | None
+    harness_sha256: str | None
+    configuration_sha256: str | None
+    measurement_plan_sha256: str | None
+    limitation: str = ""
+
+    def __post_init__(self) -> None:
+        """Reject incomplete toolchain or configuration identity."""
+        if self.cargo_profile != "perf":
+            msg = f"toolchain cargo_profile must be 'perf': {self.cargo_profile!r}"
+            raise ValueError(msg)
+        if self.limitation:
+            _require_markdown_text("toolchain limitation", self.limitation)
+            if any(
+                value is not None
+                for value in (
+                    self.rustc,
+                    self.criterion_version,
+                    self.cargo_lock_sha256,
+                    self.harness_sha256,
+                    self.configuration_sha256,
+                    self.measurement_plan_sha256,
+                )
+            ):
+                msg = "limited toolchain evidence must leave unavailable fields null"
+                raise ValueError(msg)
+            return
+        if self.rustc is None or _RUSTC_RE.fullmatch(self.rustc) is None:
+            msg = f"toolchain rustc is not a supported rustc version string: {self.rustc!r}"
+            raise ValueError(msg)
+        _require_markdown_text("toolchain rustc", self.rustc)
+        if self.criterion_version is None or _VERSION_RE.fullmatch(self.criterion_version) is None:
+            msg = f"toolchain criterion_version is not a semantic version: {self.criterion_version!r}"
+            raise ValueError(msg)
+        for field, value in (
+            ("cargo_lock_sha256", self.cargo_lock_sha256),
+            ("harness_sha256", self.harness_sha256),
+            ("configuration_sha256", self.configuration_sha256),
+            ("measurement_plan_sha256", self.measurement_plan_sha256),
+        ):
+            if value is None:
+                msg = f"complete toolchain evidence requires {field}"
+                raise ValueError(msg)
+            _require_sha256(field, value)
+
+
+@dataclass(frozen=True, slots=True)
+class HostIdentity:
+    """Recorded host identity or an explicit historical-data limitation."""
+
+    status: HostStatus
+    cpu: str
+    operating_system: str
+    architecture: str
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        """Require complete recorded identity or an explicit unavailable reason."""
+        if self.status == "recorded":
+            for field, value in (
+                ("cpu", self.cpu),
+                ("operating_system", self.operating_system),
+                ("architecture", self.architecture),
+            ):
+                _require_markdown_text(f"host {field}", value)
+                if value.strip().lower() in {"unknown", "unavailable", "n/a"}:
+                    msg = f"recorded host {field} must not use a placeholder value"
+                    raise ValueError(msg)
+            if self.reason:
+                msg = "recorded host identity must not contain an unavailable reason"
+                raise ValueError(msg)
+        elif self.status == "unavailable":
+            _require_markdown_text("unavailable host reason", self.reason)
+            for field, value in (
+                ("cpu", self.cpu),
+                ("operating_system", self.operating_system),
+                ("architecture", self.architecture),
+            ):
+                if value:
+                    _require_markdown_text(f"unavailable host {field}", value)
+        else:
+            msg = f"unsupported host status: {self.status!r}"
+            raise ValueError(msg)
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementArtifact:
+    """Identity of the Criterion sample tree that supplied one revision."""
+
+    origin: Literal["local-run", "release-archive"]
+    content_sha256: str
+    sample_name: str
+    archive_sha256: str | None = None
+
+    def __post_init__(self) -> None:
+        """Require a content-bound sample and archive digest when applicable."""
+        if self.origin not in ("local-run", "release-archive"):
+            msg = f"unsupported measurement artifact origin: {self.origin!r}"
+            raise ValueError(msg)
+        _require_sha256("measurement artifact content_sha256", self.content_sha256)
+        _require_markdown_text("measurement artifact sample_name", self.sample_name)
+        if self.origin == "release-archive":
+            if self.archive_sha256 is None:
+                msg = "release-archive measurements require archive_sha256"
+                raise ValueError(msg)
+            _require_sha256("measurement artifact archive_sha256", self.archive_sha256)
+        elif self.archive_sha256 is not None:
+            msg = "local-run measurements must not contain archive_sha256"
+            raise ValueError(msg)
+
+
+def _validate_commands(label: str, commands: tuple[tuple[str, ...], ...]) -> None:
+    """Require at least one non-empty argument-vector command."""
+    if not commands:
+        msg = f"{label} commands must not be empty"
+        raise ValueError(msg)
+    for command in commands:
+        if not command or any(not part for part in command):
+            msg = f"{label} commands must contain non-empty argument vectors"
+            raise ValueError(msg)
+        for part in command:
+            _require_markdown_text(f"{label} command argument", part)
+
+
+def _validate_optional_commands(label: str, commands: tuple[tuple[str, ...], ...]) -> None:
+    """Validate zero or more argument-vector commands."""
+    for command in commands:
+        if not command or any(not part for part in command):
+            msg = f"{label} commands must contain non-empty argument vectors"
+            raise ValueError(msg)
+        for part in command:
+            _require_markdown_text(f"{label} command argument", part)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactContext:
+    """Validated non-tabular metadata for a performance dataset."""
+
+    release: ReleasePair
+    statistic: Literal["median"]
+    suite: str
+    scope: str
+    measurement_mode: MeasurementMode
+    current_source: SourceState
+    baseline_source: SourceState
+    current_commands: tuple[tuple[str, ...], ...]
+    baseline_commands: tuple[tuple[str, ...], ...]
+    current_completed_targets: tuple[str, ...]
+    baseline_completed_targets: tuple[str, ...]
+    current_acquisition_commands: tuple[tuple[str, ...], ...]
+    baseline_acquisition_commands: tuple[tuple[str, ...], ...]
+    current_toolchain: ToolchainState
+    baseline_toolchain: ToolchainState
+    current_measurement_host: HostIdentity
+    baseline_measurement_host: HostIdentity
+    current_artifact: MeasurementArtifact
+    baseline_artifact: MeasurementArtifact
+    publication_host: HostIdentity
+
+    def __post_init__(self) -> None:
+        """Bind selection, sources, commands, toolchains, and hosts together."""
+        _validate_context_selection(self.statistic, self.suite, self.scope, self.measurement_mode)
+        if self.current_source.version != self.release.current:
+            msg = "current source version does not match release.current"
+            raise ValueError(msg)
+        if self.baseline_source.version != self.release.baseline:
+            msg = "baseline source version does not match release.baseline"
+            raise ValueError(msg)
+        _validate_optional_commands("current", self.current_commands)
+        _validate_optional_commands("baseline", self.baseline_commands)
+        for label, targets in (
+            ("current", self.current_completed_targets),
+            ("baseline", self.baseline_completed_targets),
+        ):
+            if len(set(targets)) != len(targets):
+                msg = f"{label} completed benchmark targets must be unique"
+                raise ValueError(msg)
+            for target in targets:
+                _require_markdown_text(f"{label} completed benchmark target", target)
+        _validate_optional_commands("current acquisition", self.current_acquisition_commands)
+        _validate_optional_commands("baseline acquisition", self.baseline_acquisition_commands)
+        _validate_context_mode(self)
+        if self.publication_host.status != "recorded":
+            msg = "artifact publication requires a recorded publication host"
+            raise ValueError(msg)
+
+    @property
+    def comparison_blockers(self) -> tuple[str, ...]:
+        """Return provenance differences that prevent before/after ratios."""
+        # Fresh measurements certify workload identity from recorded digests.
+        # The historical release boundary applies only to imported archives.
+        blockers = list(self.release.benchmark_contract_blockers) if self.measurement_mode == "github-assets" else []
+        if self.current_source.limitation or self.baseline_source.limitation:
+            blockers.append("complete source-state evidence is unavailable")
+        if self.current_toolchain.limitation or self.baseline_toolchain.limitation:
+            blockers.append("complete toolchain evidence is unavailable")
+        if not self.current_commands or not self.baseline_commands:
+            blockers.append("measurement command evidence is unavailable")
+        if self.measurement_mode == "github-assets":
+            blockers.append("release archives were measured in separate sessions")
+        if self.current_measurement_host.status != "recorded" or self.baseline_measurement_host.status != "recorded":
+            blockers.append("measurement host identity is unavailable")
+        elif self.current_measurement_host != self.baseline_measurement_host:
+            blockers.append("measurement hosts differ")
+        toolchain_fields = (
+            ("rustc", self.current_toolchain.rustc, self.baseline_toolchain.rustc),
+            ("Criterion version", self.current_toolchain.criterion_version, self.baseline_toolchain.criterion_version),
+            ("Cargo profile", self.current_toolchain.cargo_profile, self.baseline_toolchain.cargo_profile),
+            ("benchmark harness", self.current_toolchain.harness_sha256, self.baseline_toolchain.harness_sha256),
+            ("measurement plan", self.current_toolchain.measurement_plan_sha256, self.baseline_toolchain.measurement_plan_sha256),
+        )
+        blockers.extend(f"{label} differs" for label, current, baseline in toolchain_fields if current != baseline)
+        blockers.extend(self.target_transition_blockers)
+        return tuple(blockers)
+
+    @property
+    def shared_completed_targets(self) -> tuple[str, ...]:
+        """Return the canonical release targets completed by both revisions."""
+        current = set(self.current_completed_targets)
+        baseline = set(self.baseline_completed_targets)
+        return tuple(target for target in RELEASE_SIGNAL_TARGETS if target in current and target in baseline)
+
+    @property
+    def target_transition_blockers(self) -> tuple[str, ...]:
+        """Reject target drift unless it is a complete, ordered release-plan transition."""
+        current = self.current_completed_targets
+        baseline = self.baseline_completed_targets
+        if current == baseline:
+            return ()
+        if self.suite != "release-signal":
+            return ("completed benchmark targets differ",)
+
+        canonical = set(RELEASE_SIGNAL_TARGETS)
+        blockers: list[str] = []
+        unknown = sorted((set(current) | set(baseline)) - canonical)
+        if unknown:
+            blockers.append("completed benchmark targets contain unsupported targets: " + ", ".join(unknown))
+        for label, targets in (("current", current), ("baseline", baseline)):
+            ordered = tuple(target for target in RELEASE_SIGNAL_TARGETS if target in set(targets))
+            if targets != ordered:
+                blockers.append(f"{label} completed benchmark targets are not in canonical release-plan order")
+        if not self.shared_completed_targets:
+            blockers.append("release target transition has no shared completed targets")
+        if set(current) | set(baseline) != canonical:
+            blockers.append("release target transition does not cover the canonical release-signal plan")
+        return tuple(blockers)
+
+
+def _validate_context_selection(statistic: str, suite: str, scope: str, measurement_mode: str) -> None:
+    """Validate the finite supported report-selection vocabulary."""
+    if statistic != "median":
+        msg = f"unsupported performance statistic: {statistic!r}"
+        raise ValueError(msg)
+    if suite not in SUITES:
+        msg = f"unsupported suite: {suite!r}"
+        raise ValueError(msg)
+    if scope not in SCOPES:
+        msg = f"unsupported scope: {scope!r}"
+        raise ValueError(msg)
+    if measurement_mode not in MEASUREMENT_MODES:
+        msg = f"unsupported measurement mode: {measurement_mode!r}"
+        raise ValueError(msg)
+
+
+def _validate_context_mode(context: ArtifactContext) -> None:
+    """Validate mode-specific host, acquisition, and artifact contracts."""
+    if context.measurement_mode == "local-worktrees":
+        if context.current_measurement_host.status != "recorded" or context.baseline_measurement_host.status != "recorded":
+            msg = "local-worktree measurements require recorded hosts for both revisions"
+            raise ValueError(msg)
+        if context.current_acquisition_commands or context.baseline_acquisition_commands:
+            msg = "local-worktree measurements must not contain acquisition commands"
+            raise ValueError(msg)
+        if context.current_artifact.origin != "local-run" or context.baseline_artifact.origin != "local-run":
+            msg = "local-worktree measurements require local-run artifacts"
+            raise ValueError(msg)
+        if context.current_source.limitation or context.baseline_source.limitation:
+            msg = "local-worktree measurements require complete source evidence"
+            raise ValueError(msg)
+        if context.current_toolchain.limitation or context.baseline_toolchain.limitation:
+            msg = "local-worktree measurements require complete toolchain evidence"
+            raise ValueError(msg)
+        _validate_commands("current", context.current_commands)
+        _validate_commands("baseline", context.baseline_commands)
+    else:
+        if not context.current_acquisition_commands or not context.baseline_acquisition_commands:
+            msg = "GitHub asset measurements require acquisition commands for both revisions"
+            raise ValueError(msg)
+        if context.current_artifact.origin != "release-archive" or context.baseline_artifact.origin != "release-archive":
+            msg = "GitHub asset measurements require release-archive artifacts"
+            raise ValueError(msg)
+
+
+@dataclass(frozen=True, slots=True)
+class PerformanceBundle:
+    """A complete validated performance dataset and its provenance."""
+
+    context: ArtifactContext
+    rows: tuple[PerformanceRow, ...]
+    payload_sha256: str | None = dataclass_field(default=None, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Require non-empty unique rows bound to one selection."""
+        if not self.rows:
+            msg = "performance dataset must contain at least one row"
+            raise ValueError(msg)
+        keys: set[str] = set()
+        comparison_blockers = self.context.comparison_blockers
+        for row in self.rows:
+            if row.suite != self.context.suite:
+                msg = f"row suite {row.suite!r} does not match report suite {self.context.suite!r}"
+                raise ValueError(msg)
+            if row.scope != self.context.scope:
+                msg = f"row scope {row.scope!r} does not match report scope {self.context.scope!r}"
+                raise ValueError(msg)
+            if row.benchmark_id in keys:
+                msg = f"duplicate benchmark_id: {row.benchmark_id!r}"
+                raise ValueError(msg)
+            keys.add(row.benchmark_id)
+            if row.coverage_status == "comparable" and comparison_blockers:
+                msg = "comparable row is not supported by compatible measurement provenance"
+                raise ValueError(msg)
+
+    @property
+    def sorted_rows(self) -> tuple[PerformanceRow, ...]:
+        """Return rows in deterministic group and benchmark order."""
+        return tuple(sorted(self.rows, key=lambda row: (row.group, row.benchmark)))
+
+    @property
+    def promotion_blockers(self) -> tuple[str, ...]:
+        """Return reasons this bundle cannot become curated release evidence."""
+        blockers = list(self.context.comparison_blockers)
+        comparable = tuple(row for row in self.rows if row.coverage_status == "comparable")
+        if not comparable:
+            blockers.append("no scientifically comparable rows")
+        target_transition = self.context.current_completed_targets != self.context.baseline_completed_targets
+        added_targets = set(self.context.current_completed_targets) - set(self.context.baseline_completed_targets)
+        removed_targets = set(self.context.baseline_completed_targets) - set(self.context.current_completed_targets)
+        incomplete = tuple(
+            row.benchmark_id
+            for row in self.rows
+            if row.coverage_status == "not-comparable"
+            or (row.coverage_status == "current-only" and _benchmark_target(row.group) not in added_targets)
+            or (row.coverage_status == "baseline-only" and _benchmark_target(row.group) not in removed_targets)
+        )
+        if incomplete:
+            blockers.append("release-signal coverage is incomplete or non-comparable: " + ", ".join(sorted(incomplete)))
+        if self.context.suite != "release-signal" or self.context.scope != "release-signal":
+            blockers.append("curated promotion requires the release-signal suite and scope")
+        if not target_transition:
+            missing_current = sorted(set(RELEASE_SIGNAL_TARGETS) - set(self.context.current_completed_targets))
+            missing_baseline = sorted(set(RELEASE_SIGNAL_TARGETS) - set(self.context.baseline_completed_targets))
+            if missing_current:
+                blockers.append("current measurement did not complete required targets: " + ", ".join(missing_current))
+            if missing_baseline:
+                blockers.append("baseline measurement did not complete required targets: " + ", ".join(missing_baseline))
+        if self.context.release.current == self.context.release.baseline:
+            blockers.append("current and baseline releases are identical")
+        return tuple(dict.fromkeys(blockers))
+
+    def require_promotable(self) -> None:
+        """Reject bundles that cannot support a curated release comparison."""
+        blockers = self.promotion_blockers
+        if blockers:
+            msg = "performance bundle is not promotable: " + "; ".join(blockers)
+            raise ValueError(msg)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactPaths:
+    """Adjacent shared comparison payload and evidence manifest destinations."""
+
+    payload: Path
+    provenance: Path
+
+    def __post_init__(self) -> None:
+        """Require distinct adjacent artifact paths."""
+        ensure_distinct_paths({"payload": self.payload, "provenance": self.provenance})
+        if self.payload.resolve(strict=False).parent != self.provenance.resolve(strict=False).parent:
+            msg = "payload and provenance sidecar must be adjacent"
+            raise ValueError(msg)
+
+
+def _paths_alias(first: Path, second: Path) -> bool:
+    """Return whether two paths resolve to the same filesystem target."""
+    if first.exists() and second.exists() and first.samefile(second):
+        return True
+    return first.resolve(strict=False) == second.resolve(strict=False)
+
+
+def ensure_distinct_paths(paths: Mapping[str, Path]) -> None:
+    """Reject lexical, symlink, or existing-file aliases among named paths."""
+    items = tuple(paths.items())
+    for index, (first_name, first_path) in enumerate(items):
+        for second_name, second_path in items[index + 1 :]:
+            if _paths_alias(first_path, second_path):
+                msg = f"{first_name} and {second_name} must use distinct paths: {first_path}"
+                raise ValueError(msg)
+
+
+def comparison_for_bundle(bundle: PerformanceBundle) -> ComparisonSet:
+    """Use shared inventories and arithmetic without inferring scientific eligibility."""
+
+    def sample(side: Literal["baseline", "current"]) -> Sample:
+        estimates = []
+        for row in bundle.rows:
+            timing = row.baseline if side == "baseline" else row.current
+            if timing is not None:
+                estimates.append((row.benchmark_id, Estimate(timing.median_ns, timing.ci_lower_ns, timing.ci_upper_ns, timing.confidence_level)))
+        return Sample(tuple(estimates), "median", "ns")
+
+    return compare_samples(sample("baseline"), sample("current"))
+
+
+def _context_payload(context: ArtifactContext) -> dict[str, object]:
+    """Keep the Delaunay selection and comparability contract in consumer context."""
+
+    def side(name: Literal["current", "baseline"]) -> dict[str, object]:
+        return {
+            "source": asdict(context.current_source if name == "current" else context.baseline_source),
+            "measurement_commands": list(context.current_commands if name == "current" else context.baseline_commands),
+            "completed_targets": list(context.current_completed_targets if name == "current" else context.baseline_completed_targets),
+            "acquisition_commands": list(context.current_acquisition_commands if name == "current" else context.baseline_acquisition_commands),
+            "toolchain": asdict(context.current_toolchain if name == "current" else context.baseline_toolchain),
+            "measurement_host": asdict(context.current_measurement_host if name == "current" else context.baseline_measurement_host),
+            "artifact": asdict(context.current_artifact if name == "current" else context.baseline_artifact),
+        }
+
+    return {
+        "release": asdict(context.release),
+        "selection": {"statistic": context.statistic, "suite": context.suite, "scope": context.scope},
+        "measurement_mode": context.measurement_mode,
+        "current": side("current"),
+        "baseline": side("baseline"),
+        "publication_host": asdict(context.publication_host),
+    }
+
+
+def evidence_for_bundle(bundle: PerformanceBundle) -> Evidence:
+    """Retain shared timing samples with independently validated Delaunay policy.
+
+    Existing source-state, harness and sample-tree digests have consumer-defined
+    framing. Keep them in that policy; do not relabel them as shared file hashes
+    or claim that summary estimates are complete raw-sample runs.
+    """
+    policy = {
+        "schema": POLICY_SCHEMA,
+        "context": _context_payload(bundle.context),
+        "rows": [
+            {
+                "benchmark_id": row.benchmark_id,
+                "group": row.group,
+                "benchmark": row.benchmark,
+                "coverage_status": row.coverage_status,
+                "coverage_note": row.coverage_note,
+            }
+            for row in bundle.sorted_rows
+        ],
+    }
+    policy_text = json.dumps(policy, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    context = bundle.context
+    return Evidence(
+        serialize_comparison(comparison_for_bundle(bundle)),
+        COMPARISON_SCHEMA,
+        (
+            ("baseline", Provenance(context.baseline_source.commit, context=(("release", context.release.baseline),))),
+            ("current", Provenance(context.current_source.commit, context=(("release", context.release.current), (POLICY_CONTEXT, policy_text)))),
+        ),
+    )
+
+
+def serialize_bundle(bundle: PerformanceBundle) -> tuple[bytes, bytes]:
+    """Delegate timing serialization, provenance envelopes and integrity to the package."""
+    return serialize_evidence(evidence_for_bundle(bundle))
+
+
+def _require_exact_keys(data: Mapping[str, object], expected: frozenset[str], *, source: str) -> None:
+    """Reject missing or unsupported object fields."""
+    observed = frozenset(data)
+    if observed != expected:
+        missing = sorted(expected - observed)
+        unknown = sorted(observed - expected)
+        msg = f"{source} fields do not match schema; missing={missing}, unknown={unknown}"
+        raise ValueError(msg)
+
+
+def _required_object(data: Mapping[str, object], field: str, *, source: str) -> dict[str, object]:
+    """Parse a required JSON object field."""
+    value = data.get(field)
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        msg = f"{source}.{field} must be an object"
+        raise TypeError(msg)
+    return cast("dict[str, object]", value)
+
+
+def _required_string(data: Mapping[str, object], field: str, *, source: str) -> str:
+    """Parse a required non-empty JSON string field."""
+    value = data.get(field)
+    if not isinstance(value, str) or not value.strip():
+        msg = f"{source}.{field} must be a non-empty string"
+        raise ValueError(msg)
+    return value
+
+
+def _string_field(data: Mapping[str, object], field: str, *, source: str) -> str:
+    """Require a JSON string even when an empty value is permitted."""
+    value = data.get(field)
+    if not isinstance(value, str):
+        msg = f"{source}.{field} must be a string"
+        raise TypeError(msg)
+    return value
+
+
+def _parse_source(data: Mapping[str, object], *, source: str) -> SourceState:
+    """Parse one raw source-state object into a trusted value."""
+    _require_exact_keys(
+        data,
+        frozenset({"version", "commit", "ref", "revision_timestamp", "git_clean", "source_state_sha256", "limitation"}),
+        source=source,
+    )
+    git_clean = data.get("git_clean")
+    if git_clean is not None and not isinstance(git_clean, bool):
+        msg = f"{source}.git_clean must be a boolean or null"
+        raise TypeError(msg)
+    source_state_sha256 = data.get("source_state_sha256")
+    if source_state_sha256 is not None and not isinstance(source_state_sha256, str):
+        msg = f"{source}.source_state_sha256 must be a string or null"
+        raise TypeError(msg)
+    return SourceState(
+        version=_required_string(data, "version", source=source),
+        commit=_required_string(data, "commit", source=source),
+        ref=_required_string(data, "ref", source=source),
+        revision_timestamp=_required_string(data, "revision_timestamp", source=source),
+        git_clean=git_clean,
+        source_state_sha256=source_state_sha256,
+        limitation=_string_field(data, "limitation", source=source),
+    )
+
+
+def _parse_toolchain(data: Mapping[str, object], *, source: str) -> ToolchainState:
+    """Parse one raw toolchain object into a trusted value."""
+    _require_exact_keys(
+        data,
+        frozenset(
+            {
+                "rustc",
+                "criterion_version",
+                "cargo_profile",
+                "cargo_lock_sha256",
+                "harness_sha256",
+                "configuration_sha256",
+                "measurement_plan_sha256",
+                "limitation",
+            }
+        ),
+        source=source,
+    )
+    optional_fields: dict[str, str | None] = {}
+    for field in (
+        "rustc",
+        "criterion_version",
+        "cargo_lock_sha256",
+        "harness_sha256",
+        "configuration_sha256",
+        "measurement_plan_sha256",
+    ):
+        value = data.get(field)
+        if value is not None and not isinstance(value, str):
+            msg = f"{source}.{field} must be a string or null"
+            raise TypeError(msg)
+        optional_fields[field] = value
+    return ToolchainState(
+        rustc=optional_fields["rustc"],
+        criterion_version=optional_fields["criterion_version"],
+        cargo_profile=_required_string(data, "cargo_profile", source=source),
+        cargo_lock_sha256=optional_fields["cargo_lock_sha256"],
+        harness_sha256=optional_fields["harness_sha256"],
+        configuration_sha256=optional_fields["configuration_sha256"],
+        measurement_plan_sha256=optional_fields["measurement_plan_sha256"],
+        limitation=_string_field(data, "limitation", source=source),
+    )
+
+
+def _parse_host(data: Mapping[str, object], *, source: str) -> HostIdentity:
+    """Parse one raw host object into a trusted value."""
+    _require_exact_keys(data, frozenset({"status", "cpu", "operating_system", "architecture", "reason"}), source=source)
+    status = _required_string(data, "status", source=source)
+    if status not in ("recorded", "unavailable"):
+        msg = f"{source}.status has unsupported value {status!r}"
+        raise ValueError(msg)
+    for field in ("cpu", "operating_system", "architecture", "reason"):
+        if not isinstance(data.get(field), str):
+            msg = f"{source}.{field} must be a string"
+            raise TypeError(msg)
+    return HostIdentity(
+        status=status,
+        cpu=cast("str", data["cpu"]),
+        operating_system=cast("str", data["operating_system"]),
+        architecture=cast("str", data["architecture"]),
+        reason=cast("str", data["reason"]),
+    )
+
+
+def _parse_artifact(data: Mapping[str, object], *, source: str) -> MeasurementArtifact:
+    """Parse one measurement-artifact identity."""
+    _require_exact_keys(data, frozenset({"origin", "content_sha256", "sample_name", "archive_sha256"}), source=source)
+    origin = _required_string(data, "origin", source=source)
+    if origin not in ("local-run", "release-archive"):
+        msg = f"{source}.origin has unsupported value {origin!r}"
+        raise ValueError(msg)
+    archive_sha256 = data.get("archive_sha256")
+    if archive_sha256 is not None and not isinstance(archive_sha256, str):
+        msg = f"{source}.archive_sha256 must be a string or null"
+        raise TypeError(msg)
+    return MeasurementArtifact(
+        origin=origin,
+        content_sha256=_required_string(data, "content_sha256", source=source),
+        sample_name=_required_string(data, "sample_name", source=source),
+        archive_sha256=archive_sha256,
+    )
+
+
+def _parse_commands(value: object, *, source: str, allow_empty: bool = False) -> tuple[tuple[str, ...], ...]:
+    """Parse a JSON array of argument-vector commands."""
+    if not isinstance(value, list):
+        msg = f"{source} must be an array"
+        raise TypeError(msg)
+    commands: list[tuple[str, ...]] = []
+    for index, command in enumerate(value):
+        if not isinstance(command, list) or not command or not all(isinstance(part, str) and part for part in command):
+            msg = f"{source}[{index}] must be a non-empty string array"
+            raise ValueError(msg)
+        commands.append(tuple(cast("list[str]", command)))
+    result = tuple(commands)
+    if allow_empty:
+        _validate_optional_commands(source, result)
+    else:
+        _validate_commands(source, result)
+    return result
+
+
+def _parse_side(
+    data: Mapping[str, object], *, source: str
+) -> tuple[
+    SourceState,
+    tuple[tuple[str, ...], ...],
+    tuple[str, ...],
+    tuple[tuple[str, ...], ...],
+    ToolchainState,
+    HostIdentity,
+    MeasurementArtifact,
+]:
+    """Parse one current/baseline provenance side."""
+    _require_exact_keys(
+        data,
+        frozenset(
+            {
+                "source",
+                "measurement_commands",
+                "completed_targets",
+                "acquisition_commands",
+                "toolchain",
+                "measurement_host",
+                "artifact",
+            }
+        ),
+        source=source,
+    )
+    targets = data.get("completed_targets")
+    if not isinstance(targets, list) or not all(isinstance(target, str) for target in targets):
+        msg = f"{source}.completed_targets must be a string array"
+        raise TypeError(msg)
+    return (
+        _parse_source(_required_object(data, "source", source=source), source=f"{source}.source"),
+        _parse_commands(data.get("measurement_commands"), source=f"{source}.measurement_commands", allow_empty=True),
+        tuple(cast("list[str]", targets)),
+        _parse_commands(data.get("acquisition_commands"), source=f"{source}.acquisition_commands", allow_empty=True),
+        _parse_toolchain(_required_object(data, "toolchain", source=source), source=f"{source}.toolchain"),
+        _parse_host(_required_object(data, "measurement_host", source=source), source=f"{source}.measurement_host"),
+        _parse_artifact(_required_object(data, "artifact", source=source), source=f"{source}.artifact"),
+    )
+
+
+def _parse_context(data: Mapping[str, object], *, source: str) -> ArtifactContext:
+    """Parse only Delaunay's selection, comparability and publication policy."""
+    _require_exact_keys(
+        data,
+        frozenset({"release", "selection", "measurement_mode", "current", "baseline", "publication_host"}),
+        source=source,
+    )
+    release_data = _required_object(data, "release", source=source)
+    _require_exact_keys(release_data, frozenset({"current", "baseline"}), source=f"{source}.release")
+    selection = _required_object(data, "selection", source=source)
+    _require_exact_keys(selection, frozenset({"statistic", "suite", "scope"}), source=f"{source}.selection")
+    statistic = _required_string(selection, "statistic", source=f"{source}.selection")
+    if statistic != "median":
+        msg = f"unsupported performance statistic: {statistic!r}"
+        raise ValueError(msg)
+    mode = _required_string(data, "measurement_mode", source=source)
+    if mode not in MEASUREMENT_MODES:
+        msg = f"unsupported measurement mode: {mode!r}"
+        raise ValueError(msg)
+
+    current_source, current_commands, current_targets, current_acquisition_commands, current_toolchain, current_host, current_artifact = _parse_side(
+        _required_object(data, "current", source=source),
+        source=f"{source}.current",
+    )
+    baseline_source, baseline_commands, baseline_targets, baseline_acquisition_commands, baseline_toolchain, baseline_host, baseline_artifact = _parse_side(
+        _required_object(data, "baseline", source=source),
+        source=f"{source}.baseline",
+    )
+    return ArtifactContext(
+        release=ReleasePair(
+            current=_required_string(release_data, "current", source=f"{source}.release"),
+            baseline=_required_string(release_data, "baseline", source=f"{source}.release"),
+        ),
+        statistic="median",
+        suite=_required_string(selection, "suite", source=f"{source}.selection"),
+        scope=_required_string(selection, "scope", source=f"{source}.selection"),
+        measurement_mode=mode,
+        current_source=current_source,
+        baseline_source=baseline_source,
+        current_commands=current_commands,
+        baseline_commands=baseline_commands,
+        current_completed_targets=current_targets,
+        baseline_completed_targets=baseline_targets,
+        current_acquisition_commands=current_acquisition_commands,
+        baseline_acquisition_commands=baseline_acquisition_commands,
+        current_toolchain=current_toolchain,
+        baseline_toolchain=baseline_toolchain,
+        current_measurement_host=current_host,
+        baseline_measurement_host=baseline_host,
+        current_artifact=current_artifact,
+        baseline_artifact=baseline_artifact,
+        publication_host=_parse_host(_required_object(data, "publication_host", source=source), source=f"{source}.publication_host"),
+    )
+
+
+def _complete_timing(estimate: Estimate | None) -> TimingEstimate | None:
+    """Require recorded marginal intervals for Delaunay timing reports."""
+    if estimate is None:
+        return None
+    if estimate.lower is None or estimate.upper is None or estimate.confidence_level is None:
+        msg = "Delaunay performance evidence requires complete confidence intervals"
+        raise ValueError(msg)
+    return TimingEstimate(estimate.point, estimate.lower, estimate.upper, estimate.confidence_level)
+
+
+def _load_policy(evidence: Evidence, *, source: str) -> Mapping[str, object]:
+    """Read the consumer policy stored in shared provenance context."""
+    sources = dict(evidence.sources)
+    if set(sources) != {"baseline", "current"}:
+        msg = "Delaunay performance evidence requires baseline and current sources"
+        raise ValueError(msg)
+    policy_text = dict(sources["current"].context).get(POLICY_CONTEXT)
+    if policy_text is None:
+        msg = "shared evidence is missing the Delaunay performance policy"
+        raise ValueError(msg)
+    policy = json.loads(policy_text)
+    if not isinstance(policy, dict):
+        msg = "Delaunay performance policy must be an object"
+        raise TypeError(msg)
+    _require_exact_keys(policy, frozenset({"schema", "context", "rows"}), source=source)
+    if policy["schema"] != POLICY_SCHEMA:
+        msg = f"unsupported Delaunay performance policy: {policy['schema']!r}"
+        raise ValueError(msg)
+    return policy
+
+
+def _verify_source_binding(evidence: Evidence, context: ArtifactContext) -> None:
+    """Bind public provenance revisions to the consumer's measured source states."""
+    sources = dict(evidence.sources)
+    for side, state in (("baseline", context.baseline_source), ("current", context.current_source)):
+        recorded = sources[side]
+        if recorded.revision != state.commit or dict(recorded.context).get("release") != state.version:
+            msg = f"{side} shared provenance does not match Delaunay source identity"
+            raise ValueError(msg)
+        if recorded.source_sha256 is not None or recorded.harness_sha256 is not None:
+            msg = "consumer-framed fingerprints must not be relabeled as shared file fingerprints"
+            raise ValueError(msg)
+
+
+def load_bundle_bytes(payload: bytes, provenance_payload: bytes, *, source: str) -> PerformanceBundle:
+    """Verify shared evidence before interpreting its Delaunay policy and timings."""
+    evidence = parse_evidence(payload, provenance_payload)
+    if evidence.payload_schema != COMPARISON_SCHEMA:
+        msg = f"unsupported performance payload schema in {source}: {evidence.payload_schema!r}"
+        raise ValueError(msg)
+    comparison = parse_comparison(evidence.payload)
+    if comparison.baseline.statistic != "median" or comparison.baseline.unit != "ns":
+        msg = "Delaunay performance evidence requires median timings in nanoseconds"
+        raise ValueError(msg)
+    policy = _load_policy(evidence, source=source)
+    context = _parse_context(_required_object(policy, "context", source=source), source=source)
+    _verify_source_binding(evidence, context)
+    descriptors = policy["rows"]
+    if not isinstance(descriptors, list):
+        msg = "Delaunay row policy must be an array"
+        raise TypeError(msg)
+    baseline, current = dict(comparison.baseline.estimates), dict(comparison.current.estimates)
+    rows = []
+    for raw in descriptors:
+        if not isinstance(raw, dict):
+            msg = "Delaunay row policy must contain objects"
+            raise TypeError(msg)
+        _require_exact_keys(raw, frozenset({"benchmark_id", "group", "benchmark", "coverage_status", "coverage_note"}), source=source)
+        name = _required_string(raw, "benchmark_id", source=source)
+        coverage = _required_string(raw, "coverage_status", source=source)
+        if coverage not in COVERAGE_STATES or not isinstance(raw["coverage_note"], str):
+            msg = "unsupported Delaunay coverage policy"
+            raise ValueError(msg)
+        rows.append(
+            PerformanceRow(
+                suite=context.suite,
+                scope=context.scope,
+                benchmark_id=name,
+                group=_required_string(raw, "group", source=source),
+                benchmark=_required_string(raw, "benchmark", source=source),
+                coverage_status=coverage,
+                coverage_note=raw["coverage_note"],
+                baseline=_complete_timing(baseline.get(name)),
+                current=_complete_timing(current.get(name)),
+            )
+        )
+    if {row.benchmark_id for row in rows} != baseline.keys() | current.keys():
+        msg = "Delaunay row policy does not match the complete shared benchmark inventory"
+        raise ValueError(msg)
+    bundle = PerformanceBundle(context=context, rows=tuple(rows))
+    object.__setattr__(bundle, "payload_sha256", sha256(payload))
+    return bundle
+
+
+def load_bundle(paths: ArtifactPaths) -> PerformanceBundle:
+    """Read the new shared evidence pair without consulting historical CSV writers."""
+    return load_bundle_bytes(paths.payload.read_bytes(), paths.provenance.read_bytes(), source=str(paths.payload.parent))
+
+
+def write_bundle(paths: ArtifactPaths, bundle: PerformanceBundle) -> None:
+    """Publish validated shared evidence through the package's transaction."""
+    evidence = evidence_for_bundle(bundle)
+    payload, manifest = serialize_evidence(evidence)
+    if load_bundle_bytes(payload, manifest, source="new shared bundle") != PerformanceBundle(context=bundle.context, rows=bundle.sorted_rows):
+        msg = "serialized performance bundle does not match validated measurements"
+        raise ValueError(msg)
+    publish_evidence(evidence, paths.payload, paths.provenance)

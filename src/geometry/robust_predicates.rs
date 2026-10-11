@@ -25,7 +25,7 @@ static PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
 ///
 /// Production code reads `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` once per
 /// process.
-fn strict_insphere_consistency_enabled() -> bool {
+pub(crate) fn strict_insphere_consistency_enabled() -> bool {
     *PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY
 }
 
@@ -127,8 +127,9 @@ pub enum InsphereConsistencyError {
 /// # Errors
 ///
 /// Returns [`CoordinateConversionError`] if `simplex_points.len() != D + 1`,
-/// if a coordinate cannot be converted for predicate evaluation, if a relative
-/// squared norm is non-finite, or if strict insphere-consistency diagnostics are
+/// if a coordinate cannot be converted for predicate evaluation, if the
+/// unsupported-dimension distance path cannot represent its intermediates,
+/// or if strict insphere-consistency diagnostics are
 /// enabled and detect a determinant/distance disagreement.
 ///
 /// # Complexity
@@ -168,9 +169,10 @@ pub enum InsphereConsistencyError {
 ///
 /// Absolute-coordinate squared-norm overflow is avoided by using the
 /// relative-coordinate lifted formulation shared with
-/// [`crate::geometry::predicates::insphere_lifted`] for D ≤ 6. If a relative
-/// squared norm is non-finite, the error is returned instead of falling through
-/// to a symbolic classification.
+/// [`crate::geometry::predicates::insphere_lifted`] for D ≤ 6. Finite binary64
+/// inputs whose relative coordinates or squared norms overflow use the exact
+/// rational cold path in those dimensions. Unrepresentable intermediates in
+/// the unsupported-dimension distance path return a typed error.
 pub fn robust_insphere<const D: usize>(
     simplex_points: &[Point<D>],
     test_point: &Point<D>,

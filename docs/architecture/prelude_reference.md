@@ -73,7 +73,7 @@ returned by Delaunay APIs; it does not export the internal vector alias.
 - Repository examples and benchmarks should prefer focused preludes when one
   communicates the workflow clearly. Public Rustdoc code fences must use
   focused preludes rather than the root kitchen-sink import; the static test in
-  `scripts/tests/test_rustdoc_imports.py` enforces that boundary while leaving
+  `tests/tooling/test_rustdoc_imports.py` enforces that boundary while leaving
   explanatory prose free to mention `delaunay::prelude::*`.
 - Raw bistellar flip primitives remain available through `delaunay::flips` for
   expert/debug workflows, but they are intentionally not part of a prelude.

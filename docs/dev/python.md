@@ -1,6 +1,6 @@
 # Python Development Guidelines
 
-Guidance for repository-owned Python, including automation under `scripts/`
+Guidance for repository-owned Python, including scientific modules under `tooling/python/`
 and static-analysis fixtures under `tests/semgrep/`.
 
 The Rust library is the primary product. Consumer-owned Python benchmarks,
@@ -20,12 +20,14 @@ just python-check
 just test-python
 ```
 
-`just python-check` runs Ruff formatting checks, Ruff linting, and
-`just python-typecheck`. All three checks use shared `files run` batching over tracked
+`just python-check` invokes shared `python check` for Ruff formatting, Ruff linting,
+and ty; `just python-fix` invokes shared `python fix`. All three checks use shared batching over tracked
 Python files plus new, unignored `.py` and `.pyi` files, including files outside
-`scripts/`. Deleted files are skipped. The fixer uses the same list.
+`tooling/python/`. Deleted files are skipped. The fixer uses the same list.
 `ty check --error all` is the type-checking authority. Prefer reducing untyped
 surfaces in code and tests over adding more `ty` configuration.
+The tooling and notebook groups inherit exact Ruff, ty, and pytest pins from
+the shared `python-tools` extra; `toolchain python-tools-check` verifies that contract.
 
 `just python-fixture-lint` runs the full configured Ruff policy over
 `tests/semgrep/` and is a direct dependency of `just ci`. Deliberate fixture
@@ -111,7 +113,7 @@ attributes to check.
 ## Test Helpers
 
 Put reusable typed test helpers near the top of the test module or in
-`scripts/tests/conftest.py` when they are shared. Prefer one helper that returns
+`tests/tooling/conftest.py` when they are shared. Prefer one helper that returns
 the real structured type over repeating partially configured mocks throughout a
 file.
 

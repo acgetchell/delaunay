@@ -15,15 +15,13 @@ on:
     paths:
       - ".github/workflows/benchmarks.yml"
       - ".github/actions/setup-just/**"
-      - "scripts/tectonic_native_dependencies.sh"
       - ".python-version"
       - "justfile"
       - "pyproject.toml"
       - "rust-toolchain.toml"
-      - "scripts/benchmark_models.py"
-      - "scripts/benchmark_utils.py"
-      - "scripts/hardware_utils.py"
-      - "scripts/performance_artifacts.py"
+      - "tooling/python/benchmark_models.py"
+      - "tooling/python/benchmark_utils.py"
+      - "tooling/python/performance_artifacts.py"
       - "src/**"
       - "benches/**"
       - "Cargo.toml"
@@ -38,15 +36,13 @@ on:
     paths:
       - ".github/workflows/benchmarks.yml"
       - ".github/actions/setup-just/**"
-      - "scripts/tectonic_native_dependencies.sh"
       - ".python-version"
       - "justfile"
       - "pyproject.toml"
       - "rust-toolchain.toml"
-      - "scripts/benchmark_models.py"
-      - "scripts/benchmark_utils.py"
-      - "scripts/hardware_utils.py"
-      - "scripts/performance_artifacts.py"
+      - "tooling/python/benchmark_models.py"
+      - "tooling/python/benchmark_utils.py"
+      - "tooling/python/performance_artifacts.py"
       - "src/**"
       - "benches/**"
       - "Cargo.toml"
@@ -56,8 +52,6 @@ on:
 # Security: Define minimal required permissions
 permissions:
   contents: read
-  actions: read
-  pull-requests: read
 
 concurrency:
   group: perf-regress-${{ github.workflow }}-${{ github.ref }}
@@ -66,18 +60,17 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  BENCHMARK_TIMEOUT_SECONDS: 1800 # 30 min; pre-computed seeds + reduced 5D counts keep runtime well under this
   DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT: 256 # fallback only; ci_performance_suite uses pre-computed seeds
 
 jobs:
   performance-regression:
     runs-on: ubuntu-latest
-    timeout-minutes: 90 # Allow cold tool setup/compilation plus the 30min benchmark timeout.
+    timeout-minutes: 150 # Fresh baseline and current runs, including cold compilation.
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # required to diff against BASELINE_COMMIT
+          fetch-depth: 0 # Resolve the published baseline and disposable measurement checkouts.
           persist-credentials: false
 
       - name: Set up shared tooling
@@ -87,171 +80,26 @@ jobs:
       - name: Verify uv installation
         run: uv --version
 
-      - name: Find latest release benchmark baseline
-        id: find_baseline
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const releases = await github.paginate(github.rest.repos.listReleases, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              per_page: 100
-            });
-
-            const parseStableSemver = (tag) => {
-              const match = /^v([0-9]+)\.([0-9]+)\.([0-9]+)$/.exec(tag);
-              if (!match) return null;
-              return match.slice(1).map((part) => Number.parseInt(part, 10));
-            };
-
-            const candidates = [];
-            for (const release of releases) {
-              if (release.draft || release.prerelease) continue;
-              const version = parseStableSemver(release.tag_name);
-              if (!version) continue;
-
-              const expectedAsset = `delaunay-${release.tag_name}-criterion-baseline.tar.gz`;
-              const asset = release.assets.find((candidate) => candidate.name === expectedAsset);
-              if (!asset) {
-                console.log(`Release ${release.tag_name} has no benchmark baseline asset named ${expectedAsset}`);
-                continue;
-              }
-
-              candidates.push({ release, asset, version });
-            }
-
-            candidates.sort((left, right) => {
-              for (const index of [0, 1, 2]) {
-                const diff = right.version[index] - left.version[index];
-                if (diff !== 0) return diff;
-              }
-              return Date.parse(right.release.published_at) - Date.parse(left.release.published_at);
-            });
-
-            if (candidates.length > 0) {
-              const selected = candidates[0];
-              console.log(`Selected release benchmark baseline ${selected.asset.name} from ${selected.release.tag_name}`);
-              core.setOutput('found', 'true');
-              core.setOutput('tag', selected.release.tag_name);
-              core.setOutput('asset_name', selected.asset.name);
-              return;
-            }
-
-            console.log('No release benchmark baseline asset found');
-            core.setOutput('found', 'false');
-
-      - name: Download latest release benchmark baseline
-        if: steps.find_baseline.outputs.found == 'true'
+      - name: Measure current and baseline in one job
         env:
           GH_TOKEN: ${{ github.token }}
-          BASELINE_TAG: ${{ steps.find_baseline.outputs.tag }}
-          BASELINE_ASSET: ${{ steps.find_baseline.outputs.asset_name }}
-        run: |
-          set -euo pipefail
+        run: just performance-local
 
-          mkdir -p baseline-artifact
-          gh release download "$BASELINE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern "$BASELINE_ASSET" \
-            --dir baseline-artifact \
-            --clobber
-          tar -xzf "baseline-artifact/$BASELINE_ASSET" -C baseline-artifact
-
-      - name: Prepare baseline for comparison
-        if: steps.find_baseline.outputs.found == 'true'
-        run: uv run --locked benchmark-utils prepare-baseline
-
-      - name: Set baseline status if none found
-        if: steps.find_baseline.outputs.found != 'true'
-        run: uv run --locked benchmark-utils set-no-baseline
-
-      - name: Skip benchmarks - no baseline available
-        if: env.BASELINE_EXISTS != 'true'
-        run: uv run --locked benchmark-utils display-no-baseline
-
-      - name: Run performance regression test (compare vs latest release baseline)
-        id: compare_regression
-        if: env.BASELINE_EXISTS == 'true'
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-
-          # Ensure regression-summary reports this as a real run.
-          echo "SKIP_BENCHMARKS=false" >> "$GITHUB_ENV"
-          echo "SKIP_REASON=running" >> "$GITHUB_ENV"
-
-          echo "   Baseline origin: ${BASELINE_ORIGIN:-unknown}"
-          echo "   Baseline ref:    ${BASELINE_REF:-unknown}"
-
-          uv run --locked benchmark-utils compare \
-            --baseline "baseline-artifact/baseline_results.txt" \
-            --bench-timeout "${BENCHMARK_TIMEOUT_SECONDS}"
-      - name: Classify benchmark comparison outcome
-        if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false'
-        env:
-          COMPARE_REGRESSION_OUTCOME: ${{ steps.compare_regression.outcome }}
-        run: |
-          set -euo pipefail
-
-          results_file="benches/main_vs_release_compare_results.txt"
-
-          # Successful compare step => no regressions beyond configured threshold.
-          if [ "$COMPARE_REGRESSION_OUTCOME" = "success" ]; then
-            echo "BENCHMARK_REGRESSION_DETECTED=false" >> "$GITHUB_ENV"
-            exit 0
-          fi
-
-          # Compare step failed. Distinguish "expected regression" from real benchmark errors.
-          if [ ! -f "$results_file" ]; then
-            echo "::error::Benchmark comparison failed and produced no results file."
-            exit 1
-          fi
-
-          if grep -q "❌ Error:" "$results_file"; then
-            echo "::error::Benchmark comparison failed due to benchmark execution error."
-            echo "::group::Benchmark comparison error details"
-            cat "$results_file"
-            echo "::endgroup::"
-            exit 1
-          fi
-
-          if grep -q "REGRESSION" "$results_file"; then
-            echo "BENCHMARK_REGRESSION_DETECTED=true" >> "$GITHUB_ENV"
-            warning_msg="Performance regressions detected vs baseline ${BASELINE_REF:-unknown};"
-            warning_msg="${warning_msg} workflow allowed to pass by policy."
-            echo "::warning::${warning_msg}"
-            {
-              echo "### ⚠️ Performance Regression Detected"
-              echo ""
-              echo "- Baseline ref: \`${BASELINE_REF:-unknown}\`"
-              echo "- Policy: regressions are warning-only in this workflow."
-              echo "- See uploaded artifact \`performance-regression-results-${{ github.run_number }}\`"
-              echo "  and logs for details."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          echo "::error::Benchmark comparison failed for an unknown reason."
-          echo "::group::Benchmark comparison output"
-          cat "$results_file"
-          echo "::endgroup::"
-          exit 1
-
-      - name: Display regression test results
-        if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false' && always()
-        run: uv run --locked benchmark-utils display-results
-
-      - name: Upload regression test results
-        if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false' && always()
+      - name: Upload performance evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: performance-regression-results-${{ github.run_number }}
-          path: |
-            benches/main_vs_release_compare_results.txt
-            baseline-artifact/baseline_results.txt
-          if-no-files-found: warn
+          path: target/bench-reports/performance.*
+          if-no-files-found: error
           retention-days: 30
 
       - name: Summary
-        if: always()
-        run: uv run --locked benchmark-utils regression-summary
+        run: |
+          {
+            echo "### Performance comparison"
+            echo ""
+            echo "Both revisions were measured freshly in this job."
+            echo "Ratios require matching harness, measurement plan, toolchain, and host evidence."
+            echo "The artifact contains medians, marginal confidence intervals, coverage, and provenance."
+            echo "Timing changes are descriptive estimates; this workflow does not apply a regression threshold."
+          } >> "$GITHUB_STEP_SUMMARY"

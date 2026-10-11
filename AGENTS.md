@@ -98,7 +98,7 @@ workflow references do not need to be loaded preemptively.
 - **Keep README and citation prose mirrored.** The first paragraph under
   `README.md`'s Introduction is mirrored by the `abstract` field in
   `CITATION.cff`; update both together. The invariant is checked by
-  `scripts/tests/test_readme_citation_mirror.py`.
+  `tests/tooling/test_readme_citation_mirror.py`.
 
 ## Project Context
 

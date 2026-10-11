@@ -77,14 +77,7 @@ delaunay/
 │   ├── validation.pdf
 │   └── validation.tex
 ├── scripts/
-│   ├── ci/
-│   ├── tests/
-│   ├── benchmark_models.py
-│   ├── benchmark_utils.py
-│   ├── hardware_utils.py
-│   ├── paper_check.py
-│   ├── performance_artifacts.py
-│   └── tectonic_native_dependencies.sh
+│   └── release_benchmarks.sh
 ├── src/
 │   ├── bin/
 │   │   ├── delaunay/
@@ -107,6 +100,7 @@ delaunay/
 │   └── lib.rs
 ├── tests/
 │   ├── semgrep/
+│   ├── tooling/
 │   ├── proptest_*.rs
 │   ├── mesh_export.rs
 │   ├── pachner_roundtrip.rs
@@ -114,7 +108,19 @@ delaunay/
 │   └── regressions.rs
 ├── tooling/
 │   ├── README.md
-│   └── examples.toml
+│   ├── examples.toml
+│   ├── profiling-inputs.toml
+│   └── python/
+│       ├── README.md
+│       ├── benchmark_models.py
+│       ├── benchmark_utils.py
+│       ├── notebook_utils.py
+│       ├── notebook_validation.py
+│       ├── notebook_validation_rendering.py
+│       ├── notebook_visualization.py
+│       ├── performance_artifacts.py
+│       ├── profiling_metadata.py
+│       └── publish_readme_performance.py
 ├── AGENTS.md
 ├── Cargo.toml
 ├── Cargo.lock
@@ -144,7 +150,9 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
 
 ## Top-Level Areas
 
-- `tooling/` declares shared command workflows; consumer policy tests remain in `scripts/tests/`.
+- `tooling/` declares shared command workflows. `tooling/python/` owns retained
+  scientific modules and legacy evidence adapters; consumer policy tests live in
+  `tests/tooling/`.
 - `src/` contains the Rust library plus feature-gated artifact and diagnostic binaries.
   See [`module_map.md`](module_map.md) for ownership and layering.
 - `tests/` contains integration tests, property tests, regression tests, and
@@ -165,9 +173,8 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
 - `docs/dev/` contains operational rules for agents and contributors, indexed
   by [`../dev/README.md`](../dev/README.md).
 - `docs/architecture/` contains focused architecture references.
-- `scripts/` contains consumer-owned benchmark, hardware, notebook, paper/PDF,
-  evidence publication, SARIF, and native prerequisite adapters. Generic
-  infrastructure uses the pinned shared package's public APIs.
+- `scripts/` contains shell scripts only. The release benchmark shell script
+  retains the preflight binding described in the shared tooling adoption guide.
 - `.github/` contains issue templates, workflow definitions, and
   repository-integrated automation.
 

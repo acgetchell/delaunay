@@ -51,7 +51,7 @@ repository.
   `target/notebooks/`.
 - `README.md`'s first Introduction paragraph and `CITATION.cff`'s `abstract`
   field intentionally mirror each other. When one changes, update the other in
-  the same patch. `scripts/tests/test_readme_citation_mirror.py` checks the
+  the same patch. `tests/tooling/test_readme_citation_mirror.py` checks the
   normalized text after Markdown links are stripped from the README prose.
   Semgrep also rejects stale public validation-hierarchy wording.
 - `docs/archive/` stores historical plans and old design notes;

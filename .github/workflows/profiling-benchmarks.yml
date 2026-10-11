@@ -64,6 +64,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential
 
+      - name: Set up declared uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version-file: pyproject.toml
+          enable-cache: false
+
+      - name: Install locked profiling dependencies
+        run: uv sync --locked --managed-python --no-default-groups
+
       - name: Set profiling mode
         env:
           INPUT_MODE: ${{ github.event.inputs.mode || 'development' }}
@@ -101,7 +110,7 @@ jobs:
       - name: Capture profiling environment metadata
         env:
           BENCH_FILTER_VALUE: ${{ github.event.inputs.benchmark_filter || '' }}
-        run: ./scripts/ci/capture_profiling_metadata.sh
+        run: uv run --locked --no-sync --no-default-groups delaunay-profile-metadata
 
       - name: Build profiling suite
         run: |
@@ -203,7 +212,7 @@ jobs:
 
           - \`profiling_output.log\`: Complete benchmark output
           - \`memory_profiling_detailed.log\`: Detailed memory allocation analysis
-          - \`environment_metadata.md\`: Code ref, compiler, profile, and filter metadata
+          - \`environment.json\`: Shared host/source provenance, native tool declarations, profile, and filter metadata
           - \`criterion/\`: HTML reports and detailed timing data
 
           EOF
@@ -275,12 +284,21 @@ jobs:
           echo "Running allocation API tests..."
           cargo test --test allocation_api --features count-allocations --verbose
 
+      - name: Set up declared uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version-file: pyproject.toml
+          enable-cache: false
+
+      - name: Install locked profiling dependencies
+        run: uv sync --locked --managed-python --no-default-groups
+
       - name: Capture memory profiling environment metadata
         env:
           PROFILE_METADATA_TITLE: Memory Profiling Environment
           PROFILE_METADATA_FILTER: memory_profiling
           PROFILE_METADATA_MODE: development
-        run: ./scripts/ci/capture_profiling_metadata.sh
+        run: uv run --locked --no-sync --no-default-groups delaunay-profile-metadata
 
       - name: Run memory scaling benchmarks
         env:
