@@ -627,7 +627,7 @@ The `circumcenter/solve_path` group separately compares a regular 3D LU solve
 with a near-coplanar fixture that LU classifies as numerically singular and the
 exact rounded solve resolves. Both fixtures are validated before timing.
 
-Fresh local perf-profile run on maintainer Apple M4 Max hardware
+Historical local perf-profile run on maintainer Apple M4 Max hardware
 (2026-05-14, Rust 1.95.0):
 
 | 3D random batch, 1000 queries | Mean |
@@ -653,15 +653,17 @@ The same run reported 1000/1000 agreement for each pairwise method comparison
 and 1000/1000 agreement across all three methods on the random consistency
 checks.
 
-Interpretation:
+Interpretation of that historical run:
 
-- `insphere_lifted` is currently fastest for 2D/3D fixed non-boundary cases and
+- `insphere_lifted` was fastest for 2D/3D fixed non-boundary cases and
   for the 3D random batch.
-- `insphere_distance` is currently fastest for 4D/5D fixed non-boundary cases.
-- `insphere` has very fast boundary-vertex short-circuit behavior, but its
-  robust determinant path is slower on non-boundary 3D-5D cases.
-- Keep `insphere` as the correctness reference unless a caller has a narrowly
-  measured workload-specific reason to choose a comparison helper.
+- `insphere_distance` was fastest for 4D/5D fixed non-boundary cases.
+- `insphere` had fast boundary-vertex short-circuit behavior, while its
+  robust determinant path was slower on non-boundary 3D-5D cases.
+
+Current `insphere` and `insphere_lifted` share the filtered-exact core. These
+May 2026 timings do not rank the current implementations; rerun representative
+workloads with the current toolchain before choosing a helper for performance.
 
 ## Cold Path Predicates
 

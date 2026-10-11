@@ -67,13 +67,11 @@
 //! ## References
 //!
 //! - J. R. Munkres, *Elements of Algebraic Topology*, Addison–Wesley, 1984.
-//!   (Chapter 9: Simplicial Manifolds and Links.)
 //!
 //! - C. P. Rourke & B. J. Sanderson, *Introduction to Piecewise-Linear Topology*,
 //!   Springer, 1972.
 //!
 //! - A. Hatcher, *Algebraic Topology*, Cambridge University Press, 2002.
-//!   (Appendix A: PL Manifolds and Links.)
 //!
 //! - H. Edelsbrunner & J. Harer, *Computational Topology*, AMS, 2010.
 //!   (Sections on pseudomanifolds and manifold conditions in simplicial complexes.)

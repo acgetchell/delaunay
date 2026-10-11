@@ -868,7 +868,7 @@ For the project-wide bibliography (including references not cited here), see [`R
     and [src/core/algorithms/flips/repair.rs](../src/core/algorithms/flips/repair.rs).
 [^impl-delaunay-validation]: Implementation: [src/delaunay/property_validation.rs](../src/delaunay/property_validation.rs).
 [^hatcher2002]: Allen Hatcher. *Algebraic Topology*. Cambridge University Press, 2002.
-    Free online version: <https://pi.math.cornell.edu/~hatcher/AT/ATpage>. (See Appendix A: “PL Manifolds and Links”.)
+    Free online version: <https://pi.math.cornell.edu/~hatcher/AT/ATpage>.
 [^rourke-sanderson]: C. P. Rourke and B. J. Sanderson. *Introduction to Piecewise-Linear Topology*. Springer, 1972.
     DOI: <https://doi.org/10.1007/978-3-642-81735-9>.
 [^bowyer1981]: A. Bowyer. “Computing Dirichlet Tessellations.” *The Computer Journal* 24(2), 1981.

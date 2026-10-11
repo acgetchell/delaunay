@@ -346,7 +346,7 @@ for benchmark selection, fixture sizes, baseline workflows, and large-scale
 profiling guidance.
 
 Release PRs publish a compact group-level snapshot from the validated retained
-CSV/provenance bundle. The geometric-mean ratios are descriptive summaries;
+`.comparison.json`/`.evidence.json` bundle. The geometric-mean ratios are descriptive summaries;
 the generated full report retains every benchmark result represented in that
 bundle.
 

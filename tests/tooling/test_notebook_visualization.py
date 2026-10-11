@@ -1,9 +1,11 @@
 """Tests for validated notebook visualization records."""
 
 import json
+import operator
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -102,6 +104,29 @@ def readme_config() -> ReadmeFigureConfig:
         axis_scale=0.3,
         transparent=True,
     )
+
+
+def test_visualization_copies_and_freezes_geometry_and_nested_metadata() -> None:
+    original = readme_visualization()
+    coordinates = dict(original.coordinates)
+    metadata: dict[str, Any] = {"labels": ["validated"]}
+    edges = list(original.edges)
+    artifact = replace(original, coordinates=coordinates, metadata=metadata, edges=edges)
+    coordinates.clear()
+    metadata["labels"].append("changed")
+    edges.clear()
+    assert artifact.coordinates == original.coordinates
+    assert artifact.edges == original.edges
+    assert artifact.metadata["labels"] == ("validated",)
+    for mapping in (artifact.coordinates, artifact.simplices, artifact.neighbors, artifact.metadata):
+        with pytest.raises(TypeError):
+            operator.setitem(cast("dict[str, Any]", mapping), "invalid", None)
+    with pytest.raises(TypeError):
+        operator.setitem(cast("list[tuple[str, str]]", artifact.edges), 0, ("missing", "vertices"))
+    with pytest.raises(TypeError):
+        operator.setitem(cast("list[tuple[str, str, str]]", artifact.boundary_faces), 0, ("missing", "vertices", "face"))
+    selected = select_readme_figure_geometry(artifact, hull_facets(), readme_config())
+    assert selected.total_edges == len(original.edges)
 
 
 def hull_facets() -> list[tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]]:

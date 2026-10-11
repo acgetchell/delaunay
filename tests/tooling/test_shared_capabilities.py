@@ -36,12 +36,14 @@ def test_profile_capture_retains_consumer_labels_and_native_declarations(monkeyp
     monkeypatch.chdir(ROOT)
     monkeypatch.setenv("PROFILE_METADATA_MODE", "development")
     monkeypatch.setenv("PROFILE_METADATA_FILTER", "construction")
+    monkeypatch.setenv("PROFILE_METADATA_TITLE", "Profiling 🚀")
     monkeypatch.delenv("BENCH_FILTER_VALUE", raising=False)
     captured: dict[Path, bytes] = {}
     monkeypatch.setattr(profiling_metadata, "replace_many", captured.update)
     assert profiling_metadata.main([]) == 0
     payload = json.loads(captured[ROOT / "profiling-results/environment.json"])
     assert payload["context"]["mode"] == "development"
+    assert payload["context"]["title"] == "Profiling 🚀"
     assert payload["context"]["filter"] == "construction"
     assert payload["declarations"]["cargo-manifest"]["text"] == (ROOT / "Cargo.toml").read_text(encoding="utf-8")
     assert payload["declarations"]["rust-toolchain"]["text"] == (ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")

@@ -2,12 +2,15 @@
 
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
 from itertools import combinations
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Never, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 type JsonObject = dict[str, Any]
@@ -27,13 +30,30 @@ type Segment3 = tuple[Point3, Point3]
 class Visualization3D:
     """A validated 3D simplicial-complex visualization artifact."""
 
-    metadata: JsonObject
-    coordinates: dict[str, Point3]
-    simplices: dict[str, SimplexVertices]
-    neighbors: dict[str, NeighborSlots]
-    edges: list[Edge]
-    boundary_faces: list[Face]
+    metadata: Mapping[str, Any]
+    coordinates: Mapping[str, Point3]
+    simplices: Mapping[str, SimplexVertices]
+    neighbors: Mapping[str, NeighborSlots]
+    edges: Sequence[Edge]
+    boundary_faces: Sequence[Face]
     axis_limits: AxisLimits
+
+    def __post_init__(self) -> None:
+        """Copy and freeze parsed geometry so aliases cannot invalidate it."""
+        object.__setattr__(self, "metadata", _freeze_metadata(self.metadata))
+        for name in ("coordinates", "simplices", "neighbors"):
+            object.__setattr__(self, name, MappingProxyType({key: tuple(value) for key, value in getattr(self, name).items()}))
+        object.__setattr__(self, "edges", tuple(tuple(edge) for edge in self.edges))
+        object.__setattr__(self, "boundary_faces", tuple(tuple(face) for face in self.boundary_faces))
+
+
+def _freeze_metadata(value: Any) -> Any:
+    """Remove mutable aliases from nested JSON metadata."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_metadata(item) for key, item in value.items()})
+    if isinstance(value, list | tuple):
+        return tuple(_freeze_metadata(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,7 +397,7 @@ def unique_edges(simplices: dict[str, SimplexVertices]) -> list[Edge]:
     return sorted(edges)
 
 
-def faces_by_boundary_state(simplices: dict[str, SimplexVertices], neighbors: dict[str, NeighborSlots], *, boundary: bool) -> list[Face]:
+def faces_by_boundary_state(simplices: Mapping[str, SimplexVertices], neighbors: Mapping[str, NeighborSlots], *, boundary: bool) -> list[Face]:
     """Derive unique triangular faces selected by neighbor presence."""
     faces: set[Face] = set()
     for simplex_id, vertex_ids in simplices.items():
@@ -427,7 +447,7 @@ def normalized_point(point: Point3, limits: AxisLimits) -> Point3:
     return (values[0], values[1], values[2])
 
 
-def face_centroid(face: Face, point_map: dict[str, Point3]) -> Point3:
+def face_centroid(face: Face, point_map: Mapping[str, Point3]) -> Point3:
     """Return the centroid of one triangular face."""
     points = [point_map[vertex_id] for vertex_id in face]
     return (
@@ -473,7 +493,7 @@ def display_priority(point: Point3, limits: AxisLimits) -> tuple[float, float, f
     return (abs(mixed - 0.5), centered_distance, unit_point[0], unit_point[1], unit_point[2])
 
 
-def _edge_midpoint(edge: Edge, point_map: dict[str, Point3]) -> Point3:
+def _edge_midpoint(edge: Edge, point_map: Mapping[str, Point3]) -> Point3:
     left_point = point_map[edge[0]]
     right_point = point_map[edge[1]]
     return (

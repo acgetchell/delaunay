@@ -436,9 +436,7 @@ realizations, and the topology-only manifold / PL-manifold validation logic in t
 - Dey, T. K., and Wang, Y. *Computational Topology for Data Analysis*. Cambridge University Press, 2022.
 - Edelsbrunner, H., and Harer, J. *Computational Topology: An Introduction*. AMS, 2010.
 - Hatcher, A. *Algebraic Topology*. Cambridge University Press, 2002.
-  (Appendix A: PL Manifolds and Links.)
 - Munkres, J. R. *Elements of Algebraic Topology*. Addison–Wesley, 1984.
-  (Chapter 9: Simplicial Manifolds and Links.)
 - Rourke, C. P., and Sanderson, B. J. *Introduction to Piecewise-Linear Topology*. Springer, 1972.
 - Stillwell, J. *Euler's Gem: The Polyhedron Formula and the Birth of Topology*. Princeton University Press, 2010.
 - Zomorodian, A. *Topology for Computing*. Cambridge University Press, 2005.

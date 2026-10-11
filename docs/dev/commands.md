@@ -618,6 +618,11 @@ before any fetch or benchmark side effect. Temp-worktree release commands apply
 the shared exact snapshot by default, including nonignored new files and their
 permissions. Snapshot application requires the captured checkout revision.
 
+Promotion commands require every input and output, including retained scratch
+reports, to be inside the project root. External promotion paths fail before
+measurements or publication. Standalone `performance-local` and
+`performance-github-assets` reports may use external output paths.
+
 Use `just performance-readme` after `performance-release` to validate that the
 retained bundle exactly matches the promoted durable evidence, then publish a
 compact group-level README table and the canonical comparison JSON/evidence pair under

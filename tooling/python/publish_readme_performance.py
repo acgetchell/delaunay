@@ -136,6 +136,10 @@ def publish_readme_performance(
         payload=resolved_root / "target/bench-reports/performance.comparison.json",
         provenance=resolved_root / "target/bench-reports/performance.evidence.json",
     )
+    source = ArtifactPaths(
+        payload=_contained_destination(resolved_root, source.payload, label="performance payload input"),
+        provenance=_contained_destination(resolved_root, source.provenance, label="performance provenance input"),
+    )
     readme_path = _contained_destination(resolved_root, readme or resolved_root / "README.md", label="README destination")
     source_evidence = source.payload.read_bytes()
     source_provenance = source.provenance.read_bytes()
@@ -235,8 +239,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="repository root (default: current directory)")
-    parser.add_argument("--artifact-payload", type=Path, default=Path("target/bench-reports/performance.comparison.json"))
-    parser.add_argument("--artifact-provenance", type=Path, default=Path("target/bench-reports/performance.evidence.json"))
+    parser.add_argument(
+        "--artifact-payload", type=Path, default=Path("target/bench-reports/performance.comparison.json"), help="retained payload inside the repository root"
+    )
+    parser.add_argument(
+        "--artifact-provenance",
+        type=Path,
+        default=Path("target/bench-reports/performance.evidence.json"),
+        help="retained provenance inside the repository root",
+    )
     parser.add_argument("--readme", type=Path, default=Path("README.md"))
     return parser.parse_args(argv)
 

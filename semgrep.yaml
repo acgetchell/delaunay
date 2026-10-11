@@ -3522,14 +3522,15 @@ rules:
     languages:
       - python
     severity: WARNING
-    message: "Keep performance promotion inputs in the canonical CSV format."
+    message: "Keep performance promotion inputs in the canonical shared JSON evidence format."
     metadata:
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/550"
       rationale: >-
-        CSV is the reviewed interchange and release-archive format. Notebooks
+        Shared comparison JSON and digest-bound evidence are the reviewed
+        interchange and release-archive format. Notebooks
         may derive Parquet for analysis, but promotion must validate and publish
-        the canonical CSV rather than accepting a second input contract.
+        the canonical shared evidence rather than accepting a second input contract.
     paths:
       include:
         - "/tooling/python/performance_artifacts.py"

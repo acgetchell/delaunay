@@ -31,7 +31,8 @@ def main(argv: list[str] | None = None) -> int:
         configuration.write_text(
             'schema = 1\ncargo-manifest = "Cargo.toml"\nrust-toolchain = "rust-toolchain.toml"\n'
             'measurement = "tooling/profiling-inputs.toml"\n'
-            f"release = {json.dumps('v' + version)}\n[context]\n" + "".join(f"{name} = {json.dumps(value)}\n" for name, value in context.items()),
+            f"release = {json.dumps('v' + version, ensure_ascii=False)}\n[context]\n"
+            + "".join(f"{name} = {json.dumps(value, ensure_ascii=False)}\n" for name, value in context.items()),
             encoding="utf-8",
         )
         payload = capture_profile(root, configuration.relative_to(root).as_posix())

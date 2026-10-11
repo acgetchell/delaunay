@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import csv
 import os
 import subprocess
 import tempfile
@@ -12,6 +11,7 @@ import tempfile
 # ok: delaunay.python.no-future-annotations-on-python314
 from typing import TYPE_CHECKING, Protocol
 
+from research_repo_tools.evidence import parse_evidence
 from research_repo_tools.process import run_command as run_safe_command
 
 if TYPE_CHECKING:
@@ -149,4 +149,4 @@ def parquet_promotion_inputs(path: Path, pl: PolarsReader, pandas: DataFrameRead
     # ruleid: delaunay.python.performance-promotion-is-csv-only
     pyarrow.parquet.ParquetFile(path)
     # ok: delaunay.python.performance-promotion-is-csv-only
-    csv.DictReader(path.open(encoding="utf-8"))
+    parse_evidence(path.read_bytes(), path.with_suffix(".evidence.json").read_bytes())

@@ -139,9 +139,11 @@ as a record rather than reinterpreted as newly certified evidence.
 ## v0.1.8 consumer evidence
 
 Production/test counts cover `.py` and `.sh` under the owning directories,
-counting physical lines including blanks. The baseline is Git HEAD's `scripts/`
-before this patch; current production spans `tooling/python/` and `scripts/`,
-and current tests live in `tests/tooling/`. Generated files, static-analysis
+counting physical lines including blanks. These historical counts compare
+baseline commit `55e2e260e62598cf41ff5ae75bc57d798ee592a9`'s `scripts/`
+with adoption commit `4b9458f9fd00f5773962460bc6077582b13a5582`'s production
+under `tooling/python/` and `scripts/` and tests under `tests/tooling/`.
+Generated files, static-analysis
 fixtures and `__pycache__` are excluded.
 
 | Surface | Before files / lines | After files / lines |
@@ -170,12 +172,27 @@ and isolated notebook smoke checks, plus `just python-check`,
 and zero errors across 323 inputs. All execution was on aarch64 macOS.
 The system uv changed to 0.13.0 during validation. Initial checks used an
 isolated 0.12.24 installation under `/private/tmp/`; final checks use the pinned
-0.13.0 manager. No live benchmark or hosted CI run was performed.
+0.13.0 manager. That retirement pass did not run live benchmarks or hosted CI.
 
-No benchmark timings, scientific notebook execution or tracked figure/PDF
-refresh was performed during this migration. Git commits, tags, pushes,
-CodeRabbit review and issue closure were not requested. Native Linux/Windows
-results remain for hosted CI; local tests do not establish those results.
+The retirement pass did not execute scientific notebooks or refresh tracked
+figures/PDFs. Publication and hosted validation happened in subsequent PR work;
+the results below describe that follow-up separately.
+
+### Performance smoke follow-up
+
+The first post-adoption 2D–5D smoke run exceeded the unchanged 60-second cap in
+every dimension. The same workloads also timed out at baseline commit
+`55e2e260e62598cf41ff5ae75bc57d798ee592a9`, establishing a pre-existing
+validation cost. Those failed runs provide no valid performance measurements.
+
+At follow-up commit `6ef1ae4fa5d7268b32d73c591b65e9b9b1c41703`, the unchanged
+smoke workloads passed in 31.587, 33.887, 38.229 and 38.279 seconds for 2D,
+3D, 4D and 5D respectively, with no skipped insertions. Exact Delaunay
+classification remains the fallback for uncertain circumsphere bounds. The
+smoke guard is a coarse wall-clock regression check, not release benchmark
+evidence. Local `just ci` also passed, including the canonical macOS validation
+notebook figure comparison; it did not publish tracked figures. Native
+Linux/Windows results require hosted CI and are not established by that local run.
 
 ## Regression ownership and consumer evidence
 

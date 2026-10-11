@@ -138,10 +138,28 @@ Historical CSV/text files stay unchanged as records. Their readers and writers
 are retired. New reports use `.comparison.json` and `.evidence.json`; old files
 cannot be passed to the new promotion commands.
 
+All inputs and outputs for `performance-release`, `performance-doc`, and
+`publish-readme-performance` must be inside the project root so the shared
+publication transaction can bind them. Promotion rejects external scratch paths
+before measurements start. `performance-local` and `performance-github-assets`
+can still write standalone reports outside the project.
+
 `publish-readme-performance` consumes the retained bundle after promotion and
 atomically publishes the compact README table plus the canonical
 `docs/assets/bench/release-performance.{comparison.json,evidence.json}` pair. It never
 runs Cargo or Criterion.
+
+### Profiling metadata
+
+```bash
+uv run --locked delaunay-profile-metadata
+```
+
+The command captures shared host and source metadata into
+`profiling-results/environment.json`. `PROFILE_METADATA_TITLE`,
+`PROFILE_METADATA_MODE`, `PROFILE_METADATA_FILTER` (or `BENCH_FILTER_VALUE`),
+and `GITHUB_REF_NAME` supply consumer labels. It probes the environment without
+running benchmarks.
 
 ### Hardware utilities
 

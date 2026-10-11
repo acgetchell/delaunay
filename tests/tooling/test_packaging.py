@@ -193,6 +193,38 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
     environment["PATH"] = f"{shared_cli.parent}{os.pathsep}{environment.get('PATH', '')}"
     environment.pop("PYTHONPATH", None)
 
+    import_check = subprocess.run(  # noqa: S603 - isolated interpreter imports the declared wheel modules.
+        [
+            str(_venv_executable(venv, "python")),
+            "-I",
+            "-c",
+            (
+                "import importlib, pathlib, sys; "
+                "root = pathlib.Path(sys.prefix).resolve(); "
+                "assert all(pathlib.Path(importlib.import_module(name).__file__).resolve().is_relative_to(root) for name in sys.argv[1:])"
+            ),
+            *configuration["tool"]["setuptools"]["py-modules"],
+        ],
+        cwd=consumer,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert import_check.returncode == 0, import_check.stdout + import_check.stderr
+    for command in configuration["project"]["scripts"]:
+        help_result = subprocess.run(  # noqa: S603 - command is a declared entry point in the isolated wheel installation.
+            [str(_venv_executable(venv, command)), "--help"],
+            cwd=consumer,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert help_result.returncode == 0, help_result.stdout + help_result.stderr
+
     lint = subprocess.run(  # noqa: S603 - executable and inputs come from the isolated test installation.
         [str(shared_cli), "--root", str(consumer), "notebooks", "lint", str(notebook)],
         cwd=consumer,

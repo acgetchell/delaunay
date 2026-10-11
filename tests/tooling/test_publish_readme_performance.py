@@ -325,8 +325,40 @@ def test_publish_readme_performance_rejects_symlinked_asset_destination(
     assert list(outside.iterdir()) == []
 
 
+def test_publish_readme_rejects_external_inputs_before_reading(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = performance_artifacts.ArtifactPaths(payload=tmp_path / "missing.comparison.json", provenance=tmp_path / "missing.evidence.json")
+    with pytest.raises(ValueError, match="performance payload input must be contained"):
+        publish_readme_performance.publish_readme_performance(root, artifacts=source)
+    assert list(root.iterdir()) == []
+
+
+def test_publish_readme_rejects_missing_shared_case_during_target_transition(tmp_path: Path) -> None:
+    source = _write_project(tmp_path)
+    original = _bundle()
+    missing = replace(
+        original.rows[0],
+        benchmark_id="validation/missing",
+        benchmark="missing",
+        coverage_status="current-only",
+        coverage_note="case absent from the baseline shared target",
+        baseline=None,
+    )
+    invalid = performance_artifacts.PerformanceBundle(
+        context=replace(original.context, baseline_completed_targets=performance_artifacts.RELEASE_SIGNAL_TARGETS[:-1]),
+        rows=(*original.rows, missing),
+    )
+    performance_artifacts.write_bundle(source, invalid)
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    with pytest.raises(ValueError, match="coverage is incomplete"):
+        publish_readme_performance.publish_readme_performance(tmp_path, artifacts=source)
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
 @pytest.mark.parametrize("destination", ["README.md", "docs/assets/bench/release-performance.comparison.json"])
-def test_publish_readme_rejects_internal_output_symlinks(tmp_path: Path, destination: str) -> None:
+@pytest.mark.parametrize("relative_target", [False, True])
+def test_publish_readme_rejects_internal_output_symlinks(tmp_path: Path, destination: str, *, relative_target: bool) -> None:
     """Canonicalizing a destination must not bypass shared symlink rejection."""
     source = _write_project(tmp_path)
     original = (tmp_path / "README.md").read_bytes()
@@ -335,13 +367,16 @@ def test_publish_readme_rejects_internal_output_symlinks(tmp_path: Path, destina
     target = linked.with_name("unrelated.txt")
     target.write_bytes(original if destination == "README.md" else b"unrelated bytes\n")
     linked.unlink(missing_ok=True)
-    linked.symlink_to(target)
+    linked.symlink_to(target.name if relative_target else target)
+    link_target = linked.readlink()
     before = target.read_bytes()
 
     with pytest.raises(ValueError, match="symlink"):
         publish_readme_performance.publish_readme_performance(tmp_path, artifacts=source)
 
     assert linked.is_symlink()
+    assert linked.readlink() == link_target
+    assert linked.samefile(target)
     assert target.read_bytes() == before
     assert (tmp_path / "README.md").read_bytes() == original
 

@@ -1,4 +1,4 @@
-"""Tests for retained performance CSV and provenance artifacts."""
+"""Tests for retained shared performance JSON and provenance artifacts."""
 
 import json
 from dataclasses import replace
@@ -330,12 +330,61 @@ def test_promotion_allows_supported_release_target_transition_with_one_sided_row
             original.context,
             baseline_completed_targets=RELEASE_TARGETS[:-1],
         ),
-        rows=original.rows,
+        rows=(original.rows[0], replace(original.rows[1], group="realization_validation", benchmark_id="realization_validation/new_case/750")),
     )
 
     assert transitioning.context.shared_completed_targets == RELEASE_TARGETS[:-1]
     assert transitioning.context.target_transition_blockers == ()
     transitioning.require_promotable()
+
+
+@pytest.mark.parametrize("side", ["current-only", "baseline-only"])
+@pytest.mark.parametrize("group", ["validation", "unknown"])
+def test_unrelated_target_transition_cannot_hide_missing_cases(side: str, group: str) -> None:
+    """A target added elsewhere does not excuse missing shared or unknown rows."""
+    original = bundle()
+    missing = replace(
+        original.rows[1],
+        group=group,
+        benchmark_id=f"{group}/new_case/750",
+        coverage_status=side,
+        baseline=estimate(500_000.0) if side == "baseline-only" else None,
+        current=estimate(500_000.0) if side == "current-only" else None,
+    )
+    transitioning = PerformanceBundle(
+        context=replace(original.context, baseline_completed_targets=RELEASE_TARGETS[:-1]),
+        rows=(original.rows[0], missing),
+    )
+    with pytest.raises(ValueError, match="coverage is incomplete"):
+        transitioning.require_promotable()
+
+
+def test_promotion_allows_rows_owned_by_a_removed_target() -> None:
+    original = bundle()
+    removed = replace(
+        original.rows[1],
+        group="realization_validation",
+        benchmark_id="realization_validation/new_case/750",
+        coverage_status="baseline-only",
+        baseline=estimate(500_000.0),
+        current=None,
+    )
+    PerformanceBundle(
+        context=replace(original.context, current_completed_targets=RELEASE_TARGETS[:-1]),
+        rows=(original.rows[0], removed),
+    ).require_promotable()
+
+
+@pytest.mark.parametrize("record", ["source", "toolchain"])
+@pytest.mark.parametrize("value", [None, False, 0, [], {}])
+def test_loader_rejects_non_string_limitation(record: str, value: object) -> None:
+    payload, manifest = serialize_bundle(bundle())
+    data = json.loads(manifest)
+    policy = json.loads(data["sources"]["current"]["context"][POLICY_CONTEXT])
+    policy["context"]["current"][record]["limitation"] = value
+    data["sources"]["current"]["context"][POLICY_CONTEXT] = json.dumps(policy, separators=(",", ":"))
+    with pytest.raises(TypeError, match="limitation must be a string"):
+        load_bundle_bytes(payload, json.dumps(data).encode(), source="malformed limitation")
 
 
 def test_target_transition_requires_the_union_to_cover_the_release_plan() -> None:

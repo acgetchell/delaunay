@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock, patch
 
 import pytest
+from research_repo_tools.evidence import parse_evidence, serialize_evidence
 from research_repo_tools.process import run_command as run_safe_command
 from research_repo_tools.release_discovery import PublishedRelease
 from research_repo_tools.worktrees import TreeSnapshot
@@ -1151,6 +1152,37 @@ def test_release_generation_preflights_output_aliases_before_measurement(tmp_pat
         )
 
 
+def test_release_generation_rejects_external_scratch_before_measurement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    measurement = Mock()
+    monkeypatch.setattr(benchmark_utils, "_build_performance_bundle_in_temp_worktree", measurement)
+    with pytest.raises(ValueError, match="Markdown output must be contained"):
+        benchmark_utils.generate_and_promote_performance_report(
+            output=tmp_path / "outside.md",
+            current=project_root / "docs/performance.md",
+            archive_dir=project_root / "docs/archive/performance",
+            config=ReleaseReportConfig(repo_root=project_root, current_tag="v0.8.0", baseline_tag="v0.7.8", worktree_ref="HEAD"),
+        )
+    measurement.assert_not_called()
+    assert not (tmp_path / "outside.md").exists()
+
+
+def test_performance_doc_rejects_external_inputs_before_reading(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    with pytest.raises(ValueError, match="artifact payload input must be contained"):
+        benchmark_utils.render_and_promote_performance_artifacts(
+            output=project_root / "target/performance.md",
+            artifacts=performance_artifacts.ArtifactPaths(payload=tmp_path / "missing.comparison.json", provenance=tmp_path / "missing.evidence.json"),
+            destinations=benchmark_utils.PerformancePromotionDestinations(
+                project_root=project_root, current=project_root / "docs/performance.md", archive_dir=project_root / "docs/archive/performance"
+            ),
+            expected_current_tag="v0.8.0",
+        )
+    assert list(project_root.iterdir()) == []
+
+
 @pytest.mark.parametrize("escape", ["traversal", "symlink"])
 def test_release_generation_rejects_archive_escape_before_measurement_or_publication(
     tmp_path: Path,
@@ -1391,6 +1423,23 @@ def test_renderer_distinguishes_scratch_and_promoted_evidence_paths(tmp_path: Pa
     assert durable.payload.relative_to(tmp_path).as_posix() in promoted_report
     assert durable.payload.as_posix() not in promoted_report
     assert scratch.payload.as_posix() not in promoted_report
+
+
+def test_renderer_hashes_exact_retained_bytes_including_json_whitespace(tmp_path: Path) -> None:
+    payload, manifest = performance_artifacts.serialize_bundle(retained_performance_bundle())
+    compact = json.dumps(json.loads(payload), separators=(",", ":")).encode()
+    assert compact != payload
+    evidence = replace(parse_evidence(payload, manifest), payload=compact)
+    _, compact_manifest = serialize_evidence(evidence)
+    loaded = performance_artifacts.load_bundle_bytes(compact, compact_manifest, source="compact fixture")
+    report = benchmark_utils.render_performance_bundle(
+        loaded,
+        evidence_paths=performance_artifacts.ArtifactPaths(payload=tmp_path / "performance.comparison.json", provenance=tmp_path / "performance.evidence.json"),
+        evidence_state="scratch",
+    )
+    assert f"Evidence SHA-256 `{hashlib.sha256(compact).hexdigest()}`" in report
+    assert hashlib.sha256(payload).hexdigest() not in report
+    assert replace(loaded).payload_sha256 is None
 
 
 def test_prepare_github_release_assets_copies_current_and_baseline_samples(

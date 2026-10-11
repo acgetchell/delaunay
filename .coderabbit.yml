@@ -35,7 +35,7 @@ reviews:
   path_instructions:
     - path: "tooling/python/*.py"
       instructions: |
-        These are Delaunay scientific utilities and legacy benchmark evidence adapters.
+        These are Delaunay scientific utilities and benchmark evidence publication policies.
         Focus on code quality, maintainability, and adherence to Python best practices.
         The scripts use ruff for comprehensive linting and formatting (pylint has been retired).
   abort_on_close: true

@@ -2,7 +2,7 @@
 
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field as dataclass_field
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -15,7 +15,7 @@ from research_repo_tools.criterion import (
     parse_comparison,
     serialize_comparison,
 )
-from research_repo_tools.evidence import Evidence, Provenance, parse_evidence, publish_evidence, serialize_evidence
+from research_repo_tools.evidence import Evidence, Provenance, parse_evidence, publish_evidence, serialize_evidence, sha256
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -35,6 +35,35 @@ RELEASE_SIGNAL_TARGETS = (
     "locate",
     "realization_validation",
 )
+RELEASE_SIGNAL_GROUPS_BY_TARGET = {
+    "ci_performance_suite": (
+        "tds_new_",
+        "boundary_facets",
+        "convex_hull",
+        "convex_hull_queries",
+        "validation",
+        "incremental_insert",
+        "explicit_import",
+        "proof_boundaries",
+        "bistellar_flips_",
+    ),
+    "circumsphere_containment": ("random", "2d", "3d", "4d", "5d", "edge_cases_", "circumcenter"),
+    "cold_path_predicates": ("predicates",),
+    "locate": ("locate",),
+    "realization_validation": ("realization_",),
+}
+
+
+def _benchmark_target(group: str) -> str | None:
+    """Identify a row's measurement owner before allowing target transitions."""
+    top_level = group.split("/", 1)[0]
+    owners = [
+        target
+        for target, prefixes in RELEASE_SIGNAL_GROUPS_BY_TARGET.items()
+        if any(top_level.startswith(prefix) if prefix.endswith("_") else top_level == prefix for prefix in prefixes)
+    ]
+    return owners[0] if len(owners) == 1 else None
+
 
 type CoverageState = Literal["comparable", "not-comparable", "current-only", "baseline-only"]
 type MeasurementMode = Literal["local-worktrees", "github-assets"]
@@ -554,6 +583,7 @@ class PerformanceBundle:
 
     context: ArtifactContext
     rows: tuple[PerformanceRow, ...]
+    payload_sha256: str | None = dataclass_field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Require non-empty unique rows bound to one selection."""
@@ -590,8 +620,14 @@ class PerformanceBundle:
         if not comparable:
             blockers.append("no scientifically comparable rows")
         target_transition = self.context.current_completed_targets != self.context.baseline_completed_targets
+        added_targets = set(self.context.current_completed_targets) - set(self.context.baseline_completed_targets)
+        removed_targets = set(self.context.baseline_completed_targets) - set(self.context.current_completed_targets)
         incomplete = tuple(
-            row.benchmark_id for row in self.rows if row.coverage_status == "not-comparable" or (not target_transition and row.coverage_status != "comparable")
+            row.benchmark_id
+            for row in self.rows
+            if row.coverage_status == "not-comparable"
+            or (row.coverage_status == "current-only" and _benchmark_target(row.group) not in added_targets)
+            or (row.coverage_status == "baseline-only" and _benchmark_target(row.group) not in removed_targets)
         )
         if incomplete:
             blockers.append("release-signal coverage is incomplete or non-comparable: " + ", ".join(sorted(incomplete)))
@@ -752,6 +788,15 @@ def _required_string(data: Mapping[str, object], field: str, *, source: str) -> 
     return value
 
 
+def _string_field(data: Mapping[str, object], field: str, *, source: str) -> str:
+    """Require a JSON string even when an empty value is permitted."""
+    value = data.get(field)
+    if not isinstance(value, str):
+        msg = f"{source}.{field} must be a string"
+        raise TypeError(msg)
+    return value
+
+
 def _parse_source(data: Mapping[str, object], *, source: str) -> SourceState:
     """Parse one raw source-state object into a trusted value."""
     _require_exact_keys(
@@ -774,7 +819,7 @@ def _parse_source(data: Mapping[str, object], *, source: str) -> SourceState:
         revision_timestamp=_required_string(data, "revision_timestamp", source=source),
         git_clean=git_clean,
         source_state_sha256=source_state_sha256,
-        limitation=_required_string(data, "limitation", source=source) if data.get("limitation") else "",
+        limitation=_string_field(data, "limitation", source=source),
     )
 
 
@@ -818,7 +863,7 @@ def _parse_toolchain(data: Mapping[str, object], *, source: str) -> ToolchainSta
         harness_sha256=optional_fields["harness_sha256"],
         configuration_sha256=optional_fields["configuration_sha256"],
         measurement_plan_sha256=optional_fields["measurement_plan_sha256"],
-        limitation=_required_string(data, "limitation", source=source) if data.get("limitation") else "",
+        limitation=_string_field(data, "limitation", source=source),
     )
 
 
@@ -1066,7 +1111,9 @@ def load_bundle_bytes(payload: bytes, provenance_payload: bytes, *, source: str)
     if {row.benchmark_id for row in rows} != baseline.keys() | current.keys():
         msg = "Delaunay row policy does not match the complete shared benchmark inventory"
         raise ValueError(msg)
-    return PerformanceBundle(context=context, rows=tuple(rows))
+    bundle = PerformanceBundle(context=context, rows=tuple(rows))
+    object.__setattr__(bundle, "payload_sha256", sha256(payload))
+    return bundle
 
 
 def load_bundle(paths: ArtifactPaths) -> PerformanceBundle:

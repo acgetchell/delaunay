@@ -304,7 +304,8 @@ fn first_delaunay_violation_witness<U, V, const D: usize>(
 fn can_bound_circumsphere_scan<U, V, const D: usize>(tds: &Tds<U, V, D>) -> bool {
     // D<=6 is the exact predicate envelope. This conservative coordinate cap
     // ensures every relative squared norm is representable (<=24e300), so
-    // excluding a far-away point cannot hide a lifted-coordinate overflow.
+    // the broad phase stays within its binary64 envelope. Extreme coordinates
+    // use the exhaustive scan and the predicate's exact rational cold path.
     (1..=6).contains(&D)
         && !strict_insphere_consistency_enabled()
         && tds.vertices().all(|(_, vertex)| {
