@@ -48,7 +48,7 @@ def _local_imports(source: Path, local_modules: set[str]) -> set[str]:
 
 
 def _build_support_wheel(repository: Path, tmp_path: Path) -> tuple[Path, dict[str, Any]]:
-    """Build the support wheel from a clean copied source tree."""
+    """Build a source distribution, then its wheel outside the copied source tree."""
     configuration = tomllib.loads((repository / "pyproject.toml").read_text(encoding="utf-8"))
     source = tmp_path / "source"
     module_path = Path(configuration["tool"]["setuptools"]["package-dir"][""])
@@ -64,8 +64,18 @@ def _build_support_wheel(repository: Path, tmp_path: Path) -> tuple[Path, dict[s
     assert uv is not None
     wheel_output = tmp_path / "dist"
     subprocess.run(  # noqa: S603 - executable is resolved; arguments are repository constants.
-        [uv, "build", "--wheel", "--out-dir", str(wheel_output)],
+        [uv, "build", "--sdist", "--out-dir", str(wheel_output)],
         cwd=source,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    sources = list(wheel_output.glob("*.tar.gz"))
+    assert len(sources) == 1
+    subprocess.run(  # noqa: S603 - executable is resolved and input is the test-built source distribution.
+        [uv, "build", "--wheel", str(sources[0]), "--out-dir", str(wheel_output)],
+        cwd=tmp_path,
         check=True,
         capture_output=True,
         text=True,
@@ -81,6 +91,47 @@ def _venv_executable(venv: Path, name: str) -> Path:
     executable_dir = venv / ("Scripts" if os.name == "nt" else "bin")
     suffix = ".exe" if os.name == "nt" else ""
     return executable_dir / f"{name}{suffix}"
+
+
+def _assert_installed_modules_and_commands(
+    consumer: Path,
+    configuration: dict[str, Any],
+    environment: dict[str, str],
+) -> None:
+    """Resolve modules and console commands only from the disposable installation."""
+    venv = consumer / ".venv"
+    import_check = subprocess.run(  # noqa: S603 - isolated interpreter imports the declared wheel modules.
+        [
+            str(_venv_executable(venv, "python")),
+            "-I",
+            "-c",
+            (
+                "import importlib, pathlib, sys; "
+                "root = pathlib.Path(sys.prefix).resolve(); "
+                "assert all(pathlib.Path(importlib.import_module(name).__file__).resolve().is_relative_to(root) for name in sys.argv[1:])"
+            ),
+            *configuration["tool"]["setuptools"]["py-modules"],
+        ],
+        cwd=consumer,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert import_check.returncode == 0, import_check.stdout + import_check.stderr
+    for command in configuration["project"]["scripts"]:
+        help_result = subprocess.run(  # noqa: S603 - command is a declared entry point in the isolated wheel installation.
+            [str(_venv_executable(venv, command)), "--help"],
+            cwd=consumer,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert help_result.returncode == 0, help_result.stdout + help_result.stderr
+        assert "usage:" in help_result.stdout.lower()
 
 
 def test_local_imports_follows_package_level_imports(tmp_path: Path) -> None:
@@ -130,12 +181,43 @@ def test_support_package_uses_its_own_readme(tmp_path: Path) -> None:
     assert description.startswith("# Python tooling\n")
 
 
+def test_installed_package_without_extras_supports_imports_and_commands(tmp_path: Path) -> None:
+    """The sdist-built wheel works with only its declared base dependencies."""
+    repository = Path(__file__).parents[2]
+    wheel_path, configuration = _build_support_wheel(repository, tmp_path)
+    assert "release_benchmarks" in configuration["tool"]["setuptools"]["py-modules"]
+    uv = shutil.which("uv")
+    assert uv is not None
+    consumer = tmp_path / "minimal-consumer"
+    consumer.mkdir()
+    venv = consumer / ".venv"
+    subprocess.run(  # noqa: S603 - resolved executable creates a disposable environment with no inherited packages.
+        [uv, "venv", "--python", sys.executable, str(venv)],
+        cwd=consumer,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    subprocess.run(  # noqa: S603 - resolved executable installs only the test-built wheel and its base requirements.
+        [uv, "pip", "install", "--python", str(_venv_executable(venv, "python")), str(wheel_path)],
+        cwd=consumer,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    _assert_installed_modules_and_commands(consumer, configuration, environment)
+
+
 def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_path: Path) -> None:
     """The built wheel's notebook extra installs every advertised command mode."""
     repository = Path(__file__).parents[2]
     wheel_path, configuration = _build_support_wheel(repository, tmp_path)
     assert set(configuration["project"]["optional-dependencies"]["notebooks"]) == {
-        "research-repo-tools[notebooks,python-tools]==0.1.8",
+        "research-repo-tools[notebooks,python-tools]==0.1.9",
     }
     with zipfile.ZipFile(wheel_path) as wheel:
         metadata_path = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))
@@ -150,7 +232,7 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
     consumer.mkdir()
     (consumer / ".python-version").write_bytes((repository / ".python-version").read_bytes())
     (consumer / "pyproject.toml").write_text(
-        '[project]\nname = "wheel-consumer"\nversion = "0.0.0"\nrequires-python = ">=3.14"\n'
+        '[project]\nname = "wheel-consumer"\nversion = "0.0.0"\nrequires-python = ">=3.15"\n'
         f"dependencies = [{json.dumps(f'delaunay-scripts[notebooks] @ {wheel_path.as_uri()}')}]\n"
         "[dependency-groups]\nnotebooks = []\n"
         '[tool.research-repo-tools.notebooks]\ngroup = "notebooks"\n'
@@ -193,37 +275,7 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
     environment["PATH"] = f"{shared_cli.parent}{os.pathsep}{environment.get('PATH', '')}"
     environment.pop("PYTHONPATH", None)
 
-    import_check = subprocess.run(  # noqa: S603 - isolated interpreter imports the declared wheel modules.
-        [
-            str(_venv_executable(venv, "python")),
-            "-I",
-            "-c",
-            (
-                "import importlib, pathlib, sys; "
-                "root = pathlib.Path(sys.prefix).resolve(); "
-                "assert all(pathlib.Path(importlib.import_module(name).__file__).resolve().is_relative_to(root) for name in sys.argv[1:])"
-            ),
-            *configuration["tool"]["setuptools"]["py-modules"],
-        ],
-        cwd=consumer,
-        env=environment,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    assert import_check.returncode == 0, import_check.stdout + import_check.stderr
-    for command in configuration["project"]["scripts"]:
-        help_result = subprocess.run(  # noqa: S603 - command is a declared entry point in the isolated wheel installation.
-            [str(_venv_executable(venv, command)), "--help"],
-            cwd=consumer,
-            env=environment,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        assert help_result.returncode == 0, help_result.stdout + help_result.stderr
+    _assert_installed_modules_and_commands(consumer, configuration, environment)
 
     lint = subprocess.run(  # noqa: S603 - executable and inputs come from the isolated test installation.
         [str(shared_cli), "--root", str(consumer), "notebooks", "lint", str(notebook)],
@@ -245,7 +297,11 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
     )
 
     assert lint.returncode == 0, lint.stderr
-    assert lint.stderr == ""
+    # The inherited Ruff pin reports its provisional Python 3.15 support.
+    ruff_notice = (
+        f"INFO {notebook}: ruff check: warning: Support for Python 3.15 is under development and may be unstable. Enable `preview` to remove this warning.\n"
+    )
+    assert lint.stderr in ("", ruff_notice), lint.stderr
     assert "OK linted" in lint.stdout
     assert execute.returncode == 0, execute.stderr
     assert "Traceback" not in execute.stderr

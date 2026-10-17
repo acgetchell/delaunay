@@ -190,7 +190,7 @@ parameterized implementation helpers live in `just/helpers.just`.
 
 Tool declarations live in their authoritative consumer files: exact uv and Cargo
 tool pins in `pyproject.toml`, Python in `.python-version`, and Rust plus components
-in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.1.8` from PyPI
+in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.1.9` from PyPI
 and is included by `dev`. Before the first Just invocation, run:
 
 ```bash
@@ -546,6 +546,12 @@ checkout, or save an explicit baseline name with the same recipe. Use
 `just performance-local` when you want the tool to manage isolated
 baseline/current worktrees.
 
+Saved baseline names must start with an ASCII letter or digit and contain only
+ASCII letters, digits, dots, underscores, or hyphens. Names must be distinct
+without regard to case across the saved samples; `new`, `base`, `change`, and
+`report` are reserved. Conflicting existing names are rejected before discovery
+or sampling with a rename diagnostic, leaving the previous output unchanged.
+
 `just bench-preflight [bench_timeout]` executes fixture setup and one operation
 for every case in every curated target using Criterion `--test`, without
 sampling, saved baselines, or measurement sidecars. Its default and maximum
@@ -561,10 +567,15 @@ existing baseline assets and published releases; see the recovery sequence in
 [`../RELEASING.md`](../RELEASING.md).
 
 Manual `just bench-latest` runs use a 30-minute timeout for each target unless
-an override is supplied. The local `performance-release` workflow uses a
-two-hour sampling ceiling plus a ten-minute preflight ceiling per target and
-derives its outer ceiling from all five curated targets (up to ten hours and
-fifty minutes). The hosted draft workflow has a 150-minute job ceiling and a
+an override is supplied. Fresh runs use a private output tree and publish to
+`target/criterion` after validation, preserving named baselines. Discovery and scientific
+preflight precede sampling, and saved baselines are checked against the fresh
+raw files before evidence is retained. The local `performance-release` workflow uses
+separate two-hour discovery and sampling ceilings per target, plus a ten-minute
+preflight ceiling per target. The sampling child also has an aggregate limit of
+two hours times the selected target count for each revision; discovery and preflight
+run before that child. There is no combined local workflow deadline.
+The hosted draft workflow has a 150-minute job ceiling and a
 one-hour sampling ceiling per target. A target timeout invalidates the measurement; rerun
 the complete release workflow rather than treating partial Criterion output as
 release evidence.

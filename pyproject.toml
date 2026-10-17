@@ -7,7 +7,7 @@ name = "delaunay-scripts"
 version = "0.8.2"
 description = "Scientific Python tooling for the delaunay Rust library"
 readme = "tooling/python/README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.15"
 license = "BSD-3-Clause"
 license-files = [ "LICENSE" ]
 authors = [ { name = "Adam Getchell", email = "adam@adamgetchell.org" } ]
@@ -18,7 +18,7 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Scientific/Engineering :: Mathematics",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Benchmarking",
@@ -27,12 +27,12 @@ classifiers = [
 # Project dependencies
 dependencies = [
     "packaging>=26.2",
-    "research-repo-tools[papers]==0.1.8",
+    "research-repo-tools[papers]==0.1.9",
 ]
 
 [project.optional-dependencies]
 notebooks = [
-    "research-repo-tools[notebooks,python-tools]==0.1.8",
+    "research-repo-tools[notebooks,python-tools]==0.1.9",
 ]
 
 [project.urls]
@@ -60,6 +60,7 @@ py-modules = [
     "performance_artifacts",
     "profiling_metadata",
     "publish_readme_performance",
+    "release_benchmarks",
 ]
 
 [tool.ruff]
@@ -254,18 +255,18 @@ disable = [
 line-length = 160
 
 [dependency-groups]
-tooling = [ "research-repo-tools[python-tools]==0.1.8" ]
+tooling = [ "research-repo-tools[python-tools]==0.1.9" ]
 dev = [
     { include-group = "tooling" },
     "actionlint-py>=1.7.12.24",
     "pyyaml>=6.0.3",
-    "semgrep>=1.172.0",
+    "semgrep>=1.181.0",
     "shellcheck-py>=0.11.0.1",
     "shfmt-py>=4.0.0",
     "yamllint>=1.38.0",
 ]
 notebooks = [
-    "research-repo-tools[notebooks,python-tools]==0.1.8",
+    "research-repo-tools[notebooks,python-tools]==0.1.9",
     "ipykernel>=7.3.0",
     "jupyterlab>=4.6.2",
     "matplotlib>=3.11.1",
@@ -278,14 +279,14 @@ notebooks = [
 ]
 
 [tool.uv]
-required-version = "==0.13.0"
-# Semgrep 1.172.0 still pins vulnerable mcp 1.23.3. Keep the patched override
-# until Semgrep's published dependency constraint moves to mcp 1.28.1 or later.
-override-dependencies = [ "mcp==1.28.1" ]
+required-version = "==0.13.1"
+# Semgrep 1.181.0 pins vulnerable MCP 1.29.0 and pywin32 311, whose wheels
+# stop at Python 3.14. Retain patched MCP 1.x and Python 3.15 Windows wheels.
+override-dependencies = [ "mcp==1.30.0", "pywin32==312; sys_platform == 'win32'" ]
 
 [tool.uv.dependency-groups]
-tooling = { requires-python = ">=3.14" }
-notebooks = { requires-python = ">=3.14" }
+tooling = { requires-python = ">=3.15" }
+notebooks = { requires-python = ">=3.15" }
 
 [tool.research-repo-tools]
 schema = 1

@@ -76,8 +76,6 @@ delaunay/
 │   ├── validation.bib
 │   ├── validation.pdf
 │   └── validation.tex
-├── scripts/
-│   └── release_benchmarks.sh
 ├── src/
 │   ├── bin/
 │   │   ├── delaunay/
@@ -120,7 +118,8 @@ delaunay/
 │       ├── notebook_visualization.py
 │       ├── performance_artifacts.py
 │       ├── profiling_metadata.py
-│       └── publish_readme_performance.py
+│       ├── publish_readme_performance.py
+│       └── release_benchmarks.py
 ├── AGENTS.md
 ├── Cargo.toml
 ├── Cargo.lock
@@ -173,8 +172,8 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
 - `docs/dev/` contains operational rules for agents and contributors, indexed
   by [`../dev/README.md`](../dev/README.md).
 - `docs/architecture/` contains focused architecture references.
-- `scripts/` contains shell scripts only. The release benchmark shell script
-  retains the preflight binding described in the shared tooling adoption guide.
+- `tooling/python/release_benchmarks.py` owns release benchmark handoff policy;
+  the shared package owns remote release identity and publication checks.
 - `.github/` contains issue templates, workflow definitions, and
   repository-integrated automation.
 

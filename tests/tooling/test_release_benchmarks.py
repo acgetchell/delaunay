@@ -1,246 +1,183 @@
-"""Execute the release publication guard against a local fake GitHub transport."""
+"""Consumer release policy using the installed shared target contract."""
 
-import hashlib
 import json
 import os
+import shlex
+import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
-from research_repo_tools.process import run_command as run_safe_command
+import yaml
+from research_repo_tools.process import run_command
+from research_repo_tools.release_assets import GitHubRelease, ReleaseTarget, parse_release_target
 
-if TYPE_CHECKING:
-    import subprocess
+import release_benchmarks
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "release_benchmarks.sh"
 COMMIT = "a" * 40
-ASSET = "delaunay-v0.8.2-criterion-baseline.tar.gz"
+TAG = "v0.8.2"
+REPOSITORY = "acgetchell/delaunay"
+ASSET = f"delaunay-{TAG}-criterion-baseline.tar.gz"
+WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/release-benchmarks.yml"
 
 
 @pytest.fixture
-def release_env(tmp_path: Path) -> dict[str, str]:
-    """Provide a draft, tagged commit, archive, and observable fake CLI writes."""
-    archive = b"complete benchmark archive"
-    (tmp_path / ASSET).write_bytes(archive)
-    release = {
-        "id": 42,
-        "tag_name": "v0.8.2",
-        "draft": True,
-        "prerelease": False,
-        "immutable": False,
-        "published_at": None,
-        "assets": [],
-    }
-    (tmp_path / "before.json").write_text(json.dumps(release), encoding="utf-8")
-    release["assets"] = [{"name": ASSET, "state": "uploaded", "size": len(archive), "digest": f"sha256:{hashlib.sha256(archive).hexdigest()}"}]
-    (tmp_path / "after.json").write_text(json.dumps(release), encoding="utf-8")
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    gh = fake_bin / "gh"
-    gh.write_text(
-        """#!/usr/bin/env bash
-set -euo pipefail
-echo "$*" >> "$FAKE_ROOT/calls"
-case "$*" in
-    *'--method PATCH'*) exit "${PUBLISH_STATUS:-0}" ;;
-    'release upload '*)
-        [[ "${UPLOAD_STATUS:-0}" == 0 ]] || exit "$UPLOAD_STATUS"
-        cp "$FAKE_ROOT/after.json" "$FAKE_ROOT/before.json" ;;
-    *'/releases?per_page=100'*)
-        [[ "${MISSING_RELEASE:-0}" == 0 ]] || exit 1
-        if [[ -f "$FAKE_ROOT/releases-response.json" ]]; then
-            cat "$FAKE_ROOT/releases-response.json"
-        else
-            jq '[[.]]' "$FAKE_ROOT/before.json"
-        fi
-        exit "${RELEASES_STATUS:-0}" ;;
-    *'/git/ref/tags/'*) printf '{"type":"commit","sha":"%s"}\\n' "$REMOTE_COMMIT" ;;
-    *) exit 99 ;;
-esac
-""",
-        encoding="utf-8",
+def target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ReleaseTarget:
+    """Provide the shared typed identity; remote lifecycle tests belong upstream."""
+    selected = ReleaseTarget(repository=REPOSITORY, release_id=42, tag=TAG, commit=COMMIT)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "output"))
+    monkeypatch.setattr(release_benchmarks, "resolve_revision", lambda *_args: COMMIT)
+    monkeypatch.setattr(release_benchmarks, "preflight_release_target", lambda *_args: selected)
+    monkeypatch.setattr(
+        release_benchmarks,
+        "revalidate_release_target",
+        lambda *_args: GitHubRelease(REPOSITORY, TAG, 42, draft=True, immutable=False, prerelease=False, assets=()),
     )
-    git = fake_bin / "git"
-    git.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$LOCAL_COMMIT"\n', encoding="utf-8")
-    gh.chmod(0o755)
-    git.chmod(0o755)
-    return {
-        **os.environ,
-        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
-        "FAKE_ROOT": str(tmp_path),
-        "GITHUB_OUTPUT": str(tmp_path / "output"),
-        "GITHUB_REPOSITORY": "owner/repo",
-        "RELEASE_TAG": "v0.8.2",
-        "LOCAL_COMMIT": COMMIT,
-        "REMOTE_COMMIT": COMMIT,
-        "EXPECTED_COMMIT": COMMIT,
-        "EXPECTED_RELEASE_ID": "42",
-    }
+    return selected
 
 
-def run_guard(tmp_path: Path, env: dict[str, str], mode: str = "preflight") -> subprocess.CompletedProcess[str]:
-    """Run the actual guard without remote access or Git mutations."""
-    return run_safe_command("bash", [str(SCRIPT), mode], cwd=tmp_path, env=env, check=False, timeout=10)
+def test_trusted_handoff_reaches_publication_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: ReleaseTarget) -> None:
+    """The trusted target survives a long build and publication has explicit intent."""
+    handoff = tmp_path / "target.json"
+    publish = Mock()
+    monkeypatch.setattr(release_benchmarks, "publish_release_asset", publish)
+    release_benchmarks.release_benchmarks("preflight", tmp_path, handoff, REPOSITORY, TAG)
+    assert parse_release_target(handoff.read_bytes()) == target
+    assert (tmp_path / "output").read_bytes() == f"commit={COMMIT}\n".encode()
+    publish.assert_not_called()
+    release_benchmarks.release_benchmarks("publish", tmp_path, handoff, REPOSITORY, TAG)
+    publish.assert_called_once_with(tmp_path, REPOSITORY, TAG, tmp_path / ASSET, target=target, publish=True)
 
 
-def change_release(tmp_path: Path, field: str, value: object, filename: str = "before.json") -> None:
-    """Change one transport field to exercise a fail-closed boundary."""
-    path = tmp_path / filename
-    release = json.loads(path.read_text(encoding="utf-8"))
-    release[field] = value
-    path.write_text(json.dumps(release), encoding="utf-8")
+def test_annotated_tag_handoff_uses_peeled_commit_and_requires_matching_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real Git resolution distinguishes the tag object, its commit, and a later HEAD."""
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    root = tmp_path / "release checkout"
+    root.mkdir()
+    for args in (
+        ["init", "--quiet"],
+        ["config", "user.name", "Release Test"],
+        ["config", "user.email", "release@example.invalid"],
+        ["commit", "--quiet", "--allow-empty", "-m", "release"],
+        ["tag", "--annotate", TAG, "--message", "release"],
+    ):
+        run_command("git", args, cwd=root, timeout=30)
+    commit = run_command("git", ["--no-pager", "rev-parse", "HEAD"], cwd=root, timeout=30).stdout.strip()
+    tag_object = run_command("git", ["--no-pager", "rev-parse", f"refs/tags/{TAG}"], cwd=root, timeout=30).stdout.strip()
+    assert tag_object != commit
+    run_command("git", ["commit", "--quiet", "--allow-empty", "-m", "later checkout"], cwd=root, timeout=30)
+    selected = ReleaseTarget(repository=REPOSITORY, release_id=42, tag=TAG, commit=commit)
+    preflight = Mock(return_value=selected)
+    revalidate = Mock(return_value=GitHubRelease(REPOSITORY, TAG, 42, draft=True, immutable=False, prerelease=False, assets=()))
+    publish = Mock()
+    monkeypatch.setattr(release_benchmarks, "preflight_release_target", preflight)
+    monkeypatch.setattr(release_benchmarks, "revalidate_release_target", revalidate)
+    monkeypatch.setattr(release_benchmarks, "publish_release_asset", publish)
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    handoff = tmp_path / "target.json"
+
+    release_benchmarks.release_benchmarks("preflight", root, handoff, REPOSITORY, TAG)
+
+    preflight.assert_called_once_with(root, REPOSITORY, TAG, commit)
+    assert parse_release_target(handoff.read_bytes()) == selected
+    assert output.read_bytes() == f"commit={commit}\n".encode()
+    with pytest.raises(ValueError, match="HEAD differs"):
+        release_benchmarks.release_benchmarks("publish", root, handoff, REPOSITORY, TAG)
+    publish.assert_not_called()
+    run_command("git", ["checkout", "--quiet", "--detach", commit], cwd=root, timeout=30)
+
+    release_benchmarks.release_benchmarks("publish", root, handoff, REPOSITORY, TAG)
+
+    publish.assert_called_once_with(root, REPOSITORY, TAG, root / ASSET, target=selected, publish=True)
+    revalidate.assert_called_with(root, selected)
 
 
-def assert_no_publication(tmp_path: Path) -> None:
-    """Check that no publication request escaped a failed validation."""
-    calls = tmp_path / "calls"
-    assert not calls.exists() or "--method PATCH" not in calls.read_text(encoding="utf-8")
+@pytest.mark.parametrize("failure", ["checkout", "tag", "repository", "existing"])
+def test_consumer_policy_blocks_wrong_checkout_or_existing_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: ReleaseTarget,
+    failure: str,
+) -> None:
+    """Local policy adds checkout and no-overwrite constraints to shared lifecycle checks."""
+    handoff = tmp_path / "target.json"
+    release_benchmarks.release_benchmarks("preflight", tmp_path, handoff, REPOSITORY, TAG)
+    original = handoff.read_bytes()
+    publish = Mock()
+    monkeypatch.setattr(release_benchmarks, "publish_release_asset", publish)
+    if failure == "checkout":
+        monkeypatch.setattr(release_benchmarks, "resolve_revision", lambda *_args: "b" * 40)
+    if failure == "existing":
+        monkeypatch.setattr(
+            release_benchmarks,
+            "revalidate_release_target",
+            lambda *_args: GitHubRelease(REPOSITORY, TAG, target.release_id, draft=True, immutable=False, prerelease=False, assets=((ASSET, 7, 42, None),)),
+        )
+    with pytest.raises(ValueError, match=r"differs|already exists"):
+        release_benchmarks.release_benchmarks(
+            "publish",
+            tmp_path,
+            handoff,
+            "different/repository" if failure == "repository" else REPOSITORY,
+            "v0.8.3" if failure == "tag" else TAG,
+        )
+    publish.assert_not_called()
+    assert handoff.read_bytes() == original
 
 
-def assert_no_remote_writes(tmp_path: Path) -> None:
-    """Require failed pre-upload validation to leave the remote draft untouched."""
-    assert_no_publication(tmp_path)
-    calls = tmp_path / "calls"
-    assert not calls.exists() or "release upload" not in calls.read_text(encoding="utf-8")
-    assert not (tmp_path / "output").exists()
-
-
-@pytest.mark.parametrize("tag", ["main", "v01.2.3", "v1.2.3-rc.1", "v1.2.3+build", "v1.2.3\n", "$(touch injected)"])
-def test_invalid_tag_fails_before_network(tmp_path: Path, release_env: dict[str, str], tag: str) -> None:
-    release_env["RELEASE_TAG"] = tag
-    assert run_guard(tmp_path, release_env).returncode != 0
-    assert not (tmp_path / "calls").exists()
+def test_release_workflow_preserves_trusted_code_runtime_and_target() -> None:
+    """The release checkout cannot replace the upload implementation or its registry pin."""
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert workflow.index("Preserve publication runtime") < workflow.index("Validate draft release target") < workflow.index("Check out exact release commit")
+    assert 'cp pyproject.toml uv.lock .python-version "$RUNNER_TEMP/release-tools/"' in workflow
+    assert 'cp tooling/python/release_benchmarks.py "$RUNNER_TEMP/release-tools/"' in workflow
+    assert workflow.count('"$RUNNER_TEMP/release-tools/.venv/bin/python"') == 2
+    assert 'preflight "$RUNNER_TEMP/release-target.json"' in workflow
+    assert 'publish "$RUNNER_TEMP/release-target.json"' in workflow
 
 
 @pytest.mark.parametrize(
-    ("field", "value"),
-    [("draft", False), ("prerelease", True), ("immutable", True), ("immutable", None), ("published_at", "2026-09-09"), ("tag_name", "v0.8.1"), ("id", 43)],
+    ("step_name", "mode"),
+    [("Validate draft release target", "preflight"), ("Attach baseline and publish draft", "publish")],
 )
-def test_unsuitable_release_never_publishes(tmp_path: Path, release_env: dict[str, str], field: str, value: object) -> None:
-    change_release(tmp_path, field, value)
-    assert run_guard(tmp_path, release_env).returncode != 0
-    assert_no_publication(tmp_path)
-
-
-@pytest.mark.parametrize("failure", ["missing", "moved", "existing"])
-def test_preflight_rejects_missing_or_changed_target(tmp_path: Path, release_env: dict[str, str], failure: str) -> None:
-    if failure == "missing":
-        release_env["MISSING_RELEASE"] = "1"
-    elif failure == "moved":
-        release_env["REMOTE_COMMIT"] = "b" * 40
-    else:
-        change_release(tmp_path, "assets", [{"name": ASSET}])
-    assert run_guard(tmp_path, release_env).returncode != 0
-    assert_no_publication(tmp_path)
-
-
-def test_preflight_binds_release_and_commit_without_writes(tmp_path: Path, release_env: dict[str, str]) -> None:
-    result = run_guard(tmp_path, release_env)
-    assert result.returncode == 0, result.stderr
-    assert (tmp_path / "output").read_text(encoding="utf-8") == f"release_id=42\ncommit={COMMIT}\n"
-    assert "release upload" not in (tmp_path / "calls").read_text(encoding="utf-8")
-    assert_no_publication(tmp_path)
-
-
-def test_publish_verifies_upload_before_publication(tmp_path: Path, release_env: dict[str, str]) -> None:
-    result = run_guard(tmp_path, release_env, "publish")
-    assert result.returncode == 0, result.stderr
-    calls = (tmp_path / "calls").read_text(encoding="utf-8")
-    assert calls.index("release upload") < calls.rindex("/releases?per_page=100") < calls.index("--method PATCH")
-    assert "-F draft=false" in calls
-    assert "--clobber" not in calls
-
-
-@pytest.mark.parametrize("failure", ["upload", "digest", "absent", "published", "identity", "empty", "missing_identity"])
-def test_failed_publication_leaves_draft_recoverable(tmp_path: Path, release_env: dict[str, str], failure: str) -> None:
-    if failure == "upload":
-        release_env["UPLOAD_STATUS"] = "1"
-    elif failure in {"digest", "absent"}:
-        assets = [] if failure == "absent" else [{"name": ASSET, "state": "uploaded", "size": 1, "digest": "sha256:wrong"}]
-        change_release(tmp_path, "assets", assets, "after.json")
-    elif failure == "published":
-        change_release(tmp_path, "draft", value=False, filename="after.json")
-    elif failure == "identity":
-        change_release(tmp_path, "id", 43, "after.json")
-    elif failure == "empty":
-        (tmp_path / ASSET).write_bytes(b"")
-    else:
-        release_env.pop("EXPECTED_COMMIT")
-    assert run_guard(tmp_path, release_env, "publish").returncode != 0
-    assert_no_publication(tmp_path)
-
-
-@pytest.mark.parametrize("mode", ["preflight", "publish"])
-@pytest.mark.parametrize("response", ["", "null", "[]", "[[]]", "[null]", "{"])
-def test_malformed_release_response_never_writes(tmp_path: Path, release_env: dict[str, str], response: str, mode: str) -> None:
-    (tmp_path / "releases-response.json").write_text(response, encoding="utf-8")
-    assert run_guard(tmp_path, release_env, mode).returncode != 0
-    assert_no_remote_writes(tmp_path)
-
-
-@pytest.mark.parametrize("mode", ["preflight", "publish"])
-def test_release_response_followed_by_transport_failure_never_writes(tmp_path: Path, release_env: dict[str, str], mode: str) -> None:
-    release_env["RELEASES_STATUS"] = "57"
-    assert run_guard(tmp_path, release_env, mode).returncode == 57
-    assert_no_remote_writes(tmp_path)
-
-
-@pytest.mark.parametrize("filename", ["before.json", "after.json"])
-@pytest.mark.parametrize("assets", [None, {}, {"asset": {"name": "other"}}, False, 0, "assets", [None], [{}], [{"name": None}], [{"name": 3}], [{"name": ""}]])
-def test_invalid_asset_collection_blocks_publication(tmp_path: Path, release_env: dict[str, str], filename: str, assets: object) -> None:
-    change_release(tmp_path, "assets", assets, filename)
-    result = run_guard(tmp_path, release_env, "publish")
-    assert result.returncode != 0
-    assert "release assets must be an array of named objects" in result.stderr
-    assert_no_publication(tmp_path)
-    if filename == "before.json":
-        assert_no_remote_writes(tmp_path)
-    else:
-        assert "release upload" in (tmp_path / "calls").read_text(encoding="utf-8")
-
-
-@pytest.mark.parametrize("filename", ["before.json", "after.json"])
-def test_missing_asset_collection_blocks_publication(tmp_path: Path, release_env: dict[str, str], filename: str) -> None:
-    path = tmp_path / filename
-    release = json.loads(path.read_text(encoding="utf-8"))
-    del release["assets"]
-    path.write_text(json.dumps(release), encoding="utf-8")
-    assert run_guard(tmp_path, release_env, "publish").returncode != 0
-    assert_no_publication(tmp_path)
-    if filename == "before.json":
-        assert_no_remote_writes(tmp_path)
-
-
-@pytest.mark.parametrize("size", ["0", "26", None, True, {}, [], 0, -1, 1, 1.5])
-def test_uploaded_asset_size_must_match_local_bytes(tmp_path: Path, release_env: dict[str, str], size: object) -> None:
-    path = tmp_path / "after.json"
-    release = json.loads(path.read_text(encoding="utf-8"))
-    release["assets"][0]["size"] = size
-    path.write_text(json.dumps(release), encoding="utf-8")
-    result = run_guard(tmp_path, release_env, "publish")
-    assert result.returncode != 0
-    assert "different size or digest" in result.stderr
-    assert "release upload" in (tmp_path / "calls").read_text(encoding="utf-8")
-    assert_no_publication(tmp_path)
-
-
-def test_duplicate_baseline_name_blocks_publication_even_if_one_copy_matches(tmp_path: Path, release_env: dict[str, str]) -> None:
-    path = tmp_path / "after.json"
-    release = json.loads(path.read_text(encoding="utf-8"))
-    release["assets"].append({**release["assets"][0], "digest": "sha256:wrong"})
-    path.write_text(json.dumps(release), encoding="utf-8")
-    assert run_guard(tmp_path, release_env, "publish").returncode != 0
-    assert_no_publication(tmp_path)
-
-
-def test_unrelated_asset_names_are_data_not_filter_or_shell_code(tmp_path: Path, release_env: dict[str, str]) -> None:
-    name = "other'\"; $(touch injected); [not a filter]"
-    for filename in ("before.json", "after.json"):
-        path = tmp_path / filename
-        release = json.loads(path.read_text(encoding="utf-8"))
-        release["assets"].append({"name": name})
-        path.write_text(json.dumps(release), encoding="utf-8")
-    result = run_guard(tmp_path, release_env, "publish")
-    assert result.returncode == 0, result.stderr
-    assert "--method PATCH" in (tmp_path / "calls").read_text(encoding="utf-8")
-    assert not (tmp_path / "injected").exists()
+def test_release_workflow_launcher_ignores_incompatible_ambient_uv(tmp_path: Path, step_name: str, mode: str) -> None:
+    """Both workflow commands reach the preserved adapter after ambient uv changes."""
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    command = next(step["run"] for step in workflow["jobs"]["release-baseline"]["steps"] if step.get("name") == step_name)
+    runtime = tmp_path / "release-tools"
+    python = runtime / ".venv/bin/python"
+    python.parent.mkdir(parents=True)
+    python.write_text(f'#!/bin/sh\nexec {shlex.quote(Path(sys.executable).as_posix())} "$@"\n', encoding="utf-8")
+    python.chmod(0o755)
+    adapter = runtime / "release_benchmarks.py"
+    adapter.write_text("import json, sys\nprint(json.dumps([__file__, *sys.argv[1:]]))\n", encoding="utf-8")
+    ambient_bin = tmp_path / "ambient-bin"
+    ambient_bin.mkdir()
+    uv = ambient_bin / "uv"
+    uv.write_text(
+        '#!/bin/sh\nprintf "incompatible uv version\\n" >&2\nprintf "called\\n" > "$RUNNER_TEMP/ambient-uv-called"\nexit 2\n',
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    checkout = tmp_path / "release-checkout"
+    checkout.mkdir()
+    (checkout / "release_benchmarks.py").write_text('raise RuntimeError("release checkout adapter must not run")\n', encoding="utf-8")
+    environment = os.environ.copy()
+    environment["RUNNER_TEMP"] = tmp_path.as_posix()
+    environment["PATH"] = f"{ambient_bin}{os.pathsep}{environment.get('PATH', '')}"
+    result = run_command(
+        "bash",
+        ["--noprofile", "--norc", "-eo", "pipefail", "-c", command],
+        cwd=checkout,
+        env=environment,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    actual_adapter, actual_mode, actual_target = json.loads(result.stdout)
+    assert Path(actual_adapter) == adapter
+    assert actual_mode == mode
+    assert Path(actual_target) == tmp_path / "release-target.json"
+    assert not (tmp_path / "ambient-uv-called").exists()

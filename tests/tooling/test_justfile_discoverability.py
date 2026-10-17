@@ -268,7 +268,8 @@ def test_release_signal_benchmark_recipes_match_python_runner() -> None:
 
     assert "uv run --locked benchmark-utils run-release-signal" in latest_command
     assert "cargo bench --profile perf --bench" not in latest_command
-    assert 'uv run --locked benchmark-utils run-release-signal --save-baseline "$tag"' in saved_command
+    assert "uv run --locked benchmark-utils run-release-signal --suite 'release-signal' --save-baseline 'last'" in saved_command
+    assert "cargo bench" not in saved_command
 
 
 def test_checkpoint_baseline_replacement_and_full_report_are_discoverable() -> None:
@@ -545,7 +546,7 @@ def test_ci_composes_non_mutating_canonical_validation_figure_check() -> None:
     """The local CI contract should catch stale tracked figures on canonical macOS."""
     recipes = inspect_justfile(REPO_ROOT).recipes
     ci_dependencies = [dependency["recipe"] for dependency in recipes["ci"]["dependencies"]]
-    assert ci_dependencies[0] == "_validation-doc-figures-check-if-canonical"
+    assert ci_dependencies[:3] == ["check", "python-fixture-lint", "_validation-doc-figures-check-if-canonical"]
 
     rendered_result = dry_run(REPO_ROOT, "validation-doc-figures-check")
     rendered = rendered_result.stdout + rendered_result.stderr

@@ -2,20 +2,25 @@
 
 import json
 import re
-from dataclasses import asdict, dataclass, field as dataclass_field
+from dataclasses import asdict, dataclass, field as dataclass_field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, cast
 
+from research_repo_tools.complete_runs import CompletePolicy, parse_policy
 from research_repo_tools.criterion import (
     COMPARISON_SCHEMA,
+    SAMPLE_SCHEMA,
     ComparisonSet,
     Estimate,
     Sample,
     compare_samples,
     parse_comparison,
+    parse_sample,
     serialize_comparison,
 )
+from research_repo_tools.criterion_inventory import parse_inventory
 from research_repo_tools.evidence import Evidence, Provenance, parse_evidence, publish_evidence, serialize_evidence, sha256
+from research_repo_tools.host_metadata import parse_host
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -23,6 +28,7 @@ if TYPE_CHECKING:
 
 POLICY_SCHEMA = "delaunay/performance-policy/v1"
 POLICY_CONTEXT = "delaunay.performance-policy"
+MEASUREMENTS_CONTEXT = "delaunay.measurements"
 BENCHMARK_CONTRACT_START = "v0.8.2"
 SUITES = ("release-signal", "ci", "query", "predicates", "topology")
 SCOPES = ("release-signal", "all-benches")
@@ -583,6 +589,7 @@ class PerformanceBundle:
 
     context: ArtifactContext
     rows: tuple[PerformanceRow, ...]
+    measurements: tuple[tuple[str, Evidence], ...] = ()
     payload_sha256: str | None = dataclass_field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -606,6 +613,9 @@ class PerformanceBundle:
             if row.coverage_status == "comparable" and comparison_blockers:
                 msg = "comparable row is not supported by compatible measurement provenance"
                 raise ValueError(msg)
+        if self.measurements:
+            _validate_measurements(self)
+            object.__setattr__(self, "measurements", tuple(sorted(self.measurements, key=lambda item: item[0])))
 
     @property
     def sorted_rows(self) -> tuple[PerformanceRow, ...]:
@@ -698,6 +708,101 @@ def comparison_for_bundle(bundle: PerformanceBundle) -> ComparisonSet:
     return compare_samples(sample("baseline"), sample("current"))
 
 
+def _validate_measurement_toolchain(metadata: Mapping[str, str], toolchain: ToolchainState) -> None:
+    """Require captured compiler and Criterion identities to match report policy."""
+    try:
+        rustc = json.loads(metadata.get("tool.rustc", "null"))
+    except json.JSONDecodeError as error:
+        msg = "retained measurement rustc must be a JSON-encoded compiler identity"
+        raise ValueError(msg) from error
+    if toolchain.rustc is None or rustc != toolchain.rustc:
+        msg = "retained measurement rustc does not match report toolchain"
+        raise ValueError(msg)
+    if toolchain.criterion_version is None or metadata.get("dependency.criterion") != toolchain.criterion_version:
+        msg = "retained measurement Criterion version does not match report toolchain"
+        raise ValueError(msg)
+
+
+def _measurement_timings(context: ArtifactContext, side: str, evidence: Evidence) -> tuple[dict[str, Estimate], CompletePolicy | None]:
+    """Validate one revision's retained scientific and provenance bindings."""
+    if evidence.payload_schema != SAMPLE_SCHEMA or len(evidence.sources) != 1 or evidence.sources[0][0] != "measurement":
+        msg = "retained measurement must use the shared sample and measurement provenance"
+        raise ValueError(msg)
+    source = evidence.sources[0][1]
+    metadata = dict(source.context)
+    state = context.current_source if side == "current" else context.baseline_source
+    toolchain = context.current_toolchain if side == "current" else context.baseline_toolchain
+    completed_targets = context.current_completed_targets if side == "current" else context.baseline_completed_targets
+    artifact = context.current_artifact if side == "current" else context.baseline_artifact
+    recorded_host = context.current_measurement_host if side == "current" else context.baseline_measurement_host
+    if source.revision != state.commit or metadata.get("release") != state.version or source.source_sha256 is None or source.harness_sha256 is None:
+        msg = "retained measurement does not match source identity"
+        raise ValueError(msg)
+    if metadata.get("delaunay.scientific-preflight") != "passed" or metadata.get("delaunay.raw-sample-sha256") != artifact.content_sha256:
+        msg = "retained measurement lacks the scientific gate or raw-sample binding"
+        raise ValueError(msg)
+    if metadata.get("delaunay.sample") != artifact.sample_name:
+        msg = "retained measurement sample name does not match artifact"
+        raise ValueError(msg)
+    _validate_measurement_toolchain(metadata, toolchain)
+    metadata_source = f"retained {side} measurement"
+    host = parse_host(_required_string(metadata, "host", source=metadata_source).encode("utf-8"))
+    if (host.cpu, host.os, host.architecture) != (recorded_host.cpu, recorded_host.operating_system, recorded_host.architecture):
+        msg = "retained measurement host does not match report context"
+        raise ValueError(msg)
+    policy = parse_policy(_required_string(metadata, "delaunay.sampling-policy", source=metadata_source).encode("utf-8"))
+    inventory = parse_inventory(_required_string(metadata, "delaunay.inventory", source=metadata_source).encode("utf-8"))
+    if {name for name, _ in inventory.suites} != set(completed_targets):
+        msg = "retained measurement inventory targets do not match completed targets"
+        raise ValueError(msg)
+    sample = parse_sample(evidence.payload)
+    timings = dict(sample.estimates)
+    if (
+        sample.unit != policy.unit
+        or sample.statistic not in policy.statistics
+        or any(estimate.confidence_level != policy.confidence_level for estimate in timings.values())
+    ):
+        msg = "retained measurement estimates differ from their sampling policy"
+        raise ValueError(msg)
+    if sample.statistic != "median" or sample.unit != "ns" or set(timings) != set(policy.expected) or policy.expected != inventory.expected:
+        msg = "retained measurement inventory differs from its sampling policy"
+        raise ValueError(msg)
+    shared_targets = set(context.current_completed_targets) & set(context.baseline_completed_targets)
+    shared_ids = tuple(name for target, names in inventory.suites if target in shared_targets for name in names if name in timings)
+    shared_policy = (
+        replace(policy, expected=shared_ids, sample_count=None, sample_counts=tuple((name, policy.count_for(name)) for name in shared_ids))
+        if shared_ids
+        else None
+    )
+    return timings, shared_policy
+
+
+def _validate_measurements(bundle: PerformanceBundle) -> None:
+    """Bind independently captured shared evidence to the report's selected rows."""
+    if len(bundle.measurements) != 2 or {name for name, _ in bundle.measurements} != {"baseline", "current"}:
+        msg = "retained measurements require exactly baseline and current evidence"
+        raise ValueError(msg)
+    measured_ids: set[str] = set()
+    policies = {}
+    for side, evidence in bundle.measurements:
+        timings, policies[side] = _measurement_timings(bundle.context, side, evidence)
+        measured_ids.update(timings)
+        for row in bundle.rows:
+            timing = row.current if side == "current" else row.baseline
+            if timing != _complete_timing(timings.get(row.benchmark_id)):
+                msg = "report timing differs from retained measurement"
+                raise ValueError(msg)
+    if measured_ids != {row.benchmark_id for row in bundle.rows}:
+        msg = "report omits retained measurement rows"
+        raise ValueError(msg)
+    if (
+        bundle.context.current_toolchain.measurement_plan_sha256 == bundle.context.baseline_toolchain.measurement_plan_sha256
+        and policies["baseline"] != policies["current"]
+    ):
+        msg = "retained sampling policies contradict matching measurement plans"
+        raise ValueError(msg)
+
+
 def _context_payload(context: ArtifactContext) -> dict[str, object]:
     """Keep the Delaunay selection and comparability contract in consumer context."""
 
@@ -745,12 +850,19 @@ def evidence_for_bundle(bundle: PerformanceBundle) -> Evidence:
     }
     policy_text = json.dumps(policy, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     context = bundle.context
+    measurement_context = ()
+    if bundle.measurements:
+        records = {side: [part.decode("utf-8") for part in serialize_evidence(evidence)] for side, evidence in bundle.measurements}
+        measurement_context = ((MEASUREMENTS_CONTEXT, json.dumps(records, sort_keys=True, separators=(",", ":"))),)
     return Evidence(
         serialize_comparison(comparison_for_bundle(bundle)),
         COMPARISON_SCHEMA,
         (
             ("baseline", Provenance(context.baseline_source.commit, context=(("release", context.release.baseline),))),
-            ("current", Provenance(context.current_source.commit, context=(("release", context.release.current), (POLICY_CONTEXT, policy_text)))),
+            (
+                "current",
+                Provenance(context.current_source.commit, context=(("release", context.release.current), (POLICY_CONTEXT, policy_text), *measurement_context)),
+            ),
         ),
     )
 
@@ -1050,7 +1162,7 @@ def _load_policy(evidence: Evidence, *, source: str) -> Mapping[str, object]:
     if policy["schema"] != POLICY_SCHEMA:
         msg = f"unsupported Delaunay performance policy: {policy['schema']!r}"
         raise ValueError(msg)
-    return policy
+    return cast("Mapping[str, object]", policy)
 
 
 def _verify_source_binding(evidence: Evidence, context: ArtifactContext) -> None:
@@ -1064,6 +1176,24 @@ def _verify_source_binding(evidence: Evidence, context: ArtifactContext) -> None
         if recorded.source_sha256 is not None or recorded.harness_sha256 is not None:
             msg = "consumer-framed fingerprints must not be relabeled as shared file fingerprints"
             raise ValueError(msg)
+
+
+def _load_measurements(evidence: Evidence) -> tuple[tuple[str, Evidence], ...]:
+    """Read optional v0.1.9 measurement records without upgrading historical evidence."""
+    records_text = dict(dict(evidence.sources)["current"].context).get(MEASUREMENTS_CONTEXT)
+    measurements = []
+    if records_text is not None:
+        records = json.loads(records_text)
+        if not isinstance(records, dict) or set(records) != {"baseline", "current"}:
+            msg = "retained measurement records require both revisions"
+            raise ValueError(msg)
+        for side in ("baseline", "current"):
+            parts = records[side]
+            if not isinstance(parts, list) or len(parts) != 2 or any(not isinstance(part, str) for part in parts):
+                msg = "retained measurement records require a payload and manifest pair"
+                raise ValueError(msg)
+            measurements.append((side, parse_evidence(parts[0].encode("utf-8"), parts[1].encode("utf-8"))))
+    return tuple(measurements)
 
 
 def load_bundle_bytes(payload: bytes, provenance_payload: bytes, *, source: str) -> PerformanceBundle:
@@ -1111,7 +1241,7 @@ def load_bundle_bytes(payload: bytes, provenance_payload: bytes, *, source: str)
     if {row.benchmark_id for row in rows} != baseline.keys() | current.keys():
         msg = "Delaunay row policy does not match the complete shared benchmark inventory"
         raise ValueError(msg)
-    bundle = PerformanceBundle(context=context, rows=tuple(rows))
+    bundle = PerformanceBundle(context=context, rows=tuple(rows), measurements=_load_measurements(evidence))
     object.__setattr__(bundle, "payload_sha256", sha256(payload))
     return bundle
 
@@ -1125,7 +1255,9 @@ def write_bundle(paths: ArtifactPaths, bundle: PerformanceBundle) -> None:
     """Publish validated shared evidence through the package's transaction."""
     evidence = evidence_for_bundle(bundle)
     payload, manifest = serialize_evidence(evidence)
-    if load_bundle_bytes(payload, manifest, source="new shared bundle") != PerformanceBundle(context=bundle.context, rows=bundle.sorted_rows):
+    if load_bundle_bytes(payload, manifest, source="new shared bundle") != PerformanceBundle(
+        context=bundle.context, rows=bundle.sorted_rows, measurements=bundle.measurements
+    ):
         msg = "serialized performance bundle does not match validated measurements"
         raise ValueError(msg)
     publish_evidence(evidence, paths.payload, paths.provenance)
