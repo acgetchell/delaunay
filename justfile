@@ -85,35 +85,7 @@ bench-preflight bench_timeout="600": _ensure-uv
 # Save a Criterion baseline for a Delaunay benchmark suite.
 [group('benchmarks and performance')]
 bench-save-baseline tag suite="release-signal": _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tag="{{ tag }}"
-    suite="{{ suite }}"
-    case "$suite" in
-        release-signal)
-            {{ managed }} uv run --locked benchmark-utils run-release-signal --save-baseline "$tag"
-            exit 0
-            ;;
-        ci)
-            targets=(ci_performance_suite)
-            ;;
-        query)
-            targets=(circumsphere_containment locate)
-            ;;
-        predicates)
-            targets=(circumsphere_containment cold_path_predicates)
-            ;;
-        topology)
-            targets=(topology_guarantee_construction)
-            ;;
-        *)
-            echo "unknown benchmark suite: $suite" >&2
-            exit 2
-            ;;
-    esac
-    for target in "${targets[@]}"; do
-        {{ managed }} cargo bench --profile perf --bench "$target" -- --save-baseline "$tag"
-    done
+    {{ managed }} uv run --locked benchmark-utils run-release-signal --suite {{ quote(suite) }} --save-baseline {{ quote(tag) }}
 
 # Smoke-test benchmark harnesses with minimal samples; not for performance data.
 # Criterion requires sample_size >= 10; use the minimum with short measurement/warm-up windows.
@@ -188,7 +160,7 @@ check-fast:
 
 # CI simulation: comprehensive validation.
 [group('workflows')]
-ci: _validation-doc-figures-check-if-canonical check python-fixture-lint test bench-compile examples
+ci: check python-fixture-lint _validation-doc-figures-check-if-canonical test bench-compile examples
     @echo "🎯 CI checks complete!"
 
 # CI plus the explicit slow correctness bucket.

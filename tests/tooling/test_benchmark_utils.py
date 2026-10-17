@@ -16,16 +16,22 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock, patch
 
 import pytest
-from research_repo_tools.evidence import parse_evidence, serialize_evidence
+from research_repo_tools import measurement as shared_measurement
+from research_repo_tools.complete_runs import serialize_policy
+from research_repo_tools.criterion import SAMPLE_SCHEMA, Sample, read_estimate, serialize_sample
+from research_repo_tools.criterion_inventory import CriterionInventory, serialize_inventory
+from research_repo_tools.evidence import Evidence, Provenance, parse_evidence, serialize_evidence
+from research_repo_tools.host_metadata import HostMetadata, serialize_host
 from research_repo_tools.process import run_command as run_safe_command
 from research_repo_tools.release_discovery import PublishedRelease
 from research_repo_tools.worktrees import TreeSnapshot
@@ -39,7 +45,6 @@ from benchmark_models import (
 from benchmark_utils import (
     _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE,
     _CI_PERFORMANCE_SUITE_METRICS_FILE,
-    _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE,
     BENCHMARK_BUILD_FLAVOR,
     DEV_MODE_BENCH_ARGS,
     CiPerformanceMetric,
@@ -72,7 +77,6 @@ from benchmark_utils import (
 if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractContextManager
-    from typing import NoReturn
     from unittest.mock import MagicMock
 
 
@@ -223,6 +227,7 @@ def write_estimate(target_dir: Path, path_parts: tuple[str, ...], mean_ns: float
         },
     }
     (estimates_dir / "estimates.json").write_text(json.dumps(estimates), encoding="utf-8")
+    (estimates_dir / "sample.json").write_text('{"iters": [1, 2], "times": [1000, 2000]}', encoding="utf-8")
     full_id = "/".join(path_parts)
     (estimates_dir / "benchmark.json").write_text(
         json.dumps({"full_id": full_id, "group_id": path_parts[0]}),
@@ -255,6 +260,7 @@ def write_named_estimate(  # noqa: PLR0913
         },
     }
     (estimates_dir / "estimates.json").write_text(json.dumps(estimates), encoding="utf-8")
+    (estimates_dir / "sample.json").write_text('{"iters": [1, 2], "times": [1000, 2000]}', encoding="utf-8")
     benchmark_id = full_id or "/".join(path_parts)
     (estimates_dir / "benchmark.json").write_text(
         json.dumps({"full_id": benchmark_id, "group_id": group_id or benchmark_id.split("/", maxsplit=1)[0]}),
@@ -479,41 +485,6 @@ def test_release_measurement_plan_matches_workflow_and_just_recipe() -> None:
 
 @patch("benchmark_utils.run_cargo_command")
 @patch("benchmark_utils.run_cargo_live")
-def test_release_measurement_plan_runner_executes_exact_target_order(mock_live: MagicMock, mock_cargo: MagicMock, tmp_path: Path) -> None:
-    """The executable plan should be the only owner of release target order."""
-    mock_live.side_effect = mock_cargo
-    mock_cargo.return_value = completed_process(stdout=CI_MANIFEST_STDOUT)
-
-    outputs = benchmark_utils.run_release_signal_measurement_plan(tmp_path, bench_timeout=3600)
-
-    assert tuple(outputs) == benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
-    assert [call.args[0] for call in mock_cargo.call_args_list] == [
-        [*measurement.command[1:], "--", "--test"] for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN
-    ] + [list(measurement.command[1:]) for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN]
-    preflight_calls = mock_cargo.call_args_list[: len(benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN)]
-    sampling_calls = mock_cargo.call_args_list[len(benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN) :]
-    assert all(call.kwargs["timeout"] == benchmark_utils.RELEASE_PREFLIGHT_TIMEOUT_SECONDS for call in preflight_calls)
-    assert all(call.kwargs["timeout"] == 3600 for call in sampling_calls)
-
-
-@patch("benchmark_utils.run_cargo_command")
-@patch("benchmark_utils.run_cargo_live")
-def test_release_measurement_plan_runner_stops_at_first_failed_target(mock_live: MagicMock, mock_cargo: MagicMock, tmp_path: Path) -> None:
-    """A failed planned target must prevent later measurements from running."""
-    mock_live.side_effect = mock_cargo
-    mock_cargo.side_effect = [
-        *[completed_process() for _ in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN],
-        completed_process(returncode=101, stderr="benchmark failed"),
-    ]
-
-    with pytest.raises(RuntimeError, match="ci_performance_suite exited with status 101"):
-        benchmark_utils.run_release_signal_measurement_plan(tmp_path)
-
-    assert mock_cargo.call_count == len(benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN) + 1
-
-
-@patch("benchmark_utils.run_cargo_command")
-@patch("benchmark_utils.run_cargo_live")
 def test_release_preflight_runs_every_target_without_writing_evidence(mock_live: MagicMock, mock_cargo: MagicMock, tmp_path: Path) -> None:
     mock_live.side_effect = mock_cargo
     mock_cargo.return_value = completed_process(stdout=CI_MANIFEST_STDOUT)
@@ -521,18 +492,6 @@ def test_release_preflight_runs_every_target_without_writing_evidence(mock_live:
     assert [call.args[0] for call in mock_cargo.call_args_list] == [
         [*measurement.command[1:], "--", "--test"] for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN
     ]
-    assert list(tmp_path.iterdir()) == []
-
-
-@patch("benchmark_utils.run_cargo_command")
-@patch("benchmark_utils.run_cargo_live")
-def test_failed_preflight_prevents_all_sampling(mock_live: MagicMock, mock_cargo: MagicMock, tmp_path: Path) -> None:
-    mock_live.side_effect = mock_cargo
-    mock_cargo.side_effect = [completed_process(), subprocess.CalledProcessError(1, ["cargo", "bench"])]
-    with pytest.raises(subprocess.CalledProcessError):
-        benchmark_utils.run_release_signal_measurement_plan(tmp_path)
-    assert mock_cargo.call_count == 2
-    assert all(call.args[0][-1] == "--test" for call in mock_cargo.call_args_list)
     assert list(tmp_path.iterdir()) == []
 
 
@@ -597,6 +556,15 @@ def test_release_transition_digests_only_the_targets_shared_by_both_revisions(tm
         (benches / "ci_performance_suite.rs").write_text("fn shared() {}\n", encoding=UTF8)
     (current / "benches" / "realization_validation.rs").write_text("fn added() {}\n", encoding=UTF8)
     shared_targets = ("ci_performance_suite",)
+    for checkout in (current, baseline):
+        suites = (("ci_performance_suite", ("validation/case",)),)
+        if checkout == current:
+            suites += (("realization_validation", ("realization_validation/case",)),)
+        inventory = CriterionInventory(suites)
+        criterion = checkout / "target/criterion"
+        criterion.mkdir(parents=True)
+        (criterion / benchmark_utils.MEASUREMENT_INVENTORY_FILE).write_bytes(serialize_inventory(inventory))
+        (criterion / benchmark_utils.MEASUREMENT_POLICY_FILE).write_bytes(serialize_policy(benchmark_utils._sampling_policy(inventory.expected)))
 
     assert benchmark_utils._benchmark_harness_digest(
         current,
@@ -618,6 +586,89 @@ def test_release_transition_digests_only_the_targets_shared_by_both_revisions(tm
     )
 
 
+def test_measurement_child_routes_cargo_and_scientific_diagnostics_to_private_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The shared runner's child must not overwrite the last successful generation."""
+    criterion = tmp_path / "target/private-output"
+    run = Mock(return_value=completed_process(CI_MANIFEST_STDOUT))
+    monkeypatch.setattr(benchmark_utils, "run_cargo_command", run)
+    args = create_argument_parser().parse_args(
+        ["sample-suite", "--criterion-dir", str(criterion), "--targets", "ci_performance_suite", "--save-baseline", "last"]
+    )
+    execute_command(args, tmp_path)
+    assert run.call_args.kwargs["env"]["CRITERION_HOME"] == str(criterion)
+    assert run.call_args.args[0][-2:] == ["--", "--save-baseline=last"]
+    assert json.loads((criterion / benchmark_utils.MEASUREMENT_OUTPUT_FILE).read_bytes()) == {"ci_performance_suite": CI_MANIFEST_STDOUT}
+    assert benchmark_utils._load_ci_performance_metrics(criterion)
+    assert benchmark_utils._load_ci_performance_manifest_ids(criterion)
+    assert benchmark_utils._load_ci_performance_run_metadata(criterion)["sampling_mode"] == "full"
+    assert not (tmp_path / "target/criterion").exists()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param((1, CI_MANIFEST_STDOUT, "exited with status 1"), id="cargo-failure"),
+        pytest.param((0, CI_MANIFEST_STDOUT.splitlines(keepends=True)[1], "no api_benchmark manifest"), id="missing-manifest"),
+        pytest.param((0, CI_MANIFEST_STDOUT.splitlines(keepends=True)[0], "no construction metrics"), id="missing-metrics"),
+    ],
+)
+def test_measurement_child_rejects_failed_or_incomplete_targets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: tuple[int, str, str],
+) -> None:
+    """An invalid first target must preserve diagnostics and stop the measurement."""
+    returncode, stdout, message = failure
+    criterion = tmp_path / "target/private-output"
+    run = Mock(return_value=completed_process(stdout, returncode=returncode, stderr="child diagnostic\n"))
+    monkeypatch.setattr(benchmark_utils, "run_cargo_command", run)
+    args = create_argument_parser().parse_args(["sample-suite", "--criterion-dir", str(criterion), "--targets", "ci_performance_suite", "cold_path_predicates"])
+
+    with pytest.raises(RuntimeError, match=message):
+        execute_command(args, tmp_path)
+
+    run.assert_called_once()
+    assert run.call_args.args[0][-1] == "ci_performance_suite"
+    captured = capsys.readouterr()
+    assert stdout in captured.out
+    assert "child diagnostic\n" in captured.err
+    assert not (criterion / benchmark_utils.MEASUREMENT_OUTPUT_FILE).exists()
+
+
+@pytest.mark.parametrize("as_bytes", [False, True], ids=["text", "bytes"])
+def test_measurement_child_preserves_timeout_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    as_bytes: bool,
+) -> None:
+    """Captured output from timed-out Cargo runs remains visible to the parent."""
+    criterion = tmp_path / "target/private-output"
+    stdout = "completed fixture diagnostic\n"
+    stderr = "incomplete fixture diagnostic\n"
+    error = subprocess.TimeoutExpired(
+        ["cargo", "bench"],
+        30,
+        output=stdout.encode(UTF8) if as_bytes else stdout,
+        stderr=stderr.encode(UTF8) if as_bytes else stderr,
+    )
+    run = Mock(side_effect=error)
+    monkeypatch.setattr(benchmark_utils, "run_cargo_command", run)
+    args = create_argument_parser().parse_args(["sample-suite", "--criterion-dir", str(criterion), "--targets", "ci_performance_suite", "cold_path_predicates"])
+
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        execute_command(args, tmp_path)
+
+    assert raised.value is error
+    run.assert_called_once()
+    assert run.call_args.args[0][-1] == "ci_performance_suite"
+    captured = capsys.readouterr()
+    assert stdout in captured.err
+    assert stderr in captured.err
+    assert not (criterion / benchmark_utils.MEASUREMENT_OUTPUT_FILE).exists()
+
+
 def test_realization_validation_stable_ids_survive_saved_baseline_comparison(tmp_path: Path) -> None:
     """Level 4 comparisons should match on dimension and fixed input size."""
     benchmark_ids = (
@@ -633,191 +684,6 @@ def test_realization_validation_stable_ids_survive_saved_baseline_comparison(tmp
     comparisons = collect_criterion_comparisons(tmp_path / "criterion", "last")
 
     assert {comparison.benchmark for comparison in comparisons} == {"/".join(benchmark_id) for benchmark_id in benchmark_ids}
-
-
-def test_run_latest_for_explicit_suite_bypasses_release_signal_recipe(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """A named suite should run its own Cargo targets even when Just is present."""
-    (tmp_path / "justfile").write_text("", encoding=UTF8)
-    (tmp_path / "Cargo.toml").write_text(
-        '[[bench]]\nname = "topology_guarantee_construction"\n',
-        encoding=UTF8,
-    )
-
-    with patch("benchmark_utils._run_tool") as run_tool:
-        benchmark_utils._run_latest_for_suite(worktree=tmp_path, suite="topology", env=None)
-
-    run_tool.assert_called_once_with(
-        "cargo",
-        [
-            "bench",
-            "--profile",
-            benchmark_utils.BENCHMARK_BUILD_FLAVOR,
-            "--bench",
-            "topology_guarantee_construction",
-        ],
-        cwd=tmp_path,
-        options=benchmark_utils.ToolRunOptions(
-            timeout=benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS,
-            env=None,
-            stream_output=True,
-        ),
-    )
-    assert capsys.readouterr().err.splitlines() == [
-        "[performance] running current benchmark topology_guarantee_construction",
-        "[performance] completed current benchmark topology_guarantee_construction",
-    ]
-
-
-def test_run_saved_baseline_streams_with_progress(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Saved-baseline benchmarks stream output with the release timeout."""
-    (tmp_path / "Cargo.toml").write_text(
-        '[[bench]]\nname = "topology_guarantee_construction"\n',
-        encoding=UTF8,
-    )
-    environment = {"CARGO_TARGET_DIR": str(tmp_path / "criterion-target")}
-
-    with patch("benchmark_utils._run_tool") as run_tool:
-        commands = benchmark_utils._run_saved_baseline_for_suite(
-            worktree=tmp_path,
-            baseline_tag="v0.7.7",
-            suite="topology",
-            env=environment,
-        )
-
-    assert commands == (
-        (
-            "cargo",
-            "bench",
-            "--profile",
-            benchmark_utils.BENCHMARK_BUILD_FLAVOR,
-            "--bench",
-            "topology_guarantee_construction",
-            "--",
-            "--save-baseline",
-            "v0.7.7",
-        ),
-    )
-    run_tool.assert_called_once_with(
-        "cargo",
-        [
-            "bench",
-            "--profile",
-            benchmark_utils.BENCHMARK_BUILD_FLAVOR,
-            "--bench",
-            "topology_guarantee_construction",
-            "--",
-            "--save-baseline",
-            "v0.7.7",
-        ],
-        cwd=tmp_path,
-        options=benchmark_utils.ToolRunOptions(
-            timeout=benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS,
-            env=environment,
-            stream_output=True,
-        ),
-    )
-    assert capsys.readouterr().err.splitlines() == [
-        "[performance] running baseline benchmark topology_guarantee_construction for v0.7.7",
-        "[performance] completed baseline benchmark topology_guarantee_construction for v0.7.7",
-    ]
-
-
-def test_run_latest_release_signal_streams_without_false_completion(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """A failed release-signal recipe streams and emits no completion marker."""
-    (tmp_path / "justfile").write_text("", encoding=UTF8)
-    environment = {"CARGO_TARGET_DIR": str(tmp_path / "criterion-target")}
-
-    with (
-        patch("benchmark_utils._run_tool", side_effect=RuntimeError("benchmark failed")) as run_tool,
-        pytest.raises(RuntimeError, match="benchmark failed"),
-    ):
-        benchmark_utils._run_latest_for_suite(worktree=tmp_path, suite="release-signal", env=environment)
-
-    run_tool.assert_called_once_with(
-        "just",
-        ["bench-latest", str(benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS)],
-        cwd=tmp_path,
-        options=benchmark_utils.ToolRunOptions(
-            timeout=benchmark_utils.RELEASE_SIGNAL_TIMEOUT_SECONDS,
-            env=environment,
-            stream_output=True,
-        ),
-    )
-    assert capsys.readouterr().err.splitlines() == ["[performance] running current release-signal benchmarks"]
-
-
-def test_run_latest_release_signal_forwards_timeout_and_records_command(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Release orchestration should forward its per-target timeout through Just."""
-    (tmp_path / "justfile").write_text("", encoding=UTF8)
-    environment = {"CARGO_TARGET_DIR": str(tmp_path / "criterion-target")}
-    expected_command = ("just", "bench-latest", str(benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS))
-
-    with patch("benchmark_utils._run_tool") as run_tool:
-        commands = benchmark_utils._run_latest_for_suite(
-            worktree=tmp_path,
-            suite="release-signal",
-            env=environment,
-        )
-
-    assert commands == (expected_command,)
-    run_tool.assert_called_once_with(
-        "just",
-        list(expected_command[1:]),
-        cwd=tmp_path,
-        options=benchmark_utils.ToolRunOptions(
-            timeout=benchmark_utils.RELEASE_SIGNAL_TIMEOUT_SECONDS,
-            env=environment,
-            stream_output=True,
-        ),
-    )
-    assert capsys.readouterr().err.splitlines() == [
-        "[performance] running current release-signal benchmarks",
-        "[performance] completed current release-signal benchmarks",
-    ]
-
-
-def test_run_tool_can_stream_long_running_command_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Streaming commands inherit stdout/stderr while keeping their long timeout."""
-    observed_kwargs: dict[str, object] = {}
-
-    def fake_run(*_args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        observed_kwargs.update(kwargs)
-        return completed_process()
-
-    monkeypatch.setattr(benchmark_utils, "run_command_live", fake_run)
-
-    benchmark_utils._run_tool(
-        "cargo",
-        ["bench"],
-        cwd=tmp_path,
-        options=benchmark_utils.ToolRunOptions(
-            timeout=benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS,
-            stream_output=True,
-        ),
-    )
-
-    assert observed_kwargs["timeout"] == benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS
-
-
-def test_run_tool_captures_short_command_output_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Short support commands retain captured output for structured diagnostics."""
-    observed_kwargs: dict[str, object] = {}
-
-    def fake_run(*_args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        observed_kwargs.update(kwargs)
-        return completed_process()
-
-    monkeypatch.setattr(benchmark_utils, "run_safe_command", fake_run)
-
-    benchmark_utils._run_tool("gh", ["release", "download"], cwd=tmp_path)
-
-    assert observed_kwargs["timeout"] == benchmark_utils.RELEASE_COMMAND_TIMEOUT_SECONDS
 
 
 @pytest.mark.parametrize("point_estimate", [float("nan"), float("inf"), 0.0, -1.0])
@@ -1666,14 +1532,46 @@ def test_versioned_release_asset_rejects_placeholder_recorded_host(tmp_path: Pat
         )
 
 
+def write_complete_release_samples(tmp_path: Path) -> tuple[Path, CriterionInventory]:
+    """Write raw cases with independent counts for every release-signal target."""
+    ids = ("validation/validate_3d/750", "random/insphere", "predicates/hot/case", "locate/no_hint/3d/case", "realization_validation/case")
+    for name in ids:
+        write_named_estimate(tmp_path, tuple(name.split("/")), "new", 1_000_000.0)
+    criterion = tmp_path / "criterion"
+    inventory = CriterionInventory(tuple((target, (name,)) for target, name in zip(benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS, ids, strict=True)))
+    policy = benchmark_utils._sampling_policy(inventory.expected)
+    for name, count in zip(ids, (15, 100, 100, 10, 100), strict=True):
+        directory = criterion / name / "new"
+        (directory / "sample.json").write_text(json.dumps({"iters": [1] * count, "times": [100] * count}), encoding=UTF8)
+        estimates = json.loads((directory / "estimates.json").read_bytes())
+        estimates["mean"] = estimates["median"]
+        (directory / "estimates.json").write_text(json.dumps(estimates), encoding=UTF8)
+    (criterion / benchmark_utils.MEASUREMENT_INVENTORY_FILE).write_bytes(serialize_inventory(inventory))
+    (criterion / benchmark_utils.MEASUREMENT_POLICY_FILE).write_bytes(serialize_policy(policy))
+    return criterion, inventory
+
+
 @pytest.mark.parametrize("tag", ["v0.8.0", "v0.8.0+build.7"])
+@pytest.mark.parametrize("changed_input", [None, "src/lib.rs", "benches/ci_performance_suite.rs", "src/added.rs", "benches/common/added.rs"])
+@pytest.mark.parametrize("execution_case", [("native", "perf"), ("windows", "perf"), ("native", "release"), ("windows", "release")])
 def test_write_release_benchmark_metadata_binds_measurement_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     tag: str,
+    changed_input: str | None,
+    execution_case: tuple[str, str],
 ) -> None:
+    path_ordering, cargo_profile = execution_case
+    if path_ordering == "windows":
+        monkeypatch.setattr(type(tmp_path), "__lt__", lambda first, second: PureWindowsPath(first.as_posix()) < PureWindowsPath(second.as_posix()))
     (tmp_path / "Cargo.toml").write_text(f'[package]\nversion = "{tag.removeprefix("v")}"\n', encoding=UTF8)
-    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "new", 1_000_000.0)
+    source_paths = tuple(Path(name) for name in ("Cargo.lock", "Cargo.toml", "rust-toolchain.toml", "src/lib.rs"))
+    harness_paths = (*(Path(f"benches/{target}.rs") for target in benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS), *source_paths[:3])
+    for path in set(source_paths + harness_paths) - {Path("Cargo.toml")}:
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text("// measured input\n", encoding=UTF8)
+    criterion, inventory = write_complete_release_samples(tmp_path)
+    policy = benchmark_utils._sampling_policy(inventory.expected)
     commit = "a" * 40
     source = replace(
         retained_performance_bundle().context.current_source,
@@ -1683,12 +1581,73 @@ def test_write_release_benchmark_metadata_binds_measurement_provenance(
         source_state_sha256=hashlib.sha256(f"commit {commit}\n".encode()).hexdigest(),
     )
     toolchain = retained_performance_bundle().context.current_toolchain
-    host = retained_performance_bundle().context.current_measurement_host
     monkeypatch.setattr(benchmark_utils, "_source_state", lambda *_args, **_kwargs: source)
     monkeypatch.setattr(benchmark_utils, "_expected_tag_commit", lambda *_args, **_kwargs: commit)
     monkeypatch.setattr(benchmark_utils, "_toolchain_state", lambda *_args, **_kwargs: toolchain)
-    monkeypatch.setattr(benchmark_utils, "_recorded_host_identity", lambda *_args, **_kwargs: host)
+    sample = Sample(tuple((name, read_estimate(criterion / name / "new/estimates.json")) for name in inventory.expected))
+    assert toolchain.criterion_version is not None
+    (tmp_path / "Cargo.lock").write_text(f'[[package]]\nname = "criterion"\nversion = "{toolchain.criterion_version}"\n', encoding=UTF8)
+    monkeypatch.setattr(shared_measurement, "resolve_revision", lambda *_args: commit)
+    monkeypatch.setattr(
+        shared_measurement,
+        "capture_host",
+        lambda *_args, **_kwargs: HostMetadata("Test OS", "test", "Test CPU", 4, 8, 4096, (("rustc", toolchain.rustc),)),
+    )
+    captured = shared_measurement.capture_provenance(
+        tmp_path,
+        shared_measurement.MeasurementConfig(
+            command=(
+                sys.executable,
+                str(Path(benchmark_utils.__file__).resolve()),
+                "sample-suite",
+                "--profile",
+                cargo_profile,
+                "--bench-timeout",
+                "7200",
+                "--criterion-dir",
+                str(criterion),
+                "--targets",
+                *benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS,
+            ),
+            sources=tuple(path.as_posix() for path in source_paths),
+            harness=tuple(path.as_posix() for path in harness_paths),
+            dependencies=(("criterion", "Cargo.lock"),),
+            context=(
+                ("delaunay.inventory", json.dumps(json.loads(serialize_inventory(inventory)))),
+                ("delaunay.sampling-policy", serialize_policy(policy).decode()),
+                ("delaunay.scientific-preflight", "passed"),
+                ("delaunay.sample", "new"),
+                ("delaunay.raw-sample-sha256", benchmark_utils._criterion_sample_digest(criterion, "new")),
+            ),
+        ),
+        tag,
+        mode="release",
+    )
+    measurement = Evidence(
+        serialize_sample(sample),
+        SAMPLE_SCHEMA,
+        (("measurement", captured),),
+    )
+    sample_payload, sample_manifest = serialize_evidence(measurement)
+    (criterion / "delaunay-sample.json").write_bytes(sample_payload)
+    (criterion / "delaunay-evidence.json").write_bytes(sample_manifest)
     output = tmp_path / "metadata.json"
+
+    if cargo_profile != "perf":
+        output.write_bytes(b"previous release metadata\n")
+        with pytest.raises(ValueError, match="captured perf sample-suite command"):
+            benchmark_utils.write_release_benchmark_metadata(repo_root=tmp_path, tag=tag, criterion_dir=criterion, output=output)
+        assert output.read_bytes() == b"previous release metadata\n"
+        return
+
+    if changed_input is not None:
+        changed_path = tmp_path / changed_input
+        changed_path.parent.mkdir(parents=True, exist_ok=True)
+        changed_path.write_text("// restored clean tag differs from measured bytes\n", encoding=UTF8)
+        with pytest.raises(ValueError, match="source or harness differs"):
+            benchmark_utils.write_release_benchmark_metadata(repo_root=tmp_path, tag=tag, criterion_dir=criterion, output=output)
+        assert not output.exists()
+        return
 
     benchmark_utils.write_release_benchmark_metadata(
         repo_root=tmp_path,
@@ -1850,20 +1809,11 @@ def test_worktree_revision_rejects_empty_or_malformed_git_output(tmp_path: Path,
         benchmark_utils._resolve_worktree_revision(tmp_path, "HEAD")
 
 
-def test_run_tool_preserves_timeout_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    def timeout(*_args: object, **_kwargs: object) -> NoReturn:
-        raise subprocess.TimeoutExpired(["cargo", "bench"], 30, output=b"last completed case\r\n", stderr=b"worker stalled\xff")
-
-    monkeypatch.setattr(benchmark_utils, "run_safe_command", timeout)
-    with pytest.raises(RuntimeError, match="timed out after 30 seconds") as failure:
-        benchmark_utils._run_tool("cargo", ["bench"], cwd=tmp_path)
-    assert "last completed case" in str(failure.value)
-    assert "worker stalled" in str(failure.value)
-
-
+@pytest.mark.parametrize("host_drift", [False, True])
 def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_baseline(  # noqa: C901, PLR0915
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    host_drift: bool,
 ) -> None:
     """Local release report generation should isolate baseline and current benchmark runs."""
     output = tmp_path / "target" / "bench-reports" / "performance.md"
@@ -1891,13 +1841,14 @@ def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_base
 
     def fake_run_safe(command: str, args: list[str], cwd: Path | None = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append((command, tuple(args), cwd))
-        if command == "cargo" and "--save-baseline" in args:
+        if command == "cargo" and "--save-baseline=v0.7.8" in args:
             assert cwd is not None
             write_named_estimate(cwd / "target", ("validation", "validate_3d", "750"), "v0.7.8", 2_000_000.0)
-            write_named_estimate(cwd / "target", ("validation", "removed_case", "750"), "v0.7.8", 3_000_000.0)
-        if command == "cargo" and "--save-baseline" not in args:
+            write_named_estimate(cwd / "target", ("validation", "second_case", "750"), "v0.7.8", 3_000_000.0)
+        if command == "cargo" and "--save-baseline=v0.7.8" not in args:
             assert cwd is not None
             write_named_estimate(cwd / "target", ("validation", "validate_3d", "750"), "new", 1_000_000.0)
+            write_named_estimate(cwd / "target", ("validation", "second_case", "750"), "new", 1_500_000.0)
         if command == "uv":
             report = Path(args[args.index("--output") + 1])
             report.write_text(delaunay_report("0.8.0", "v0.7.8"), encoding=UTF8)
@@ -1917,6 +1868,16 @@ def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_base
     monkeypatch.setattr(benchmark_utils, "apply_snapshot", apply)
     monkeypatch.setattr(benchmark_utils, "run_safe_command", fake_run_safe)
 
+    def fake_measure_suite(root: Path, targets: tuple[str, ...], *, save_baseline: str | None = None) -> dict[str, str]:
+        for target in targets:
+            args = ["bench", "--profile", "perf", "--bench", target]
+            if save_baseline:
+                args.extend(["--", f"--save-baseline={save_baseline}"])
+            fake_run_safe("cargo", args, cwd=root)
+        return dict.fromkeys(targets, "")
+
+    monkeypatch.setattr(benchmark_utils, "_measure_suite", fake_measure_suite)
+
     def fake_revision_evidence(
         checkout: Path,
         *,
@@ -1924,7 +1885,43 @@ def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_base
         ref: str,
         measurement: benchmark_utils.RevisionMeasurement,
     ) -> benchmark_utils.RevisionEvidence:
-        del checkout
+        sample_name = "new" if version == "v0.8.0" else version
+        samples = benchmark_utils._criterion_estimates_by_id(checkout / "target/criterion", sample_name)
+        inventory = CriterionInventory((("ci_performance_suite", tuple(samples)),))
+        shared = Evidence(
+            serialize_sample(Sample(tuple((name, read_estimate(case.estimates)) for name, case in samples.items()))),
+            SAMPLE_SCHEMA,
+            (
+                (
+                    "measurement",
+                    Provenance(
+                        ("a" if version == "v0.8.0" else "b") * 40,
+                        "1" * 64,
+                        "2" * 64,
+                        (
+                            ("release", version),
+                            ("tool.rustc", json.dumps("rustc 1.98.0")),
+                            ("dependency.criterion", "0.7.0"),
+                            ("delaunay.sample", sample_name),
+                            (
+                                "host",
+                                json.dumps(
+                                    json.loads(
+                                        serialize_host(
+                                            HostMetadata("Test OS", "test", "Changed CPU" if host_drift and version != "v0.8.0" else "Test CPU", 4, 8, 4096)
+                                        )
+                                    )
+                                ),
+                            ),
+                            ("delaunay.inventory", json.dumps(json.loads(serialize_inventory(inventory)))),
+                            ("delaunay.sampling-policy", serialize_policy(benchmark_utils._sampling_policy(inventory.expected)).decode()),
+                            ("delaunay.scientific-preflight", "passed"),
+                            ("delaunay.raw-sample-sha256", benchmark_utils._criterion_sample_digest(checkout / "target/criterion", sample_name)),
+                        ),
+                    ),
+                ),
+            ),
+        )
         return benchmark_utils.RevisionEvidence(
             source=benchmark_utils.SourceState(
                 version=version,
@@ -1945,6 +1942,7 @@ def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_base
             ),
             commands=measurement.commands,
             completed_targets=("ci_performance_suite",),
+            measurement=shared,
         )
 
     host = benchmark_utils.HostIdentity(status="recorded", cpu="Test CPU", operating_system="Test OS", architecture="test")
@@ -1968,7 +1966,7 @@ def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_base
     assert apply.call_args.args[1] == snapshot
     report = output.read_text(encoding=UTF8)
     assert "**delaunay** v0.8.0" in report
-    assert "Comparison against baseline **v0.7.8**" in report
+    assert ("Measurements for current and baseline **v0.7.8**" if host_drift else "Comparison against baseline **v0.7.8**") in report
     assert "| validate_3d/750 | 2.00 ms" in report
     assert output.with_suffix(".comparison.json").is_file()
     assert output.with_suffix(".evidence.json").is_file()
@@ -1976,21 +1974,28 @@ def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_base
         performance_artifacts.ArtifactPaths(payload=output.with_suffix(".comparison.json"), provenance=output.with_suffix(".evidence.json"))
     )
     assert [(row.benchmark_id, row.coverage_status) for row in retained.sorted_rows] == [
-        ("validation/removed_case/750", "baseline-only"),
-        ("validation/validate_3d/750", "comparable"),
+        ("validation/second_case/750", "not-comparable" if host_drift else "comparable"),
+        ("validation/validate_3d/750", "not-comparable" if host_drift else "comparable"),
     ]
     assert retained.context.current_source.commit == "a" * 40
     assert retained.context.baseline_source.commit == "b" * 40
     assert retained.context.current_commands == (("cargo", "bench", "--profile", "perf", "--bench", "ci_performance_suite"),)
-    assert retained.context.baseline_commands[0][-2:] == ("--save-baseline", "v0.7.8")
+    assert retained.context.baseline_commands == (("cargo", "bench", "--profile", "perf", "--bench", "ci_performance_suite", "--", "--save-baseline=v0.7.8"),)
     assert retained.context.current_measurement_host == host
-    assert retained.context.baseline_measurement_host == host
+    assert retained.context.baseline_measurement_host == (replace(host, cpu="Changed CPU") if host_drift else host)
+    assert len(retained.measurements) == 2
+    changed_row = replace(retained.rows[-1], current=performance_artifacts.TimingEstimate(2_000_000, 1_900_000, 2_100_000, 0.95))
+    with pytest.raises(ValueError, match="timing differs from retained measurement"):
+        replace(retained, rows=(*retained.rows[:-1], changed_row))
+    with pytest.raises(ValueError, match="omits retained measurement rows"):
+        replace(retained, rows=(retained.rows[-1],))
+    assert "measurement hosts differ" in retained.context.comparison_blockers if host_drift else not retained.context.comparison_blockers
     assert retained.context.current_artifact.sample_name == "new"
     assert retained.context.baseline_artifact.sample_name == "v0.7.8"
     assert any(kind == "git" and args[:3] == ("worktree", "add", "--detach") and args[4] == "a" * 40 for kind, args, _ in calls)
     assert any(kind == "git" and args[:3] == ("worktree", "add", "--detach") and args[4] == "b" * 40 for kind, args, _ in calls)
-    assert any(kind == "cargo" and "--save-baseline" in args for kind, args, _ in calls)
-    assert any(kind == "cargo" and "--save-baseline" not in args for kind, args, _ in calls)
+    assert any(kind == "cargo" and "--save-baseline=v0.7.8" in args for kind, args, _ in calls)
+    assert any(kind == "cargo" and "--save-baseline=v0.7.8" not in args for kind, args, _ in calls)
     assert not any(kind == "uv" for kind, _, _ in calls)
 
 
@@ -2784,276 +2789,6 @@ Benchmark completed."""
 
             assert result is None
 
-    @patch("benchmark_utils.run_cargo_command")
-    def test_run_circumsphere_benchmarks_success(self, mock_cargo: MagicMock) -> None:
-        """Test running circumsphere benchmarks successfully."""
-        mock_cargo.return_value = completed_process()
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            success, numerical_data = generator._run_circumsphere_benchmarks()
-
-            assert success is True
-            # numerical_data should be a dict or None when successful
-            assert numerical_data is None or isinstance(numerical_data, dict)
-            mock_cargo.assert_called_once()
-            args = mock_cargo.call_args.args[0]
-            # Fresh benchmark runs must default to the trusted perf profile so
-            # numbers are comparable with baseline/compare output.
-            assert args[:5] == [
-                "bench",
-                "--profile",
-                BENCHMARK_BUILD_FLAVOR,
-                "--bench",
-                "circumsphere_containment",
-            ]
-
-    @patch("benchmark_utils.run_cargo_command")
-    def test_run_circumsphere_benchmarks_uses_requested_cargo_profile(self, mock_cargo: MagicMock) -> None:
-        """Test running circumsphere benchmarks with an explicit Cargo profile."""
-        mock_cargo.return_value = completed_process()
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            requested_profile = "release"
-            success, numerical_data = generator._run_circumsphere_benchmarks(cargo_profile=requested_profile)
-
-            assert success is True
-            assert numerical_data is None or isinstance(numerical_data, dict)
-            mock_cargo.assert_called_once()
-            args = mock_cargo.call_args.args[0]
-            assert args[:5] == ["bench", "--profile", requested_profile, "--bench", "circumsphere_containment"]
-
-    @patch("benchmark_utils.run_cargo_command")
-    def test_run_circumsphere_benchmarks_with_numerical_data(self, mock_cargo: MagicMock) -> None:
-        """Test running circumsphere benchmarks with numerical accuracy data."""
-        # Mock cargo command to return output with numerical accuracy data
-        mock_result = completed_process(
-            """Running benchmarks...
-Method Comparisons (1000 total tests):
-  insphere vs insphere_distance:  820/1000 (82.0%)
-  insphere vs insphere_lifted:  5/1000 (0.5%)
-  insphere_distance vs insphere_lifted:  180/1000 (18.0%)
-  All three methods agree:  2/1000 (0.2%)
-Benchmark completed.""",
-        )
-        mock_cargo.return_value = mock_result
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            success, numerical_data = generator._run_circumsphere_benchmarks()
-
-            assert success is True
-            assert numerical_data is not None
-            assert isinstance(numerical_data, dict)
-            # Check specific accuracy values were parsed correctly
-            assert numerical_data["insphere_distance"] == "82.0%"
-            assert numerical_data["insphere_lifted"] == "0.5%"
-            assert numerical_data["distance_lifted"] == "18.0%"
-            assert numerical_data["all_agree"] == "0.2%"
-            mock_cargo.assert_called_once()
-            # Fresh runs must still go through the trusted perf profile.
-            args = mock_cargo.call_args.args[0]
-            assert args[:5] == [
-                "bench",
-                "--profile",
-                BENCHMARK_BUILD_FLAVOR,
-                "--bench",
-                "circumsphere_containment",
-            ]
-
-    @patch("benchmark_utils.run_cargo_command")
-    def test_run_circumsphere_benchmarks_failure(self, mock_cargo: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
-        """Test handling circumsphere benchmark failures."""
-        mock_cargo.side_effect = RuntimeError("Benchmark failed")
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            success, numerical_data = generator._run_circumsphere_benchmarks()
-
-            assert success is False
-            # numerical_data should be None when there's a failure
-            assert numerical_data is None
-            # Check error was printed (it goes to stdout, not stderr)
-            captured = capsys.readouterr()
-            assert "Error running circumsphere benchmarks" in captured.out
-
-    @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_success(self, mock_cargo: MagicMock) -> None:
-        """Test running the public API CI performance suite successfully."""
-        mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            success = generator._run_ci_performance_suite()
-
-            assert success is True
-            mock_cargo.assert_called_once()
-            args = mock_cargo.call_args.args[0]
-            assert args[:5] == [
-                "bench",
-                "--profile",
-                BENCHMARK_BUILD_FLAVOR,
-                "--bench",
-                "ci_performance_suite",
-            ]
-            assert "--" not in args
-            assert mock_cargo.call_args.kwargs["timeout"] == 1800
-            manifest_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE
-            assert manifest_path.read_text(encoding="utf-8") == "boundary_facets/boundary_facets_3d/50\n"
-            metrics_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_METRICS_FILE
-            assert json.loads(metrics_path.read_text(encoding="utf-8")) == {
-                "tds_new_2d/tds_new/10": {"simplices": 17, "vertices": 10},
-            }
-            metadata_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            assert metadata["cargo_profile"] == BENCHMARK_BUILD_FLAVOR
-            assert metadata["sampling_mode"] == "full"
-            assert "completed_at" in metadata
-
-    @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_uses_requested_cargo_profile(self, mock_cargo: MagicMock) -> None:
-        """Test running the public API CI performance suite with an explicit profile."""
-        mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            requested_profile = "release"
-            success = generator._run_ci_performance_suite(cargo_profile=requested_profile)
-
-            assert success is True
-            mock_cargo.assert_called_once()
-            args = mock_cargo.call_args.args[0]
-            assert args[:5] == ["bench", "--profile", requested_profile, "--bench", "ci_performance_suite"]
-            assert "--" not in args
-
-    @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_uses_requested_timeout(self, mock_cargo: MagicMock) -> None:
-        """Test that release callers can extend the public API benchmark budget."""
-        mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            generator = PerformanceSummaryGenerator(Path(temp_dir))
-
-            success = generator._run_ci_performance_suite(bench_timeout=3600)
-
-            assert success is True
-            assert mock_cargo.call_args.kwargs["timeout"] == 3600
-
-    @pytest.mark.parametrize("bench_timeout", [0, -1])
-    def test_run_ci_performance_suite_rejects_non_positive_timeout(self, bench_timeout: int) -> None:
-        """Defensive suite calls must reject invalid benchmark budgets."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            generator = PerformanceSummaryGenerator(Path(temp_dir))
-
-            with (
-                patch("benchmark_utils.run_cargo_command") as mock_cargo,
-                pytest.raises(ValueError, match="bench_timeout must be a positive integer"),
-            ):
-                generator._run_ci_performance_suite(bench_timeout=bench_timeout)
-
-            mock_cargo.assert_not_called()
-
-    @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_dev_mode_uses_reduced_sampling(self, mock_cargo: MagicMock) -> None:
-        """Test dev mode appends reduced Criterion sampling args explicitly."""
-        mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            success = generator._run_ci_performance_suite(use_dev_mode=True)
-
-            assert success is True
-            args = mock_cargo.call_args.args[0]
-            assert "--" in args
-            for arg in DEV_MODE_BENCH_ARGS:
-                assert arg in args
-            metadata_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            assert metadata["sampling_mode"] == "dev"
-
-    @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_requires_manifest(self, mock_cargo: MagicMock) -> None:
-        """Test successful ci_performance_suite runs must emit the manifest."""
-        mock_cargo.return_value = completed_process()
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            stale_manifest_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE
-            stale_manifest_path.parent.mkdir(parents=True)
-            stale_manifest_path.write_text("stale/benchmark/id\n", encoding="utf-8")
-            generator = PerformanceSummaryGenerator(project_root)
-
-            with pytest.raises(RuntimeError, match="emitted no api_benchmark manifest"):
-                generator._run_ci_performance_suite()
-
-            assert stale_manifest_path.read_text(encoding="utf-8") == "stale/benchmark/id\n"
-
-    @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_requires_metrics(self, mock_cargo: MagicMock) -> None:
-        """Test fresh ci_performance_suite runs must emit construction metrics."""
-        stdout_without_metrics = CI_MANIFEST_STDOUT.split("api_benchmark_metric", maxsplit=1)[0]
-        mock_cargo.return_value = completed_process(stdout_without_metrics)
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            stale_metrics_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_METRICS_FILE
-            stale_metrics_path.parent.mkdir(parents=True)
-            stale_metrics_path.write_text(
-                json.dumps({"tds_new_2d/tds_new/10": {"vertices": 10, "simplices": 17}}),
-                encoding="utf-8",
-            )
-            generator = PerformanceSummaryGenerator(project_root)
-
-            with pytest.raises(RuntimeError, match="emitted no construction metrics"):
-                generator._run_ci_performance_suite()
-
-            assert stale_metrics_path.read_text(encoding="utf-8") == "{}\n"
-
-    @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_nonzero_exit(self, mock_cargo: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
-        """Test handling ci_performance_suite nonzero process exits."""
-        mock_cargo.return_value = completed_process(returncode=101, stderr="benchmark failed")
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            success = generator._run_ci_performance_suite()
-
-            assert success is False
-            captured = capsys.readouterr()
-            assert "cargo exited with status 101" in captured.out
-
-    @patch("benchmark_utils.run_cargo_command")
-    def test_run_ci_performance_suite_failure(self, mock_cargo: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
-        """Test handling ci_performance_suite benchmark failures."""
-        mock_cargo.side_effect = OSError("Benchmark failed")
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            success = generator._run_ci_performance_suite()
-
-            assert success is False
-            captured = capsys.readouterr()
-            assert "Error running ci_performance_suite benchmarks" in captured.out
-
     @patch("benchmark_utils.run_git_command")
     def test_generate_summary_success(self, mock_git: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
         """Test successful generation of performance summary."""
@@ -3292,7 +3027,7 @@ Benchmark completed.""",
         assert all(section.is_complete for section in sections)
         assert "obsolete/fixture" not in benchmark_utils._criterion_result_ids(criterion_dir)
         # Comparison and artifact consumers retain the strict default.
-        with pytest.raises((TypeError, ValueError)):
+        with pytest.raises((OSError, TypeError, ValueError)):
             benchmark_utils._criterion_estimates_by_id(criterion_dir, sample)
 
     def test_release_signal_result_ids_preserve_samples_and_sorting(self, tmp_path: Path) -> None:

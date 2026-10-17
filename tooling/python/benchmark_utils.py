@@ -24,7 +24,7 @@ import tempfile
 import tomllib
 from collections.abc import Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
 from itertools import product
@@ -32,9 +32,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NoReturn, TypeIs, cast
 
 from research_repo_tools.archives import extract_archive as _safe_extract_tar
-from research_repo_tools.criterion import Comparison, Estimate, Sample, compare_samples, read_estimate
-from research_repo_tools.files import replace_many
-from research_repo_tools.host_metadata import capture_host
+from research_repo_tools.complete_runs import CompleteCase, CompletePolicy, collect_complete_sample, parse_policy, serialize_policy
+from research_repo_tools.criterion import SAMPLE_SCHEMA, Comparison, Estimate, Sample, compare_samples, parse_sample, read_estimate, serialize_sample
+from research_repo_tools.criterion_baselines import SavedSamplePlan, validate_saved_sample
+from research_repo_tools.criterion_inventory import DiscoveryCommand, DiscoveryPlan, discover_inventory, parse_inventory, serialize_inventory
+from research_repo_tools.evidence import Evidence, fingerprint_files, load_evidence, serialize_evidence
+from research_repo_tools.files import publish_directory, replace_many
+from research_repo_tools.host_metadata import capture_host, parse_host
+from research_repo_tools.measurement import MeasurementConfig, capture_provenance, measure_checkout
 from research_repo_tools.process import ExecutableNotFoundError, format_exception_diagnostics, run_command as run_safe_command, run_command_live
 from research_repo_tools.publication import plan_outputs, publish_publication
 from research_repo_tools.release_assets import download_release_asset
@@ -114,6 +119,8 @@ _NUMERICAL_ACCURACY_PARSE_ERRORS: ExceptionFamily = (IndexError, TypeError, Valu
 _CARGO_MANIFEST_LOAD_ERRORS: ExceptionFamily = (OSError, tomllib.TOMLDecodeError)
 _LOCAL_RUSTC_VERSION_ERRORS: ExceptionFamily = (ExecutableNotFoundError, OSError, subprocess.SubprocessError)
 _BENCHMARK_TIMEOUT_PARSE_ERRORS: ExceptionFamily = (ValueError, TypeError)
+_CRITERION_ESTIMATE_LOAD_ERRORS: ExceptionFamily = (OSError, ValueError)
+_CRITERION_METADATA_LOAD_ERRORS: ExceptionFamily = (OSError, TypeError, ValueError)
 
 # Trusted benchmark commands use this Cargo profile so local, CI, and release
 # numbers are generated with the same ThinLTO/codegen-units settings.
@@ -182,6 +189,10 @@ CI_PERFORMANCE_SUITE_GROUP_ORDER = tuple(CI_PERFORMANCE_SUITE_GROUPS)
 _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE = "ci_performance_suite_manifest_ids.txt"
 _CI_PERFORMANCE_SUITE_METRICS_FILE = "ci_performance_suite_metrics.json"
 _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE = "ci_performance_suite_run_metadata.json"
+MEASUREMENT_INVENTORY_FILE = "delaunay-inventory.json"
+MEASUREMENT_POLICY_FILE = "delaunay-sampling-policy.json"
+MEASUREMENT_OUTPUT_FILE = "delaunay-output.json"
+MEASUREMENT_SOURCE_PATTERNS = ("src/**/*.rs", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml")
 RELEASE_SIGNAL_MEASUREMENT_PLAN = (
     BenchmarkTargetMeasurement(
         "ci_performance_suite",
@@ -223,35 +234,11 @@ BENCH_TARGET_SUITES = {
     "topology": ("topology_guarantee_construction",),
 }
 BENCH_COMPARE_GROUP_PREFIXES_BY_SUITE = {
-    "release-signal": RELEASE_SIGNAL_GROUP_PREFIXES,
-    "ci": (
-        "tds_new_",
-        "boundary_facets",
-        "convex_hull",
-        "convex_hull_queries",
-        "validation",
-        "incremental_insert",
-        "explicit_import",
-        "bistellar_flips_",
-    ),
-    "query": (
-        "random",
-        "2d",
-        "3d",
-        "4d",
-        "5d",
-        "edge_cases_",
-        "locate",
-    ),
-    "predicates": (
-        "random",
-        "2d",
-        "3d",
-        "4d",
-        "5d",
-        "edge_cases_",
-        "predicates",
-    ),
+    **{
+        suite: tuple(dict.fromkeys(prefix for target in targets for prefix in RELEASE_SIGNAL_GROUPS_BY_TARGET[target]))
+        for suite, targets in BENCH_TARGET_SUITES.items()
+        if suite != "topology"
+    },
     "topology": ("topology_guarantee_construction",),
 }
 BENCH_COMPARE_SUITE_CHOICES = tuple(BENCH_TARGET_SUITES)
@@ -262,7 +249,6 @@ PERFORMANCE_ARCHIVE_DIR = Path("docs") / "archive" / "performance"
 RELEASE_BENCH_TIMEOUT_SECONDS = 7200
 RELEASE_PREFLIGHT_TIMEOUT_SECONDS = 600
 RELEASE_COMMAND_TIMEOUT_SECONDS = 600
-RELEASE_SIGNAL_TIMEOUT_SECONDS = (RELEASE_BENCH_TIMEOUT_SECONDS + RELEASE_PREFLIGHT_TIMEOUT_SECONDS) * len(RELEASE_SIGNAL_MEASUREMENT_PLAN)
 DELAUNAY_REPORT_VERSION_RE = re.compile(r"^\*\*delaunay\*\* v(?P<version>[^\s`]+)", re.MULTILINE)
 DELAUNAY_REPORT_BASELINE_RE = re.compile(r"^Comparison against baseline \*\*(?P<baseline>[^*]+)\*\*:", re.MULTILINE)
 SEMVER_IDENTIFIER_RE = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -368,15 +354,6 @@ class ReleaseReportConfig:
             raise ValueError(msg)
 
 
-@dataclass(frozen=True, slots=True)
-class ToolRunOptions:
-    """Execution controls for one repository support command."""
-
-    timeout: int = RELEASE_COMMAND_TIMEOUT_SECONDS
-    env: dict[str, str] | None = None
-    stream_output: bool = False
-
-
 @dataclass(frozen=True)
 class RevisionEvidence:
     """Source, toolchain, and command evidence for one measured revision."""
@@ -385,6 +362,16 @@ class RevisionEvidence:
     toolchain: ToolchainState
     commands: tuple[tuple[str, ...], ...]
     completed_targets: tuple[str, ...]
+    measurement: Evidence | None = None
+
+
+@dataclass(frozen=True)
+class SamplingOptions:
+    """Delaunay profile, per-target budget and optional saved-baseline request."""
+
+    cargo_profile: str
+    bench_timeout: int
+    save_baseline: str | None
 
 
 @dataclass(frozen=True)
@@ -568,12 +555,12 @@ def _ci_performance_run_metadata_path(criterion_dir: Path) -> Path:
     return criterion_dir / _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE
 
 
-def _write_ci_performance_manifest_ids(project_root: Path, stdout: str) -> None:
+def _write_ci_performance_manifest_ids(project_root: Path, stdout: str, *, criterion_dir: Path | None = None) -> None:
     """Persist the runtime ci_performance_suite manifest beside Criterion results."""
     if not isinstance(stdout, str):
         msg = "ci_performance_suite completed but stdout was not text; cannot extract api_benchmark manifest"
         raise TypeError(msg)
-    criterion_dir = project_root / "target" / "criterion"
+    criterion_dir = criterion_dir or project_root / "target" / "criterion"
     manifest_path = _ci_performance_manifest_ids_path(criterion_dir)
     manifest_ids = _parse_ci_performance_manifest_ids(stdout)
     if not manifest_ids:
@@ -586,9 +573,9 @@ def _write_ci_performance_manifest_ids(project_root: Path, stdout: str) -> None:
     )
 
 
-def _write_ci_performance_metrics(project_root: Path, stdout: object, *, require_metrics: bool = False) -> None:
+def _write_ci_performance_metrics(project_root: Path, stdout: object, *, require_metrics: bool = False, criterion_dir: Path | None = None) -> None:
     """Persist ci_performance_suite construction metrics beside Criterion results."""
-    criterion_dir = project_root / "target" / "criterion"
+    criterion_dir = criterion_dir or project_root / "target" / "criterion"
     metrics_path = _ci_performance_metrics_path(criterion_dir)
     criterion_dir.mkdir(parents=True, exist_ok=True)
 
@@ -619,9 +606,10 @@ def _write_ci_performance_run_metadata(
     completed_at: datetime,
     cargo_profile: str,
     use_dev_mode: bool,
+    criterion_dir: Path | None = None,
 ) -> None:
     """Persist metadata for the latest successful ci_performance_suite run."""
-    criterion_dir = project_root / "target" / "criterion"
+    criterion_dir = criterion_dir or project_root / "target" / "criterion"
     metadata_path = _ci_performance_run_metadata_path(criterion_dir)
     criterion_dir.mkdir(parents=True, exist_ok=True)
     metadata = {
@@ -730,7 +718,7 @@ def _load_criterion_estimate(estimates_path: Path) -> CriterionEstimate | None:
     """Load shared Criterion data with the summary's required interval bounds."""
     try:
         estimate = read_estimate(estimates_path, statistic="mean")
-    except OSError, ValueError:
+    except _CRITERION_ESTIMATE_LOAD_ERRORS:
         return None
     if estimate.lower is None or estimate.upper is None:
         return None
@@ -942,6 +930,231 @@ def preflight_release_signal(project_root: Path, *, cargo_profile: str, bench_ti
         )
 
 
+def _sampling_policy(expected: tuple[str, ...]) -> CompletePolicy:
+    """Declare the Rust workloads' counts independently of observed sample arrays."""
+    counts = []
+    for full_id in expected:
+        group = full_id.split("/", 1)[0]
+        if group == "topology_guarantee_construction":
+            count = {"2d": 10, "3d": 15, "4d": 12, "5d": 10}[full_id.split("/")[1]]
+        elif (
+            group.startswith(("tds_new_", "bistellar_flips_"))
+            or group in {"explicit_import", "proof_boundaries", "locate"}
+            or full_id.startswith("predicates/sos_degenerate/")
+        ):
+            count = 10
+        else:
+            count = {"boundary_facets": 25, "convex_hull": 20, "convex_hull_queries": 20, "validation": 15, "incremental_insert": 15}.get(group, 100)
+        counts.append((full_id, count))
+    return CompletePolicy(expected, sample_count=None, sample_counts=tuple(counts))
+
+
+def _preserve_saved_sample(sample: Path, replacement: str | None) -> bool:
+    """Keep named baselines unless the filesystem aliases a replaced sample."""
+    for name in ("new", "base", "change", replacement):
+        if name is not None:
+            excluded = sample.with_name(name)
+            if excluded.exists() and excluded.samefile(sample):
+                return False
+    return True
+
+
+def _saved_baseline_names(criterion: Path, replacement: str | None) -> tuple[str, ...]:
+    """Reject ambiguous portable baseline names before doing native work."""
+    policy = CompletePolicy(("name-validation",))
+    if replacement is not None:
+        SavedSamplePlan("target/criterion", replacement, policy)
+    names = sorted(
+        {
+            path.parent.name
+            for path in criterion.rglob("estimates.json")
+            if (path.parent / "benchmark.json").is_file() and _preserve_saved_sample(path.parent, replacement)
+        },
+    )
+    spellings = {name.casefold(): name for name in ("new", "base", "change", replacement) if name is not None}
+    for name in names:
+        try:
+            SavedSamplePlan("target/criterion", name, policy)
+        except ValueError as error:
+            msg = f"Rename saved baseline {name!r} before measuring: {error}"
+            raise ValueError(msg) from error
+        if name.casefold() in spellings:
+            msg = f"Rename saved baseline {name!r} before measuring: portable name conflicts with {spellings[name.casefold()]!r}"
+            raise ValueError(msg)
+        spellings[name.casefold()] = name
+    return tuple(names)
+
+
+def _measure_suite(
+    project_root: Path,
+    targets: tuple[str, ...],
+    *,
+    cargo_profile: str = BENCHMARK_BUILD_FLAVOR,
+    bench_timeout: int = RELEASE_BENCH_TIMEOUT_SECONDS,
+    save_baseline: str | None = None,
+) -> dict[str, str]:
+    """Publish validated fresh measurements while retaining named saved baselines."""
+    project_root = project_root.resolve()
+    destination = project_root / "target" / "criterion"
+    saved_names = _saved_baseline_names(destination, save_baseline)
+    with publish_directory(destination) as candidate:
+        outputs = _measure_suite_into(project_root, candidate, targets, SamplingOptions(cargo_profile, bench_timeout, save_baseline))
+        for name in saved_names:
+            _copy_criterion_sample(source_criterion=destination, target_criterion=candidate, source_sample=name, target_sample=name)
+    return outputs
+
+
+def _measure_suite_into(
+    project_root: Path,
+    criterion: Path,
+    targets: tuple[str, ...],
+    options: SamplingOptions,
+) -> dict[str, str]:
+    """Apply Delaunay eligibility around shared discovery, execution and completeness.
+
+    Each revision keeps its own harness. The report's comparability policy can
+    therefore retain absolute timings while suppressing incompatible ratios.
+    Shared common-harness execution deliberately replaces the baseline harness;
+    that is a different experiment from these independent release measurements.
+    """
+    _require_positive_int_field("bench_timeout", options.bench_timeout)
+    if not targets:
+        msg = "measurement requires at least one benchmark target"
+        raise ValueError(msg)
+    # Validate the saved name before any native command, using the shared contract.
+    if options.save_baseline is not None:
+        SavedSamplePlan("target/criterion", options.save_baseline, CompletePolicy(("name-validation",)))
+    controller = Path(__file__).resolve()
+    controller_digest = _sha256_file(controller)
+    command = (
+        sys.executable,
+        str(controller),
+        "sample-suite",
+        "--profile",
+        options.cargo_profile,
+        "--bench-timeout",
+        str(options.bench_timeout),
+        "--criterion-dir",
+        str(criterion),
+        "--targets",
+        *targets,
+        *(("--save-baseline", options.save_baseline) if options.save_baseline is not None else ()),
+    )
+    harness = tuple(str(path.relative_to(project_root).as_posix()) for path in _benchmark_harness_files_for_targets(project_root, targets))
+    configuration = MeasurementConfig(
+        command=command,
+        criterion_dir=criterion.relative_to(project_root).as_posix(),
+        sources=MEASUREMENT_SOURCE_PATTERNS,
+        harness=harness,
+        timeout=options.bench_timeout * len(targets),
+        probes=(("rustc", ("rustc", "--version")),),
+        dependencies=(("criterion", "Cargo.lock"),),
+        context=(("delaunay.controller-sha256", controller_digest),),
+    )
+    tag = _current_package_tag(project_root)
+    before = capture_provenance(project_root, configuration, tag, mode="independent-release")
+    discovery = DiscoveryPlan(
+        tuple(
+            DiscoveryCommand(target, ("cargo", "bench", "--profile", options.cargo_profile, "--bench", target, "--", "--list"), timeout=options.bench_timeout)
+            for target in targets
+        )
+    )
+    try:
+        inventory = discover_inventory(project_root, discovery, env=_benchmark_env(project_root))
+    except subprocess.SubprocessError as error:
+        print(format_exception_diagnostics(error), file=sys.stderr)
+        raise
+    policy = _sampling_policy(inventory.expected)
+    for target in targets:
+        run_cargo_live(
+            ["bench", "--profile", options.cargo_profile, "--bench", target, "--", "--test"],
+            cwd=project_root,
+            timeout=min(options.bench_timeout, RELEASE_PREFLIGHT_TIMEOUT_SECONDS),
+            env={**(_benchmark_env(project_root) or os.environ), "CRITERION_HOME": str(criterion)},
+        )
+    if any(criterion.iterdir()):
+        msg = "discovery or scientific preflight produced timing output"
+        raise ValueError(msg)
+    if _sha256_file(controller) != controller_digest or capture_provenance(project_root, configuration, tag, mode="independent-release") != before:
+        msg = "measurement inputs or host/tool identity changed during discovery or scientific preflight"
+        raise ValueError(msg)
+    _, provenance = measure_checkout(project_root, configuration, tag, mode="independent-release")
+    if _sha256_file(controller) != controller_digest or provenance != before:
+        msg = "measurement inputs, controller or host/tool identity changed during measurement"
+        raise ValueError(msg)
+    complete = collect_complete_sample(criterion, "new", policy)
+    if options.save_baseline is not None:
+        validate_saved_sample(criterion, options.save_baseline, policy, raw_files=("benchmark.json", "estimates.json", "sample.json", "tukey.json"))
+    # Keep the shared file-fingerprint framing and full discovery/count policy.
+    # Raw sample bytes remain in the archived Criterion tree; no historical run
+    # is relabeled as a common-harness CompleteRun.
+    provenance = replace(
+        provenance,
+        context=(
+            *provenance.context,
+            ("delaunay.inventory", json.dumps(json.loads(serialize_inventory(inventory)), separators=(",", ":"))),
+            ("delaunay.sampling-policy", serialize_policy(policy).decode("utf-8")),
+            ("delaunay.scientific-preflight", "passed"),
+            ("delaunay.sample", options.save_baseline or "new"),
+            ("delaunay.raw-sample-sha256", _criterion_sample_digest(criterion, options.save_baseline or "new")),
+        ),
+    )
+    evidence = Evidence(
+        serialize_sample(Sample(tuple((case.full_id, case.estimate("median")) for case in complete.cases))), SAMPLE_SCHEMA, (("measurement", provenance),)
+    )
+    outputs = json.loads((criterion / MEASUREMENT_OUTPUT_FILE).read_bytes())
+    if not isinstance(outputs, dict) or set(outputs) != set(targets) or any(not isinstance(value, str) for value in outputs.values()):
+        msg = "measurement output does not match the Delaunay target plan"
+        raise ValueError(msg)
+    payload, manifest = serialize_evidence(evidence)
+    replace_many(
+        {
+            criterion / MEASUREMENT_INVENTORY_FILE: serialize_inventory(inventory),
+            criterion / MEASUREMENT_POLICY_FILE: serialize_policy(policy),
+            criterion / "delaunay-sample.json": payload,
+            criterion / "delaunay-evidence.json": manifest,
+        }
+    )
+    return cast("dict[str, str]", outputs)
+
+
+def _load_fresh_measurement(criterion: Path) -> Evidence:
+    """Bind fresh Delaunay eligibility evidence to its unchanged raw observations."""
+    evidence = load_evidence(criterion / "delaunay-sample.json", criterion / "delaunay-evidence.json")
+    if evidence.payload_schema != SAMPLE_SCHEMA or len(evidence.sources) != 1 or evidence.sources[0][0] != "measurement":
+        msg = "fresh Delaunay evidence requires one shared measurement sample"
+        raise ValueError(msg)
+    metadata = dict(evidence.sources[0][1].context)
+    inventory = parse_inventory((criterion / MEASUREMENT_INVENTORY_FILE).read_bytes())
+    policy = parse_policy((criterion / MEASUREMENT_POLICY_FILE).read_bytes())
+    if (
+        policy != _sampling_policy(inventory.expected)
+        or parse_inventory(metadata["delaunay.inventory"].encode()) != inventory
+        or parse_policy(metadata["delaunay.sampling-policy"].encode()) != policy
+        or metadata.get("delaunay.scientific-preflight") != "passed"
+    ):
+        msg = "fresh measurement differs from the preflighted Delaunay workload policy"
+        raise ValueError(msg)
+    sample_name = metadata["delaunay.sample"]
+    complete = collect_complete_sample(criterion, sample_name, policy)
+    sample = Sample(tuple((case.full_id, case.estimate("median")) for case in complete.cases))
+    if parse_sample(evidence.payload) != sample or metadata.get("delaunay.raw-sample-sha256") != _criterion_sample_digest(criterion, sample_name):
+        msg = "raw Criterion observations differ from the retained measurement"
+        raise ValueError(msg)
+    return evidence
+
+
+def _benchmark_harness_files_for_targets(project_root: Path, targets: tuple[str, ...]) -> tuple[Path, ...]:
+    """Select workload and build inputs that affect Delaunay benchmark identity."""
+    return (
+        *(project_root / "benches" / f"{target}.rs" for target in targets),
+        *sorted((project_root / "benches" / "common").rglob("*.rs")),
+        project_root / "Cargo.toml",
+        project_root / "Cargo.lock",
+        project_root / "rust-toolchain.toml",
+    )
+
+
 def run_release_signal_measurement_plan(
     project_root: Path,
     *,
@@ -955,46 +1168,61 @@ def run_release_signal_measurement_plan(
     if preflight_only and save_baseline is not None:
         msg = "preflight cannot save a measurement baseline"
         raise ValueError(msg)
-    preflight_release_signal(project_root, cargo_profile=cargo_profile, bench_timeout=bench_timeout)
     if preflight_only:
+        preflight_release_signal(project_root, cargo_profile=cargo_profile, bench_timeout=bench_timeout)
         return {}
+    return _measure_suite(project_root, RELEASE_SIGNAL_BENCH_TARGETS, cargo_profile=cargo_profile, bench_timeout=bench_timeout, save_baseline=save_baseline)
+
+
+def _sample_delaunay_targets(project_root: Path, criterion: Path, targets: tuple[str, ...], options: SamplingOptions) -> None:
+    """Execute selected scientific workloads and retain their domain diagnostics.
+
+    This child command is called by the shared measurement engine; discovery,
+    preflight, provenance checks and completeness are owned by its caller.
+    """
     outputs: dict[str, str] = {}
-    for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN:
-        cargo_args = ["bench", "--profile", cargo_profile, "--bench", measurement.target]
-        criterion_arguments = list(measurement.criterion_arguments)
-        if save_baseline is not None:
-            criterion_arguments.extend(["--save-baseline", save_baseline])
+    for target in targets:
+        cargo_args = ["bench", "--profile", options.cargo_profile, "--bench", target]
+        criterion_arguments: list[str] = []
+        if options.save_baseline is not None:
+            criterion_arguments.append(f"--save-baseline={options.save_baseline}")
         if criterion_arguments:
             cargo_args.extend(["--", *criterion_arguments])
 
-        print(f"🔄 Running release-signal target {measurement.target}...")
-        result = run_cargo_command(
-            cargo_args,
-            cwd=project_root,
-            timeout=bench_timeout,
-            check=False,
-        )
+        print(f"Running Delaunay benchmark target {target}...", flush=True)
+        try:
+            result = run_cargo_command(
+                cargo_args,
+                cwd=project_root,
+                timeout=options.bench_timeout,
+                check=False,
+                env={**(_benchmark_env(project_root) or os.environ), "CRITERION_HOME": str(criterion)},
+            )
+        except subprocess.TimeoutExpired as error:
+            print(format_exception_diagnostics(error), file=sys.stderr)
+            raise
         if result.stdout:
             print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
         if result.stderr:
             print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
         if result.returncode != 0:
-            msg = f"release-signal target {measurement.target} exited with status {result.returncode}"
+            msg = f"Delaunay target {target} exited with status {result.returncode}"
             raise RuntimeError(msg)
-        outputs[measurement.target] = result.stdout
+        outputs[target] = result.stdout
 
-        if measurement.target == "ci_performance_suite":
+        if target == "ci_performance_suite":
             completed_at = datetime.now(UTC)
-            _write_ci_performance_manifest_ids(project_root, result.stdout)
-            _write_ci_performance_metrics(project_root, result.stdout, require_metrics=True)
+            _write_ci_performance_manifest_ids(project_root, result.stdout, criterion_dir=criterion)
+            _write_ci_performance_metrics(project_root, result.stdout, require_metrics=True, criterion_dir=criterion)
             _write_ci_performance_run_metadata(
                 project_root,
                 completed_at=completed_at,
-                cargo_profile=cargo_profile,
+                cargo_profile=options.cargo_profile,
                 use_dev_mode=False,
+                criterion_dir=criterion,
             )
 
-    return outputs
+    _write_text_atomic(criterion / MEASUREMENT_OUTPUT_FILE, json.dumps(outputs))
 
 
 # =============================================================================
@@ -1356,105 +1584,6 @@ class PerformanceSummaryGenerator:
             return datetime.now(UTC).strftime("%Y-%m-%d")
         except _RECOVERABLE_CLI_ERRORS:
             return datetime.now(UTC).strftime("%Y-%m-%d")
-
-    def _run_circumsphere_benchmarks(self, cargo_profile: str | None = None) -> tuple[bool, dict[str, str] | None]:
-        """
-        Run the circumsphere containment benchmarks to generate fresh data.
-
-        Args:
-            cargo_profile: Cargo profile for the fresh run.  Defaults to
-                :data:`BENCHMARK_BUILD_FLAVOR` so every fresh benchmark run
-                goes through the same ThinLTO/codegen-units settings used
-                by baseline generation and comparison.
-
-        Returns:
-            Tuple of (success, numerical_accuracy_data)
-        """
-        try:
-            print("🔄 Running circumsphere containment benchmarks...")
-
-            profile = cargo_profile if cargo_profile is not None else BENCHMARK_BUILD_FLAVOR
-            cargo_args = ["bench", "--profile", profile, "--bench", "circumsphere_containment", "--", *DEV_MODE_BENCH_ARGS]
-
-            # Run the circumsphere benchmark with reduced sample size for speed
-            result = run_cargo_command(
-                cargo_args,
-                cwd=self.project_root,
-                timeout=240,  # 4 minute timeout for quick benchmarks
-            )
-
-            # Parse numerical accuracy data from stdout
-            numerical_accuracy_data = self._parse_numerical_accuracy_output(result.stdout)
-
-            print("✅ Circumsphere benchmarks completed successfully")
-            return True, numerical_accuracy_data
-
-        except _RECOVERABLE_CLI_ERRORS as e:
-            print(f"❌ Error running circumsphere benchmarks: {e}")
-            return False, None
-
-    def _run_ci_performance_suite(
-        self,
-        cargo_profile: str | None = None,
-        *,
-        use_dev_mode: bool = False,
-        bench_timeout: int = 1800,
-    ) -> bool:
-        """
-        Run the public API CI performance suite to generate fresh Criterion data.
-
-        Args:
-            cargo_profile: Cargo profile for the fresh run. Defaults to
-                :data:`BENCHMARK_BUILD_FLAVOR` so summary, baseline, and
-                comparison measurements use the same optimized profile.
-            use_dev_mode: When true, pass reduced Criterion sampling arguments
-                for local development feedback. Full sampling is used by
-                default.
-            bench_timeout: Maximum runtime for the Cargo benchmark command in seconds.
-
-        Returns:
-            True if the benchmark completed successfully, False otherwise.
-        """
-        _require_positive_int_field("bench_timeout", bench_timeout)
-        try:
-            print("🔄 Running ci_performance_suite benchmarks...")
-
-            profile = cargo_profile if cargo_profile is not None else BENCHMARK_BUILD_FLAVOR
-            cargo_args = ["bench", "--profile", profile, "--bench", "ci_performance_suite"]
-            if use_dev_mode:
-                cargo_args.extend(["--", *DEV_MODE_BENCH_ARGS])
-
-            result = run_cargo_command(
-                cargo_args,
-                cwd=self.project_root,
-                timeout=bench_timeout,
-                check=False,
-            )
-            if result.returncode != 0:
-                print(f"❌ Error running ci_performance_suite benchmarks: cargo exited with status {result.returncode}")
-                return False
-
-            completed_at = datetime.now(UTC)
-            _write_ci_performance_manifest_ids(self.project_root, result.stdout)
-            _write_ci_performance_metrics(self.project_root, result.stdout, require_metrics=True)
-            _write_ci_performance_run_metadata(
-                self.project_root,
-                completed_at=completed_at,
-                cargo_profile=profile,
-                use_dev_mode=use_dev_mode,
-            )
-            print("✅ ci_performance_suite benchmarks completed successfully")
-            return True
-
-        except ExecutableNotFoundError as e:
-            print(f"❌ Error running ci_performance_suite benchmarks: {e}")
-            return False
-        except subprocess.TimeoutExpired as e:
-            print(f"❌ Error running ci_performance_suite benchmarks: {e}")
-            return False
-        except OSError as e:
-            print(f"❌ Error running ci_performance_suite benchmarks: {e}")
-            return False
 
     def _parse_numerical_accuracy_output(self, stdout: str) -> dict[str, str] | None:
         """
@@ -2437,29 +2566,22 @@ def _criterion_sample(estimates_json: Path, criterion_dir: Path) -> CriterionSam
         benchmark_dir.relative_to(criterion_dir)
     except ValueError:
         return None
-    metadata_path = sample_dir / "benchmark.json"
-    try:
-        metadata = json.loads(_read_text(metadata_path))
-    except (OSError, json.JSONDecodeError) as exc:
-        msg = f"could not load Criterion benchmark metadata {metadata_path}: {exc}"
-        raise ValueError(msg) from exc
-    if not isinstance(metadata, Mapping):
-        msg = f"Criterion benchmark metadata must be an object: {metadata_path}"
-        raise TypeError(msg)
-    full_id = metadata.get("full_id")
-    group_id = metadata.get("group_id")
-    if not isinstance(full_id, str) or not full_id.strip() or not isinstance(group_id, str) or not group_id.strip():
-        msg = f"Criterion benchmark metadata requires non-empty full_id and group_id: {metadata_path}"
+    case = CompleteCase(
+        benchmark_dir.relative_to(criterion_dir).as_posix(),
+        (sample_dir / "benchmark.json").read_bytes(),
+        estimates_json.read_bytes(),
+        (sample_dir / "sample.json").read_bytes(),
+    )
+    full_id = case.full_id
+    if "/" not in full_id:
+        msg = f"Criterion full_id must contain a group and benchmark: {full_id!r} in {sample_dir}"
         raise ValueError(msg)
-    prefix = f"{group_id}/"
-    if full_id.startswith(prefix):
-        group = group_id
-        benchmark = full_id.removeprefix(prefix)
-    elif "/" in full_id:
-        group, benchmark = full_id.split("/", maxsplit=1)
+    # Group labels are Delaunay presentation policy; canonical identity is shared.
+    group = json.loads(case.benchmark).get("group_id")
+    if isinstance(group, str) and group and full_id.startswith(f"{group}/"):
+        benchmark = full_id.removeprefix(f"{group}/")
     else:
-        msg = f"Criterion full_id must contain a group and benchmark: {full_id!r} in {metadata_path}"
-        raise ValueError(msg)
+        group, benchmark = full_id.split("/", maxsplit=1)
     return CriterionSample(benchmark_id=full_id, group=group, benchmark=benchmark, estimates=estimates_json)
 
 
@@ -2473,7 +2595,7 @@ def _criterion_estimates_by_id(criterion_dir: Path, sample: str, *, skip_invalid
             continue
         try:
             criterion_sample = _criterion_sample(estimates_json, criterion_dir)
-        except TypeError, ValueError:
+        except _CRITERION_METADATA_LOAD_ERRORS:
             if not skip_invalid_metadata:
                 raise
             continue
@@ -3278,16 +3400,6 @@ def published_stable_release_tags(repo_root: Path) -> list[str]:
     return [release.tag for release in published_releases(repo_root)]
 
 
-def _run_tool(command: str, args: list[str], *, cwd: Path, options: ToolRunOptions | None = None) -> None:
-    """Run a support command through shared bounded process execution."""
-    resolved_options = options or ToolRunOptions()
-    try:
-        runner = run_command_live if resolved_options.stream_output else run_safe_command
-        runner(command, args, cwd=cwd, timeout=resolved_options.timeout, env=resolved_options.env)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError(format_exception_diagnostics(exc)) from exc
-
-
 def _progress(message: str) -> None:
     """Write one immediately visible performance-workflow phase marker."""
     print(f"[performance] {message}", file=sys.stderr, flush=True)
@@ -3591,6 +3703,13 @@ def _measurement_plan_digest(
         if key in {"CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS", "RUSTUP_TOOLCHAIN"} or key.startswith(("BENCH_", "CRIT_", "DELAUNAY_BENCH_"))
     )
     payload["environment"] = relevant_environment
+    policy_path = checkout / "target" / "criterion" / MEASUREMENT_POLICY_FILE
+    if policy_path.is_file():
+        policy = parse_policy(policy_path.read_bytes())
+        inventory = parse_inventory((policy_path.parent / MEASUREMENT_INVENTORY_FILE).read_bytes())
+        selected_ids = tuple(name for target, names in inventory.suites if target in targets for name in names)
+        policy = replace(policy, expected=selected_ids, sample_count=None, sample_counts=tuple((name, policy.count_for(name)) for name in selected_ids))
+        payload["sampling_policy"] = json.loads(serialize_policy(policy))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
@@ -3652,6 +3771,7 @@ def _revision_evidence(
         toolchain=_toolchain_state(checkout, measurement.suite, measurement.comparison_targets),
         commands=measurement.commands,
         completed_targets=_bench_targets_for_suite(checkout, measurement.suite),
+        measurement=_load_fresh_measurement(checkout / "target/criterion"),
     )
 
 
@@ -3664,6 +3784,13 @@ def _recorded_host_identity(repo_root: Path) -> HostIdentity:
         operating_system=host.os or "",
         architecture=host.architecture or "",
     )
+
+
+def _measurement_host(evidence: Evidence) -> HostIdentity:
+    """Use the host captured around this revision's measurement, not a later probe."""
+    source = dict(evidence.sources)["measurement"]
+    host = parse_host(dict(source.context)["host"].encode("utf-8"))
+    return HostIdentity(status="recorded", cpu=host.cpu or "", operating_system=host.os or "", architecture=host.architecture or "")
 
 
 def _cargo_manifest_bench_targets(worktree: Path) -> set[str]:
@@ -3707,83 +3834,6 @@ def _shared_bench_targets(current_worktree: Path, baseline_worktree: Path, suite
     return shared
 
 
-def _run_saved_baseline_for_suite(
-    *,
-    worktree: Path,
-    baseline_tag: str,
-    suite: str,
-    env: dict[str, str] | None,
-) -> tuple[tuple[str, ...], ...]:
-    """Run present release-signal benchmarks and save a named Criterion baseline."""
-    targets = _bench_targets_for_suite(worktree, suite)
-    if not targets:
-        msg = f"no benchmark targets found for suite {suite!r} in {worktree}"
-        raise RuntimeError(msg)
-    commands: list[tuple[str, ...]] = []
-    for target in targets:
-        command = (
-            "cargo",
-            "bench",
-            "--profile",
-            BENCHMARK_BUILD_FLAVOR,
-            "--bench",
-            target,
-            "--",
-            "--save-baseline",
-            baseline_tag,
-        )
-        _progress(f"running baseline benchmark {target} for {baseline_tag}")
-        _run_tool(
-            command[0],
-            list(command[1:]),
-            cwd=worktree,
-            options=ToolRunOptions(
-                timeout=RELEASE_BENCH_TIMEOUT_SECONDS,
-                env=env,
-                stream_output=True,
-            ),
-        )
-        _progress(f"completed baseline benchmark {target} for {baseline_tag}")
-        commands.append(command)
-    return tuple(commands)
-
-
-def _run_latest_for_suite(*, worktree: Path, suite: str, env: dict[str, str] | None) -> tuple[tuple[str, ...], ...]:
-    """Run current benchmarks for a suite."""
-    if suite == "release-signal" and (worktree / "justfile").exists():
-        command = ("just", "bench-latest", str(RELEASE_BENCH_TIMEOUT_SECONDS))
-        _progress("running current release-signal benchmarks")
-        _run_tool(
-            command[0],
-            list(command[1:]),
-            cwd=worktree,
-            options=ToolRunOptions(
-                timeout=RELEASE_SIGNAL_TIMEOUT_SECONDS,
-                env=env,
-                stream_output=True,
-            ),
-        )
-        _progress("completed current release-signal benchmarks")
-        return (command,)
-    commands: list[tuple[str, ...]] = []
-    for target in _bench_targets_for_suite(worktree, suite):
-        command = ("cargo", "bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", target)
-        _progress(f"running current benchmark {target}")
-        _run_tool(
-            command[0],
-            list(command[1:]),
-            cwd=worktree,
-            options=ToolRunOptions(
-                timeout=RELEASE_BENCH_TIMEOUT_SECONDS,
-                env=env,
-                stream_output=True,
-            ),
-        )
-        _progress(f"completed current benchmark {target}")
-        commands.append(command)
-    return tuple(commands)
-
-
 def _generate_local_baseline_into_worktree(
     *,
     config: ReleaseReportConfig,
@@ -3800,11 +3850,10 @@ def _generate_local_baseline_into_worktree(
             msg = f"prepared baseline checkout version {observed_baseline_tag} does not match requested release {config.baseline_tag}"
             raise ValueError(msg)
         comparison_targets = _shared_bench_targets(target_worktree, baseline_worktree, config.suite)
-        commands = _run_saved_baseline_for_suite(
-            worktree=baseline_worktree,
-            baseline_tag=config.baseline_tag,
-            suite=config.suite,
-            env=_benchmark_env(baseline_worktree),
+        targets = _bench_targets_for_suite(baseline_worktree, config.suite)
+        _measure_suite(baseline_worktree, targets, save_baseline=config.baseline_tag)
+        commands = tuple(
+            ("cargo", "bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", target, "--", f"--save-baseline={config.baseline_tag}") for target in targets
         )
         baseline_criterion = baseline_worktree / "target" / "criterion"
         if not baseline_criterion.is_dir():
@@ -3871,6 +3920,27 @@ def _host_identity_payload(host: HostIdentity) -> dict[str, str]:
     }
 
 
+def _validate_release_measurement_command(metadata: Mapping[str, str]) -> None:
+    """Bind release metadata to the captured sampler's profile and full target plan."""
+    msg = "release metadata requires a captured perf sample-suite command for every release-signal target"
+    try:
+        command = json.loads(metadata.get("command", "null"))
+    except json.JSONDecodeError as error:
+        raise ValueError(msg) from error
+    if (
+        not isinstance(command, list)
+        or len(command) != 10 + len(RELEASE_SIGNAL_BENCH_TARGETS)
+        or any(not isinstance(part, str) or not part for part in command)
+        or command[2:6] != ["sample-suite", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench-timeout"]
+        or command[7] != "--criterion-dir"
+        or command[9:] != ["--targets", *RELEASE_SIGNAL_BENCH_TARGETS]
+        or not command[6].isascii()
+        or not command[6].isdecimal()
+        or int(command[6]) <= 0
+    ):
+        raise ValueError(msg)
+
+
 def write_release_benchmark_metadata(*, repo_root: Path, tag: str, criterion_dir: Path, output: Path) -> None:
     """Write versioned measurement provenance inside a release benchmark archive."""
     resolved_criterion = criterion_dir.resolve(strict=False)
@@ -3896,8 +3966,37 @@ def write_release_benchmark_metadata(*, repo_root: Path, tag: str, criterion_dir
         msg = f"release benchmark checkout source-state digest is inconsistent with clean tag {normalized_tag}"
         raise ValueError(msg)
     toolchain = _toolchain_state(repo_root, "release-signal")
-    host = _recorded_host_identity(repo_root)
-    _criterion_sample_digest(criterion_dir, "new")
+    measurement = _load_fresh_measurement(criterion_dir)
+    measured_source = measurement.sources[0][1]
+    measured_metadata = dict(measured_source.context)
+    _validate_release_measurement_command(measured_metadata)
+    if (
+        measured_source.revision != source.commit
+        or measured_metadata.get("release") != observed_tag
+        or measured_metadata.get("delaunay.sample") != "new"
+        or json.loads(measured_metadata["tool.rustc"]) != toolchain.rustc
+        or measured_metadata.get("dependency.criterion") != toolchain.criterion_version
+    ):
+        msg = "release metadata differs from the captured measurement identity"
+        raise ValueError(msg)
+    host = _measurement_host(measurement)
+    inventory = parse_inventory((criterion_dir / MEASUREMENT_INVENTORY_FILE).read_bytes())
+    if {name for name, _ in inventory.suites} != set(RELEASE_SIGNAL_BENCH_TARGETS):
+        msg = "release archive requires every release-signal target"
+        raise ValueError(msg)
+    sources = tuple(sorted((path.relative_to(repo_root) for pattern in MEASUREMENT_SOURCE_PATTERNS for path in repo_root.glob(pattern)), key=Path.as_posix))
+    harness = tuple(
+        sorted((path.relative_to(repo_root) for path in _benchmark_harness_files_for_targets(repo_root, RELEASE_SIGNAL_BENCH_TARGETS)), key=Path.as_posix),
+    )
+    if (
+        measured_metadata.get("fingerprint-schema") != "research-repo-tools/files/v1"
+        or json.loads(measured_metadata["source-inventory"]) != [path.as_posix() for path in sources]
+        or json.loads(measured_metadata["harness-inventory"]) != [path.as_posix() for path in harness]
+        or measured_source.source_sha256 != fingerprint_files(repo_root, sources)
+        or measured_source.harness_sha256 != fingerprint_files(repo_root, harness)
+    ):
+        msg = "release measurement source or harness differs from the clean tag checkout"
+        raise ValueError(msg)
     payload = {
         "schema_version": RELEASE_ASSET_METADATA_SCHEMA_VERSION,
         "source": _source_state_payload(source),
@@ -4384,6 +4483,7 @@ def _build_performance_bundle_in_temp_worktree(*, config: ReleaseReportConfig) -
                 msg = f"prepared current checkout version {observed_current_tag} does not match requested release {config.current_tag}"
                 raise ValueError(msg)
             if config.baseline_source == "github-assets":
+                measurements: tuple[tuple[str, Evidence], ...] = ()
                 current_asset_evidence, baseline_asset_evidence = _prepare_github_release_assets(
                     config=config,
                     target_worktree=worktree,
@@ -4398,9 +4498,10 @@ def _build_performance_bundle_in_temp_worktree(*, config: ReleaseReportConfig) -
                 current_acquisition_commands = current_asset_evidence.acquisition_commands
                 baseline_acquisition_commands = baseline_asset_evidence.acquisition_commands
             else:
-                baseline_evidence = _generate_local_baseline_into_worktree(config=config, target_worktree=worktree, tmp_dir=tmp_dir)
-                current_commands = _run_latest_for_suite(worktree=worktree, suite=config.suite, env=_benchmark_env(worktree))
                 current_targets = _bench_targets_for_suite(worktree, config.suite)
+                _measure_suite(worktree, current_targets)
+                current_commands = tuple(("cargo", "bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", target) for target in current_targets)
+                baseline_evidence = _generate_local_baseline_into_worktree(config=config, target_worktree=worktree, tmp_dir=tmp_dir)
                 baseline_targets = set(baseline_evidence.completed_targets)
                 comparison_targets = tuple(target for target in current_targets if target in baseline_targets)
                 current_evidence = _revision_evidence(
@@ -4413,8 +4514,12 @@ def _build_performance_bundle_in_temp_worktree(*, config: ReleaseReportConfig) -
                         comparison_targets=comparison_targets,
                     ),
                 )
-                current_host = _recorded_host_identity(config.repo_root)
-                baseline_host = current_host
+                if current_evidence.measurement is None or baseline_evidence.measurement is None:
+                    msg = "fresh comparisons require shared measurement evidence for both revisions"
+                    raise ValueError(msg)
+                measurements = (("baseline", baseline_evidence.measurement), ("current", current_evidence.measurement))
+                current_host = _measurement_host(current_evidence.measurement)
+                baseline_host = _measurement_host(baseline_evidence.measurement)
                 criterion_dir = worktree / "target" / "criterion"
                 current_artifact = MeasurementArtifact(
                     origin="local-run",
@@ -4459,7 +4564,7 @@ def _build_performance_bundle_in_temp_worktree(*, config: ReleaseReportConfig) -
                 scope=config.scope,
                 comparison_note=comparison_note,
             )
-            return PerformanceBundle(context=context, rows=rows)
+            return PerformanceBundle(context=context, rows=rows, measurements=measurements)
 
 
 def _artifact_paths_for_output(output: Path) -> ArtifactPaths:
@@ -4753,6 +4858,7 @@ def _add_release_signal_subcommand(subparsers: argparse._SubParsersAction[argpar
         "--save-baseline",
         help="Also save every planned Criterion result under this baseline name",
     )
+    release_signal_parser.add_argument("--suite", choices=BENCH_COMPARE_SUITE_CHOICES, default="release-signal", help="Select a Delaunay workload suite")
     release_signal_parser.add_argument(
         "--preflight-only",
         action="store_true",
@@ -4760,6 +4866,16 @@ def _add_release_signal_subcommand(subparsers: argparse._SubParsersAction[argpar
     )
     _add_bench_timeout_arg(release_signal_parser)
     _add_project_root_arg(release_signal_parser)
+
+    sample_parser = subparsers.add_parser("sample-suite", help="Execute Delaunay workloads inside the shared measurement engine")
+    sample_parser.add_argument(
+        "--targets", nargs="+", required=True, choices=sorted({target for targets in BENCH_TARGET_SUITES.values() for target in targets})
+    )
+    sample_parser.add_argument("--profile", default=BENCHMARK_BUILD_FLAVOR)
+    sample_parser.add_argument("--save-baseline")
+    sample_parser.add_argument("--criterion-dir", type=Path, required=True)
+    _add_bench_timeout_arg(sample_parser)
+    _add_project_root_arg(sample_parser)
 
 
 def _add_performance_summary_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -4908,13 +5024,25 @@ def _cmd_generate_summary(args: argparse.Namespace, project_root: Path) -> None:
 def _cmd_run_release_signal(args: argparse.Namespace, project_root: Path) -> None:
     """Execute the release-signal plan from its single Python owner."""
     try:
-        run_release_signal_measurement_plan(
-            project_root,
-            cargo_profile=args.profile,
-            bench_timeout=args.bench_timeout,
-            save_baseline=args.save_baseline,
-            preflight_only=args.preflight_only,
-        )
+        if args.suite == "release-signal":
+            run_release_signal_measurement_plan(
+                project_root,
+                cargo_profile=args.profile,
+                bench_timeout=args.bench_timeout,
+                save_baseline=args.save_baseline,
+                preflight_only=args.preflight_only,
+            )
+        else:
+            if args.preflight_only:
+                msg = "standalone scientific preflight requires the release-signal suite"
+                raise ValueError(msg)
+            _measure_suite(
+                project_root,
+                _bench_targets_for_suite(project_root, args.suite),
+                cargo_profile=args.profile,
+                bench_timeout=args.bench_timeout,
+                save_baseline=args.save_baseline,
+            )
     except _RECOVERABLE_CLI_ERRORS as error:
         print(f"run-release-signal: {error}", file=sys.stderr)
         sys.exit(1)
@@ -5153,6 +5281,14 @@ def execute_performance_summary_commands(args: argparse.Namespace, project_root:
 
 def execute_command(args: argparse.Namespace, project_root: Path) -> None:
     """Execute the selected command based on parsed arguments."""
+    if args.command == "sample-suite":
+        _sample_delaunay_targets(
+            project_root,
+            args.criterion_dir,
+            tuple(args.targets),
+            SamplingOptions(args.profile, args.bench_timeout, args.save_baseline),
+        )
+        return
     handlers = {
         "bench-compare": _cmd_bench_compare,
         "generate-summary": execute_performance_summary_commands,

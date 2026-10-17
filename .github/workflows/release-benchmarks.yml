@@ -37,14 +37,25 @@ jobs:
           persist-credentials: false
           ref: ${{ github.sha }}
 
+      - name: Set up trusted publication tooling
+        uses: $/.github/actions/setup-just
+
+      - name: Preserve publication runtime across release checkout
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-tools"
+          cp pyproject.toml uv.lock .python-version "$RUNNER_TEMP/release-tools/"
+          cp tooling/python/release_benchmarks.py "$RUNNER_TEMP/release-tools/"
+          uv sync --locked --only-group tooling --no-install-project --project "$RUNNER_TEMP/release-tools"
+
       - name: Validate draft release target
         id: target
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          bash scripts/release_benchmarks.sh preflight
-          cp scripts/release_benchmarks.sh "$RUNNER_TEMP/release_benchmarks.sh"
+          "$RUNNER_TEMP/release-tools/.venv/bin/python" \
+            "$RUNNER_TEMP/release-tools/release_benchmarks.py" \
+            preflight "$RUNNER_TEMP/release-target.json"
 
       - name: Check out exact release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -106,12 +117,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
-          EXPECTED_RELEASE_ID: ${{ steps.target.outputs.release_id }}
-          EXPECTED_COMMIT: ${{ steps.target.outputs.commit }}
         run: |
           set -euo pipefail
 
-          bash "$RUNNER_TEMP/release_benchmarks.sh" publish
+          "$RUNNER_TEMP/release-tools/.venv/bin/python" \
+            "$RUNNER_TEMP/release-tools/release_benchmarks.py" \
+            publish "$RUNNER_TEMP/release-target.json"
 
       - name: Release benchmark summary
         env:

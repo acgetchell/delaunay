@@ -145,9 +145,10 @@ the comparison JSON/evidence pair after reloading it, promotes `docs/performance
 archives the prior report plus the exact promoted evidence under
 `docs/archive/performance/`.
 
-The local comparison workflow gives each of the five curated benchmark targets
-a two-hour sampling ceiling plus a ten-minute preflight ceiling and derives
-an outer ceiling for the complete plan (up to ten hours and fifty minutes).
+For each measured revision, the local comparison workflow gives each of the five
+curated benchmark targets separate two-hour discovery and sampling ceilings,
+plus a ten-minute preflight ceiling. The sampling child has a ten-hour ceiling;
+discovery and preflight run before it, with no combined local workflow deadline.
 These ceilings accommodate slow higher-dimensional
 measurements; they are not expected runtimes. A timeout in any target means the
 measurement failed: rerun the complete `just performance-release` command

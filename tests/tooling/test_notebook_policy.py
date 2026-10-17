@@ -46,6 +46,8 @@ def test_native_notebook_lint_rejects_popen(tmp_path: Path, source: str, *, proh
 
     diagnostics = json.loads(result.stdout)
     assert result.returncode == int(prohibited), result.stderr
-    assert result.stderr == ""
+    # Keep rejecting unexpected diagnostics while the inherited Ruff pin warns.
+    ruff_notice = "warning: Support for Python 3.15 is under development and may be unstable. Enable `preview` to remove this warning.\n"
+    assert result.stderr in ("", ruff_notice), result.stderr
     assert [item["code"] for item in diagnostics] == (["TID251"] if prohibited else [])
     assert all(item["cell"] == 1 for item in diagnostics)

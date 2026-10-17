@@ -1,13 +1,25 @@
 # Shared tooling adoption
 
 The repository now pins the published
-[research-repo-tools v0.1.8](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.1.8)
+[research-repo-tools v0.1.9](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.1.9)
 PyPI distribution in runtime dependencies, the tooling/dev groups, and the
 notebook extra/group. `uv.lock` records exact registry artifacts and hashes.
-Python retains the inherited 3.14 floor. Ruff, ty and pytest inherit exact
+Python follows the shared package's 3.15 floor. Ruff, ty and pytest inherit exact
 versions from the package's `python-tools` extra; no independent floating
-requirements remain. The uv declaration is 0.13.0, matching the installed
+requirements remain. The uv declaration is 0.13.1, matching the installed
 manager used for the lock and consumer checks.
+
+Semgrep 1.181.0 runs in the same Python 3.15 environment. The uv overrides
+select patched MCP 1.30.0 and, on Windows, pywin32 312 with Python 3.15 wheels;
+Semgrep's own pins still select MCP 1.29.0 and pywin32 311. Native Linux and
+Windows execution must be verified by their CI jobs.
+
+The Rust dependency is now the published la-stack 0.5.0, retaining disabled
+default features and the `exact` feature. This dependency refresh makes the
+upstream APIs available; numerical delegation remains tracked by
+[#577](https://github.com/acgetchell/delaunay/issues/577),
+[#579](https://github.com/acgetchell/delaunay/issues/579), and
+[#610](https://github.com/acgetchell/delaunay/issues/610).
 
 ## Ownership
 
@@ -27,8 +39,9 @@ regenerated in this adoption patch.
 
 The v0.1.8 implementation is adopted for issues #625–#630, #632–#634 and #636.
 Their native Linux/Windows consumer results remain pending hosted CI.
-Issue #631 is partially implemented; it must remain open until the remaining
-performance contracts can be replaced without changing scientific behavior.
+Issue #631 adopts the v0.1.9 discovery, heterogeneous completeness, saved-sample
+verification and captured release-target APIs. Delaunay retains workload and
+scientific eligibility policy; shared code owns the underlying mechanisms.
 
 | Adoption | Published integration | Remaining ownership |
 |-----|-----|-----|
@@ -38,7 +51,7 @@ performance contracts can be replaced without changing scientific behavior.
 | [#628][d628] | Declared lowercase kebab-case notebook ID pattern | Stable descriptive cell names |
 | [#629][d629] | Paired Semgrep scan, suppressions, aggregate SARIF and budgets | Repository rules/scopes and fixture exclusion |
 | [#630][d630] | Nullable host, native TOML and profiling source capture | Scientific eligibility and dynamic profiling labels |
-| [#631][d631] | Shared comparison JSON/evidence, release selection, asset downloads, publication | Mixed sampling and canonical Criterion IDs; see below |
+| [#631][d631] | Measurement, inventory, completeness, saved samples and captured-target publication | Scientific policy; see below |
 | [#632][d632] | Python commands/pins, Just inspection, notebook test project | Lint policy and installed-wheel smoke test |
 | [#633][d633] | Shared raw all-lines 160-character Markdown gate | Explicit changelog/history exclusions |
 | [#634][d634] | Shared JupyterLab launch and explicit index/revision reset plan | Declared scratch/checkpoint paths; reset remains opt-in |
@@ -88,9 +101,10 @@ Codacy or the shared package supports this producer format directly.
 Declarative workflow inputs live under `tooling/`, following the same boundary
 as la-stack and markov-chain-monte-carlo. The remaining scientific Python modules
 are packaged from `tooling/python/`, with consumer tests in `tests/tooling/` and
-mirrored fixtures in `tests/semgrep/tests/tooling/`. `scripts/` contains only
-`release_benchmarks.sh`. The package boundary remains `tooling/python/`; `scripts/` contains only shell
-scripts. Legacy benchmark CLI commands and recipes are deliberately removed.
+mirrored fixtures in `tests/semgrep/tests/tooling/`. The last shell helper,
+`scripts/release_benchmarks.sh`, is retired. Its small release-policy adapter
+is packaged as `tooling/python/release_benchmarks.py`.
+Legacy benchmark CLI commands and recipes are deliberately removed.
 The retained `performance-*` commands use new shared evidence paths.
 
 Performance retention uses the shared Criterion comparison JSON and evidence
@@ -105,36 +119,95 @@ Retired comparison formats are no longer accepted as promotion inputs.
 
 ### Performance deletion gates
 
-Published `CompletePolicy` has one sample count for a whole phase, and the
-common-harness plan requires the same count for both phases. Delaunay's actual
-release-signal plan intentionally combines 10, 15, 20, 25 and default 100-sample
-groups. A valid two-case fixture with 10 and 100 raw samples is rejected under
-both uniform policies by the installed v0.1.8 package. This verified gap is
-[research-repo-tools #101](https://github.com/acgetchell/research-repo-tools/issues/101),
-recorded as a native blocked-by dependency of [#631][d631].
+The published v0.1.9 contracts resolve
+[heterogeneous sampling #101](https://github.com/acgetchell/research-repo-tools/issues/101),
+[inventory and saved samples #98](https://github.com/acgetchell/research-repo-tools/issues/98),
+and [captured release targets #94](https://github.com/acgetchell/research-repo-tools/issues/94).
+Fresh measurements use shared `discover_inventory`, `measure_checkout`,
+`collect_complete_sample` and `validate_saved_sample`. Discovery uses isolated
+Criterion output and canonical IDs from native listing; collection reads
+`benchmark.json` identity independently of sanitized storage paths. The policy
+declares every case's count before measurement. The release-signal workload
+keeps its 10, 15, 20, 25 and default 100 samples; topology experiments also retain
+their existing 12-sample group. Missing, unexpected or incomplete cases fail.
+Saved copies must match the raw benchmark, estimate, sample and Tukey bytes.
 
-Consequently, release-signal execution and provenance orchestration remain in
-`benchmark_utils.py`. They preserve target/section/group selection, independent
-scientific preflight, exact Criterion IDs, incomplete coverage and hosted-session
-ratio suppression. Native reports use recorded harness and measurement-plan
-identity rather than the historical v0.8.2 label boundary. Differing workload,
-host or compiler evidence prevents ratios. Same-version scratch comparisons
-are supported; publication still requires distinct releases and valid coverage.
-The CI performance job now measures both revisions freshly in one job and
-retains descriptive evidence without threshold classification.
-Changing sample sizes, synthesizing samples or weakening completeness is not
-an acceptable migration.
+Delaunay selects targets, sections, groups and counts, executes the independent
+scientific preflight, and interprets construction diagnostics. The shared runner
+checks source, harness, compiler and host identity around execution. Fresh runs
+use a private output tree. Shared directory publication replaces the latest
+generation only after validation, preserving named baselines and restoring prior
+output on caught failures. Publication requires exclusive ownership of the output
+tree and is not crash-atomic. If rollback fails, restore the retained backup
+identified by the recovery error before retrying. Release packaging revalidates raw observations against
+the retained measurement and preflight policy. No samples are synthesized,
+padded, truncated or rescaled.
 
-`release_benchmarks.sh` also retains the preflight release ID/tag-commit binding
-across long benchmark runs. The published upload API cannot carry that binding;
-the existing upstream
-[#94](https://github.com/acgetchell/research-repo-tools/issues/94)
-tracks the required replacement. Generic Criterion inventory discovery and
-saved-baseline verification are tracked by
-[#98](https://github.com/acgetchell/research-repo-tools/issues/98).
-Full common-harness execution remains blocked by the verified mixed-sampling
-gap. New shared comparison reports already use separate paths; history is kept
-as a record rather than reinterpreted as newly certified evidence.
+Each revision keeps its own harness. The common-harness runner intentionally
+overlays the current harness onto the baseline and requires compatibility;
+that would change the release experiment and discard useful absolute results.
+Delaunay therefore composes the public independent-checkout runner with the
+shared complete collector. Retained comparisons carry both shared sample/evidence
+pairs, including source/harness fingerprints, captured hosts, canonical inventory,
+count policy and raw-sample digests. They are not labeled as common-harness
+`CompleteRun` evidence. Historical records are preserved without inventing those
+proofs. The existing consumer digest framing remains in Delaunay context.
+
+The report still suppresses ratios for incompatible workload, host or compiler
+evidence and across hosted sessions. Current-only and baseline-only rows remain
+visible. Same-version scratch comparisons are supported; publication requires
+distinct releases and valid coverage. Measurement hosts come from each run's
+captured evidence, so a later host probe cannot make two different hosts appear
+comparable.
+
+The release workflow preserves its publication adapter, locked registry runtime
+and serialized `ReleaseTarget` outside the checkout before measuring the tag.
+The shared publisher revalidates the captured release ID and tag commit through
+upload and final publication. Delaunay adds its refusal to overwrite an existing
+baseline asset and requires the benchmark checkout to match the captured commit.
+Publication remains explicit, with credentials confined to the release steps.
+
+Retired local implementation includes the generic saved/latest execution wrappers,
+unused summary execution paths, the saved-baseline Just loop and the shell
+release lifecycle. Their generic tests are removed. Consumer regressions cover
+workload eligibility, unchanged sampling, canonical IDs, malformed/incomplete
+output, preflight failure, captured provenance, ratio suppression, release policy
+and trusted workflow handoff using the installed package.
+
+## v0.1.9 consumer evidence
+
+The #631 implementation snapshot below compares the initial index, including
+the already-staged dependency refresh, with the working tree before follow-up
+repository-review fixes.
+Counts include physical lines in `.py` and `.sh` files under `tooling/python/`,
+`scripts/` and `tests/tooling/`; static-analysis fixtures and generated files
+are excluded. The existing staged changes were preserved byte-for-byte.
+
+| Surface | Before files / lines | After files / lines |
+|-----|-----|-----|
+| Production helpers | 10 / 8,794 | 10 / 8,929 |
+| Consumer tests | 20 / 7,736 | 21 / 7,400 |
+
+The 92-line shell lifecycle is deleted and replaced by a 61-line release-policy
+adapter. Generic execution and parser tests are removed; new consumer bindings
+retain independent measurement evidence, scientific eligibility and named
+baselines across fresh directory publication. Production grows by 135 lines
+while tests shrink by 336; the combined reduction is 201 lines.
+
+That snapshot passed all 475 consumer tests on native aarch64 macOS, including the
+installed-wheel and isolated notebook smoke checks, plus `just python-check`,
+`just python-fixture-lint`, `just check-config`, `just check-docs` and
+`just shell-check`. The preserved publication environment was also synchronized
+from copied locked manifests with `--no-install-project`, and its adapter's
+help command loaded the installed registry package successfully.
+
+Measurement integration exercises the installed discovery, complete collection,
+saved-sample verification, provenance, evidence and directory-publication APIs
+over real temporary files. Cargo/Git observations and remote release responses
+are modeled at their boundaries; these tests are not native scientific benchmark
+results or live GitHub publication evidence. No long benchmark, scientific
+notebook, historical report refresh or release publication ran. Native Linux and
+Windows validation remains for hosted CI.
 
 ## v0.1.8 consumer evidence
 

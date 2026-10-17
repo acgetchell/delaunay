@@ -1,8 +1,7 @@
 # Python tooling
 
 This directory contains Delaunay-specific Python modules. Shared infrastructure
-comes from the pinned `research-repo-tools` package; shell scripts live in
-`../../scripts/`. Prefer `just` recipes for validation and tests, and use the
+comes from the pinned `research-repo-tools` package. Prefer `just` recipes for validation and tests, and use the
 `uv run --locked ...` entrypoints documented here when invoking an individual utility
 directly.
 
@@ -18,12 +17,12 @@ uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
 The installed package and tooling/notebook groups pin
-`research-repo-tools==0.1.8`. Shared CLI commands and documented Python APIs own
+`research-repo-tools==0.1.9`. Shared CLI commands and documented Python APIs own
 setup, maintenance, source inventory, subprocesses, archive extraction, worktree
 lifecycle, Criterion parsing, file transactions and notebook infrastructure.
 Retained adapters own Delaunay science and policy. The
 [adoption inventory](../../docs/dev/tooling_adoption.md#remaining-shared-tool-gaps)
-records the completed v0.1.8 integrations and remaining performance contracts.
+records the v0.1.8 integrations and v0.1.9 performance adoption.
 
 ## CLI entrypoints
 
@@ -106,6 +105,17 @@ Just recipes, release CI, retained metadata, and strict summary coverage.
 It formats and compares benchmark evidence; the harnesses being run are
 responsible for failing before timings are published when scientific invariants
 are violated.
+Fresh measurements use a private output directory. Shared directory publication
+replaces the latest results after validation while preserving named baselines.
+Run only one publisher per output tree. Caught failures restore the prior
+`target/criterion` tree; publication is not crash-atomic. If rollback itself
+fails, the recovery error identifies the retained backup to restore before retrying.
+The shared runner captures source, harness and tool identity before and after
+sampling. Native discovery supplies canonical IDs, and a per-case policy checks
+the unchanged 10/15/20/25/100 sampling plan. Saved baselines must match fresh raw
+files byte-for-byte, including `tukey.json`. Discovery and scientific preflight
+cannot create timing output. The raw archive retains discovery, sampling and
+shared measurement evidence beside its Criterion files.
 Published releases retain raw Criterion data and versioned metadata as GitHub
 Release assets. `bench-compare` renders `target/bench-reports/performance.md` from
 existing Criterion `new` data and a saved baseline such as `last`.
@@ -137,6 +147,12 @@ marginal timing intervals are not ratio intervals or significance tests.
 Historical CSV/text files stay unchanged as records. Their readers and writers
 are retired. New reports use `.comparison.json` and `.evidence.json`; old files
 cannot be passed to the new promotion commands.
+
+`release_benchmarks.py` is the release workflow's policy adapter. The workflow
+preserves this file and a separate locked tooling environment before checking
+out the measured tag. The shared `ReleaseTarget` handoff binds repository, release
+ID and tag commit through upload and explicit publication. Delaunay additionally
+requires the benchmarked HEAD and refuses an existing baseline asset.
 
 All inputs and outputs for `performance-release`, `performance-doc`, and
 `publish-readme-performance` must be inside the project root so the shared
