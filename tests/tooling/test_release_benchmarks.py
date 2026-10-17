@@ -49,6 +49,51 @@ def test_trusted_handoff_reaches_publication_unchanged(tmp_path: Path, monkeypat
     publish.assert_called_once_with(tmp_path, REPOSITORY, TAG, tmp_path / ASSET, target=target, publish=True)
 
 
+def test_annotated_tag_handoff_uses_peeled_commit_and_requires_matching_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real Git resolution distinguishes the tag object, its commit, and a later HEAD."""
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    root = tmp_path / "release checkout"
+    root.mkdir()
+    for args in (
+        ["init", "--quiet"],
+        ["config", "user.name", "Release Test"],
+        ["config", "user.email", "release@example.invalid"],
+        ["commit", "--quiet", "--allow-empty", "-m", "release"],
+        ["tag", "--annotate", TAG, "--message", "release"],
+    ):
+        run_command("git", args, cwd=root, timeout=30)
+    commit = run_command("git", ["--no-pager", "rev-parse", "HEAD"], cwd=root, timeout=30).stdout.strip()
+    tag_object = run_command("git", ["--no-pager", "rev-parse", f"refs/tags/{TAG}"], cwd=root, timeout=30).stdout.strip()
+    assert tag_object != commit
+    run_command("git", ["commit", "--quiet", "--allow-empty", "-m", "later checkout"], cwd=root, timeout=30)
+    selected = ReleaseTarget(repository=REPOSITORY, release_id=42, tag=TAG, commit=commit)
+    preflight = Mock(return_value=selected)
+    revalidate = Mock(return_value=GitHubRelease(REPOSITORY, TAG, 42, draft=True, immutable=False, prerelease=False, assets=()))
+    publish = Mock()
+    monkeypatch.setattr(release_benchmarks, "preflight_release_target", preflight)
+    monkeypatch.setattr(release_benchmarks, "revalidate_release_target", revalidate)
+    monkeypatch.setattr(release_benchmarks, "publish_release_asset", publish)
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    handoff = tmp_path / "target.json"
+
+    release_benchmarks.release_benchmarks("preflight", root, handoff, REPOSITORY, TAG)
+
+    preflight.assert_called_once_with(root, REPOSITORY, TAG, commit)
+    assert parse_release_target(handoff.read_bytes()) == selected
+    assert output.read_bytes() == f"commit={commit}\n".encode()
+    with pytest.raises(ValueError, match="HEAD differs"):
+        release_benchmarks.release_benchmarks("publish", root, handoff, REPOSITORY, TAG)
+    publish.assert_not_called()
+    run_command("git", ["checkout", "--quiet", "--detach", commit], cwd=root, timeout=30)
+
+    release_benchmarks.release_benchmarks("publish", root, handoff, REPOSITORY, TAG)
+
+    publish.assert_called_once_with(root, REPOSITORY, TAG, root / ASSET, target=selected, publish=True)
+    revalidate.assert_called_with(root, selected)
+
+
 @pytest.mark.parametrize("failure", ["checkout", "tag", "repository", "existing"])
 def test_consumer_policy_blocks_wrong_checkout_or_existing_evidence(
     tmp_path: Path,

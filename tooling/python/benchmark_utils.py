@@ -960,17 +960,21 @@ def _preserve_saved_sample(sample: Path, replacement: str | None) -> bool:
 
 
 def _saved_baseline_names(criterion: Path, replacement: str | None) -> tuple[str, ...]:
-    """Reject ambiguous portable baseline names before doing native work."""
+    """Validate preserved samples and portable baseline names before native work."""
     policy = CompletePolicy(("name-validation",))
     if replacement is not None:
         SavedSamplePlan("target/criterion", replacement, policy)
-    names = sorted(
-        {
-            path.parent.name
-            for path in criterion.rglob("estimates.json")
-            if (path.parent / "benchmark.json").is_file() and _preserve_saved_sample(path.parent, replacement)
-        },
-    )
+    preserved_names: set[str] = set()
+    for path in sorted(criterion.rglob("estimates.json")):
+        if not _preserve_saved_sample(path.parent, replacement):
+            continue
+        try:
+            _criterion_sample(path, criterion)
+        except _CRITERION_METADATA_LOAD_ERRORS as error:
+            msg = f"Remove or repair saved sample {path.parent} before measuring: {error}"
+            raise ValueError(msg) from error
+        preserved_names.add(path.parent.name)
+    names = sorted(preserved_names)
     spellings = {name.casefold(): name for name in ("new", "base", "change", replacement) if name is not None}
     for name in names:
         try:

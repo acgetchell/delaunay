@@ -189,6 +189,55 @@ def test_latest_measurement_retains_saved_baseline_and_replaces_stale_new_rows(t
     assert benchmark_utils._load_fresh_measurement(criterion).payload
 
 
+@pytest.mark.parametrize(
+    ("filename", "contents"),
+    [
+        ("benchmark.json", b"{broken"),
+        ("benchmark.json", b'{"full_id":"ungrouped"}'),
+        ("benchmark.json", None),
+        ("sample.json", None),
+        ("estimates.json", b"[]"),
+    ],
+)
+def test_invalid_preserved_sample_fails_before_native_work(
+    tmp_path: Path,
+    native_boundary: list[str],
+    filename: str,
+    contents: bytes | None,
+) -> None:
+    """Every case in a retained baseline must be usable before native work starts."""
+    criterion = tmp_path / "target/criterion"
+    write_case(criterion, "validation/a", 15)
+    write_case(criterion, "validation/z", 15)
+    sample = criterion / "validation_z/last"
+    if contents is None:
+        (sample / filename).unlink()
+    else:
+        (sample / filename).write_bytes(contents)
+    prior = {path.relative_to(criterion): path.read_bytes() for path in criterion.rglob("*") if path.is_file()}
+
+    with pytest.raises(ValueError, match="Remove or repair saved sample") as raised:
+        benchmark_utils._measure_suite(tmp_path, TARGETS)
+
+    assert str(sample) in str(raised.value)
+    assert native_boundary == []
+    assert {path.relative_to(criterion): path.read_bytes() for path in criterion.rglob("*") if path.is_file()} == prior
+
+
+def test_invalid_replaced_samples_do_not_block_measurement(tmp_path: Path, native_boundary: list[str]) -> None:
+    """Fresh samples may replace invalid new and explicitly selected baseline bytes."""
+    criterion = tmp_path / "target/criterion"
+    write_case(criterion, "validation/old", 15)
+    for sample in ("new", "last"):
+        (criterion / "validation_old" / sample / "benchmark.json").write_bytes(b"{broken")
+
+    benchmark_utils._measure_suite(tmp_path, TARGETS, save_baseline="last")
+
+    assert "measure" in native_boundary
+    assert not (criterion / "validation_old").exists()
+    assert benchmark_utils._load_fresh_measurement(criterion).payload
+
+
 @pytest.mark.parametrize("old_name", ["Last", "New", "Base", "Change"])
 def test_saved_baseline_preservation_respects_filesystem_aliases(tmp_path: Path, native_boundary: list[str], old_name: str) -> None:
     """A case alias cannot restore old bytes over a freshly validated sample."""
