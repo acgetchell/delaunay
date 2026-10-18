@@ -539,8 +539,9 @@ The default kernel is designed around a staged predicate model:
 - exact arithmetic fallback for supported dimensions,
 - and deterministic symbolic perturbation for exact degeneracies.
 
-The current release envelope is intentionally finite. The fast `f64` predicate filters are available
-through `D <= 4`; exact orientation and exact relative-coordinate in-sphere support, including the
+The current release envelope is intentionally finite. The orientation `f64` filter uses augmented
+matrices of size at most 4 (`D <= 3`); the relative in-sphere interval filter supports `D <= 6`.
+Exact orientation and exact relative-coordinate in-sphere support, including the
 `ExactPredicates` contract used by flip repair, are available through `D <= 6`. Higher-dimensional
 experiments may still be useful, but they are outside the strongest predicate and repair contract.
 

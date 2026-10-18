@@ -13,7 +13,8 @@
 //! and public construction errors.
 //!
 //! Delaunay assembles geometric coefficients and interprets predicate signs;
-//! `la-stack` owns exact matrix elimination. Already-derived rational inputs
+//! `la-stack` owns interval arithmetic, certified vector reductions, and exact
+//! matrix elimination. Already-derived rational inputs
 //! stay exact through `RationalMatrix` and `RationalVector`, with explicit
 //! rounding only at a public coordinate boundary.
 //!
@@ -37,8 +38,9 @@
 pub use la_stack::LaError;
 use la_stack::Matrix as LaMatrix;
 pub(crate) use la_stack::{
-    BigRational, DEFAULT_SINGULAR_TOL, ExactF64Conversion, FromPrimitive, RationalMatrix,
-    RationalVector, Signed, SingularityReason, Tolerance, Vector as LaVector, gram_matrix,
+    BigRational, DEFAULT_SINGULAR_TOL, ExactF64Conversion, FromPrimitive, Interval,
+    IntervalDeterminantSign, IntervalMatrix, RationalMatrix, RationalVector, Signed,
+    SingularityReason, Tolerance, Vector as LaVector, gram_matrix,
 };
 use thiserror::Error;
 

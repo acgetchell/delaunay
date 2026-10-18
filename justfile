@@ -591,8 +591,8 @@ perf-help:
     @echo "                              # 4D random-walk Pachner diagnostics with progress.csv and summary.json"
     @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
     @echo "  just profile v0.7.5        # v0.7.5 code on its declared Rust toolchain"
-    @echo "  just profile 1.99.0        # Current tree on Rust 1.99.0"
-    @echo "  just profile 1.99.0 v0.7.5 # v0.7.5 code on Rust 1.99.0"
+    @echo "  just profile 1.99.1        # Current tree on Rust 1.99.1"
+    @echo "  just profile 1.99.1 v0.7.5 # v0.7.5 code on Rust 1.99.1"
 
 # Quick pre-push 2D-5D large-scale wall-clock smoke guard.
 [group('benchmarks and performance')]

@@ -36,10 +36,13 @@ coordinate model/API rather than as arbitrary scalar genericity.
 
 Orientation and insphere predicates use staged evaluation:
 
-1. **Provable f64 fast filter (D ≤ 4)** — `la_stack::Matrix::det_errbound()` computes a
-   rigorous Shewchuk-style error bound from the f64 determinant. If the bound certifies
-   the sign, no allocation is needed. For D ≥ 5 (where `det_errbound` is not available),
-   the predicate falls through directly to exact arithmetic.
+1. **Certified fast filters** — orientation uses
+   `la_stack::Matrix::det_direct_with_errbound()` for matrices of size at most 4.
+   Relative in-sphere construction uses `la_stack::Interval` to enclose coordinate
+   differences and squared norms before rounding can lose information, then
+   `IntervalMatrix::det_sign()` for matrices of size at most 7 (D ≤ 6).
+   Only a strictly positive or negative interval sign completes that fast path;
+   zero, inconclusive bounds, and range failures continue to exact arithmetic.
 2. **Exact sign** — ordinary finite matrices use
    `la_stack::Matrix::det_sign_exact`. Relative in-sphere construction instead
    converts the original binary64 coordinates to `la-stack`'s re-exported
@@ -64,7 +67,8 @@ Mücke [7]. The numbered entries are maintained in
 **Dimension limits:** the stack-allocated matrix dispatch supports up to 7×7 matrices
 (`MAX_STACK_MATRIX_DIM = 7`). This means:
 
-- f64 fast filter: D ≤ 4 (`det_errbound()` is unavailable above 4D)
+- Orientation f64 filter: D ≤ 3 (the augmented matrix has size D+1 ≤ 4)
+- Relative in-sphere interval filter: D ≤ 6 (matrix size D+1 ≤ 7)
 - Exact orientation: D ≤ 6 (matrix is (D+1)×(D+1))
 - Public exact-insphere / `ExactPredicates` support: D ≤ 6 (the relative lifted
   matrix is `(D+1)×(D+1)`)
@@ -287,6 +291,17 @@ the `D + 2` systems needed through geometric dimension 6. Provisional LP basis
 navigation may use rounded floating-point values; certification always solves
 the original rational system. Exact arithmetic remains temporary geometric or
 LP state and is not stored in triangulation owners or public certificates.
+
+### Certified simplex-intersection separation
+
+Level 4 shared-vertex separation uses
+`la_stack::Vector::dot_with_errbound` on the original coordinates. It reuses
+the shared vertex's certified projection and outward interval thresholds to
+prove that each non-shared projection clears the unit dual margin. No coordinate
+difference is rounded before certification. Equality, an overlapping bound,
+an unavailable certificate, or a range error continues to exact certification.
+Axis construction, shared labels, and intersection witnesses remain geometric
+responsibilities in Delaunay.
 
 ## Duplicate vertex handling
 

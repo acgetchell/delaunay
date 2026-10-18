@@ -10,7 +10,9 @@ use core::array::from_fn;
 
 use la_stack::{BigInt, BigRational, FromPrimitive, Signed, ToPrimitive};
 
-use crate::geometry::matrix::{LaError, LaVector, RationalVector, solve_exact_runtime_system};
+use crate::geometry::matrix::{
+    Interval, LaError, LaVector, RationalVector, solve_exact_runtime_system,
+};
 use crate::geometry::realization::{
     LabeledSimplexRealization, SimplexIntersectionWitness, SimplexRealizationBuffer,
 };
@@ -1234,71 +1236,60 @@ where
         return false;
     }
 
-    let scaled_axis: Vec<_> = axis.iter().map(|value| *value * 1024.0).collect();
-    if scaled_axis.len() != D || scaled_axis.iter().any(|value| !value.is_finite()) {
+    let Ok(axis): Result<[f64; D], _> = axis.try_into() else {
         return false;
-    }
-    first
-        .labels()
-        .iter()
-        .zip(first.coordinates())
-        .filter(|(label, _)| *label != shared_label)
-        .all(|(_, coordinates)| {
-            certified_dot_difference_lower_bound(&scaled_axis, coordinates, first_shared)
-                .is_some_and(|lower_bound| lower_bound > 1.0)
-        })
-        && second
-            .labels()
-            .iter()
-            .zip(second.coordinates())
-            .filter(|(label, _)| *label != shared_label)
-            .all(|(_, coordinates)| {
-                certified_dot_difference_lower_bound(&scaled_axis, second_shared, coordinates)
-                    .is_some_and(|lower_bound| lower_bound > 1.0)
-            })
-}
-
-/// Returns a conservative lower bound for `axis · (left - right)`.
-fn certified_dot_difference_lower_bound<const D: usize>(
-    axis: &[f64],
-    left: &[f64; D],
-    right: &[f64; D],
-) -> Option<f64> {
-    let mut estimate = 0.0;
-    let mut magnitude = 0.0;
-    for ((coefficient, left_value), right_value) in axis.iter().zip(left).zip(right) {
-        let left_product = coefficient * left_value;
-        let right_product = coefficient * right_value;
-        if !left_product.is_finite()
-            || !right_product.is_finite()
-            || product_underflowed(*coefficient, *left_value, left_product)
-            || product_underflowed(*coefficient, *right_value, right_product)
-        {
-            return None;
+    };
+    let Ok(scaled_axis) = LaVector::try_new(axis.map(|value| value * 1024.0)) else {
+        return false;
+    };
+    let Ok(shared) = LaVector::try_new(*first_shared) else {
+        return false;
+    };
+    let Ok(Some(common)) = scaled_axis.dot_with_errbound(&shared) else {
+        return false;
+    };
+    // Reuse the common projection and enclose its unit-margin thresholds.
+    // All projections use original coordinates, never rounded differences.
+    let Ok(positive_margin) = Interval::try_from_subtraction(common.upper_bound(), -1.0) else {
+        return false;
+    };
+    let Ok(negative_margin) = Interval::try_from_subtraction(common.lower_bound(), 1.0) else {
+        return false;
+    };
+    for (label, coordinates) in first.labels().iter().zip(first.coordinates()) {
+        if label == shared_label {
+            continue;
         }
-        estimate = coefficient.mul_add(*left_value, estimate);
-        estimate = (-coefficient).mul_add(*right_value, estimate);
-        magnitude += left_product.abs() + right_product.abs();
-        if !estimate.is_finite() || !magnitude.is_finite() {
-            return None;
+        let Ok(vertex) = LaVector::try_new(*coordinates) else {
+            return false;
+        };
+        let Ok(Some(projection)) = scaled_axis.dot_with_errbound(&vertex) else {
+            return false;
+        };
+        // For representable x, x > RN(y) implies x > y: rounding is
+        // monotone and RN(x) = x. This proves estimate - error > margin
+        // without constructing another endpoint. Overflow rejects the proof.
+        if projection.estimate() <= positive_margin.upper() + projection.absolute_error_bound() {
+            return false;
         }
     }
-
-    let operation_count = f64::from(u32::try_from(2 * D).ok()?);
-    // The u32 count times 2^-52 is exact, so fusion preserves this bound's denominator.
-    let denominator = (-operation_count).mul_add(f64::EPSILON, 1.0);
-    if denominator <= 0.0 {
-        return None;
+    for (label, coordinates) in second.labels().iter().zip(second.coordinates()) {
+        if label == shared_label {
+            continue;
+        }
+        let Ok(vertex) = LaVector::try_new(*coordinates) else {
+            return false;
+        };
+        let Ok(Some(projection)) = scaled_axis.dot_with_errbound(&vertex) else {
+            return false;
+        };
+        // The symmetric strict comparison proves estimate + error < margin.
+        // Overflow produces negative infinity and rejects the proof.
+        if projection.estimate() >= negative_margin.lower() - projection.absolute_error_bound() {
+            return false;
+        }
     }
-    let gamma = operation_count * f64::EPSILON / denominator;
-    let magnitude_upper_bound = magnitude / denominator.powi(2);
-    let error_bound = 4.0 * gamma * magnitude_upper_bound;
-    error_bound.is_finite().then_some(estimate - error_bound)
-}
-
-/// Detects a product whose exact non-zero value rounded into the subnormal range.
-fn product_underflowed(left: f64, right: f64, product: f64) -> bool {
-    left != 0.0 && right != 0.0 && (product == 0.0 || product.abs() < f64::MIN_POSITIVE)
+    true
 }
 
 /// Compares finite coordinates exactly while treating both signed zeros alike.
@@ -2414,28 +2405,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn filtered_dot_difference_rejects_overflow_and_underflow() {
-        assert_eq!(
-            certified_dot_difference_lower_bound(&[f64::MAX], &[2.0], &[0.0]),
-            None
-        );
-        assert_eq!(
-            certified_dot_difference_lower_bound(&[f64::MIN_POSITIVE], &[0.5], &[0.0],),
-            None
-        );
-
-        // Finite products can still overflow the accumulated estimate, the
-        // absolute magnitude despite exact cancellation, or its error bound.
-        for right in [-f64::MAX, f64::MAX, 0.0] {
-            assert_eq!(
-                certified_dot_difference_lower_bound(&[1.0], &[f64::MAX], &[right]),
-                None,
-                "unrepresentable bound must request exact fallback for right={right}"
-            );
-        }
-    }
-
     /// Checks certified separation and range-sensitive fallback against simplices
     /// in opposite orthants, whose only common point is their shared origin.
     fn assert_shared_vertex_filter_and_fallback<const D: usize>() {
@@ -2469,10 +2438,46 @@ mod tests {
         let mut tangent_axis = [0.0; D];
         tangent_axis[0] = 1.0;
         // Zero projections and an exact unit margin must remain inconclusive.
-        for axis in [tangent_axis, [1.0 / 1024.0; D], [f64::MAX; D]] {
+        for axis in [
+            tangent_axis,
+            [1.0 / 1024.0; D],
+            [f64::MAX; D],
+            [f64::NAN; D],
+        ] {
             assert!(!filtered_single_shared_vertex_confinement(
                 &first, &second, &shared, &axis
             ));
+        }
+        assert!(!filtered_single_shared_vertex_confinement(
+            &first,
+            &second,
+            &shared,
+            &[1.0; D][..D - 1]
+        ));
+        // Adjacent representable axes distinguish a strict unit margin from
+        // equality on both sides of the common vertex.
+        for (component, certifies) in [
+            ((1.0_f64 / 1024.0).next_down(), false),
+            ((1.0_f64 / 1024.0).next_up(), true),
+        ] {
+            assert_eq!(
+                filtered_single_shared_vertex_confinement(
+                    &first,
+                    &second,
+                    &shared,
+                    &[component; D]
+                ),
+                certifies
+            );
+            assert_eq!(
+                filtered_single_shared_vertex_confinement(
+                    &second,
+                    &first,
+                    &shared,
+                    &[-component; D]
+                ),
+                certifies
+            );
         }
         assert_matches!(
             intersection_via_linear_program(&first, &second, &shared, false),
