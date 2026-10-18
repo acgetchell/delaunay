@@ -201,6 +201,7 @@ without multiplying the release matrix with small synthetic cases.
 | Circumsphere / insphere | `circumsphere_containment`, `cold_path_predicates` | `math/geometry` radii |
 | Quality / volume | Indirect public-workflow coverage | `math/geometry` quality, volume, facet measure, and surface measure |
 | Ridge / Euler / manifold | `ci_performance_suite` validation and proof boundaries | `math/topology` |
+| Spherical distance | None | `math/spherical_distance` adapter and upstream angle |
 | Locate / hull / visible facets | `locate`, `ci_performance_suite` | Retain existing cases |
 | Barycenter | None; allocation coverage is manual | `math/geometry/*/barycenter` |
 | Allocation hot paths | None; instrumentation is manual | Retain separate allocation contracts |
@@ -211,6 +212,31 @@ separate well-conditioned, nonzero cancellation, and zero-determinant cases.
 Circumsphere coverage already compares three predicate families,
 boundary/far/near-boundary queries, 3D circumcenter solve paths, certified
 cospherical exact cases, and SoS; the audit retains those release cases.
+
+`math/spherical_distance` compares `SphericalMetric::try_distance` with the
+released la-stack slice angle on identical canonical coordinates in intrinsic
+dimensions 2-5 (ambient lengths 3-6). Dense integer Gram and planar angle
+oracles check correctness outside timing. Fixtures include nearly coincident
+and antipodal directions, a subnormal angle, and extreme radii. With
+`count-allocations`, setup also asserts zero allocations for both paths.
+The upstream exterior-product calculation takes quadratic work in the ambient
+length and constant auxiliary storage. These small-dimension measurements do
+not establish scaling performance for large ambient dimensions.
+For an implementation comparison, save a baseline before changing the adapter,
+then repeat the same command with `--baseline spherical-local-610` instead of
+`--save-baseline spherical-local-610`:
+
+```bash
+uv run --locked --group dev research-repo-tools toolchain run -- \
+  cargo bench --locked --profile perf --features count-allocations \
+  --bench math_kernels -- math/spherical_distance --sample-size 30 \
+  --warm-up-time 0.5 --measurement-time 1 --noplot \
+  --save-baseline spherical-local-610
+```
+
+The baseline for #610 is the corrected local norm-weighted calculation;
+the inaccurate `acos(dot)` path is excluded. The downstream benchmark measures
+radius validation and arc-length conversion separately from the upstream API.
 
 `realization_narrow_phase/shared_face_boundary` and
 `near_degenerate_shared_face` already isolate exact barycentric intersection
@@ -271,7 +297,7 @@ cargo bench --profile perf --bench math_kernels -- --baseline before --noplot
 ```
 
 `math_kernels` defaults to 30 samples, one second of warm-up, and two seconds of
-measurement per case; Criterion CLI overrides remain available. Its 114 cases
+measurement per case; Criterion CLI overrides remain available. Its 170 cases
 are investigations, not new performance claims. Use the same filter, profile,
 hardware, and sampling settings before and after an implementation change.
 `just bench-compile` includes this target in the ordinary benchmark compile
@@ -337,7 +363,7 @@ operations abort on error so a failed path cannot silently publish a fast result
 | `realization_validation.rs` | Level 4 narrow phase and whole validation | Realistic/near-degenerate 2D-5D | ~1-5 min | Level 4 tuning |
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex deletion |
 | `locate.rs` | Point-location facet-walk latency (no-hint vs exact-hint) | 2D-5D fixed cases | ~1-3 min | Locate/walk tuning |
-| `math_kernels.rs` | Geometry and topology kernels | 114 cases: geometry 2D-6D, others 2D-5D | Several minutes | Manual kernel investigations |
+| `math_kernels.rs` | Geometry and topology kernels | 170 cases: geometry 2D-6D, others 2D-5D | Several minutes | Manual kernel investigations |
 | `tds_clone.rs` | Owner clone and topology-view cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback and incidence baselines |
 | `topology_guarantee_construction.rs` | Cost of PL-manifold validation audit cadences | 2D-5D construction cases | ~45-60 min | Manual topology policy work |
 

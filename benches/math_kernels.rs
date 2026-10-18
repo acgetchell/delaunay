@@ -15,12 +15,14 @@ use delaunay::prelude::geometry::{
     inradius, normalized_volume, radius_ratio, safe_usize_to_scalar, simplex_orientation,
     simplex_volume, surface_measure,
 };
+use delaunay::prelude::topology::spaces::{SphericalMetric, SphericalPoint};
 use delaunay::prelude::topology::validation::{
     count_boundary_simplices, count_simplices, euler_characteristic, validate_closed_boundary,
     validate_ridge_links, validate_vertex_links,
 };
 use delaunay::prelude::try_dedup_vertices_epsilon;
 use delaunay::try_vertices_from_points;
+use la_stack::VectorAngle;
 use std::{hint::black_box, time::Duration};
 
 /// Shared fatal-error adapters keep failed operations out of timing evidence.
@@ -348,6 +350,97 @@ fn bench_epsilon_deduplication<const D: usize>(group: &mut BenchmarkGroup<'_, Wa
     }
 }
 
+/// Compares the public arc-length adapter and upstream angle on identical stored
+/// coordinates, with independent planar or integer Gram oracles before timing.
+fn bench_spherical_distance<const D: usize>(group: &mut BenchmarkGroup<'_, WallTime>) {
+    let tiny = f64::from_bits(1);
+    let slope = 2.0_f64.powi(-30);
+    let dimension = safe_usize_to_scalar(D + 1).or_abort();
+    let dot = dimension - 2.0;
+    let dense_angle = dimension.mul_add(dimension, -dot * dot).sqrt().atan2(dot);
+    for (case, radius, direction, expected) in [
+        ("dense", 1.0, [1.0, -1.0], dense_angle),
+        ("near_coincident", 1.0, [1.0, slope], slope.atan()),
+        (
+            "near_antipodal",
+            1.0,
+            [-1.0, slope],
+            std::f64::consts::PI - slope.atan(),
+        ),
+        ("subnormal_angle", 1.0, [1.0, tiny], tiny),
+        ("maximum_radius", f64::MAX, [1.0, slope], slope.atan()),
+        (
+            "subnormal_radius",
+            f64::MIN_POSITIVE / 2.0,
+            [0.0, 1.0],
+            std::f64::consts::FRAC_PI_2,
+        ),
+    ] {
+        let mut left = vec![0.0; D + 1];
+        let mut right = vec![0.0; D + 1];
+        if case == "dense" {
+            left.fill(1.0);
+            right.fill(1.0);
+            right[D] = -1.0;
+        } else {
+            left[0] = 1.0;
+            right[0] = direction[0];
+            right[D] = direction[1];
+        }
+        let a = SphericalPoint::<D>::try_from_slice_with_radius(&left, radius).or_abort();
+        let b = SphericalPoint::<D>::try_from_slice_with_radius(&right, radius).or_abort();
+        let metric = SphericalMetric::<D>::try_new(radius).or_abort();
+        assert_relative_eq!(
+            a.coords().angle(b.coords()).or_abort(),
+            expected,
+            epsilon = 0.0,
+            max_relative = 32.0 * f64::EPSILON
+        );
+        assert_relative_eq!(
+            metric.try_distance(&a, &b).or_abort(),
+            radius * expected,
+            epsilon = 0.0,
+            max_relative = 32.0 * f64::EPSILON
+        );
+        #[cfg(feature = "count-allocations")]
+        {
+            use delaunay::prelude::query::measure_with_result;
+
+            let (angle, angle_allocations) = measure_with_result(|| a.coords().angle(b.coords()));
+            let (distance, adapter_allocations) =
+                measure_with_result(|| metric.try_distance(&a, &b));
+            angle.or_abort();
+            distance.or_abort();
+            assert_eq!(angle_allocations.count_total, 0);
+            assert_eq!(adapter_allocations.count_total, 0);
+        }
+        group.bench_function(
+            BenchmarkId::new(format!("{case}/upstream"), format!("{D}d")),
+            |bencher| {
+                bencher.iter(|| {
+                    black_box(
+                        black_box(a.coords())
+                            .angle(black_box(b.coords()))
+                            .or_abort(),
+                    )
+                });
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(format!("{case}/adapter"), format!("{D}d")),
+            |bencher| {
+                bencher.iter(|| {
+                    black_box(
+                        black_box(metric)
+                            .try_distance(black_box(&a), black_box(&b))
+                            .or_abort(),
+                    )
+                });
+            },
+        );
+    }
+}
+
 /// Registers the same kernel families across the supported routine dimensions.
 fn bench_math_kernels(c: &mut Criterion) {
     // Each group must span every dimension: finishing another group with the
@@ -380,6 +473,15 @@ fn bench_math_kernels(c: &mut Criterion) {
         bench_epsilon_deduplication::<4>(&mut deduplication);
         bench_epsilon_deduplication::<5>(&mut deduplication);
         deduplication.finish();
+    }
+
+    {
+        let mut spherical = c.benchmark_group("math/spherical_distance");
+        bench_spherical_distance::<2>(&mut spherical);
+        bench_spherical_distance::<3>(&mut spherical);
+        bench_spherical_distance::<4>(&mut spherical);
+        bench_spherical_distance::<5>(&mut spherical);
+        spherical.finish();
     }
 
     let mut topology = c.benchmark_group("math/topology/cross_polytope");

@@ -35,7 +35,7 @@ first use, start with the [README](README.md).
 | Quality and similarity | [Mesh quality][quality] and [set similarity][similarity]: metric definitions and interpretation |
 | Realization overlap | [Baraff and I-COLLIDE][overlap]: sweep-and-prune provenance; Ericson: collision-detection background |
 | Spatial locality | [Skilling and Moon et al.](#spatial-ordering-and-hilbert-curves) [9, 8]: index algorithm and locality analysis |
-| Spherical distances | [Kahan](#stable-vector-angles): stable norm-weighted vector-angle formulas |
+| Spherical distances | [Stable vector angles](#stable-vector-angles): la-stack implementation and Kahan background |
 | Topology | [PL and computational topology texts][topology]: simplicial complexes, links, and manifold background |
 
 [construction]: #triangulation-construction-algorithms
@@ -345,9 +345,13 @@ These references ensure the library's geometric computations are mathematically 
   Working paper, January 11, 2006, Section 12, "Mangled Angles," pp. 46-48.
   Available at: <https://people.eecs.berkeley.edu/~wkahan/Mindless.pdf>
 
-  Supplies the norm-weighted half-angle identity used by `SphericalMetric::try_distance`.
-  The implementation uses scaled norms and a double-angle `atan2` identity to retain
-  representable subnormal full angles. This is a rounded distance, not an exact predicate.
+  Background for stable angle evaluation and the former norm-weighted half-angle
+  implementation. `SphericalMetric::try_distance` now delegates unsigned angles to
+  [la-stack's `VectorAngle`](https://docs.rs/la-stack/0.5.0/la_stack/trait.VectorAngle.html).
+  Its [derivation](https://github.com/acgetchell/la-stack/blob/v0.5.0/docs/mathematical_basis.md#unsigned-vector-angles)
+  describes power-of-two scaling, compensated exterior products, and the small-angle
+  quotient that preserves representable subnormal angles. Delaunay owns radius checks
+  and arc-length scaling. This is a rounded distance, not an exact predicate.
 
 ## Mesh Quality Metrics
 

@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+use la_stack::{LaError, VectorAngle};
 use thiserror::Error;
 
 /// Typed point on `S^D` realized in `R^(D+1)`.
@@ -414,10 +415,13 @@ impl<const D: usize> SphericalMetric<D> {
     /// The returned arc length is in the same units as this metric's radius and
     /// lies in `[0, pi * radius]` up to floating-point roundoff.
     /// This is a rounded numerical distance, not an exact geometric predicate.
-    /// A norm-weighted half-angle formula avoids the loss of accuracy in
-    /// `acos(dot)` near coincident and antipodal directions; scaled `hypot`
-    /// reductions preserve tiny separations without squaring them away.
-    /// See Kahan's "Mangled Angles" discussion in
+    /// Delegates the unsigned angle to la-stack's [`VectorAngle::angle`] on
+    /// borrowed ambient coordinates, without allocation or a dimension cap.
+    /// The exterior-product calculation takes `O((D + 1)^2)` work and constant
+    /// auxiliary storage; it is intended for small ambient dimensions.
+    /// Upstream power-of-two scaling and compensated exterior products avoid
+    /// the endpoint sensitivity of `acos(dot)` and preserve representable
+    /// subnormal angles. See the implementation provenance and background in
     /// [REFERENCES.md](https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md#stable-vector-angles).
     ///
     /// # Errors
@@ -425,7 +429,9 @@ impl<const D: usize> SphericalMetric<D> {
     /// Returns [`SphericalPointError::MismatchedRadius`] when either point was
     /// canonicalized for a different radius than this metric. Returns
     /// [`SphericalPointError::NonFiniteDistance`] when the arc length is not
-    /// representable as a finite `f64`.
+    /// representable as a finite `f64`. An upstream numerical failure is
+    /// preserved as [`SphericalPointError::AngleComputationFailed`] with its
+    /// typed source.
     ///
     /// # Examples
     ///
@@ -454,29 +460,10 @@ impl<const D: usize> SphericalMetric<D> {
                 });
             }
         }
-        // Scale before forming norm products: stored coordinates can have
-        // extreme radii and their rounded norms need not equal the radius.
-        let (left_norm, right_norm) = a.coords().iter().zip(b.coords()).fold(
-            (0.0_f64, 0.0_f64),
-            |(left_norm, right_norm), (&left, &right)| {
-                (
-                    left_norm.hypot(left / self.radius),
-                    right_norm.hypot(right / self.radius),
-                )
-            },
-        );
-        let (difference, sum) = a.coords().iter().zip(b.coords()).fold(
-            (0.0_f64, 0.0_f64),
-            |(difference, sum), (&left, &right)| {
-                let left = (left / self.radius) * right_norm;
-                let right = (right / self.radius) * left_norm;
-                (difference.hypot(left - right), sum.hypot(left + right))
-            },
-        );
-        // Kahan's norm-weighted lengths give angle = 2 * atan2(difference, sum).
-        // Apply the double-angle identity inside atan2 so a representable
-        // subnormal angle is not lost when its half rounds to zero.
-        let angle = (2.0 * difference * sum).atan2((sum - difference) * (sum + difference));
+        let angle = a
+            .coords()
+            .angle(b.coords())
+            .map_err(|source| SphericalPointError::AngleComputationFailed { source })?;
         let distance = self.radius * angle;
         if distance.is_finite() {
             Ok(distance)
@@ -486,7 +473,7 @@ impl<const D: usize> SphericalMetric<D> {
     }
 }
 
-/// Errors emitted while constructing or canonicalizing spherical points.
+/// Errors emitted while constructing, canonicalizing, or measuring spherical points.
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum SphericalPointError {
@@ -552,6 +539,14 @@ pub enum SphericalPointError {
         actual: f64,
     },
 
+    /// The upstream unsigned-angle calculation failed.
+    #[error("spherical vector-angle calculation failed: {source}")]
+    AngleComputationFailed {
+        /// Typed numerical failure, including upstream location and provenance.
+        #[source]
+        source: LaError,
+    },
+
     /// The requested geodesic distance is not representable as a finite `f64`.
     #[error("spherical geodesic distance is not finite: {distance:?}")]
     NonFiniteDistance {
@@ -598,8 +593,8 @@ fn validate_radius(radius: f64) -> Result<(), SphericalPointError> {
 /// metric backend. It classifies user-visible normalization failures while
 /// scaling by the largest coordinate magnitude so finite vectors can be
 /// projected without avoidable overflow or underflow.
-/// Unlike a distance query, projection must also accept a direction whose
-/// unscaled norm is unrepresentable. Keep this radius-scaled, runtime-slice
+/// Projection must accept a direction whose unscaled norm is unrepresentable.
+/// Keep this radius-scaled, runtime-slice
 /// reduction here: spherical storage has `D + 1` entries, which stable const
 /// generics cannot pass directly to `la_stack::Vector<D>`.
 fn normalize_coordinates(coords: &mut [f64], radius: f64) -> Result<(), SphericalPointError> {
@@ -682,6 +677,7 @@ mod tests {
     };
 
     use approx::assert_relative_eq;
+    use la_stack::{NonFiniteLocation, NonFiniteOrigin, VectorOperand};
 
     use super::*;
 
@@ -831,6 +827,32 @@ mod tests {
         assert_matches!(
             metric.try_distance(&x, &opposite),
             Err(SphericalPointError::NonFiniteDistance { distance }) if distance.is_infinite()
+        );
+    }
+
+    #[test]
+    fn spherical_distance_preserves_upstream_error_provenance() {
+        let metric = SphericalMetric::<2>::unit();
+        let valid = SphericalPoint::<2>::try_new([1.0, 0.0, 0.0]).unwrap();
+        // Bypass the public constructor only to exercise defensive propagation;
+        // ordinary SphericalPoint values already prove finite nonzero inputs.
+        let corrupted = SphericalPoint::<2> {
+            coords: vec![1.0, f64::NAN, 0.0],
+            radius: 1.0,
+        };
+        assert_matches!(
+            metric.try_distance(&valid, &corrupted),
+            Err(SphericalPointError::AngleComputationFailed {
+                source: LaError::NonFinite {
+                    location: NonFiniteLocation::VectorOperandEntry {
+                        operand: VectorOperand::Right,
+                        index: 1,
+                        ..
+                    },
+                    origin: NonFiniteOrigin::Input,
+                    ..
+                },
+            })
         );
     }
 

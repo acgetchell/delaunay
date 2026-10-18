@@ -77,6 +77,12 @@ fn spherical_metric_rejects_distance_between_mismatched_radii() {
             if expected.to_bits() == 1.0_f64.to_bits()
                 && actual.to_bits() == 2.0_f64.to_bits()
     );
+    assert_matches!(
+        metric.try_distance(&radius_two, &unit),
+        Err(SphericalPointError::MismatchedRadius { expected, actual })
+            if expected.to_bits() == 1.0_f64.to_bits()
+                && actual.to_bits() == 2.0_f64.to_bits()
+    );
 }
 
 #[test]
@@ -371,7 +377,8 @@ fn spherical_builder_rejects_mismatched_point_radii() {
 }
 
 #[test]
-fn spherical_distance_between_vertices_reports_index_errors() {
+fn spherical_distance_between_vertices_reports_index_errors()
+-> Result<(), SphericalDelaunayValidationError> {
     let points = [
         [1.0, 1.0, 1.0],
         [1.0, -1.0, -1.0],
@@ -382,6 +389,12 @@ fn spherical_distance_between_vertices_reports_index_errors() {
         .expect("tetrahedron points should canonicalize")
         .build()
         .expect("tetrahedron hull should construct");
+
+    assert_eq!(
+        triangulation.distance_between_vertices(0, 0)?.to_bits(),
+        0,
+        "forwarded self-distance must be positive zero"
+    );
 
     let err = triangulation
         .distance_between_vertices(0, 4)
@@ -404,6 +417,7 @@ fn spherical_distance_between_vertices_reports_index_errors() {
             vertex_count: 4,
         }
     );
+    Ok(())
 }
 
 #[test]
