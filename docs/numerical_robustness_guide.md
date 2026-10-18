@@ -50,11 +50,12 @@ Orientation and insphere predicates use staged evaluation:
    matrix to `la_stack::RationalMatrix::det_sign`. This distinction matters:
    sending already-rounded `f64` differences or squared norms to an exact
    determinant would only compute the exact sign of the wrong matrix.
-3. **Indeterminate or symbolic fallback** — if exact arithmetic cannot run
-   (for example due to non-finite entries or unsupported insphere matrix size),
-   robust predicates return `BOUNDARY` / `DEGENERATE` where appropriate, while
-   `AdaptiveKernel` applies deterministic Simulation of Simplicity (SoS)
-   tie-breaking for degenerate finite inputs.
+3. **Exact degeneracy and kernel policy** — exact zero produces
+   `BOUNDARY` / `DEGENERATE`; `AdaptiveKernel` applies deterministic Simulation
+   of Simplicity (SoS) tie-breaking to those finite degeneracies through D ≤ 6.
+   Invalid inputs and failed computations produce typed errors, not degeneracy
+   classifications. Only `robust_insphere` has the unsupported-dimension
+   distance fallback described below; that fallback can also return an error.
 
 This applies to `simplex_orientation`, `insphere`, `insphere_lifted`, `robust_orientation`,
 and `robust_insphere`.
@@ -82,10 +83,10 @@ explicit repair APIs are not available through the `ExactPredicates` gate there.
 
 The crate includes robust orientation and insphere predicates (e.g.
 `robust_orientation`, `robust_insphere`) for near-degenerate configurations.
-These predicates layer additional strategies on top of exact predicates: opt-in
-consistency checking against `insphere_distance`, symbolic perturbation for
-tie-breaking, and deterministic geometric fallbacks when the exact insphere
-matrix is outside the supported range.
+These functions preserve exact degeneracy signals. `robust_insphere` adds
+opt-in consistency checking against `insphere_distance` and a geometric fallback
+when the exact insphere matrix is outside the supported range. Symbolic
+tie-breaking belongs to the `AdaptiveKernel` policy layered over exact predicates.
 
 Most users won't call these functions directly; instead, select a kernel.
 
@@ -184,7 +185,8 @@ Helper functions in `src/core/util/canonical_points.rs` implement these patterns
 - `sorted_facet_points_with_extra(tds, facet_keys, extra)` — collects facet
   vertices in canonical order, then appends `extra` at position D
 
-Both return `Option`, with `None` indicating an unresolvable vertex key.
+Both return typed `Result` values: `InvalidArity` identifies an unexpected vertex
+count, and `MissingVertex` identifies a key that cannot be resolved in the TDS.
 
 When adding new kernel call sites, **always** use canonical ordering. Failure to
 do so will re-introduce order-dependent SoS behavior.
@@ -321,7 +323,8 @@ etc.) using the default
 `InsertionOrderStrategy::Hilbert`, the
 Hilbert ordering pass quantizes each coordinate to a fixed-width integer grid before
 computing the space-filling curve index. After sorting, vertices that map to the same
-quantized grid cell are adjacent and are removed in a single linear sweep.
+quantized grid cell are adjacent. When `DedupPolicy` is enabled, a linear sweep
+removes these duplicates; `DedupPolicy::Off` preserves them for insertion checks.
 
 Moon et al. [8] provide the locality background, while the crate's index
 calculation follows Skilling [9]; both entries are maintained in
@@ -334,11 +337,11 @@ The quantization resolution is `min(128/D, 31)` bits per coordinate, giving:
 - 4D: 31 bits/coord → ~10⁻⁹ relative resolution
 - 5D: 25 bits/coord → ~10⁻⁸ relative resolution
 
-This layer is **unconditional** when Hilbert ordering is active (the default)
-and runs in O(n log n) time with zero extra allocation (the quantized
-coordinates are already computed during Hilbert index generation). It removes
-the vast majority of exact and near-duplicate vertices before any insertion
-occurs, regardless of `DedupPolicy`.
+This layer is enabled only when Hilbert ordering is active and `DedupPolicy` is
+`Exact` or an epsilon policy. Sorting takes O(n log n) time; the subsequent
+deduplication sweep takes O(n) time and allocates an output vector while reusing
+the quantized coordinates. Distinct coordinates in the same quantized grid cell
+can be removed, so this step also coalesces near-duplicates at that resolution.
 
 See `order_vertices_hilbert` (called from `order_vertices_by_strategy`) in
 [`src/delaunay/construction.rs`](../src/delaunay/construction.rs).
@@ -381,7 +384,8 @@ detects only exact floating-point matches — it is a strict invariant that shou
 never be violated if Layers 1 and 2 are working correctly.
 
 If violated, the error is
-`TdsError::DuplicateCoordinatesInSimplex { simplex_id, message }`.
+`TdsError::DuplicateCoordinatesInSimplex { simplex_id, vertex_keys,
+vertex_uuids, coordinates }`, carrying the offending identities and coordinates.
 
 See `validate_simplex_coordinate_uniqueness` in
 [`src/core/tds/validation.rs`](../src/core/tds/validation.rs).
@@ -403,20 +407,21 @@ construction, or when using a non-Hilbert insertion order.
 
 ### Choosing a `DedupPolicy`
 
-`DedupPolicy` is a **performance-tuning** knob, not a correctness requirement.
-Layer 1 is active when using the default Hilbert ordering, and Layer 2 is always
-active regardless of this setting.
+`DedupPolicy` controls preprocessing, while per-insertion duplicate checks
+(Layer 2) remain active under every policy. With Hilbert ordering, enabling a
+policy also enables quantized deduplication (Layer 1).
 
-- `DedupPolicy::Off` *(default)*: rely on the built-in Hilbert dedup (Layer 1)
-  and per-insertion checks (Layer 2). This is sufficient for most use cases.
-- `DedupPolicy::Exact`: additionally apply `dedup_vertices_exact` before
-  construction. This is a performance optimisation for inputs with many exact
-  duplicates — it avoids paying per-vertex insertion overhead for each one.
-- `DedupPolicy::try_epsilon(value)`: additionally apply epsilon deduplication
-  with the parsed tolerance before construction.
+- `DedupPolicy::Off` *(default)*: skip preprocessing deduplication, including
+  Hilbert grid-cell removal, and rely on per-insertion checks (Layer 2).
+- `DedupPolicy::Exact`: remove exact coordinate duplicates before ordering.
+  With Hilbert ordering, the subsequent grid-cell sweep can also remove
+  distinct coordinates at the quantization resolution.
+- `DedupPolicy::try_epsilon(value)`: apply epsilon deduplication with the parsed
+  tolerance before ordering, then apply grid-cell deduplication when using Hilbert.
 
-The default (`Off`) is recommended because Hilbert dedup is free (zero extra cost)
-and per-insertion checks handle any remaining cases.
+Use `Off` when preprocessing should preserve the input vertices. Enable a policy
+when duplicate-heavy input warrants preprocessing; choose a non-Hilbert order
+if only the selected exact or epsilon equivalence should apply before insertion.
 
 ## Practical recommendations
 
@@ -447,15 +452,16 @@ and per-insertion checks handle any remaining cases.
 
 ## Current limitations
 
-- **D ≥ 5 performance:** for dimensions 5 and above, `det_errbound()` is not
-  available, so predicates fall through directly to exact Bareiss arithmetic on
-  more calls. This is correct but slower than the fast-filter path used for
-  D ≤ 4.
+- **Orientation performance in D = 4–6:** the direct determinant fast filter
+  used by `simplex_orientation` is available through D = 3; dimensions 4–6
+  always use exact Bareiss arithmetic. The relative in-sphere determinant has
+  an interval filter through D = 6, although its orientation sub-predicate
+  still follows the orientation limits.
 - **D ≥ 7 exact repair:** the public exact-insphere / `ExactPredicates` repair
   contract stops at D ≤ 6.
   See [`limitations.md`](limitations.md) for the current dimension envelope.
-- **Non-finite input:** robust predicates return typed errors or
-  `BOUNDARY`/`DEGENERATE` when exact arithmetic cannot run. Clean or reject
-  non-finite coordinates before construction when possible.
+- **Non-finite input:** coordinate construction rejects non-finite values with
+  typed errors. An unavailable floating-point certificate requests exact
+  fallback; it does not by itself imply `BOUNDARY` or `DEGENERATE`.
 
 Historical investigation notes live in `docs/archive/`.

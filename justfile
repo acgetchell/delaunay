@@ -791,6 +791,9 @@ profile toolchain="" code_ref="current": _ensure-jq _ensure-toolchain
 
     {{ managed }} rustup toolchain install "$requested_toolchain" --profile minimal
 
+    rustc_version="$({{ managed }} rustup run "$requested_toolchain" rustc --version)"
+    cargo_version="$({{ managed }} rustup run "$requested_toolchain" cargo --version)"
+
     {
         echo "# Profile Run"
         echo
@@ -799,8 +802,8 @@ profile toolchain="" code_ref="current": _ensure-jq _ensure-toolchain
         echo "- Commit: $(git -C "$workdir" rev-parse HEAD)"
         echo "- Dirty tree: $(if [[ "$workdir" == "$repo_root" && -n "$(git status --short)" ]]; then echo yes; else echo no; fi)"
         echo "- Requested toolchain: $requested_toolchain"
-        echo "- rustc: $({{ managed }} rustup run "$requested_toolchain" rustc --version)"
-        echo "- cargo: $(rustup run "$requested_toolchain" cargo --version)"
+        echo "- rustc: $rustc_version"
+        echo "- cargo: $cargo_version"
         echo "- Cargo profile: cargo bench --profile perf"
         echo "- Benchmark harness: ci_performance_suite"
     } > "$run_dir/profile_metadata.md"

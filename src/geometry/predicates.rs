@@ -455,7 +455,8 @@ impl std::fmt::Display for Orientation {
 /// This predicate uses adaptive-precision arithmetic to return a provably correct
 /// sign. For D ≤ 3, a fast f64 filter resolves the sign without allocating in
 /// well-conditioned cases. For nearly-degenerate configurations (and always for
-/// D ≥ 4), the Bareiss algorithm runs in exact integer arithmetic in `la-stack`.
+/// D = 4–6), the Bareiss algorithm runs in exact integer arithmetic in `la-stack`.
+/// Dimensions above D = 6 are unsupported.
 ///
 /// # Arguments
 ///
@@ -468,7 +469,8 @@ impl std::fmt::Display for Orientation {
 ///
 /// # Errors
 ///
-/// Returns an error if the number of simplex points is not exactly D+1.
+/// Returns an error if the number of simplex points is not exactly D+1 or
+/// the dimension exceeds D = 6.
 ///
 /// # Algorithm
 ///
@@ -796,15 +798,17 @@ pub fn insphere<const D: usize>(
 /// The performance gains come from:
 /// 1. Using relative coordinates which reduce numerical magnitude
 /// 2. Computing smaller (D+1)×(D+1) determinants instead of (D+2)×(D+2)
-/// 3. Benefiting from la-stack's closed-form determinants for D=1-4
+/// 3. Using la-stack's allocation-free interval determinant filter through D=6
 ///
 /// This method combines an exact determinant contract with a compact
 /// relative-coordinate formulation.
 ///
 /// # Robustness
 ///
-/// Both the orientation sub-predicate and the lifted insphere determinant use a
-/// filtered-exact evaluation:
+/// The orientation sub-predicate uses [`simplex_orientation`]: a direct f64
+/// determinant filter through D=3, followed by exact integer arithmetic when
+/// inconclusive (and always for D=4–6).
+/// The relative lifted insphere determinant uses:
 /// 1. **Outward-rounded interval filter** — resolves well-conditioned cases
 ///    without allocation and encloses subtraction and lift-construction error.
 /// 2. **Exact rational cold path** — constructs relative coordinates and

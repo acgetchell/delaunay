@@ -794,8 +794,8 @@ exact symbolic determinant through D=6 rather than stopping after first-order
 cofactors, breaking exact-degeneracy ties deterministically and eliminating
 the most common source of non-progressing flip cycles. The `ExactPredicates` marker trait ensures
 that flip repair entry points only accept kernels with provably correct in-sphere sign decisions in
-the supported dimensions. Exact orientation extends farther than exact in-sphere support, but repair
-entry points are intentionally gated by the stronger Delaunay-predicate contract. Remaining
+the supported dimensions. Exact orientation and exact in-sphere support both extend through D=6;
+repair entry points are gated by the Delaunay-predicate contract. Remaining
 convergence risks at large scale are primarily cavity/topology interactions, pathological input
 conditioning, or workflows outside the supported predicate envelope rather than ambiguous predicate
 ties.

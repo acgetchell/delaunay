@@ -37,16 +37,22 @@ GPU/parallel meshing, or production-scale dynamic remeshing.
 
 The stack-allocated exact determinant path supports matrices up to 7×7:
 
-- f64 fast filter: D ≤ 4, because `det_errbound()` is unavailable above 4D.
+- Orientation f64 fast filter: D ≤ 3, because `det_direct_with_errbound()`
+  supports matrices up to 4×4 and orientation uses a `(D + 1) × (D + 1)` matrix.
+- Relative in-sphere interval filter: D ≤ 6, using outward-rounded intervals
+  in a `(D + 1) × (D + 1)` matrix. Uncertain intervals request exact arithmetic.
 - Exact orientation: D ≤ 6, because orientation uses a `(D + 1) × (D + 1)`
   determinant.
 - Exact insphere: D ≤ 6, because the translation-invariant relative formulation
   uses a `(D + 1) × (D + 1)` determinant. Its cold path forms differences and
   squared norms directly as exact rationals from the IEEE-754 inputs.
 
-For D ≥ 5, predicate evaluation falls through to exact arithmetic more often.
-For D ≥ 7, exact insphere determinants are unavailable. Higher-dimensional
-fallbacks remain deterministic but do not carry the `ExactPredicates` proof.
+For D=4 through D=6, orientation goes directly to exact arithmetic, while the
+relative in-sphere determinant can still be interval-certified. For D ≥ 7,
+exact determinants are unavailable. The `robust_insphere` distance fallback,
+also used by `RobustKernel::in_sphere`, does not carry the `ExactPredicates`
+proof; `AdaptiveKernel` reports the unsupported dimension instead. Built-in
+point-driven constructors require `ExactPredicates` and are supported through D=6.
 
 ## Numerical Robustness
 

@@ -2529,6 +2529,117 @@ mod tests {
         );
     }
 
+    /// Multiple nonzero products need an error allowance even when the exact
+    /// signed gap lies just above one; translation also exercises common error.
+    fn assert_shared_vertex_filter_rounding_margin<const D: usize>() {
+        for translation in [0.0, 0.25] {
+            let mut coordinates = standard_simplex_coordinates::<D>();
+            coordinates[1][0] = 0.5;
+            coordinates[1][1] = 0.5;
+            let first = LabeledSimplexRealization::try_new(
+                0..=D,
+                coordinates
+                    .iter()
+                    .map(|point| point.map(|value| translation + value)),
+            )
+            .unwrap();
+            let second = LabeledSimplexRealization::try_new(
+                core::iter::once(0).chain(D + 1..=2 * D),
+                coordinates
+                    .iter()
+                    .map(|point| point.map(|value| 2.0_f64.mul_add(-value, translation))),
+            )
+            .unwrap();
+            for (left, right) in [(&first, &second), (&second, &first)] {
+                assert_eq!(validate_simplex_intersection(left, right), Ok(()));
+            }
+            for (component, certifies) in [
+                ((1.0_f64 / 1024.0).next_down(), false),
+                (1.0 / 1024.0, false),
+                ((1.0_f64 / 1024.0).next_up(), false),
+                (2.0 / 1024.0, true),
+            ] {
+                // Only the smaller simplex is near the unit margin, so reversing
+                // the pair checks each strict comparison independently.
+                for (left, right, direction, left_scale, right_scale) in [
+                    (&first, &second, 1.0, 1.0, 2.0),
+                    (&second, &first, -1.0, 2.0, 1.0),
+                ] {
+                    let axis = [direction * component; D];
+                    let scaled_axis = LaVector::try_new(axis.map(|value| value * 1024.0)).unwrap();
+                    let common = scaled_axis
+                        .dot_with_errbound(&LaVector::try_new(left.coordinates()[0]).unwrap())
+                        .unwrap()
+                        .unwrap();
+                    if translation != 0.0 {
+                        assert!(common.absolute_error_bound() > 0.0);
+                    }
+                    let mut exact_margin_holds = true;
+                    for (simplex, side, scale) in
+                        [(left, 1.0, left_scale), (right, -1.0, right_scale)]
+                    {
+                        let vertex = simplex.coordinates()[1];
+                        let projection = scaled_axis
+                            .dot_with_errbound(&LaVector::try_new(vertex).unwrap())
+                            .unwrap()
+                            .unwrap();
+                        assert!(projection.absolute_error_bound() > 0.0);
+                        // Form exact differences from stored coordinates, without
+                        // reusing the filter's separately rounded projections.
+                        let gap = vertex.iter().zip(&axis).zip(&left.coordinates()[0]).fold(
+                            rational_zero(),
+                            |sum, ((&value, &coefficient), &shared)| {
+                                sum + rational_from_f64(side * coefficient * 1024.0)
+                                    * (rational_from_f64(value) - rational_from_f64(shared))
+                            },
+                        );
+                        assert_eq!(gap, rational_from_f64(component * 1024.0 * scale));
+                        exact_margin_holds &= gap >= rational_one();
+                    }
+                    assert_eq!(
+                        filtered_single_shared_vertex_confinement(left, right, &[0], &axis),
+                        certifies
+                    );
+                    assert_eq!(
+                        exact_shared_face_confinement_certificate(left, right, &[0], &axis),
+                        exact_margin_holds
+                    );
+                }
+            }
+        }
+    }
+
+    /// A nonzero subnormal common projection has no floating certificate, but
+    /// exact arithmetic still proves intersection only at the shared vertex.
+    fn assert_shared_vertex_filter_subnormal_common<const D: usize>() {
+        let (first, second, shared) = boundary_degenerate_pair::<D>(1, 1.0);
+        let translate = |simplex: &LabeledSimplexRealization<usize, D>| {
+            LabeledSimplexRealization::try_new(
+                simplex.labels().iter().copied(),
+                simplex
+                    .coordinates()
+                    .iter()
+                    .map(|point| point.map(|value| value + f64::from_bits(1))),
+            )
+            .unwrap()
+        };
+        let first = translate(&first);
+        let second = translate(&second);
+        for (left, right, direction) in [(&first, &second, 1.0), (&second, &first, -1.0)] {
+            let axis = [direction; D];
+            let scaled_axis = LaVector::try_new([direction * 1024.0; D]).unwrap();
+            let common = LaVector::try_new(left.coordinates()[0]).unwrap();
+            assert!(scaled_axis.dot_with_errbound(&common).unwrap().is_none());
+            assert!(!filtered_single_shared_vertex_confinement(
+                left, right, &shared, &axis
+            ));
+            assert!(exact_shared_face_confinement_certificate(
+                left, right, &shared, &axis
+            ));
+            assert_eq!(validate_simplex_intersection(left, right), Ok(()));
+        }
+    }
+
     macro_rules! shared_vertex_bound_tests {
         ($($dim:literal),+ $(,)?) => {
             pastey::paste! {
@@ -2541,6 +2652,16 @@ mod tests {
                     #[test]
                     fn [<shared_vertex_filter_cancellation_ $dim d>]() {
                         assert_shared_vertex_filter_cancellation::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<shared_vertex_filter_rounding_margin_ $dim d>]() {
+                        assert_shared_vertex_filter_rounding_margin::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<shared_vertex_filter_subnormal_common_ $dim d>]() {
+                        assert_shared_vertex_filter_subnormal_common::<$dim>();
                     }
 
                     proptest! {
