@@ -423,9 +423,10 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
     /// either index is outside the point set. A
     /// [`SphericalDelaunayValidationError::Metric`] error is possible only if
     /// the stored radius invariant has been violated internally. A
-    /// [`SphericalDelaunayValidationError::GeodesicDistance`] error indicates
-    /// that one of the stored points no longer matches the triangulation's
-    /// sphere radius.
+    /// [`SphericalDelaunayValidationError::GeodesicDistance`] error preserves
+    /// the typed source from [`SphericalMetric::try_distance`], including a
+    /// mismatched sphere radius, an unrepresentable arc length, or an upstream
+    /// angle-computation failure.
     ///
     /// # Examples
     ///

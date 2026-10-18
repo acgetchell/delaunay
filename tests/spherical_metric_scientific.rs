@@ -3,7 +3,7 @@
 use std::f64::consts::PI;
 
 use approx::assert_relative_eq;
-use delaunay::prelude::topology::spaces::{SphericalMetric, SphericalPoint};
+use delaunay::prelude::topology::spaces::{SphericalMetric, SphericalPoint, SphericalPointError};
 
 /// Embeds a known planar direction using the first and last ambient coordinates.
 fn planar_point<const D: usize>(direction: [f64; 2], radius: f64) -> SphericalPoint<D> {
@@ -98,7 +98,7 @@ fn spherical_distance_matches_independent_planar_angles() {
         ];
         for (left, right) in directions {
             // Bounded integer cross and dot products are exact and do not
-            // reuse the production norm-weighted half-angle construction.
+            // reuse the upstream compensated exterior-product construction.
             let cross = left[0] * right[1] - left[1] * right[0];
             let dot = left[0] * right[0] + left[1] * right[1];
             let angle = f64::from(cross.abs()).atan2(f64::from(dot));
@@ -127,6 +127,40 @@ fn spherical_distance_matches_independent_planar_angles() {
 }
 
 #[test]
+fn spherical_distance_matches_independent_dense_angles() -> Result<(), SphericalPointError> {
+    fn check<const D: usize>() -> Result<(), SphericalPointError> {
+        let ambient_length =
+            f64::from(u32::try_from(D + 1).expect("fixture dimensions fit in u32"));
+        // Every coordinate participates. Negating one coordinate changes the
+        // exact dot product from n to n - 2; both squared norms remain n.
+        // acos is well-conditioned for these angles and independent of the
+        // upstream exterior-product atan2 construction.
+        let angle = ((ambient_length - 2.0) / ambient_length).acos();
+        let left = vec![1.0; D + 1];
+        for axis in 0..=D {
+            let mut right = left.clone();
+            right[axis] = -1.0;
+            for radius in [0.5, 1.0, 2.0] {
+                let metric = SphericalMetric::<D>::try_new(radius)?;
+                let a = SphericalPoint::try_from_slice_with_radius(&left, radius)?;
+                let b = SphericalPoint::try_from_slice_with_radius(&right, radius)?;
+                assert_relative_eq!(
+                    metric.try_distance(&a, &b)?,
+                    radius * angle,
+                    epsilon = 0.0,
+                    max_relative = 16.0 * f64::EPSILON
+                );
+            }
+        }
+        Ok(())
+    }
+    check::<2>()?;
+    check::<3>()?;
+    check::<4>()?;
+    check::<5>()
+}
+
+#[test]
 fn spherical_distance_preserves_small_arcs_at_maximum_radius() {
     fn check<const D: usize>() {
         let radius = f64::MAX;
@@ -147,4 +181,19 @@ fn spherical_distance_preserves_small_arcs_at_maximum_radius() {
     check::<3>();
     check::<4>();
     check::<5>();
+}
+
+#[test]
+fn spherical_distance_has_no_matrix_dispatch_dimension_cap() -> Result<(), SphericalPointError> {
+    // This metric accepts runtime ambient coordinates independently of the
+    // bounded spherical triangulation prototype and fixed-matrix dispatch.
+    let metric = SphericalMetric::<64>::unit();
+    let axis = planar_point::<64>([1.0, 0.0], 1.0);
+    let perpendicular = planar_point::<64>([0.0, 1.0], 1.0);
+    assert_relative_eq!(
+        metric.try_distance(&axis, &perpendicular)?,
+        PI / 2.0,
+        epsilon = f64::EPSILON
+    );
+    Ok(())
 }
