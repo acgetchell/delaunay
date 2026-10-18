@@ -2640,6 +2640,61 @@ mod tests {
         }
     }
 
+    /// A finite projection at either range endpoint cannot enclose a unit
+    /// margin. The opposite orthants still meet only at their shared vertex.
+    fn assert_shared_vertex_filter_margin_overflow<const D: usize>() {
+        for (extreme, inward) in [
+            (f64::MAX, f64::MAX.next_down()),
+            (-f64::MAX, -f64::MAX.next_down()),
+        ] {
+            let mut coordinates = standard_simplex_coordinates::<D>();
+            for point in &mut coordinates {
+                point[0] = extreme;
+            }
+            coordinates[1][0] = inward;
+            coordinates[1][1] = 1.0;
+            let first =
+                LabeledSimplexRealization::try_new(0..=D, coordinates.iter().copied()).unwrap();
+            let second = LabeledSimplexRealization::try_new(
+                core::iter::once(0).chain(D + 1..=2 * D),
+                coordinates.iter().map(|point| {
+                    from_fn(|axis| if axis == 0 { point[axis] } else { -point[axis] })
+                }),
+            )
+            .unwrap();
+            let mut axis = [0.0; D];
+            axis[0] = 1.0 / 1024.0;
+            let common = LaVector::try_new(axis.map(|value| value * 1024.0))
+                .unwrap()
+                .dot_with_errbound(&LaVector::try_new(first.coordinates()[0]).unwrap())
+                .unwrap()
+                .unwrap();
+            // The projection itself is exact and finite; only its outward unit
+            // margin fails. This distinguishes threshold overflow from dot overflow.
+            assert_eq!(common.lower_bound().to_bits(), extreme.to_bits());
+            assert_eq!(common.upper_bound().to_bits(), extreme.to_bits());
+            for (left, right, direction) in [(&first, &second, 1.0), (&second, &first, -1.0)] {
+                assert!(!filtered_single_shared_vertex_confinement(
+                    left,
+                    right,
+                    &[0],
+                    &axis
+                ));
+                // All non-shared vertices have a strictly positive/negative sum
+                // in the remaining coordinates, independently of the huge offset.
+                let separating_axis: [f64; D] =
+                    from_fn(|axis| if axis == 0 { 0.0 } else { direction });
+                assert!(exact_shared_face_confinement_certificate(
+                    left,
+                    right,
+                    &[0],
+                    &separating_axis
+                ));
+                assert_eq!(validate_simplex_intersection(left, right), Ok(()));
+            }
+        }
+    }
+
     macro_rules! shared_vertex_bound_tests {
         ($($dim:literal),+ $(,)?) => {
             pastey::paste! {
@@ -2662,6 +2717,11 @@ mod tests {
                     #[test]
                     fn [<shared_vertex_filter_subnormal_common_ $dim d>]() {
                         assert_shared_vertex_filter_subnormal_common::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<shared_vertex_filter_margin_overflow_ $dim d>]() {
+                        assert_shared_vertex_filter_margin_overflow::<$dim>();
                     }
 
                     proptest! {
