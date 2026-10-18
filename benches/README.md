@@ -222,9 +222,23 @@ and antipodal directions, a subnormal angle, and extreme radii. With
 The upstream exterior-product calculation takes quadratic work in the ambient
 length and constant auxiliary storage. These small-dimension measurements do
 not establish scaling performance for large ambient dimensions.
-For an implementation comparison, save a baseline before changing the adapter,
-then repeat the same command with `--baseline spherical-local-610` instead of
-`--save-baseline spherical-local-610`:
+To reproduce the #610 implementation comparison, prepare an isolated copy of
+the current checkout, retaining its `benches/math_kernels.rs`, `Cargo.toml`,
+and `Cargo.lock` for both runs. The corrected local revision predates this
+benchmark group, so checking out that entire revision cannot produce the
+required case IDs. Read its implementation with:
+
+```bash
+git --no-pager show \
+  06284cfe4a699cc81bc1aa334524e5dcac438707:src/topology/spaces/spherical.rs
+```
+
+In the isolated copy, replace only `SphericalMetric::try_distance` with that
+revision's complete method and remove the now-unused `VectorAngle` import.
+Keep the current benchmark harness, canonical fixtures, dependency lockfile,
+toolchain, and features unchanged. Run the command below from that copy to
+save the corrected-local baseline; running it on the unchanged current adapter
+would mislabel the baseline:
 
 ```bash
 uv run --locked --group dev research-repo-tools toolchain run -- \
@@ -234,9 +248,19 @@ uv run --locked --group dev research-repo-tools toolchain run -- \
   --save-baseline spherical-local-610
 ```
 
-The baseline for #610 is the corrected local norm-weighted calculation;
+Restore the current method and import in the same isolated copy, then repeat
+the command with `--baseline spherical-local-610` instead of
+`--save-baseline spherical-local-610`. Preserve the Criterion output directory
+between runs. The baseline is the corrected local norm-weighted calculation;
 the inaccurate `acos(dot)` path is excluded. The downstream benchmark measures
 radius validation and arc-length conversion separately from the upstream API.
+
+Criterion runs cases sequentially, so record execution order with the results.
+For small timing differences, repeat the comparison with alternating
+before/after run order to assess clock, temperature, and cache drift. A single
+run provides descriptive local measurements, not a paired-sampling guarantee.
+For direct upstream-versus-adapter comparisons, filter their case IDs into
+separate invocations and reverse that execution order on repeated runs.
 
 `realization_narrow_phase/shared_face_boundary` and
 `near_degenerate_shared_face` already isolate exact barycentric intersection
