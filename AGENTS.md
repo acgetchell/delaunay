@@ -85,6 +85,8 @@ workflow references do not need to be loaded preemptively.
   guides use uppercase verb/gerund filenames; discussions, policy, references,
   and results use lowercase descriptive names. Keep conventional indexes and
   archives intact; details live in [documentation policy](docs/dev/docs.md).
+  README Quickstart owns usage and bare `just` discovery; CONTRIBUTING owns
+  contributor checks, fixes, tests, security, and PR preparation.
 - **Treat paper prose as author-owned.** Agents must not add substantive
   publication prose to `papers/`; local paper maintenance rules live in
   `docs/dev/docs.md`.

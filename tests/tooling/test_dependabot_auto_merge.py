@@ -50,14 +50,16 @@ def test_dependency_policy_covers_declared_ecosystems_and_resolution_roots() -> 
 
 
 def test_actions_policy_covers_consumer_workflows_and_composite_actions() -> None:
-    """Every Actions dependency is covered by an exact existing file path."""
+    """Ordinary dependencies are automatic; publishing changes require human review."""
     paths = {
         path.relative_to(ROOT).as_posix()
         for directory in (ROOT / ".github/workflows", ROOT / ".github/actions")
         for path in directory.rglob("*")
         if path.suffix in {".yml", ".yaml"} and (directory.name == "workflows" or path.stem == "action")
     }
-    assert set(POLICY["github_actions"]["files"]) == paths
+    manual_review = {".github/workflows/publish-crates.yml"}
+    assert manual_review <= paths
+    assert set(POLICY["github_actions"]["files"]) == paths - manual_review
     for ecosystem in POLICY.values():
         files = ecosystem["files"]
         assert len(files) == len(set(files))

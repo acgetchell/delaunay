@@ -54,8 +54,7 @@ bootstrap launcher is needed. Repository Python tooling is described in
 For the current command list and workflow details, use:
 
 ```bash
-just --list
-just help-workflows
+just
 ```
 
 A typical first local pass is:
@@ -64,6 +63,15 @@ A typical first local pass is:
 just setup
 just check
 ```
+
+Use `just fix` to apply formatters and safe automatic fixes, `just test` for the
+default test suites, and `just security` for dependency and secret scans. These
+are contributor workflows; README Quickstart concentrates on using the library,
+examples, notebooks, and CLI. The [command placement policy](docs/dev/docs.md#documentation-ownership)
+keeps that distinction consistent when commands are added.
+
+Before committing edited notebooks, clear generated outputs and execution counts
+with `just notebook-clear-outputs-all`; see [notebook policy](docs/dev/notebooks.md).
 
 During iterative review and fixes, use `just check` alongside targeted tests
 for changed behavior. CodeRabbit review requires explicit maintainer
@@ -125,8 +133,9 @@ git checkout -b doc/329-branch-guidance
 
 Keep changes scoped, update tests and documentation with the behavior they
 support, and check performance impact for Rust algorithm or benchmark changes.
-Automation must stop before version-control mutations; contributors should
-perform commits, pushes, tags, and release operations manually.
+Agents require explicit maintainer authorization before version-control mutations.
+Follow the [Git and GitHub rules](docs/dev/git.md) for branches, commits, pushes,
+and tags; release publication follows the dedicated release guide.
 
 ## Project References
 

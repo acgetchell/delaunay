@@ -113,7 +113,7 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      - name: Attach baseline and publish draft
+      - name: Attach and verify baseline on the draft
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
@@ -134,6 +134,7 @@ jobs:
             echo "### Release Benchmark Baseline"
             echo ""
             echo "Uploaded release asset: \`$RELEASE_ASSET\`"
+            echo "The release remains a draft. Review it, then run just release-publish with a human GitHub CLI session."
             echo ""
             echo "The archive contains:"
             echo ""

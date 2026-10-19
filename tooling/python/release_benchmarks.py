@@ -45,7 +45,7 @@ def release_benchmarks(mode: str, root: Path, target_path: Path, repository: str
         with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8", newline="\n") as output:
             output.write(f"commit={target.commit}\n")
     else:
-        publish_release_asset(root, repository, tag, asset, target=target, publish=True)
+        publish_release_asset(root, repository, tag, asset, target=target, publish=False)
 
 
 def main() -> None:

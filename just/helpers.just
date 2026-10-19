@@ -148,6 +148,17 @@ _performance-tag-pair-state current_tag baseline_tag:
     fi
 
 [private]
+_release-notes-check tag: _ensure-gh _ensure-jq
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tag={{ quote(tag) }}
+    notes="$(mktemp)"
+    trap 'rm -f "$notes"' EXIT
+    {{ rrt }} changelog notes "$tag" > "$notes"
+    gh release view "$tag" --repo acgetchell/delaunay --json tagName,name,body |
+        jq -e --arg tag "$tag" --rawfile notes "$notes" '.tagName == $tag and .name == $tag and ((.body | gsub("\r\n"; "\n") | rtrimstr("\n")) == ($notes | rtrimstr("\n")))' > /dev/null
+
+[private]
 _validation-doc-figures-check-if-canonical:
     #!/usr/bin/env bash
     set -euo pipefail

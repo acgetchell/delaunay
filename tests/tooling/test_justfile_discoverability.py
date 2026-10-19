@@ -74,12 +74,26 @@ def test_security_audit_covers_every_maintained_lockfile() -> None:
     assert secrets[-2:] == ["security", "secrets"]
 
 
-def test_bare_just_shows_curated_help() -> None:
-    """Invoking Just without a recipe should never run a validation command."""
+def test_bare_just_lists_every_public_command() -> None:
+    """The default lists commands, arguments, and descriptions without validation."""
     result = run_safe_command("just", [], cwd=REPO_ROOT)
+    listing = run_safe_command("just", ["--list"], cwd=REPO_ROOT)
+    assert result.stdout == listing.stdout
+    assert "release-publish tag" in result.stdout
+    assert "Publish a reviewed, benchmark-equipped draft" in result.stdout
+    assert "_default" not in result.stdout
 
-    assert result.stdout.startswith("Recommended workflows:\n")
-    assert "Use 'just --list' for the complete grouped recipe reference." in result.stdout
+
+def test_default_discovers_new_recipes_without_a_help_edit(tmp_path: Path) -> None:
+    """Adding a command automatically changes bare Just's generated reference."""
+    shutil.copytree(REPO_ROOT / "just", tmp_path / "just")
+    (tmp_path / "justfile").write_text(
+        JUSTFILE.read_text(encoding="utf-8") + '\n# A newly added command.\n[group("test")]\nzz-new-command argument="example":\n    @exit 99\n',
+        encoding="utf-8",
+    )
+    result = run_safe_command("just", [], cwd=tmp_path)
+    assert 'zz-new-command argument="example"' in result.stdout
+    assert "A newly added command." in result.stdout
 
 
 def test_local_and_ci_setup_use_the_locked_package() -> None:
@@ -89,8 +103,8 @@ def test_local_and_ci_setup_use_the_locked_package() -> None:
     assert "research-repo-tools toolchain sync" in action
     assert "research-repo-tools toolchain export" in action
     assert "cargo install" not in action
-    for name in ("README.md", "CONTRIBUTING.md"):
-        assert "uv run --locked --managed-python --only-group tooling research-repo-tools setup" in (REPO_ROOT / name).read_text(encoding="utf-8")
+    assert "uv run --locked --managed-python --only-group tooling research-repo-tools setup" in (REPO_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert "CONTRIBUTING.md#getting-started" in (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     for workflow_name in ("audit.yml", "benchmarks.yml", "papers.yml"):
         pull_request_paths, push_paths = workflow_trigger_paths(REPO_ROOT / ".github" / "workflows" / workflow_name)
         assert ".github/actions/setup-just/**" in pull_request_paths
@@ -352,7 +366,7 @@ def test_release_recipes_forward_shared_policy_arguments() -> None:
         if name == "tag-force":
             expected.append("--force")
         assert shlex.split(tag_command) == expected
-    command = dry_run(REPO_ROOT, "changelog-unreleased", ("v0.9.0", "2026-10-04"))
+    command = dry_run(REPO_ROOT, "changelog-release", ("v0.9.0", "2026-10-04"))
     assert "--tag 'v0.9.0' --date '2026-10-04'" in command.stdout + command.stderr
 
 
