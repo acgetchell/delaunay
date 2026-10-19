@@ -191,15 +191,19 @@ def test_workflow_limits_credentials_and_verifies_clean_packages() -> None:
     assert "CARGO_REGISTRY_TOKEN" not in yaml.safe_dump({"env": workflow["env"], "verify": jobs["verify"]})
     for job in jobs.values():
         assert job["steps"][0]["with"] == {"ref": "${{ github.sha }}", "fetch-depth": 0, "persist-credentials": False}
-        assert job["steps"][1]["with"]["cache"] == "false"
+    assert jobs["verify"]["steps"][1]["with"]["cache"] == "false"
     steps = jobs["publish"]["steps"]
-    assert 'just release-gate "$RELEASE_TAG"' in steps[2]["run"]
-    assert 'release registry "$RELEASE_TAG" --expect absent' in steps[2]["run"]
-    assert steps[3]["id"] == "auth"
-    assert steps[4]["run"].endswith("cargo publish --locked --package delaunay --registry crates-io --no-verify")
-    assert [index for index, step in enumerate(steps) if "CARGO_REGISTRY_TOKEN" in step.get("env", {})] == [4]
-    assert steps[5]["if"] == "${{ !cancelled() && steps.auth.outcome == 'success' }}"
-    assert steps[5]["run"] == 'just release-verify "$RELEASE_TAG"'
+    gate = next(step for step in steps if step.get("name", "").startswith("Recheck evidence"))
+    auth = next(step for step in steps if step.get("id") == "auth")
+    upload = next(step for step in steps if "CARGO_REGISTRY_TOKEN" in step.get("env", {}))
+    visibility = steps[-1]
+    assert steps.index(gate) < steps.index(auth) < steps.index(upload) < steps.index(visibility)
+    assert 'release-gate "$RELEASE_TAG"' in gate["run"]
+    assert 'release registry "$RELEASE_TAG" --expect absent' in gate["run"]
+    assert upload["run"] == "cargo publish --locked --package delaunay --registry crates-io --no-verify"
+    assert [step for step in steps if "CARGO_REGISTRY_TOKEN" in step.get("env", {})] == [upload]
+    assert visibility["if"] == "${{ !cancelled() && steps.auth.outcome == 'success' }}"
+    assert visibility["run"].endswith('release-verify "$RELEASE_TAG"')
     assert "continue-on-error" not in WORKFLOW.read_text(encoding="utf-8")
     commands = dry_run(ROOT, "release-package").stderr
     assert commands.count("--package delaunay --registry crates-io --dry-run") == 2
@@ -208,6 +212,58 @@ def test_workflow_limits_credentials_and_verifies_clean_packages() -> None:
     assert "--no-verify" not in commands
     gate_dependencies = {item["recipe"] for item in inspect_justfile(ROOT).recipes["release-gate"]["dependencies"]}
     assert "_release-notes-check" in gate_dependencies
+
+
+def test_oidc_job_installs_only_minimal_locked_publication_tools() -> None:
+    """The credential-capable job excludes local code and managed development builds."""
+    workflow = yaml.safe_load(WORKFLOW.read_bytes())
+    steps = workflow["jobs"]["publish"]["steps"]
+    rendered = yaml.safe_dump(steps)
+    assert "setup-just" not in rendered
+    assert "toolchain sync" not in rendered
+    assert "toolchain run" not in rendered
+    setup_uv = next(step for step in steps if step.get("uses", "").startswith("astral-sh/setup-uv@"))
+    shared_setup = yaml.safe_load((ROOT / ".github/actions/setup-just/action.yml").read_bytes())
+    assert setup_uv["uses"] == shared_setup["runs"]["steps"][0]["uses"]
+    assert setup_uv["with"] == {"version-file": "pyproject.toml", "enable-cache": False}
+    bootstrap = next(step for step in steps if step.get("name") == "Install locked publication tooling")
+    assert "uv sync --locked --managed-python --only-group tooling --no-install-project" in bootstrap["run"]
+    manifest = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert manifest["dependency-groups"]["tooling"] == ["research-repo-tools[python-tools]==0.1.9"]
+
+
+def test_oidc_rust_setup_exports_the_declared_minimal_toolchain(tmp_path: Path) -> None:
+    """Exercise channel selection and Actions environment output without installation."""
+    workflow = yaml.safe_load(WORKFLOW.read_bytes())
+    script = next(step["run"] for step in workflow["jobs"]["publish"]["steps"] if step.get("name") == "Install the declared minimal Rust toolchain")
+    output = tmp_path / "environment"
+    calls = tmp_path / "rustup-args"
+    runner = (
+        'uv() { [[ "$1 $2 $3 $4" == "run --locked --no-sync python" ]] || return 90; shift 4; '
+        f'{shlex.quote(Path(sys.executable).as_posix())} "$@"; }}\n'
+        f"rustup() {{ printf '%s\\n' \"$@\" > {shlex.quote(calls.as_posix())}; }}\n"
+    )
+    result = run_command("bash", ["--noprofile", "--norc", "-euc", runner + script], cwd=ROOT, env={**os.environ, "GITHUB_ENV": output.as_posix()}, check=False)
+    assert result.returncode == 0, result.stderr
+    channel = tomllib.loads((ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
+    assert calls.read_text(encoding="utf-8").splitlines() == ["toolchain", "install", channel, "--profile", "minimal", "--no-self-update"]
+    assert output.read_text(encoding="utf-8") == f"RUSTUP_TOOLCHAIN={channel}\n"
+
+
+@pytest.mark.parametrize("recipe", ["release-gate", "release-verify"])
+def test_oidc_release_commands_cannot_resynchronize_dev(recipe: str) -> None:
+    """Real Just expansion must retain the minimal environment after setup."""
+    workflow = yaml.safe_load(WORKFLOW.read_bytes())
+    commands = [line for step in workflow["jobs"]["publish"]["steps"] for line in step.get("run", "").splitlines()]
+    command = shlex.split(next(line for line in commands if line.endswith(f'{recipe} "$RELEASE_TAG"')))
+    assert command[:4] == ["just", "--set", "rrt", "uv run --locked --no-sync research-repo-tools"]
+    command[-1] = TAG
+    command.insert(1, "--dry-run")
+    result = run_command(command[0], command[1:], cwd=ROOT)
+    rendered = result.stdout + result.stderr
+    assert f"research-repo-tools release {'gate' if recipe == 'release-gate' else 'verify'}" in rendered
+    assert "--group dev" not in rendered
+    assert "uv sync" not in rendered
 
 
 def test_account_payloads_match_workflow_identity_and_require_tag_review() -> None:
@@ -231,7 +287,7 @@ def test_account_payloads_match_workflow_identity_and_require_tag_review() -> No
 def test_preupload_shell_requires_evidence_and_proven_absence(tmp_path: Path, failure: str, expected_exit: int) -> None:
     """An existing version or unavailable registry blocks the actual upload sequence."""
     workflow = yaml.safe_load(WORKFLOW.read_bytes())
-    script = workflow["jobs"]["publish"]["steps"][2]["run"]
+    script = next(step["run"] for step in workflow["jobs"]["publish"]["steps"] if step.get("name", "").startswith("Recheck evidence"))
     marker = tmp_path / "upload-reached"
     gate = "just() { return 1; }" if failure == "evidence" else "just() { return 0; }"
     registry_exit = expected_exit if failure in {"present", "unavailable"} else 0

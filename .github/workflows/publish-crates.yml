@@ -64,10 +64,24 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up declared tools without caches
-        uses: $/.github/actions/setup-just
+      - name: Install declared uv without caches
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          cache: "false"
+          version-file: pyproject.toml
+          enable-cache: false
+
+      - name: Install locked publication tooling
+        run: |
+          uv sync --locked --managed-python --only-group tooling --no-install-project
+          printf '%s/.venv/bin\n' "$GITHUB_WORKSPACE" >> "$GITHUB_PATH"
+
+      - name: Install the declared minimal Rust toolchain
+        run: |
+          set -euo pipefail
+          toolchain="$(uv run --locked --no-sync python -c \
+            'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("rust-toolchain.toml").read_text())["toolchain"]["channel"])')"
+          rustup toolchain install "$toolchain" --profile minimal --no-self-update
+          printf 'RUSTUP_TOOLCHAIN=%s\n' "$toolchain" >> "$GITHUB_ENV"
 
       - name: Recheck evidence and registry absence after deployment approval
         env:
@@ -75,7 +89,7 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
-          just release-gate "$RELEASE_TAG"
+          just --set rrt 'uv run --locked --no-sync research-repo-tools' release-gate "$RELEASE_TAG"
           uv run --locked --no-sync research-repo-tools release registry "$RELEASE_TAG" --expect absent
 
       - name: Obtain a short-lived crates.io token
@@ -87,11 +101,11 @@ jobs:
       - name: Package and upload verified source without building
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: uv run --locked --no-sync research-repo-tools toolchain run -- cargo publish --locked --package delaunay --registry crates-io --no-verify
+        run: cargo publish --locked --package delaunay --registry crates-io --no-verify
 
       - name: Check visibility even after a Cargo upload timeout
         if: ${{ !cancelled() && steps.auth.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: just release-verify "$RELEASE_TAG"
+        run: just --set rrt 'uv run --locked --no-sync research-repo-tools' release-verify "$RELEASE_TAG"

@@ -375,11 +375,16 @@ generated notes. Human authentication is essential: publishing with a workflow's
 The publishing workflow checks out `github.sha`, rechecks the published event's
 repository, release ID, tag/ref/commit and evidence, then runs `just release-package`.
 It also reads the captured release ID to require GitHub's immutable state.
-After it succeeds, approve the `crates-io` environment deployment in GitHub.
+After the `verify` job succeeds and the `publish` job is waiting for approval,
+approve the `crates-io` environment deployment in GitHub.
 The upload job rechecks the gate and requires proven absence of the exact registry
 version after approval, then obtains a short-lived OIDC token. Only that job has
 `id-token: write`; it has no repository write permission or dependency caches.
 Uploads for `delaunay` are serialized without cancellation.
+
+The OIDC-enabled upload job installs only the pinned uv, the declared minimal
+Rust toolchain, and the locked `tooling` Python group. It does not run the full
+development setup, install the local Python project, or install managed Cargo tools.
 
 The verification job builds default and all-feature packages without upload
 credentials. After approval, Cargo repackages the same clean, revalidated commit
@@ -420,7 +425,9 @@ in #618. Keep that issue open until the next approved publication is verified.
 
 ### Recovering a failed run
 
-A benchmark, upload or verification failure leaves the release as a draft.
+A benchmark failure leaves the GitHub release as a draft. Crates.io upload or
+post-upload verification failures occur after the GitHub release is published;
+follow the published-release recovery steps below for those failures.
 Rerun the benchmark workflow with the same tag after fixing the cause when no
 baseline asset was uploaded. If it already exists, the adapter fails before
 measurement and never overwrites it. Inspect the retained Actions archive and
