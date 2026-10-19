@@ -591,8 +591,8 @@ perf-help:
     @echo "                              # 4D random-walk Pachner diagnostics with progress.csv and summary.json"
     @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
     @echo "  just profile v0.7.5        # v0.7.5 code on its declared Rust toolchain"
-    @echo "  just profile 1.99.0        # Current tree on Rust 1.99.0"
-    @echo "  just profile 1.99.0 v0.7.5 # v0.7.5 code on Rust 1.99.0"
+    @echo "  just profile 1.99.1        # Current tree on Rust 1.99.1"
+    @echo "  just profile 1.99.1 v0.7.5 # v0.7.5 code on Rust 1.99.1"
 
 # Quick pre-push 2D-5D large-scale wall-clock smoke guard.
 [group('benchmarks and performance')]
@@ -791,6 +791,9 @@ profile toolchain="" code_ref="current": _ensure-jq _ensure-toolchain
 
     {{ managed }} rustup toolchain install "$requested_toolchain" --profile minimal
 
+    rustc_version="$({{ managed }} rustup run "$requested_toolchain" rustc --version)"
+    cargo_version="$({{ managed }} rustup run "$requested_toolchain" cargo --version)"
+
     {
         echo "# Profile Run"
         echo
@@ -799,8 +802,8 @@ profile toolchain="" code_ref="current": _ensure-jq _ensure-toolchain
         echo "- Commit: $(git -C "$workdir" rev-parse HEAD)"
         echo "- Dirty tree: $(if [[ "$workdir" == "$repo_root" && -n "$(git status --short)" ]]; then echo yes; else echo no; fi)"
         echo "- Requested toolchain: $requested_toolchain"
-        echo "- rustc: $({{ managed }} rustup run "$requested_toolchain" rustc --version)"
-        echo "- cargo: $(rustup run "$requested_toolchain" cargo --version)"
+        echo "- rustc: $rustc_version"
+        echo "- cargo: $cargo_version"
         echo "- Cargo profile: cargo bench --profile perf"
         echo "- Benchmark harness: ci_performance_suite"
     } > "$run_dir/profile_metadata.md"

@@ -151,7 +151,7 @@ cargo add delaunay@0.8.2
 
 Use `cargo add delaunay` instead if you want Cargo to select the newest published release.
 
-- Rust 1.99.0 or newer. The minimum supported version is declared in
+- Rust 1.99.1 or newer. The minimum supported version is declared in
   `Cargo.toml`, while `rust-toolchain.toml` pins the exact repository toolchain.
 - `f64` coordinates for caller-facing construction, predicate, validation, and generator APIs.
 
@@ -365,9 +365,10 @@ No retained release-comparison bundle has been published to the README yet.
 Current routine construction coverage targets 2D through 5D. Exact orientation, relative in-sphere,
 and complete symbolic tie-breaking are available through D=6. The in-sphere fast path bounds the
 determinant with outward-rounded intervals; its cold path forms the relative matrix exactly from the
-original binary64 coordinates before asking `la-stack`'s `RationalMatrix` for the sign. D≥7
-falls back to the floating-point circumcenter/radius predicate and therefore lacks exact-sign
-protection near degeneracy.
+original binary64 coordinates before asking `la-stack`'s `RationalMatrix` for the sign. For D≥7,
+`robust_insphere` and `RobustKernel::in_sphere` use a floating-point circumcenter/radius
+fallback without exact-sign protection near degeneracy; `AdaptiveKernel` reports the unsupported
+dimension. Built-in point-driven constructors require `ExactPredicates` and are supported through D=6.
 
 `.try_toroidal([..])` builds a periodic quotient through the image-point method. It is validated on
 `T^2` and compact `T^3`, while `T^4`/`T^5` fail fast pending scalable quotient work.

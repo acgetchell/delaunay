@@ -134,9 +134,10 @@ pub enum InsphereConsistencyError {
 ///
 /// # Complexity
 ///
-/// The f64 fast-filter path is O(D³). When the exact Bareiss path is triggered
-/// for near-degenerate inputs, arbitrary-precision rational arithmetic increases
-/// the cost significantly beyond O(D³).
+/// The relative determinant's interval filter uses O((D+1) × 2^D) interval
+/// operations through D=6. Its orientation sub-predicate already requires exact
+/// arithmetic in D=4–6. Bareiss elimination takes O(D³) arithmetic operations,
+/// whose arbitrary-precision cost depends on the input values.
 ///
 /// # Examples
 ///
@@ -331,8 +332,9 @@ fn relative_exact_insphere<const D: usize>(
 
 /// Enhanced orientation predicate with robustness improvements.
 ///
-/// Internally uses provable [`la_stack::Matrix::det_errbound`] bounds (D ≤ 4)
-/// and exact Bareiss arithmetic for the slow path.
+/// Uses [`la_stack::Matrix::det_direct_with_errbound`] for augmented matrices
+/// of size at most 4 (D ≤ 3), then exact Bareiss arithmetic when inconclusive.
+/// Dimensions D=4–6 always use exact arithmetic; larger dimensions return an error.
 ///
 /// # Errors
 ///
@@ -707,7 +709,7 @@ mod tests {
     #[test]
     fn test_robust_orientation_ccw_triangle_2d() {
         // Standard CCW triangle — robust_orientation uses provable
-        // det_errbound and exact Bareiss arithmetic, no configuration.
+        // direct determinant error bounds and exact Bareiss arithmetic, no configuration.
         let points = vec![
             Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([1.0, 0.0]).expect("finite point coordinates"),

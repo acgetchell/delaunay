@@ -10,8 +10,8 @@ use core::hint::cold_path;
 
 use crate::core::simplex::SimplexValidationError;
 use crate::geometry::matrix::{
-    LaVector, Matrix, RationalMatrix, StackMatrixDispatchError, matrix_fast_filter, matrix_set,
-    rational_from_f64,
+    Interval, IntervalDeterminantSign, IntervalMatrix, LaError, LaVector, Matrix, RationalMatrix,
+    StackMatrixDispatchError, matrix_fast_filter, matrix_set, rational_from_f64,
 };
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
@@ -76,99 +76,6 @@ pub(crate) const fn relative_insphere_classification(signs: RelativeInsphereSign
     }
 }
 
-/// Closed interval with outward-rounded arithmetic for the filtered predicate.
-#[derive(Clone, Copy, Debug)]
-struct F64Interval {
-    lower: f64,
-    upper: f64,
-}
-
-impl F64Interval {
-    const ZERO: Self = Self {
-        lower: 0.0,
-        upper: 0.0,
-    };
-    const ONE: Self = Self {
-        lower: 1.0,
-        upper: 1.0,
-    };
-
-    #[inline]
-    fn subtract_exact(left: f64, right: f64) -> Option<Self> {
-        let rounded = left - right;
-        rounded.is_finite().then_some(Self {
-            lower: rounded.next_down(),
-            upper: rounded.next_up(),
-        })
-    }
-
-    #[inline]
-    fn add(self, other: Self) -> Option<Self> {
-        let lower = self.lower + other.lower;
-        let upper = self.upper + other.upper;
-        (lower.is_finite() && upper.is_finite()).then_some(Self {
-            lower: lower.next_down(),
-            upper: upper.next_up(),
-        })
-    }
-
-    #[inline]
-    fn multiply(self, other: Self) -> Option<Self> {
-        let products = [
-            self.lower * other.lower,
-            self.lower * other.upper,
-            self.upper * other.lower,
-            self.upper * other.upper,
-        ];
-        products.iter().all(|value| value.is_finite()).then(|| {
-            let lower = products.iter().copied().fold(f64::INFINITY, f64::min);
-            let upper = products.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-            Self {
-                lower: lower.next_down(),
-                upper: upper.next_up(),
-            }
-        })
-    }
-
-    #[inline]
-    const fn negate(self) -> Self {
-        Self {
-            lower: -self.upper,
-            upper: -self.lower,
-        }
-    }
-
-    /// Division is enclosing only when the divisor excludes zero.
-    fn divide(self, other: Self) -> Option<Self> {
-        if other.lower <= 0.0 && other.upper >= 0.0 {
-            return None;
-        }
-        let lower = 1.0 / other.upper;
-        let upper = 1.0 / other.lower;
-        if !lower.is_finite() || !upper.is_finite() {
-            return None;
-        }
-        self.multiply(Self {
-            lower: lower.next_down(),
-            upper: upper.next_up(),
-        })
-    }
-
-    #[inline]
-    fn square(self) -> Option<Self> {
-        let lower = if self.lower <= 0.0 && self.upper >= 0.0 {
-            0.0
-        } else {
-            (self.lower * self.lower).min(self.upper * self.upper)
-        };
-        let upper = (self.lower * self.lower).max(self.upper * self.upper);
-        (lower.is_finite() && upper.is_finite()).then_some(Self {
-            lower: if lower == 0.0 { 0.0 } else { lower.next_down() },
-            upper: upper.next_up(),
-        })
-    }
-}
-
 /// Encloses the exact circumsphere in an outward-rounded coordinate box.
 ///
 /// Solve `(p_i - p_0) · c = |p_i - p_0|² / 2` in intervals, where `c`
@@ -186,31 +93,29 @@ pub(crate) fn circumsphere_coordinate_bounds<const D: usize>(
         return None;
     }
     let reference = simplex_points[0].coords();
-    let half = F64Interval {
-        lower: 0.5,
-        upper: 0.5,
-    };
-    let mut matrix = [[F64Interval::ZERO; D]; D];
-    let mut rhs = [F64Interval::ZERO; D];
+    let half = Interval::point(0.5).ok()?;
+    let mut matrix = [[Interval::ZERO; D]; D];
+    let mut rhs = [Interval::ZERO; D];
     for (row, point) in simplex_points.iter().skip(1).enumerate() {
-        let mut squared_norm = F64Interval::ZERO;
+        let mut squared_norm = Interval::ZERO;
         for (column, &coordinate) in point.coords().iter().enumerate() {
-            let relative = F64Interval::subtract_exact(coordinate, reference[column])?;
+            let relative = Interval::try_from_subtraction(coordinate, reference[column]).ok()?;
             matrix[row][column] = relative;
-            squared_norm = squared_norm.add(relative.square()?)?;
+            squared_norm = squared_norm.try_add(&relative.try_square().ok()?).ok()?;
         }
-        rhs[row] = squared_norm.multiply(half)?;
+        rhs[row] = squared_norm.try_mul(&half).ok()?;
     }
 
+    let mut inverse_pivots = [Interval::ZERO; D];
     for column in 0..D {
         // Prefer the pivot furthest from zero. No tolerance can admit an
         // interval containing zero: that would lose the enclosure guarantee.
         let pivot_row = (column..D).max_by(|&left, &right| {
-            let separation = |entry: F64Interval| {
-                if entry.lower > 0.0 {
-                    entry.lower
-                } else if entry.upper < 0.0 {
-                    -entry.upper
+            let separation = |entry: Interval| {
+                if entry.lower() > 0.0 {
+                    entry.lower()
+                } else if entry.upper() < 0.0 {
+                    -entry.upper()
                 } else {
                     0.0
                 }
@@ -220,44 +125,61 @@ pub(crate) fn circumsphere_coordinate_bounds<const D: usize>(
         matrix.swap(column, pivot_row);
         rhs.swap(column, pivot_row);
         let pivot = matrix[column][column];
+        // The backend deliberately omits interval division. Enclose the inverse
+        // of this circumsphere pivot once for elimination and back substitution.
         // Check even the last pivot, which has no elimination rows.
-        F64Interval::ONE.divide(pivot)?;
+        if pivot.contains(0.0) {
+            return None;
+        }
+        let inverse = Interval::try_new(
+            (1.0 / pivot.upper()).next_down(),
+            (1.0 / pivot.lower()).next_up(),
+        )
+        .ok()?;
+        inverse_pivots[column] = inverse;
         let pivot_entries = matrix[column];
         for row in column + 1..D {
-            let factor = matrix[row][column].divide(pivot)?;
+            let factor = matrix[row][column].try_mul(&inverse).ok()?;
             for (entry, &pivot_entry) in matrix[row].iter_mut().zip(&pivot_entries).skip(column + 1)
             {
-                *entry = entry.add(factor.multiply(pivot_entry)?.negate())?;
+                *entry = entry
+                    .try_add(&factor.try_mul(&pivot_entry).ok()?.negate())
+                    .ok()?;
             }
-            rhs[row] = rhs[row].add(factor.multiply(rhs[column])?.negate())?;
-            matrix[row][column] = F64Interval::ZERO;
+            rhs[row] = rhs[row]
+                .try_add(&factor.try_mul(&rhs[column]).ok()?.negate())
+                .ok()?;
+            matrix[row][column] = Interval::ZERO;
         }
     }
 
-    let mut center = [F64Interval::ZERO; D];
+    let mut center = [Interval::ZERO; D];
     for row in (0..D).rev() {
         let mut residual = rhs[row];
         for (column, &coordinate) in center.iter().enumerate().skip(row + 1) {
-            residual = residual.add(matrix[row][column].multiply(coordinate)?.negate())?;
+            residual = residual
+                .try_add(&matrix[row][column].try_mul(&coordinate).ok()?.negate())
+                .ok()?;
         }
-        center[row] = residual.divide(matrix[row][row])?;
+        center[row] = residual.try_mul(&inverse_pivots[row]).ok()?;
     }
-    let mut squared_radius = F64Interval::ZERO;
+    let mut squared_radius = Interval::ZERO;
     for coordinate in center {
-        squared_radius = squared_radius.add(coordinate.square()?)?;
+        squared_radius = squared_radius
+            .try_add(&coordinate.try_square().ok()?)
+            .ok()?;
     }
-    let radius = squared_radius.upper.sqrt().next_up();
+    let radius = squared_radius.upper().sqrt().next_up();
     if !radius.is_finite() {
         return None;
     }
     let mut bounds = [[0.0; 2]; D];
     for (axis, coordinate) in center.iter().enumerate() {
-        let absolute = coordinate.add(F64Interval {
-            lower: reference[axis],
-            upper: reference[axis],
-        })?;
-        let lower = (absolute.lower - radius).next_down();
-        let upper = (absolute.upper + radius).next_up();
+        let absolute = coordinate
+            .try_add(&Interval::point(reference[axis]).ok()?)
+            .ok()?;
+        let lower = (absolute.lower() - radius).next_down();
+        let upper = (absolute.upper() + radius).next_up();
         if !lower.is_finite() || !upper.is_finite() {
             return None;
         }
@@ -266,19 +188,12 @@ pub(crate) fn circumsphere_coordinate_bounds<const D: usize>(
     Some(bounds)
 }
 
-/// Builds the relative lifted matrix as intervals enclosing the exact-real result.
-fn relative_insphere_interval_matrix<const D: usize>(
+/// Encloses geometric differences and lifts before any rounding can lose their sign.
+fn fill_relative_insphere_interval_matrix<const D: usize, const N: usize>(
+    matrix: &mut IntervalMatrix<N>,
     simplex_points: &[Point<D>],
     test_point: &Point<D>,
-) -> Option<[[F64Interval; 7]; 7]> {
-    if D + 1 > 7 {
-        return None;
-    }
-    if simplex_points.len() != D + 1 {
-        return None;
-    }
-
-    let mut matrix = [[F64Interval::ZERO; 7]; 7];
+) -> Result<(), LaError> {
     let reference_coords = simplex_points[0].coords();
     for (row, point) in simplex_points
         .iter()
@@ -286,59 +201,37 @@ fn relative_insphere_interval_matrix<const D: usize>(
         .chain(core::iter::once(test_point))
         .enumerate()
     {
-        let mut lifted = F64Interval::ZERO;
-        for column in 0..D {
-            let relative =
-                F64Interval::subtract_exact(point.coords()[column], reference_coords[column])?;
-            matrix[row][column] = relative;
-            lifted = lifted.add(relative.square()?)?;
+        let mut lifted = Interval::ZERO;
+        for (column, (&coordinate, &reference)) in
+            point.coords().iter().zip(reference_coords).enumerate()
+        {
+            let relative = Interval::try_from_subtraction(coordinate, reference)?;
+            matrix.set(row, column, relative)?;
+            lifted = lifted.try_add(&relative.try_square()?)?;
         }
-        matrix[row][D] = lifted;
+        matrix.set(row, D, lifted)?;
     }
-    Some(matrix)
+    Ok(())
 }
 
-/// Returns a certified determinant sign when interval elimination separates zero.
+/// Accepts only a strict interval sign; every other outcome requests exact arithmetic.
 fn relative_insphere_interval_sign<const D: usize>(
     simplex_points: &[Point<D>],
     test_point: &Point<D>,
 ) -> Option<i32> {
-    let matrix = relative_insphere_interval_matrix(simplex_points, test_point)?;
-    let dimension = D + 1;
-    let mut partials = [None; 128];
-    partials[0] = Some(F64Interval::ONE);
-
-    for mask in 0usize..(1usize << dimension) {
-        let row = mask.count_ones() as usize;
-        if row >= dimension {
-            continue;
-        }
-        let Some(partial) = partials[mask] else {
-            continue;
-        };
-        for (column, &entry) in matrix[row][..dimension].iter().enumerate() {
-            if mask & (1 << column) != 0 {
-                continue;
-            }
-            let mut term = partial.multiply(entry)?;
-            if (mask >> (column + 1)).count_ones() % 2 == 1 {
-                term = term.negate();
-            }
-            let next = mask | (1 << column);
-            partials[next] = Some(match partials[next] {
-                Some(existing) => existing.add(term)?,
-                None => term,
-            });
-        }
+    if simplex_points.len() != D + 1 {
+        return None;
     }
-
-    let determinant = partials[(1 << dimension) - 1]?;
-    if determinant.lower > 0.0 {
-        Some(1)
-    } else if determinant.upper < 0.0 {
-        Some(-1)
-    } else {
-        None
+    let sign = la_stack::try_with_interval_matrix!(D + 1, |mut matrix| -> Result<_, LaError> {
+        fill_relative_insphere_interval_matrix(&mut matrix, simplex_points, test_point)?;
+        matrix.det_sign()
+    })
+    .ok()?;
+    match sign {
+        IntervalDeterminantSign::Positive => Some(1),
+        IntervalDeterminantSign::Negative => Some(-1),
+        // Preserve exact-zero handling as well as inconclusive/range fallback.
+        _ => None,
     }
 }
 
@@ -476,8 +369,7 @@ pub(crate) fn try_orientation_from_matrix<const N: usize>(
 ) -> Result<Orientation, StackMatrixDispatchError> {
     validate_active_matrix_dimension::<N>(k)?;
 
-    // Stage 1: provable f64 fast filter for D ≤ 4.
-    // See `insphere_from_matrix` for detailed explanation of the error bound.
+    // Stage 1: the backend certifies direct determinants for matrix size N ≤ 4.
     if let Some((det, errbound)) = matrix_fast_filter(matrix)? {
         if det > errbound {
             return Ok(Orientation::POSITIVE);
@@ -487,9 +379,7 @@ pub(crate) fn try_orientation_from_matrix<const N: usize>(
         }
     }
 
-    // Stage 2: exact sign via Bareiss — reached for ambiguous f64 results
-    // (D ≤ 4) or always for D ≥ 5.  See `insphere_from_matrix` for why this
-    // is annotated cold.
+    // Stage 2: exact sign via Bareiss for ambiguous f64 results or N ≥ 5.
     cold_path();
     Ok(sign_to_orientation(matrix.det_sign_exact().as_i8()))
 }
@@ -563,9 +453,10 @@ impl std::fmt::Display for Orientation {
 /// # Exact Arithmetic
 ///
 /// This predicate uses adaptive-precision arithmetic to return a provably correct
-/// sign. For D ≤ 4, a fast f64 filter resolves the sign without allocating in
+/// sign. For D ≤ 3, a fast f64 filter resolves the sign without allocating in
 /// well-conditioned cases. For nearly-degenerate configurations (and always for
-/// D ≥ 5), the Bareiss algorithm runs in exact integer arithmetic in `la-stack`.
+/// D = 4–6), the Bareiss algorithm runs in exact integer arithmetic in `la-stack`.
+/// Dimensions above D = 6 are unsupported.
 ///
 /// # Arguments
 ///
@@ -578,7 +469,8 @@ impl std::fmt::Display for Orientation {
 ///
 /// # Errors
 ///
-/// Returns an error if the number of simplex points is not exactly D+1.
+/// Returns an error if the number of simplex points is not exactly D+1 or
+/// the dimension exceeds D = 6.
 ///
 /// # Algorithm
 ///
@@ -906,15 +798,17 @@ pub fn insphere<const D: usize>(
 /// The performance gains come from:
 /// 1. Using relative coordinates which reduce numerical magnitude
 /// 2. Computing smaller (D+1)×(D+1) determinants instead of (D+2)×(D+2)
-/// 3. Benefiting from la-stack's closed-form determinants for D=1-4
+/// 3. Using la-stack's allocation-free interval determinant filter through D=6
 ///
 /// This method combines an exact determinant contract with a compact
 /// relative-coordinate formulation.
 ///
 /// # Robustness
 ///
-/// Both the orientation sub-predicate and the lifted insphere determinant use a
-/// filtered-exact evaluation:
+/// The orientation sub-predicate uses [`simplex_orientation`]: a direct f64
+/// determinant filter through D=3, followed by exact integer arithmetic when
+/// inconclusive (and always for D=4–6).
+/// The relative lifted insphere determinant uses:
 /// 1. **Outward-rounded interval filter** — resolves well-conditioned cases
 ///    without allocation and encloses subtraction and lift-construction error.
 /// 2. **Exact rational cold path** — constructs relative coordinates and
@@ -1028,14 +922,119 @@ pub fn insphere_lifted<const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::matrix::matrix_set as try_matrix_set;
     use crate::geometry::matrix::test_support::with_la_stack_matrix;
-    use crate::geometry::matrix::{LaError, matrix_set as try_matrix_set};
     use crate::geometry::robust_predicates::robust_insphere;
     use crate::prelude::circumradius;
     use approx::assert_relative_eq;
+    use proptest::{prelude::*, test_runner::RngSeed};
     use rand::{RngExt, SeedableRng, rngs::StdRng};
     use std::assert_matches;
     use std::collections::HashMap;
+
+    /// Uses an absolute augmented matrix, independent of the production relative
+    /// lifting and interval arithmetic. Bareiss is shared, coefficient assembly is not.
+    fn augmented_insphere_sign<const D: usize>(simplex: &[Point<D>], query: &Point<D>) -> i32 {
+        let sign = la_stack::try_with_rational_matrix!(D + 2, |mut matrix| -> Result<_, LaError> {
+            for (row, point) in simplex.iter().chain(core::iter::once(query)).enumerate() {
+                let mut squared_norm = rational_from_f64(0.0).unwrap();
+                for (column, &coordinate) in point.coords().iter().enumerate() {
+                    let exact = rational_from_f64(coordinate).unwrap();
+                    squared_norm += &exact * &exact;
+                    matrix.set(row, column, exact)?;
+                }
+                matrix.set(row, D, squared_norm)?;
+                matrix.set(row, D + 1, rational_from_f64(1.0).unwrap())?;
+            }
+            Ok(i32::from(matrix.det_sign().as_i8()))
+        })
+        .unwrap();
+        // Expanding the final column after subtracting the first row gives
+        // cofactor parity (-1)^(D+1) relative to the production determinant.
+        if D.is_multiple_of(2) { -sign } else { sign }
+    }
+
+    /// Exercises strict signs, exact zero, and unavailable finite-range proofs.
+    fn assert_interval_adapter_regimes<const D: usize>() {
+        for (scale, certifies) in [(1.0, true), (f64::from_bits(1), false), (1.0e155, false)] {
+            let mut simplex = vec![Point::try_new([0.0; D]).unwrap()];
+            for axis in 0..D {
+                let mut coordinates = [0.0; D];
+                coordinates[axis] = scale;
+                simplex.push(Point::try_new(coordinates).unwrap());
+            }
+            let outside = Point::try_new([2.0 * scale; D]).unwrap();
+            let boundary = Point::try_new([scale; D]).unwrap();
+            assert_eq!(relative_insphere_interval_sign(&simplex, &boundary), None);
+            assert_eq!(
+                relative_insphere_determinant_sign(&simplex, &boundary).unwrap(),
+                0
+            );
+            assert_eq!(
+                insphere_lifted(&simplex, boundary).unwrap(),
+                InSphere::BOUNDARY
+            );
+            assert_eq!(augmented_insphere_sign(&simplex, &outside), 1);
+            assert_eq!(
+                relative_insphere_determinant_sign(&simplex, &outside).unwrap(),
+                1
+            );
+            assert_eq!(
+                insphere_lifted(&simplex, outside).unwrap(),
+                InSphere::OUTSIDE
+            );
+            let expected_filter = certifies.then_some(1);
+            assert_eq!(
+                relative_insphere_interval_sign(&simplex, &outside),
+                expected_filter
+            );
+            simplex.swap(1, 2);
+            assert_eq!(
+                relative_insphere_determinant_sign(&simplex, &outside).unwrap(),
+                -1
+            );
+            assert_eq!(
+                relative_insphere_interval_sign(&simplex, &outside),
+                expected_filter.map(|sign| -sign)
+            );
+            if certifies {
+                let inside = Point::try_new([0.5; D]).unwrap();
+                assert_eq!(relative_insphere_interval_sign(&simplex, &inside), Some(1));
+                assert_eq!(insphere_lifted(&simplex, inside).unwrap(), InSphere::INSIDE);
+            }
+        }
+    }
+
+    /// Checks the filter and its exact fallback against independently assembled coefficients.
+    fn assert_interval_adapter_agreement<const D: usize>(
+        raw: &[i16],
+        exponent: i32,
+    ) -> Result<(), TestCaseError> {
+        let scale = 2.0_f64.powi(exponent);
+        let points: Vec<_> = raw
+            .as_chunks::<D>()
+            .0
+            .iter()
+            .map(|coordinates| {
+                Point::<D>::try_new(core::array::from_fn(|axis| {
+                    f64::from(coordinates[axis]) * scale
+                }))
+                .unwrap()
+            })
+            .collect();
+        let simplex = &points[..=D];
+        let query = &points[D + 1];
+        let exact = augmented_insphere_sign(simplex, query);
+        if let Some(filtered) = relative_insphere_interval_sign(simplex, query) {
+            prop_assert_ne!(filtered, 0);
+            prop_assert_eq!(filtered, exact);
+        }
+        prop_assert_eq!(
+            relative_insphere_determinant_sign(simplex, query).unwrap(),
+            exact
+        );
+        Ok(())
+    }
 
     /// The independent predicate never uses the circumsphere enclosure.
     fn assert_circumsphere_bounds_agree_with_predicate<const D: usize>() {
@@ -1142,6 +1141,35 @@ mod tests {
         );
     }
 
+    macro_rules! interval_adapter_tests {
+        ($($dim:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<interval_adapter_preserves_regimes_ $dim d>]() {
+                        assert_interval_adapter_regimes::<$dim>();
+                    }
+
+                    proptest! {
+                        #![proptest_config(ProptestConfig {
+                            cases: 24,
+                            rng_seed: RngSeed::Fixed(0x577),
+                            ..ProptestConfig::default()
+                        })]
+
+                        #[test]
+                        fn [<interval_adapter_agrees_with_augmented_exact_ $dim d>](
+                            raw in prop::collection::vec(-16_i16..=16, ($dim + 2) * $dim),
+                            exponent in prop_oneof![Just(-540), Just(0), Just(510)],
+                        ) {
+                            assert_interval_adapter_agreement::<$dim>(&raw, exponent)?;
+                        }
+                    }
+                )+
+            }
+        };
+    }
+
     macro_rules! gen_circumsphere_bounds_tests {
         ($dimension:literal) => {
             pastey::paste! {
@@ -1153,6 +1181,7 @@ mod tests {
         };
     }
 
+    interval_adapter_tests!(2, 3, 4, 5, 6);
     gen_circumsphere_bounds_tests!(1);
     gen_circumsphere_bounds_tests!(2);
     gen_circumsphere_bounds_tests!(3);
@@ -2746,6 +2775,10 @@ mod tests {
         ];
         let opposite_corner = Point::try_new([1.0, 1.0e8]).unwrap();
 
+        assert_eq!(
+            relative_insphere_interval_sign(&simplex, &opposite_corner),
+            None
+        );
         assert_eq!(
             insphere_lifted(&simplex, opposite_corner).unwrap(),
             InSphere::BOUNDARY
