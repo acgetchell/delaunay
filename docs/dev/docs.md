@@ -23,6 +23,15 @@ repository.
 - `README.md` owns evaluation and getting started: introduction, "Use this crate
   when" immediately afterward, capabilities, quickstart, and links to the API,
   workflows, and scientific contracts.
+- README Quickstart contains runnable usage examples and bare `just` for complete
+  command discovery, with a link to prerequisite setup. CONTRIBUTING owns checks,
+  fixes, tests, security scans, and PR preparation. Dependency maintenance and
+  release procedures stay in their focused development and release guides.
+  Commands that check inputs preserve sources; fix commands declare their writes;
+  run/example/notebook commands execute a workload. Keep equivalent commands
+  consistent across research repositories while preserving project-specific
+  features and arguments. Delaunay's `run` enables its optional `cli` feature;
+  `examples` discovers the library's examples and their required features.
 - `REFERENCES.md` owns bibliographic records, stable citation keys/anchors, and
   a concise topic-to-source index. Keep derivations and caller contracts in
   their topic guides; retain brief implementation/background attribution.

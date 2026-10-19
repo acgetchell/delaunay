@@ -37,7 +37,7 @@ def target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ReleaseTarget:
 
 
 def test_trusted_handoff_reaches_publication_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: ReleaseTarget) -> None:
-    """The trusted target survives a long build and publication has explicit intent."""
+    """The trusted target survives a long build and assets leave the draft mutable."""
     handoff = tmp_path / "target.json"
     publish = Mock()
     monkeypatch.setattr(release_benchmarks, "publish_release_asset", publish)
@@ -46,7 +46,7 @@ def test_trusted_handoff_reaches_publication_unchanged(tmp_path: Path, monkeypat
     assert (tmp_path / "output").read_bytes() == f"commit={COMMIT}\n".encode()
     publish.assert_not_called()
     release_benchmarks.release_benchmarks("publish", tmp_path, handoff, REPOSITORY, TAG)
-    publish.assert_called_once_with(tmp_path, REPOSITORY, TAG, tmp_path / ASSET, target=target, publish=True)
+    publish.assert_called_once_with(tmp_path, REPOSITORY, TAG, tmp_path / ASSET, target=target, publish=False)
 
 
 def test_annotated_tag_handoff_uses_peeled_commit_and_requires_matching_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,7 +90,7 @@ def test_annotated_tag_handoff_uses_peeled_commit_and_requires_matching_head(tmp
 
     release_benchmarks.release_benchmarks("publish", root, handoff, REPOSITORY, TAG)
 
-    publish.assert_called_once_with(root, REPOSITORY, TAG, root / ASSET, target=selected, publish=True)
+    publish.assert_called_once_with(root, REPOSITORY, TAG, root / ASSET, target=selected, publish=False)
     revalidate.assert_called_with(root, selected)
 
 
@@ -140,7 +140,7 @@ def test_release_workflow_preserves_trusted_code_runtime_and_target() -> None:
 
 @pytest.mark.parametrize(
     ("step_name", "mode"),
-    [("Validate draft release target", "preflight"), ("Attach baseline and publish draft", "publish")],
+    [("Validate draft release target", "preflight"), ("Attach and verify baseline on the draft", "publish")],
 )
 def test_release_workflow_launcher_ignores_incompatible_ambient_uv(tmp_path: Path, step_name: str, mode: str) -> None:
     """Both workflow commands reach the preserved adapter after ambient uv changes."""

@@ -131,13 +131,12 @@ def update_commands(recipe: str) -> list[list[str]]:
         "update-dependencies": cargo + python,
         "update-cargo-dependencies": cargo,
         "update-python-dependencies": python,
-        "update-python-deps": python,
     }[recipe]
 
 
 @pytest.mark.parametrize(
     "recipe",
-    ["update", "update-tools", "update-cargo-tools", "update-dependencies", "update-cargo-dependencies", "update-python-dependencies", "update-python-deps"],
+    ["update", "update-tools", "update-cargo-tools", "update-dependencies", "update-cargo-dependencies", "update-python-dependencies"],
 )
 def test_update_composition_and_boundaries(recording_recipes: Path, recipe: str) -> None:
     files = [recording_recipes / name for name in ("pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock", FIXTURE_MANIFEST)]
@@ -163,7 +162,7 @@ def test_update_failure_stops_later_steps(recording_recipes: Path, monkeypatch: 
         ("review", ["topic/$(touch SHOULD_NOT_EXIST);literal"], ["review", "branch", "--base=topic/$(touch SHOULD_NOT_EXIST);literal"]),
         ("review-uncommitted", [], ["review", "uncommitted"]),
         (
-            "changelog-unreleased",
+            "changelog-release",
             ["v0.9.0", "2026-10-04"],
             ["toolchain", "run", "--", "research-repo-tools", "changelog", "generate", "--tag", "v0.9.0", "--date", "2026-10-04"],
         ),

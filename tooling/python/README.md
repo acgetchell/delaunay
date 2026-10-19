@@ -45,8 +45,7 @@ uv run --locked --group dev research-repo-tools --help
 
 Changelog generation normalizes history and retains Unreleased and the latest
 minor series in the root, with older series under `docs/archives/changelog/`.
-`changelog-unreleased` aliases `changelog-release` and requires the same explicit
-date. Metadata preparation is separate. `update-version` defaults to UTC today
+Metadata preparation is separate. `update-version` defaults to UTC today
 and published stable GitHub history; explicit date and predecessor arguments
 allow offline preparation. The final release gate requires a matching changelog
 heading and citation date, while the DOI remains fixed by consumer policy.

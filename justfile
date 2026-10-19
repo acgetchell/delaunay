@@ -27,6 +27,12 @@ _coverage_base_args := '''--ignore-filename-regex '(^|/)(benches|examples)/' \
 
 import 'just/helpers.just'
 
+# List every public command and its arguments directly from Just.
+[default]
+[private]
+_default:
+    @just --list
+
 # GitHub Actions workflow validation
 [group('validation')]
 action-lint: _ensure-actionlint
@@ -138,8 +144,6 @@ changelog-preview:
 changelog-release tag date:
     {{ managed }} research-repo-tools changelog generate --tag {{ quote(tag) }} --date {{ quote(date) }}
 
-alias changelog-unreleased := changelog-release
-
 # Run every non-mutating validator outside the test suites.
 [group('workflows')]
 check: check-code check-config check-docs
@@ -224,11 +228,6 @@ debug-large-scale-4d n="800" repair_every="1": _ensure-nextest
 debug-large-scale-5d n="140" repair_every="1": _ensure-nextest
     DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} {{ managed }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_5d -- --exact --nocapture
 
-# Show the curated workflow guide when `just` is invoked without a recipe.
-[default]
-[private]
-default: help-workflows
-
 # Build rustdoc for the workspace and reject warnings.
 [group('validation')]
 doc-check:
@@ -263,84 +262,6 @@ fmt-check:
 [group('validation')]
 github-actions-check: action-lint zizmor
     @echo "✅ GitHub Actions checks complete!"
-
-# Show the curated entry points for common repository workflows.
-[group('workflows')]
-help-workflows:
-    @echo "Recommended workflows:"
-    @echo "  just check              # All non-mutating source, config, and docs checks"
-    @echo "  just fix                # Apply repository formatters and safe auto-fixes"
-    @echo "  just test               # Default Rust and Python test buckets"
-    @echo "  just ci                 # GitHub-equivalent default validation suite"
-    @echo "  just security           # Network dependency audit and full-history secret scan"
-    @echo ""
-    @echo "Local CodeRabbit review:"
-    @echo "  just review [base]      # Review branch and local edits against verified live origin/main; explicit local bases skip verification"
-    @echo "  just review-uncommitted # Review only local edits, including new files"
-    @echo ""
-    @echo "Setup and maintenance:"
-    @echo "  just setup              # Install pinned tools and build the development profile"
-    @echo "  just setup-tools        # Install and verify pinned repository tools"
-    @echo "  just update             # Update dependency requirements, locks, and repo-owned Cargo tools"
-    @echo ""
-    @echo "Focused checks:"
-    @echo "  just check-code         # Rust, Python, notebooks, and shell"
-    @echo "  just check-config       # Just, Cargo, JSON, TOML, YAML/CFF, and Actions"
-    @echo "  just check-docs         # Markdown, spelling, and version references"
-    @echo "  just rust-core-check    # Rust fmt, Clippy, rustdoc, and Semgrep"
-    @echo "  just python-check       # Ruff formatting/lint plus ty type checking"
-    @echo "  just notebook-check     # Notebook hygiene and native notebook code checks"
-    @echo "  just shell-check        # ShellCheck plus shfmt verification"
-    @echo ""
-    @echo "Focused tests:"
-    @echo "  just test-rust          # Unit, integration, CLI, and doctests"
-    @echo "  just test-unit          # Debug and release Rust lib unit tests"
-    @echo "  just test-integration   # Release integration tests, including proptests"
-    @echo "  just test-integration-fast # Integration tests without proptests"
-    @echo "  just test-cli           # CLI-feature binary unit and integration tests"
-    @echo "  just test-doc           # Release doctests"
-    @echo "  just test-python        # Python support-script tests"
-    @echo "  just test-slow          # Explicit slow correctness bucket"
-    @echo "  just examples           # Build and run every Rust example"
-    @echo ""
-    @echo "Notebooks and papers:"
-    @echo "  just notebook           # Launch JupyterLab with repository scratch caches"
-    @echo "  just notebook-execute   # Execute one notebook under target/notebooks"
-    @echo "  just validation-doc-figures # Refresh canonical validation figures"
-    @echo "  just validation-doc-figures-check # Verify canonical figures without publishing"
-    @echo "  just paper-check        # Lint, build, and check without tracked changes"
-    @echo "  just paper-artifact-check # Compare the build with the reviewer PDF"
-    @echo "  just paper-refresh      # Check, then refresh one tracked reviewer PDF"
-    @echo "  just papers             # Refresh figures and the validation reviewer PDF"
-    @echo ""
-    @echo "Canonical performance workflows:"
-    @echo "  just performance-local  # Measure current tree vs latest release; retain bundle"
-    @echo "  just performance-release # Measure, retain, validate, and promote release docs"
-    @echo "  just performance-readme # Publish retained release data to README assets/table"
-    @echo "  just performance-doc    # Promote docs from retained comparison JSON/evidence; no benchmarks"
-    @echo "  just performance-github-assets # Compare stored release assets; retain bundle"
-    @echo ""
-    @echo "Delaunay-specific performance checks (perf-*):"
-    @echo "  just perf-large-scale-smoke # Bounded 2D-5D wall-clock guard"
-    @echo "  just perf-help          # Detailed performance and profiling commands"
-    @echo ""
-    @echo "Larger benchmarks (bench-*):"
-    @echo "  just bench-compile      # Compile benchmark harnesses without running"
-    @echo "  just bench-smoke        # Smoke-test harnesses; not performance evidence"
-    @echo "  just bench              # Run the complete benchmark suite"
-    @echo "  just bench-ci           # Run the CI regression benchmark suite"
-    @echo "  just bench-latest-vs-last # Measure release signals and compare to last"
-    @echo "  just bench-perf-summary # Generate the release performance summary"
-    @echo ""
-    @echo "Release and optional workflows:"
-    @echo "  just publish-check      # Validate metadata and cargo publish --dry-run"
-    @echo "  just changelog          # Regenerate and format changelog artifacts"
-    @echo "  just release-version-check # Require final changelog/citation synchronization"
-    @echo "  just update-version <tag>        # Synchronize release metadata using the current UTC date"
-    @echo "  just ci-slow            # Default CI plus slow correctness tests"
-    @echo "  just coverage           # Generate local HTML coverage"
-    @echo ""
-    @echo "Use 'just --list' for the complete grouped recipe reference."
 
 # Check JSON files parse cleanly.
 [group('validation')]
@@ -542,57 +463,6 @@ paper-tex-lint: _ensure-chktex
 [group('notebooks and papers')]
 papers: validation-doc-figures (paper-refresh "validation")
     @echo "📚 Paper workflow complete!"
-
-# Show detailed performance-check, benchmark, and profiling workflows.
-[group('benchmarks and performance')]
-perf-help:
-    @echo "Performance Analysis Commands:"
-    @echo "  just bench-latest          # Run curated release-signal Criterion benchmarks"
-    @echo "  just bench-latest-vs-last  # Run latest and compare against saved 'last'"
-    @echo "  just bench-compare [base] [suite] [scope] # Render a report from saved Criterion baselines"
-    @echo "  just bench-save-baseline <tag> [suite] # Save a named Criterion baseline"
-    @echo "  just bench-save-baseline last # Save release-signal Criterion baseline as 'last'"
-    @echo "  just performance-local    # Compare current tree against latest release locally"
-    @echo "  just performance-github-assets # Compare stored GitHub Release benchmark assets"
-    @echo "  just performance-release  # Measure, retain, and promote release performance docs"
-    @echo "  just performance-doc      # Promote docs from retained comparison JSON/evidence without benchmarks"
-    @echo "  just performance-readme   # Publish retained release data to README assets/table"
-    @echo "  just perf-large-scale-smoke # Quick pre-push 2D-5D wall-clock smoke guard"
-    @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
-    @echo ""
-    @echo "Profiling Commands:"
-    @echo "  just profile               # Run ci_performance_suite for the current tree/toolchain"
-    @echo "  just profile [toolchain] [code_ref]"
-    @echo "                              # Run ci_performance_suite for a compiler/code pair"
-    @echo "  just profile-dev           # Samply profile 3D construction in profiling_suite"
-    @echo "  just profile-mem           # Samply profile memory allocations (with count-allocations feature)"
-    @echo ""
-    @echo "Benchmark System (Delaunay-specific):"
-    @echo "  just perf-large-scale-smoke # Pre-push guard using debug-large-scale 2D-5D with a short cap"
-    @echo "  just bench                 # Full benchmark suite with perf profile"
-    @echo "  just bench-ci              # CI benchmark suite with perf profile"
-    @echo "  just bench-allocations     # Allocation-contract microbenchmarks"
-    @echo "  just pachner-stress        # 3D+4D direct Pachner CLI stress with progress.csv and summary.json"
-    @echo "  just pachner-stress-3d     # 3D Pachner CLI stress (100 steps, 9K vertices)"
-    @echo "  just pachner-stress-4d     # 4D Pachner CLI stress (100 steps, 1K vertices)"
-    @echo "  just bench-pachner-stress  # Criterion timing for Pachner move/round-trip stress"
-    @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
-    @echo ""
-    @echo "Environment Variables (Benchmark Configuration):"
-    @echo "  CRIT_SAMPLE_SIZE=N         # Number of samples per benchmark"
-    @echo "  CRIT_MEASUREMENT_MS=N      # Measurement time in milliseconds"
-    @echo "  CRIT_WARMUP_MS=N           # Warm-up time in milliseconds"
-    @echo "  DELAUNAY_BENCH_SEED=N      # Random seed (decimal or 0x-hex)"
-    @echo ""
-    @echo "Examples:"
-    @echo "  just perf-large-scale-smoke # Run before pushing to catch obvious performance drift"
-    @echo "  CRIT_SAMPLE_SIZE=100 just bench  # Custom sample size"
-    @echo "  just pachner-stress-4d 100000 1000 1000 target/pachner_stress/4d random-walk"
-    @echo "                              # 4D random-walk Pachner diagnostics with progress.csv and summary.json"
-    @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
-    @echo "  just profile v0.7.5        # v0.7.5 code on its declared Rust toolchain"
-    @echo "  just profile 1.99.1        # Current tree on Rust 1.99.1"
-    @echo "  just profile 1.99.1 v0.7.5 # v0.7.5 code on Rust 1.99.1"
 
 # Quick pre-push 2D-5D large-scale wall-clock smoke guard.
 [group('benchmarks and performance')]
@@ -868,10 +738,37 @@ python-sync: _ensure-uv
 python-typecheck: _ensure-uv
     uv run --locked --group dev --group notebooks research-repo-tools python typecheck
 
+# Require the immutable release event and successful checks on its exact commit.
+[group('release')]
+release-gate tag: (_release-notes-check tag)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tag={{ quote(tag) }}
+    {{ rrt }} release gate "$tag"
+    release_id="$(jq -er '.release.id' "$GITHUB_EVENT_PATH")"
+    gh api "repos/acgetchell/delaunay/releases/$release_id" | jq -e '.immutable == true' > /dev/null
+
 # Print retained release notes for a tag.
 [group('release')]
 release-notes tag:
     {{ rrt }} changelog notes {{ quote(tag) }}
+
+# Verify clean default and all-feature packages without uploading.
+[group('release')]
+release-package: _ensure-toolchain
+    {{ managed }} research-repo-tools validation cargo-metadata --package delaunay
+    {{ managed }} cargo publish --locked --package delaunay --registry crates-io --dry-run
+    {{ managed }} cargo publish --locked --package delaunay --registry crates-io --dry-run --all-features
+
+# Publish a reviewed, benchmark-equipped draft using the maintainer's GitHub session.
+[group('release')]
+release-publish tag: (_release-notes-check tag)
+    {{ rrt }} release publish {{ quote(tag) }} --approve
+
+# Verify the stable GitHub release, benchmark asset, and exact crates.io version.
+[group('release')]
+release-verify tag:
+    {{ rrt }} release verify {{ quote(tag) }} --attempts 7 --interval 10
 
 # Require matching final changelog and citation dates.
 [group('release')]
@@ -928,7 +825,7 @@ semgrep-test: _ensure-uv
 # Install required tools and build the development profile.
 [group('build and setup')]
 setup: setup-tools build
-    echo "✅ Setup complete! Run 'just help-workflows' to see available commands."
+    echo "✅ Setup complete! Run 'just' to see available commands."
 
 # Install and verify repository development tools.
 [doc('Install and verify repository development tools.')]
@@ -1126,8 +1023,6 @@ update-python-dependencies:
     uv run --locked --only-group tooling --inexact research-repo-tools deps update-python
     uv lock --upgrade
     uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain run -- uv sync --locked --managed-python --group dev
-
-alias update-python-deps := update-python-dependencies
 
 # Upgrade uv and managed Cargo tools, then synchronize the declared environment.
 [group('build and setup')]

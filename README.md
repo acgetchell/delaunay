@@ -3,7 +3,7 @@
 [![DOI](https://badgen.net/badge/DOI/10.5281%2Fzenodo.16931097/blue)](https://doi.org/10.5281/zenodo.16931097)
 [![Crates.io](https://badgen.net/crates/v/delaunay)](https://crates.io/crates/delaunay)
 [![Downloads](https://badgen.net/crates/d/delaunay)](https://crates.io/crates/delaunay)
-[![License](https://badgen.net/github/license/acgetchell/delaunay)](https://github.com/acgetchell/delaunay/blob/v0.8.2/LICENSE)
+[![License](https://badgen.net/github/license/acgetchell/delaunay)](https://github.com/acgetchell/delaunay/blob/main/LICENSE)
 [![Docs.rs](https://docs.rs/delaunay/badge.svg)](https://docs.rs/delaunay)
 [![CI][ci-badge]][ci-workflow]
 [![CodeQL][codeql-badge]][codeql-workflow]
@@ -182,7 +182,16 @@ quality metrics, and explicit flips, see the
 
 ### Notebook and binary
 
-From a repository checkout, start with the notebook-first workflow:
+From a repository checkout, follow
+[prerequisite setup](https://github.com/acgetchell/delaunay/blob/main/CONTRIBUTING.md#getting-started),
+then discover every command and run the Rust examples:
+
+```bash
+just
+just examples
+```
+
+For interactive exploration:
 
 ```bash
 just notebook-setup
@@ -201,12 +210,10 @@ this visual-inspection workflow without duplicating its implementation.
 For validation-layer failure visuals, open
 [`notebooks/01_validation.ipynb`][validation-notebook];
 it runs `delaunay validation-demo` and renders generated validation figures for docs and papers.
-The tracked spherical hero is generated from the real `S²` prototype by
+The spherical hero comes from the real `S²` prototype in
 [`notebooks/02_spherical_hero.ipynb`][spherical-notebook].
-Refresh it deliberately with `just spherical-readme-hero`; routine notebook checks only lint this
-computational artifact.
 
-For headless CI or batch execution, use:
+For headless batch execution, use:
 
 ```bash
 just notebook-execute
@@ -218,12 +225,6 @@ Use the binary directly when you want a scriptable artifact run:
 just run generate visualization \
   --dimension 3 --vertices 1000 --distribution ball --seed 873 \
   --output target/notebooks/00_quickstart/visualization_3d.json
-```
-
-Before committing edited notebooks, clear generated outputs and execution counts:
-
-```bash
-just notebook-clear-outputs-all
 ```
 
 ## 🧪 Scientific Basis
@@ -378,28 +379,13 @@ visualization, massively parallel/GPU construction, out-of-core meshing, full sp
 beyond the bounded `S^2`/`S^3` prototype, and hyperbolic triangulation semantics.
 
 See [`docs/limitations.md`][limitations-guide] for operational limits and [`docs/roadmap.md`][roadmap]
-for v0.8.1 follow-up work and later feature tracks.
+for current follow-up work and later feature tracks.
 
 ## 🤝 Contributing
 
-See [CONTRIBUTING.md][contributing-guide] for the full contributor guide: project layout, development
-workflow, code style, testing, documentation, benchmarking, and release support. Community expectations
+See [CONTRIBUTING.md][contributing-guide] for prerequisite setup, checks, fixes, tests, security scans,
+PR preparation, documentation, benchmarking, and release support. Community expectations
 live in [CODE_OF_CONDUCT.md][code-of-conduct]. AI assistants should follow [AGENTS.md][agent-guide].
-
-Quick local workflow:
-
-```bash
-git clone https://github.com/acgetchell/delaunay.git
-cd delaunay
-tectonic_environment="$(uv run --locked --managed-python --only-group tooling research-repo-tools tectonic discover --format shell)"
-eval "$tectonic_environment"
-uv run --locked --managed-python --only-group tooling research-repo-tools setup
-just setup
-just check
-just test
-```
-
-For the full command list, run `just --list`.
 
 ## 📚 Citation
 
@@ -443,7 +429,7 @@ for the repository's AI-assisted development note.
 
 ## 📜 License
 
-This project is licensed under the [BSD 3-Clause License](https://github.com/acgetchell/delaunay/blob/v0.8.2/LICENSE).
+This project is licensed under the [BSD 3-Clause License](https://github.com/acgetchell/delaunay/blob/main/LICENSE).
 
 ---
 
