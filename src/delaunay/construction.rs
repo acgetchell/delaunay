@@ -6251,6 +6251,7 @@ mod tests {
     use crate::repair::DelaunayRepairPolicy;
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
+    use crate::triangulation::realization::TriangulationRealizationSimplexDetail;
     use crate::triangulation::validation::{
         TopologyGuarantee, TriangulationValidationError, ValidationPolicy,
     };
@@ -8900,6 +8901,77 @@ mod tests {
     }
 
     #[test]
+    fn test_realization_errors_preserve_witnesses_across_construction_boundaries() {
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
+        let simplex_uuid = Uuid::from_u128(5);
+        let detail = Box::new(TriangulationRealizationSimplexDetail {
+            key: simplex_key,
+            uuid: simplex_uuid,
+            vertices: (1..=4)
+                .map(|key| VertexKey::from(KeyData::from_ffi(key)))
+                .collect(),
+            vertex_uuids: (1..=4).map(Uuid::from_u128).collect(),
+        });
+        for source in [
+            TriangulationRealizationValidationError::NegativeSimplexOrientation {
+                simplex_key,
+                simplex_uuid,
+                detail: detail.clone(),
+                dimension: 3,
+            },
+            TriangulationRealizationValidationError::DegenerateSimplex {
+                simplex_key,
+                simplex_uuid,
+                detail,
+                dimension: 3,
+            },
+        ] {
+            let orientation_error = InsertionError::OrientationValidationFailed {
+                source: source.clone(),
+            };
+            assert_eq!(
+                TestDelaunay::<3>::map_orientation_canonicalization_error(
+                    orientation_error.clone()
+                ),
+                TriangulationConstructionError::OrientationCanonicalizationGeometric {
+                    source: Box::new(orientation_error.clone()),
+                }
+            );
+            for insertion_error in [
+                orientation_error,
+                InsertionError::RealizationValidationFailed {
+                    source: source.clone(),
+                },
+            ] {
+                assert_eq!(
+                    TestDelaunay::<3>::map_insertion_error(insertion_error),
+                    TriangulationConstructionError::InsertionRealizationValidation {
+                        source: source.clone(),
+                    }
+                );
+            }
+            for builder_error in [
+                TriangulationBuilderError::GeometricNondegeneracy {
+                    source: Box::new(source.clone()),
+                },
+                TriangulationBuilderError::RealizationValidation {
+                    source: Box::new(source.clone()),
+                },
+            ] {
+                let mapped = DelaunayBatchWorkspace::<AdaptiveKernel<f64>, (), (), 3>::map_triangulation_builder_error(builder_error);
+                assert_eq!(
+                    mapped,
+                    DelaunayTriangulationConstructionError::Triangulation {
+                        source: DelaunayConstructionFailure::FinalRealizationValidation {
+                            source: source.clone(),
+                        },
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_delaunay_construction_failure_preserves_typed_generic_sources() {
         let simplex_source = SimplexValidationError::InsufficientVertices {
             actual: 2,
@@ -9185,28 +9257,33 @@ mod tests {
     #[test]
     fn test_map_orientation_canonicalization_error_orientation_violation_is_internal_inconsistency()
     {
-        let error = InsertionError::TopologyValidation {
-            source: TdsError::OrientationViolation {
-                simplex1_key: SimplexKey::from(KeyData::from_ffi(1)),
-                simplex1_uuid: Uuid::nil(),
-                simplex2_key: SimplexKey::from(KeyData::from_ffi(2)),
-                simplex2_uuid: Uuid::nil(),
-                simplex1_facet_index: 0,
-                simplex2_facet_index: 1,
-                facet_vertices: vec![],
-                simplex2_facet_vertices: vec![],
-                observed_odd_permutation: true,
-                expected_odd_permutation: false,
-            },
+        let source = TdsError::OrientationViolation {
+            simplex1_key: SimplexKey::from(KeyData::from_ffi(1)),
+            simplex1_uuid: Uuid::nil(),
+            simplex2_key: SimplexKey::from(KeyData::from_ffi(2)),
+            simplex2_uuid: Uuid::nil(),
+            simplex1_facet_index: 0,
+            simplex2_facet_index: 1,
+            facet_vertices: vec![],
+            simplex2_facet_vertices: vec![],
+            observed_odd_permutation: true,
+            expected_odd_permutation: false,
         };
-        let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
-        assert!(
-            matches!(
-                mapped,
-                TriangulationConstructionError::OrientationCanonicalizationInternal { .. }
-            ),
-            "OrientationViolation should map to typed internal orientation canonicalization (structural invariant breach, not geometry), got: {mapped:?}"
-        );
+        for error in [
+            InsertionError::TopologyValidation {
+                source: source.clone(),
+            },
+            InsertionError::OrientationValidationFailed {
+                source: source.into(),
+            },
+        ] {
+            assert_eq!(
+                TestDelaunay::<3>::map_orientation_canonicalization_error(error.clone()),
+                TriangulationConstructionError::OrientationCanonicalizationInternal {
+                    source: Box::new(error),
+                }
+            );
+        }
     }
 
     #[test]

@@ -604,6 +604,16 @@ mod tests {
                 && detail.vertices.as_slice() == tri.tds.simplex(simplex_key).unwrap().vertices()
                 && detail.vertex_uuids.len() == 3
         );
+        assert_eq!(
+            tri.validate_geometric_simplex_orientation_for_simplices(&[simplex_key]),
+            Err(err.clone())
+        );
+        assert_eq!(
+            tri.validate_local_orientation_for_simplices(&[simplex_key]),
+            Err(InsertionError::OrientationValidationFailed {
+                source: err.clone()
+            })
+        );
         assert!(InsertionError::OrientationValidationFailed { source: err }.is_retryable());
     }
 

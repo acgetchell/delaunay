@@ -2351,16 +2351,23 @@ mod tests {
         tds.assign_neighbors().unwrap();
         let error = tds.validate_coherent_orientation().unwrap_err();
         assert_matches!(
-            error,
+            &error,
             TdsError::OrientationViolation {
                 simplex1_key,
                 simplex2_key,
                 observed_odd_permutation: false,
                 expected_odd_permutation: true,
                 ..
-            } if [simplex1_key, simplex2_key].contains(&simplex_key)
-                && [simplex1_key, simplex2_key].contains(&neighbor_key)
+            } if [*simplex1_key, *simplex2_key].contains(&simplex_key)
+                && [*simplex1_key, *simplex2_key].contains(&neighbor_key)
         );
+        let report = tds.structure_report().unwrap_err();
+        assert_eq!(report.violations.len(), 1);
+        assert_eq!(
+            report.violations[0].kind,
+            TdsInvariantKind::CoherentOrientation
+        );
+        assert_eq!(report.violations[0].error, error);
     }
 
     #[test]
@@ -3657,6 +3664,21 @@ mod tests {
                 ref context,
             } if context == "facet indices must fit in u8"
         );
+        let report = tds.structure_report().unwrap_err();
+        assert_eq!(
+            report
+                .violations
+                .iter()
+                .map(|violation| violation.kind)
+                .collect::<Vec<_>>(),
+            [
+                TdsInvariantKind::FacetSharing,
+                TdsInvariantKind::NeighborConsistency
+            ]
+        );
+        for violation in report.violations {
+            assert_eq!(violation.error, err);
+        }
     }
 
     #[test]
@@ -3741,6 +3763,16 @@ mod tests {
         // more precise "missing vertex key" diagnostic.
         let err = tds.is_valid().unwrap_err();
         assert_matches!(err, TdsError::VertexNotFound { .. });
+        let report = tds.structure_report().unwrap_err();
+        assert_eq!(report.violations.len(), 1);
+        assert_eq!(
+            report.violations[0].kind,
+            TdsInvariantKind::SimplexVertexKeys
+        );
+        assert_matches!(
+            &report.violations[0].error,
+            TdsError::VertexNotFound { vertex_key, .. } if *vertex_key == invalid_vkey
+        );
     }
 
     #[test]
@@ -4000,10 +4032,17 @@ mod tests {
         let err = tds.validate_no_duplicate_simplices().unwrap_err();
         let simplex_uuids: Vec<_> = tds.simplices().map(|(_, simplex)| simplex.uuid()).collect();
         assert_matches!(
-            err,
+            &err,
             TdsError::DuplicateSimplices { simplex_pairs, .. }
-                if simplex_pairs == [[simplex_uuids[0], simplex_uuids[1]]]
+                if *simplex_pairs == [[simplex_uuids[0], simplex_uuids[1]]]
         );
+        let report = tds.structure_report().unwrap_err();
+        let duplicate = report
+            .violations
+            .iter()
+            .find(|violation| violation.kind == TdsInvariantKind::DuplicateSimplices)
+            .expect("aggregate report must retain the duplicate-simplex cause");
+        assert_eq!(duplicate.error, err);
     }
 
     #[test]

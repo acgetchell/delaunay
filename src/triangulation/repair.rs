@@ -2626,19 +2626,26 @@ mod tests {
 
         let realization_source =
             TriangulationRealizationValidationError::IncompleteConstruction { vertex_count: 2 };
-        assert_eq!(
-            insertion_error_to_vertex_removal_error(
-                InsertionError::RealizationValidationFailed {
-                    source: realization_source.clone(),
-                },
-                TriangulationRepairOperation::NeighborWiring,
-            ),
-            VertexRemovalError::Invariant {
-                source: Box::new(InvariantError::Realization {
-                    source: realization_source,
-                }),
-            }
-        );
+        for error in [
+            InsertionError::RealizationValidationFailed {
+                source: realization_source.clone(),
+            },
+            InsertionError::OrientationValidationFailed {
+                source: realization_source.clone(),
+            },
+        ] {
+            assert_eq!(
+                insertion_error_to_vertex_removal_error(
+                    error,
+                    TriangulationRepairOperation::NeighborWiring,
+                ),
+                VertexRemovalError::Invariant {
+                    source: Box::new(InvariantError::Realization {
+                        source: realization_source.clone(),
+                    }),
+                }
+            );
+        }
 
         let delaunay_source = DelaunayTriangulationValidationError::Tds {
             source: Box::new(TdsError::InconsistentDataStructure {

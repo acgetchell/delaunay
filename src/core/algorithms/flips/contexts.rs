@@ -1723,6 +1723,47 @@ mod tests {
         }
     }
 
+    fn check_k3_predicate_failure<const D: usize>() {
+        let (tds, keys) = cospherical_k3_fixture::<D>(0, false);
+        let context = build_k3_flip_context(&tds, ridge_handle_for_face(&tds, &keys[3..])).unwrap();
+        let config = RepairAttemptConfig {
+            attempt: 0,
+            queue_order: RepairQueueOrder::Fifo,
+            max_flips_override: None,
+        };
+        let mut diagnostics = RepairDiagnostics::default();
+        let error = is_delaunay_violation_k3(
+            &tds,
+            &FailingInSphereKernel,
+            &GlobalTopology::Euclidean.model(),
+            &context,
+            &config,
+            &mut diagnostics,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            FlipError::PredicateFailure {
+                reason: Box::new(FlipPredicateError::CoordinateConversion {
+                    operation: FlipPredicateOperation::K3SimplexInSphere,
+                    source: CoordinateConversionError::UnsupportedMatrixDimension {
+                        requested: D + 2,
+                        max: D + 1,
+                    }
+                })
+            }
+        );
+        assert_eq!(diagnostics.predicate_failures, 1);
+        tds.is_valid().unwrap();
+    }
+
+    #[test]
+    fn k3_predicate_failure_preserves_operation_and_diagnostics() {
+        check_k3_predicate_failure::<3>();
+        check_k3_predicate_failure::<4>();
+        check_k3_predicate_failure::<5>();
+    }
+
     #[test]
     fn inverse_k1_vertex_cleanup_propagates_tds_failure() {
         let mut tds = Tds::<(), (), 2>::empty();

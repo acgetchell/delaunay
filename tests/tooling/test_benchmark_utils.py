@@ -2743,6 +2743,8 @@ class TestPerformanceSummaryGenerator:
             assert f"- **Measured source SHA-256**: {'b' * 64}" in content
             assert f"- **Measured harness SHA-256**: {'c' * 64}" in content
             assert "- **Measured Cargo profile**: perf" in content
+            assert "- **Scientific preflight**: passed; complete raw Criterion evidence verified" in content
+            assert "- **Measurement provenance**: unavailable" not in content
             assert "including uncommitted changes" in content
 
     @pytest.mark.parametrize(("confidence_level", "label"), [(0.95, "95%"), (0.99, "99%"), (0.975, "97.5%"), (None, "unreported")])
@@ -2859,6 +2861,58 @@ class TestPerformanceSummaryGenerator:
 
             with pytest.raises(ValueError, match="bench_timeout must be a positive integer"):
                 generator.generate_summary(bench_timeout=bench_timeout)
+
+    @pytest.mark.parametrize("mode", ["permissive", "strict", "fresh"])
+    @pytest.mark.parametrize("stale_state", ["changed", "missing"])
+    def test_generate_summary_stale_measurement_policy(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
+        mode: Literal["permissive", "strict", "fresh"],
+        stale_state: str,
+    ) -> None:
+        """Permissive reports omit stale provenance; required evidence protects prior output."""
+        strict = mode == "strict"
+        run_benchmarks = mode == "fresh"
+        generator = PerformanceSummaryGenerator(tmp_path)
+        write_complete_release_signal_coverage(tmp_path)
+        measured = Provenance("a" * 40, "b" * 64, "c" * 64, (("delaunay.cargo-profile", "perf"),))
+        payload, manifest = serialize_evidence(Evidence(b"{}", SAMPLE_SCHEMA, (("measurement", measured),)))
+        criterion = generator.circumsphere_results_dir
+        (criterion / "delaunay-evidence.json").write_bytes(manifest)
+        if stale_state == "changed":
+            (criterion / "delaunay-sample.json").write_bytes(payload + b"\n")
+        with pytest.raises(ValueError if stale_state == "changed" else FileNotFoundError) as failure:
+            benchmark_utils._load_fresh_measurement(criterion)
+
+        output = tmp_path / "summary.md"
+        output.write_text("previous report\n", encoding=UTF8)
+        with (
+            patch("benchmark_utils.run_release_signal_measurement_plan", return_value={}) as run_plan,
+            patch.object(generator, "_parse_ci_performance_suite_results", return_value=complete_ci_performance_results()),
+            patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=complete_circumsphere_results(generator)),
+        ):
+            success = generator.generate_summary(output_path=output, strict=strict, run_benchmarks=run_benchmarks)
+
+        assert run_plan.call_count == int(run_benchmarks)
+        assert success is not (strict or run_benchmarks)
+        content = output.read_text(encoding=UTF8)
+        captured = capsys.readouterr()
+        if strict or run_benchmarks:
+            assert content == "previous report\n"
+            assert str(failure.value) in captured.err
+            assert "Generated performance summary" not in captured.out
+        else:
+            assert "- **Measurement provenance**: unavailable; retained evidence is stale or unreadable." in content
+            assert "- **Measured " not in content
+            assert "- **Scientific preflight**:" not in content
+            assert "including uncommitted changes" not in content
+            assert PUBLIC_API_TITLE in content
+            assert CIRCUMSPHERE_TITLE in content
+            assert str(failure.value) in caplog.text
+            assert "Generated performance summary" in captured.out
+        assert list(tmp_path.glob(".summary.md.*.tmp")) == []
 
     @patch("benchmark_utils.run_release_signal_measurement_plan")
     def test_generate_summary_with_benchmarks(self, mock_run_plan: MagicMock) -> None:

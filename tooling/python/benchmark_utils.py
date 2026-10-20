@@ -1307,7 +1307,7 @@ class PerformanceSummaryGenerator:
 
             # Render from the evidence that was validated above, then publish only
             # after the complete content has been durably written beside the target.
-            content = self._generate_markdown_content(evidence=evidence)
+            content = self._generate_markdown_content(evidence=evidence, require_measurement_evidence=strict or run_benchmarks)
             _write_text_atomic(output_path, content)
 
             print(f"📊 Generated performance summary: {output_path}")
@@ -1425,17 +1425,43 @@ class PerformanceSummaryGenerator:
         )
         return lines
 
+    def _measurement_provenance_lines(self, *, required: bool) -> list[str]:
+        """Render verified retained provenance, or mark it unavailable when optional."""
+        if not (self.circumsphere_results_dir / "delaunay-evidence.json").exists():
+            return []
+        try:
+            measurement = _load_fresh_measurement(self.circumsphere_results_dir).sources[0][1]
+        except _RECOVERABLE_CLI_ERRORS as error:
+            if required:
+                raise
+            logger.warning("Retained measurement evidence is stale or unreadable: %s", format_exception_diagnostics(error))
+            return ["- **Measurement provenance**: unavailable; retained evidence is stale or unreadable."]
+
+        context = dict(measurement.context)
+        return [
+            f"- **Measured base commit**: {measurement.revision}",
+            f"- **Measured source SHA-256**: {measurement.source_sha256}",
+            f"- **Measured harness SHA-256**: {measurement.harness_sha256}",
+            f"- **Measured Cargo profile**: {context.get('delaunay.cargo-profile', 'unreported')}",
+            "- **Scientific preflight**: passed; complete raw Criterion evidence verified",
+            "",
+            "The measured source and harness digests identify working-tree contents,",
+            "including uncommitted changes; the base commit alone does not identify this run.",
+        ]
+
     def _generate_markdown_content(
         self,
         generator_name: str | None = None,
         *,
         evidence: PerformanceSummaryEvidence | None = None,
+        require_measurement_evidence: bool = False,
     ) -> str:
         """
         Generate the complete markdown content for performance results.
 
         Args:
             generator_name: Name of the tool generating the summary (for attribution)
+            require_measurement_evidence: Reject stale or unreadable retained measurement evidence.
 
         Returns:
             Formatted markdown content as string
@@ -1481,21 +1507,7 @@ class PerformanceSummaryGenerator:
             logger.debug("Could not get hardware info: %s", e)
             lines.append("- **Hardware**: Unknown")
 
-        if (self.circumsphere_results_dir / "delaunay-evidence.json").exists():
-            measurement = _load_fresh_measurement(self.circumsphere_results_dir).sources[0][1]
-            context = dict(measurement.context)
-            lines.extend(
-                [
-                    f"- **Measured base commit**: {measurement.revision}",
-                    f"- **Measured source SHA-256**: {measurement.source_sha256}",
-                    f"- **Measured harness SHA-256**: {measurement.harness_sha256}",
-                    f"- **Measured Cargo profile**: {context.get('delaunay.cargo-profile', 'unreported')}",
-                    "- **Scientific preflight**: passed; complete raw Criterion evidence verified",
-                    "",
-                    "The measured source and harness digests identify working-tree contents,",
-                    "including uncommitted changes; the base commit alone does not identify this run.",
-                ],
-            )
+        lines.extend(self._measurement_provenance_lines(required=require_measurement_evidence))
 
         if lines[-1] != "":
             lines.append("")

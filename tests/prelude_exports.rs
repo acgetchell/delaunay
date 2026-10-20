@@ -218,6 +218,7 @@ use delaunay::prelude::validation::{
     DelaunayValidationError as FocusedDelaunayValidationError,
     DelaunayViolationDetail as FocusedDelaunayViolationDetail,
     DelaunayViolationReport as FocusedDelaunayViolationReport,
+    InvariantKind as FocusedInvariantKind, InvariantViolation as FocusedInvariantViolation,
     ManifoldError as FocusedValidationManifoldError,
     SphericalDelaunayValidationError as FocusedSphericalDelaunayValidationError,
     SphericalValidationLayer as FocusedSphericalValidationLayer,
@@ -243,6 +244,8 @@ use delaunay::prelude::{
     GlobalTopology as RootGlobalTopology, GlobalTopologyModelError as RootGlobalTopologyModelError,
     IncidenceView as RootIncidenceView,
     InitialSimplexUnexpectedInsertionStage as RootInitialSimplexUnexpectedInsertionStage,
+    InvariantError as RootInvariantError, InvariantKind as RootInvariantKind,
+    InvariantViolation as RootInvariantViolation,
     PlManifoldRepairStage as RootPreludePlManifoldRepairStage,
     RidgeCandidate as RootRidgeCandidate, RidgeCandidateError as RootRidgeCandidateError,
     RidgeHandle as RootRidgeHandle, RidgeLinkView as RootRidgeLinkView,
@@ -2139,7 +2142,7 @@ fn construction_prelude_covers_typed_explicit_error_wrappers() {
 }
 
 #[test]
-fn validation_prelude_covers_configuration_error() {
+fn validation_prelude_covers_configuration_and_report_types() {
     let focused_error =
         FocusedValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
             topology_guarantee: FocusedValidationTopologyGuarantee::PLManifold,
@@ -2167,11 +2170,27 @@ fn validation_prelude_covers_configuration_error() {
         }
     );
 
+    let error: RootInvariantError = InvariantError::Tds {
+        source: TdsError::InconsistentDataStructure {
+            message: "bad neighbors".to_string(),
+        },
+    };
+    let kind: RootInvariantKind = FocusedInvariantKind::NeighborConsistency;
+    let violation: RootInvariantViolation = FocusedInvariantViolation { kind, error };
     let focused_report = FocusedValidationReport {
-        violations: Vec::new(),
+        violations: vec![violation],
     };
     let root_report: RootTriangulationValidationReport = focused_report;
-    assert!(root_report.is_empty());
+    assert_eq!(
+        root_report.violations[0].kind,
+        RootInvariantKind::NeighborConsistency
+    );
+    assert_matches!(
+        &root_report.violations[0].error,
+        RootInvariantError::Tds {
+            source: TdsError::InconsistentDataStructure { message },
+        } if message == "bad neighbors"
+    );
 
     assert_eq!(
         FocusedSphericalValidationLayer::Realization.to_string(),

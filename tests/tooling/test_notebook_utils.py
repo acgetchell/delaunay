@@ -56,6 +56,7 @@ def test_unit_interval_float_env_rejects_invalid_overrides_and_defaults(monkeypa
 @pytest.mark.parametrize("setting", ["EDGE_ALPHA", "POINT_ALPHA", "HULL_ALPHA"])
 def test_quickstart_rejects_invalid_opacity_before_generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setting: str) -> None:
     """Exercise the real configuration cell without launching the Rust CLI."""
+    pytest.importorskip("matplotlib")
     notebook_path = REPO_ROOT / "notebooks/00_quickstart.ipynb"
     notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
     cell = next(cell for cell in notebook["cells"] if cell["id"] == "generate-3d-code")
