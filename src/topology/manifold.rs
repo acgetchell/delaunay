@@ -7,8 +7,8 @@
 //!
 //! ## What is being validated
 //!
-//! Let `K` be a pure D-dimensional simplicial complex. Classical PL topology shows that
-//! `K` is a PL-manifold with boundary if and only if the following local conditions hold:
+//! Let `K` be a pure D-dimensional simplicial complex, with D≥2. The following
+//! are necessary local screens for a PL-manifold with boundary:
 //!
 //! 1. **Codimension-1 (facet) condition**
 //!    Every (D−1)-simplex is incident to exactly one or two D-simplices.
@@ -34,9 +34,16 @@
 //! To certify that `K` is a **PL-manifold with boundary**, the canonical condition is:
 //!
 //! 4. **Vertex-link condition (canonical PL-manifold test)**
-//!    For every vertex `v`, the link `Lk(v)` is a (D−1)-sphere if `v` is an interior //!    or a (D−1)-ball if `v` lies on the boundary.
+//!    Every interior vertex has a link PL-homeomorphic to a (D−1)-sphere;
+//!    every boundary vertex has a link PL-homeomorphic to a (D−1)-ball.
+//!    See Lickorish, Definition 2.2, in the references below.
 //!
-//! This condition is enforced by [`validate_vertex_links`].
+//! [`validate_vertex_links`] checks these obligations. For D≥4, local incidence
+//! and Euler checks alone cannot recognize arbitrary PL spheres or balls.
+//! The standalone validator rejects larger complexes with
+//! [`ManifoldError::HighDimensionalVertexLinkUnproven`]; higher-level owners can
+//! certify them through the internal validator when they carry preserved
+//! construction evidence. A single simplex is directly recognizable.
 //!
 //! ## What is *not* checked here
 //!
@@ -58,13 +65,16 @@
 //!
 //! - **Ridge-link validation** ([`validate_ridge_links`]) as an efficient, highly-local check
 //!   that detects many codimension-2 branching/wedge singularities.
-//! - **Vertex-link validation** ([`validate_vertex_links`]) as the definitive (topological)
-//!   certificate for PL-manifoldness.
+//! - **Vertex-link validation** ([`validate_vertex_links`]) to certify the
+//!   sphere/ball condition within the recognition and provenance limits above.
 //!
 //! In debug/test builds, or when a strong `TopologyGuarantee` is requested, callers should
 //! prefer running [`validate_vertex_links`] (optionally in addition to ridge links).
 //!
 //! ## References
+//!
+//! - W. B. R. Lickorish, *Simplicial moves on complexes and manifolds* (1999),
+//!   [Definition 2.2](https://arxiv.org/html/math/9911256v1).
 //!
 //! - J. R. Munkres, *Elements of Algebraic Topology*, Addison–Wesley, 1984.
 //!
@@ -1376,8 +1386,8 @@ pub fn validate_ridge_links_for_simplices<U, V, const D: usize>(
 /// Validates the vertex-link condition for PL-manifoldness (with boundary).
 ///
 /// A pure D-dimensional simplicial complex is a PL-manifold with boundary if and only if
-/// for every vertex `v`, the link `Lk(v)` is a (D-1)-sphere when `v` is interior, or a
-/// (D-1)-ball when `v` lies on the boundary.
+/// every interior vertex link is PL-homeomorphic to a (D-1)-sphere and every
+/// boundary vertex link is PL-homeomorphic to a (D-1)-ball.
 ///
 /// This validator treats a vertex as a *boundary vertex* if it participates in
 /// any actual boundary facet of the original complex. One-sided periodic
@@ -1394,6 +1404,10 @@ pub fn validate_ridge_links_for_simplices<U, V, const D: usize>(
 /// - [`ManifoldError::Tds`] if the underlying triangulation data structure is internally inconsistent.
 /// - [`ManifoldError::VertexLinkNotManifold`] if any vertex has a link that is not a connected
 ///   (D-1)-manifold with the expected boundary behavior.
+/// - [`ManifoldError::HighDimensionalVertexLinkUnproven`] if D≥4 and a
+///   locally plausible complex contains more than one simplex. This standalone
+///   entry point does not receive the construction evidence used by
+///   higher-level owners.
 ///
 /// # Examples
 ///

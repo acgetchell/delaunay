@@ -3,7 +3,8 @@
 This file is the reviewer entry point for the `delaunay` v0.8.0 software
 artifact. It indexes the immutable release, reproduction commands, validation
 evidence, generated figures, benchmark evidence, and known limits. The linked
-documents remain the source of truth for their respective contracts.
+documents at commit `ee0b1992071552ecf8669418ea74444a699343a9` remain the source
+of truth for the release's contracts, including their historical paths and commands.
 
 > **Release status:** v0.8.0 was published on 2026-07-28 as an annotated tag, a
 > crates.io package, a [GitHub release][github-release], and a
@@ -20,7 +21,7 @@ documents remain the source of truth for their respective contracts.
 | GitHub archive | [`delaunay` at `v0.8.0`][source-tag] | Tag and commit must agree |
 | GitHub release | [`v0.8.0`][github-release] | Published 2026-07-28 from the annotated tag |
 | Crate | [`delaunay` 0.8.0 on crates.io][crate-release] | Package version must be `0.8.0` |
-| Rust | 1.97.1 | `rustc --version` and [`rust-toolchain.toml`](../rust-toolchain.toml) |
+| Rust | 1.97.1 | `rustc --version` and [`rust-toolchain.toml`][release-toolchain] |
 | Zenodo collection | [`10.5281/zenodo.16931097`][zenodo-concept] | Stable software concept DOI |
 | Zenodo v0.8.0 record | [`10.5281/zenodo.21635965`][zenodo-version] | SHA-256 `7ec456da83d105f807ac40737d38e102b30f5963467d410354925cf197cb45a7` |
 
@@ -48,7 +49,7 @@ printf '%s\n' '7ec456da83d105f807ac40737d38e102b30f5963467d410354925cf197cb45a7 
 
 The release-specific Zenodo DOI is
 [`10.5281/zenodo.21635965`][zenodo-version].
-[`CITATION.cff`](../CITATION.cff) intentionally uses the stable concept DOI
+[`CITATION.cff`][release-citation] intentionally uses the stable concept DOI
 [`10.5281/zenodo.16931097`][zenodo-concept] to identify the software collection
 across releases; cite the version DOI when referring specifically to v0.8.0.
 
@@ -68,8 +69,8 @@ snapshot for executable reproduction.
 
 ## Environment and setup
 
-The repository pins Rust 1.97.1 in both [`Cargo.toml`](../Cargo.toml) and
-[`rust-toolchain.toml`](../rust-toolchain.toml). From the exact release
+The release pins Rust 1.97.1 in both [`Cargo.toml`][release-cargo] and
+[`rust-toolchain.toml`][release-toolchain]. From the exact release
 checkout, install the repository-owned tools and dependencies with:
 
 ```bash
@@ -79,7 +80,7 @@ just setup
 The quick and standard paths require Rust/Cargo, `just`, the uv-managed Python
 environment, and the test tools installed by repository setup. The paper path
 also needs the native TeX/Tectonic prerequisites listed in
-[`docs/dev/commands.md`](../docs/dev/commands.md#paper-build). Exact command
+[`docs/dev/commands.md`][release-paper-build]. Exact command
 ownership, platform notes, and validator selection remain in that command
 guide.
 
@@ -122,9 +123,9 @@ git --no-pager diff --exit-code -- \
 ### Visual inspection and validation figures
 
 The generic visualization/export artifact is implemented by
-[`delaunay::io::visualization`](../src/io/visualization.rs), specified in the
-[`Mesh Export Schema`](../docs/mesh_export.md), and covered by
-[`tests/mesh_export.rs`](../tests/mesh_export.rs). It exports stable UUID-based
+[`delaunay::io::visualization`][release-visualization], specified in the
+[`Mesh Export Schema`][release-mesh-export-guide], and covered by
+[`tests/mesh_export.rs`][release-mesh-export-test]. It exports stable UUID-based
 simplicial-complex primitives rather than exposing private TDS handles.
 
 Run the quickstart visual-inspection notebook:
@@ -144,16 +145,16 @@ just validation-doc-figures
 
 The expected tracked outputs are:
 
-- [`validation_hierarchy.png`](../docs/assets/validation/validation_hierarchy.png)
-- [`validation_level_1_element_validity.png`](../docs/assets/validation/validation_level_1_element_validity.png)
-- [`validation_level_2_combinatorial_consistency.png`](../docs/assets/validation/validation_level_2_combinatorial_consistency.png)
-- [`validation_level_3_intrinsic_pl_topology.png`](../docs/assets/validation/validation_level_3_intrinsic_pl_topology.png)
-- [`validation_level_4_valid_realization.png`](../docs/assets/validation/validation_level_4_valid_realization.png)
-- [`validation_level_5_geometric_predicates.png`](../docs/assets/validation/validation_level_5_geometric_predicates.png)
+- [`validation_hierarchy.png`][release-hierarchy-figure]
+- [`validation_level_1_element_validity.png`][release-level-1-figure]
+- [`validation_level_2_combinatorial_consistency.png`][release-level-2-figure]
+- [`validation_level_3_intrinsic_pl_topology.png`][release-level-3-figure]
+- [`validation_level_4_valid_realization.png`][release-level-4-figure]
+- [`validation_level_5_geometric_predicates.png`][release-level-5-figure]
 
 The canonical generator is
-[`notebooks/01_validation.ipynb`](../notebooks/01_validation.ipynb). The same
-figures are consumed by [`docs/construction_and_validation.md`](../docs/construction_and_validation.md) and the
+[`notebooks/01_validation.ipynb`][release-validation-notebook]. The same
+figures are consumed by [`docs/validation.md`][release-validation-guide] and the
 paper snapshot; there is no duplicate artifact implementation here. The
 spherical README image has a separate deliberate refresh path:
 
@@ -169,7 +170,7 @@ cost and observability only after those invariants pass.
 | Purpose | Command | Output |
 |---|---|---|
 | Curated release-signal measurements | `just bench-latest` | Fresh Criterion results under `target/criterion/` |
-| Rebuild the checked-in public summary | `just bench-perf-summary` | [`benches/PERFORMANCE_RESULTS.md`](../benches/PERFORMANCE_RESULTS.md) |
+| Rebuild the checked-in public summary | `just bench-perf-summary` | [`benches/PERFORMANCE_RESULTS.md`][release-performance-results] |
 | Same-machine comparison with the latest published release | `just perf-local` | `target/bench-reports/performance.md` |
 | Compare two durable GitHub release assets | `just perf-github-assets "$TAG" "$PREVIOUS_TAG"` | `target/bench-reports/github-assets-performance.md` |
 | Coarse 2D–5D large-scale guard | `just perf-large-scale-smoke` | Per-dimension pass/fail wall-clock diagnostics |
@@ -177,8 +178,8 @@ cost and observability only after those invariants pass.
 Absolute timings are not portable across machines. Use same-machine comparisons
 for regression claims and stored GitHub release assets for runner-to-runner
 release comparisons when both releases provide them. See
-[`benches/README.md`](../benches/README.md) for the benchmark contract and
-[`docs/dev/TUNING-PERFORMANCE.md`](../docs/dev/TUNING-PERFORMANCE.md) for evidence rules.
+[`benches/README.md`][release-benchmark-guide] for the benchmark contract and
+[`docs/dev/perf-tuning.md`][release-performance-guide] for evidence rules.
 
 #### Known benchmark exception
 
@@ -196,117 +197,117 @@ environment metadata alongside the results.
 ## Five-level claim map
 
 The canonical definitions and API semantics are in the
-[`Construction and Validation Guide`](../docs/construction_and_validation.md) and
-[`Invariant Guide`](../docs/invariants.md). This table only maps those
+[`Validation Guide`][release-validation-guide] and
+[`Invariant Guide`][release-invariants]. This table only maps those
 contracts to concrete artifact evidence.
 
 ### Level 1 — Element Validity
 
-- Implementation: [`vertex.rs`](../src/core/vertex.rs),
-  [`simplex.rs`](../src/core/simplex.rs), and
-  [`tds/validation.rs`](../src/core/tds/validation.rs)
-- Representative tests: [`proptest_vertex.rs`](../tests/proptest_vertex.rs),
-  [`proptest_simplex.rs`](../tests/proptest_simplex.rs), and
-  [`proptest_tds.rs`](../tests/proptest_tds.rs)
-- Documentation: [Level 1 contract](../docs/construction_and_validation.md#level-1-element-validity)
-  and [figure](../docs/assets/validation/validation_level_1_element_validity.png)
+- Implementation: [`vertex.rs`][release-vertex],
+  [`simplex.rs`][release-simplex], and
+  [`tds/validation.rs`][release-tds-validation]
+- Representative tests: [`proptest_vertex.rs`][release-proptest-vertex],
+  [`proptest_simplex.rs`][release-proptest-simplex], and
+  [`proptest_tds.rs`][release-proptest-tds]
+- Documentation: [Level 1 contract][release-level-1]
+  and [figure][release-level-1-figure]
 - Performance evidence: `structure` component in
-  [`profiling_suite.rs`](../benches/profiling_suite.rs)
+  [`profiling_suite.rs`][release-profiling]
 
 ### Level 2 — Combinatorial Consistency
 
-- Implementation: [`tds/validation.rs`](../src/core/tds/validation.rs) and
-  [`adjacency.rs`](../src/core/adjacency.rs)
-- Representative tests: [`proptest_tds.rs`](../tests/proptest_tds.rs),
-  [`proptest_triangulation.rs`](../tests/proptest_triangulation.rs), and
-  [`public_topology_api.rs`](../tests/public_topology_api.rs)
+- Implementation: [`tds/validation.rs`][release-tds-validation] and
+  [`adjacency.rs`][release-adjacency]
+- Representative tests: [`proptest_tds.rs`][release-proptest-tds],
+  [`proptest_triangulation.rs`][release-proptest-triangulation], and
+  [`public_topology_api.rs`][release-public-topology]
 - Documentation:
-  [Level 2 contract](../docs/construction_and_validation.md#level-2-combinatorial-consistency)
+  [Level 2 contract][release-level-2]
   and
-  [figure](../docs/assets/validation/validation_level_2_combinatorial_consistency.png)
+  [figure][release-level-2-figure]
 - Performance evidence: `structure` component in
-  [`profiling_suite.rs`](../benches/profiling_suite.rs)
+  [`profiling_suite.rs`][release-profiling]
 
 ### Level 3 — Intrinsic PL Topology
 
-- Implementation: [`triangulation/validation.rs`](../src/triangulation/validation.rs),
-  [`manifold.rs`](../src/topology/manifold.rs), and
-  [`characteristics/validation.rs`](../src/topology/characteristics/validation.rs)
+- Implementation: [`core/validation.rs`][release-topology-validation],
+  [`manifold.rs`][release-manifold], and
+  [`characteristics/validation.rs`][release-characteristics]
 - Representative tests:
-  [`proptest_euler_characteristic.rs`](../tests/proptest_euler_characteristic.rs),
-  [`public_topology_api.rs`](../tests/public_topology_api.rs), and
-  [`proptest_toroidal.rs`](../tests/proptest_toroidal.rs)
+  [`proptest_euler_characteristic.rs`][release-proptest-euler],
+  [`public_topology_api.rs`][release-public-topology], and
+  [`proptest_toroidal.rs`][release-proptest-toroidal]
 - Documentation:
-  [Level 3 contract](../docs/construction_and_validation.md#level-3-intrinsic-pl-topology)
+  [Level 3 contract][release-level-3]
   and
-  [figure](../docs/assets/validation/validation_level_3_intrinsic_pl_topology.png)
+  [figure][release-level-3-figure]
 - Performance evidence: `triangulation` component in
-  [`profiling_suite.rs`](../benches/profiling_suite.rs)
+  [`profiling_suite.rs`][release-profiling]
 
 ### Level 4 — Valid Realization
 
-- Implementation: [`triangulation/realization.rs`](../src/triangulation/realization.rs),
-  [`geometry/realization.rs`](../src/geometry/realization.rs), and the spherical
-  backend in [`spherical.rs`](../src/delaunay/spherical.rs)
+- Implementation: [`core/realization.rs`][release-owner-realization],
+  [`geometry/realization.rs`][release-geometry-realization], and the spherical
+  backend in [`spherical.rs`][release-spherical]
 - Representative tests: unit tests in
-  [`triangulation/realization.rs`](../src/triangulation/realization.rs),
-  [`triangulation_builder.rs`](../tests/triangulation_builder.rs),
-  [`proptest_toroidal.rs`](../tests/proptest_toroidal.rs), and
-  [`spherical_delaunay.rs`](../tests/spherical_delaunay.rs)
-- Documentation: [Level 4 contract](../docs/construction_and_validation.md#level-4-valid-realization)
-  and [figure](../docs/assets/validation/validation_level_4_valid_realization.png)
+  [`core/realization.rs`][release-owner-realization],
+  [`triangulation_builder.rs`][release-triangulation-builder],
+  [`proptest_toroidal.rs`][release-proptest-toroidal], and
+  [`spherical_delaunay.rs`][release-spherical-test]
+- Documentation: [Level 4 contract][release-level-4]
+  and [figure][release-level-4-figure]
 - Performance evidence: `realization` component in
-  [`profiling_suite.rs`](../benches/profiling_suite.rs)
+  [`profiling_suite.rs`][release-profiling]
 
 ### Level 5 — Geometric Predicates
 
-- Implementation: [`delaunay/validation.rs`](../src/delaunay/validation.rs),
-  [`property_validation.rs`](../src/delaunay/property_validation.rs), and the
-  spherical backend in [`spherical.rs`](../src/delaunay/spherical.rs)
+- Implementation: [`delaunay/validation.rs`][release-delaunay-validation],
+  [`property_validation.rs`][release-property-validation], and the
+  spherical backend in [`spherical.rs`][release-spherical]
 - Representative tests:
-  [`proptest_delaunay_triangulation.rs`](../tests/proptest_delaunay_triangulation.rs),
-  [`proptest_toroidal.rs`](../tests/proptest_toroidal.rs), and
-  [`spherical_delaunay.rs`](../tests/spherical_delaunay.rs)
-- Documentation: [Level 5 contract](../docs/construction_and_validation.md#level-5-geometric-predicates)
-  and [figure](../docs/assets/validation/validation_level_5_geometric_predicates.png)
+  [`proptest_delaunay_triangulation.rs`][release-proptest-delaunay],
+  [`proptest_toroidal.rs`][release-proptest-toroidal], and
+  [`spherical_delaunay.rs`][release-spherical-test]
+- Documentation: [Level 5 contract][release-level-5]
+  and [figure][release-level-5-figure]
 - Performance evidence: `delaunay` and cumulative `full` components in
-  [`profiling_suite.rs`](../benches/profiling_suite.rs)
+  [`profiling_suite.rs`][release-profiling]
 
-[`ci_performance_suite.rs`](../benches/ci_performance_suite.rs) supplies the
+[`ci_performance_suite.rs`][release-ci-performance] supplies the
 stable cumulative Levels 1–5 release-signal benchmark. Component benchmarks
 make cost visible; they do not replace the layer-specific correctness tests.
 
 ### Cross-cutting evidence
 
 - **Adaptive exact predicate signs and deterministic degeneracy handling**
-  - Implementation: [`predicates.rs`](../src/geometry/predicates.rs),
-    [`robust_predicates.rs`](../src/geometry/robust_predicates.rs), and
-    [`sos.rs`](../src/geometry/sos.rs)
+  - Implementation: [`predicates.rs`][release-predicates],
+    [`robust_predicates.rs`][release-robust-predicates], and
+    [`sos.rs`][release-sos]
   - Tests and documentation:
-    [`proptest_predicates.rs`](../tests/proptest_predicates.rs),
-    [`proptest_sos.rs`](../tests/proptest_sos.rs), and the
-    [Numerical Robustness Guide](../docs/numerical_robustness_guide.md)
+    [`proptest_predicates.rs`][release-proptest-predicates],
+    [`proptest_sos.rs`][release-proptest-sos], and the
+    [Numerical Robustness Guide][release-robustness-guide]
 - **Generic stable-ID visualization/export data**
-  - Implementation: [`io/visualization.rs`](../src/io/visualization.rs)
-  - Tests and documentation: [`mesh_export.rs`](../tests/mesh_export.rs), the
-    [schema guide](../docs/mesh_export.md), and
-    [`00_quickstart.ipynb`](../notebooks/00_quickstart.ipynb)
+  - Implementation: [`io/visualization.rs`][release-visualization]
+  - Tests and documentation: [`mesh_export.rs`][release-mesh-export-test], the
+    [schema guide][release-mesh-export-guide], and
+    [`00_quickstart.ipynb`][release-quickstart]
 - **Dimension-generic construction and invariant coverage**
-  - Implementation: [`delaunay/construction.rs`](../src/delaunay/construction.rs)
-    and [`triangulation/construction.rs`](../src/triangulation/construction.rs)
-  - Tests and documentation: the [test index](../tests/README.md),
-    [property-testing summary](../docs/property_testing_summary.md), and 2D–5D
+  - Implementation: [`delaunay/construction.rs`][release-delaunay-construction]
+    and [`core/construction.rs`][release-triangulation-construction]
+  - Tests and documentation: the [test index][release-test-index],
+    [property-testing summary][release-property-testing], and 2D–5D
     release-signal cases in
-    [`ci_performance_suite.rs`](../benches/ci_performance_suite.rs)
+    [`ci_performance_suite.rs`][release-ci-performance]
 - **Safe Rust implementation**
-  - Implementation: [`lib.rs`](../src/lib.rs) and the manifest lint policy in
-    [`Cargo.toml`](../Cargo.toml)
+  - Implementation: [`lib.rs`][release-lib] and the manifest lint policy in
+    [`Cargo.toml`][release-cargo]
   - Tests and documentation: `just ci` compiles all supported targets with
     unsafe code forbidden
 
 ## Known limitations
 
-[`docs/limitations.md`](../docs/limitations.md) is the canonical and more
+[`docs/limitations.md`][release-limitations] is the canonical and more
 detailed scope statement. Reviewers should interpret results within these
 boundaries:
 
@@ -330,7 +331,7 @@ boundaries:
 
 This artifact does not claim novelty for established Delaunay theory,
 triangulation data structures, or standard computational-geometry algorithms.
-The repository's [`REFERENCES.md`](../REFERENCES.md) records the algorithmic
+The release's [`REFERENCES.md`][release-references] records the algorithmic
 literature. Relevant software prior art includes:
 
 - [CGAL](https://www.cgal.org/) for broad, production computational geometry
@@ -343,8 +344,8 @@ reproducibility, and performance contracts of this release.
 
 ## Manuscript snapshot
 
-The full GitHub/Zenodo artifact includes [`papers/validation.tex`](../papers/validation.tex)
-and the compiled reviewer copy [`papers/validation.pdf`](../papers/validation.pdf)
+The full GitHub/Zenodo artifact includes [`papers/validation.tex`][release-paper-source]
+and the compiled reviewer copy [`papers/validation.pdf`][release-paper-pdf]
 because they reuse the same validation tables and generated figures. They are a
 source snapshot, not a claim that the manuscript is submission-complete.
 Substantive author-owned manuscript completion and submission packaging are
@@ -366,3 +367,72 @@ not as evidence that the source release is unpublished.
 [source-tag]: https://github.com/acgetchell/delaunay/tree/v0.8.0
 [zenodo-concept]: https://doi.org/10.5281/zenodo.16931097
 [zenodo-version]: https://doi.org/10.5281/zenodo.21635965
+[release-adjacency]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/core/adjacency.rs
+[release-benchmark-guide]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/benches/README.md
+[release-cargo]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/Cargo.toml
+[release-characteristics]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/topology/characteristics/validation.rs
+[release-ci-performance]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/benches/ci_performance_suite.rs
+[release-citation]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/CITATION.cff
+[release-delaunay-construction]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/delaunay/construction.rs
+[release-delaunay-validation]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/delaunay/validation.rs
+[release-geometry-realization]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/geometry/realization.rs
+[release-hierarchy-figure]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/assets/validation/validation_hierarchy.png
+[release-invariants]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/invariants.md
+[release-level-1]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/validation.md#level-1-element-validity
+[release-level-1-figure]:
+<https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/assets/validation/validation_level_1_element_validity.png>
+[release-level-2]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/validation.md#level-2-combinatorial-consistency
+[release-level-2-figure]:
+<https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/assets/validation/validation_level_2_combinatorial_consistency.png>
+[release-level-3]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/validation.md#level-3-intrinsic-pl-topology
+[release-level-3-figure]:
+<https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/assets/validation/validation_level_3_intrinsic_pl_topology.png>
+[release-level-4]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/validation.md#level-4-valid-realization
+[release-level-4-figure]:
+<https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/assets/validation/validation_level_4_valid_realization.png>
+[release-level-5]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/validation.md#level-5-geometric-predicates
+[release-level-5-figure]:
+<https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/assets/validation/validation_level_5_geometric_predicates.png>
+[release-lib]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/lib.rs
+[release-limitations]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/limitations.md
+[release-manifold]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/topology/manifold.rs
+[release-mesh-export-guide]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/mesh_export.md
+[release-mesh-export-test]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/tests/mesh_export.rs
+[release-owner-realization]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/core/realization.rs
+[release-paper-build]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/dev/commands.md#paper-build
+[release-paper-pdf]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/papers/validation.pdf
+[release-paper-source]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/papers/validation.tex
+[release-performance-guide]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/dev/perf-tuning.md
+[release-performance-results]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/benches/PERFORMANCE_RESULTS.md
+[release-predicates]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/geometry/predicates.rs
+[release-profiling]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/benches/profiling_suite.rs
+[release-property-testing]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/property_testing_summary.md
+[release-property-validation]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/delaunay/property_validation.rs
+[release-proptest-delaunay]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/tests/proptest_delaunay_triangulation.rs
+[release-proptest-euler]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/tests/proptest_euler_characteristic.rs
+[release-proptest-predicates]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/tests/proptest_predicates.rs
+[release-proptest-simplex]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/tests/proptest_simplex.rs
+[release-proptest-sos]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/tests/proptest_sos.rs
+[release-proptest-tds]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/tests/proptest_tds.rs
+[release-proptest-toroidal]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/tests/proptest_toroidal.rs
+[release-proptest-triangulation]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/tests/proptest_triangulation.rs
+[release-proptest-vertex]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/tests/proptest_vertex.rs
+[release-public-topology]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/tests/public_topology_api.rs
+[release-quickstart]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/notebooks/00_quickstart.ipynb
+[release-references]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/REFERENCES.md
+[release-robust-predicates]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/geometry/robust_predicates.rs
+[release-robustness-guide]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/numerical_robustness_guide.md
+[release-simplex]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/core/simplex.rs
+[release-sos]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/geometry/sos.rs
+[release-spherical]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/delaunay/spherical.rs
+[release-spherical-test]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/tests/spherical_delaunay.rs
+[release-tds-validation]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/core/tds/validation.rs
+[release-test-index]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/tests/README.md
+[release-toolchain]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/rust-toolchain.toml
+[release-topology-validation]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/core/validation.rs
+[release-triangulation-builder]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/tests/triangulation_builder.rs
+[release-triangulation-construction]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/core/construction.rs
+[release-validation-guide]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/docs/validation.md
+[release-validation-notebook]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/notebooks/01_validation.ipynb
+[release-vertex]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/core/vertex.rs
+[release-visualization]: https://github.com/acgetchell/delaunay/blob/ee0b1992071552ecf8669418ea74444a699343a9/src/io/visualization.rs

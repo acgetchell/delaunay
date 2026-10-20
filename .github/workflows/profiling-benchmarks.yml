@@ -23,8 +23,8 @@ on:
   # Uses production mode for comprehensive long-term performance tracking
 
   schedule:
-    # First Sunday of each month at 2 AM UTC (runs only when DOM is 1-7 and Sunday)
-    - cron: "0 2 1-7 * 0"
+    # Sundays at 2 AM UTC; the schedule gate admits only the first Sunday.
+    - cron: "0 2 * * 0"
 
   # Trigger on release tags for baseline profiling data
   # Uses development mode to keep runtime reasonable (~1-2 hours) while still capturing performance snapshots
@@ -37,13 +37,35 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
+  schedule-gate:
+    name: Select profiling runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.select.outputs.run }}
+    steps:
+      - name: Allow manual, tag, and first-Sunday runs
+        id: select
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != "schedule" ]] || (( 10#$(date -u +%d) <= 7 )); then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
   comprehensive-profiling:
     name: Comprehensive Performance Profiling
+    needs: schedule-gate
+    if: needs.schedule-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 360 # 6 hours timeout for comprehensive profiling
 
@@ -86,7 +108,7 @@ jobs:
           # 3. Scheduled runs and manual dispatch with mode="production": Use production mode
           #    - Full large-scale profiling counts, including opt-in 4D 5K/10K
           #    - May take 4-6 hours
-          if [[ "$INPUT_MODE" == "development" ]] || [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]] || [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$INPUT_MODE" == "development" ]]; then
             echo "PROFILING_DEV_MODE=1" >> "$GITHUB_ENV"
             echo "Running in development mode (reduced scale)"
             # Smaller, faster dev runs
@@ -213,7 +235,7 @@ jobs:
           - \`profiling_output.log\`: Complete benchmark output
           - \`memory_profiling_detailed.log\`: Detailed memory allocation analysis
           - \`environment.json\`: Shared host/source provenance, native tool declarations, profile, and filter metadata
-          - \`criterion/\`: HTML reports and detailed timing data
+          - \`target/criterion/\`: HTML reports and detailed timing data in the artifact
 
           EOF
 
@@ -234,7 +256,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: profiling-results-${{ github.run_number }}
-          path: profiling-results/
+          path: |
+            profiling-results/
+            target/criterion/
           retention-days: 30
 
       - name: Upload profiling baseline (for tagged releases)
@@ -257,6 +281,8 @@ jobs:
 
   memory-stress-test:
     name: Memory Stress Testing
+    needs: schedule-gate
+    if: needs.schedule-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:

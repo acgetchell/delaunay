@@ -102,6 +102,19 @@ The order of a simplex's vertices is part of the data-structure contract, not pr
 It determines the simplex's combinatorial orientation and the facet index used for neighbor links.
 This is why the TDS validation layer checks coherent orientation alongside neighbor reciprocity.
 
+Simplex equality identifies vertex permutations and common lattice translations.
+For periodic vertex–offset pairs `(v_i, o_i)`, replacing every `o_i` by `o_i + t`
+represents the same quotient simplex; changing relative offsets can represent a
+different simplex. Missing offsets mean zero. `Simplex::PartialEq`,
+`PartialOrd`, `Hash`, and TDS duplicate detection share this normalization.
+Within one TDS, simplex identity uses vertex keys (equivalently their unique
+UUID mappings). `Simplex::eq_by_vertices` and `Tds::PartialEq` compare owners by
+exact coordinates instead, ignoring UUIDs and payloads. TDS equality also
+compares simplex multiplicities and vertex-to-simplex incidence, matching
+coincident-coordinate vertices by their incident simplex multisets. These
+comparisons do not certify orientation, realization, or equality of runtime
+owner state; use validation and explicit state checks for those contracts.
+
 ---
 
 ## Validation layering
@@ -331,6 +344,9 @@ For a nonempty `DelaunayIncrementalBuilder`, the first full-dimensional simplex 
 internal early publication checkpoint: failure returns
 `DelaunayIncrementalBuilderError` and leaves the pre-insertion bootstrap state
 reusable. The public owner is still returned only by `finish()`.
+If `finish()` fails, it returns a `RefinementError` containing the unchanged
+builder and the typed reason, so incomplete input and payloads remain available
+for repair or retry.
 
 The generic and Delaunay layers each have one public promotion builder with
 explicit modes:

@@ -12,7 +12,7 @@ use super::{
     TdsMutationError, TdsValidationFailure, TopologyGuarantee, TopologyOwnerId, TriangleHandle,
     TriangulationRealizationValidationError, TriangulationValidationError, VertexKey, fmt,
 };
-use crate::core::tds::InvariantError;
+use crate::validation_report::InvariantError;
 
 /// Predicate operation being evaluated by flip logic.
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
@@ -944,7 +944,8 @@ impl From<InsertionError> for FlipNeighborWiringError {
             InsertionError::DelaunayValidationFailed { source } => Self::DelaunayValidation {
                 reason: source.into(),
             },
-            InsertionError::RealizationValidationFailed { source } => {
+            InsertionError::RealizationValidationFailed { source }
+            | InsertionError::OrientationValidationFailed { source } => {
                 Self::RealizationValidation { source }
             }
             InsertionError::DelaunayRepairFailed { source, context: _ } => Self::DelaunayRepair {
@@ -2081,6 +2082,9 @@ pub(super) const fn insertion_error_kind(source: &InsertionError) -> InsertionEr
         InsertionError::RealizationValidationFailed { .. } => {
             InsertionErrorKind::RealizationValidationFailed
         }
+        InsertionError::OrientationValidationFailed { .. } => {
+            InsertionErrorKind::OrientationValidationFailed
+        }
         InsertionError::DelaunayRepairFailed { .. } => InsertionErrorKind::DelaunayRepairFailed,
         InsertionError::DuplicateCoordinates { .. } => InsertionErrorKind::DuplicateCoordinates,
         InsertionError::DuplicateUuid { .. } => InsertionErrorKind::DuplicateUuid,
@@ -2689,23 +2693,42 @@ mod tests {
             dimension: 2,
         };
 
-        let realization_wiring =
-            FlipNeighborWiringError::from(InsertionError::RealizationValidationFailed {
-                source: realization_source.clone(),
-            });
-        let FlipNeighborWiringError::RealizationValidation { source } = &realization_wiring else {
-            panic!("expected preserved realization validation source, got {realization_wiring:?}");
-        };
-        assert_eq!(source, &realization_source);
-        let error_source = realization_wiring
-            .source()
-            .and_then(|source| source.downcast_ref::<TriangulationRealizationValidationError>())
-            .expect("realization validation should remain the typed error source");
-        assert_eq!(error_source, &realization_source);
-        assert_eq!(
-            FlipFailureKind::from(&FlipError::from(realization_wiring)),
-            FlipFailureKind::WiringValidation
-        );
+        for (error, kind, retryable) in [
+            (
+                InsertionError::RealizationValidationFailed {
+                    source: realization_source.clone(),
+                },
+                InsertionErrorKind::RealizationValidationFailed,
+                false,
+            ),
+            (
+                InsertionError::OrientationValidationFailed {
+                    source: realization_source.clone(),
+                },
+                InsertionErrorKind::OrientationValidationFailed,
+                true,
+            ),
+        ] {
+            assert_eq!(insertion_error_kind(&error), kind);
+            assert_eq!(error.is_retryable(), retryable);
+            let realization_wiring = FlipNeighborWiringError::from(error);
+            let FlipNeighborWiringError::RealizationValidation { source } = &realization_wiring
+            else {
+                panic!(
+                    "expected preserved realization validation source, got {realization_wiring:?}"
+                );
+            };
+            assert_eq!(source, &realization_source);
+            let error_source = realization_wiring
+                .source()
+                .and_then(|source| source.downcast_ref::<TriangulationRealizationValidationError>())
+                .expect("realization validation should remain the typed error source");
+            assert_eq!(error_source, &realization_source);
+            assert_eq!(
+                FlipFailureKind::from(&FlipError::from(realization_wiring)),
+                FlipFailureKind::WiringValidation
+            );
+        }
 
         let transaction_realization = FlipError::RealizationValidation {
             source: Box::new(realization_source.clone()),

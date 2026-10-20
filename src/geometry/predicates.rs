@@ -543,15 +543,11 @@ pub fn simplex_orientation<const D: usize>(
 ///
 /// # Performance
 ///
-/// Current repository benchmarks favor [`insphere_lifted`] for fixed
-/// non-boundary 2D/3D workloads, while this distance-based method can be faster
-/// in 4D/5D. The result depends on dimension, conditioning, and how often a
-/// filtered determinant needs its exact fallback, so benchmark the intended
-/// workload rather than assuming one implementation is universally fastest.
-///
-/// Use [`insphere_lifted`] when a provably correct determinant sign is required.
-/// This method is tolerance-based and is useful when the circumcenter is also
-/// needed or when its higher-dimensional benchmark profile fits the workload.
+/// This method uses a scaled distance tolerance and can classify a near-boundary
+/// point as [`InSphere::BOUNDARY`] even when its exact determinant is nonzero.
+/// Use [`insphere_lifted`] when an exact determinant sign is required. See the
+/// [performance report](https://github.com/acgetchell/delaunay/blob/main/benches/PERFORMANCE_RESULTS.md)
+/// for measurements and their workload scope.
 ///
 /// # Algorithm
 ///
@@ -649,24 +645,24 @@ pub fn insphere_distance<const D: usize>(
 ///
 /// # Performance
 ///
-/// The relative-coordinate matrix used by [`insphere_lifted`] is smaller and
-/// performs well in the repository's fixed 2D/3D non-boundary benchmarks.
-/// Performance is workload- and dimension-dependent; benchmark both exact
-/// determinant formulations for the target data. Inconclusive fast-filter
-/// results in either formulation fall back to an exact determinant sign.
+/// This method shares the filtered-exact relative-coordinate determinant core
+/// with [`insphere_lifted`] and additionally returns [`InSphere::BOUNDARY`]
+/// immediately for queries at simplex vertices. Inconclusive filter results
+/// fall back to exact arithmetic. See the
+/// [performance report](https://github.com/acgetchell/delaunay/blob/main/benches/PERFORMANCE_RESULTS.md)
+/// for measurements and their workload scope.
 ///
 /// # Algorithm
 ///
 /// This implementation follows the robust geometric predicates approach (see References below).
 ///
-/// **Key Implementation Note**: This method uses a standard determinant approach without
-/// dimension-dependent parity adjustments. For the lifted matrix formulation that requires
-/// parity handling, see [`insphere_lifted`] (specifically the "sign interpretation" section)
-/// which correctly handles the dimension-dependent sign convention where even dimensions
-/// (2D, 4D, etc.) require inverted sign interpretation compared to odd dimensions (3D, 5D, etc.).
-///
-/// This ensures agreement between `insphere_lifted` and the other insphere methods
-/// across all dimensions from 2D to 5D and beyond.
+/// The homogeneous determinant below is evaluated through the reduced relative
+/// formulation documented in [`insphere_lifted`], including its shared
+/// orientation and dimension-dependent sign interpretation. The two determinant
+/// APIs therefore agree wherever both return a classification; their agreement
+/// is shared-core consistency evidence, not an independent numerical oracle.
+/// Unlike [`insphere_lifted`], this wrapper shortcuts queries at simplex vertices
+/// before checking degeneracy and returns [`CoordinateConversionError`] directly.
 ///
 /// The in-sphere test uses the determinant of a specially constructed matrix. For a
 /// d-dimensional simplex with points `p₁, p₂, ..., pₐ₊₁` and test point `p`, the
@@ -696,13 +692,10 @@ pub fn insphere_distance<const D: usize>(
 /// by Shewchuk, this approach provides much better numerical robustness for geometric
 /// computations.
 ///
-/// The sign of the determinant depends on the orientation of the simplex:
-/// - For a **positively oriented** simplex: positive determinant means the point is inside
-/// - For a **negatively oriented** simplex: negative determinant means the point is inside
-///
-/// This function automatically determines the simplex orientation using [`simplex_orientation`]
-/// and interprets the determinant sign accordingly, ensuring correct results regardless
-/// of vertex ordering.
+/// The determinant sign depends on both simplex orientation and dimension.
+/// This function determines the orientation using [`simplex_orientation`] and
+/// applies the shared sign interpretation described in [`insphere_lifted`],
+/// ensuring correct results regardless of vertex ordering.
 ///
 /// # Arguments
 ///
@@ -786,22 +779,18 @@ pub fn insphere<const D: usize>(
 /// Check if a point is contained within the circumsphere of a simplex using the lifted paraboloid determinant method.
 ///
 /// This is the recommended exact relative-coordinate implementation of the
-/// insphere predicate.
+/// insphere predicate. It shares its filtered-exact engine with [`insphere`],
+/// but always evaluates simplex orientation (including queries at simplex
+/// vertices) and maps failures into [`SimplexValidationError`].
 ///
 /// # Performance
 ///
-/// Current repository benchmarks favor this method for fixed non-boundary
-/// 2D/3D inputs. [`insphere_distance`] can be faster in 4D/5D, but it uses a
-/// tolerance rather than an exact determinant sign. Benchmark representative
-/// inputs before selecting an implementation solely for performance.
-///
-/// The performance gains come from:
-/// 1. Using relative coordinates which reduce numerical magnitude
-/// 2. Computing smaller (D+1)×(D+1) determinants instead of (D+2)×(D+2)
-/// 3. Using la-stack's allocation-free interval determinant filter through D=6
-///
-/// This method combines an exact determinant contract with a compact
-/// relative-coordinate formulation.
+/// This method preserves an exact-sign contract through a fast filter and an
+/// exact fallback; its cost depends on which path resolves the input.
+/// [`insphere_distance`] uses a tolerance and has a different correctness
+/// contract. See the
+/// [performance report](https://github.com/acgetchell/delaunay/blob/main/benches/PERFORMANCE_RESULTS.md)
+/// for measurements and their workload scope.
 ///
 /// # Robustness
 ///

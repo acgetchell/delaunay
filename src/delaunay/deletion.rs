@@ -14,7 +14,7 @@ use crate::core::algorithms::flips::{
 };
 use crate::core::algorithms::insertion::InsertionError;
 use crate::core::collections::SimplexKeyBuffer;
-use crate::core::tds::{InvariantError, NeighborValidationError, SimplexKey, TdsError, VertexKey};
+use crate::core::tds::{NeighborValidationError, SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::delaunay_model::DelaunayTriangulation;
 use crate::delaunay_rollback::{DelaunayRollbackTransaction, DelaunaySpatialIndexRollback};
@@ -25,6 +25,7 @@ use crate::triangulation::repair::{
 };
 use crate::triangulation::validation::TopologyGuarantee;
 use crate::validation::DelaunayTriangulationValidationError;
+use crate::validation_report::InvariantError;
 use thiserror::Error;
 
 /// Errors returned by [`DelaunayTriangulation::delete_vertex`].
@@ -230,7 +231,7 @@ where
     /// ```rust
     /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::deletion::DeleteVertexError;
-    /// use delaunay::prelude::tds::InvariantError;
+    /// use delaunay::prelude::validation::InvariantError;
     /// use delaunay::prelude::triangulation::TriangulationValidationError;
     ///
     /// # fn main() -> DelaunayResult<()> {
@@ -362,6 +363,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builder::DelaunayTriangulationBuilder;
     use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
     use crate::core::algorithms::insertion::CavityFillingError;
     use crate::core::collections::spatial_hash_grid::HashGridIndex;
@@ -369,11 +371,10 @@ mod tests {
     use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates};
     use crate::geometry::util::safe_usize_to_scalar;
     use crate::repair::DelaunayRepairPolicy;
-    use crate::triangulation::validation::TriangulationValidationError;
     use crate::vertex;
     use std::assert_matches;
+    use std::fmt::Debug;
     use std::sync::Once;
-    use uuid::Uuid;
 
     #[must_use]
     fn synthetic_nonconvergent_error() -> DelaunayRepairError {
@@ -406,36 +407,26 @@ mod tests {
         });
     }
 
-    fn simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
+    fn simplex_vertices<const D: usize>() -> Vec<Vertex<u32, D>> {
         let mut vertices = Vec::with_capacity(D + 1);
-        vertices.push(vertex!([0.0; D]).unwrap());
+        vertices.push(vertex!([0.0; D]; data = 0).unwrap());
         for axis in 0..D {
             let mut coords = [0.0; D];
             coords[axis] = 1.0;
-            vertices.push(vertex!(coords).unwrap());
+            vertices.push(vertex!(coords; data = u32::try_from(axis + 1).unwrap()).unwrap());
         }
         vertices
     }
 
-    fn interior_vertex_for_k1_insert<const D: usize>() -> Vertex<(), D> {
+    fn interior_vertex_for_k1_insert<const D: usize>() -> Vertex<u32, D> {
         let denominator = safe_usize_to_scalar(D + 2)
             .expect("D + 2 should convert exactly for rollback test dimensions");
         let coord = 1.0 / denominator;
-        vertex!([coord; D]).unwrap()
-    }
-
-    fn rollback_probe_vertex<const D: usize>(point_index: usize) -> Vertex<(), D> {
-        let dimension = safe_usize_to_scalar(D).expect("test dimensions should convert exactly");
-        let point_index_scalar =
-            safe_usize_to_scalar(point_index).expect("point index should convert exactly");
-        let mut coords = [0.2 / dimension; D];
-        let axis = point_index % D;
-        coords[axis] += point_index_scalar.mul_add(0.005, 0.02);
-        vertex!(coords).unwrap()
+        vertex!([coord; D]; data = 100).unwrap()
     }
 
     fn incident_simplex_count<const D: usize>(
-        dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
+        dt: &DelaunayTriangulation<AdaptiveKernel<f64>, u32, u32, D>,
         vertex_key: VertexKey,
     ) -> usize {
         dt.simplices()
@@ -443,72 +434,122 @@ mod tests {
             .count()
     }
 
-    fn assert_forced_delete_vertex_rolls_back<const D: usize>(
-        dt: &mut DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
-        vertex_key: VertexKey,
-        inserted_uuid: Uuid,
+    /// Captures persisted data and runtime state independently of the rollback journal
+    /// and geometric equality, which deliberately ignores keys and metadata.
+    fn deletion_owner_snapshot<const D: usize>(
+        dt: &DelaunayTriangulation<AdaptiveKernel<f64>, u32, u32, D>,
+    ) -> impl Debug + PartialEq + use<D> {
+        let tds = &dt.tri.tds;
+        (
+            serde_json::to_value(tds).expect("valid TDS must serialize"),
+            tds.vertices()
+                .map(|(key, vertex)| {
+                    (
+                        key,
+                        vertex.uuid(),
+                        vertex.point().coords().map(f64::to_bits),
+                        vertex.incident_simplex(),
+                        tds.vertex_key_from_uuid(&vertex.uuid()),
+                        tds.simplex_keys_containing_vertex(key).collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            tds.simplices()
+                .map(|(key, simplex)| {
+                    (
+                        key,
+                        simplex.uuid(),
+                        simplex.vertices().to_vec(),
+                        simplex.neighbors().map(Iterator::collect::<Vec<_>>),
+                        simplex.periodic_vertex_offsets().map(<[_]>::to_vec),
+                        tds.simplex_key_from_uuid(&simplex.uuid()),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            (
+                tds.topology_owner_id(),
+                tds.generation(),
+                tds.construction_state().clone(),
+            ),
+            (
+                dt.tri.topology_guarantee,
+                dt.tri.global_topology,
+                dt.tri.validation_policy,
+                dt.tri.topology_construction_provenance,
+                dt.euclidean_report_domain,
+            ),
+            (
+                dt.insertion_state.last_inserted_simplex,
+                dt.insertion_state.delaunay_repair_policy,
+                dt.insertion_state.delaunay_check_policy,
+                dt.insertion_state.delaunay_repair_insertion_count,
+                dt.insertion_state.use_global_repair_fallback,
+            ),
+            dt.spatial_index
+                .as_ref()
+                .map(HashGridIndex::<D>::debug_snapshot),
+        )
+    }
+
+    /// Gives deletion meaningful payloads and caches to restore after a failure.
+    fn prepare_rollback_owner<const D: usize>(
+        dt: &mut DelaunayTriangulation<AdaptiveKernel<f64>, u32, u32, D>,
     ) {
-        let vertex_count_before = dt.number_of_vertices();
-        let simplex_count_before = dt.number_of_simplices();
-        let hint_simplex_before = dt.simplices().next().map(|(key, _)| key);
-        dt.insertion_state.last_inserted_simplex = hint_simplex_before;
+        let simplex_keys: Vec<_> = dt.tri.tds.simplex_keys().collect();
+        for (index, &key) in simplex_keys.iter().enumerate() {
+            dt.set_simplex_data(key, Some(u32::try_from(index + 1).unwrap()))
+                .unwrap();
+        }
+        dt.insertion_state.last_inserted_simplex = simplex_keys.first().copied();
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::EveryInsertion;
         let mut spatial_index = HashGridIndex::<D>::try_new(1.0).unwrap();
         for (vertex_key, vertex) in dt.vertices() {
             spatial_index.insert_vertex(vertex_key, vertex.point().coords());
         }
         dt.spatial_index = Some(spatial_index);
-        let last_inserted_simplex_before = dt.insertion_state.last_inserted_simplex;
-        let spatial_index_before = dt
-            .spatial_index
-            .as_ref()
-            .map(HashGridIndex::<D>::debug_snapshot);
+        assert!(dt.euclidean_report_domain.supports_local_certificate());
+        dt.validate()
+            .expect("rollback fixture must be valid through Level 5");
+    }
 
-        let result = dt.delete_vertex_with_repair(vertex_key, |_, _, _, _| {
+    /// Requires a post-removal repair failure to restore the complete original owner.
+    fn assert_forced_delete_vertex_rolls_back<const D: usize>(
+        dt: &mut DelaunayTriangulation<AdaptiveKernel<f64>, u32, u32, D>,
+        vertex_key: VertexKey,
+    ) {
+        prepare_rollback_owner(dt);
+        let before = deletion_owner_snapshot(dt);
+
+        let mut repair_called = false;
+        let result = dt.delete_vertex_with_repair(vertex_key, |delaunay, _, _, _| {
+            repair_called = true;
+            assert!(!delaunay.tri.tds.contains_vertex_key(vertex_key));
+            assert!(
+                !delaunay
+                    .euclidean_report_domain
+                    .supports_local_certificate()
+            );
             Err(synthetic_nonconvergent_error())
         });
+        assert!(
+            repair_called,
+            "{D}D deletion must reach injected repair: {result:?}"
+        );
         let err = result.expect_err("forced repair failure should make deletion fail");
-        match err {
-            DeleteVertexError::InvariantViolation { source } => match source.as_ref() {
-                InvariantError::Delaunay {
-                    source:
-                        DelaunayTriangulationValidationError::RepairOperationFailed {
-                            operation: DelaunayRepairOperation::VertexRemoval,
-                            source,
-                        },
-                } if matches!(
-                    source.as_ref(),
-                    DelaunayRepairError::NonConvergent { max_flips: 0, .. }
-                ) => {}
-                InvariantError::Triangulation {
-                    source: TriangulationValidationError::OrientationPromotionNonConvergence { .. },
-                }
-                | InvariantError::Tds {
-                    source: TdsError::FacetSharingViolation { .. },
-                } => {}
-                other => panic!(
-                    "expected vertex-deletion rollback error from forced repair path, got {other:?}"
-                ),
-            },
-            other => panic!(
-                "expected vertex-deletion rollback error from forced repair path, got {other:?}"
-            ),
-        }
-
-        assert_eq!(dt.number_of_vertices(), vertex_count_before);
-        assert_eq!(dt.number_of_simplices(), simplex_count_before);
         assert_eq!(
-            dt.insertion_state.last_inserted_simplex, last_inserted_simplex_before,
-            "delete_vertex rollback should restore last_inserted_simplex"
+            err,
+            DeleteVertexError::InvariantViolation {
+                source: Box::new(InvariantError::Delaunay {
+                    source: DelaunayTriangulationValidationError::RepairOperationFailed {
+                        operation: DelaunayRepairOperation::VertexRemoval,
+                        source: Box::new(synthetic_nonconvergent_error()),
+                    },
+                }),
+            }
         );
-        assert_eq!(
-            dt.spatial_index
-                .as_ref()
-                .map(HashGridIndex::<D>::debug_snapshot),
-            spatial_index_before,
-            "delete_vertex rollback should restore spatial_index"
-        );
-        assert!(dt.vertices().any(|(_, v)| v.uuid() == inserted_uuid));
-        assert!(dt.as_triangulation().validate().is_ok());
+        assert_eq!(deletion_owner_snapshot(dt), before);
+        dt.validate()
+            .expect("rollback must restore validity through Level 5");
     }
 
     fn assert_delete_vertex_rollback<const D: usize>()
@@ -518,8 +559,11 @@ mod tests {
         init_tracing();
         let vertices = simplex_vertices::<D>();
 
-        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, u32, u32, D> =
+            DelaunayTriangulationBuilder::new(&vertices)
+                .simplex_data_type::<u32>()
+                .build()
+                .unwrap();
         dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
             .unwrap();
 
@@ -534,7 +578,8 @@ mod tests {
             .expect("Inserted vertex not found");
         assert_eq!(vertex_key, inserted_key);
 
-        assert_forced_delete_vertex_rolls_back(&mut dt, vertex_key, inserted_uuid);
+        assert_eq!(incident_simplex_count(&dt, vertex_key), D + 1);
+        assert_forced_delete_vertex_rolls_back(&mut dt, vertex_key);
     }
 
     fn assert_delete_vertex_fallback_rollback<const D: usize>()
@@ -542,41 +587,53 @@ mod tests {
         AdaptiveKernel<f64>: ExactPredicates<D>,
     {
         init_tracing();
-        let vertices = simplex_vertices::<D>();
+        let mut vertices = simplex_vertices::<D>();
+        let (removed_uuid, expected_incidence) = if D < 4 {
+            // A bipyramid over a (D-1)-simplex has 2*D facets. Its center
+            // has 2*D incident simplices, forcing fan deletion of a convex cavity.
+            let center_uuid = vertices[0].uuid();
+            let mut base_vertex = [-1.0; D];
+            base_vertex[D - 1] = 0.0;
+            vertices.push(vertex!(base_vertex; data = 101).unwrap());
+            let mut opposite_apex = [0.0; D];
+            opposite_apex[D - 1] = -1.0;
+            vertices.push(vertex!(opposite_apex; data = 102).unwrap());
+            (center_uuid, 2 * D)
+        } else {
+            // General fan deletion revokes high-dimensional PL-link provenance.
+            // Removing this boundary vertex leaves a single simplex, whose links
+            // can be certified directly, so the repair stage remains reachable.
+            // Strictly beyond only x[0] = 0; positive transverse coordinates
+            // avoid a collinear hull edge and construction-time perturbation.
+            let mut coords = [0.125; D];
+            coords[0] = -1.0;
+            let boundary_vertex = vertex!(coords; data = 101).unwrap();
+            let removed_uuid = boundary_vertex.uuid();
+            vertices.push(boundary_vertex);
+            (removed_uuid, 1)
+        };
 
-        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, u32, u32, D> =
+            DelaunayTriangulationBuilder::new(&vertices)
+                .simplex_data_type::<u32>()
+                .build()
+                .unwrap();
         dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
             .unwrap();
 
-        let mut inserted_vertices = Vec::new();
-        for point_index in 0..(D + 3) {
-            let inserted_vertex = rollback_probe_vertex::<D>(point_index);
-            let inserted_uuid = inserted_vertex.uuid();
-            let vertex_key = dt
-                .insert_vertex(inserted_vertex)
-                .expect("rollback fallback fixture insertion should succeed");
-            inserted_vertices.push((vertex_key, inserted_uuid));
-        }
-
-        let (vertex_key, inserted_uuid, incident_simplices) = inserted_vertices
-            .iter()
-            .find_map(|&(vertex_key, inserted_uuid)| {
-                let incident_simplices = incident_simplex_count(&dt, vertex_key);
-                (incident_simplices != D + 1).then_some((
-                    vertex_key,
-                    inserted_uuid,
-                    incident_simplices,
-                ))
-            })
-            .expect("expected at least one inserted vertex with a non-simplex star");
+        let vertex_key = dt.tri.tds.vertex_key_from_uuid(&removed_uuid).unwrap();
+        assert_eq!(
+            incident_simplex_count(&dt, vertex_key),
+            expected_incidence,
+            "fallback fixture must have the expected vertex star"
+        );
         assert_ne!(
-            incident_simplices,
+            expected_incidence,
             D + 1,
-            "fallback rollback fixture must avoid the inverse-k=1 simplex-star path"
+            "inverse-k1 requires D+1 incident simplices"
         );
 
-        assert_forced_delete_vertex_rolls_back(&mut dt, vertex_key, inserted_uuid);
+        assert_forced_delete_vertex_rolls_back(&mut dt, vertex_key);
     }
 
     macro_rules! gen_delete_vertex_rollback_tests {
@@ -603,8 +660,11 @@ mod tests {
     #[test]
     fn delete_vertex_final_validation_rolls_back_owner_coupled_state() {
         let vertices = simplex_vertices::<2>();
-        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, u32, u32, 2> =
+            DelaunayTriangulationBuilder::new(&vertices)
+                .simplex_data_type::<u32>()
+                .build()
+                .unwrap();
         dt.try_set_topology_guarantee(TopologyGuarantee::PLManifold)
             .unwrap();
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::EveryInsertion;
@@ -619,24 +679,8 @@ mod tests {
             .simplices()
             .find_map(|(key, simplex)| simplex.contains_vertex(vertex_key).then_some(key))
             .unwrap();
-        let hint_simplex = dt.simplices().next().map(|(key, _)| key);
-        dt.insertion_state.last_inserted_simplex = hint_simplex;
-        let mut spatial_index = HashGridIndex::<2>::try_new(1.0).unwrap();
-        for (key, vertex) in dt.vertices() {
-            spatial_index.insert_vertex(key, vertex.point().coords());
-        }
-        dt.spatial_index = Some(spatial_index);
-
-        let tds_before = dt.tri.tds.clone_for_rollback();
-        let owner_before = dt.tri.tds.topology_owner_id();
-        let generation_before = dt.tri.tds.generation();
-        let last_inserted_simplex_before = dt.insertion_state.last_inserted_simplex;
-        let spatial_index_before = dt
-            .spatial_index
-            .as_ref()
-            .map(HashGridIndex::<2>::debug_snapshot);
-        let report_domain_before = dt.euclidean_report_domain;
-        assert!(report_domain_before.supports_local_certificate());
+        prepare_rollback_owner(&mut dt);
+        let before = deletion_owner_snapshot(&dt);
         let mut observed_invalid_report_domain = false;
 
         let result = dt.delete_vertex_with_repair(vertex_key, |delaunay, _, _, _| {
@@ -663,20 +707,7 @@ mod tests {
                     }
                 )
         );
-        assert_eq!(dt.tri.tds, tds_before);
-        assert_eq!(dt.tri.tds.topology_owner_id(), owner_before);
-        assert_eq!(dt.tri.tds.generation(), generation_before);
-        assert_eq!(
-            dt.insertion_state.last_inserted_simplex,
-            last_inserted_simplex_before
-        );
-        assert_eq!(
-            dt.spatial_index
-                .as_ref()
-                .map(HashGridIndex::<2>::debug_snapshot),
-            spatial_index_before
-        );
-        assert_eq!(dt.euclidean_report_domain, report_domain_before);
+        assert_eq!(deletion_owner_snapshot(&dt), before);
         dt.validate().unwrap();
     }
 

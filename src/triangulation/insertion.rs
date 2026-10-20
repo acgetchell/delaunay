@@ -42,7 +42,7 @@ use crate::core::operations::{
     InsertionTelemetryMode, SuspicionFlags,
 };
 use crate::core::simplex::Simplex;
-use crate::core::tds::{InvariantError, SimplexKey, TdsError, VertexKey};
+use crate::core::tds::{SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::util::coords_within_epsilon_inclusive;
 use crate::core::vertex::Vertex;
@@ -60,6 +60,7 @@ use crate::triangulation::rollback::{
     TriangulationRollbackTransaction, TriangulationRollbackWindow,
 };
 use crate::triangulation::validation::TopologyConstructionProvenance;
+use crate::validation_report::InvariantError;
 
 /// Maximum number of repair iterations for fixing non-manifold topology after insertion.
 ///
@@ -1875,7 +1876,6 @@ where
                         ck,
                         c,
                         "post-insertion orientation audit",
-                        "orientation predicate failed during post-insertion audit",
                     ) {
                         Ok(o) if o > 0 => pos += 1,
                         Ok(o) if o < 0 => neg += 1,

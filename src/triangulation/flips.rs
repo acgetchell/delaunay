@@ -821,8 +821,8 @@ mod tests {
     use super::*;
     use crate::DelaunayTriangulation;
     use crate::core::facet::FacetError;
-    use crate::core::tds::InvariantError;
     use crate::triangulation::validation::TopologyConstructionProvenance;
+    use crate::validation_report::InvariantError;
     use crate::vertex;
     use std::assert_matches;
 

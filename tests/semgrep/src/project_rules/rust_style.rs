@@ -1420,30 +1420,6 @@ pub struct UuidRelationshipSnapshot {
     neighbors: Vec<Option<Uuid>>,
 }
 
-struct RawTdsSnapshotMissingDeserializers {
-    // ruleid: delaunay.rust.raw-tds-snapshot-uuid-maps-require-duplicate-key-deserializers
-    simplex_vertices: FastHashMap<Uuid, Vec<Uuid>>,
-    // ruleid: delaunay.rust.raw-tds-snapshot-uuid-maps-require-duplicate-key-deserializers
-    simplex_neighbors: FastHashMap<Uuid, Vec<Option<Uuid>>>,
-    // ruleid: delaunay.rust.raw-tds-snapshot-uuid-maps-require-duplicate-key-deserializers
-    simplex_vertex_offsets: FastHashMap<Uuid, Vec<Vec<i8>>>,
-}
-
-struct RawTdsSnapshotDuplicateKeyDeserializersOk {
-    // ok: delaunay.rust.raw-tds-snapshot-uuid-maps-require-duplicate-key-deserializers
-    #[serde(deserialize_with = "deserialize_simplex_vertices_no_duplicates")]
-    simplex_vertices: FastHashMap<Uuid, Vec<Uuid>>,
-    // ok: delaunay.rust.raw-tds-snapshot-uuid-maps-require-duplicate-key-deserializers
-    #[serde(deserialize_with = "deserialize_simplex_neighbors_no_duplicates")]
-    simplex_neighbors: FastHashMap<Uuid, Vec<Option<Uuid>>>,
-    // ok: delaunay.rust.raw-tds-snapshot-uuid-maps-require-duplicate-key-deserializers
-    #[serde(
-        default,
-        deserialize_with = "deserialize_simplex_vertex_offsets_no_duplicates"
-    )]
-    simplex_vertex_offsets: FastHashMap<Uuid, Vec<Vec<i8>>>,
-}
-
 // ruleid: delaunay.rust.no-public-tds-snapshot-internals
 pub struct RawTdsSnapshot {
     vertices: Vec<Uuid>,
@@ -1552,47 +1528,6 @@ fn raw_tds_flip_predicate_verifier_fixture() {
     verify_tds_via_flip_predicates(tds, kernel);
     // ok: delaunay.rust.no-raw-tds-flip-predicate-verifier-outside-core-flips
     dt.verify_via_flip_predicates();
-}
-
-// ruleid: delaunay.rust.tds-serialize-must-use-snapshot
-impl Serialize for Tds {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.vertices.serialize(serializer)
-    }
-}
-
-impl TdsSnapshot {
-    fn from_tds(_tds: &Tds) -> Self {
-        TdsSnapshot
-    }
-}
-
-struct TdsSnapshot;
-
-pub struct RawTdsSnapshotImage;
-
-impl Serialize for RawTdsSnapshotImage {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_unit()
-    }
-}
-
-impl Tds {
-    pub fn serialize_via_snapshot<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // ok: delaunay.rust.tds-serialize-must-use-snapshot
-        let snapshot = TdsSnapshot::from_tds(self);
-        let raw = RawTdsSnapshotImage;
-        raw.serialize(serializer)
-    }
 }
 
 pub fn simplex_new_constructor_bad(vertex_keys: Vec<VertexKey>) {

@@ -21,8 +21,7 @@ use crate::core::facet::{
 };
 use crate::core::simplex::Simplex;
 use crate::core::tds::{
-    InvariantError, InvariantViolation, SimplexKey, TdsError, TdsMutationError,
-    TriangulationValidationReport, VertexKey,
+    SimplexKey, TdsError, TdsInvariantViolation, TdsMutationError, TdsValidationReport, VertexKey,
 };
 use crate::core::traits::data_type::DataCopy;
 use crate::core::vertex::Vertex;
@@ -43,6 +42,7 @@ use crate::triangulation::validation::{
     TopologyGuarantee, ValidationConfigurationError, ValidationPolicy,
 };
 use crate::validation::DelaunayTriangulationValidationError;
+use crate::validation_report::InvariantError;
 use thiserror::Error;
 
 /// Error returned when filling simplex payloads from a secondary map.
@@ -383,7 +383,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
 
     /// Returns the first actionable Level 2 structural diagnostic, if any.
     #[must_use]
-    pub fn structure_diagnostic(&self) -> Option<InvariantViolation> {
+    pub fn structure_diagnostic(&self) -> Option<TdsInvariantViolation> {
         self.tri.structure_diagnostic()
     }
 
@@ -391,9 +391,9 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationReport`] containing all invariant
+    /// Returns a [`TdsValidationReport`] containing all invariant
     /// violations if any structural validation step fails.
-    pub fn structure_report(&self) -> Result<(), TriangulationValidationReport> {
+    pub fn structure_report(&self) -> Result<(), TdsValidationReport> {
         self.tri.structure_report()
     }
 
@@ -1237,7 +1237,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let mut dt = DelaunayIncrementalBuilder::<_, (), (), 2>::new()
-    ///     .finish()?;
+    ///     .finish().map_err(delaunay::RefinementError::into_reason)?;
     ///
     /// dt.try_set_validation_policy(ValidationPolicy::Always)?;
     /// assert_eq!(
@@ -1284,7 +1284,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let mut dt = DelaunayIncrementalBuilder::<_, (), (), 3>::new()
-    ///     .finish()?;
+    ///     .finish().map_err(delaunay::RefinementError::into_reason)?;
     /// dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)?;
     ///
     /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);

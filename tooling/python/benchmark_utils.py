@@ -115,7 +115,6 @@ _RECOVERABLE_CLI_ERRORS: ExceptionFamily = (
 )
 _CI_PERFORMANCE_METRIC_PARSE_ERRORS: ExceptionFamily = (KeyError, ValueError)
 _CI_PERFORMANCE_SIDECAR_LOAD_ERRORS: ExceptionFamily = (OSError, json.JSONDecodeError)
-_NUMERICAL_ACCURACY_PARSE_ERRORS: ExceptionFamily = (IndexError, TypeError, ValueError)
 _CARGO_MANIFEST_LOAD_ERRORS: ExceptionFamily = (OSError, tomllib.TOMLDecodeError)
 _LOCAL_RUSTC_VERSION_ERRORS: ExceptionFamily = (ExecutableNotFoundError, OSError, subprocess.SubprocessError)
 _BENCHMARK_TIMEOUT_PARSE_ERRORS: ExceptionFamily = (ValueError, TypeError)
@@ -431,9 +430,6 @@ class ResolvedPerformanceRequest:
     worktree_ref: str
     tags_to_fetch: tuple[str, ...] = ()
 
-    def __post_init__(self) -> None:
-        """Reject contract crossings before any tag fetch or benchmark worktree."""
-
 
 @dataclass(frozen=True)
 class PerformanceRequestOptions:
@@ -468,6 +464,7 @@ class CriterionEstimate:
     mean_ns: float
     low_ns: float
     high_ns: float
+    confidence_level: float | None
 
 
 def ci_suite_group_key(first_path_part: str) -> str | None:
@@ -722,7 +719,7 @@ def _load_criterion_estimate(estimates_path: Path) -> CriterionEstimate | None:
         return None
     if estimate.lower is None or estimate.upper is None:
         return None
-    return CriterionEstimate(mean_ns=estimate.point, low_ns=estimate.lower, high_ns=estimate.upper)
+    return CriterionEstimate(mean_ns=estimate.point, low_ns=estimate.lower, high_ns=estimate.upper, confidence_level=estimate.confidence_level)
 
 
 def _collect_ci_suite_estimates(criterion_dir: Path) -> list[tuple[tuple[str, ...], Path]]:
@@ -782,6 +779,7 @@ class CiPerformanceResult:
     mean_ns: float
     low_ns: float
     high_ns: float
+    confidence_level: float | None
 
     @property
     def variant(self) -> str:
@@ -1053,7 +1051,7 @@ def _measure_suite_into(
         timeout=options.bench_timeout * len(targets),
         probes=(("rustc", ("rustc", "--version")),),
         dependencies=(("criterion", "Cargo.lock"),),
-        context=(("delaunay.controller-sha256", controller_digest),),
+        context=(("delaunay.controller-sha256", controller_digest), ("delaunay.cargo-profile", options.cargo_profile)),
     )
     tag = _current_package_tag(project_root)
     before = capture_provenance(project_root, configuration, tag, mode="independent-release")
@@ -1244,9 +1242,6 @@ class PerformanceSummaryGenerator:
         # Path for storing Criterion benchmark results
         self.circumsphere_results_dir = project_root / "target" / "criterion"
 
-        # Storage for numerical accuracy data from benchmarks
-        self.numerical_accuracy_data: dict[str, str] | None = None
-
         # Extract current version and date information
         self.current_version = self._get_current_version()
         self.current_date = self._get_version_date()
@@ -1289,17 +1284,16 @@ class PerformanceSummaryGenerator:
                 if cargo_profile is None:
                     cargo_profile = BENCHMARK_BUILD_FLAVOR
                 try:
-                    outputs = run_release_signal_measurement_plan(
+                    run_release_signal_measurement_plan(
                         self.project_root,
                         cargo_profile=cargo_profile,
                         bench_timeout=bench_timeout,
                     )
-                    self.numerical_accuracy_data = self._parse_numerical_accuracy_output(
-                        outputs["circumsphere_containment"],
-                    )
                 except _RECOVERABLE_CLI_ERRORS as error:
-                    logger.debug("Fresh release-signal benchmark plan failed: %s", error)
-                    print("❌ Fresh benchmark run failed; summary publication was not attempted", file=sys.stderr)
+                    print(
+                        "❌ Fresh benchmark run failed; summary publication was not attempted\n" + format_exception_diagnostics(error),
+                        file=sys.stderr,
+                    )
                     return False
 
             evidence = self._collect_summary_evidence()
@@ -1313,14 +1307,14 @@ class PerformanceSummaryGenerator:
 
             # Render from the evidence that was validated above, then publish only
             # after the complete content has been durably written beside the target.
-            content = self._generate_markdown_content(evidence=evidence)
+            content = self._generate_markdown_content(evidence=evidence, require_measurement_evidence=strict or run_benchmarks)
             _write_text_atomic(output_path, content)
 
             print(f"📊 Generated performance summary: {output_path}")
             return True
 
         except _RECOVERABLE_CLI_ERRORS as e:
-            print(f"❌ Failed to generate performance summary: {e}", file=sys.stderr)
+            print(f"❌ Failed to generate performance summary: {format_exception_diagnostics(e)}", file=sys.stderr)
             return False
 
     def _collect_ci_performance_summary_evidence(self) -> CiPerformanceSummaryEvidence:
@@ -1431,17 +1425,43 @@ class PerformanceSummaryGenerator:
         )
         return lines
 
+    def _measurement_provenance_lines(self, *, required: bool) -> list[str]:
+        """Render verified retained provenance, or mark it unavailable when optional."""
+        if not (self.circumsphere_results_dir / "delaunay-evidence.json").exists():
+            return []
+        try:
+            measurement = _load_fresh_measurement(self.circumsphere_results_dir).sources[0][1]
+        except _RECOVERABLE_CLI_ERRORS as error:
+            if required:
+                raise
+            logger.warning("Retained measurement evidence is stale or unreadable: %s", format_exception_diagnostics(error))
+            return ["- **Measurement provenance**: unavailable; retained evidence is stale or unreadable."]
+
+        context = dict(measurement.context)
+        return [
+            f"- **Measured base commit**: {measurement.revision}",
+            f"- **Measured source SHA-256**: {measurement.source_sha256}",
+            f"- **Measured harness SHA-256**: {measurement.harness_sha256}",
+            f"- **Measured Cargo profile**: {context.get('delaunay.cargo-profile', 'unreported')}",
+            "- **Scientific preflight**: passed; complete raw Criterion evidence verified",
+            "",
+            "The measured source and harness digests identify working-tree contents,",
+            "including uncommitted changes; the base commit alone does not identify this run.",
+        ]
+
     def _generate_markdown_content(
         self,
         generator_name: str | None = None,
         *,
         evidence: PerformanceSummaryEvidence | None = None,
+        require_measurement_evidence: bool = False,
     ) -> str:
         """
         Generate the complete markdown content for performance results.
 
         Args:
             generator_name: Name of the tool generating the summary (for attribution)
+            require_measurement_evidence: Reject stale or unreadable retained measurement evidence.
 
         Returns:
             Formatted markdown content as string
@@ -1487,6 +1507,8 @@ class PerformanceSummaryGenerator:
             logger.debug("Could not get hardware info: %s", e)
             lines.append("- **Hardware**: Unknown")
 
+        lines.extend(self._measurement_provenance_lines(required=require_measurement_evidence))
+
         if lines[-1] != "":
             lines.append("")
         lines.extend(
@@ -1508,7 +1530,7 @@ class PerformanceSummaryGenerator:
 
         # Add circumsphere-specific implementation notes next to the data they
         # explain.
-        lines.extend(self._get_implementation_notes())
+        lines.extend(self._get_implementation_notes(evidence.circumsphere))
 
         # Add static content sections (moved to end)
         lines.extend(self._get_static_sections())
@@ -1588,93 +1610,6 @@ class PerformanceSummaryGenerator:
             return datetime.now(UTC).strftime("%Y-%m-%d")
         except _RECOVERABLE_CLI_ERRORS:
             return datetime.now(UTC).strftime("%Y-%m-%d")
-
-    def _parse_numerical_accuracy_output(self, stdout: str) -> dict[str, str] | None:
-        """
-        Parse numerical accuracy data from circumsphere benchmark stdout.
-
-        Args:
-            stdout: The stdout output from the circumsphere benchmark
-
-        Returns:
-            Dictionary with accuracy percentages or None if parsing failed
-        """
-        try:
-            lines = stdout.split("\n")
-            accuracy_data = {}
-
-            # Look for the Method Comparisons section
-            for i, line in enumerate(lines):
-                if "Method Comparisons" in line and "total tests" in line:
-                    # Parse the following lines for accuracy percentages
-                    # Expected format:
-                    # "  insphere vs insphere_distance:  1000/1000 (100.00%)"
-                    patterns = [
-                        (r"insphere vs insphere_distance:\s+\d+/\d+\s+\(([\d.]+)%\)", "insphere_distance"),
-                        (r"insphere vs insphere_lifted:\s+\d+/\d+\s+\(([\d.]+)%\)", "insphere_lifted"),
-                        (r"insphere_distance vs insphere_lifted:\s+\d+/\d+\s+\(([\d.]+)%\)", "distance_lifted"),
-                        (r"All three methods agree:\s+\d+/\d+\s+\(([\d.]+)%\)", "all_agree"),
-                    ]
-
-                    # Look at the next several lines for the percentages
-                    for j in range(i + 1, min(i + 6, len(lines))):
-                        check_line = lines[j]
-                        for pattern, key in patterns:
-                            match = re.search(pattern, check_line)
-                            if match:
-                                accuracy_data[key] = f"{float(match.group(1)):.1f}%"
-                    break
-
-            return accuracy_data or None
-
-        except _NUMERICAL_ACCURACY_PARSE_ERRORS:
-            return None
-
-    def _get_numerical_accuracy_analysis(self) -> list[str]:
-        """
-        Generate numerical accuracy analysis section using dynamic data if available.
-
-        Returns:
-            List of markdown lines with numerical accuracy analysis
-        """
-        lines = [
-            "",
-            "### Numerical Accuracy Analysis",
-            "",
-            "Based on random test cases:",
-            "",
-        ]
-
-        if self.numerical_accuracy_data:
-            # Use actual dynamic data from benchmark runs
-            insphere_distance = self.numerical_accuracy_data.get("insphere_distance", "unknown")
-            insphere_lifted = self.numerical_accuracy_data.get("insphere_lifted", "unknown")
-            distance_lifted = self.numerical_accuracy_data.get("distance_lifted", "unknown")
-            all_agree = self.numerical_accuracy_data.get("all_agree", "unknown")
-
-            lines.extend(
-                [
-                    f"- **insphere vs insphere_distance**: {insphere_distance} agreement",
-                    f"- **insphere vs insphere_lifted**: {insphere_lifted} agreement (different algorithms)",
-                    f"- **insphere_distance vs insphere_lifted**: {distance_lifted} agreement",
-                    f"- **All three methods agree**: {all_agree} (expected due to different numerical approaches)",
-                ],
-            )
-        else:
-            # Use reference data when no fresh benchmark data is available
-            lines.extend(
-                [
-                    "- **insphere vs insphere_distance**: ~82% agreement (reference data)",
-                    "- **insphere vs insphere_lifted**: ~0% agreement (different algorithms, reference data)",
-                    "- **insphere_distance vs insphere_lifted**: ~18% agreement (reference data)",
-                    "- **All three methods agree**: ~0% (expected due to different numerical approaches, reference data)",
-                    "",
-                    "*Note: To get current numerical accuracy data, run with `--run-benchmarks` flag.*",
-                ],
-            )
-
-        lines.append("")
-        return lines
 
     def _parse_circumsphere_benchmark_results(self) -> list[CircumsphereTestCase]:
         """
@@ -1886,14 +1821,6 @@ class PerformanceSummaryGenerator:
         """Extract a human-readable input size from Criterion benchmark path parts."""
         return path_parts[-1] if len(path_parts) > 2 else "fixed fixture"
 
-    @staticmethod
-    def _load_criterion_estimate(estimates_path: Path) -> tuple[float, float, float] | None:
-        """Load mean and confidence interval values from a Criterion estimates file."""
-        estimate = _load_criterion_estimate(estimates_path)
-        if estimate is None:
-            return None
-        return estimate.mean_ns, estimate.low_ns, estimate.high_ns
-
     def _parse_ci_performance_suite_results(self) -> list[CiPerformanceResult]:
         """
         Parse Criterion data for the versioned ci_performance_suite benchmark IDs.
@@ -1908,7 +1835,7 @@ class PerformanceSummaryGenerator:
 
         results = []
         for path_parts, estimates_path in _collect_ci_suite_estimates(criterion_dir):
-            estimates = self._load_criterion_estimate(estimates_path)
+            estimates = _load_criterion_estimate(estimates_path)
             if estimates is None:
                 continue
 
@@ -1917,16 +1844,16 @@ class PerformanceSummaryGenerator:
             if group_key is None:
                 continue
 
-            mean_ns, low_ns, high_ns = estimates
             results.append(
                 CiPerformanceResult(
                     group_key=group_key,
                     benchmark_id=benchmark_id,
                     dimension=ci_suite_dimension(benchmark_id),
                     input_size=self._ci_suite_input_size(path_parts),
-                    mean_ns=mean_ns,
-                    low_ns=low_ns,
-                    high_ns=high_ns,
+                    mean_ns=estimates.mean_ns,
+                    low_ns=estimates.low_ns,
+                    high_ns=estimates.high_ns,
+                    confidence_level=estimates.confidence_level,
                 ),
             )
 
@@ -1961,7 +1888,7 @@ class PerformanceSummaryGenerator:
             "This suite is the versioned benchmark contract for public Delaunay workflows.",
             "It covers construction, hull extraction, validation, incremental insertion,",
             "boundary traversal, and explicit bistellar flip roundtrips.",
-            "Combined input counts use `v` for vertices and `s` for simplices (for example, `120v/226s`).",
+            "Input counts use `v` for vertices and `s` for simplices (for example, `120v/226s` or `226s`).",
             "",
         ]
 
@@ -2001,17 +1928,19 @@ class PerformanceSummaryGenerator:
                     "",
                     f"Public API: `{public_api}`",
                     "",
-                    "| Benchmark ID | Dimension | Input | Variant | Mean | 95% CI |",
-                    "|--------------|-----------|-------|---------|------|--------|",
+                    "| Benchmark ID | Dimension | Input | Variant | Mean | CI | Confidence |",
+                    "|--------------|-----------|-------|---------|------|----|------------|",
                 ],
             )
 
             for result in group_results:
                 confidence_interval = f"{self._format_duration_ns(result.low_ns)} - {self._format_duration_ns(result.high_ns)}"
+                confidence = "unreported" if result.confidence_level is None else f"{result.confidence_level * 100:g}%"
                 input_size = re.sub(r"^vertices_(\d+)_simplices_(\d+)$", r"\1v/\2s", result.input_size)
+                input_size = re.sub(r"^simplices_(\d+)$", r"\1s", input_size)
                 lines.append(
                     f"| `{result.benchmark_id}` | {result.dimension} | {input_size} | {result.variant} | "
-                    f"{self._format_duration_ns(result.mean_ns)} | {confidence_interval} |",
+                    f"{self._format_duration_ns(result.mean_ns)} | {confidence_interval} | {confidence} |",
                 )
 
             lines.append("")
@@ -2077,15 +2006,15 @@ class PerformanceSummaryGenerator:
                 [
                     f"#### Single Query Performance ({dimension})",
                     "",
-                    "| Test Case | insphere | insphere_distance | insphere_lifted | Winner |",
+                    "| Test Case | insphere | insphere_distance | insphere_lifted | Lowest mean |",
                     "|-----------|----------|------------------|-----------------|---------|",
                 ],
             )
 
             # Add single query performance data from parsed results
             for test_case in dim_cases:
-                winner = test_case.get_winner()
-                winner_text = f"**{winner}**" if winner else "N/A"
+                lowest_methods = self._lowest_mean_methods(test_case)
+                winner_text = f"**{', '.join(lowest_methods)}**" if lowest_methods else "N/A"
 
                 # Convert nanoseconds to a more readable format
                 methods_formatted = {}
@@ -2135,240 +2064,59 @@ class PerformanceSummaryGenerator:
         )
         return lines
 
-    def _get_dynamic_analysis_sections(self) -> list[str]:
-        """
-        Generate dynamic analysis sections based on performance data.
+    @staticmethod
+    def _lowest_mean_methods(test_case: CircumsphereTestCase) -> tuple[str, ...]:
+        """Identify all minima using unrounded means, without a significance claim."""
+        minimum = min((method.time_ns for method in test_case.methods.values()), default=None)
+        return tuple(sorted(name for name, method in test_case.methods.items() if method.time_ns == minimum))
 
-        Returns:
-            List of markdown lines with dynamic analysis
-        """
-        test_data = self._parse_circumsphere_benchmark_results()
-        performance_ranking = self._analyze_performance_ranking(test_data)
-
+    @staticmethod
+    def _get_implementation_notes(evidence: CircumsphereSummaryEvidence) -> list[str]:
+        """Derive descriptive conclusions from the evidence used by the tables."""
         lines = [
-            "## Circumsphere Predicate Analysis",
-            "",
-            "### Performance Ranking",
-            "",
-        ]
-
-        # Generate dynamic ranking based on data
-        for i, (method, _avg_performance, description) in enumerate(performance_ranking, 1):
-            lines.append(f"{i}. **{method}** - {description}")
-
-        # Add numerical accuracy analysis with dynamic data if available
-        lines.extend(self._get_numerical_accuracy_analysis())
-
-        lines.extend(
-            [
-                "### Recommendations",
-                "",
-            ],
-        )
-
-        # Generate dynamic recommendations based on performance ranking
-        lines.extend(self._generate_dynamic_recommendations(performance_ranking))
-
-        # Add dynamic conclusion based on performance ranking
-        if performance_ranking:
-            lines.extend(
-                [
-                    "",
-                    "### Conclusion",
-                    "",
-                    "All three methods are mathematically correct and produce valid results. Performance characteristics vary by dimension:",
-                    "",
-                ],
-            )
-
-            # Add dimension-specific winners
-            for method, _, desc in performance_ranking:
-                if "best in" in desc:
-                    lines.append(f"- `{method}` {desc}")
-
-            lines.extend(
-                [
-                    "",
-                    "For general-purpose applications, choose based on your primary use case:",
-                    "",
-                    "- **Performance-critical**: Use the method that performs best in your target dimension",
-                    "- **Numerical stability**: Use `insphere` for its proven mathematical properties",
-                    "- **Educational/debugging**: Use `insphere_distance` for its transparent algorithm",
-                    "",
-                ],
-            )
-
-        return lines
-
-    @staticmethod
-    def _collect_method_performance(test_data: list[CircumsphereTestCase]) -> tuple[dict[str, list[float]], dict[str, list[str]]]:
-        """Collect per-method timings and dimension wins, excluding trivial boundary cases."""
-        method_totals: dict[str, list[float]] = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
-        method_wins: dict[str, list[str]] = {"insphere": [], "insphere_distance": [], "insphere_lifted": []}
-
-        for test_case in test_data:
-            if test_case.is_boundary_case:
-                continue
-
-            winner = test_case.get_winner()
-            if winner:
-                method_wins[winner].append(test_case.dimension)
-
-            for method_name, perf_data in test_case.methods.items():
-                method_totals[method_name].append(perf_data.time_ns)
-
-        return method_totals, method_wins
-
-    @staticmethod
-    def _ranking_description(method: str, avg_time: float, fastest_time: float, method_wins: dict[str, list[str]]) -> str:
-        """Describe relative method performance for the dynamic ranking table."""
-        if avg_time == float("inf"):
-            return "No benchmark data available"
-
-        slowdown = (avg_time / fastest_time) if fastest_time > 0 and fastest_time != float("inf") else 1
-        wins = method_wins.get(method, [])
-        if not wins:
-            return f"~{slowdown:.1f}x slower than fastest on average"
-
-        dims_text = ", ".join(sorted(set(wins)))
-        if slowdown > 1.01:
-            return f"(best in {dims_text}) - ~{slowdown:.1f}x average vs fastest"
-        return f"(best in {dims_text}) - Best average performance"
-
-    def _analyze_performance_ranking(self, test_data: list[CircumsphereTestCase]) -> list[tuple[str, float, str]]:
-        """
-        Analyze performance data to generate dynamic rankings.
-
-        Args:
-            test_data: List of CircumsphereTestCase objects
-
-        Returns:
-            List of tuples (method_name, average_performance, description)
-        """
-        method_totals, method_wins = self._collect_method_performance(test_data)
-
-        # Calculate averages and determine ranking
-        method_averages = {}
-        for method, times in method_totals.items():
-            if times:
-                method_averages[method] = sum(times) / len(times)
-            else:
-                method_averages[method] = float("inf")
-
-        # Sort by performance (lowest time first)
-        sorted_methods = sorted(method_averages.items(), key=lambda x: x[1])
-
-        rankings = []
-        if sorted_methods:
-            fastest_time = sorted_methods[0][1]
-
-            for method, avg_time in sorted_methods:
-                rankings.append((method, avg_time, self._ranking_description(method, avg_time, fastest_time, method_wins)))
-
-        return rankings
-
-    def _generate_dynamic_recommendations(self, performance_ranking: list[tuple[str, float, str]]) -> list[str]:
-        """
-        Generate dynamic recommendations based on performance ranking.
-
-        Args:
-            performance_ranking: List of performance ranking tuples
-
-        Returns:
-            List of markdown lines with recommendations
-        """
-        if not performance_ranking:
-            return []
-
-        lines = [
-            "#### Method Selection Guide",
-            "",
-            "**All three methods are mathematically correct** (they produce valid insphere test results).",
-            "Choose based on your specific requirements:",
-            "",
-        ]
-
-        # Add dimension-specific performance recommendations
-        lines.append("##### Performance Optimization by Dimension")
-        lines.append("")
-
-        for method, _avg_time, desc in performance_ranking:
-            if "best in" in desc:
-                # Extract dimension info from description
-                lines.append(f"- **`{method}`**: {desc}")
-
-        lines.extend(
-            [
-                "",
-                "##### General Recommendations",
-                "",
-                "**For maximum performance**: Choose the method that performs best in your target dimension (see above)",
-                "",
-                "**For general-purpose use**: `insphere` provides consistent performance across all dimensions",
-                "and uses the standard determinant-based approach with well-understood numerical properties",
-                "",
-                "**For algorithm transparency**: `insphere_distance` explicitly calculates the circumcenter,",
-                "making it excellent for educational purposes, debugging, and algorithm validation",
-                "",
-                "##### Performance Comparison",
-                "",
-                "Average performance across all non-boundary test cases:",
-                "",
-            ],
-        )
-
-        # Add current benchmark-based summary with data-driven labels
-        if len(performance_ranking) >= 3:
-            # Format times, handling inf gracefully
-            times = []
-            for _, time, _ in performance_ranking:
-                if time == float("inf"):
-                    times.append("N/A")
-                elif time >= 1000:
-                    times.append(f"{time / 1000:.1f} µs")
-                else:
-                    times.append(f"{time:.0f} ns")
-
-            # Extract brief labels from descriptions or use position-based defaults
-            def brief_label(desc: str, position: int) -> str:
-                """Extract label from description or use position-based default."""
-                if "best in" in desc:
-                    # Extract just the dimension info without outer parens;
-                    # the caller's f-string wraps the result in (...) already.
-                    # Use removeprefix/removesuffix (not strip) to avoid
-                    # accidentally removing internal parentheses.
-                    return desc.split(" - ", maxsplit=1)[0].removeprefix("(").removesuffix(")")
-                defaults = ["fastest average", "second fastest", "third fastest"]
-                return defaults[position] if position < len(defaults) else "slower"
-
-            lines.extend(
-                [
-                    f"- `{performance_ranking[0][0]}`: {times[0]} ({brief_label(performance_ranking[0][2], 0)})",
-                    f"- `{performance_ranking[1][0]}`: {times[1]} ({brief_label(performance_ranking[1][2], 1)})",
-                    f"- `{performance_ranking[2][0]}`: {times[2]} ({brief_label(performance_ranking[2][2], 2)})",
-                ],
-            )
-
-        return lines
-
-    @staticmethod
-    def _get_implementation_notes() -> list[str]:
-        """
-        Get circumsphere-specific implementation notes.
-
-        Returns:
-            List of markdown lines with implementation notes
-        """
-        return [
             "## Implementation Notes",
             "",
             "### Dimension-Dependent InSphere Predicate Performance",
             "",
-            "The tables above are the source of truth for predicate timing. `insphere_lifted`",
-            "shows advantages in lower dimensions such as 2D/3D, while `insphere_distance`",
-            "often wins in 4D/5D; boundary cases may favor `insphere` because of early exits.",
+            "`insphere` and `insphere_lifted` share a filtered-exact relative-coordinate",
+            "determinant core. `insphere` additionally short-circuits queries at simplex",
+            "vertices. `insphere_distance` computes a circumcenter and uses a scaled",
+            "distance tolerance; it does not provide the same exact-sign guarantee.",
             "",
         ]
+        if not evidence.is_complete:
+            return [*lines, "Complete measured predicate evidence is unavailable; timing conclusions are withheld.", ""]
+
+        lines.extend(
+            [
+                "For this run, the following counts summarize which methods have the lowest",
+                "measured mean in the fixed cases shown above (basic, boundary vertex, and far",
+                "vertex). Each tied minimum counts for every tied method. Comparisons use",
+                "unrounded means; displayed timings may round to the same value.",
+                "",
+                "| Dimension | Cases | insphere | insphere_distance | insphere_lifted |",
+                "|-----------|-------|----------|-------------------|-----------------|",
+            ],
+        )
+        for dimension in sorted({case.dimension for case in evidence.test_cases}, key=lambda dimension: int(dimension.removesuffix("D"))):
+            cases = [case for case in evidence.test_cases if case.dimension == dimension]
+            minima = [PerformanceSummaryGenerator._lowest_mean_methods(case) for case in cases]
+            counts = [sum(method in methods for methods in minima) for method in ("insphere", "insphere_distance", "insphere_lifted")]
+            lines.append(f"| {dimension} | {len(cases)} | {counts[0]} | {counts[1]} | {counts[2]} |")
+        lines.extend(
+            [
+                "",
+                "These counts describe the recorded host, toolchain, build profile, and fixed",
+                "inputs. They do not establish statistical significance or a universal winner",
+                "for a dimension. The randomized, near-boundary, and cold-path workloads are",
+                "outside this fixed-case comparison. Scientific preflight must pass before",
+                "measurement, but agreement on its fixtures does not make tolerance-based",
+                "classification interchangeable with an exact determinant sign. Choose the",
+                "required correctness contract first, then measure representative workloads.",
+                "",
+            ],
+        )
+        return lines
 
     def _get_static_sections(self) -> list[str]:
         """
@@ -2427,10 +2175,10 @@ class PerformanceSummaryGenerator:
             "",
             "### Customization",
             "",
-            "For manual updates or custom analysis, modify the `PerformanceSummaryGenerator`",
-            "class in `tooling/python/benchmark_utils.py`. This provides enhanced control over",
-            "dynamic vs static content organization and supports parsing numerical accuracy",
-            "data from live benchmark runs.",
+            "To customize the report's tables, conclusions, or static instructions, update",
+            "`PerformanceSummaryGenerator` in `tooling/python/benchmark_utils.py`.",
+            "Keep interpretation tied to the retained Criterion measurements and their",
+            "recorded confidence levels.",
             "",
         ]
 
@@ -4998,18 +4746,22 @@ def _exit_called_process_error(error: subprocess.CalledProcessError) -> NoReturn
 
 
 def _cmd_bench_compare(args: argparse.Namespace, project_root: Path) -> None:
-    output = args.output if args.output.is_absolute() else project_root / args.output
-    success = write_criterion_comparison_report(
-        project_root,
-        CriterionReportRequest(
-            baseline_name=args.baseline,
-            output=output,
-            stat=args.stat,
-            suite=args.suite,
-            scope=args.scope,
-            criterion_dir=args.criterion_dir,
-        ),
-    )
+    try:
+        output = args.output if args.output.is_absolute() else project_root / args.output
+        success = write_criterion_comparison_report(
+            project_root,
+            CriterionReportRequest(
+                baseline_name=args.baseline,
+                output=output,
+                stat=args.stat,
+                suite=args.suite,
+                scope=args.scope,
+                criterion_dir=args.criterion_dir,
+            ),
+        )
+    except _RECOVERABLE_CLI_ERRORS as error:
+        print(f"bench-compare: {format_exception_diagnostics(error)}", file=sys.stderr)
+        sys.exit(1)
     sys.exit(0 if success else 2)
 
 
@@ -5048,7 +4800,7 @@ def _cmd_run_release_signal(args: argparse.Namespace, project_root: Path) -> Non
                 save_baseline=args.save_baseline,
             )
     except _RECOVERABLE_CLI_ERRORS as error:
-        print(f"run-release-signal: {error}", file=sys.stderr)
+        print(f"run-release-signal: {format_exception_diagnostics(error)}", file=sys.stderr)
         sys.exit(1)
     sys.exit(0)
 
@@ -5121,7 +4873,7 @@ def _cmd_create_release_benchmark_metadata(args: argparse.Namespace, project_roo
             output=_path_from_root(project_root, args.output),
         )
     except _RECOVERABLE_CLI_ERRORS as exc:
-        print(f"create-release-benchmark-metadata: {exc}", file=sys.stderr)
+        print(f"create-release-benchmark-metadata: {format_exception_diagnostics(exc)}", file=sys.stderr)
         sys.exit(1)
     sys.exit(0)
 
@@ -5144,7 +4896,7 @@ def _cmd_performance_local(args: argparse.Namespace, project_root: Path) -> None
         )
         report_id = generate_performance_worktree_report(output=output, config=config)
     except _RECOVERABLE_CLI_ERRORS as exc:
-        print(f"performance-local: {exc}", file=sys.stderr)
+        print(f"performance-local: {format_exception_diagnostics(exc)}", file=sys.stderr)
         sys.exit(1)
 
     print(f"Generated benchmark report in a temporary worktree and wrote it to {output}")
@@ -5175,7 +4927,7 @@ def _cmd_performance_github_assets(args: argparse.Namespace, project_root: Path)
         )
         report_id = generate_performance_worktree_report(output=output, config=config)
     except _RECOVERABLE_CLI_ERRORS as exc:
-        print(f"performance-github-assets: {exc}", file=sys.stderr)
+        print(f"performance-github-assets: {format_exception_diagnostics(exc)}", file=sys.stderr)
         sys.exit(1)
 
     print(f"Generated benchmark report from GitHub Release assets and wrote it to {output}")
@@ -5214,7 +4966,7 @@ def _cmd_performance_release(args: argparse.Namespace, project_root: Path) -> No
         )
         report_id = generate_and_promote_performance_report(output=output, current=current, archive_dir=archive_dir, config=config)
     except _RECOVERABLE_CLI_ERRORS as exc:
-        print(f"performance-release: {exc}", file=sys.stderr)
+        print(f"performance-release: {format_exception_diagnostics(exc)}", file=sys.stderr)
         sys.exit(1)
 
     print(f"Generated benchmark report in a temporary worktree and promoted it to {current}")
@@ -5245,7 +4997,7 @@ def _cmd_performance_doc(args: argparse.Namespace, project_root: Path) -> None:
             expected_current_tag=_current_package_tag(project_root),
         )
     except _RECOVERABLE_CLI_ERRORS as exc:
-        print(f"performance-doc: {exc}", file=sys.stderr)
+        print(f"performance-doc: {format_exception_diagnostics(exc)}", file=sys.stderr)
         sys.exit(1)
 
     print(f"Rendered retained artifacts and promoted the report to {current}")

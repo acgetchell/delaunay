@@ -15,8 +15,8 @@ use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::simplex::SimplexValidationError;
 use crate::core::tds::{
-    InvariantError, SimplexKey, Tds, TdsConstructionError, TdsDraft, TdsDraftError,
-    TdsDraftInsertionError, TdsError, VertexKey,
+    SimplexKey, Tds, TdsConstructionError, TdsDraft, TdsDraftError, TdsDraftInsertionError,
+    TdsError, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::util::PeriodicFacetKeyDerivationError;
@@ -33,6 +33,7 @@ use crate::triangulation::Triangulation;
 use crate::triangulation::realization::TriangulationRealizationValidationError;
 use crate::triangulation::validation::TriangulationValidationError;
 use crate::validation::DelaunayTriangulationValidationError;
+use crate::validation_report::InvariantError;
 use thiserror::Error;
 
 /// Classifies the construction phase that failed final Levels 1–3 validation.
@@ -396,9 +397,9 @@ pub enum TriangulationConstructionError {
         "Periodic image construction failed geometric orientation validation after build: {source}"
     )]
     PeriodicImageGeometricOrientationValidation {
-        /// Underlying TDS orientation validation failure.
+        /// Underlying triangulation-owned orientation validation failure.
         #[source]
-        source: Box<TdsError>,
+        source: Box<TriangulationRealizationValidationError>,
     },
 
     /// Periodic quotient reconstruction produced no representative simplices.

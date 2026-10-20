@@ -3,8 +3,7 @@
 #![forbid(unsafe_code)]
 
 use crate::core::algorithms::insertion::InsertionError;
-use crate::core::tds::{InvariantError, Tds, TdsError};
-use crate::core::traits::data_type::DataType;
+use crate::core::tds::{Tds, TdsError};
 use crate::geometry::kernel::Kernel;
 use crate::refinement::RefinementError;
 use crate::topology::traits::topological_space::GlobalTopology;
@@ -15,6 +14,7 @@ use crate::triangulation::validation::{
     TopologyCertificationEvidence, TopologyConstructionProvenance, TopologyGuarantee,
     ValidationConfigurationError, ValidationPolicy,
 };
+use crate::validation_report::InvariantError;
 use thiserror::Error;
 
 /// Selects whether [`TriangulationBuilder`] may transform TDS storage.
@@ -69,12 +69,12 @@ pub enum TriangulationBuilderError {
         #[source]
         source: Box<InvariantError>,
     },
-    /// At least one maximal simplex is geometrically degenerate.
+    /// Geometric nondegeneracy could not be established for a maximal simplex.
     #[error("geometric nondegeneracy failed during triangulation construction: {source}")]
     GeometricNondegeneracy {
         /// Typed geometric validation failure.
         #[source]
-        source: Box<TdsError>,
+        source: Box<TriangulationRealizationValidationError>,
     },
     /// The complex is not a valid realization in its selected topology model.
     #[error("realization validation failed during triangulation construction: {source}")]
@@ -117,6 +117,10 @@ pub(super) type TriangulationBuildWithTopologyEvidence<K, U, V, const D: usize> 
 /// the canonical TDS before normalization, adding storage and copy work linear
 /// in the TDS representation. Either mode returns the exact input TDS in
 /// [`TriangulationBuildFailure`] when publication fails.
+///
+/// Both modes require vertex and simplex payloads to implement [`Clone`].
+/// Canonicalizing construction uses it for the recovery snapshot; strict
+/// construction performs no payload cloning.
 ///
 /// # Examples
 ///
@@ -240,8 +244,8 @@ impl<K, U, V, const D: usize> TriangulationBuilder<K, U, V, D> {
 impl<K, U, V, const D: usize> TriangulationBuilder<K, U, V, D>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
+    U: Clone,
+    V: Clone,
 {
     /// Promotes the configured TDS into a proof-bearing Levels 1–4 triangulation.
     ///
@@ -282,7 +286,8 @@ where
 mod tests {
     use super::*;
     use crate::core::tds::TdsBuilder;
-    use crate::geometry::kernel::AdaptiveKernel;
+    use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
+    use crate::geometry::traits::coordinate::CoordinateConversionError;
     use crate::vertex;
     use std::assert_matches;
 
@@ -292,6 +297,84 @@ mod tests {
             TriangulationBuildMode::default(),
             TriangulationBuildMode::Strict
         );
+    }
+
+    #[test]
+    fn canonicalizing_builder_preserves_orientation_dimension_limit() {
+        let vertices: Vec<_> = (0..=7)
+            .map(|index| {
+                let mut coords = [0.0; 7];
+                if index > 0 {
+                    coords[index - 1] = 1.0;
+                }
+                vertex!(coords).unwrap()
+            })
+            .collect();
+        let tds = TdsBuilder::new(&vertices, &[vec![0, 1, 2, 3, 4, 5, 6, 7]])
+            .build()
+            .unwrap();
+        tds.validate().unwrap();
+        let owner = tds.topology_owner_id();
+        let generation = tds.generation();
+        let snapshot = serde_json::to_value(&tds).unwrap();
+        let (simplex_key, simplex) = tds.simplices().next().unwrap();
+        let simplex_uuid = simplex.uuid();
+        let vertex_keys = simplex.vertices().to_vec();
+        let vertex_uuids: Vec<_> = vertex_keys
+            .iter()
+            .map(|&key| tds.vertex(key).unwrap().uuid())
+            .collect();
+        let failure = TriangulationBuilder::new(tds, FastKernel::new())
+            .canonicalizing()
+            .build()
+            .unwrap_err();
+        let TriangulationBuilderError::OrientationNormalization { source } = failure.reason()
+        else {
+            panic!("expected orientation normalization failure: {failure:?}");
+        };
+        assert!(!source.is_retryable());
+        assert_matches!(source.as_ref(), InsertionError::OrientationValidationFailed {
+            source: TriangulationRealizationValidationError::PredicateFailed {
+                simplex_key: key, simplex_uuid: uuid, detail, ..
+            }
+        } if *key == simplex_key && *uuid == simplex_uuid
+            && detail.key == simplex_key && detail.uuid == simplex_uuid
+            && detail.vertices.as_slice() == vertex_keys
+            && detail.vertex_uuids.as_slice() == vertex_uuids);
+        // Error mapping is dimension-independent; the Delaunay owner itself
+        // requires an exact-predicate dimension supported by its kernel.
+        for mapped in [
+            crate::DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 2>::map_orientation_canonicalization_error(*source.clone()),
+            crate::DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 2>::map_insertion_error(*source.clone()),
+        ] {
+            assert_matches!(&mapped, crate::TriangulationConstructionError::InsertionRealizationValidation {
+                source: TriangulationRealizationValidationError::PredicateFailed {
+                    source: CoordinateConversionError::UnsupportedMatrixDimension { requested: 8, max: 7 }, ..
+                }
+            });
+            assert!(crate::DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 2>::is_non_retryable_construction_error(&mapped.into()));
+        }
+        let mut cause: &dyn std::error::Error = failure.reason();
+        let predicate = loop {
+            if let Some(source) = cause.downcast_ref::<CoordinateConversionError>() {
+                break source;
+            }
+            cause = cause
+                .source()
+                .expect("orientation failure must retain its typed predicate cause");
+        };
+        assert_matches!(
+            predicate,
+            CoordinateConversionError::UnsupportedMatrixDimension {
+                requested: 8,
+                max: 7,
+            }
+        );
+        let recovered = failure.into_owner();
+        assert_eq!(recovered.topology_owner_id(), owner);
+        assert_eq!(recovered.generation(), generation);
+        assert_eq!(serde_json::to_value(&recovered).unwrap(), snapshot);
+        recovered.validate().unwrap();
     }
 
     #[test]
@@ -457,12 +540,18 @@ mod tests {
     #[test]
     fn failed_publication_rolls_back_canonicalization_and_returns_original_tds() {
         let vertices = [
-            vertex![0.0, 0.0].unwrap(),
-            vertex![1.0, 0.0].unwrap(),
-            vertex![0.0, 1.0].unwrap(),
+            vertex![0.0, 0.0; data = String::from("origin")].unwrap(),
+            vertex![1.0, 0.0; data = String::from("x")].unwrap(),
+            vertex![0.0, 1.0; data = String::from("y")].unwrap(),
         ];
         let simplices = [vec![0, 2, 1]];
-        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+        let mut tds = TdsBuilder::new(&vertices, &simplices)
+            .simplex_data_type::<String>()
+            .build()
+            .unwrap();
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        tds.set_simplex_data(simplex_key, Some(String::from("triangle")))
+            .unwrap();
         let expected_snapshot = serde_json::to_value(&tds).unwrap();
         let expected_owner = tds.topology_owner_id();
         let expected_generation = tds.generation();

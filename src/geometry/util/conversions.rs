@@ -1,8 +1,7 @@
-//! Safe coordinate conversion functions between numeric types.
+//! Finite-coordinate checks and checked numeric conversions.
 //!
-//! This module provides functions for safely converting coordinate values
-//! between different numeric types with proper error handling and finite-value
-//! checking.
+//! Finite checks preserve the exact input bits and report indexed, typed errors.
+//! Integer conversions additionally check precision before producing coordinates.
 
 #![forbid(unsafe_code)]
 
@@ -68,29 +67,11 @@ pub enum ValueConversionError {
     },
 }
 
-/// Safely convert a coordinate value from type T to f64.
-/// This function provides proper error handling for coordinate type conversions,
-/// replacing silent fallback after `cast(x)` with explicit
-/// error reporting. It also checks for non-finite values (NaN, infinity).
-///
-/// # Arguments
-///
-/// * `value` - The coordinate value to convert
-/// * `coordinate_index` - Index of the coordinate for error reporting
-///
-/// # Returns
-///
-/// The converted f64 value or a `CoordinateConversionError`
-///
-/// # Errors
-///
-/// Returns `CoordinateConversionError::NonFiniteValue` if the value is NaN or infinite
-/// Returns `CoordinateConversionError::ConversionFailed` if the conversion fails
-pub(super) fn safe_cast_to_f64(
+/// Checks a coordinate while retaining its index for diagnostics.
+fn try_finite_coordinate(
     value: f64,
     coordinate_index: usize,
 ) -> Result<f64, CoordinateConversionError> {
-    // Check for non-finite values first
     if !value.is_finite() {
         return Err(CoordinateConversionError::NonFiniteValue {
             coordinate_index,
@@ -101,195 +82,68 @@ pub(super) fn safe_cast_to_f64(
     Ok(value)
 }
 
-/// Safely convert a coordinate value from f64 to type T.
+/// Checks that every coordinate is finite and returns the unchanged values.
 ///
-/// This function provides proper error handling for coordinate type conversions,
-/// replacing silent fallback after `cast(x)` with explicit
-/// error reporting. It also checks for non-finite values (NaN, infinity).
-///
-/// # Arguments
-///
-/// * `value` - The f64 value to convert
-/// * `coordinate_index` - Index of the coordinate for error reporting
-///
-/// # Returns
-///
-/// The converted T value or a `CoordinateConversionError`
+/// All finite values retain their exact bits, including signed zero. Empty
+/// arrays are accepted.
 ///
 /// # Errors
 ///
-/// Returns `CoordinateConversionError::NonFiniteValue` if the value is NaN or infinite
-/// Returns `CoordinateConversionError::ConversionFailed` if the conversion fails
-pub(super) fn safe_cast_from_f64(
-    value: f64,
-    coordinate_index: usize,
-) -> Result<f64, CoordinateConversionError> {
-    // Check for non-finite values first
-    if !value.is_finite() {
-        return Err(CoordinateConversionError::NonFiniteValue {
-            coordinate_index,
-            coordinate_value: InvalidCoordinateValue::from_debug(&value),
-        });
-    }
-
-    Ok(value)
-}
-
-/// Safely convert an array of coordinates from type T to f64.
-///
-/// This function converts each coordinate in the array, providing detailed
-/// error information if any conversion fails.
-///
-/// # Arguments
-///
-/// * `coords` - Reference to array of coordinates to convert
-///
-/// # Returns
-///
-/// Array of f64 coordinates or a `CoordinateConversionError`
-///
-/// # Errors
-///
-/// Returns `CoordinateConversionError::ConversionFailed` if any coordinate conversion fails
+/// Returns [`CoordinateConversionError::NonFiniteValue`] for the first NaN or
+/// infinite coordinate, with its zero-based index and typed value classification.
 ///
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::geometry::{CoordinateConversionError, safe_coords_to_f64};
+/// use delaunay::prelude::geometry::{
+///     CoordinateConversionError, InvalidCoordinateValue, try_finite_coords,
+/// };
 ///
 /// # fn main() -> Result<(), CoordinateConversionError> {
-/// // Convert f64 coordinates to f64 after validation
-/// let coords = [1.5, 2.5, 3.5];
-/// let coords_f64 = safe_coords_to_f64(&coords)?;
-/// assert_eq!(coords_f64, [1.5, 2.5, 3.5]);
-///
-/// // Works with different array sizes - 4D example
-/// let coords_4d = [1.0, 2.0, 3.0, 4.0];
-/// let result_4d = safe_coords_to_f64(&coords_4d)?;
-/// assert_eq!(result_4d, [1.0, 2.0, 3.0, 4.0]);
+/// let coords = try_finite_coords(&[1.5, -0.0, 3.5])?;
+/// assert_eq!(coords[1].to_bits(), (-0.0_f64).to_bits());
+/// std::assert_matches!(
+///     try_finite_coords(&[1.0, f64::INFINITY, f64::NAN]),
+///     Err(CoordinateConversionError::NonFiniteValue {
+///         coordinate_index: 1,
+///         coordinate_value: InvalidCoordinateValue::PositiveInfinity,
+///     })
+/// );
 /// # Ok(())
 /// # }
 /// ```
-pub fn safe_coords_to_f64<const D: usize>(
+pub fn try_finite_coords<const D: usize>(
     coords: &[f64; D],
 ) -> Result<[f64; D], CoordinateConversionError> {
     let mut result = [0.0_f64; D];
     for (i, &coord) in coords.iter().enumerate() {
-        result[i] = safe_cast_to_f64(coord, i)?;
+        result[i] = try_finite_coordinate(coord, i)?;
     }
     Ok(result)
 }
 
-/// Safely convert an array of coordinates from f64 to type T.
+/// Checks that a scalar is finite and returns the unchanged value.
 ///
-/// This function converts each coordinate in the array, providing detailed
-/// error information if any conversion fails.
-///
-/// # Arguments
-///
-/// * `coords` - Reference to array of f64 coordinates to convert
-///
-/// # Returns
-///
-/// Array of T coordinates or a `CoordinateConversionError`
+/// All finite values retain their exact bits, including signed zero.
 ///
 /// # Errors
 ///
-/// Returns `CoordinateConversionError::ConversionFailed` if any coordinate conversion fails
+/// Returns [`CoordinateConversionError::NonFiniteValue`] for NaN or infinity,
+/// with coordinate index zero and a typed value classification.
 ///
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::geometry::{CoordinateConversionError, safe_coords_from_f64};
+/// use delaunay::prelude::geometry::{CoordinateConversionError, try_finite_scalar};
 ///
 /// # fn main() -> Result<(), CoordinateConversionError> {
-/// // Convert f64 coordinates to validated f64 coordinates
-/// let coords_f64 = [1.5, 2.5, 3.5];
-/// let coords_checked: [f64; 3] = safe_coords_from_f64(&coords_f64)?;
-/// assert_eq!(coords_checked, [1.5, 2.5, 3.5]);
-///
-/// // Works with different array sizes - 4D example
-/// let coords_4d = [1.0, 2.0, 3.0, 4.0];
-/// let result_4d: [f64; 4] = safe_coords_from_f64(&coords_4d)?;
-/// assert_eq!(result_4d, [1.0, 2.0, 3.0, 4.0]);
+/// let value = try_finite_scalar(-0.0)?;
+/// assert_eq!(value.to_bits(), (-0.0_f64).to_bits());
 /// # Ok(())
 /// # }
 /// ```
-pub fn safe_coords_from_f64<const D: usize>(
-    coords: &[f64; D],
-) -> Result<[f64; D], CoordinateConversionError> {
-    let mut result = [0.0_f64; D];
-    for (i, &coord) in coords.iter().enumerate() {
-        result[i] = safe_cast_from_f64(coord, i)?;
-    }
-    Ok(result)
-}
-
-/// Safely convert a single scalar value from type T to f64.
-///
-/// This is a convenience function for converting single values with proper error handling.
-/// Unlike basic casting, this function checks for non-finite values (NaN, infinity) and
-/// provides detailed error information if the conversion fails.
-///
-/// # Arguments
-///
-/// * `value` - The value to convert
-///
-/// # Returns
-///
-/// The converted f64 value or a `CoordinateConversionError`
-///
-/// # Errors
-///
-/// Returns `CoordinateConversionError::NonFiniteValue` if the value is NaN or infinite
-/// Returns `CoordinateConversionError::ConversionFailed` if the conversion fails
-///
-/// # Example
-///
-/// ```
-/// use delaunay::prelude::geometry::{CoordinateConversionError, safe_scalar_to_f64};
-///
-/// # fn main() -> Result<(), CoordinateConversionError> {
-/// let value = 42.5;
-/// let value_f64 = safe_scalar_to_f64(value)?;
-/// assert_eq!(value_f64, 42.5);
-/// # Ok(())
-/// # }
-/// ```
-pub fn safe_scalar_to_f64(value: f64) -> Result<f64, CoordinateConversionError> {
-    safe_cast_to_f64(value, 0)
-}
-
-/// Safely convert a single scalar value from f64 to type T.
-///
-/// This is a convenience function for converting single values with proper error handling.
-///
-/// # Arguments
-///
-/// * `value` - The f64 value to convert
-///
-/// # Returns
-///
-/// The converted T value or a `CoordinateConversionError`
-///
-/// # Errors
-///
-/// Returns `CoordinateConversionError::ConversionFailed` if the conversion fails
-///
-/// # Examples
-///
-/// ```
-/// use delaunay::prelude::geometry::{CoordinateConversionError, safe_scalar_from_f64};
-///
-/// # fn main() -> Result<(), CoordinateConversionError> {
-/// // Convert f64 to f64 (identity)
-/// let value: f64 = safe_scalar_from_f64(42.0)?;
-/// assert_eq!(value, 42.0);
-/// # Ok(())
-/// # }
-/// ```
-pub fn safe_scalar_from_f64(value: f64) -> Result<f64, CoordinateConversionError> {
-    safe_cast_from_f64(value, 0)
+pub fn try_finite_scalar(value: f64) -> Result<f64, CoordinateConversionError> {
+    try_finite_coordinate(value, 0)
 }
 
 /// Safely convert a `usize` value to the supported coordinate scalar type.
@@ -530,140 +384,6 @@ mod tests {
 
         // Test the maximum safe value for this platform
         let _usize_max_u64 = u64::try_from(usize::MAX).unwrap_or(u64::MAX);
-    }
-
-    #[test]
-    fn test_safe_cast_to_f64_non_finite() {
-        // Test NaN handling
-        let result = safe_cast_to_f64(f64::NAN, 0);
-        assert_matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        );
-
-        // Test infinity handling
-        let result = safe_cast_to_f64(f64::INFINITY, 1);
-        assert_matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        );
-
-        // Test negative infinity
-        let result = safe_cast_to_f64(f64::NEG_INFINITY, 2);
-        assert_matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        );
-
-        // Test valid finite value
-        let result = safe_cast_to_f64(42.5f64, 0);
-        assert!(result.is_ok());
-        assert_relative_eq!(result.unwrap(), 42.5);
-    }
-
-    #[test]
-    fn test_safe_cast_from_f64_non_finite() {
-        // Test NaN handling
-        let result: Result<f64, _> = safe_cast_from_f64(f64::NAN, 0);
-        assert_matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        );
-
-        // Test infinity handling
-        let result: Result<f64, _> = safe_cast_from_f64(f64::INFINITY, 1);
-        assert_matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        );
-
-        // Test negative infinity
-        let result: Result<f64, _> = safe_cast_from_f64(f64::NEG_INFINITY, 2);
-        assert_matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        );
-
-        // Test valid conversion
-        let result: Result<f64, _> = safe_cast_from_f64(42.5, 0);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_safe_coords_conversion_with_non_finite() {
-        // Test array with NaN
-        let coords_nan = [1.0, f64::NAN, 3.0];
-        let result = safe_coords_to_f64(&coords_nan);
-        assert_matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        );
-
-        // Test array with infinity
-        let coords_inf = [1.0, 2.0, f64::INFINITY];
-        let result = safe_coords_to_f64(&coords_inf);
-        assert_matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        );
-
-        // Test successful conversion
-        let coords_valid = [1.0, 2.0, 3.0];
-        let result = safe_coords_to_f64(&coords_valid);
-        assert!(result.is_ok());
-        assert_relative_eq!(
-            result.unwrap().as_slice(),
-            [1.0f64, 2.0f64, 3.0f64].as_slice()
-        );
-    }
-
-    #[test]
-    fn test_safe_coords_from_f64_with_non_finite() {
-        // Test array with NaN
-        let coords_nan = [1.0f64, f64::NAN, 3.0f64];
-        let result: Result<[f64; 3], _> = safe_coords_from_f64(&coords_nan);
-        assert_matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        );
-
-        // Test array with infinity
-        let coords_inf = [1.0f64, 2.0f64, f64::INFINITY];
-        let result: Result<[f64; 3], _> = safe_coords_from_f64(&coords_inf);
-        assert_matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        );
-
-        // Test successful conversion
-        let coords_valid = [1.0f64, 2.0f64, 3.0f64];
-        let result: Result<[f64; 3], _> = safe_coords_from_f64(&coords_valid);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_safe_scalar_conversion_edge_cases() {
-        // Test scalar to f64 with NaN
-        let result = safe_scalar_to_f64(f64::NAN);
-        assert_matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        );
-
-        // Test scalar from f64 with NaN
-        let result: Result<f64, _> = safe_scalar_from_f64(f64::NAN);
-        assert_matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        );
-
-        // Test successful conversions
-        let result = safe_scalar_to_f64(42.5);
-        assert!(result.is_ok());
-        assert_relative_eq!(result.unwrap(), 42.5f64);
-
-        let result: Result<f64, _> = safe_scalar_from_f64(42.5);
-        assert!(result.is_ok());
     }
 
     #[test]

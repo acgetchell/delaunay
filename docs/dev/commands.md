@@ -103,7 +103,9 @@ default test suite. When a diff touches multiple focused test surfaces, compose
 the matching recipes once each; for example, run `just test-doc` and
 `just test-integration` for doctest plus integration-test changes. Broad Rust
 correctness workflows compose `just test-unit`, `just test-integration`,
-`just test-cli`, and `just test-doc` through `just test-rust`.
+`just test-cli`, `just test-doc`, and `just test-features` through `just test-rust`.
+For changes confined to optional-feature tests, use `just test-unit-features`
+or `just test-doc-features` for the affected target class.
 
 During fast code-writing cycles, start with the smallest changed test or
 doctest rather than the whole focused bucket. For single-item rustdoc edits, run
@@ -297,6 +299,11 @@ just check
 `just check` is the non-mutating lint/validator bundle. It does not run tests,
 examples, or benchmarks.
 
+Configuration, documentation, Python, notebook, shell, and unused-dependency
+checks run before Clippy and Rustdoc so their failures surface before expensive
+Rust analysis. Each recipe retains its setup prerequisites; Just runs shared
+dependencies with the same arguments only once per invocation.
+
 `just check-fast` is the cheapest compile-only check:
 
 ```bash
@@ -395,8 +402,8 @@ diagnostic invariants.
 Actions. It composes `just check`, `just python-fixture-lint`, `just test`,
 `just bench-compile`, and `just examples`. The target classes remain orthogonal: `rust-core-check` covers
 formatting, all-targets Clippy, rustdoc, and Semgrep; `unused-deps` checks direct
-Cargo dependency hygiene; `test-rust` composes unit, integration, CLI, and
-doctest buckets; `notebook-check` validates notebooks without executing them.
+Cargo dependency hygiene; `test-rust` composes unit, integration, CLI, doctest,
+and feature-only buckets; `notebook-check` validates notebooks without executing them.
 Routine notebook checks are lint-only. On macOS, `just ci` also executes only
 the validation notebook through `validation-doc-figures-check`, regenerating
 under `target/` and failing when tracked canonical figures are stale. Execute
@@ -441,6 +448,17 @@ override because its two complete exact expansions per generated case can also
 cross that boundary on hosted runners. Unaffected tests keep the normal budget.
 `test-cli` owns the feature-gated binary unit and CLI integration tests, and
 `test-rust` composes every Rust test class once.
+
+`test-features` composes `test-unit-features` and `test-doc-features` with
+`diagnostics,count-allocations,bench`. The unit lane uses a focused nextest
+filter in debug and release modes; the doctest lane selects allocation
+measurement and diagnostics examples. These selections exclude default tests
+and leave `slow-tests` in its existing bucket. Adding or moving feature-gated
+tests requires checking nextest discovery with and without these features and
+updating `_feature_unit_filter` to cover the difference. Likewise, update the
+doctest filters when adding feature-only examples. The native CI matrix reaches
+both lanes through `just ci` → `just test` → `just test-rust`.
+
 The LLVM-instrumented coverage profile retains its 300-second default watchdog.
 The compact `T^3` builder case that validates topology and Delaunay has a
 1,800-second override; the reversed-input and orientation-reversing-map cases
@@ -1058,6 +1076,7 @@ JSON/SARIF reports from `target/security/` for seven days, including on findings
 | Run CLI-feature binary unit and integration tests | `just test-cli` |
 | Run Rust lib unit tests only | `just test-unit` |
 | Run doctests only | `just test-doc` |
+| Run feature-only library tests and doctests | `just test-features` |
 | Run integration tests | `just test-integration` |
 | Compile benchmark harnesses | `just bench-compile` |
 | Compile release integration tests without running | `just test-integration-compile` |

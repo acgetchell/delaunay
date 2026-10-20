@@ -1,9 +1,11 @@
 """Consumer policy integrations with the published research-repo-tools APIs."""
 
 import json
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -49,6 +51,75 @@ def test_profile_capture_retains_consumer_labels_and_native_declarations(monkeyp
     assert payload["declarations"]["rust-toolchain"]["text"] == (ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
     version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
     assert payload["source"]["context"]["release"] == f"v{version}"
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [None, "[package\n", "[package]\nname = 'delaunay'\n", "[package]\nversion = 123\n", "[package]\nversion = ''\n"],
+    ids=["missing", "malformed", "missing-version", "invalid-version-type", "empty-version"],
+)
+def test_profile_metadata_cli_rejects_invalid_manifest_before_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], manifest: str | None
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    manifest_path = tmp_path / "Cargo.toml"
+    if manifest is not None:
+        manifest_path.write_text(manifest, encoding="utf-8")
+    output = tmp_path / "profiling-results/environment.json"
+    output.parent.mkdir()
+    output.write_bytes(b"previous metadata\n")
+    capture = Mock(return_value=b"unexpected metadata\n")
+    monkeypatch.setattr(profiling_metadata, "capture_profile", capture)
+
+    assert profiling_metadata.main([]) == 1
+
+    capture.assert_not_called()
+    assert output.read_bytes() == b"previous metadata\n"
+    assert not (tmp_path / "target").exists()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "delaunay-profile-metadata:" in captured.err
+    expected_path = repr(str(manifest_path)) if manifest is None else str(manifest_path)
+    assert expected_path in captured.err
+    assert "No such file" in captured.err if manifest is None else "package.version" in captured.err
+    assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize("stage", ["capture", "publication"])
+def test_profile_metadata_cli_reports_failure_and_cleans_temporary_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], stage: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.3"\n', encoding="utf-8")
+    output = tmp_path / "profiling-results/environment.json"
+    output.parent.mkdir()
+    output.write_bytes(b"previous metadata\n")
+    capture = Mock(return_value=b"new metadata\n")
+    if stage == "capture":
+        capture.side_effect = subprocess.TimeoutExpired(["rustc", "--version"], 10, output=b"probe output\n", stderr=b"probe failure\n")
+    publisher = Mock(side_effect=PermissionError(13, "publication denied", str(output)))
+    monkeypatch.setattr(profiling_metadata, "capture_profile", capture)
+    monkeypatch.setattr(profiling_metadata, "replace_many", publisher)
+
+    assert profiling_metadata.main([]) == 1
+
+    capture.assert_called_once()
+    assert output.read_bytes() == b"previous metadata\n"
+    assert not list((tmp_path / "target").glob("profiling-context-*"))
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "delaunay-profile-metadata:" in captured.err
+    assert "Traceback" not in captured.err
+    if stage == "capture":
+        publisher.assert_not_called()
+        assert "rustc --version" in captured.err
+        assert "10" in captured.err
+        assert "probe output\n" in captured.err
+        assert "probe failure\n" in captured.err
+    else:
+        publisher.assert_called_once_with({output: b"new metadata\n"})
+        assert repr(str(output)) in captured.err
+        assert "publication denied" in captured.err
 
 
 def test_retained_validation_paper_satisfies_consumer_policy() -> None:

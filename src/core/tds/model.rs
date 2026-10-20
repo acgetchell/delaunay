@@ -138,7 +138,7 @@
 //! #     #[error(transparent)]
 //! #     TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
 //! #     #[error(transparent)]
-//! #     Invariant(#[from] delaunay::prelude::tds::InvariantError),
+//! #     Invariant(#[from] delaunay::prelude::validation::InvariantError),
 //! #     #[error(transparent)]
 //! #     Facet(#[from] delaunay::prelude::tds::FacetError),
 //! #     #[error(transparent)]
@@ -203,7 +203,7 @@
 //! #     #[error(transparent)]
 //! #     TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
 //! #     #[error(transparent)]
-//! #     Invariant(#[from] delaunay::prelude::tds::InvariantError),
+//! #     Invariant(#[from] delaunay::prelude::validation::InvariantError),
 //! #     #[error(transparent)]
 //! #     Facet(#[from] delaunay::prelude::tds::FacetError),
 //! #     #[error(transparent)]
@@ -250,7 +250,7 @@
 //! #     #[error(transparent)]
 //! #     TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
 //! #     #[error(transparent)]
-//! #     Invariant(#[from] delaunay::prelude::tds::InvariantError),
+//! #     Invariant(#[from] delaunay::prelude::validation::InvariantError),
 //! #     #[error(transparent)]
 //! #     Facet(#[from] delaunay::prelude::tds::FacetError),
 //! #     #[error(transparent)]
@@ -297,7 +297,7 @@
 //! #     #[error(transparent)]
 //! #     TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
 //! #     #[error(transparent)]
-//! #     Invariant(#[from] delaunay::prelude::tds::InvariantError),
+//! #     Invariant(#[from] delaunay::prelude::validation::InvariantError),
 //! #     #[error(transparent)]
 //! #     Facet(#[from] delaunay::prelude::tds::FacetError),
 //! #     #[error(transparent)]
@@ -343,8 +343,10 @@ use crate::core::tds::errors::{NeighborValidationError, TdsError, TriangulationC
 use crate::core::tds::incidence::VertexIncidenceIndex;
 use crate::core::tds::{SimplexKey, VertexKey};
 use crate::core::{
-    facet::facet_key_from_vertices, simplex::Simplex,
-    util::periodic_facet_key_from_lifted_vertices, vertex::Vertex,
+    facet::facet_key_from_vertices,
+    simplex::{PeriodicSimplexIdentity, Simplex, canonical_periodic_identity},
+    util::periodic_facet_key_from_lifted_vertices,
+    vertex::Vertex,
 };
 use std::{
     fmt::Debug,
@@ -475,7 +477,7 @@ pub trait TopologyOwner {
 /// #     #[error(transparent)]
 /// #     TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
 /// #     #[error(transparent)]
-/// #     Invariant(#[from] delaunay::prelude::tds::InvariantError),
+/// #     Invariant(#[from] delaunay::prelude::validation::InvariantError),
 /// #     #[error(transparent)]
 /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
 /// #     #[error(transparent)]
@@ -728,7 +730,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             });
         }
 
-        let mut vertex_uuid_offsets = SimplexUuidSortKey::<D>::new();
+        let mut vertex_uuid_offsets =
+            SmallBuffer::<(Uuid, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE>::new();
         for (vertex_idx, &vertex_key) in vertices.iter().enumerate() {
             let vertex = self
                 .vertices
@@ -742,9 +745,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             let offset = periodic_offsets.map_or([0_i8; D], |offsets| offsets[vertex_idx]);
             vertex_uuid_offsets.push((vertex.uuid(), offset));
         }
-        vertex_uuid_offsets.sort_unstable();
-
-        Ok(vertex_uuid_offsets)
+        Ok(canonical_periodic_identity(vertex_uuid_offsets))
     }
 
     pub(super) fn lifted_vertex_identities(
@@ -885,7 +886,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)]
     /// #     TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
     /// #     #[error(transparent)]
-    /// #     Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)]
     /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)]
@@ -939,7 +940,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsMutation(#[from] delaunay::prelude::tds::TdsMutationError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// # }
@@ -980,7 +981,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsMutation(#[from] delaunay::prelude::tds::TdsMutationError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// # }
@@ -1019,7 +1020,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsMutation(#[from] delaunay::prelude::tds::TdsMutationError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// # }
@@ -1063,7 +1064,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsMutation(#[from] delaunay::prelude::tds::TdsMutationError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -1109,7 +1110,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsMutation(#[from] delaunay::prelude::tds::TdsMutationError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -1165,7 +1166,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -1198,7 +1199,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)] Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
@@ -1256,7 +1257,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// # }
@@ -1300,7 +1301,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)] Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
@@ -1378,7 +1379,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)] Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
@@ -1410,7 +1411,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)] Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
@@ -1469,7 +1470,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -1663,7 +1664,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -1737,7 +1738,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -1813,7 +1814,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -1889,7 +1890,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -1930,7 +1931,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -1996,7 +1997,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -2037,7 +2038,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -2129,7 +2130,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -2176,7 +2177,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -2358,8 +2359,7 @@ impl<U, V, const D: usize> DerefMut for UnverifiedTds<U, V, D> {
 // TRAIT IMPLEMENTATIONS
 // =============================================================================
 
-pub(super) type SimplexUuidSortKey<const D: usize> =
-    SmallBuffer<(Uuid, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE>;
+pub(super) type SimplexUuidSortKey<const D: usize> = PeriodicSimplexIdentity<Uuid, D>;
 
 // =============================================================================
 // TEST SUPPORT

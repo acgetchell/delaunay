@@ -6,7 +6,8 @@
 //! is formed, and uses transactional owner insertion thereafter. Calling
 //! [`DelaunayIncrementalBuilder::finish`] on an empty builder publishes the
 //! valid empty complex; finishing a nonempty partial bootstrap returns
-//! [`DelaunayIncrementalBuilderError::IncompleteBootstrap`].
+//! [`DelaunayIncrementalBuilderError::IncompleteBootstrap`] together with the
+//! unchanged builder in a [`RefinementError`], ready for more input and a retry.
 //!
 //! For batch point-set construction, use
 //! [`DelaunayTriangulationBuilder`](crate::DelaunayTriangulationBuilder).
@@ -24,8 +25,7 @@ use crate::core::operations::{
     DelaunayInsertionState, InsertionOutcome, InsertionResult, InsertionStatistics,
 };
 use crate::core::tds::{
-    TdsDraft, TdsDraftError, TdsDraftInsertionError, TdsError, TdsRollbackSavepoint,
-    TriangulationValidationReport, VertexKey,
+    TdsDraft, TdsDraftError, TdsDraftInsertionError, TdsError, TdsRollbackSavepoint, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::util::coords_within_epsilon_inclusive;
@@ -45,6 +45,7 @@ use crate::triangulation::validation::{
     ValidationPolicy,
 };
 use crate::validation::DelaunayTriangulationValidationError;
+use crate::validation_report::TriangulationValidationReport;
 
 /// Typed failures while operating or finishing an incremental Delaunay builder.
 ///
@@ -69,10 +70,11 @@ use crate::validation::DelaunayTriangulationValidationError;
 ///
 /// std::assert_matches!(
 ///     builder.finish(),
-///     Err(DelaunayIncrementalBuilderError::IncompleteBootstrap {
-///         dimension: 2,
-///         vertex_count: 1,
-///     })
+///     Err(failure) if matches!(failure.reason(),
+///         DelaunayIncrementalBuilderError::IncompleteBootstrap {
+///             dimension: 2,
+///             vertex_count: 1,
+///         })
 /// );
 /// # Ok(())
 /// # }
@@ -266,40 +268,70 @@ where
     U: DataType,
     V: DataType,
 {
-    /// Consumes the workspace, publishing Levels 1–4 before crossing the Level 5 draft boundary.
+    /// Publishes the empty workspace, retaining it unchanged if any proof boundary fails.
     fn try_into_owner(
-        self,
-    ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayIncrementalBuilderError> {
-        let tds = self
-            .tds
-            .finish()
-            .map_err(|source| DelaunayIncrementalBuilderError::TdsPublication { source })?;
-        let triangulation = TriangulationDraft::with_topology_context(
+        mut self,
+    ) -> Result<
+        DelaunayTriangulation<K, U, V, D>,
+        RefinementError<Self, DelaunayIncrementalBuilderError>,
+    > {
+        let savepoint = self.tds.begin_rollback_savepoint();
+        let tds = match std::mem::take(&mut self.tds).finish_recoverable() {
+            Ok(tds) => tds,
+            Err(failure) => {
+                let (mut tds, source) = failure.into_parts();
+                tds.rollback_savepoint(savepoint);
+                self.tds = tds;
+                return Err(RefinementError::new(
+                    self,
+                    DelaunayIncrementalBuilderError::TdsPublication { source },
+                ));
+            }
+        };
+        let triangulation = match TriangulationDraft::with_topology_context(
             tds,
-            self.kernel,
+            self.kernel.clone(),
             self.topology_guarantee,
             self.global_topology,
         )
         .construction_provenance(TopologyConstructionProvenance::EuclideanDelaunayInsertion)
         .validation_policy(self.validation_policy)
         .finish_strict()
-        .map_err(
-            |failure| DelaunayIncrementalBuilderError::TriangulationPublication {
-                source: failure.into_reason(),
-            },
-        )?;
-        DelaunayTriangulationDraft::from_parts(
+        {
+            Ok(triangulation) => triangulation,
+            Err(failure) => {
+                let (mut tds, source) = failure.into_parts();
+                tds.rollback_savepoint(savepoint);
+                self.tds = TdsDraft::from_rolled_back_storage(tds);
+                return Err(RefinementError::new(
+                    self,
+                    DelaunayIncrementalBuilderError::TriangulationPublication { source },
+                ));
+            }
+        };
+        match DelaunayTriangulationDraft::from_parts(
             triangulation,
             self.insertion_state,
-            self.spatial_index,
+            self.spatial_index.clone(),
             self.euclidean_report_domain,
         )
         .try_into_delaunay()
-        .map_err(
-            |failure| DelaunayIncrementalBuilderError::DelaunayCertification {
-                source: failure.into_reason(),
-            },
-        )
+        {
+            Ok(mut triangulation) => {
+                triangulation.commit_tds_savepoint(savepoint);
+                Ok(triangulation)
+            }
+            Err(failure) => {
+                let (triangulation, source) = failure.into_parts();
+                let mut tds = triangulation.into_tds();
+                tds.rollback_savepoint(savepoint);
+                self.tds = TdsDraft::from_rolled_back_storage(tds);
+                Err(RefinementError::new(
+                    self,
+                    DelaunayIncrementalBuilderError::DelaunayCertification { source },
+                ))
+            }
+        }
     }
 
     /// Publishes the first simplex while carrying its TDS journal through every proof layer.
@@ -422,7 +454,8 @@ enum DelaunayIncrementalBuilderState<K, U, V, const D: usize> {
 /// failed transition restores the exact pre-insertion bootstrap. Later
 /// insertions use that owner's transactional mutation path.
 /// [`finish`](Self::finish) is the only operation that returns the Levels 1–5
-/// owner to the caller, after a cumulative final audit.
+/// owner to the caller, after a cumulative final audit. On failure, its
+/// [`RefinementError`] retains the unchanged builder for inspection or retry.
 ///
 /// # Lifecycle
 ///
@@ -451,7 +484,7 @@ enum DelaunayIncrementalBuilderState<K, U, V, const D: usize> {
 ///     builder.insert_vertex(vertex)?;
 /// }
 ///
-/// let triangulation = builder.finish()?;
+/// let triangulation = builder.finish().map_err(delaunay::RefinementError::into_reason)?;
 /// assert_eq!(triangulation.number_of_vertices(), 3);
 /// triangulation.validate()?;
 /// # Ok(())
@@ -895,6 +928,13 @@ where
     ///
     /// # Errors
     ///
+    /// Every failure returns the unchanged builder and its typed reason in a
+    /// [`RefinementError`]. Use [`RefinementError::into_owner`] to recover the
+    /// builder and resume insertion, or [`RefinementError::into_parts`] to keep
+    /// both the builder and diagnostic. Callers that deliberately discard the
+    /// builder can propagate only the reason with
+    /// `.map_err(RefinementError::into_reason)`.
+    ///
     /// Returns
     /// [`IncompleteBootstrap`](DelaunayIncrementalBuilderError::IncompleteBootstrap)
     /// when the builder contains between one and `D` vertices and therefore no
@@ -911,22 +951,43 @@ where
     /// if its cumulative Levels 1–5 audit fails.
     pub fn finish(
         self,
-    ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayIncrementalBuilderError> {
+    ) -> Result<
+        DelaunayTriangulation<K, U, V, D>,
+        RefinementError<Self, DelaunayIncrementalBuilderError>,
+    > {
         match self.state {
             DelaunayIncrementalBuilderState::Bootstrap(state) => {
                 let vertex_count = state.tds.number_of_vertices();
                 if vertex_count != 0 {
-                    return Err(DelaunayIncrementalBuilderError::IncompleteBootstrap {
-                        dimension: D,
-                        vertex_count,
-                    });
+                    return Err(RefinementError::new(
+                        Self {
+                            state: DelaunayIncrementalBuilderState::Bootstrap(state),
+                        },
+                        DelaunayIncrementalBuilderError::IncompleteBootstrap {
+                            dimension: D,
+                            vertex_count,
+                        },
+                    ));
                 }
-                state.try_into_owner()
+                state.try_into_owner().map_err(|failure| {
+                    let (state, reason) = failure.into_parts();
+                    RefinementError::new(
+                        Self {
+                            state: DelaunayIncrementalBuilderState::Bootstrap(state),
+                        },
+                        reason,
+                    )
+                })
             }
             DelaunayIncrementalBuilderState::Owner(triangulation) => {
-                triangulation.validate().map_err(|source| {
-                    DelaunayIncrementalBuilderError::FinalValidation { source }
-                })?;
+                if let Err(source) = triangulation.validate() {
+                    return Err(RefinementError::new(
+                        Self {
+                            state: DelaunayIncrementalBuilderState::Owner(triangulation),
+                        },
+                        DelaunayIncrementalBuilderError::FinalValidation { source },
+                    ));
+                }
                 Ok(triangulation)
             }
         }
@@ -1204,18 +1265,97 @@ mod tests {
     }
 
     #[test]
-    fn partial_bootstrap_builder_cannot_publish() {
+    fn partial_bootstrap_rejection_preserves_workspace_identity() {
         let mut builder: DelaunayIncrementalBuilder<_, (), (), 2> =
             DelaunayIncrementalBuilder::new();
         builder.insert_vertex(vertex![0.0, 0.0].unwrap()).unwrap();
+        let DelaunayIncrementalBuilderState::Bootstrap(state) = &builder.state else {
+            panic!("one vertex cannot publish a 2D owner");
+        };
+        let identity = state.tds.topology_owner_id();
+        let generation = state.tds.topology_generation();
 
+        let failure = builder.finish().unwrap_err();
         assert_eq!(
-            builder.finish().unwrap_err(),
-            DelaunayIncrementalBuilderError::IncompleteBootstrap {
+            failure.reason(),
+            &DelaunayIncrementalBuilderError::IncompleteBootstrap {
                 dimension: 2,
                 vertex_count: 1,
             }
         );
+        let DelaunayIncrementalBuilderState::Bootstrap(state) = &failure.owner().state else {
+            panic!("rejected finish must retain the bootstrap workspace");
+        };
+        assert_eq!(state.tds.topology_owner_id(), identity);
+        assert_eq!(state.tds.topology_generation(), generation);
+    }
+
+    #[test]
+    fn empty_finish_failure_restores_workspace_for_retry() {
+        let mut builder: DelaunayIncrementalBuilder<_, (), (), 2> =
+            DelaunayIncrementalBuilder::new();
+        let DelaunayIncrementalBuilderState::Bootstrap(state) = &mut builder.state else {
+            panic!("empty builder must retain a bootstrap workspace");
+        };
+        // Force a later proof boundary to fail after TDS publication.
+        state.validation_policy = ValidationPolicy::Never;
+        let identity = state.tds.topology_owner_id();
+        let generation = state.tds.topology_generation();
+        let failure = builder.finish().unwrap_err();
+        assert!(matches!(
+            failure.reason(),
+            DelaunayIncrementalBuilderError::TriangulationPublication {
+                source: TriangulationBuilderError::ValidationConfiguration { .. }
+            }
+        ));
+        let mut recovered = failure.into_owner();
+        let DelaunayIncrementalBuilderState::Bootstrap(state) = &recovered.state else {
+            panic!("empty publication failure must restore bootstrap state");
+        };
+        assert_eq!(state.tds.topology_owner_id(), identity);
+        assert_eq!(state.tds.topology_generation(), generation);
+        assert_eq!(state.tds.number_of_vertices(), 0);
+        assert_eq!(state.tds.number_of_simplices(), 0);
+        assert_eq!(state.validation_policy, ValidationPolicy::Never);
+        recovered
+            .try_set_validation_policy(ValidationPolicy::Always)
+            .unwrap();
+        let finished = recovered.finish().unwrap();
+        finished.validate().unwrap();
+        assert_eq!(
+            finished.into_triangulation().into_tds().topology_owner_id(),
+            identity
+        );
+    }
+
+    #[test]
+    fn final_validation_failure_retains_the_original_owner() {
+        let mut builder: DelaunayIncrementalBuilder<_, (), (), 2> =
+            DelaunayIncrementalBuilder::new();
+        for vertex in [vertex![0.0, 0.0], vertex![1.0, 0.0], vertex![0.0, 1.0]] {
+            builder.insert_vertex(vertex.unwrap()).unwrap();
+        }
+        let DelaunayIncrementalBuilderState::Owner(owner) = &mut builder.state else {
+            panic!("three noncollinear vertices must publish the internal owner");
+        };
+        // Inject a higher-layer violation using a checked Levels 1–2 mutation.
+        let keys: Vec<_> = owner.tri.tds.simplex_keys().collect();
+        owner.tri.tds.remove_simplices_by_keys(&keys).unwrap();
+        let expected = serde_json::to_value(&owner.tri.tds).unwrap();
+        let identity = owner.tri.tds.topology_owner_id();
+        let generation = owner.tri.tds.generation();
+
+        let failure = builder.finish().unwrap_err();
+        assert!(matches!(
+            failure.reason(),
+            DelaunayIncrementalBuilderError::FinalValidation { .. }
+        ));
+        let DelaunayIncrementalBuilderState::Owner(owner) = &failure.owner().state else {
+            panic!("failed final audit must retain the existing owner state");
+        };
+        assert_eq!(owner.tri.tds.topology_owner_id(), identity);
+        assert_eq!(owner.tri.tds.generation(), generation);
+        assert_eq!(serde_json::to_value(&owner.tri.tds).unwrap(), expected);
     }
 
     #[test]

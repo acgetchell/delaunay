@@ -1,17 +1,21 @@
 //! Benchmarks for circumsphere containment algorithms.
 //!
-//! This benchmark suite compares the performance of three different algorithms for
+//! This benchmark suite compares three public helpers for
 //! determining whether a vertex is contained within the circumsphere of a simplex:
 //!
-//! 1. **insphere**: Standard determinant-based method (most numerically stable)
-//! 2. **`insphere_distance`**: Distance-based method using explicit circumcenter calculation
-//! 3. **`insphere_lifted`**: Matrix determinant method with lifted paraboloid approach
+//! 1. **`insphere`**: Filtered-exact determinant wrapper with a simplex-vertex shortcut
+//! 2. **`insphere_distance`**: Approximate distance method using an explicit circumcenter and tolerance
+//! 3. **`insphere_lifted`**: The same filtered-exact engine, with orientation checks and different errors
+//!
+//! Agreement between the exact wrappers is supplementary shared-core evidence.
+//! The distance method has a different correctness contract; timings and
+//! workload-specific conclusions are recorded in `PERFORMANCE_RESULTS.md`.
 //!
 //! The benchmarks include:
 //! - Random query tests with multiple vertices
 //! - Tests across different dimensions (2D, 3D, 4D, 5D)
 //! - Edge case tests with boundary and distant vertices
-//! - Numerical consistency validation between all three algorithms
+//! - Numerical consistency validation within the helpers' supported contracts
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;

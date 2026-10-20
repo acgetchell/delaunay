@@ -6,7 +6,7 @@
 #![forbid(unsafe_code)]
 
 use core::array;
-use std::{any::type_name, env, num::NonZeroUsize};
+use std::{any::type_name, collections::TryReserveError, env, num::NonZeroUsize};
 
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
@@ -82,6 +82,18 @@ pub enum InvalidPositiveScalar<T = f64> {
 #[derive(Clone, Debug, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum RandomPointGenerationError<T = f64> {
+    /// The requested point buffer exceeds capacity limits or cannot be allocated.
+    #[error("Cannot reserve buffer for {requested_points} points in {dimension}D: {source}")]
+    PointBufferReservationFailed {
+        /// Number of points requested.
+        requested_points: usize,
+        /// Dimension of each point.
+        dimension: usize,
+        /// The concrete capacity-overflow or allocation failure.
+        #[source]
+        source: TryReserveError,
+    },
+
     /// Invalid coordinate range provided.
     #[error("Invalid coordinate range for random point generation: {source}")]
     InvalidCoordinateRange {
@@ -380,6 +392,23 @@ fn is_poisson_candidate_spaced<const D: usize>(
     Ok(true)
 }
 
+/// Reserve the entire output before sampling so pushes cannot grow the buffer.
+fn try_point_buffer<const D: usize>(
+    requested_points: usize,
+) -> Result<Vec<Point<D>>, RandomPointGenerationError> {
+    let mut points = Vec::new();
+    points
+        .try_reserve_exact(requested_points)
+        .map_err(
+            |source| RandomPointGenerationError::PointBufferReservationFailed {
+                requested_points,
+                dimension: D,
+                source,
+            },
+        )?;
+    Ok(points)
+}
+
 /// Generates points after proving the validated range is safe for uniform sampling.
 fn generate_random_points_in_range_with_rng<R, const D: usize>(
     n_points: usize,
@@ -391,7 +420,7 @@ where
 {
     let range = SamplerRange::try_new(range)?;
 
-    (0..n_points).try_fold(Vec::with_capacity(n_points), |mut points, _| {
+    (0..n_points).try_fold(try_point_buffer(n_points)?, |mut points, _| {
         points.push(sample_point_in_range(range, rng)?);
         Ok(points)
     })
@@ -506,7 +535,7 @@ const fn ball_max_attempts(n_points: usize, dimension: usize) -> usize {
 /// # Returns
 ///
 /// Vector of random points with coordinates in the specified range, or a
-/// [`RandomPointGenerationError`] if the parameters are invalid.
+/// [`RandomPointGenerationError`] if generation fails.
 ///
 /// # Errors
 ///
@@ -516,6 +545,8 @@ const fn ball_max_attempts(n_points: usize, dimension: usize) -> usize {
 ///   validated bounds are too wide for uniform floating-point sampling.
 /// * [`RandomPointGenerationError::GeneratedPointCoordinateRejected`] if a
 ///   generated coordinate is rejected while constructing a [`Point`].
+/// * [`RandomPointGenerationError::PointBufferReservationFailed`] if the requested
+///   point buffer exceeds capacity limits or cannot be allocated.
 ///
 /// # Examples
 ///
@@ -586,6 +617,8 @@ pub fn try_generate_random_points<const D: usize>(
 /// a generated coordinate is rejected while constructing a [`Point`], or
 /// [`RandomPointGenerationError::CoordinateRangeWidthOverflow`] if the validated
 /// bounds are too wide for uniform floating-point sampling.
+/// Returns [`RandomPointGenerationError::PointBufferReservationFailed`] if the
+/// requested point buffer exceeds capacity limits or cannot be allocated.
 ///
 /// # Examples
 ///
@@ -623,7 +656,7 @@ pub fn generate_random_points_in_range<const D: usize>(
 /// # Returns
 ///
 /// Vector of random points with coordinates in the specified range, or a
-/// [`RandomPointGenerationError`] if the parameters are invalid.
+/// [`RandomPointGenerationError`] if generation fails.
 ///
 /// # Errors
 ///
@@ -633,6 +666,8 @@ pub fn generate_random_points_in_range<const D: usize>(
 ///   validated bounds are too wide for uniform floating-point sampling.
 /// * [`RandomPointGenerationError::GeneratedPointCoordinateRejected`] if a
 ///   generated coordinate is rejected while constructing a [`Point`].
+/// * [`RandomPointGenerationError::PointBufferReservationFailed`] if the requested
+///   point buffer exceeds capacity limits or cannot be allocated.
 ///
 /// # Examples
 ///
@@ -700,6 +735,8 @@ pub fn try_generate_random_points_seeded<const D: usize>(
 /// a generated coordinate is rejected while constructing a [`Point`], or
 /// [`RandomPointGenerationError::CoordinateRangeWidthOverflow`] if the validated
 /// bounds are too wide for uniform floating-point sampling.
+/// Returns [`RandomPointGenerationError::PointBufferReservationFailed`] if the
+/// requested point buffer exceeds capacity limits or cannot be allocated.
 ///
 /// # Examples
 ///
@@ -744,6 +781,8 @@ pub fn generate_random_points_in_range_seeded<const D: usize>(
 ///
 /// Returns [`RandomPointGenerationError::InvalidPeriodicDomain`] if any
 /// `domain[i]` is non-finite or non-positive.
+/// Returns [`RandomPointGenerationError::PointBufferReservationFailed`] if the
+/// requested point buffer exceeds capacity limits or cannot be allocated.
 ///
 /// # Examples
 ///
@@ -778,7 +817,7 @@ pub fn generate_random_points_periodic<const D: usize>(
 
     let mut rng = StdRng::seed_from_u64(seed);
 
-    (0..n_points).try_fold(Vec::with_capacity(n_points), |mut points, _| {
+    (0..n_points).try_fold(try_point_buffer(n_points)?, |mut points, _| {
         let coords = array::from_fn(|axis| rng.random_range(0.0..periods[axis].get()));
         points.push(point_from_generated_coords(coords)?);
         Ok(points)
@@ -827,7 +866,7 @@ where
     let radius = radius.get();
     let bounds = SamplerRange::try_new(bounds)?;
 
-    let mut points = Vec::with_capacity(n_points);
+    let mut points = try_point_buffer(n_points)?;
     let mut attempts = 0;
 
     while points.len() < n_points && attempts < max_attempts {
@@ -879,6 +918,8 @@ where
 /// sampling, or
 /// [`RandomPointGenerationError::BallSamplingFailed`] if rejection sampling
 /// exhausts its attempt budget before producing `n_points`.
+/// Returns [`RandomPointGenerationError::PointBufferReservationFailed`] if the
+/// requested point buffer exceeds capacity limits or cannot be allocated.
 ///
 /// # Examples
 ///
@@ -921,6 +962,8 @@ pub fn generate_random_points_in_ball<const D: usize>(
 /// sampling, or
 /// [`RandomPointGenerationError::BallSamplingFailed`] if rejection sampling
 /// exhausts its attempt budget before producing `n_points`.
+/// Returns [`RandomPointGenerationError::PointBufferReservationFailed`] if the
+/// requested point buffer exceeds capacity limits or cannot be allocated.
 ///
 /// # Examples
 ///
@@ -1122,9 +1165,11 @@ fn grid_index_as_scalar<const D: usize>(
 /// In higher dimensions, tight spacing constraints become exponentially more
 /// difficult to satisfy.
 ///
-/// **Complexity**: The current implementation uses O(n²) distance checks per candidate,
-/// which is efficient for typical test/benchmark sizes but may be slow for very large
-/// point sets (e.g., n > 10,000).
+/// **Complexity**: Each candidate uses at most O(n) distance checks, or O(n D)
+/// arithmetic, against the accepted points. The rejection budget is proportional
+/// to n with a dimension-dependent attempt multiplier. At fixed dimension and
+/// multiplier, total distance-check work is O(n²); large point sets or rejection
+/// budgets can therefore be expensive.
 ///
 /// # Arguments
 ///
@@ -1152,6 +1197,8 @@ fn grid_index_as_scalar<const D: usize>(
 ///   attempt limit
 /// * [`RandomPointGenerationError::VectorComputation`] if a candidate distance
 ///   is not representable as a finite `f64`.
+/// * [`RandomPointGenerationError::PointBufferReservationFailed`] if spacing is
+///   disabled and the uniform sampler cannot reserve the requested point buffer.
 ///
 /// # Examples
 ///
@@ -1207,6 +1254,8 @@ pub fn try_generate_poisson_points<const D: usize>(
 /// bounds are too wide for uniform floating-point sampling.
 /// Returns [`RandomPointGenerationError::VectorComputation`] if a candidate
 /// distance is not representable as a finite `f64`.
+/// Returns [`RandomPointGenerationError::PointBufferReservationFailed`] if spacing
+/// is disabled and the uniform sampler cannot reserve the requested point buffer.
 ///
 /// # Examples
 ///
@@ -1335,6 +1384,34 @@ mod tests {
         assert_eq!(dimension, D);
     }
 
+    fn assert_oversized_point_count_rejected<const D: usize>(
+        generate: impl Fn(usize) -> Result<Vec<Point<D>>, RandomPointGenerationError>,
+    ) {
+        // Exercise both byte-layout overflow and element-count overflow without
+        // asking the allocator for a real large allocation.
+        let first_unrepresentable =
+            usize::try_from(isize::MAX).unwrap() / size_of::<Point<D>>() + 1;
+        for requested_points in [first_unrepresentable, usize::MAX] {
+            let error = generate(requested_points).unwrap_err();
+            let RandomPointGenerationError::PointBufferReservationFailed {
+                requested_points: actual_points,
+                dimension,
+                source,
+            } = &error
+            else {
+                panic!("expected point buffer reservation failure, got {error:?}");
+            };
+            assert_eq!(*actual_points, requested_points);
+            assert_eq!(*dimension, D);
+            assert_eq!(
+                error
+                    .source()
+                    .and_then(|cause| cause.downcast_ref::<TryReserveError>()),
+                Some(source),
+            );
+        }
+    }
+
     /// Scaling the independently checked ball constraint avoids overflowing the oracle.
     fn assert_extreme_scale_sampling<const D: usize>() {
         for radius in [1.0e-200, 1.0, 1.0e200] {
@@ -1369,6 +1446,55 @@ mod tests {
         );
     }
 
+    /// Fail closed on seeded Poisson edge cases and independently check their geometry.
+    fn assert_poisson_edge_cases<const D: usize>() {
+        let min_distance = 0.001;
+        let points = try_generate_poisson_points::<D>(100, (0.0, 1.0), min_distance, 42)
+            .expect("small-spacing fixture should fill its requested point count");
+        assert_eq!(points.len(), 100);
+        for (index, point) in points.iter().enumerate() {
+            for &coordinate in point.coords() {
+                assert!((0.0..1.0).contains(&coordinate));
+            }
+            for other in &points[..index] {
+                // Use hypot independently of the sampler's LaVector norm.
+                let distance = point
+                    .coords()
+                    .iter()
+                    .zip(other.coords())
+                    .fold(0.0_f64, |norm, (&left, &right)| norm.hypot(left - right));
+                assert!(
+                    distance >= min_distance,
+                    "{D}D distance {distance} violates minimum spacing {min_distance}"
+                );
+            }
+        }
+
+        let empty = try_generate_poisson_points::<D>(0, (0.0, 1.0), 0.1, 42)
+            .expect("zero requested points should succeed");
+        assert_eq!(empty.as_slice(), []);
+
+        // The first candidate is accepted; spacing 3 exceeds the unit box's
+        // diameter sqrt(D) in 2D through 5D, so no second point can fit.
+        let sparse = try_generate_poisson_points::<D>(10, (0.0, 1.0), 3.0, 42)
+            .expect("excessive spacing should return the first accepted point");
+        assert_eq!(sparse.len(), 1);
+        for &coordinate in sparse[0].coords() {
+            assert!((0.0..1.0).contains(&coordinate));
+        }
+    }
+
+    macro_rules! poisson_edge_case_tests {
+        ($($dimension:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(#[test]
+                fn [<test_generate_poisson_points_edge_cases_ $dimension d>]() {
+                    assert_poisson_edge_cases::<$dimension>();
+                })+
+            }
+        };
+    }
+
     macro_rules! extreme_scale_sampling_tests {
         ($($dimension:literal),+ $(,)?) => {
             pastey::paste! {
@@ -1376,6 +1502,35 @@ mod tests {
                 fn [<extreme_scale_sampling_ $dimension d>]() {
                     assert_extreme_scale_sampling::<$dimension>();
                 })+
+            }
+        };
+    }
+
+    macro_rules! oversized_point_count_tests {
+        ($($dimension:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<oversized_point_count_cube_ $dimension d>]() {
+                        assert_oversized_point_count_rejected::<$dimension>(|count| {
+                            try_generate_random_points_seeded(count, (0.0, 1.0), 42)
+                        });
+                    }
+
+                    #[test]
+                    fn [<oversized_point_count_periodic_ $dimension d>]() {
+                        assert_oversized_point_count_rejected::<$dimension>(|count| {
+                            generate_random_points_periodic(count, [1.0; $dimension], 42)
+                        });
+                    }
+
+                    #[test]
+                    fn [<oversized_point_count_ball_ $dimension d>]() {
+                        assert_oversized_point_count_rejected::<$dimension>(|count| {
+                            generate_random_points_in_ball_seeded(count, 1.0, 42)
+                        });
+                    }
+                )+
             }
         };
     }
@@ -1414,6 +1569,7 @@ mod tests {
     gen_generated_point_coordinate_rejected_tests!(5);
 
     extreme_scale_sampling_tests!(2, 3, 4, 5, 6);
+    oversized_point_count_tests!(2, 3, 4, 5);
 
     #[test]
     fn scalar_validation_errors_preserve_source_chain() {
@@ -1600,9 +1756,6 @@ mod tests {
         let unconstrained_poisson =
             generate_poisson_points_in_range::<2>(8, range, 0.0, 42).unwrap();
         assert_eq!(unconstrained_poisson.len(), 8);
-
-        let empty_poisson = generate_poisson_points_in_range::<2>(0, range, 0.1, 42).unwrap();
-        assert_eq!(empty_poisson.as_slice(), []);
 
         let invalid_empty_poisson = generate_poisson_points_in_range::<2>(0, range, f64::NAN, 42);
         assert_matches!(
@@ -2119,14 +2272,6 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_random_points_in_ball_seeded_same_seed_is_deterministic_4d() {
-        // This is a small smoke test that ensures deterministic output for fixed seed.
-        let points1 = generate_random_points_in_ball_seeded::<4>(10, 1.0, 0xBEEF).unwrap();
-        let points2 = generate_random_points_in_ball_seeded::<4>(10, 1.0, 0xBEEF).unwrap();
-        assert_eq!(points1, points2);
-    }
-
-    #[test]
     fn test_generate_random_points_distribution_coverage_all_dimensions() {
         // Test that points cover the range reasonably well across all dimensions
 
@@ -2598,19 +2743,6 @@ mod tests {
                 if distance == InvalidCoordinateValue::PositiveInfinity
         );
 
-        // Test minimum distance too large for bounds (should produce few/no points)
-        let result = try_generate_poisson_points::<2>(100, (0.0, 1.0), 10.0, 42);
-        match result {
-            Ok(points) => {
-                // Should produce very few points or fail
-                assert!(points.len() < 5);
-            }
-            Err(RandomPointGenerationError::PoissonSamplingFailed { .. }) => {
-                // This is also acceptable - can't fit points with such large spacing
-            }
-            _ => panic!("Unexpected error type"),
-        }
-
         // Test zero distance optimization (should return exact count without spacing checks)
         let points = try_generate_poisson_points::<2>(100, (0.0, 10.0), 0.0, 42).unwrap();
         assert_eq!(points.len(), 100); // Should get exactly the requested number
@@ -2680,29 +2812,7 @@ mod tests {
         // Expected to fail with large point counts
     }
 
-    #[test]
-    fn test_generate_poisson_points_edge_cases() {
-        // Test very small spacing with valid number of points
-        let result = try_generate_poisson_points::<2>(100, (0.0, 1.0), 0.001, 42);
-        if let Ok(points) = result {
-            assert_ne!(points.as_slice(), []);
-        }
-        // May fail due to too many points
-
-        // Test with zero points (should succeed with empty result)
-        let result = try_generate_poisson_points::<2>(0, (0.0, 1.0), 0.1, 42);
-        if let Ok(points) = result {
-            assert_eq!(points.as_slice(), []);
-        }
-        // Also acceptable if Err
-
-        // Test very large spacing (should work but produce fewer points)
-        let result = try_generate_poisson_points::<2>(10, (0.0, 1.0), 2.0, 42);
-        if let Ok(points) = result {
-            assert!(points.len() <= 10);
-        }
-        // May fail if spacing is too large for domain
-    }
+    poisson_edge_case_tests!(2, 3, 4, 5);
 
     #[test]
     fn test_max_grid_bytes_safety_cap() {

@@ -11,38 +11,52 @@ use crate::core::collections::{
     fast_hash_set_with_capacity,
 };
 use crate::core::simplex::Simplex;
-use crate::core::tds::{GeometricError, SimplexKey, TdsError, VertexKey};
+use crate::core::tds::{SimplexKey, TdsError, VertexKey};
+use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::topology::traits::global_topology_model::GlobalTopologyModel;
 use crate::triangulation::Triangulation;
+use crate::triangulation::realization::{
+    TriangulationRealizationSimplexDetail, TriangulationRealizationValidationError,
+};
 use crate::triangulation::validation::TriangulationValidationError;
 
 const POSITIVE_ORIENTATION_PROMOTION_MAX_PASSES: usize = 3;
-
-fn negative_orientation_error<V, const D: usize>(
-    simplex_key: SimplexKey,
-    simplex: &Simplex<V, D>,
-    scope_label: &str,
-) -> TdsError {
-    let vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-        simplex.vertices().iter().copied().collect();
-    TdsError::Geometric {
-        source: GeometricError::NegativeOrientation {
-            message: format!(
-                "Simplex {:?} (key {simplex_key:?}, vertices {vertex_keys:?}) has negative {scope_label} orientation; expected positive canonical orientation",
-                simplex.uuid(),
-            ),
-        },
-    }
-}
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
     K: Kernel<D, Scalar = f64>,
 {
+    /// Captures vertex identities only when an orientation diagnostic needs them.
+    fn orientation_simplex_detail(
+        &self,
+        simplex_key: SimplexKey,
+        simplex: &Simplex<V, D>,
+    ) -> Result<Box<TriangulationRealizationSimplexDetail>, TdsError> {
+        let vertex_uuids = simplex
+            .vertices()
+            .iter()
+            .map(|&vertex_key| {
+                self.tds
+                    .vertex(vertex_key)
+                    .map(Vertex::uuid)
+                    .ok_or_else(|| TdsError::VertexNotFound {
+                        vertex_key,
+                        context: format!("orientation diagnostic for simplex {simplex_key:?}"),
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Box::new(TriangulationRealizationSimplexDetail {
+            key: simplex_key,
+            uuid: simplex.uuid(),
+            vertices: simplex.vertices().iter().copied().collect(),
+            vertex_uuids,
+        }))
+    }
+
     /// Collect simplex points for orientation evaluation.
     ///
     /// For periodic simplices, this delegates per-vertex lattice-offset lifting to the active
@@ -52,7 +66,10 @@ where
         simplex_key: SimplexKey,
         simplex: &Simplex<V, D>,
         purpose: &str,
-    ) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, TdsError> {
+    ) -> Result<
+        SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>,
+        TriangulationRealizationValidationError,
+    > {
         let topology_model = self.global_topology.model();
         let periodic_offsets = simplex.periodic_vertex_offsets();
         if let Some(offsets) = periodic_offsets {
@@ -64,7 +81,7 @@ where
                         "simplex {:?} (key {simplex_key:?}) periodic offset count vs vertex count during {purpose}",
                         simplex.uuid(),
                     ),
-                });
+                }.into());
             }
             if !topology_model.supports_periodic_orientation_offsets() {
                 return Err(TdsError::InconsistentDataStructure {
@@ -77,7 +94,7 @@ where
                         topology_model.allows_boundary(),
                         topology_model.periodic_domain(),
                     ),
-                });
+                }.into());
             }
         }
 
@@ -97,20 +114,25 @@ where
             let periodic_offset = periodic_offsets.map(|offsets| offsets[vertex_idx]);
             let lifted_coords = topology_model
                 .lift_for_orientation(*vertex.point().coords(), periodic_offset)
-                .map_err(|error| TdsError::InconsistentDataStructure {
-                    message: format!(
-                        "Failed to lift coordinates for vertex key {vertex_key:?} at slot {vertex_idx} in simplex {:?} (key {simplex_key:?}) during {purpose}: {error}",
-                        simplex.uuid(),
-                    ),
-                })?;
+                .map_err(
+                    |source| TriangulationRealizationValidationError::TopologyLifting {
+                        simplex_key,
+                        simplex_uuid: simplex.uuid(),
+                        vertex_key,
+                        vertex_uuid: vertex.uuid(),
+                        source,
+                    },
+                )?;
 
-            let lifted_point =
-                Point::try_new(lifted_coords).map_err(|source| TdsError::InconsistentDataStructure {
-                    message: format!(
-                        "Lifted coordinates for vertex key {vertex_key:?} at slot {vertex_idx} in simplex {:?} (key {simplex_key:?}) during {purpose} violated point invariants: {source}",
-                        simplex.uuid(),
-                    ),
-                })?;
+            let lifted_point = Point::try_new(lifted_coords).map_err(|source| {
+                TriangulationRealizationValidationError::CoordinateValidation {
+                    simplex_key,
+                    simplex_uuid: simplex.uuid(),
+                    vertex_key,
+                    vertex_uuid: vertex.uuid(),
+                    source,
+                }
+            })?;
             points.push(lifted_point);
         }
 
@@ -126,19 +148,18 @@ where
         simplex_key: SimplexKey,
         simplex: &Simplex<V, D>,
         purpose: &str,
-        predicate_failure_prefix: &str,
-    ) -> Result<i32, TdsError> {
+    ) -> Result<i32, TriangulationRealizationValidationError> {
         let points = self.collect_simplex_points_for_orientation(simplex_key, simplex, purpose)?;
 
         match robust_orientation(&points) {
             Ok(Orientation::POSITIVE) => Ok(1),
             Ok(Orientation::NEGATIVE) => Ok(-1),
             Ok(Orientation::DEGENERATE) => Ok(0),
-            Err(error) => Err(TdsError::InconsistentDataStructure {
-                message: format!(
-                    "{predicate_failure_prefix} {:?} (key {simplex_key:?}): {error}",
-                    simplex.uuid(),
-                ),
+            Err(source) => Err(TriangulationRealizationValidationError::PredicateFailed {
+                simplex_key,
+                simplex_uuid: simplex.uuid(),
+                detail: self.orientation_simplex_detail(simplex_key, simplex)?,
+                source,
             }),
         }
     }
@@ -147,13 +168,14 @@ where
     ///
     /// Simplices are stored in canonical positive orientation order by construction and mutation
     /// paths; a negative sign indicates geometric/combinatorial mismatch.
-    pub(crate) fn validate_geometric_simplex_orientation(&self) -> Result<(), TdsError> {
+    pub(crate) fn validate_geometric_simplex_orientation(
+        &self,
+    ) -> Result<(), TriangulationRealizationValidationError> {
         for (simplex_key, simplex) in self.tds.simplices() {
             let orientation = self.evaluate_simplex_orientation_for_context(
                 simplex_key,
                 simplex,
                 "geometric orientation validation",
-                "Geometric orientation predicate failed for simplex",
             )?;
             if orientation < 0 {
                 let vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -172,11 +194,14 @@ where
                     "negative geometric orientation detected during validation",
                 );
 
-                return Err(negative_orientation_error(
-                    simplex_key,
-                    simplex,
-                    "geometric",
-                ));
+                return Err(
+                    TriangulationRealizationValidationError::NegativeSimplexOrientation {
+                        simplex_key,
+                        simplex_uuid: simplex.uuid(),
+                        detail: self.orientation_simplex_detail(simplex_key, simplex)?,
+                        dimension: D,
+                    },
+                );
             }
         }
 
@@ -187,7 +212,7 @@ where
     pub(crate) fn validate_geometric_simplex_orientation_for_simplices(
         &self,
         simplices: &[SimplexKey],
-    ) -> Result<(), TdsError> {
+    ) -> Result<(), TriangulationRealizationValidationError> {
         for &simplex_key in simplices {
             let simplex =
                 self.tds
@@ -200,7 +225,6 @@ where
                 simplex_key,
                 simplex,
                 "local geometric orientation validation",
-                "Geometric orientation predicate failed for local simplex",
             )?;
             if orientation < 0 {
                 let vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -213,11 +237,14 @@ where
                     "negative geometric orientation detected during local validation",
                 );
 
-                return Err(negative_orientation_error(
-                    simplex_key,
-                    simplex,
-                    "geometric",
-                ));
+                return Err(
+                    TriangulationRealizationValidationError::NegativeSimplexOrientation {
+                        simplex_key,
+                        simplex_uuid: simplex.uuid(),
+                        detail: self.orientation_simplex_detail(simplex_key, simplex)?,
+                        dimension: D,
+                    },
+                );
             }
         }
 
@@ -231,7 +258,8 @@ where
     ) -> Result<(), InsertionError> {
         self.tds
             .validate_coherent_orientation_for_simplices(simplices)?;
-        self.validate_geometric_simplex_orientation_for_simplices(simplices)?;
+        self.validate_geometric_simplex_orientation_for_simplices(simplices)
+            .map_err(|source| InsertionError::OrientationValidationFailed { source })?;
         Ok(())
     }
 
@@ -240,12 +268,13 @@ where
         let mut negative_simplices = SimplexKeyBuffer::new();
 
         for (simplex_key, simplex) in self.tds.simplices() {
-            let orientation = self.evaluate_simplex_orientation_for_context(
-                simplex_key,
-                simplex,
-                "positive-orientation promotion",
-                "Geometric orientation predicate failed while promoting positive orientation for simplex",
-            )?;
+            let orientation = self
+                .evaluate_simplex_orientation_for_context(
+                    simplex_key,
+                    simplex,
+                    "positive-orientation promotion",
+                )
+                .map_err(|source| InsertionError::OrientationValidationFailed { source })?;
             if orientation == 0 {
                 continue;
             }
@@ -269,12 +298,13 @@ where
     /// that must surface as a typed invariant failure.
     fn simplices_require_positive_orientation_promotion(&self) -> Result<bool, InsertionError> {
         for (simplex_key, simplex) in self.tds.simplices() {
-            let orientation = self.evaluate_simplex_orientation_for_context(
-                simplex_key,
-                simplex,
-                "positive-orientation convergence check",
-                "Geometric orientation predicate failed while checking positive-orientation convergence for simplex",
-            )?;
+            let orientation = self
+                .evaluate_simplex_orientation_for_context(
+                    simplex_key,
+                    simplex,
+                    "positive-orientation convergence check",
+                )
+                .map_err(|source| InsertionError::OrientationValidationFailed { source })?;
             if orientation == 0 {
                 continue;
             }
@@ -317,12 +347,13 @@ where
                             context: "component orientation-sign canonicalization".to_string(),
                         })?;
 
-                let orientation = self.evaluate_simplex_orientation_for_context(
-                    simplex_key,
-                    simplex,
-                    "component orientation-sign canonicalization",
-                    "Geometric orientation predicate failed while canonicalizing component orientation sign for simplex",
-                )?;
+                let orientation = self
+                    .evaluate_simplex_orientation_for_context(
+                        simplex_key,
+                        simplex,
+                        "component orientation-sign canonicalization",
+                    )
+                    .map_err(|source| InsertionError::OrientationValidationFailed { source })?;
                 if representative_sign.is_none() && orientation != 0 {
                     representative_sign = Some(orientation);
                 }
@@ -376,12 +407,13 @@ where
             let mut residual_count = 0_usize;
             let mut sample_keys: [Option<SimplexKey>; 5] = [None; 5];
             for (simplex_key, simplex) in self.tds.simplices() {
-                let orientation = self.evaluate_simplex_orientation_for_context(
-                    simplex_key,
-                    simplex,
-                    "residual negative-orientation sampling",
-                    "Geometric orientation predicate failed while sampling residual negatives for simplex",
-                )?;
+                let orientation = self
+                    .evaluate_simplex_orientation_for_context(
+                        simplex_key,
+                        simplex,
+                        "residual negative-orientation sampling",
+                    )
+                    .map_err(|source| InsertionError::OrientationValidationFailed { source })?;
                 if orientation < 0 {
                     if residual_count < sample_keys.len() {
                         sample_keys[residual_count] = Some(simplex_key);
@@ -424,8 +456,8 @@ where
                     simplex_key,
                     simplex,
                     "insertion orientation canonicalization",
-                    "Geometric orientation predicate failed while canonicalizing simplex",
-                )?
+                )
+                .map_err(|source| InsertionError::OrientationValidationFailed { source })?
             };
 
             if orientation == 0 {
@@ -452,7 +484,6 @@ where
                                 simplex_key,
                                 c,
                                 "orientation swap verification",
-                                "orientation predicate failed during swap verification",
                             )
                         });
                         match post_orientation {
@@ -506,23 +537,21 @@ where
     ///
     /// This is a sign-agnostic check: it flags simplices whose exact orientation
     /// determinant is zero regardless of the sign.
-    pub(crate) fn validate_geometric_nondegeneracy(&self) -> Result<(), TdsError> {
+    pub(crate) fn validate_geometric_nondegeneracy(
+        &self,
+    ) -> Result<(), TriangulationRealizationValidationError> {
         for (simplex_key, simplex) in self.tds.simplices() {
             let orientation = self.evaluate_simplex_orientation_for_context(
                 simplex_key,
                 simplex,
                 "geometric nondegeneracy check",
-                "Orientation predicate failed for simplex",
             )?;
             if orientation == 0 {
-                return Err(TdsError::Geometric {
-                    source: GeometricError::DegenerateOrientation {
-                        message: format!(
-                            "Simplex {:?} (key {simplex_key:?}) is geometrically degenerate \
-                         (zero-volume simplex from collinear/coplanar vertices)",
-                            simplex.uuid(),
-                        ),
-                    },
+                return Err(TriangulationRealizationValidationError::DegenerateSimplex {
+                    simplex_key,
+                    simplex_uuid: simplex.uuid(),
+                    detail: self.orientation_simplex_detail(simplex_key, simplex)?,
+                    dimension: D,
                 });
             }
         }
@@ -536,6 +565,7 @@ mod tests {
     use crate::core::simplex::Simplex;
     use crate::core::tds::Tds;
     use crate::geometry::kernel::FastKernel;
+    use crate::topology::traits::global_topology_model::GlobalTopologyModelError;
     use crate::topology::traits::topological_space::{
         GlobalTopology, ToroidalConstructionMode, ToroidalDomainError,
     };
@@ -564,7 +594,27 @@ mod tests {
             .swap_vertex_slots(0, 1);
 
         assert!(tri.is_valid_topology().is_ok());
-        assert!(tri.validate_geometric_simplex_orientation().is_err());
+        let err = tri.validate_geometric_simplex_orientation().unwrap_err();
+        assert_matches!(
+            &err,
+            TriangulationRealizationValidationError::NegativeSimplexOrientation {
+                simplex_key: key, simplex_uuid, detail, dimension: 2,
+            } if *key == simplex_key
+                && *simplex_uuid == tri.tds.simplex(simplex_key).unwrap().uuid()
+                && detail.vertices.as_slice() == tri.tds.simplex(simplex_key).unwrap().vertices()
+                && detail.vertex_uuids.len() == 3
+        );
+        assert_eq!(
+            tri.validate_geometric_simplex_orientation_for_simplices(&[simplex_key]),
+            Err(err.clone())
+        );
+        assert_eq!(
+            tri.validate_local_orientation_for_simplices(&[simplex_key]),
+            Err(InsertionError::OrientationValidationFailed {
+                source: err.clone()
+            })
+        );
+        assert!(InsertionError::OrientationValidationFailed { source: err }.is_retryable());
     }
 
     #[test]
@@ -583,38 +633,13 @@ mod tests {
         assert_eq!(tri.tds.remove_simplices_by_keys(&[simplex_key]).unwrap(), 1);
 
         match tri.validate_geometric_simplex_orientation_for_simplices(&[simplex_key]) {
-            Err(TdsError::SimplexNotFound {
-                simplex_key: missing_key,
-                ..
-            }) => assert_eq!(missing_key, simplex_key),
+            Err(TriangulationRealizationValidationError::Tds { source }) => {
+                assert_matches!(*source, TdsError::SimplexNotFound {
+                    simplex_key: missing_key, ..
+                } if missing_key == simplex_key);
+            }
             other => panic!("Expected SimplexNotFound, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn validate_geometric_simplex_orientation_returns_enriched_error_on_negative() {
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-        ];
-        let mut tds =
-            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
-
-        let simplex_key = tds.simplex_keys().next().unwrap();
-        tds.simplex_mut(simplex_key)
-            .unwrap()
-            .swap_vertex_slots(0, 1);
-
-        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let err = tri.validate_geometric_simplex_orientation().unwrap_err();
-        assert_matches!(
-            &err,
-            TdsError::Geometric { source: GeometricError::NegativeOrientation { message } }
-                if message.contains("negative geometric orientation")
-                    && message.contains("vertices"),
-            "Error should contain vertex keys: {err}"
-        );
     }
 
     #[test]
@@ -745,8 +770,9 @@ mod tests {
         let err = tri.validate_geometric_simplex_orientation().unwrap_err();
         assert_matches!(
             err,
-            TdsError::Geometric { source: GeometricError::NegativeOrientation { message } }
-                if message.contains("negative geometric orientation")
+            TriangulationRealizationValidationError::NegativeSimplexOrientation {
+                simplex_key: key, dimension: 2, ..
+            } if key == simplex_key
         );
     }
 
@@ -769,9 +795,11 @@ mod tests {
         let err = tri.validate_geometric_simplex_orientation().unwrap_err();
         assert_matches!(
             err,
-            TdsError::InconsistentDataStructure { message }
-                if message.contains("has periodic offsets")
+            TriangulationRealizationValidationError::Tds { source }
+                if matches!(source.as_ref(), TdsError::InconsistentDataStructure { message }
+                    if message.contains("has periodic offsets")
                     && message.contains("expected periodic-orientation-offset-capable topology")
+                )
         );
     }
 
@@ -793,11 +821,12 @@ mod tests {
         let err = tri.validate_geometric_simplex_orientation().unwrap_err();
         assert_matches!(
             err,
-            TdsError::DimensionMismatch {
+            TriangulationRealizationValidationError::Tds { source }
+                if matches!(source.as_ref(), TdsError::DimensionMismatch {
                 expected: 3,
                 actual: 2,
                 ..
-            }
+            })
         );
     }
 
@@ -813,5 +842,52 @@ mod tests {
             ToroidalDomainError::InvalidPeriod { axis: 0, period }
                 if period.abs() < f64::EPSILON
         );
+    }
+
+    #[test]
+    fn periodic_orientation_preserves_lift_overflow() {
+        let vertices = [
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+        ];
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .set_periodic_vertex_offsets(vec![[0, 2], [0, 0], [0, 0]])
+            .unwrap();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        // A local orientation fixture; its boundary is not a closed torus.
+        tri.global_topology = GlobalTopology::try_toroidal(
+            [1.0, f64::MAX],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        )
+        .unwrap();
+        let simplex = tri.tds.simplex(simplex_key).unwrap();
+        let simplex_uuid = simplex.uuid();
+        let vertex_key = simplex.vertices()[0];
+        let vertex_uuid = tri.tds.vertex(vertex_key).unwrap().uuid();
+        let error = tri
+            .canonicalize_positive_orientation_for_simplices(&vec![simplex_key].into())
+            .unwrap_err();
+        assert!(!error.is_retryable());
+        assert_matches!(&error, InsertionError::OrientationValidationFailed {
+            source: TriangulationRealizationValidationError::TopologyLifting {
+                simplex_key: key, simplex_uuid: uuid, vertex_key: vertex, vertex_uuid: id, ..
+            },
+        } if *key == simplex_key && *uuid == simplex_uuid && *vertex == vertex_key && *id == vertex_uuid);
+        let mut cause: &dyn std::error::Error = &error;
+        let lift = loop {
+            if let Some(source) = cause.downcast_ref::<GlobalTopologyModelError>() {
+                break source;
+            }
+            cause = cause
+                .source()
+                .expect("orientation failure must retain its typed lift cause");
+        };
+        assert_matches!(lift, GlobalTopologyModelError::NonFiniteCoordinate { axis: 1, value } if value.is_infinite());
     }
 }

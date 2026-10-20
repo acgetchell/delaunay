@@ -6,13 +6,15 @@
 //! - **Idempotent**: applying canonicalization twice gives the same result as once.
 //! - **Periodic construction invariance**: axis reflection and input permutation
 //!   preserve Levels 1-5 validity for the validated unit-domain fixture.
+//! - **Periodic quality**: published simplices agree with independent Euclidean
+//!   triangle formulas after applying their lattice offsets.
 
 #[macro_use]
 #[path = "common/proptest_config.rs"]
 mod proptest_config;
 
 use delaunay::prelude::construction::{DelaunayTriangulationBuilder, Vertex};
-use delaunay::prelude::geometry::RobustKernel;
+use delaunay::prelude::geometry::{RobustKernel, normalized_volume, radius_ratio};
 use delaunay::prelude::topology::spaces::{TopologicalSpace, ToroidalSpace};
 use delaunay::vertex;
 use proptest::prelude::*;
@@ -145,7 +147,7 @@ repo_proptest! {
 }
 
 repo_proptest! {
-    /// Periodic quotient construction remains valid under axis reflections and input permutation.
+    /// Periodic quotients retain validity and lifted quality under reflection and input permutation.
     #[test]
     fn prop_periodic_quotient_reflection_and_permutation_preserve_invariants(
         reflected_axes in prop::array::uniform2(any::<bool>()),
@@ -175,12 +177,38 @@ repo_proptest! {
         );
 
         let mut saw_nonzero_offset = false;
-        for (_, simplex) in triangulation.simplices() {
+        for (simplex_key, simplex) in triangulation.simplices() {
             let offsets = simplex.periodic_vertex_offsets();
             prop_assert!(offsets.is_some(), "periodic simplex omitted lifted offsets");
             let offsets = offsets.expect("presence checked above");
             prop_assert_eq!(offsets.len(), 3);
             saw_nonzero_offset |= offsets.iter().flatten().any(|component| *component != 0);
+
+            // Independent triangle formulas in the explicit unit-domain lift.
+            // This checks the published owner/offset wiring, complementing the
+            // dimension-generic local chart fixtures in the quality module.
+            let points: [[f64; 2]; 3] = std::array::from_fn(|slot| {
+                let vertex = triangulation.vertex(simplex.vertices()[slot]).expect("validated vertex");
+                std::array::from_fn(|axis| vertex.point().coords()[axis] + f64::from(offsets[slot][axis]))
+            });
+            let edges: [f64; 3] = std::array::from_fn(|i| {
+                let next = (i + 1) % 3;
+                (points[next][0] - points[i][0]).hypot(points[next][1] - points[i][1])
+            });
+            let area = (points[1][0] - points[0][0]).mul_add(
+                points[2][1] - points[0][1],
+                -(points[1][1] - points[0][1]) * (points[2][0] - points[0][0]),
+            ).abs() / 2.0;
+            prop_assert!(area > 0.0);
+            let perimeter: f64 = edges.iter().sum();
+            let expected_ratio = edges.iter().product::<f64>() * perimeter / (8.0 * area * area);
+            let expected_volume = 9.0 * area / (perimeter * perimeter);
+            let ratio = radius_ratio(triangulation.as_triangulation(), simplex_key)
+                .map_err(|error| TestCaseError::fail(format!("periodic radius ratio failed: {error:?}")))?;
+            let volume = normalized_volume(triangulation.as_triangulation(), simplex_key)
+                .map_err(|error| TestCaseError::fail(format!("periodic normalized volume failed: {error:?}")))?;
+            prop_assert!((ratio - expected_ratio).abs() <= 1e-10 * expected_ratio);
+            prop_assert!((volume - expected_volume).abs() <= 1e-10 * expected_volume);
         }
         prop_assert!(saw_nonzero_offset, "fixture did not exercise a translated simplex image");
     }

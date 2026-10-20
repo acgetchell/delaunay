@@ -25,7 +25,9 @@ algorithm machinery that operates on it:
 - `tds/draft.rs` - mutable unpublished `TdsDraft` representation for explicitly
   supplied vertices and maximal simplices, plus its checked Levels 1–2
   `finish()` publication boundary.
-- `tds/errors.rs` - TDS error/report vocabulary re-export boundary.
+- `tds/errors.rs` - Levels 1–2 error and report vocabulary. `TdsValidationReport`
+  contains `TdsInvariantViolation` values with local `TdsInvariantKind` categories
+  and typed `TdsError` sources.
 - `tds/equality.rs` - TDS equality implementation and stable simplex identity
   helpers.
 - `tds/incidence.rs` - invariant-bearing vertex-to-simplices incidence index.
@@ -62,8 +64,8 @@ algorithm machinery that operates on it:
   alongside the focused flip module.
 - `traits/` - core boundary and data trait definitions.
 - `util/` - shared helpers for UUIDs, hashing, deduplication, allocation
-  measurement, facet keys, Jaccard diagnostics, Hilbert ordering, and
-  canonical point order.
+  measurement, facet keys, Jaccard diagnostics, Hilbert ordering, canonical
+  point order, and permutation parity for TDS validation and flip orientation.
 - `operations.rs` - semantic classification and telemetry for topological
   operations.
 
@@ -96,7 +98,8 @@ receiving raw access to canonical TDS storage:
 - `insertion.rs` - generic transactional insertion, duplicate detection, and
   insertion telemetry.
 - `orientation.rs` - simplex orientation validation, lifted-coordinate
-  handling, and positive-orientation canonicalization.
+  handling, and positive-orientation canonicalization, sharing the typed
+  geometric diagnostics owned by `realization.rs`.
 - `query.rs` - read-only generic triangulation accessors, adjacency indices,
   barycenters, and topology traversal helpers.
 - `repair.rs` - generic local topology repair, stale incident-simplex repair,
@@ -104,7 +107,8 @@ receiving raw access to canonical TDS storage:
 - `rollback.rs` - rollback guards for generic mutation windows.
 - `serialization.rs` - exact UUID snapshot envelope, borrowed payload encoding,
   and strict Levels 1–4 restoration with caller-selected or default kernels.
-- `validation.rs` - Level 3 topology validation vocabulary and orchestration.
+- `validation.rs` - Level 3 topology validation vocabulary, summary discriminants,
+  and orchestration.
 - `realization.rs` - Level 4 realization validation and the shared Levels 3–4
   certification used by both strict TDS-to-`Triangulation` refinement and
   canonicalizing builder publication.
@@ -204,6 +208,13 @@ crate-level documentation map. Public workflow modules are exposed directly as
 `delaunay::delaunay` facade. The physical
 location of `flips` and `pachner` under `src/triangulation/` records that these
 operations require only the Levels 1–4 owner.
+
+`src/validation_report.rs` owns the whole-stack `InvariantError`,
+`InvariantKind`, `InvariantViolation`, and `TriangulationValidationReport`,
+exposed through `delaunay::validation` and its focused prelude. It composes TDS
+reports by preserving their order, category, and typed source. The TDS owner
+does not depend on this aggregation vocabulary. Topology and Delaunay summary
+discriminants live beside their respective validation errors.
 
 ## I/O And Export Layer
 

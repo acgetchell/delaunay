@@ -434,6 +434,9 @@ Default test recipes are split by target class:
 - `just test-integration` runs Rust integration tests.
 - `just test-cli` runs feature-gated binary unit and CLI integration tests.
 - `just test-python` runs Python tests.
+- `just test-features` composes `just test-unit-features` and
+  `just test-doc-features` for `diagnostics,count-allocations,bench`, selecting
+  feature-only library unit tests in debug/release and doctests in release.
 
 The debug unit-test profile keeps the same 10-second per-test budget as the
 default and CI profiles. Timeout exceptions must be nextest overrides matching
@@ -450,6 +453,10 @@ translated 5D and complete 6D exact SoS expansion checks, including the D=6
 adaptive-kernel checks that repeat the complete expansion, receive a focused
 60-second override because their irreducible cold-path work can cross the
 default boundary on hosted runners.
+The four 4D–5D cospherical flip-consistency checks receive a platform-neutral
+60-second debug override because their exact forward/inverse predicate work
+reaches that boundary on hosted Linux and Windows runners. Their fixtures and
+release budgets are unchanged.
 
 The release integration profile similarly grants 60 seconds on Windows only
 to the promoted 4D property families that sit at the 10-second boundary there.
@@ -465,12 +472,16 @@ narrowest applicable platform, integration-binary, and test-name filters so
 unrelated tests retain the normal budget. The deterministic 5D SoS in-sphere
 property also receives a cross-platform 60-second override because each
 generated case performs two complete exact expansions and can cross the
-hosted-runner boundary.
+hosted-runner boundary. The matching 5D nonzero property receives 60 seconds
+on Windows, where its single expansion per case can also exceed the default
+budget. Both retain the coverage profile's five-minute instrumented budget.
 
 For test-only changes, run only the matching focused recipe. If multiple test
 target classes changed, compose those focused recipes once each. Use
 `just test` when you intentionally want the full default test suite;
-`just test-rust` composes the four Rust target classes once each.
+`just test-rust` composes the four default Rust target classes plus the
+feature-only library lanes once each. Feature-only test additions must be
+included in the maintained filters described in [`commands.md`](commands.md).
 During iteration, prefer the targeted changed-test commands in
 [`commands.md`](commands.md); reserve full focused recipes such as
 `just test-doc`, `just test-unit`, and `just test-integration` for final bucket

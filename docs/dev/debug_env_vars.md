@@ -6,7 +6,8 @@ runtime diagnostics and debugging.
 **Build mode**: most variables are **debug-only** — gated behind
 `#[cfg(debug_assertions)]` and have no effect in release builds. Variables
 marked `[release]` in the tables below are also active in release builds
-(read via plain `env::var_os` / `env::var` without a debug-assertions gate).
+(read without a debug-assertions gate). `[diagnostics]` additionally requires
+the `diagnostics` Cargo feature, in either build mode.
 This matters for large-scale investigations that need to run under
 `cargo test --release` or `cargo bench`.
 
@@ -59,40 +60,40 @@ than mutate the process environment.
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_DEBUG_LOCATE` | presence | `triangulation.rs` | Locate stats (walk steps, hint usage, fallback) |
-| `DELAUNAY_DEBUG_VALIDATE_LOCATE` | presence | `locate.rs` | Cross-validates locate result against brute-force scan |
+| `DELAUNAY_DEBUG_LOCATE` | presence | `triangulation/insertion.rs` | Locate stats (walk steps, hint usage, fallback) |
+| `DELAUNAY_DEBUG_VALIDATE_LOCATE` | presence | `core/algorithms/locate.rs` | Cross-validates locate result against brute-force scan |
 
 ## Conflict Region
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_DEBUG_CONFLICT` | presence | `locate.rs` | Per-simplex insphere classification during BFS, including BFS boundary simplices |
-| `DELAUNAY_DEBUG_CONFLICT_PROGRESS` | presence | `locate.rs` | Periodic progress during large BFS traversals |
-| `DELAUNAY_DEBUG_CONFLICT_PROGRESS_EVERY` | **value** (integer) | `locate.rs` | Interval for progress logging (default: dimension-dependent) |
-| `DELAUNAY_DEBUG_CONFLICT_VERIFY` | presence | `triangulation.rs` | `[diagnostics]` Brute-force BFS conflict-region completeness check |
-| `DELAUNAY_DEBUG_RIDGE_FAN_ONCE` | presence | `locate.rs` | `[release]` One-shot dump of first detected ridge fan (ridge verts, boundary facets, extras). |
+| `DELAUNAY_DEBUG_CONFLICT` | presence | `core/algorithms/locate.rs` | Per-simplex insphere classification during BFS, including BFS boundary simplices |
+| `DELAUNAY_DEBUG_CONFLICT_PROGRESS` | presence | `core/algorithms/locate.rs` | Periodic progress during large BFS traversals |
+| `DELAUNAY_DEBUG_CONFLICT_PROGRESS_EVERY` | **value** (integer) | `core/algorithms/locate.rs` | Interval for progress logging (default: dimension-dependent) |
+| `DELAUNAY_DEBUG_CONFLICT_VERIFY` | presence | `triangulation/insertion.rs` | `[release]` `[diagnostics]` Brute-force BFS conflict-region completeness check |
+| `DELAUNAY_DEBUG_RIDGE_FAN_ONCE` | presence | `core/algorithms/locate.rs` | `[release]` One-shot ridge-fan dump (ridge verts, boundary facets, extras) |
 
 ## Cavity & Hull
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_DEBUG_CAVITY` | presence | `core/algorithms/insertion.rs`, `locate.rs` | Cavity boundary diagnostics, simplex creation provenance with orientation |
-| `DELAUNAY_DEBUG_HULL` | presence | `core/algorithms/insertion.rs` | Hull extension visibility, locate stats, neighbor summary |
+| `DELAUNAY_DEBUG_CAVITY` | presence | `core/algorithms/insertion.rs`, `core/algorithms/locate.rs` | Cavity boundary, simplex provenance, orientation |
+| `DELAUNAY_DEBUG_HULL` | presence | `core/algorithms/insertion.rs`, `triangulation/insertion.rs` | Hull extension visibility, locate stats, neighbor summary |
 | `DELAUNAY_DEBUG_HULL_DETAIL` | presence | `core/algorithms/insertion.rs` | Per-facet orientation details during visibility computation |
 
 ## Orientation
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_DEBUG_ORIENTATION` | presence | `orientation.rs` | Negative-orientation simplex canonicalization and post-insertion audit |
+| `DELAUNAY_DEBUG_ORIENTATION` | presence | `triangulation/orientation.rs`, `triangulation/insertion.rs` | Orientation canonicalization and insertion audit |
 
 ## Neighbor Wiring
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_DEBUG_NEIGHBORS` | presence | `core/algorithms/insertion.rs`, `triangulation.rs` | Neighbor symmetry checks after cavity wiring and hull extension |
-| `DELAUNAY_DEBUG_RIDGE_LINK` | presence | `core/algorithms/insertion.rs`, `triangulation.rs` | Ridge-link checks; skipped external facet matches |
-| `DELAUNAY_FORCE_GLOBAL_NEIGHBOR_REBUILD` | presence | `triangulation.rs` | `[release]` Bypass local repair; use global rebuild for A/B isolation. |
+| `DELAUNAY_DEBUG_NEIGHBORS` | presence | `core/algorithms/insertion.rs`, `triangulation/insertion.rs` | Neighbor symmetry after cavity/hull wiring |
+| `DELAUNAY_DEBUG_RIDGE_LINK` | presence | `core/algorithms/insertion.rs`, `triangulation/insertion.rs`, `topology/manifold.rs` | Ridge-link checks |
+| `DELAUNAY_FORCE_GLOBAL_NEIGHBOR_REBUILD` | presence | `triangulation/repair.rs` | `[release]` Bypass local repair; use global rebuild for A/B isolation. |
 
 ## Flip Repair
 
@@ -111,15 +112,15 @@ than mutate the process environment.
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` | presence | `geometry/robust_predicates.rs` | Process-wide snapshot; cross-validates exact insphere results |
-| `DELAUNAY_DEBUG_LU_FALLBACK` | presence | `circumsphere.rs` | Logs when circumsphere computation falls back to LU decomposition |
+| `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` | presence | `geometry/robust_predicates.rs` | `[release]` Cached exact-vs-distance insphere diagnostic |
+| `DELAUNAY_DEBUG_LU_FALLBACK` | presence | `geometry/util/circumsphere.rs` | Logs when a near-singular LU solve falls back to an exact rational solve |
 
 ## Point Generation
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_DEBUG_RANDOM_BUILDER` | presence | `triangulation_generation.rs` | Random triangulation builder diagnostics (point generation, retry logic) |
-| `DELAUNAY_DEBUG_RANDOM_POINTSET_RETRIES` | presence | `point_generation.rs` | Retry attempts during random point set generation |
+| `DELAUNAY_DEBUG_RANDOM_BUILDER` | presence | `geometry/util/triangulation_generation.rs` | Random builder generation and retry traces |
+| `DELAUNAY_DEBUG_RANDOM_POINTSET_RETRIES` | presence | `geometry/util/triangulation_generation.rs` | Retry attempts during random point set generation |
 
 ## Large-Scale Debug Test Harness
 
@@ -206,4 +207,4 @@ direct 3D/4D diagnostic workloads with explicit command-line arguments.
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_DEBUG_UNUSED_IMPORTS` | presence | `triangulation.rs` | Internal: suppress unused-import warnings in conditional compilation |
+| `DELAUNAY_DEBUG_UNUSED_IMPORTS` | presence | `geometry/util/` | Internal call traces for measures, circumspheres, and point/triangulation generators |

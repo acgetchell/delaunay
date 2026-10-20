@@ -111,7 +111,7 @@ the robust predicate directly and bypasses SoS.
 
 Dimension notes:
 
-- The f64 fast filter is available through D ≤ 4.
+- The f64 fast filter is available through D ≤ 3 (matrix size D+1 ≤ 4).
 - Exact orientation determinants are available through D ≤ 6 because the
   orientation matrix is `(D + 1) × (D + 1)` and the stack-matrix limit is 7×7.
 - The routine triangulation envelope remains 2D through 5D; see
@@ -265,7 +265,7 @@ Orientation maintenance is deliberately scoped:
 - Local mutation paths validate only the simplices touched by insertion or repair
   when they can do so safely.
 - Geometric sign checks use exact predicates and can be much more expensive than
-  raw f64 orientation on near-degenerate inputs, especially for D ≥ 5 where the
+  raw f64 orientation on near-degenerate inputs, especially for D ≥ 4 where the
   f64 fast filter is unavailable.
 - Debug assertions around flips compile out in release builds, but the actual
   replacement-simplex orientation checks are part of correctness and remain active.

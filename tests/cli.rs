@@ -461,19 +461,24 @@ mod cli_tests {
 
     #[test]
     fn generate_triangulation_writes_requested_json_artifact() {
-        let path = target_json_path("generate-triangulation");
-        let output = run_cli(&[
-            "generate",
-            "triangulation",
-            "--dimension",
-            "2",
-            "--vertices",
-            "4",
-            "--seed",
-            "1",
-            "--output",
-            path.to_str().expect("target path should be UTF-8"),
-        ]);
+        let directory = tempfile::tempdir().expect("artifact directory should be created");
+        let path = directory.path().join("triangulation.json");
+        let output = delaunay_command()
+            .current_dir(directory.path())
+            .args([
+                "generate",
+                "triangulation",
+                "--dimension",
+                "2",
+                "--vertices",
+                "4",
+                "--seed",
+                "1",
+                "--output",
+                "triangulation.json",
+            ])
+            .output()
+            .expect("delaunay binary should run");
         assert_success(&output);
         assert!(
             output.stdout.is_empty(),
@@ -567,7 +572,7 @@ mod cli_tests {
     }
 
     #[test]
-    fn artifact_open_errors_name_the_requested_destination() {
+    fn unsupported_artifact_errors_name_the_requested_destination() {
         let path = target_artifact_path("validation-demo-directory", "dir");
         fs::create_dir_all(&path).expect("output-directory fixture should be created");
         let output = run_cli(&[
@@ -577,7 +582,7 @@ mod cli_tests {
         ]);
 
         assert_exit_code(&output, 1);
-        assert_stderr_contains(&output, "failed to open artifact");
+        assert_stderr_contains(&output, "must be a regular file or a new path");
         assert_stderr_contains(
             &output,
             path.file_name()
@@ -810,6 +815,40 @@ mod cli_tests {
             &output,
             "3D Euclidean generation requires at least 4 vertices, got 0",
         );
+    }
+
+    #[test]
+    fn generate_rejects_oversized_point_count_without_panicking() {
+        let directory = tempfile::tempdir().expect("artifact directory should be created");
+        let path = directory.path().join("triangulation.json");
+        let original = b"existing artifact";
+        fs::write(&path, original).expect("existing artifact should be written");
+        let vertices = usize::MAX.to_string();
+        for dimension in ["2", "3", "4", "5"] {
+            for distribution in ["cube", "ball"] {
+                let output = run_cli(&[
+                    "generate",
+                    "--dimension",
+                    dimension,
+                    "--vertices",
+                    &vertices,
+                    "--distribution",
+                    distribution,
+                    "--output",
+                    path.to_str().expect("target path should be UTF-8"),
+                ]);
+                assert_exit_code(&output, 1);
+                assert_stderr_contains(
+                    &output,
+                    &format!("Cannot reserve buffer for {vertices} points in {dimension}D"),
+                );
+                assert_eq!(output.stdout, [] as [u8; 0]);
+                assert_eq!(
+                    fs::read(&path).expect("artifact should remain readable"),
+                    original
+                );
+            }
+        }
     }
 
     #[test]

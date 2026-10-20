@@ -18,10 +18,7 @@ use crate::core::collections::{
     SmallBuffer,
 };
 use crate::core::simplex::Simplex;
-use crate::core::tds::{
-    InvariantError, InvariantKind, SimplexKey, Tds, TdsError, TriangulationConstructionState,
-    VertexKey,
-};
+use crate::core::tds::{SimplexKey, Tds, TdsError, TriangulationConstructionState, VertexKey};
 use crate::geometry::periodic::ToroidalDomain;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
@@ -40,6 +37,7 @@ use crate::triangulation::Triangulation;
 use crate::triangulation::validation::{
     TopologyCertificationEvidence, TriangulationValidationError,
 };
+use crate::validation_report::{InvariantError, InvariantKind};
 
 /// Key- and UUID-based snapshot of one realized simplex.
 #[derive(Clone, Debug, Eq, PartialEq)]

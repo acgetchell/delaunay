@@ -3,8 +3,8 @@
 #![forbid(unsafe_code)]
 
 use super::errors::{
-    EntityKind, InvariantKind, InvariantViolation, NeighborValidationError,
-    SharedFacetMismatchSide, TdsError, TriangulationValidationReport,
+    EntityKind, NeighborValidationError, SharedFacetMismatchSide, TdsError, TdsInvariantKind,
+    TdsInvariantViolation, TdsValidationReport,
 };
 use super::model::{SimplexUuidSortKey, Tds};
 use super::{SimplexKey, VertexKey};
@@ -14,7 +14,9 @@ use crate::core::collections::{
 };
 use crate::core::facet::{FacetHandle, FacetToSimplicesIndex};
 use crate::core::simplex::{NeighborSlot, Simplex};
-use crate::core::util::{deduplication::coords_equal_exact, usize_to_u8};
+use crate::core::util::{
+    deduplication::coords_equal_exact, permutation::permutation_odd, usize_to_u8,
+};
 use crate::geometry::traits::coordinate::CoordinateValues;
 use slotmap::Key;
 
@@ -59,7 +61,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -147,7 +149,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// `Ok(())` if all vertex mappings are consistent, otherwise a `TdsError`.
     ///
-    /// This corresponds to [`InvariantKind::VertexMappings`], which is included in
+    /// This corresponds to [`TdsInvariantKind::VertexMappings`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report()`](crate::DelaunayTriangulation::validation_report).
     ///
@@ -213,7 +215,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// `Ok(())` if all simplex mappings are consistent, otherwise a `TdsError`.
     ///
-    /// This corresponds to [`InvariantKind::SimplexMappings`], which is included in
+    /// This corresponds to [`TdsInvariantKind::SimplexMappings`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report()`].
     ///
@@ -430,22 +432,22 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// This is useful for validation where you want to detect duplicates
     /// without automatically removing them.
     ///
-    /// **Implementation Note**: This method uses `Simplex::vertex_uuids()` to get canonical
-    /// vertex UUIDs for each simplex, which are then sorted and compared for duplicate detection.
+    /// Compares sorted vertex UUIDs with relative lattice offsets. A common
+    /// lattice translation preserves identity, and absent offsets mean zero.
     ///
     /// # Errors
     ///
     /// Returns a [`TdsError`] if simplex vertex retrieval fails
     /// or if any duplicate simplices are detected.
     ///
-    /// This corresponds to [`InvariantKind::DuplicateSimplices`], which is included in
+    /// This corresponds to [`TdsInvariantKind::DuplicateSimplices`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report()`].
     ///
     /// [`DelaunayTriangulation::validation_report()`]: crate::DelaunayTriangulation::validation_report
     fn validate_no_duplicate_simplices(&self) -> Result<(), TdsError> {
-        // Include periodic per-vertex offsets in the duplicate key so periodic quotient simplices
-        // with identical vertex sets but distinct lattice offsets are not collapsed.
+        // Relative offsets distinguish periodic simplices with the same vertex
+        // set, while translated representatives of one simplex are duplicates.
         let mut unique_simplices: FastHashMap<SimplexUuidSortKey<D>, (SimplexKey, uuid::Uuid)> =
             fast_hash_map_with_capacity(self.simplices.len());
         let mut duplicates = Vec::new();
@@ -547,7 +549,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Returns a [`TdsError`] if building the facet map fails
     /// or if any facet is shared by more than two simplices.
     ///
-    /// This corresponds to [`InvariantKind::FacetSharing`], which is included in
+    /// This corresponds to [`TdsInvariantKind::FacetSharing`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report()`].
     ///
@@ -577,7 +579,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -899,7 +901,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         let neighbor_facet_identities =
             Self::facet_vertex_identities_in_simplex_order(neighbor_simplex, mirror_idx)?;
 
-        let observed_odd_permutation = Self::permutation_is_odd(
+        let observed_odd_permutation = permutation_odd(
             &simplex_facet_identities[..],
             &neighbor_facet_identities[..],
         )
@@ -917,46 +919,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             observed_odd_permutation,
             expected_odd_permutation,
         ))
-    }
-    /// Returns whether the permutation mapping `source_order` to `target_order` is odd.
-    ///
-    /// Returns `None` if the orders are not permutations of each other.
-    fn permutation_is_odd<Id: PartialEq>(source_order: &[Id], target_order: &[Id]) -> Option<bool> {
-        if source_order.len() != target_order.len() {
-            return None;
-        }
-
-        let mut target_positions: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::with_capacity(source_order.len());
-        let mut used_target_indices: SmallBuffer<bool, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::from_elem(false, target_order.len());
-
-        for source_vertex in source_order {
-            let mut matched_target_position = None;
-            for (target_idx, target_vertex) in target_order.iter().enumerate() {
-                if target_vertex == source_vertex && !used_target_indices[target_idx] {
-                    matched_target_position = Some(target_idx);
-                    used_target_indices[target_idx] = true;
-                    break;
-                }
-            }
-            target_positions.push(matched_target_position?);
-        }
-
-        if used_target_indices.iter().any(|used| !*used) {
-            return None;
-        }
-
-        let mut is_odd = false;
-        for i in 0..target_positions.len() {
-            for j in (i + 1)..target_positions.len() {
-                if target_positions[i] > target_positions[j] {
-                    is_odd = !is_odd;
-                }
-            }
-        }
-
-        Some(is_odd)
     }
 
     /// Validate facet multiplicity from an already-built facet incidence map.
@@ -1051,7 +1013,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -1102,7 +1064,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// This is the repair/retry-oriented counterpart to
     /// [`is_valid`](Self::is_valid): it preserves the
-    /// [`InvariantKind`] grouping used by aggregate reports while still
+    /// [`TdsInvariantKind`] grouping used by aggregate reports while still
     /// returning at most one local failure.
     ///
     /// # Examples
@@ -1114,7 +1076,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// assert!(tds.structure_diagnostic().is_none());
     /// ```
     #[must_use]
-    pub fn structure_diagnostic(&self) -> Option<InvariantViolation> {
+    pub fn structure_diagnostic(&self) -> Option<TdsInvariantViolation> {
         self.structure_report()
             .err()
             .and_then(|report| report.violations.into_iter().next())
@@ -1143,7 +1105,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
     /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
@@ -1206,7 +1168,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Unlike [`is_valid`](Self::is_valid), this method does
     /// **not** stop at the first error. Instead it records a [`TdsError`] for each
     /// invariant group that fails and returns them as a
-    /// [`TriangulationValidationReport`].
+    /// [`TdsValidationReport`].
     ///
     /// **Note**: If UUID↔key mappings are inconsistent, this returns only mapping-related
     /// failures. Additional checks may produce misleading secondary errors or panic.
@@ -1225,7 +1187,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationReport`] containing all invariant
+    /// Returns a [`TdsValidationReport`] containing all invariant
     /// violations if any validation step fails.
     ///
     /// # Examples
@@ -1236,20 +1198,20 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// let tds: Tds<(), (), 2> = Tds::empty();
     /// assert!(tds.structure_report().is_ok());
     /// ```
-    pub fn structure_report(&self) -> Result<(), TriangulationValidationReport> {
+    pub fn structure_report(&self) -> Result<(), TdsValidationReport> {
         let mut violations = Vec::new();
 
         // 1. Mapping consistency (vertex + simplex UUID↔key mappings)
         if let Err(e) = self.validate_vertex_mappings() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::VertexMappings,
-                error: e.into(),
+            violations.push(TdsInvariantViolation {
+                kind: TdsInvariantKind::VertexMappings,
+                error: e,
             });
         }
         if let Err(e) = self.validate_simplex_mappings() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::SimplexMappings,
-                error: e.into(),
+            violations.push(TdsInvariantViolation {
+                kind: TdsInvariantKind::SimplexMappings,
+                error: e,
             });
         }
 
@@ -1257,45 +1219,45 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         // secondary errors or panic. In that case, stop here and return the
         // mapping-related failures only.
         if !violations.is_empty() {
-            return Err(TriangulationValidationReport { violations });
+            return Err(TdsValidationReport { violations });
         }
 
         // 2. Simplex→vertex key references (no stale/missing vertex keys)
         let mut simplex_vertex_keys_ok = true;
         if let Err(e) = self.validate_simplex_vertex_keys() {
             simplex_vertex_keys_ok = false;
-            violations.push(InvariantViolation {
-                kind: InvariantKind::SimplexVertexKeys,
-                error: e.into(),
+            violations.push(TdsInvariantViolation {
+                kind: TdsInvariantKind::SimplexVertexKeys,
+                error: e,
             });
         }
 
         // 3. Vertex incidence (non-dangling `incident_simplex` pointers, when present)
         if let Err(e) = self.validate_vertex_incidence() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::VertexIncidence,
-                error: e.into(),
+            violations.push(TdsInvariantViolation {
+                kind: TdsInvariantKind::VertexIncidence,
+                error: e,
             });
         }
 
         if simplex_vertex_keys_ok && let Err(e) = self.validate_vertex_to_simplices_index() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::VertexToSimplicesIndex,
-                error: e.into(),
+            violations.push(TdsInvariantViolation {
+                kind: TdsInvariantKind::VertexToSimplicesIndex,
+                error: e,
             });
         }
 
         // If simplex vertex keys are invalid, derived invariants may produce confusing secondary
         // errors or panic (many routines assume key validity). Stop here.
         if !simplex_vertex_keys_ok {
-            return Err(TriangulationValidationReport { violations });
+            return Err(TdsValidationReport { violations });
         }
 
         // 4. Simplex uniqueness (no duplicate simplices with identical vertex sets)
         if let Err(e) = self.validate_no_duplicate_simplices() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::DuplicateSimplices,
-                error: e.into(),
+            violations.push(TdsInvariantViolation {
+                kind: TdsInvariantKind::DuplicateSimplices,
+                error: e,
             });
         }
 
@@ -1306,18 +1268,18 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                 if let Err(e) =
                     self.validate_facet_sharing_with_facet_to_simplices_map(&facet_to_simplices)
                 {
-                    violations.push(InvariantViolation {
-                        kind: InvariantKind::FacetSharing,
-                        error: e.into(),
+                    violations.push(TdsInvariantViolation {
+                        kind: TdsInvariantKind::FacetSharing,
+                        error: e,
                     });
                 }
 
                 if let Err(e) =
                     self.validate_neighbors_with_facet_to_simplices_map(&facet_to_simplices)
                 {
-                    violations.push(InvariantViolation {
-                        kind: InvariantKind::NeighborConsistency,
-                        error: e.into(),
+                    violations.push(TdsInvariantViolation {
+                        kind: TdsInvariantKind::NeighborConsistency,
+                        error: e,
                     });
                 } else {
                     neighbor_consistency_ok = true;
@@ -1330,28 +1292,28 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                 // This requires cloning the error once (so each violation owns an error), which
                 // may allocate/copy string payloads, but this is on an error path and facet-map
                 // build errors are expected to be rare and small.
-                violations.push(InvariantViolation {
-                    kind: InvariantKind::FacetSharing,
-                    error: e.clone().into(),
+                violations.push(TdsInvariantViolation {
+                    kind: TdsInvariantKind::FacetSharing,
+                    error: e.clone(),
                 });
-                violations.push(InvariantViolation {
-                    kind: InvariantKind::NeighborConsistency,
-                    error: e.into(),
+                violations.push(TdsInvariantViolation {
+                    kind: TdsInvariantKind::NeighborConsistency,
+                    error: e,
                 });
             }
         }
 
         if neighbor_consistency_ok && let Err(e) = self.validate_coherent_orientation() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::CoherentOrientation,
-                error: e.into(),
+            violations.push(TdsInvariantViolation {
+                kind: TdsInvariantKind::CoherentOrientation,
+                error: e,
             });
         }
 
         if violations.is_empty() {
             Ok(())
         } else {
-            Err(TriangulationValidationReport { violations })
+            Err(TdsValidationReport { violations })
         }
     }
 
@@ -1362,21 +1324,20 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// # Errors
     ///
-    /// Returns `Err(TriangulationValidationReport)` containing all checkable
+    /// Returns `Err(TdsValidationReport)` containing all checkable
     /// Level 1-2 invariant violations.
-    pub fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
+    pub fn validation_report(&self) -> Result<(), TdsValidationReport> {
         let mut violations = Vec::new();
 
         for (_vertex_key, vertex) in self.vertices.iter() {
             if let Err(report) = (*vertex).vertex_report() {
                 violations.extend(report.violations.into_iter().map(|source| {
-                    InvariantViolation {
-                        kind: InvariantKind::VertexValidity,
+                    TdsInvariantViolation {
+                        kind: TdsInvariantKind::VertexValidity,
                         error: TdsError::InvalidVertex {
                             vertex_id: vertex.uuid(),
                             source,
-                        }
-                        .into(),
+                        },
                     }
                 }));
             }
@@ -1393,9 +1354,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                         },
                         |simplex_id| TdsError::InvalidSimplex { simplex_id, source },
                     );
-                    InvariantViolation {
-                        kind: InvariantKind::SimplexValidity,
-                        error: error.into(),
+                    TdsInvariantViolation {
+                        kind: TdsInvariantKind::SimplexValidity,
+                        error,
                     }
                 }));
             }
@@ -1404,9 +1365,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         if self.validate_simplex_vertex_keys().is_ok()
             && let Err(error) = self.validate_simplex_coordinate_uniqueness()
         {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::SimplexCoordinateUniqueness,
-                error: error.into(),
+            violations.push(TdsInvariantViolation {
+                kind: TdsInvariantKind::SimplexCoordinateUniqueness,
+                error,
             });
         }
 
@@ -1417,7 +1378,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         if violations.is_empty() {
             Ok(())
         } else {
-            Err(TriangulationValidationReport { violations })
+            Err(TdsValidationReport { violations })
         }
     }
 
@@ -1447,7 +1408,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Returns a [`TdsError`] if any neighbor relationship
     /// violates topological or consistency invariants.
     ///
-    /// This corresponds to [`InvariantKind::NeighborConsistency`], which is included in
+    /// This corresponds to [`TdsInvariantKind::NeighborConsistency`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report()`].
     ///
@@ -2033,7 +1994,7 @@ mod tests {
     use super::*;
     use crate::core::simplex::Simplex;
     use crate::core::tds::TdsBuilder;
-    use crate::core::tds::errors::{InvariantError, NeighborValidationError, TdsError};
+    use crate::core::tds::errors::{NeighborValidationError, TdsError};
     use crate::core::vertex::Vertex;
     use crate::vertex;
     use proptest::prelude::*;
@@ -2390,16 +2351,23 @@ mod tests {
         tds.assign_neighbors().unwrap();
         let error = tds.validate_coherent_orientation().unwrap_err();
         assert_matches!(
-            error,
+            &error,
             TdsError::OrientationViolation {
                 simplex1_key,
                 simplex2_key,
                 observed_odd_permutation: false,
                 expected_odd_permutation: true,
                 ..
-            } if [simplex1_key, simplex2_key].contains(&simplex_key)
-                && [simplex1_key, simplex2_key].contains(&neighbor_key)
+            } if [*simplex1_key, *simplex2_key].contains(&simplex_key)
+                && [*simplex1_key, *simplex2_key].contains(&neighbor_key)
         );
+        let report = tds.structure_report().unwrap_err();
+        assert_eq!(report.violations.len(), 1);
+        assert_eq!(
+            report.violations[0].kind,
+            TdsInvariantKind::CoherentOrientation
+        );
+        assert_eq!(report.violations[0].error, error);
     }
 
     #[test]
@@ -3696,6 +3664,21 @@ mod tests {
                 ref context,
             } if context == "facet indices must fit in u8"
         );
+        let report = tds.structure_report().unwrap_err();
+        assert_eq!(
+            report
+                .violations
+                .iter()
+                .map(|violation| violation.kind)
+                .collect::<Vec<_>>(),
+            [
+                TdsInvariantKind::FacetSharing,
+                TdsInvariantKind::NeighborConsistency
+            ]
+        );
+        for violation in report.violations {
+            assert_eq!(violation.error, err);
+        }
     }
 
     #[test]
@@ -3780,6 +3763,16 @@ mod tests {
         // more precise "missing vertex key" diagnostic.
         let err = tds.is_valid().unwrap_err();
         assert_matches!(err, TdsError::VertexNotFound { .. });
+        let report = tds.structure_report().unwrap_err();
+        assert_eq!(report.violations.len(), 1);
+        assert_eq!(
+            report.violations[0].kind,
+            TdsInvariantKind::SimplexVertexKeys
+        );
+        assert_matches!(
+            &report.violations[0].error,
+            TdsError::VertexNotFound { vertex_key, .. } if *vertex_key == invalid_vkey
+        );
     }
 
     #[test]
@@ -3889,7 +3882,7 @@ mod tests {
             report
                 .violations
                 .iter()
-                .any(|violation| violation.kind == InvariantKind::VertexToSimplicesIndex)
+                .any(|violation| violation.kind == TdsInvariantKind::VertexToSimplicesIndex)
         );
     }
 
@@ -3940,7 +3933,7 @@ mod tests {
             report
                 .violations
                 .iter()
-                .any(|violation| violation.kind == InvariantKind::SimplexCoordinateUniqueness)
+                .any(|violation| violation.kind == TdsInvariantKind::SimplexCoordinateUniqueness)
         );
     }
 
@@ -4004,13 +3997,11 @@ mod tests {
         let facet_violation = report
             .violations
             .iter()
-            .find(|violation| violation.kind == InvariantKind::FacetSharing)
+            .find(|violation| violation.kind == TdsInvariantKind::FacetSharing)
             .expect("validation_report should include the facet-sharing violation");
         assert_matches!(
             &facet_violation.error,
-            InvariantError::Tds {
-                source: TdsError::FacetSharingViolation { .. }
-            },
+            TdsError::FacetSharingViolation { .. },
             "Expected validation_report to preserve structured facet-sharing error, got {:?}",
             facet_violation.error
         );
@@ -4034,17 +4025,24 @@ mod tests {
         )
         .unwrap();
         tds.insert_simplex_bypassing_topology_checks_for_test(
-            Simplex::try_new_periodic(vec![v0, v1, v2], vec![[0; 2]; 3]).unwrap(),
+            Simplex::try_new_periodic(vec![v2, v0, v1], vec![[127, -128]; 3]).unwrap(),
         )
         .unwrap();
 
         let err = tds.validate_no_duplicate_simplices().unwrap_err();
         let simplex_uuids: Vec<_> = tds.simplices().map(|(_, simplex)| simplex.uuid()).collect();
         assert_matches!(
-            err,
+            &err,
             TdsError::DuplicateSimplices { simplex_pairs, .. }
-                if simplex_pairs == [[simplex_uuids[0], simplex_uuids[1]]]
+                if *simplex_pairs == [[simplex_uuids[0], simplex_uuids[1]]]
         );
+        let report = tds.structure_report().unwrap_err();
+        let duplicate = report
+            .violations
+            .iter()
+            .find(|violation| violation.kind == TdsInvariantKind::DuplicateSimplices)
+            .expect("aggregate report must retain the duplicate-simplex cause");
+        assert_eq!(duplicate.error, err);
     }
 
     #[test]
@@ -4094,7 +4092,7 @@ mod tests {
             report
                 .violations
                 .iter()
-                .any(|v| v.kind == InvariantKind::SimplexMappings),
+                .any(|v| v.kind == TdsInvariantKind::SimplexMappings),
             "Expected SimplexMappings violation"
         );
     }

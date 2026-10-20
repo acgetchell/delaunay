@@ -388,7 +388,7 @@ def _validate_references(coordinates: dict[str, Point3], simplices: dict[str, Si
     _validate_adjacency_facets(simplices, neighbors)
 
 
-def unique_edges(simplices: dict[str, SimplexVertices]) -> list[Edge]:
+def unique_edges(simplices: Mapping[str, SimplexVertices]) -> list[Edge]:
     """Derive sorted unique graph edges from tetrahedral simplex records."""
     edges: set[Edge] = set()
     for vertex_ids in simplices.values():
@@ -412,32 +412,46 @@ def faces_by_boundary_state(simplices: Mapping[str, SimplexVertices], neighbors:
     return sorted(faces)
 
 
+def _checked_display_limits(lower: float, upper: float, context: str) -> tuple[float, float]:
+    """Reject bounds that cannot support finite display normalization."""
+    if not (math.isfinite(lower) and math.isfinite(upper) and lower < upper and math.isfinite(upper - lower)):
+        raise ValueError(f"{context} must be finite and increasing with a finite span, got ({lower!r}, {upper!r})")
+    return (lower, upper)
+
+
 def coordinate_axis_limits(points: list[Point3]) -> AxisLimits:
-    """Return equal-scale 3D plot limits for a point cloud."""
+    """Return equal-scale 3D plot limits, rejecting unrepresentable bounds."""
     if not points:
         message = "cannot compute display limits for an empty point cloud"
         raise ValueError(message)
     minima = [min(point[axis] for point in points) for axis in range(3)]
     maxima = [max(point[axis] for point in points) for axis in range(3)]
-    span = max(maximum - minimum for minimum, maximum in zip(minima, maxima, strict=True))
-    half_span = max(span * 1.18, 0.5)
-    centers = [(minimum + maximum) / 2.0 for minimum, maximum in zip(minima, maxima, strict=True)]
-    return (
-        (centers[0] - half_span, centers[0] + half_span),
-        (centers[1] - half_span, centers[1] + half_span),
-        (centers[2] - half_span, centers[2] + half_span),
-    )
+    spans = [maximum - minimum for minimum, maximum in zip(minima, maxima, strict=True)]
+    for axis, minimum, maximum, span in zip("xyz", minima, maxima, spans, strict=True):
+        if not math.isfinite(span):
+            raise ValueError(f"coordinate span for axis {axis} must be finite, got {span!r} from ({minimum!r}, {maximum!r})")
+    half_span = max(max(spans) * 1.18, 0.5)
+    if not math.isfinite(half_span):
+        raise ValueError(f"padded display half-span must be finite, got {half_span!r} from coordinate span {max(spans)!r}")
+    limits = []
+    for axis, minimum, span in zip("xyz", minima, spans, strict=True):
+        # The checked span avoids overflowing the sum of same-sign endpoints.
+        center = minimum + span / 2.0
+        limits.append(_checked_display_limits(center - half_span, center + half_span, f"derived display limits for axis {axis}"))
+    return (limits[0], limits[1], limits[2])
 
 
 def scaled_axis_limits(limits: AxisLimits, scale: float) -> AxisLimits:
-    """Return equal-scale limits scaled around their shared center."""
+    """Scale limits around their centers, rejecting unrepresentable bounds."""
     if not math.isfinite(scale) or scale <= 0.0:
         raise ValueError(f"axis limit scale must be finite and positive, got {scale}")
     expanded = []
-    for lower, upper in limits:
-        center = (lower + upper) / 2.0
-        half_span = (upper - lower) * scale / 2.0
-        expanded.append((center - half_span, center + half_span))
+    for axis, (lower, upper) in zip("xyz", limits, strict=True):
+        lower, upper = _checked_display_limits(lower, upper, f"input display limits for axis {axis}")
+        half_span = (upper - lower) / 2.0
+        center = lower + half_span
+        scaled_half_span = half_span * scale
+        expanded.append(_checked_display_limits(center - scaled_half_span, center + scaled_half_span, f"scaled display limits for axis {axis}"))
     return (expanded[0], expanded[1], expanded[2])
 
 

@@ -170,6 +170,11 @@ High-dimensional convex hull bounds are covered under [High-Dimensional Computat
 
 ### Point-in-Polytope Testing
 
+- Bland, R. G. "New Finite Pivoting Rules for the Simplex Method."
+  *Mathematics of Operations Research* 2, no. 2 (1977): 103-107.
+  DOI: [10.1287/moor.2.2.103](https://doi.org/10.1287/moor.2.2.103)
+  The exact two-phase LP uses Bland's anti-cycling pivot order; its explicit
+  iteration budget can still stop before the mathematical termination bound.
 - O'Rourke, J. "Computational Geometry in C." 2nd ed. Cambridge: Cambridge University Press, 1998.
   DOI: [10.1017/CBO9780511804120](https://doi.org/10.1017/CBO9780511804120)
 
@@ -365,8 +370,8 @@ and selecting high-quality simplices during triangulation repair.
   DOI: [10.1002/(SICI)1097-0207(20000210)47:4<887::AID-NME804>3.0.CO;2-H](https://doi.org/10.1002/(SICI)1097-0207(20000210)47:4<887::AID-NME804>3.0.CO;2-H)
 - Liu, A., and Joe, B. "Relationship between Tetrahedron Shape Measures."
   *BIT Numerical Mathematics* 34, no. 2 (1994): 268-287. DOI: [10.1007/BF01955874](https://doi.org/10.1007/BF01955874)
-- Shewchuk, J.R. "What Is a Good Linear Element? Interpolation, Conditioning, Anisotropy,
-  and Quality Measures." Eleventh International Meshing Roundtable, Ithaca, New York (2002).
+- Shewchuk, J.R. "What Is a Good Linear Finite Element? Interpolation, Conditioning, Anisotropy,
+  and Quality Measures." Unpublished preprint, December 31, 2002.
   Available at: <https://people.eecs.berkeley.edu/~jrs/papers/elemj.pdf>
 
 ### Radius Ratio and Aspect Ratio Metrics
@@ -440,6 +445,9 @@ realizations, and the topology-only manifold / PL-manifold validation logic in t
 - Dey, T. K., and Wang, Y. *Computational Topology for Data Analysis*. Cambridge University Press, 2022.
 - Edelsbrunner, H., and Harer, J. *Computational Topology: An Introduction*. AMS, 2010.
 - Hatcher, A. *Algebraic Topology*. Cambridge University Press, 2002.
+- Lickorish, W. B. R. "Simplicial Moves on Complexes and Manifolds."
+  *Geometry & Topology Monographs* 2 (1999): 299-320.
+  [Definition 2.2](https://arxiv.org/html/math/9911256v1) gives the PL sphere/ball vertex-link criterion.
 - Munkres, J. R. *Elements of Algebraic Topology*. Addison–Wesley, 1984.
 - Rourke, C. P., and Sanderson, B. J. *Introduction to Piecewise-Linear Topology*. Springer, 1972.
 - Stillwell, J. *Euler's Gem: The Polyhedron Formula and the Birth of Topology*. Princeton University Press, 2010.

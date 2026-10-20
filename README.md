@@ -227,6 +227,11 @@ just run generate visualization \
   --output target/notebooks/00_quickstart/visualization_3d.json
 ```
 
+JSON file output replaces the destination atomically after serialization and flush
+succeed, preserving an existing file on failure. Destination symlinks and
+non-regular files are rejected; symlinked parent directories are supported. JSON
+written to stdout and progress CSV output continue to stream directly.
+
 ## 🧪 Scientific Basis
 
 The crate separates the abstract simplicial complex, its coordinate realization,

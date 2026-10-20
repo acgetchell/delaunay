@@ -211,7 +211,7 @@ where
     /// dt.insert_vertex(vertex![0.2, 0.2, 0.2]?)?;
     /// assert_eq!(dt.number_of_vertices(), 5);
     /// assert!(dt.number_of_simplices() > 1);
-    /// let dt = dt.finish()?;
+    /// let dt = dt.finish().map_err(delaunay::RefinementError::into_reason)?;
     /// assert!(dt.validate().is_ok());
     /// # Ok(())
     /// # }
@@ -577,7 +577,7 @@ where
         self.tri.normalize_and_promote_positive_orientation()?;
         self.tri
             .validate_geometric_simplex_orientation()
-            .map_err(|source| InsertionError::TopologyValidation { source })?;
+            .map_err(|source| InsertionError::OrientationValidationFailed { source })?;
         Ok(())
     }
 
@@ -677,7 +677,7 @@ mod tests {
     use slotmap::KeyData;
     use std::assert_matches;
     use std::iter::once;
-    use std::sync::Once;
+    use std::sync::{Arc, Once};
 
     #[must_use]
     fn synthetic_nonconvergent_error() -> DelaunayRepairError {
@@ -929,6 +929,24 @@ mod tests {
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::EveryInsertion;
 
+        dt.validate().expect("fixture must satisfy Levels 1-5");
+        let topology_before = serde_json::to_value(&dt.tri.tds).unwrap();
+        let identity_before = Arc::clone(dt.tri.tds.identity());
+        let generation_before = dt.tri.tds.generation();
+        let vertex_keys_before: Vec<_> = dt
+            .vertices()
+            .map(|(key, vertex)| (key, vertex.incident_simplex()))
+            .collect();
+        let simplex_keys_before: Vec<_> = dt.simplices().map(|(key, _)| key).collect();
+        let configuration_before = (
+            dt.tri.topology_guarantee,
+            dt.tri.global_topology,
+            dt.tri.validation_policy,
+        );
+        let provenance_before = dt.tri.topology_construction_provenance;
+        let report_domain_before = dt.euclidean_report_domain;
+        let insertion_state_before = dt.insertion_state;
+
         let facet = dt
             .tri
             .facets()
@@ -943,8 +961,6 @@ mod tests {
             .expect("quadrilateral fixture should have an interior facet")
             .handle();
         let vertex_key = dt.vertices().next().unwrap().0;
-        let vertex_count_before = dt.number_of_vertices();
-        let simplex_count_before = dt.number_of_simplices();
 
         let result = dt.with_post_insertion_rollback(|transaction| {
             let delaunay = transaction.delaunay_mut();
@@ -966,10 +982,46 @@ mod tests {
         });
 
         assert_matches!(result, Err(InsertionError::DelaunayValidationFailed { .. }));
-        assert_eq!(dt.number_of_vertices(), vertex_count_before);
-        assert_eq!(dt.number_of_simplices(), simplex_count_before);
-        dt.is_valid_delaunay()
-            .expect("rollback must restore the original Level 5 proof");
+        assert_eq!(
+            (
+                dt.tri.topology_guarantee,
+                dt.tri.global_topology,
+                dt.tri.validation_policy
+            ),
+            configuration_before
+        );
+        assert_eq!(serde_json::to_value(&dt.tri.tds).unwrap(), topology_before);
+        assert!(Arc::ptr_eq(dt.tri.tds.identity(), &identity_before));
+        assert_eq!(dt.tri.tds.generation(), generation_before);
+        assert_eq!(
+            dt.vertices()
+                .map(|(key, vertex)| (key, vertex.incident_simplex()))
+                .collect::<Vec<_>>(),
+            vertex_keys_before
+        );
+        let simplex_keys_after: Vec<_> = dt.simplices().map(|(key, _)| key).collect();
+        assert_eq!(simplex_keys_after, simplex_keys_before);
+        assert_eq!(dt.tri.topology_construction_provenance, provenance_before);
+        assert_eq!(dt.euclidean_report_domain, report_domain_before);
+        assert_eq!(
+            (
+                dt.insertion_state.last_inserted_simplex,
+                dt.insertion_state.delaunay_repair_policy,
+                dt.insertion_state.delaunay_check_policy,
+                dt.insertion_state.delaunay_repair_insertion_count,
+                dt.insertion_state.use_global_repair_fallback,
+            ),
+            (
+                insertion_state_before.last_inserted_simplex,
+                insertion_state_before.delaunay_repair_policy,
+                insertion_state_before.delaunay_check_policy,
+                insertion_state_before.delaunay_repair_insertion_count,
+                insertion_state_before.use_global_repair_fallback,
+            )
+        );
+        assert!(dt.spatial_index.is_none());
+        dt.validate()
+            .expect("restored owner must satisfy Levels 1-5");
     }
 
     #[test]

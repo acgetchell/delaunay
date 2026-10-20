@@ -5,8 +5,11 @@
 //! are used to prefer well-shaped simplices over degenerate or sliver simplices during
 //! triangulation operations.
 //!
-//! Metrics use stored `f64` coordinates directly. They do not call the
-//! triangulation's kernel or inspect vertex and simplex payloads.
+//! Metrics use `f64` coordinates in each simplex's affine chart. Periodic
+//! lattice offsets are applied using the triangulation's domain; absent offsets
+//! leave stored coordinates unchanged. These are Euclidean shape measures,
+//! not intrinsic curved-space metrics. They do not call the triangulation's
+//! kernel or inspect vertex and simplex payloads.
 //!
 //! # Quality Metrics
 //!
@@ -19,9 +22,9 @@
 //!
 //! # References
 //!
-//! - Shewchuk, J.R. "What Is a Good Linear Element? Interpolation, Conditioning,
-//!   Anisotropy, and Quality Measures." Eleventh International Meshing Roundtable,
-//!   Ithaca, New York (2002). Available at: <https://people.eecs.berkeley.edu/~jrs/papers/elemj.pdf>
+//! - Shewchuk, J.R. "What Is a Good Linear Finite Element? Interpolation, Conditioning,
+//!   Anisotropy, and Quality Measures." Unpublished preprint, December 31, 2002.
+//!   Available at: <https://people.eecs.berkeley.edu/~jrs/papers/elemj.pdf>
 //! - Liu, A., and Joe, B. "Relationship between Tetrahedron Shape Measures."
 //!   *BIT Numerical Mathematics* 34, no. 2 (1994): 268-287.
 //!   DOI: [10.1007/BF01955874](https://doi.org/10.1007/BF01955874)
@@ -48,9 +51,12 @@ use crate::core::{
 };
 use crate::geometry::{
     matrix::{LaError, LaVector},
-    point::Point,
+    point::{Point, ValidatedCoordinates},
     traits::coordinate::CoordinateConversionValue,
     util::{CircumcenterError, circumradius, inradius as simplex_inradius, simplex_volume},
+};
+use crate::topology::traits::global_topology_model::{
+    GlobalTopologyModel, GlobalTopologyModelError,
 };
 use crate::triangulation::Triangulation;
 
@@ -212,6 +218,37 @@ pub enum QualityError {
         /// Triangulation dimension.
         dimension: usize,
     },
+    /// Stored periodic offsets are not aligned with simplex vertices.
+    #[error(
+        "Simplex {simplex_key:?} has {offset_count} periodic offsets for {vertex_count} vertices"
+    )]
+    PeriodicOffsetCountMismatch {
+        /// Simplex with malformed periodic metadata.
+        simplex_key: SimplexKey,
+        /// Number of stored lattice offsets.
+        offset_count: usize,
+        /// Number of simplex vertices.
+        vertex_count: usize,
+    },
+    /// The active topology does not interpret stored periodic offsets.
+    #[error("Simplex {simplex_key:?} stores periodic offsets unsupported by the active topology")]
+    PeriodicOffsetsUnsupported {
+        /// Simplex carrying incompatible periodic metadata.
+        simplex_key: SimplexKey,
+    },
+    /// A simplex vertex could not be lifted into its periodic chart.
+    #[error(
+        "Failed to lift vertex {vertex_key:?} for quality of simplex {simplex_key:?}: {source}"
+    )]
+    VertexLift {
+        /// Simplex whose quality was being computed.
+        simplex_key: SimplexKey,
+        /// Vertex whose coordinate lift failed.
+        vertex_key: VertexKey,
+        /// Underlying topology-model failure, including the affected axis.
+        #[source]
+        source: GlobalTopologyModelError,
+    },
     /// Conversion of a numeric constant or count into the coordinate scalar failed.
     #[error("Numeric conversion failed during {operation}")]
     NumericConversion {
@@ -255,7 +292,7 @@ pub enum QualityError {
     },
 }
 
-/// Helper function to extract simplex points from a triangulation.
+/// Extract simplex points in their active affine chart.
 ///
 /// This centralizes the vertex-to-point extraction logic used by quality metrics.
 /// Uses `SmallBuffer` to avoid heap allocation for typical simplex sizes (D+1 vertices).
@@ -268,22 +305,60 @@ fn simplex_points<K, U, V, const D: usize>(
     tri: &Triangulation<K, U, V, D>,
     simplex_key: SimplexKey,
 ) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, QualityError> {
-    let vertex_keys =
-        tri.tds
-            .simplex_vertices(simplex_key)
-            .map_err(|source| QualityError::SimplexVertices {
+    let simplex = tri
+        .tds
+        .simplex(simplex_key)
+        .ok_or_else(|| QualityError::SimplexVertices {
+            simplex_key,
+            source: QualitySimplexVerticesError::SimplexNotFound {
                 simplex_key,
-                source: source.into(),
-            })?;
+                context: "quality metric simplex lookup".to_string(),
+            },
+        })?;
+    let vertex_keys = simplex.vertices();
+    if vertex_keys.len() != D + 1 {
+        return Err(QualityError::InvalidSimplexArity {
+            actual: vertex_keys.len(),
+            expected: D + 1,
+            dimension: D,
+        });
+    }
+    let offsets = simplex.periodic_vertex_offsets();
+    let model = tri.global_topology().model();
+    if let Some(offsets) = offsets {
+        if !model.supports_periodic_orientation_offsets() {
+            return Err(QualityError::PeriodicOffsetsUnsupported { simplex_key });
+        }
+        if offsets.len() != vertex_keys.len() {
+            return Err(QualityError::PeriodicOffsetCountMismatch {
+                simplex_key,
+                offset_count: offsets.len(),
+                vertex_count: vertex_keys.len(),
+            });
+        }
+    }
 
     // Use SmallBuffer to avoid heap allocation (simplices have D+1 vertices, D ≤ MAX_PRACTICAL_DIMENSION_SIZE)
     let mut points = SmallBuffer::new();
-    for &vkey in vertex_keys {
-        let point = tri
+    for (index, &vkey) in vertex_keys.iter().enumerate() {
+        let mut point = tri
             .tds
             .vertex(vkey)
             .map(|v| *v.point())
             .ok_or(QualityError::VertexNotFound { vertex_key: vkey })?;
+        if let Some(offsets) = offsets {
+            let lifted = model
+                .lift_for_orientation(*point.coords(), Some(offsets[index]))
+                .map_err(|source| QualityError::VertexLift {
+                    simplex_key,
+                    vertex_key: vkey,
+                    source,
+                })?;
+            // The checked periodic model rejects every non-finite lifted value.
+            point = Point::from_validated_coordinates(
+                ValidatedCoordinates::from_prevalidated_finite_values(lifted),
+            );
+        }
         points.push(point);
     }
     Ok(points)
@@ -395,6 +470,7 @@ fn mean_edge_length_after_sum_overflow<const D: usize>(
 /// The radius ratio is defined as the circumradius divided by the inradius.
 /// Lower values indicate better simplex quality. For a regular simplex in D dimensions,
 /// the circumradius-to-inradius ratio satisfies R/r = D, which is optimal.
+/// Periodic simplex offsets select the lifted Euclidean chart used by the metric.
 ///
 /// # Quality Interpretation
 ///
@@ -417,6 +493,9 @@ fn mean_edge_length_after_sum_overflow<const D: usize>(
 /// - [`QualityError::SimplexVertices`] or [`QualityError::VertexNotFound`] if
 ///   simplex vertices cannot be retrieved.
 /// - [`QualityError::InvalidSimplexArity`] unless there are `D + 1` vertices.
+/// - [`QualityError::PeriodicOffsetsUnsupported`] or
+///   [`QualityError::PeriodicOffsetCountMismatch`] for incompatible periodic metadata.
+/// - [`QualityError::VertexLift`] if a periodic coordinate lift is not representable.
 /// - [`QualityError::Circumradius`] or [`QualityError::Inradius`] if the
 ///   corresponding measure fails, preserving the underlying geometry error.
 /// - [`QualityError::EdgeLength`] if a derived edge displacement or length is
@@ -466,14 +545,6 @@ pub fn radius_ratio<K, U, V, const D: usize>(
     // Extract simplex points using helper
     let points = simplex_points(tri, simplex_key)?;
 
-    if points.len() != D + 1 {
-        return Err(QualityError::InvalidSimplexArity {
-            actual: points.len(),
-            expected: D + 1,
-            dimension: D,
-        });
-    }
-
     // Compute circumradius using utility function
     let circumradius_val = circumradius(&points).map_err(|source| QualityError::Circumradius {
         source: Box::new(source),
@@ -513,6 +584,7 @@ pub fn radius_ratio<K, U, V, const D: usize>(
 /// degeneracy checks use the D-th power of the scale-aware length epsilon so
 /// comparisons have matching physical dimensions.
 /// Normalization uses successive division if the mean-edge-length power overflows.
+/// Periodic simplex offsets select the lifted Euclidean chart used by the metric.
 ///
 /// # Quality Interpretation
 ///
@@ -534,6 +606,9 @@ pub fn radius_ratio<K, U, V, const D: usize>(
 /// - [`QualityError::SimplexVertices`] or [`QualityError::VertexNotFound`] if
 ///   simplex vertices cannot be retrieved.
 /// - [`QualityError::InvalidSimplexArity`] unless there are `D + 1` vertices.
+/// - [`QualityError::PeriodicOffsetsUnsupported`] or
+///   [`QualityError::PeriodicOffsetCountMismatch`] for incompatible periodic metadata.
+/// - [`QualityError::VertexLift`] if a periodic coordinate lift is not representable.
 /// - [`QualityError::Volume`] if volume computation fails, preserving the
 ///   underlying geometry error.
 /// - [`QualityError::EdgeLength`] if a derived edge displacement or length is
@@ -581,14 +656,6 @@ pub fn normalized_volume<K, U, V, const D: usize>(
 ) -> Result<f64, QualityError> {
     // Extract simplex points using helper
     let points = simplex_points(tri, simplex_key)?;
-
-    if points.len() != D + 1 {
-        return Err(QualityError::InvalidSimplexArity {
-            actual: points.len(),
-            expected: D + 1,
-            dimension: D,
-        });
-    }
 
     // Compute volume using utility function
     let volume = simplex_volume(&points).map_err(|source| QualityError::Volume {
@@ -677,10 +744,11 @@ mod tests {
     use crate::core::tds::Tds;
     use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::FastKernel;
+    use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
     use crate::triangulation::Triangulation;
     use crate::vertex;
     use approx::assert_relative_eq;
-    use std::{array, assert_matches};
+    use std::{array, assert_matches, iter::once};
 
     // sqrt(3) constant computed at compile time
     // const SQRT_3: f64 = 1.732_050_807_568_877_3;
@@ -693,6 +761,121 @@ mod tests {
         };
         value.get()
     }
+
+    /// Isolates the local geometry adapter without asserting that one simplex
+    /// is a complete closed torus. Public toroidal construction is tested separately.
+    fn quality_fixture<const D: usize>(
+        coords: &[[f64; D]],
+        offsets: Option<&[[i8; D]]>,
+        topology: GlobalTopology<D>,
+    ) -> (Triangulation<FastKernel<f64>, (), (), D>, SimplexKey) {
+        let mut tds = Tds::empty();
+        let keys: Vec<_> = coords
+            .iter()
+            .map(|&coords| {
+                tds.insert_vertex_with_mapping(vertex!(coords).unwrap())
+                    .unwrap()
+            })
+            .collect();
+        let mut simplex = Simplex::try_new_with_data(keys, None).unwrap();
+        if let Some(offsets) = offsets {
+            simplex
+                .set_periodic_vertex_offsets(offsets.to_vec())
+                .unwrap();
+        }
+        let key = tds.insert_simplex_with_mapping(simplex).unwrap();
+        tds.is_valid().unwrap();
+        let mut tri = Triangulation::new_with_tds(FastKernel::new(), tds);
+        tri.global_topology = topology;
+        (tri, key)
+    }
+
+    fn assert_periodic_quality_matches_lifted_simplex<const D: usize>() {
+        let periods: [f64; D] = array::from_fn(|axis| [2.0, 4.0, 8.0, 16.0, 32.0][axis]);
+        let topology =
+            GlobalTopology::try_toroidal(periods, ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        let dimension = f64::from(u32::try_from(D).unwrap());
+        // A right simplex with D perpendicular edges of length h has
+        // R = h*sqrt(D)/2, r = h/(D + sqrt(D)), and volume = h^D/D!.
+        let expected_ratio = dimension * dimension.sqrt().midpoint(1.0);
+        let mean_edge_factor = (dimension - 1.0).mul_add(2.0_f64.sqrt(), 2.0) / (dimension + 1.0);
+        let factorial: f64 = (1..=D)
+            .map(|n| f64::from(u32::try_from(n).unwrap()))
+            .product();
+        let expected_volume = 1.0 / (factorial * mean_edge_factor.powi(i32::try_from(D).unwrap()));
+        for translated in [false, true] {
+            let shift: [i8; D] = array::from_fn(|axis| {
+                if !translated {
+                    0
+                } else if axis % 2 == 0 {
+                    -1
+                } else {
+                    1
+                }
+            });
+            let mut coords: Vec<[f64; D]> = Vec::new();
+            let mut offsets: Vec<[i8; D]> = Vec::new();
+            let mut lifted: Vec<[f64; D]> = Vec::new();
+            for vertex in 0..=D {
+                coords.push(array::from_fn(|axis| {
+                    if vertex == axis + 1 {
+                        0.125
+                    } else {
+                        periods[axis] - 0.125
+                    }
+                }));
+                offsets.push(array::from_fn(|axis| {
+                    shift[axis] + i8::from(vertex == axis + 1)
+                }));
+                lifted.push(array::from_fn(|axis| {
+                    f64::from(shift[axis] + 1).mul_add(
+                        periods[axis],
+                        if vertex == axis + 1 { 0.125 } else { -0.125 },
+                    )
+                }));
+            }
+            // Offset-to-vertex alignment must survive a different storage order.
+            if translated {
+                coords.reverse();
+                offsets.reverse();
+                lifted.reverse();
+            }
+            let (periodic, periodic_key) = quality_fixture(&coords, Some(&offsets), topology);
+            let (euclidean, euclidean_key) =
+                quality_fixture(&lifted, None, GlobalTopology::Euclidean);
+            let ratio = radius_ratio(&periodic, periodic_key).unwrap();
+            let volume = normalized_volume(&periodic, periodic_key).unwrap();
+            assert_relative_eq!(ratio, expected_ratio, epsilon = 1e-10);
+            assert_relative_eq!(volume, expected_volume, epsilon = 1e-10);
+            assert_relative_eq!(
+                ratio,
+                radius_ratio(&euclidean, euclidean_key).unwrap(),
+                epsilon = 1e-10
+            );
+            assert_relative_eq!(
+                volume,
+                normalized_volume(&euclidean, euclidean_key).unwrap(),
+                epsilon = 1e-10
+            );
+        }
+    }
+
+    macro_rules! gen_periodic_quality_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<periodic_quality_matches_lifted_simplex_ $dim d>]() {
+                    assert_periodic_quality_matches_lifted_simplex::<$dim>();
+                }
+            }
+        };
+    }
+
+    gen_periodic_quality_tests!(2);
+    gen_periodic_quality_tests!(3);
+    gen_periodic_quality_tests!(4);
+    gen_periodic_quality_tests!(5);
 
     // =============================================================================
     // DIMENSIONAL MACRO TESTS (2D-5D)
@@ -1461,38 +1644,6 @@ let simplex_key = dt.simplices().next().unwrap().0;
     // =============================================================================
 
     #[test]
-    fn test_simplex_points_valid() {
-        // Test simplex_points helper with valid simplex
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.5, 0.866_025]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let simplex_key = dt.simplices().next().unwrap().0;
-
-        let points = simplex_points(dt.as_triangulation(), simplex_key).unwrap();
-        assert_eq!(points.len(), 3, "Should have 3 points for 2D simplex");
-    }
-
-    #[test]
-    fn test_simplex_points_invalid_key() {
-        // Test simplex_points with invalid simplex key
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.5, 0.866_025]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let invalid_key = SimplexKey::from(KeyData::from_ffi(u64::MAX));
-
-        let result = simplex_points(dt.as_triangulation(), invalid_key);
-        assert_matches!(result, Err(QualityError::SimplexVertices { .. }));
-    }
-
-    #[test]
     fn test_scale_aware_epsilon_2d() {
         // Test epsilon computation for 2D simplex
         let points = [[0.0, 0.0], [1.0, 0.0], [0.5, 0.866_025]]
@@ -1550,41 +1701,6 @@ let simplex_key = dt.simplices().next().unwrap().0;
     // =============================================================================
     // ADDITIONAL ERROR PATH TESTS
     // =============================================================================
-
-    #[test]
-    fn test_radius_ratio_wrong_vertex_count() {
-        // Create a triangulation to test vertex count validation in radius_ratio
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.5, 0.866_025]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let simplex_key = dt.simplices().next().unwrap().0;
-
-        // Normal case should succeed
-        let result = radius_ratio(dt.as_triangulation(), simplex_key);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_normalized_volume_wrong_vertex_count() {
-        // Test normalized_volume with proper vertex count
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let simplex_key = dt.simplices().next().unwrap().0;
-
-        // Should succeed with correct count
-        let result = normalized_volume(dt.as_triangulation(), simplex_key);
-        assert!(result.is_ok());
-    }
 
     #[test]
     fn test_radius_ratio_numerical_edge_cases() {
@@ -1763,6 +1879,99 @@ let simplex_key = dt.simplices().next().unwrap().0;
             Err(other) => {
                 panic!("Unexpected triangulation error for degenerate simplex test: {other}")
             }
+        }
+    }
+
+    #[test]
+    fn periodic_quality_preserves_typed_lift_overflow() {
+        let topology = GlobalTopology::try_toroidal(
+            [1e308, 1.0],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        )
+        .unwrap();
+        let (tri, key) = quality_fixture(
+            &[[f64::MAX / 2.0, 0.0], [f64::MAX / 2.0, 1.0], [0.0, 0.0]],
+            Some(&[[2, 0], [0, 0], [0, 0]]),
+            topology,
+        );
+        let expected_vertex = tri.simplex(key).unwrap().vertices()[0];
+        for metric in [radius_ratio, normalized_volume] {
+            let error = metric(&tri, key).unwrap_err();
+            assert_matches!(error,
+                QualityError::VertexLift { simplex_key, vertex_key, source: GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value } }
+                    if simplex_key == key && vertex_key == expected_vertex && value == f64::INFINITY
+            );
+            assert!(
+                std::error::Error::source(&error)
+                    .unwrap()
+                    .downcast_ref::<GlobalTopologyModelError>()
+                    .is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn periodic_quality_rejects_offsets_without_a_periodic_chart() {
+        let explicit =
+            GlobalTopology::try_toroidal([2.0; 2], ToroidalConstructionMode::Explicit).unwrap();
+        for topology in [GlobalTopology::Euclidean, explicit] {
+            let (tri, key) = quality_fixture(
+                &[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+                Some(&[[0, 0]; 3]),
+                topology,
+            );
+            for metric in [radius_ratio, normalized_volume] {
+                assert_matches!(metric(&tri, key),
+                    Err(QualityError::PeriodicOffsetsUnsupported { simplex_key }) if simplex_key == key
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn periodic_quality_rejects_misaligned_offsets() {
+        let topology =
+            GlobalTopology::try_toroidal([2.0; 2], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        let (mut tri, key) = quality_fixture(
+            &[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+            Some(&[[0, 0]; 3]),
+            topology,
+        );
+        // Normal simplex mutation rejects this state; use the existing TDS
+        // corruption seam to check that chart extraction cannot index past it.
+        tri.tds
+            .set_first_simplex_periodic_offsets_storage_only_for_test(Some(once([0, 0]).collect()));
+        for metric in [radius_ratio, normalized_volume] {
+            assert_matches!(metric(&tri, key),
+                Err(QualityError::PeriodicOffsetCountMismatch {
+                    simplex_key, offset_count: 1, vertex_count: 3,
+                }) if simplex_key == key
+            );
+        }
+    }
+
+    #[test]
+    fn periodic_quality_without_offsets_uses_stored_coordinates() {
+        for mode in [
+            ToroidalConstructionMode::Explicit,
+            ToroidalConstructionMode::PeriodicImagePoint,
+        ] {
+            let (tri, key) = quality_fixture(
+                &[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+                None,
+                GlobalTopology::try_toroidal([2.0; 2], mode).unwrap(),
+            );
+            assert_relative_eq!(
+                radius_ratio(&tri, key).unwrap(),
+                1.0 + 2.0_f64.sqrt(),
+                epsilon = 1e-12
+            );
+            assert_relative_eq!(
+                normalized_volume(&tri, key).unwrap(),
+                4.5 / (2.0 + 2.0_f64.sqrt()).powi(2),
+                epsilon = 1e-12
+            );
         }
     }
 }

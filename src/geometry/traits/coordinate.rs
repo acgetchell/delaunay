@@ -68,6 +68,8 @@
 #![forbid(unsafe_code)]
 
 use crate::geometry::matrix::{LaError, MatrixError, StackMatrixDispatchError};
+use crate::geometry::robust_predicates::InsphereConsistencyError;
+use crate::geometry::util::circumsphere::CircumcenterError;
 use ordered_float::OrderedFloat;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
@@ -522,14 +524,31 @@ pub enum CoordinateConversionError {
         reason: DegenerateSimplexReason,
     },
     /// Strict robust-insphere consistency check failed.
-    #[error("Insphere consistency check failed: {details}")]
+    #[error(
+        "Insphere consistency check failed: {source}; simplex_points={simplex_points}; test_point={test_point}"
+    )]
     InsphereInconsistency {
+        /// Typed disagreement between the determinant and distance methods.
+        #[source]
+        source: InsphereConsistencyError,
         /// Debug representation of simplex points participating in the check.
         simplex_points: String,
         /// Debug representation of the test point participating in the check.
         test_point: String,
-        /// Detailed inconsistency message.
-        details: String,
+    },
+    /// The distance-based insphere fallback failed after exact evaluation was unavailable.
+    ///
+    /// Both causes remain typed; the fallback failure is the primary error source.
+    /// Boxing breaks the recursive relationships between these error types.
+    #[error(
+        "Insphere geometric fallback failed: {source}; exact predicate unavailable: {exact_error}"
+    )]
+    InsphereFallbackFailed {
+        /// Exact-predicate failure that caused the geometric fallback to run.
+        exact_error: Box<Self>,
+        /// Failure from the circumcenter, radius, or point-distance computation.
+        #[source]
+        source: Box<CircumcenterError>,
     },
     /// A runtime-dispatched stack matrix exceeded the supported dimension.
     #[error("Unsupported stack matrix dimension {requested} (maximum supported is {max})")]

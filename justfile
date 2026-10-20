@@ -25,6 +25,17 @@ _coverage_base_args := '''--ignore-filename-regex '(^|/)(benches|examples)/' \
   --workspace --lib --tests \
   --verbose'''
 
+# Feature-only library tests; keep this selection aligned with nextest discovery.
+[private]
+_feature_unit_filter := '''test(core::util::measurement::)
+  | test(bench_fixtures::)
+  | test(test_verify_conflict_region_completeness_)
+  | test(debug_print_first_delaunay_violation_handles_violations)
+  | test(tests::basic_alloc_counting)
+  | test(tests::alloc_counting_with_vec)
+  | test(representative_manifest_allocation_budget_is_bounded)
+  | test(decoded_checkpoint_manifest_inspection_is_zero_allocation)'''
+
 import 'just/helpers.just'
 
 # List every public command and its arguments directly from Just.
@@ -146,12 +157,12 @@ changelog-release tag date:
 
 # Run every non-mutating validator outside the test suites.
 [group('workflows')]
-check: check-code check-config check-docs
+check: check-config check-docs check-code
     @echo "✅ Checks complete!"
 
-# Check Rust and dependency hygiene, Python, notebooks, and shell scripts.
+# Check Python, notebooks, shell scripts, dependency hygiene, and Rust.
 [group('validation')]
-check-code: rust-core-check unused-deps python-check notebook-check shell-check
+check-code: python-check notebook-check shell-check unused-deps rust-core-check
 
 # Check justfile, JSON, TOML, YAML/CFF, and GitHub Actions configuration.
 [group('validation')]
@@ -879,7 +890,7 @@ tag version: release-version-check
 tag-force version: release-version-check
     {{ rrt }} changelog tag {{ quote(version) }} --force
 
-# Run every default Rust and Python test bucket once.
+# Run maintained Rust and Python correctness buckets once.
 [group('workflows')]
 test: test-rust test-python
     @echo "✅ Test workflow passed!"
@@ -903,6 +914,16 @@ test-diagnostics: _ensure-nextest
 [group('tests and coverage')]
 test-doc:
     {{ managed }} cargo test --doc --release --verbose
+
+# Run allocation and diagnostics examples excluded from default doctests.
+[group('tests and coverage')]
+test-doc-features:
+    {{ managed }} cargo test --doc --release --features diagnostics,count-allocations,bench measure_with_result
+    {{ managed }} cargo test --doc --release --features diagnostics,count-allocations,bench debug_print_first_delaunay_violation
+
+# Run feature-only library tests and doctests without the slow-test suite.
+[group('tests and coverage')]
+test-features: test-unit-features test-doc-features
 
 # Run default integration tests in release mode under the normal 10-second budget.
 # Narrow test-specific overrides grant headroom to boundary-running cases.
@@ -931,9 +952,9 @@ test-integration-fast: _ensure-nextest
 test-python: _ensure-uv
     {{ semgrep_stack_limit }} uv run --locked pytest
 
-# Run every default Rust correctness target class once.
+# Run default Rust target classes and feature-only library coverage once.
 [group('tests and coverage')]
-test-rust: test-unit test-integration test-cli test-doc
+test-rust: test-unit test-integration test-cli test-doc test-features
     @echo "✅ Rust tests passed!"
 
 # Run correctness tests that exceed the 10s default-suite budget.
@@ -950,6 +971,12 @@ test-slow: _ensure-nextest
 test-unit: _ensure-nextest
     {{ managed }} cargo nextest run --profile debug --lib
     {{ managed }} cargo nextest run --release --profile ci --lib
+
+# Run feature-only lib unit tests in debug and release profiles.
+[group('tests and coverage')]
+test-unit-features: _ensure-nextest
+    {{ managed }} cargo nextest run --profile debug --lib --features diagnostics,count-allocations,bench -E {{ quote(_feature_unit_filter) }}
+    {{ managed }} cargo nextest run --release --profile ci --lib --features diagnostics,count-allocations,bench -E {{ quote(_feature_unit_filter) }}
 
 # Run TOML parsing, lint, and formatting checks.
 [group('validation')]
@@ -1058,6 +1085,7 @@ validation-doc-figures-check: _ensure-uv paper-cli
     check_root="target/docs/validation-figure-check"
     generated_dir="target/notebooks/01_validation/validation_figures"
     rm -rf "$check_root"
+    unset DELAUNAY_VALIDATION_DOC_FIGURE_DIR
     DELAUNAY_BINARY="{{ perf_delaunay_binary }}" just notebook-execute notebooks/01_validation.ipynb "$check_root/notebook"
     uv run --locked --group notebooks python -m notebook_validation_rendering "$generated_dir" docs/assets/validation
 

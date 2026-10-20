@@ -112,6 +112,10 @@ def test_visual_witnesses_cover_all_validation_levels(case: ValidationCase) -> N
             "does not duplicate an emitted simplex",
         ),
         (
+            visual_case(3, ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), ((0, 1, 2),)),
+            r"cases\[2\] Level 3 must include an isolated point witness",
+        ),
+        (
             visual_case(
                 3,
                 ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),
@@ -122,12 +126,41 @@ def test_visual_witnesses_cover_all_validation_levels(case: ValidationCase) -> N
         ),
         (
             visual_case(
+                3,
+                ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (2.0, 2.0), (3.0, 3.0)),
+                ((0, 1, 2),),
+                isolated_points=frozenset({3}),
+            ),
+            r"isolated points \[3\] do not match unused points \[3, 4\]",
+        ),
+        (
+            visual_case(
                 4,
                 ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),
                 ((0, 1, 2),),
                 highlighted_simplices=frozenset({0}),
             ),
             "exceeds degeneracy tolerance",
+        ),
+        (
+            # These non-collinear points produce inf - inf in the area calculation.
+            visual_case(
+                4,
+                ((0.0, 0.0), (1e200, 1e200), (1e200, 2e200)),
+                ((0, 1, 2),),
+                highlighted_simplices=frozenset({0}),
+            ),
+            r"cases\[3\]\.visual\.simplices\[0\] area must be finite, got nan",
+        ),
+        (
+            # This right triangle's area overflows to infinity.
+            visual_case(
+                4,
+                ((0.0, 0.0), (1e200, 0.0), (0.0, 1e200)),
+                ((0, 1, 2),),
+                highlighted_simplices=frozenset({0}),
+            ),
+            r"cases\[3\]\.visual\.simplices\[0\] area must be finite, got inf",
         ),
         (
             visual_case(

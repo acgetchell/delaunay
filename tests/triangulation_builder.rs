@@ -16,9 +16,10 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::geometry::{AdaptiveKernel, ExactPredicates, RobustKernel};
 use delaunay::prelude::insertion::InsertionError;
-use delaunay::prelude::tds::{InvariantError, TdsConstructionError, TdsError};
+use delaunay::prelude::tds::{TdsConstructionError, TdsError};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 use delaunay::prelude::topology::validation::{TopologyClassification, euler_characteristic};
+use delaunay::prelude::validation::InvariantError;
 use delaunay::prelude::validation::{
     TriangulationRealizationValidationError, TriangulationValidationError,
     ValidationConfigurationError, ValidationPolicy,
@@ -1628,7 +1629,10 @@ fn test_explicit_error_variant_geometric_nondegeneracy() {
     match err {
         DelaunayTriangulationConstructionError::ExplicitConstruction {
             source: ExplicitConstructionError::GeometricNondegeneracy { source },
-        } => assert_matches!(source.as_ref(), TdsError::Geometric { source: _ }),
+        } => assert_matches!(
+            source.as_ref(),
+            TriangulationRealizationValidationError::DegenerateSimplex { dimension: 2, .. }
+        ),
         other => panic!("expected explicit geometric nondegeneracy failure, got {other:?}"),
     }
 }

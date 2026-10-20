@@ -1,6 +1,7 @@
 """Tests for validated notebook visualization records."""
 
 import json
+import math
 import operator
 from dataclasses import replace
 from pathlib import Path
@@ -16,6 +17,7 @@ from notebook_visualization import (
     load_spherical_hero,
     load_visualization_3d,
     render_readme_figure,
+    scaled_axis_limits,
     select_readme_figure_geometry,
 )
 
@@ -118,6 +120,17 @@ def test_visualization_copies_and_freezes_geometry_and_nested_metadata() -> None
     assert artifact.coordinates == original.coordinates
     assert artifact.edges == original.edges
     assert artifact.metadata["labels"] == ("validated",)
+    assert visualization_module.unique_edges(artifact.simplices) == [
+        ("a", "b"),
+        ("a", "c"),
+        ("a", "d"),
+        ("b", "c"),
+        ("b", "d"),
+        ("b", "e"),
+        ("c", "d"),
+        ("c", "e"),
+        ("d", "e"),
+    ]
     for mapping in (artifact.coordinates, artifact.simplices, artifact.neighbors, artifact.metadata):
         with pytest.raises(TypeError):
             operator.setitem(cast("dict[str, Any]", mapping), "invalid", None)
@@ -283,16 +296,83 @@ def test_quickstart_readme_cell_is_typed_orchestration() -> None:
     assert "def " not in source
 
 
-def test_load_visualization_3d_derives_edges_faces_and_limits(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("minimum", "maximum", "expected_x_limits"),
+    [
+        pytest.param(0.0, 1.0, (-0.68, 1.68), id="ordinary"),
+        pytest.param(1.0e308, 1.1e308, (9.32e307, 1.168e308), id="large-positive"),
+        pytest.param(-1.1e308, -1.0e308, (-1.168e308, -9.32e307), id="large-negative"),
+        pytest.param(-1.0e307, 1.0e307, (-2.36e307, 2.36e307), id="opposite-signs"),
+    ],
+)
+def test_load_visualization_3d_derives_edges_faces_and_limits(tmp_path: Path, minimum: float, maximum: float, expected_x_limits: tuple[float, float]) -> None:
     path = tmp_path / "visualization.json"
-    path.write_text(json.dumps(visualization_artifact()), encoding="utf-8")
+    data = visualization_artifact()
+    for vertex in data["vertices"]:
+        vertex["coordinates"][0] = maximum if vertex["id"] == "b" else minimum
+    path.write_text(json.dumps(data, allow_nan=False), encoding="utf-8")
 
     artifact = load_visualization_3d(path)
 
     assert len(artifact.coordinates) == 4
     assert len(artifact.edges) == 6
     assert len(artifact.boundary_faces) == 4
-    assert all(lower < upper for lower, upper in artifact.axis_limits)
+    assert artifact.axis_limits[0] == pytest.approx(expected_x_limits)
+    expected_span = expected_x_limits[1] - expected_x_limits[0]
+    for axis, (lower, upper) in enumerate(artifact.axis_limits):
+        assert math.isfinite(lower)
+        assert math.isfinite(upper)
+        assert lower < upper
+        assert upper - lower == pytest.approx(expected_span)
+        assert all(lower <= point[axis] <= upper for point in artifact.coordinates.values())
+
+
+@pytest.mark.parametrize(
+    ("axis", "minimum", "maximum", "message"),
+    [
+        pytest.param(2, -1.0e308, 1.0e308, "coordinate span for axis z must be finite", id="coordinate-span-overflow"),
+        pytest.param(1, 0.0, 1.6e308, "padded display half-span must be finite", id="padding-overflow"),
+        pytest.param(0, 1.3e308, 1.7e308, "derived display limits for axis x", id="endpoint-overflow"),
+        pytest.param(0, -4.0e307, 4.0e307, "derived display limits for axis x", id="display-span-overflow"),
+        pytest.param(1, 1.0e308, 1.0e308, "derived display limits for axis y", id="collapsed-limits"),
+    ],
+)
+def test_load_visualization_3d_rejects_unrepresentable_limits(tmp_path: Path, axis: int, minimum: float, maximum: float, message: str) -> None:
+    path = tmp_path / "visualization.json"
+    data = visualization_artifact()
+    for vertex in data["vertices"]:
+        vertex["coordinates"][axis] = maximum if vertex["id"] == "b" else minimum
+    path.write_text(json.dumps(data, allow_nan=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        load_visualization_3d(path)
+
+
+@pytest.mark.parametrize(
+    ("limits", "scale", "expected"),
+    [
+        ((0.0, 1.0), 0.3, (0.35, 0.65)),
+        ((1.0e308, 1.1e308), 0.5, (1.025e308, 1.075e308)),
+        ((-1.1e308, -1.0e308), 0.5, (-1.075e308, -1.025e308)),
+    ],
+)
+def test_scaled_axis_limits_preserve_representable_ranges(limits: tuple[float, float], scale: float, expected: tuple[float, float]) -> None:
+    for result in scaled_axis_limits((limits, limits, limits), scale):
+        assert result == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("limits", "scale", "message"),
+    [
+        pytest.param((1.3e308, 1.7e308), 2.0, "scaled display limits for axis y", id="endpoint-overflow"),
+        pytest.param((-5.0e307, 5.0e307), 2.0, "scaled display limits for axis y", id="display-span-overflow"),
+        pytest.param((1.0e308, 1.1e308), 1.0e-320, "scaled display limits for axis y", id="collapsed-limits"),
+        pytest.param((-1.0e308, 1.0e308), 0.1, "input display limits for axis y", id="invalid-input-span"),
+    ],
+)
+def test_scaled_axis_limits_reject_unrepresentable_ranges(limits: tuple[float, float], scale: float, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        scaled_axis_limits(((-0.5, 0.5), limits, (-0.5, 0.5)), scale)
 
 
 @pytest.mark.parametrize("schema_version", [True, 1.0, "1"])

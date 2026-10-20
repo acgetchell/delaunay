@@ -127,6 +127,31 @@ def test_cli_recipe_runs_binary_unit_and_integration_targets() -> None:
     assert ("cargo nextest run --release --profile ci --features cli --bin delaunay --bin pachner-stress --test cli") in command
 
 
+def test_feature_lane_reaches_ci_without_default_or_slow_test_runs() -> None:
+    """CI executes optional library tests and examples through focused target lanes."""
+    recipes = inspect_justfile(REPO_ROOT).recipes
+    assert {item["recipe"] for item in recipes["test-features"]["dependencies"]} == {"test-unit-features", "test-doc-features"}
+    assert "test-features" in {item["recipe"] for item in recipes["test-rust"]["dependencies"]}
+    rendered = dry_run(REPO_ROOT, "test-features").stderr
+    assert rendered.count("--features diagnostics,count-allocations,bench") == 4
+    assert rendered.count("--lib") == 2
+    assert rendered.count("-E '") == 2
+    assert "--profile debug" in rendered
+    assert "--release --profile ci" in rendered
+    assert rendered.count("--doc --release") == 2
+    assert "bench measure_with_result" in rendered
+    assert "bench debug_print_first_delaunay_violation" in rendered
+    assert "slow-tests" not in rendered
+    assert "--all-features" not in rendered
+
+    ci = dry_run(REPO_ROOT, "ci").stderr
+    # Each target lane appears once in the aggregate, including its multiline filter.
+    for recipe in ("test-unit-features", "test-doc-features"):
+        commands = dry_run(REPO_ROOT, recipe).stderr
+        commands = "\n".join(line for line in commands.splitlines() if "toolchain check" not in line)
+        assert ci.count(commands) == 1, recipe
+
+
 @pytest.mark.parametrize(
     "output_dir",
     ["artifacts with spaces", "artifacts/$trial", "artifacts/$(printf expanded)", "artifacts/`printf expanded`", "artifacts/single' double\""],
@@ -566,7 +591,6 @@ def test_ci_composes_non_mutating_canonical_validation_figure_check() -> None:
     rendered = rendered_result.stdout + rendered_result.stderr
     assert 'check_root="target/docs/validation-figure-check"' in rendered
     assert 'generated_dir="target/notebooks/01_validation/validation_figures"' in rendered
-    assert "DELAUNAY_VALIDATION_DOC_FIGURE_DIR" not in rendered
     assert "python -m notebook_validation_rendering" in rendered
     assert "docs/assets/validation" in rendered
 

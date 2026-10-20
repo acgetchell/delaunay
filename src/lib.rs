@@ -33,16 +33,16 @@
 //!   Task-oriented, end-to-end usage recipes (Builder API, Edit API, validation,
 //!   repairs, diagnostics, and statistics).
 //!
-//! - **`docs/construction_and_validation.md`**:
+//! - **[Construction and validation](https://github.com/acgetchell/delaunay/blob/main/docs/construction_and_validation.md)**:
 //!   Construction vocabulary, proof-bearing promotion boundaries, formal
 //!   definitions of validation Levels 1–5, their costs, and guidance on when
 //!   each level should be applied.
 //!
-//! - **docs/diagnostics.md**:
+//! - **[Diagnostics](https://github.com/acgetchell/delaunay/blob/main/docs/diagnostics.md)**:
 //!   Opt-in diagnostic helpers, structured reports, debug switches, and guidance for
 //!   producing useful failure reports without expanding the default API surface.
 //!
-//! - **docs/invariants.md**:
+//! - **[Invariants](https://github.com/acgetchell/delaunay/blob/main/docs/invariants.md)**:
 //!   Deeper theoretical discussion of topological and geometric invariants
 //!   (PL-manifold conditions, ridge/vertex links, ordering heuristics, and
 //!   convergence assumptions), plus algorithmic background and limitations.
@@ -594,7 +594,8 @@ mod core {
         ///
         /// - Edelsbrunner & Shah (1996), "Incremental Topological Flipping Works for Regular
         ///   Triangulations"
-        /// - Bistellar flips implementation notebook (Warp Drive)
+        /// - [Canonical bistellar-flip references](https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md#bistellar-pachner-moves-and-delaunay-repair),
+        ///   including Pachner's PL-homeomorphism result.
         pub mod flips {
             use crate::core::algorithms::insertion::{
                 CavityFillingError, HullExtensionReason, InsertionError, InsertionErrorKind,
@@ -691,8 +692,8 @@ mod core {
             use self::orientation::{
                 debug_postcondition_facet_context, debug_ridge_context, facet_order,
                 k1_inserted_vertex_periodic_offset, normalized_facet_order_with_offsets,
-                orient_replacement_simplices, permutation_odd,
-                replacement_simplex_periodic_offsets, validate_replacement_orientation,
+                orient_replacement_simplices, replacement_simplex_periodic_offsets,
+                validate_replacement_orientation,
             };
             pub use self::repair::*;
             use self::repair_queue::{
@@ -890,6 +891,7 @@ mod core {
         pub mod hilbert;
         #[cfg(feature = "count-allocations")]
         pub mod measurement;
+        pub(crate) mod permutation;
         pub mod uuid;
 
         // Re-export utility internals within the private core namespace.
@@ -1065,9 +1067,11 @@ pub mod repair;
 /// Prototype spherical Delaunay construction via the spherical topology backend.
 #[path = "delaunay/spherical.rs"]
 pub mod spherical;
-/// Delaunay-level validation APIs, reports, and construction diagnostics.
+/// Delaunay-level validation APIs, whole-stack reports, and construction diagnostics.
 #[path = "delaunay/validation.rs"]
 pub mod validation;
+/// Whole-stack diagnostics composed from layer-local validation failures.
+mod validation_report;
 
 /// I/O and downstream-facing export data models.
 pub mod io {
@@ -1129,9 +1133,6 @@ pub use crate::spherical::{
     SphericalDelaunayValidationError, SphericalSimplex, SphericalSimplexError,
     SphericalValidationLayer,
 };
-pub use crate::tds::{
-    InvariantError, InvariantKind, InvariantViolation, TriangulationValidationReport,
-};
 pub use crate::topology::spaces::spherical::{
     SphericalMetric, SphericalPoint, SphericalPointError,
 };
@@ -1161,6 +1162,9 @@ pub use crate::triangulation::validation::{
 pub use crate::validation::{
     DelaunayTriangulationRefinementError, DelaunayTriangulationValidationError,
     DelaunayVerificationError, DelaunayVerificationErrorKind,
+};
+pub use crate::validation_report::{
+    InvariantError, InvariantKind, InvariantViolation, TriangulationValidationReport,
 };
 
 /// Creates vertices from points by re-validating coordinates at the public boundary.
@@ -1517,9 +1521,9 @@ pub mod prelude {
         DelaunayTriangulationValidationError, DelaunayVerificationError,
         DelaunayVerificationErrorKind, DuplicateDetectionMetrics, FinalDelaunayValidationContext,
         FinalTopologyValidationContext, InitialSimplexStrategy, InsertionOrderStrategy,
-        InsertionResult, PlManifoldRepairError, PlManifoldRepairRefinementError,
-        PlManifoldRepairStage, PlManifoldRepairStats, RefinementError, RepairDecision,
-        RepairSkipReason, RetryPolicy, SphericalDelaunayBuilder,
+        InsertionResult, InvariantError, InvariantKind, InvariantViolation, PlManifoldRepairError,
+        PlManifoldRepairRefinementError, PlManifoldRepairStage, PlManifoldRepairStats,
+        RefinementError, RepairDecision, RepairSkipReason, RetryPolicy, SphericalDelaunayBuilder,
         SphericalDelaunayConstructionError, SphericalDelaunayTriangulation,
         SphericalDelaunayValidationError, SphericalMetric, SphericalPoint, SphericalPointError,
         SphericalSimplex, SphericalSimplexError, SphericalValidationLayer, TopologicalOperation,
@@ -1575,7 +1579,8 @@ pub mod prelude {
             DelaunayCheckpoint, DelaunayCheckpointDecodeError, DelaunayCheckpointDigest,
             DelaunayCheckpointDigestAlgorithm, DelaunayCheckpointError,
             DelaunayCheckpointLoadError, DelaunayCheckpointManifest,
-            DelaunayCheckpointTdsHydrationError, DelaunayCheckpointV1,
+            DelaunayCheckpointPayloadError, DelaunayCheckpointTdsHydrationError,
+            DelaunayCheckpointV1,
         };
     }
 
@@ -1748,15 +1753,17 @@ pub mod prelude {
             TriangulationAdjacency,
         };
         pub use crate::tds::{
-            FacetHandle, InvariantError, NeighborSlot, Simplex, SimplexKey, Tds,
-            TdsConstructionError, TdsError, TdsErrorKind, TdsMutationError,
-            TriangulationValidationErrorKind, Vertex, VertexKey,
+            FacetHandle, NeighborSlot, Simplex, SimplexKey, Tds, TdsConstructionError, TdsError,
+            TdsErrorKind, TdsInvariantKind, TdsInvariantViolation, TdsMutationError,
+            TdsValidationReport, Vertex, VertexKey,
         };
         pub use crate::topology::manifold::ManifoldError;
         pub use crate::triangulation::editing::{TriangulationEditError, VertexRemovalError};
         pub use crate::triangulation::serialization::{
             TRIANGULATION_SNAPSHOT_SCHEMA_VERSION, TriangulationSnapshot,
         };
+        pub use crate::triangulation::validation::TriangulationValidationErrorKind;
+        pub use crate::validation_report::InvariantError;
         pub use crate::vertex;
         pub use crate::{
             InsertionError, LocalFacetRepairGuard, RefinementError,
@@ -2005,8 +2012,11 @@ pub mod prelude {
     /// assert!(cadence.should_validate(32));
     /// ```
     pub mod validation {
+        pub use crate::tds::{TdsInvariantKind, TdsInvariantViolation, TdsValidationReport};
         pub use crate::topology::manifold::ManifoldError;
-        pub use crate::validation::ValidationCadence;
+        pub use crate::triangulation::validation::TriangulationValidationErrorKind;
+        pub use crate::validation::{DelaunayValidationErrorKind, ValidationCadence};
+        pub use crate::validation_report::{InvariantError, InvariantKind, InvariantViolation};
         pub use crate::{
             DelaunayTriangulationRefinementError, DelaunayTriangulationValidationError,
             DelaunayVerificationError, DelaunayVerificationErrorKind, OrientationWitness,
@@ -2146,9 +2156,8 @@ pub mod prelude {
                 ArrayConversionFailureReason, CircumcenterError, CircumcenterFailureReason,
                 DegenerateGeometry, DegenerateMeasure, SurfaceMeasureError, ValueConversionError,
                 ValueConversionFailureReason, circumcenter, circumradius, circumradius_with_center,
-                facet_measure, inradius, safe_coords_from_f64, safe_coords_to_f64,
-                safe_scalar_from_f64, safe_scalar_to_f64, safe_usize_to_scalar, simplex_volume,
-                surface_measure,
+                facet_measure, inradius, safe_usize_to_scalar, simplex_volume, surface_measure,
+                try_finite_coords, try_finite_scalar,
             },
         };
     }
@@ -2466,6 +2475,8 @@ mod tests {
 
     #[cfg(feature = "count-allocations")]
     use allocation_counter::measure;
+    #[cfg(feature = "count-allocations")]
+    use std::hint::black_box;
 
     // =============================================================================
     // TYPE SAFETY TESTS
@@ -2793,7 +2804,7 @@ mod tests {
     // ALLOCATION COUNTING TESTS
     // =============================================================================
 
-    /// Run these with `cargo test allocation_counting --features count-allocations`
+    /// Run these with `just test-unit-features`.
     #[cfg(feature = "count-allocations")]
     #[test]
     fn basic_alloc_counting() {
@@ -2833,9 +2844,10 @@ mod tests {
     #[cfg(feature = "count-allocations")]
     #[test]
     fn alloc_counting_with_vec() {
-        // Test an operation that does allocate memory
+        // Keep the allocation observable even when optimized, then drop it
+        // inside the measurement so current allocation counts return to zero.
         let result = measure(|| {
-            let _vec: Vec<i32> = vec![1, 2, 3, 4, 5];
+            drop(black_box(vec![1_i32, 2, 3, 4, 5]));
         });
 
         // For this operation, we expect some allocations

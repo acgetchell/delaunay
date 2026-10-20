@@ -644,7 +644,9 @@ existence and mutable versus immutable access.
 The separation serves several purposes:
 
 1. **Clear contracts**: Builder API guarantees Delaunay property; Pachner Move API does not
-2. **Safety**: Low-level flip primitives are not exposed to prevent accidental misuse
+2. **Safety**: Focused preludes expose the staged Pachner workflow; expert callers
+   can import public raw flip primitives directly from `delaunay::flips`.
+   Internal context-building and application helpers remain crate-private.
 3. **Flexibility**: Pachner Move API enables research and custom algorithms without restricting the design
 4. **Documentation**: Clear distinction between "construction" and "manipulation" workflows
 

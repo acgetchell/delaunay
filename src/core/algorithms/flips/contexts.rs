@@ -1073,14 +1073,14 @@ pub(super) fn delaunay_violation_k3_for_ridge<K, U, V, const D: usize>(
 where
     K: Kernel<D, Scalar = f64>,
 {
-    if triangle_vertices.len() != 3 {
+    let &[a, b, c] = triangle_vertices else {
         return Err(FlipContextError::WrongInsertedFaceArity {
             k_move: 3,
             expected: 3,
             found: triangle_vertices.len(),
         }
         .into());
-    }
+    };
     if ridge_vertices.len() != D.saturating_sub(1) {
         return Err(FlipContextError::K3RidgeArity {
             expected: D.saturating_sub(1),
@@ -1089,26 +1089,28 @@ where
         .into());
     }
 
-    let is_euclidean_topology = matches!(topology_model, GlobalTopologyModelAdapter::Euclidean(_));
-    let mut euclidean_point_cache = EuclideanPointCache::new();
+    // As in k=2, choose one reciprocal query by stable identity. Taking the
+    // largest triangle key keeps the circuit's smallest key in the sorted
+    // simplex, even when the inverse move uses a different face. On a
+    // nondegenerate cospherical circuit, that first vertex determines the
+    // leading SoS term (including its quadratic lift term if necessary).
+    // Scanning all three queries can instead move that vertex into the query
+    // row and request both a flip and its inverse.
+    let mut triangle = [a, b, c];
+    triangle.sort_unstable_by_key(|v| v.data().as_ffi());
+    let missing = triangle[2];
+    let mut simplex_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(D + 1);
+    simplex_vertices.extend_from_slice(ridge_vertices);
+    simplex_vertices.extend_from_slice(&triangle[..2]);
+    simplex_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
 
-    for &missing in triangle_vertices {
-        let mut simplex_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::with_capacity(D + 1);
-        simplex_vertices.extend_from_slice(ridge_vertices);
-        for &v in triangle_vertices {
-            if v != missing {
-                simplex_vertices.push(v);
-            }
-        }
-
-        // Sort by VertexKey for canonical SoS perturbation ordering
-        simplex_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
-
-        let (points, missing_point) = if is_euclidean_topology {
+    let (points, missing_point) =
+        if matches!(topology_model, GlobalTopologyModelAdapter::Euclidean(_)) {
+            let mut point_cache = EuclideanPointCache::new();
             (
-                euclidean_point_cache.points_for_vertices(tds, &simplex_vertices)?,
-                euclidean_point_cache.point(tds, missing)?,
+                point_cache.points_for_vertices(tds, &simplex_vertices)?,
+                point_cache.point(tds, missing)?,
             )
         } else {
             let source_simplex =
@@ -1131,31 +1133,25 @@ where
             )
         };
 
-        let in_sphere_result = kernel.in_sphere(&points, &missing_point);
-        let in_sphere = match in_sphere_result {
-            Ok(value) => value,
-            Err(e) => {
-                diagnostics.record_predicate_failure();
-                return Err(FlipPredicateError::coordinate_conversion(
-                    FlipPredicateOperation::K3SimplexInSphere,
-                    e,
-                )
-                .into());
-            }
-        };
-
-        // Track ambiguous sites when the fast predicate returns boundary/uncertain.
-        if in_sphere == 0 {
-            let key = predicate_key_from_vertices(&simplex_vertices, missing);
-            diagnostics.record_ambiguous(key);
+    let in_sphere = match kernel.in_sphere(&points, &missing_point) {
+        Ok(value) => value,
+        Err(e) => {
+            diagnostics.record_predicate_failure();
+            return Err(FlipPredicateError::coordinate_conversion(
+                FlipPredicateOperation::K3SimplexInSphere,
+                e,
+            )
+            .into());
         }
+    };
 
-        if in_sphere > 0 {
-            return Ok(true);
-        }
+    // Track ambiguous sites when the fast predicate returns boundary/uncertain.
+    if in_sphere == 0 {
+        let key = predicate_key_from_vertices(&simplex_vertices, missing);
+        diagnostics.record_ambiguous(key);
     }
 
-    Ok(false)
+    Ok(in_sphere > 0)
 }
 
 /// Validate a k=3 bistellar flip without mutating the TDS.
@@ -1443,6 +1439,7 @@ mod tests {
     use crate::core::algorithms::insertion::repair_neighbor_pointers;
     use crate::core::tds::TdsError;
     use crate::core::test_support::{assert_same_vertex_simplex_topology, snapshot_topology};
+    use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::traits::coordinate::CoordinateConversionError;
     use crate::topology::traits::GlobalTopology;
     use crate::vertex;
@@ -1471,6 +1468,192 @@ mod tests {
                 max: D + 1,
             })
         }
+    }
+
+    /// Two orthogonal faces whose relative interiors intersect at the origin.
+    /// Every point is on one exact integer sphere, and every D+1 subset is
+    /// affinely independent. The first three vertices form the triangle.
+    fn cospherical_k3_fixture<const D: usize>(
+        first: usize,
+        reverse: bool,
+    ) -> (Tds<(), (), D>, Vec<VertexKey>) {
+        let coordinates: Vec<[i32; 5]> = match D {
+            // (6*A + 5*B + 5*C)/16 = (N + S)/2 = 0.
+            3 => vec![
+                [5, 0, 0, 0, 0],
+                [-3, 4, 0, 0, 0],
+                [-3, -4, 0, 0, 0],
+                [0, 0, 5, 0, 0],
+                [0, 0, -5, 0, 0],
+            ],
+            // Each triangle contains zero with weights (5, 6.5, 6.5).
+            4 => vec![
+                [13, 0, 0, 0, 0],
+                [-5, 12, 0, 0, 0],
+                [-5, -12, 0, 0, 0],
+                [0, 0, 13, 0, 0],
+                [0, 0, -5, 12, 0],
+                [0, 0, -5, -12, 0],
+            ],
+            // The tetrahedron's centroid is zero.
+            5 => vec![
+                [13, 0, 0, 0, 0],
+                [-5, 12, 0, 0, 0],
+                [-5, -12, 0, 0, 0],
+                [0, 0, 5, 0, 12],
+                [0, 0, 5, 0, -12],
+                [0, 0, -5, 12, 0],
+                [0, 0, -5, -12, 0],
+            ],
+            _ => panic!("fixture supports 3D through 5D"),
+        };
+        let mut order: Vec<_> = (0..D + 2).collect();
+        order.rotate_left(first);
+        if reverse {
+            order[1..].reverse();
+        }
+        let mut tds = Tds::empty();
+        let mut keys = vec![VertexKey::null(); D + 2];
+        for index in order {
+            let coords = coordinates[index];
+            assert_eq!(
+                coords.iter().map(|value| value * value).sum::<i32>(),
+                if D == 3 { 25 } else { 169 }
+            );
+            keys[index] = tds
+                .insert_vertex_with_mapping(
+                    vertex!(std::array::from_fn::<_, D, _>(|axis| f64::from(
+                        coords[axis]
+                    )))
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        for missing in 0..3 {
+            let vertices: Vec<_> = keys
+                .iter()
+                .enumerate()
+                .filter_map(|(index, &key)| (index != missing).then_some(key))
+                .collect();
+            tds.insert_simplex_with_mapping(Simplex::try_new_with_data(vertices, None).unwrap())
+                .unwrap();
+        }
+        repair_neighbor_pointers(&mut tds).unwrap();
+        tds.is_valid().unwrap();
+        (tds, keys)
+    }
+
+    fn ridge_handle_for_face<const D: usize>(
+        tds: &Tds<(), (), D>,
+        face: &[VertexKey],
+    ) -> RidgeHandle {
+        let (key, simplex) = tds
+            .simplices()
+            .find(|(_, simplex)| face.iter().all(|v| simplex.vertices().contains(v)))
+            .unwrap();
+        let opposite: Vec<_> = simplex
+            .vertices()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, v)| (!face.contains(v)).then_some(u8::try_from(index).unwrap()))
+            .collect();
+        let &[a, b] = opposite.as_slice() else {
+            panic!("ridge must have codimension two");
+        };
+        RidgeHandle::from_validated(key, a, b)
+    }
+
+    fn inverse_cospherical_violation<const D: usize>(
+        tds: &Tds<(), (), D>,
+        keys: &[VertexKey],
+        config: &RepairAttemptConfig,
+    ) -> bool {
+        let kernel = AdaptiveKernel::<f64>::new();
+        let model = GlobalTopology::Euclidean.model();
+        let mut diagnostics = RepairDiagnostics::default();
+        if D == 3 {
+            let (key, simplex) = tds.simplices().next().unwrap();
+            let opposite = simplex
+                .vertices()
+                .iter()
+                .position(|v| !keys[..3].contains(v))
+                .unwrap();
+            let inverse = build_k2_flip_context(
+                tds,
+                FacetHandle::from_validated(key, u8::try_from(opposite).unwrap()),
+            )
+            .unwrap();
+            is_delaunay_violation_k2(tds, &kernel, &model, &inverse, config, &mut diagnostics)
+                .unwrap()
+        } else if D == 4 {
+            let inverse =
+                build_k3_flip_context(tds, ridge_handle_for_face(tds, &keys[..3])).unwrap();
+            is_delaunay_violation_k3(tds, &kernel, &model, &inverse, config, &mut diagnostics)
+                .unwrap()
+        } else {
+            // The 4-to-3 queue replays the hypothetical 3-to-4 query in the
+            // current source frame, then negates its decision.
+            let sources: Vec<_> = tds.simplices().map(|(key, _)| key).collect();
+            !delaunay_violation_k3_for_ridge(
+                tds,
+                &kernel,
+                &model,
+                &keys[3..],
+                &keys[..3],
+                &sources,
+                sources.first().copied(),
+                config,
+                &mut diagnostics,
+            )
+            .unwrap()
+        }
+    }
+
+    fn check_cospherical_flip_consistency<const D: usize>(first: usize, reverse: bool) {
+        let kernel = AdaptiveKernel::<f64>::new();
+        let model = GlobalTopology::Euclidean.model();
+        let config = RepairAttemptConfig {
+            attempt: 0,
+            queue_order: RepairQueueOrder::Fifo,
+            max_flips_override: None,
+        };
+        let (mut tds, keys) = cospherical_k3_fixture::<D>(first, reverse);
+        let mut diagnostics = RepairDiagnostics::default();
+        let forward = build_k3_flip_context(&tds, ridge_handle_for_face(&tds, &keys[3..])).unwrap();
+        let violates =
+            is_delaunay_violation_k3(&tds, &kernel, &model, &forward, &config, &mut diagnostics)
+                .unwrap();
+        // Independent geometric oracle: perturb the first vertex's x.
+        // On these origin-centered spheres its lifted height changes
+        // by 2*x*epsilon + epsilon^2. The Radon faces have positive
+        // weights, so raising a triangle vertex favors the three-
+        // simplex side; raising a ridge vertex favors the other side.
+        // x is positive for A, negative for B/C, and zero on the ridge.
+        assert_eq!(
+            violates,
+            first != 0,
+            "D={D}, first={first}, reverse={reverse}"
+        );
+        // Robust predicates retain the unperturbed exact boundary.
+        assert!(
+            !is_delaunay_violation_k3(
+                &tds,
+                &RobustKernel::new(),
+                &model,
+                &forward,
+                &config,
+                &mut diagnostics
+            )
+            .unwrap()
+        );
+        assert_eq!(diagnostics.ambiguous_predicates, 1);
+        apply_bistellar_flip_raw(&mut tds, &forward).unwrap();
+        tds.is_valid().unwrap();
+        let inverse_violates = inverse_cospherical_violation(&tds, &keys, &config);
+        assert_ne!(
+            violates, inverse_violates,
+            "forward/inverse conflict: D={D}, first={first}, reverse={reverse}"
+        );
     }
 
     #[test]
@@ -1538,6 +1721,47 @@ mod tests {
             );
             assert_eq!(diagnostics.predicate_failures, 1);
         }
+    }
+
+    fn check_k3_predicate_failure<const D: usize>() {
+        let (tds, keys) = cospherical_k3_fixture::<D>(0, false);
+        let context = build_k3_flip_context(&tds, ridge_handle_for_face(&tds, &keys[3..])).unwrap();
+        let config = RepairAttemptConfig {
+            attempt: 0,
+            queue_order: RepairQueueOrder::Fifo,
+            max_flips_override: None,
+        };
+        let mut diagnostics = RepairDiagnostics::default();
+        let error = is_delaunay_violation_k3(
+            &tds,
+            &FailingInSphereKernel,
+            &GlobalTopology::Euclidean.model(),
+            &context,
+            &config,
+            &mut diagnostics,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            FlipError::PredicateFailure {
+                reason: Box::new(FlipPredicateError::CoordinateConversion {
+                    operation: FlipPredicateOperation::K3SimplexInSphere,
+                    source: CoordinateConversionError::UnsupportedMatrixDimension {
+                        requested: D + 2,
+                        max: D + 1,
+                    }
+                })
+            }
+        );
+        assert_eq!(diagnostics.predicate_failures, 1);
+        tds.is_valid().unwrap();
+    }
+
+    #[test]
+    fn k3_predicate_failure_preserves_operation_and_diagnostics() {
+        check_k3_predicate_failure::<3>();
+        check_k3_predicate_failure::<4>();
+        check_k3_predicate_failure::<5>();
     }
 
     #[test]
@@ -1947,6 +2171,104 @@ mod tests {
 
         assert_matches!(result, Err(FlipError::NonManifoldFacet));
         assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn cospherical_k2_k3_decisions_are_mutually_exclusive_3d() {
+        for first in 0..5 {
+            for reverse in [false, true] {
+                check_cospherical_flip_consistency::<3>(first, reverse);
+            }
+        }
+    }
+
+    #[test]
+    fn cospherical_k3_decisions_are_mutually_exclusive_4d() {
+        for first in 0..6 {
+            for reverse in [false, true] {
+                check_cospherical_flip_consistency::<4>(first, reverse);
+            }
+        }
+    }
+
+    #[test]
+    fn cospherical_k3_positive_linear_tie_5d() {
+        check_cospherical_flip_consistency::<5>(0, false);
+    }
+
+    #[test]
+    fn cospherical_k3_negative_linear_tie_5d() {
+        check_cospherical_flip_consistency::<5>(1, true);
+    }
+
+    #[test]
+    fn cospherical_k3_quadratic_tie_5d() {
+        check_cospherical_flip_consistency::<5>(3, false);
+    }
+
+    #[test]
+    fn cospherical_adaptive_repair_converges_from_both_triangulations_3d() {
+        let kernel = AdaptiveKernel::<f64>::new();
+        let config = RepairAttemptConfig {
+            attempt: 0,
+            queue_order: RepairQueueOrder::Fifo,
+            max_flips_override: Some(2),
+        };
+        // Exercise both possible selected triangulations without robust retry.
+        for first in [0, 1] {
+            for start_with_three in [false, true] {
+                let (mut tds, keys) = cospherical_k3_fixture::<3>(first, false);
+                if !start_with_three {
+                    let context =
+                        build_k3_flip_context(&tds, ridge_handle_for_face(&tds, &keys[3..]))
+                            .unwrap();
+                    apply_bistellar_flip_raw(&mut tds, &context).unwrap();
+                }
+                let outcome = repair_delaunay_with_flips_k2_k3_attempt(
+                    &mut tds,
+                    &kernel,
+                    None,
+                    GlobalTopology::Euclidean,
+                    &config,
+                )
+                .unwrap();
+                assert_eq!(
+                    outcome.stats.flips_performed,
+                    usize::from(start_with_three == (first != 0))
+                );
+                tds.is_valid().unwrap();
+                verify_delaunay_with_topology(&tds, &kernel, GlobalTopology::Euclidean).unwrap();
+                // Check the selected connectivity, not just successful exit.
+                let omitted = if first == 0 { &keys[..3] } else { &keys[3..] };
+                let mut expected: Vec<Vec<_>> = omitted
+                    .iter()
+                    .map(|omit| {
+                        let mut simplex: Vec<_> = keys
+                            .iter()
+                            .filter(|v| *v != omit)
+                            .map(|v| v.data().as_ffi())
+                            .collect();
+                        simplex.sort_unstable();
+                        simplex
+                    })
+                    .collect();
+                let mut actual: Vec<Vec<_>> = tds
+                    .simplices()
+                    .map(|(_, simplex)| {
+                        let mut vertices: Vec<_> = simplex
+                            .vertices()
+                            .iter()
+                            .map(|v| v.data().as_ffi())
+                            .collect();
+                        vertices.sort_unstable();
+                        vertices
+                    })
+                    .collect();
+                expected.sort_unstable();
+                actual.sort_unstable();
+                assert_eq!(actual, expected);
+            }
+        }
     }
 
     #[test]

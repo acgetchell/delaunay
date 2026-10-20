@@ -45,8 +45,7 @@ use crate::geometry::predicates::{Orientation, simplex_orientation};
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateValidationError};
 use crate::geometry::util::safe_usize_to_scalar;
 use crate::tds::{
-    InvariantError, Simplex, SimplexValidationError, Tds, TdsConstructionError, TdsError,
-    TdsMutationError, Vertex,
+    Simplex, SimplexValidationError, Tds, TdsConstructionError, TdsError, TdsMutationError, Vertex,
 };
 use crate::topology::characteristics::validation::{
     EulerClassificationEvidence, validate_euler_from_facets_with_evidence,
@@ -60,6 +59,7 @@ use crate::topology::spaces::spherical::{
     SphericalMetric, SphericalPoint, SphericalPointError, ambient_array_from_slice,
 };
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError};
+use crate::validation_report::InvariantError;
 use crate::{TopologyGuarantee, Triangulation, TriangulationValidationError, vertex};
 
 /// Default tracking issue for full spherical triangulation support.

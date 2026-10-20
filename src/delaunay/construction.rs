@@ -81,9 +81,7 @@ use crate::core::operations::{
     InsertionTelemetryMode, RepairDecision, TopologicalOperation,
 };
 use crate::core::simplex::SimplexValidationError;
-use crate::core::tds::{
-    InvariantError, SimplexKey, Tds, TdsConstructionError, TdsError, TdsMutationError,
-};
+use crate::core::tds::{SimplexKey, Tds, TdsConstructionError, TdsError, TdsMutationError};
 use crate::core::traits::data_type::DataType;
 use crate::core::util::{
     DeduplicationError, HilbertBitDepth, coords_equal_exact, coords_within_epsilon,
@@ -133,6 +131,7 @@ use crate::validation::{
     DelaunayLevelFiveCertificate, DelaunayTriangulationValidationError, DelaunayVerificationError,
     certify_level_five_for_refinement,
 };
+use crate::validation_report::InvariantError;
 
 /// Number of deterministic shuffled reconstruction attempts used by the
 /// default construction retry policy.
@@ -1040,9 +1039,9 @@ pub enum DelaunayConstructionFailure {
         "periodic image construction failed geometric orientation validation after build: {source}"
     )]
     PeriodicImageGeometricOrientationValidation {
-        /// Underlying TDS orientation validation failure.
+        /// Underlying triangulation-owned orientation validation failure.
         #[source]
-        source: Box<TdsError>,
+        source: Box<TriangulationRealizationValidationError>,
     },
 
     /// Periodic quotient reconstruction produced no representative simplices.
@@ -3584,14 +3583,8 @@ where
                 }
                 .into()
             }
-            TriangulationBuilderError::GeometricNondegeneracy { source } => {
-                DelaunayTriangulationConstructionError::Triangulation {
-                    source: DelaunayConstructionFailure::FinalRealizationValidation {
-                        source: TriangulationRealizationValidationError::from(*source),
-                    },
-                }
-            }
-            TriangulationBuilderError::RealizationValidation { source } => {
+            TriangulationBuilderError::GeometricNondegeneracy { source }
+            | TriangulationBuilderError::RealizationValidation { source } => {
                 DelaunayTriangulationConstructionError::Triangulation {
                     source: DelaunayConstructionFailure::FinalRealizationValidation {
                         source: *source,
@@ -3641,6 +3634,7 @@ pub(crate) mod test_support {
                 GlobalTopology::DEFAULT,
             )
             .finish()
+            .map_err(crate::refinement::RefinementError::into_reason)
             .expect("the empty Delaunay complex is valid")
         }
 
@@ -3656,6 +3650,7 @@ pub(crate) mod test_support {
                 GlobalTopology::DEFAULT,
             )
             .finish()
+            .map_err(crate::refinement::RefinementError::into_reason)
             .expect("the empty Delaunay complex is valid")
         }
     }
@@ -5864,6 +5859,9 @@ where
     /// because they indicate algorithmic bugs rather than bad input geometry.
     /// Geometry-related failures (degenerate predicates, conflict regions, etc.) become
     /// [`OrientationCanonicalizationGeometric`](TriangulationConstructionError::OrientationCanonicalizationGeometric).
+    /// Orientation capability and coordinate-lift failures retain their Level 4
+    /// sources in [`InsertionRealizationValidation`](TriangulationConstructionError::InsertionRealizationValidation)
+    /// and do not trigger shuffled construction retries.
     ///
     /// NOTE: This match is intentionally exhaustive over `InsertionError`.
     /// When adding new variants, decide whether the failure mode is an internal
@@ -5872,6 +5870,23 @@ where
         error: InsertionError,
     ) -> TriangulationConstructionError {
         match error {
+            InsertionError::OrientationValidationFailed { source } => {
+                if matches!(
+                    source,
+                    TriangulationRealizationValidationError::NegativeSimplexOrientation { .. }
+                        | TriangulationRealizationValidationError::DegenerateSimplex { .. }
+                ) {
+                    TriangulationConstructionError::OrientationCanonicalizationGeometric {
+                        source: Box::new(InsertionError::OrientationValidationFailed { source }),
+                    }
+                } else if matches!(source, TriangulationRealizationValidationError::Tds { .. }) {
+                    TriangulationConstructionError::OrientationCanonicalizationInternal {
+                        source: Box::new(InsertionError::OrientationValidationFailed { source }),
+                    }
+                } else {
+                    TriangulationConstructionError::InsertionRealizationValidation { source }
+                }
+            }
             // Geometric orientation errors (degenerate or negative) are
             // geometry problems, not internal bugs.
             source @ (InsertionError::TopologyValidation {
@@ -5984,7 +5999,8 @@ where
             InsertionError::DelaunayValidationFailed { source } => {
                 TriangulationConstructionError::InsertionDelaunayValidation { source }
             }
-            InsertionError::RealizationValidationFailed { source } => {
+            InsertionError::RealizationValidationFailed { source }
+            | InsertionError::OrientationValidationFailed { source } => {
                 TriangulationConstructionError::InsertionRealizationValidation { source }
             }
             InsertionError::TopologyValidationFailed { context, source } => {
@@ -6221,8 +6237,7 @@ mod tests {
     };
     use crate::core::algorithms::locate::{ConflictError, LocateError};
     use crate::core::tds::{
-        EntityKind, GeometricError, InvariantError, SimplexKey, TriangulationConstructionState,
-        VertexKey,
+        EntityKind, GeometricError, SimplexKey, TriangulationConstructionState, VertexKey,
     };
     use crate::diagnostics::BatchLocalRepairTrigger;
     use crate::geometry::coordinate_range::{CoordinateRangeError, CoordinateRangeOrdering};
@@ -6236,10 +6251,12 @@ mod tests {
     use crate::repair::DelaunayRepairPolicy;
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
+    use crate::triangulation::realization::TriangulationRealizationSimplexDetail;
     use crate::triangulation::validation::{
         TopologyGuarantee, TriangulationValidationError, ValidationPolicy,
     };
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
+    use crate::validation_report::InvariantError;
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
@@ -8884,6 +8901,77 @@ mod tests {
     }
 
     #[test]
+    fn test_realization_errors_preserve_witnesses_across_construction_boundaries() {
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
+        let simplex_uuid = Uuid::from_u128(5);
+        let detail = Box::new(TriangulationRealizationSimplexDetail {
+            key: simplex_key,
+            uuid: simplex_uuid,
+            vertices: (1..=4)
+                .map(|key| VertexKey::from(KeyData::from_ffi(key)))
+                .collect(),
+            vertex_uuids: (1..=4).map(Uuid::from_u128).collect(),
+        });
+        for source in [
+            TriangulationRealizationValidationError::NegativeSimplexOrientation {
+                simplex_key,
+                simplex_uuid,
+                detail: detail.clone(),
+                dimension: 3,
+            },
+            TriangulationRealizationValidationError::DegenerateSimplex {
+                simplex_key,
+                simplex_uuid,
+                detail,
+                dimension: 3,
+            },
+        ] {
+            let orientation_error = InsertionError::OrientationValidationFailed {
+                source: source.clone(),
+            };
+            assert_eq!(
+                TestDelaunay::<3>::map_orientation_canonicalization_error(
+                    orientation_error.clone()
+                ),
+                TriangulationConstructionError::OrientationCanonicalizationGeometric {
+                    source: Box::new(orientation_error.clone()),
+                }
+            );
+            for insertion_error in [
+                orientation_error,
+                InsertionError::RealizationValidationFailed {
+                    source: source.clone(),
+                },
+            ] {
+                assert_eq!(
+                    TestDelaunay::<3>::map_insertion_error(insertion_error),
+                    TriangulationConstructionError::InsertionRealizationValidation {
+                        source: source.clone(),
+                    }
+                );
+            }
+            for builder_error in [
+                TriangulationBuilderError::GeometricNondegeneracy {
+                    source: Box::new(source.clone()),
+                },
+                TriangulationBuilderError::RealizationValidation {
+                    source: Box::new(source.clone()),
+                },
+            ] {
+                let mapped = DelaunayBatchWorkspace::<AdaptiveKernel<f64>, (), (), 3>::map_triangulation_builder_error(builder_error);
+                assert_eq!(
+                    mapped,
+                    DelaunayTriangulationConstructionError::Triangulation {
+                        source: DelaunayConstructionFailure::FinalRealizationValidation {
+                            source: source.clone(),
+                        },
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_delaunay_construction_failure_preserves_typed_generic_sources() {
         let simplex_source = SimplexValidationError::InsufficientVertices {
             actual: 2,
@@ -9023,16 +9111,17 @@ mod tests {
         let tds_source = TdsError::InconsistentDataStructure {
             message: "periodic orientation validation".to_string(),
         };
+        let orientation_source = TriangulationRealizationValidationError::from(tds_source);
         let failure = DelaunayConstructionFailure::from(
             TriangulationConstructionError::PeriodicImageGeometricOrientationValidation {
-                source: Box::new(tds_source.clone()),
+                source: Box::new(orientation_source.clone()),
             },
         );
         assert_matches!(
             failure,
             DelaunayConstructionFailure::PeriodicImageGeometricOrientationValidation {
                 source,
-            } if *source == tds_source
+            } if *source == orientation_source
         );
     }
 
@@ -9168,28 +9257,33 @@ mod tests {
     #[test]
     fn test_map_orientation_canonicalization_error_orientation_violation_is_internal_inconsistency()
     {
-        let error = InsertionError::TopologyValidation {
-            source: TdsError::OrientationViolation {
-                simplex1_key: SimplexKey::from(KeyData::from_ffi(1)),
-                simplex1_uuid: Uuid::nil(),
-                simplex2_key: SimplexKey::from(KeyData::from_ffi(2)),
-                simplex2_uuid: Uuid::nil(),
-                simplex1_facet_index: 0,
-                simplex2_facet_index: 1,
-                facet_vertices: vec![],
-                simplex2_facet_vertices: vec![],
-                observed_odd_permutation: true,
-                expected_odd_permutation: false,
-            },
+        let source = TdsError::OrientationViolation {
+            simplex1_key: SimplexKey::from(KeyData::from_ffi(1)),
+            simplex1_uuid: Uuid::nil(),
+            simplex2_key: SimplexKey::from(KeyData::from_ffi(2)),
+            simplex2_uuid: Uuid::nil(),
+            simplex1_facet_index: 0,
+            simplex2_facet_index: 1,
+            facet_vertices: vec![],
+            simplex2_facet_vertices: vec![],
+            observed_odd_permutation: true,
+            expected_odd_permutation: false,
         };
-        let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
-        assert!(
-            matches!(
-                mapped,
-                TriangulationConstructionError::OrientationCanonicalizationInternal { .. }
-            ),
-            "OrientationViolation should map to typed internal orientation canonicalization (structural invariant breach, not geometry), got: {mapped:?}"
-        );
+        for error in [
+            InsertionError::TopologyValidation {
+                source: source.clone(),
+            },
+            InsertionError::OrientationValidationFailed {
+                source: source.into(),
+            },
+        ] {
+            assert_eq!(
+                TestDelaunay::<3>::map_orientation_canonicalization_error(error.clone()),
+                TriangulationConstructionError::OrientationCanonicalizationInternal {
+                    source: Box::new(error),
+                }
+            );
+        }
     }
 
     #[test]

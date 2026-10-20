@@ -22,7 +22,7 @@ import tempfile
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path, PureWindowsPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import Mock, patch
 
 import pytest
@@ -49,7 +49,6 @@ from benchmark_utils import (
     DEV_MODE_BENCH_ARGS,
     CiPerformanceMetric,
     CiPerformanceResult,
-    CriterionReportRequest,
     CriterionReportSettings,
     PerformanceRequestOptions,
     PerformanceSummaryGenerator,
@@ -71,7 +70,6 @@ from benchmark_utils import (
     promote_performance_report,
     render_criterion_comparison_report,
     resolve_performance_request,
-    write_criterion_comparison_report,
 )
 
 if TYPE_CHECKING:
@@ -117,6 +115,7 @@ def complete_ci_performance_results() -> list[CiPerformanceResult]:
             mean_ns=1_000.0,
             low_ns=900.0,
             high_ns=1_100.0,
+            confidence_level=0.95,
         )
         for group_key in benchmark_utils.CI_PERFORMANCE_SUITE_GROUP_ORDER
     ]
@@ -212,7 +211,7 @@ def retained_performance_bundle(*, current: str = "v0.8.0", baseline: str = "v0.
     )
 
 
-def write_estimate(target_dir: Path, path_parts: tuple[str, ...], mean_ns: float) -> None:
+def write_estimate(target_dir: Path, path_parts: tuple[str, ...], mean_ns: float, *, confidence_level: float | None = 0.95) -> None:
     """Write a minimal Criterion estimates.json fixture."""
     estimates_dir = target_dir / "criterion" / Path(*path_parts) / "base"
     estimates_dir.mkdir(parents=True)
@@ -220,7 +219,7 @@ def write_estimate(target_dir: Path, path_parts: tuple[str, ...], mean_ns: float
         "mean": {
             "point_estimate": mean_ns,
             "confidence_interval": {
-                "confidence_level": 0.95,
+                "confidence_level": confidence_level,
                 "lower_bound": mean_ns * 0.9,
                 "upper_bound": mean_ns * 1.1,
             },
@@ -687,13 +686,61 @@ def test_realization_validation_stable_ids_survive_saved_baseline_comparison(tmp
 
 
 @pytest.mark.parametrize("point_estimate", [float("nan"), float("inf"), 0.0, -1.0])
-def test_collect_criterion_comparisons_rejects_invalid_point_estimates(tmp_path: Path, point_estimate: float) -> None:
-    """Saved Criterion baseline comparison should fail on non-physical timings."""
+def test_bench_compare_cli_rejects_invalid_point_estimates(tmp_path: Path, capsys: pytest.CaptureFixture[str], point_estimate: float) -> None:
+    """Non-physical timings fail at the CLI without replacing the previous report."""
     write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "new", point_estimate)
     write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "last", 2_000_000.0)
+    output = tmp_path / "report.md"
+    output.write_text("previous report\n", encoding=UTF8)
+    args = create_argument_parser().parse_args(["bench-compare", "last", "--criterion-dir", str(tmp_path / "criterion"), "--output", str(output)])
 
-    with pytest.raises(ValueError, match=r"finite|positive|JSON"):
-        collect_criterion_comparisons(tmp_path / "criterion", "last")
+    with pytest.raises(SystemExit) as failure:
+        execute_command(args, tmp_path)
+
+    assert failure.value.code == 1
+    assert output.read_text(encoding=UTF8) == "previous report\n"
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "bench-compare:" in captured.err
+    assert re.search(r"finite|positive|JSON", captured.err)
+    assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize("stage", ["sample", "publication"])
+def test_bench_compare_cli_reports_file_failure_without_replacing_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], stage: str
+) -> None:
+    """Incomplete inputs and an unwritable output produce contextual stderr."""
+    for sample in ("new", "last"):
+        write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), sample, 1_000_000.0)
+    output = tmp_path / "report.md"
+    output.write_text("previous report\n", encoding=UTF8)
+    publisher = Mock(side_effect=PermissionError(13, "publication denied", str(output)))
+    renderer = Mock(return_value="new report\n")
+    monkeypatch.setattr(benchmark_utils, "_write_text_atomic", publisher)
+    monkeypatch.setattr(benchmark_utils, "render_criterion_comparison_report", renderer)
+    missing = tmp_path / "criterion" / "validation" / "validate_3d" / "750" / "new" / "sample.json"
+    if stage == "sample":
+        missing.unlink()
+    args = create_argument_parser().parse_args(["bench-compare", "last", "--criterion-dir", str(tmp_path / "criterion"), "--output", str(output)])
+
+    with pytest.raises(SystemExit) as failure:
+        execute_command(args, tmp_path)
+
+    assert failure.value.code == 1
+    assert output.read_text(encoding=UTF8) == "previous report\n"
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "bench-compare:" in captured.err
+    assert repr(str(missing if stage == "sample" else output)) in captured.err
+    assert "Traceback" not in captured.err
+    if stage == "sample":
+        renderer.assert_not_called()
+        publisher.assert_not_called()
+    else:
+        renderer.assert_called_once()
+        publisher.assert_called_once_with(output, "new report\n")
+        assert "publication denied" in captured.err
 
 
 def test_render_criterion_comparison_report_includes_release_workflow_footer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -747,22 +794,17 @@ def test_render_criterion_comparison_report_includes_release_workflow_footer(tmp
     assert "Ratios are emitted only when" not in report
 
 
-def test_write_criterion_comparison_report_reports_no_baseline(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_bench_compare_cli_reports_no_baseline(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Missing saved Criterion baselines should fail with an actionable hint."""
     (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.0"\n', encoding=UTF8)
     write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "new", 1_000_000.0)
     output = tmp_path / "target" / "bench-reports" / "performance.md"
 
-    success = write_criterion_comparison_report(
-        tmp_path,
-        CriterionReportRequest(
-            baseline_name="last",
-            output=output,
-            criterion_dir=tmp_path / "criterion",
-        ),
-    )
+    args = create_argument_parser().parse_args(["bench-compare", "last", "--criterion-dir", str(tmp_path / "criterion"), "--output", str(output)])
+    with pytest.raises(SystemExit) as failure:
+        execute_command(args, tmp_path)
 
-    assert not success
+    assert failure.value.code == 2
     assert not output.exists()
     captured = capsys.readouterr()
     assert "No comparison data found for baseline 'last'" in captured.err
@@ -2042,44 +2084,6 @@ def test_atomic_write_failure_preserves_original_and_cleans_temporary_file(
 class TestDelaunayBenchmarkPolicy:
     """Keep scientific counts, canonical IDs, and strict summary admission covered."""
 
-    def test_summary_estimate_loader_rejects_nonfinite_values(self) -> None:
-        """Test performance summary loader rejects non-finite Criterion estimates."""
-        estimates_data = {
-            "mean": {
-                "point_estimate": float("nan"),
-                "confidence_interval": {"lower_bound": 100000.0, "upper_bound": 120000.0},
-            },
-        }
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(estimates_data, f)
-            f.flush()
-            estimates_path = Path(f.name)
-
-        try:
-            assert PerformanceSummaryGenerator._load_criterion_estimate(estimates_path) is None
-        finally:
-            estimates_path.unlink()
-
-    @pytest.mark.parametrize(
-        "estimates_data",
-        [
-            [],
-            {"mean": []},
-            {"mean": {"point_estimate": 100000.0, "confidence_interval": []}},
-        ],
-    )
-    def test_summary_estimate_loader_rejects_structurally_invalid_mean_data(self, estimates_data: object) -> None:
-        """Test performance summary loader rejects structurally malformed Criterion estimates."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(estimates_data, f)
-            f.flush()
-            estimates_path = Path(f.name)
-
-        try:
-            assert PerformanceSummaryGenerator._load_criterion_estimate(estimates_path) is None
-        finally:
-            estimates_path.unlink()
-
     def test_ci_benchmark_id_pattern_expands_braced_segments(self) -> None:
         """Test ci_performance_suite manifest brace patterns expand to concrete IDs."""
         result = _expand_ci_benchmark_id_pattern("tds_new_2d/{tds_new,tds_new_adversarial}/{10,25}")
@@ -2242,6 +2246,67 @@ class TestProjectRootHandling:
 
 class TestTimeoutHandling:
     """Test cases for benchmark timeout functionality."""
+
+    @pytest.mark.parametrize(
+        "case",
+        [
+            ("generate-summary", ("--run-benchmarks",), "run_release_signal_measurement_plan", "Fresh benchmark run failed"),
+            ("run-release-signal", (), "run_release_signal_measurement_plan", "run-release-signal:"),
+            (
+                "create-release-benchmark-metadata",
+                ("--tag", "v0.8.0", "--criterion-dir", "target/criterion", "--output", "metadata.json"),
+                "write_release_benchmark_metadata",
+                "create-release-benchmark-metadata:",
+            ),
+            ("performance-local", (), "published_releases", "performance-local:"),
+            ("performance-github-assets", (), "published_releases", "performance-github-assets:"),
+            ("performance-release", (), "published_releases", "performance-release:"),
+            ("performance-doc", (), "render_and_promote_performance_artifacts", "performance-doc:"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "error",
+        [
+            subprocess.CalledProcessError(7, ["gh", "release", "list"], output="release lookup started\n", stderr="release lookup denied\n"),
+            subprocess.TimeoutExpired("gh release list", 30, output=b"release lookup started\n", stderr=b"release lookup timed out\n"),
+        ],
+        ids=["failed-command-text", "timeout-bytes"],
+    )
+    def test_benchmark_cli_keeps_captured_failure_diagnostics(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        case: tuple[str, tuple[str, ...], str, str],
+        error: subprocess.SubprocessError,
+    ) -> None:
+        """Expected failures retain command, captured streams, and existing reports."""
+        command, arguments, operation, context = case
+        (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.0"\n', encoding=UTF8)
+        reports = (tmp_path / "benches" / "PERFORMANCE_RESULTS.md", tmp_path / "docs" / "performance.md")
+        for report in reports:
+            report.parent.mkdir(parents=True)
+            report.write_text("previous report\n", encoding=UTF8)
+        failed_operation = Mock(side_effect=error)
+        monkeypatch.setattr(benchmark_utils, operation, failed_operation)
+        monkeypatch.setattr(benchmark_utils, "find_project_root", lambda: tmp_path)
+        monkeypatch.setattr(sys, "argv", ["benchmark-utils", command, *arguments])
+
+        with pytest.raises(SystemExit) as failure:
+            benchmark_utils.main()
+
+        assert failure.value.code == 1
+        failed_operation.assert_called_once()
+        assert all(report.read_text(encoding=UTF8) == "previous report\n" for report in reports)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert context in captured.err
+        assert "gh release list" in captured.err
+        assert "stdout:\nrelease lookup started\n" in captured.err
+        assert "stderr:\nrelease lookup " in captured.err
+        assert ("release lookup denied" if isinstance(error, subprocess.CalledProcessError) else "release lookup timed out") in captured.err
+        assert ("exit status 7" if isinstance(error, subprocess.CalledProcessError) else "30") in captured.err
+        assert "Traceback" not in captured.err
 
     def test_parser_accepts_verbose_flag(self) -> None:
         """Test that the CLI parser accepts the shared verbose logging flag."""
@@ -2666,47 +2731,73 @@ class TestPerformanceSummaryGenerator:
             assert "### Recommendations" not in content
             assert PERFORMANCE_UPDATES_TITLE in content
 
-    def test_get_ci_performance_suite_results(self) -> None:
-        """Test public API summary generation from ci_performance_suite Criterion data."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
+            # Retained evidence identifies the measured bytes, even after HEAD changes.
+            generator.circumsphere_results_dir.mkdir(parents=True)
+            (generator.circumsphere_results_dir / "delaunay-evidence.json").touch()
+            measured = Provenance("a" * 40, "b" * 64, "c" * 64, (("delaunay.cargo-profile", "perf"),))
+            retained = Evidence(b"{}", SAMPLE_SCHEMA, (("measurement", measured),))
+            with patch("benchmark_utils._load_fresh_measurement", return_value=retained) as load_measurement:
+                content = generator._generate_markdown_content()
+            load_measurement.assert_called_once_with(generator.circumsphere_results_dir)
+            assert f"- **Measured base commit**: {'a' * 40}" in content
+            assert f"- **Measured source SHA-256**: {'b' * 64}" in content
+            assert f"- **Measured harness SHA-256**: {'c' * 64}" in content
+            assert "- **Measured Cargo profile**: perf" in content
+            assert "- **Scientific preflight**: passed; complete raw Criterion evidence verified" in content
+            assert "- **Measurement provenance**: unavailable" not in content
+            assert "including uncommitted changes" in content
 
-            write_estimate(project_root / "target", ("tds_new_2d", "tds_new", "10"), 120_000.0)
-            write_estimate(project_root / "target", ("boundary_facets", "boundary_facets_3d_adversarial", "50"), 7_500.0)
-            write_estimate(project_root / "target", ("bistellar_flips_4d", "k2_roundtrip"), 950.0)
+    @pytest.mark.parametrize(("confidence_level", "label"), [(0.95, "95%"), (0.99, "99%"), (0.975, "97.5%"), (None, "unreported")])
+    def test_get_ci_performance_suite_results(self, tmp_path: Path, confidence_level: float | None, label: str) -> None:
+        """Keep each interval's confidence level through parsing, evidence, and rendering."""
+        write_estimate(tmp_path / "target", ("tds_new_2d", "tds_new", "10"), 120_000.0)
+        write_estimate(tmp_path / "target", ("boundary_facets", "boundary_facets_3d", "50"), 8_000.0)
+        write_estimate(tmp_path / "target", ("boundary_facets", "boundary_facets_3d_adversarial", "50"), 7_500.0, confidence_level=confidence_level)
+        write_estimate(tmp_path / "target", ("bistellar_flips_4d", "k2_roundtrip"), 950.0)
 
-            generator = PerformanceSummaryGenerator(project_root)
-            lines = generator._get_ci_performance_suite_results()
-            content = "\n".join(lines)
+        generator = PerformanceSummaryGenerator(tmp_path)
+        evidence = generator._collect_ci_performance_summary_evidence()
+        lines = generator._get_ci_performance_suite_results(evidence)
+        content = "\n".join(lines)
 
-            assert PUBLIC_API_TITLE in content
-            assert "#### Construction" in content
-            assert "Public API: `DelaunayTriangulationBuilder::build`" in content
-            assert "`tds_new_2d/tds_new/10`" in content
-            assert "well-conditioned" in content
-            assert "#### Boundary facets" in content
-            assert "`boundary_facets/boundary_facets_3d_adversarial/50`" in content
-            assert "| `boundary_facets/boundary_facets_3d_adversarial/50` | 3D | 50 | adversarial |" in content
-            assert "adversarial" in content
-            assert "#### Bistellar flips" in content
-            assert "`bistellar_flips_4d/k2_roundtrip`" in content
-            assert "| `bistellar_flips_4d/k2_roundtrip` | 4D | fixed fixture |" in content
+        assert PUBLIC_API_TITLE in content
+        assert "#### Construction" in content
+        assert "Public API: `DelaunayTriangulationBuilder::build`" in content
+        assert "| `tds_new_2d/tds_new/10` | 2D | 10 | well-conditioned | 120.0 µs | 108.0 µs - 132.0 µs | 95% |" in lines
+        assert "#### Boundary facets" in content
+        assert "| Benchmark ID | Dimension | Input | Variant | Mean | CI | Confidence |" in lines
+        assert "95% CI" not in content
+        assert "| `boundary_facets/boundary_facets_3d/50` | 3D | 50 | well-conditioned | 8.0 µs | 7.2 µs - 8.8 µs | 95% |" in lines
+        assert f"| `boundary_facets/boundary_facets_3d_adversarial/50` | 3D | 50 | adversarial | 7.5 µs | 6.8 µs - 8.2 µs | {label} |" in lines
+        assert "#### Bistellar flips" in content
+        assert "| `bistellar_flips_4d/k2_roundtrip` | 4D | fixed fixture | well-conditioned | 950 ns | 855 ns - 1.0 µs | 95% |" in lines
+        result = next(row for row in evidence.results if row.benchmark_id == "boundary_facets/boundary_facets_3d_adversarial/50")
+        if confidence_level is None:
+            assert result.confidence_level is None
+        else:
+            assert result.confidence_level == pytest.approx(confidence_level)
 
     def test_ci_summary_compacts_input_counts_without_changing_benchmark_ids(self, tmp_path: Path) -> None:
-        """Import rows keep exact IDs and timings within the Markdown line limit."""
-        sizes = ((2, 120, 226), (3, 30, 115), (4, 16, 68), (5, 10, 20))
-        for dimension, vertices, simplices in sizes:
+        """Import and proof rows keep exact IDs and timings within the line limit."""
+        sizes = ((2, 120, 226, None, "unreported"), (3, 30, 115, 0.975, "97.5%"), (4, 16, 68, 0.99, "99%"), (5, 10, 20, 0.95, "95%"))
+        for dimension, vertices, simplices, confidence_level, _label in sizes:
             benchmark_id = ("explicit_import", f"import_pseudomanifold_{dimension}d", f"vertices_{vertices}_simplices_{simplices}")
-            write_estimate(tmp_path / "target", benchmark_id, 100_000_000.0)
+            write_estimate(tmp_path / "target", benchmark_id, 100_000_000.0, confidence_level=confidence_level)
+            proof_id = ("proof_boundaries", f"promote_pseudomanifold_canonicalizing_{dimension}d", f"simplices_{simplices}")
+            write_estimate(tmp_path / "target", proof_id, 177_176_000.0, confidence_level=confidence_level)
         generator = PerformanceSummaryGenerator(tmp_path)
 
         lines = generator._get_ci_performance_suite_results()
 
-        for dimension, vertices, simplices in sizes:
+        for dimension, vertices, simplices, _confidence_level, label in sizes:
             expected_id = f"explicit_import/import_pseudomanifold_{dimension}d/vertices_{vertices}_simplices_{simplices}"
             row = next(line for line in lines if line.startswith(f"| `{expected_id}` |"))
             assert f"| {dimension}D | {vertices}v/{simplices}s |" in row
-            assert row.endswith("| 100.000 ms | 90.000 ms - 110.000 ms |")
+            assert row.endswith(f"| 100.000 ms | 90.000 ms - 110.000 ms | {label} |")
+            proof_id = f"proof_boundaries/promote_pseudomanifold_canonicalizing_{dimension}d/simplices_{simplices}"
+            proof_row = next(line for line in lines if line.startswith(f"| `{proof_id}` |"))
+            assert f"| {dimension}D | {simplices}s |" in proof_row
+            assert proof_row.endswith(f"| 177.176 ms | 159.458 ms - 194.894 ms | {label} |")
         assert all(len(line) <= 160 for line in lines)
         assert any("`v` for vertices and `s` for simplices" in line for line in lines)
 
@@ -2737,57 +2828,6 @@ class TestPerformanceSummaryGenerator:
             assert "just performance-local" in content
             assert "just bench-perf-summary" in content
             assert "PerformanceSummaryGenerator" in content
-
-    def test_parse_numerical_accuracy_output_success(self) -> None:
-        """Test parsing numerical accuracy output successfully."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            stdout_content = """Running benchmarks...
-Method Comparisons (1000 total tests):
-  insphere vs insphere_distance:  845/1000 (84.5%)
-  insphere vs insphere_lifted:  12/1000 (1.2%)
-  insphere_distance vs insphere_lifted:  203/1000 (20.3%)
-  All three methods agree:  8/1000 (0.8%)
-Benchmark completed."""
-
-            result = generator._parse_numerical_accuracy_output(stdout_content)
-
-            assert result is not None
-            assert isinstance(result, dict)
-            assert result["insphere_distance"] == "84.5%"
-            assert result["insphere_lifted"] == "1.2%"
-            assert result["distance_lifted"] == "20.3%"
-            assert result["all_agree"] == "0.8%"
-
-    def test_parse_numerical_accuracy_output_no_data(self) -> None:
-        """Test parsing numerical accuracy output with no relevant data."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            stdout_content = """Running benchmarks...
-No method comparisons found.
-Benchmark completed."""
-
-            result = generator._parse_numerical_accuracy_output(stdout_content)
-
-            assert result is None
-
-    def test_parse_numerical_accuracy_output_malformed(self) -> None:
-        """Test parsing numerical accuracy output with malformed data."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            stdout_content = """Running benchmarks...
-Method Comparisons (invalid format):
-Benchmark completed."""
-
-            result = generator._parse_numerical_accuracy_output(stdout_content)
-
-            assert result is None
 
     @patch("benchmark_utils.run_git_command")
     def test_generate_summary_success(self, mock_git: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
@@ -2821,6 +2861,58 @@ Benchmark completed."""
 
             with pytest.raises(ValueError, match="bench_timeout must be a positive integer"):
                 generator.generate_summary(bench_timeout=bench_timeout)
+
+    @pytest.mark.parametrize("mode", ["permissive", "strict", "fresh"])
+    @pytest.mark.parametrize("stale_state", ["changed", "missing"])
+    def test_generate_summary_stale_measurement_policy(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
+        mode: Literal["permissive", "strict", "fresh"],
+        stale_state: str,
+    ) -> None:
+        """Permissive reports omit stale provenance; required evidence protects prior output."""
+        strict = mode == "strict"
+        run_benchmarks = mode == "fresh"
+        generator = PerformanceSummaryGenerator(tmp_path)
+        write_complete_release_signal_coverage(tmp_path)
+        measured = Provenance("a" * 40, "b" * 64, "c" * 64, (("delaunay.cargo-profile", "perf"),))
+        payload, manifest = serialize_evidence(Evidence(b"{}", SAMPLE_SCHEMA, (("measurement", measured),)))
+        criterion = generator.circumsphere_results_dir
+        (criterion / "delaunay-evidence.json").write_bytes(manifest)
+        if stale_state == "changed":
+            (criterion / "delaunay-sample.json").write_bytes(payload + b"\n")
+        with pytest.raises(ValueError if stale_state == "changed" else FileNotFoundError) as failure:
+            benchmark_utils._load_fresh_measurement(criterion)
+
+        output = tmp_path / "summary.md"
+        output.write_text("previous report\n", encoding=UTF8)
+        with (
+            patch("benchmark_utils.run_release_signal_measurement_plan", return_value={}) as run_plan,
+            patch.object(generator, "_parse_ci_performance_suite_results", return_value=complete_ci_performance_results()),
+            patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=complete_circumsphere_results(generator)),
+        ):
+            success = generator.generate_summary(output_path=output, strict=strict, run_benchmarks=run_benchmarks)
+
+        assert run_plan.call_count == int(run_benchmarks)
+        assert success is not (strict or run_benchmarks)
+        content = output.read_text(encoding=UTF8)
+        captured = capsys.readouterr()
+        if strict or run_benchmarks:
+            assert content == "previous report\n"
+            assert str(failure.value) in captured.err
+            assert "Generated performance summary" not in captured.out
+        else:
+            assert "- **Measurement provenance**: unavailable; retained evidence is stale or unreadable." in content
+            assert "- **Measured " not in content
+            assert "- **Scientific preflight**:" not in content
+            assert "including uncommitted changes" not in content
+            assert PUBLIC_API_TITLE in content
+            assert CIRCUMSPHERE_TITLE in content
+            assert str(failure.value) in caplog.text
+            assert "Generated performance summary" in captured.out
+        assert list(tmp_path.glob(".summary.md.*.tmp")) == []
 
     @patch("benchmark_utils.run_release_signal_measurement_plan")
     def test_generate_summary_with_benchmarks(self, mock_run_plan: MagicMock) -> None:
@@ -2875,45 +2967,40 @@ Benchmark completed."""
             )
             assert output_file.exists()
 
-    @patch("benchmark_utils.run_release_signal_measurement_plan")
-    def test_generate_summary_fresh_benchmark_failure_preserves_previous_report(self, mock_run_plan: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
-        """A failed fresh run must fail closed without replacing prior evidence."""
-        mock_run_plan.side_effect = RuntimeError("benchmark failed")
+    @pytest.mark.parametrize("strict", [False, True])
+    def test_generate_summary_fresh_benchmark_failure_preserves_previous_report(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], strict: bool
+    ) -> None:
+        """The ordinary CLI retains the real saved-sample repair hint and prior output."""
+        output = tmp_path / "summary.md"
+        if not strict:
+            output.write_text("previous report\n", encoding=UTF8)
+        saved_sample = tmp_path / "target" / "criterion" / "fixture" / "last"
+        saved_sample.mkdir(parents=True)
+        estimates = saved_sample / "estimates.json"
+        estimates.write_text("{ invalid json", encoding=UTF8)
+        measure = Mock(side_effect=AssertionError("invalid saved samples must stop native measurement"))
+        monkeypatch.setattr(benchmark_utils, "_measure_suite_into", measure)
+        args = create_argument_parser().parse_args(
+            ["generate-summary", "--run-benchmarks", "--output", str(output), *(["--strict"] if strict else [])],
+        )
+        assert not args.verbose
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
+        with pytest.raises(SystemExit) as failure:
+            execute_command(args, tmp_path)
 
-            output_file = Path(temp_dir) / "test_summary.md"
-            output_file.write_text("previous report\n", encoding=UTF8)
-
-            success = generator.generate_summary(output_path=output_file, run_benchmarks=True)
-
-            assert success is False
-            assert output_file.read_text(encoding=UTF8) == "previous report\n"
-            captured = capsys.readouterr()
-            assert "Fresh benchmark run failed" in captured.err
-
-    @patch("benchmark_utils.run_release_signal_measurement_plan")
-    def test_generate_summary_strict_benchmark_failure_fails(self, mock_run_plan: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
-        """Test that strict summary generation fails instead of using fallback data."""
-        mock_run_plan.side_effect = RuntimeError("benchmark failed")
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-            output_file = Path(temp_dir) / "test_summary.md"
-
-            success = generator.generate_summary(
-                output_path=output_file,
-                run_benchmarks=True,
-                strict=True,
-            )
-
-            assert success is False
-            assert not output_file.exists()
-            captured = capsys.readouterr()
-            assert "Fresh benchmark run failed" in captured.err
+        assert failure.value.code == 1
+        measure.assert_not_called()
+        assert estimates.read_text(encoding=UTF8) == "{ invalid json"
+        if strict:
+            assert not output.exists()
+        else:
+            assert output.read_text(encoding=UTF8) == "previous report\n"
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Fresh benchmark run failed" in captured.err
+        assert f"Remove or repair saved sample {saved_sample.resolve()} before measuring" in captured.err
+        assert "Traceback" not in captured.err
 
     def test_generate_summary_strict_rejects_structural_fallback_provenance(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Strict generation rejects fallback based on provenance, not rendered prose."""
@@ -3114,16 +3201,15 @@ Benchmark completed."""
     def test_generate_summary_strict_rejects_manifest_result_with_malformed_estimate(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """The runtime manifest makes a skipped malformed CI estimate an explicit gap."""
         generator = PerformanceSummaryGenerator(tmp_path)
+        write_complete_release_signal_coverage(tmp_path)
+        estimates_dir = generator.circumsphere_results_dir / "validation" / "malformed" / "20" / "base"
+        estimates_dir.mkdir(parents=True)
+        (estimates_dir / "estimates.json").write_text("{ invalid json", encoding=UTF8)
         manifest_path = tmp_path / "target" / "criterion" / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE
-        manifest_path.parent.mkdir(parents=True)
-        results = complete_ci_performance_results()
-        manifest_path.write_text("\n".join([result.benchmark_id for result in results] + ["validation/malformed/20"]) + "\n", encoding=UTF8)
+        manifest_path.write_text("validation/malformed/20\n", encoding=UTF8)
         output_file = tmp_path / "summary.md"
 
-        with (
-            patch.object(generator, "_parse_ci_performance_suite_results", return_value=results),
-            patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=complete_circumsphere_results(generator)),
-        ):
+        with patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=complete_circumsphere_results(generator)):
             success = generator.generate_summary(output_path=output_file, strict=True)
 
         assert success is False
@@ -3182,15 +3268,43 @@ Benchmark completed."""
             assert "### Method Disagreements" not in content
             assert "## Benchmark Structure" in content
 
-    def test_get_implementation_notes(self) -> None:
-        """Test getting circumsphere implementation notes."""
-        lines = PerformanceSummaryGenerator._get_implementation_notes()
-        content = "\n".join(lines)
+    @pytest.mark.parametrize("fastest", ["insphere", "insphere_distance", "insphere_lifted"])
+    def test_get_implementation_notes(self, tmp_path: Path, fastest: str) -> None:
+        """Conclusions follow the same evidence as the tables, including ties."""
+        generator = PerformanceSummaryGenerator(tmp_path)
+        cases = complete_circumsphere_results(generator)
+        for case in cases:
+            for name, performance in case.methods.items():
+                performance.time_ns = 10.0 if name == fastest else 20.0
+        # A tie must credit both methods rather than depend on dictionary order.
+        tied = next(name for name in cases[0].methods if name != fastest)
+        cases[0].methods[tied].time_ns = 10.0
+        evidence = benchmark_utils.CircumsphereSummaryEvidence(tuple(cases), "criterion", ())
+        notes = "\n".join(generator._get_implementation_notes(evidence))
+        tables = "\n".join(generator._get_circumsphere_performance_results(evidence))
 
-        assert "## Implementation Notes" in content
-        assert "### Dimension-Dependent InSphere Predicate Performance" in content
-        assert "`insphere_distance`" in content
-        assert "### Method Disagreements" not in content
+        for dimension in ("2D", "3D", "4D", "5D"):
+            counts = {name: 3 if name == fastest else 0 for name in cases[0].methods}
+            if dimension == cases[0].dimension:
+                counts[tied] += 1
+            assert f"| {dimension} | 3 | {counts['insphere']} | {counts['insphere_distance']} | {counts['insphere_lifted']} |" in notes
+        assert "Lowest mean" in tables
+        assert "**" + ", ".join(sorted((fastest, tied))) + "**" in tables
+        assert "statistical significance" in notes
+        assert "tolerance" in notes
+        assert "filtered-exact" in notes
+        assert all(len(line) <= 160 for line in notes.splitlines())
+
+    @pytest.mark.parametrize(("provenance", "missing"), [("reference-fallback", ()), ("criterion", ("missing/result",))])
+    def test_implementation_notes_withhold_incomplete_conclusions(
+        self, tmp_path: Path, provenance: Literal["criterion", "reference-fallback"], missing: tuple[str, ...]
+    ) -> None:
+        """Fallback and partial results cannot support measured conclusions."""
+        generator = PerformanceSummaryGenerator(tmp_path)
+        evidence = benchmark_utils.CircumsphereSummaryEvidence(tuple(complete_circumsphere_results(generator)), provenance, missing)
+        content = "\n".join(PerformanceSummaryGenerator._get_implementation_notes(evidence))
+        assert "Complete measured predicate evidence is unavailable" in content
+        assert "| 2D |" not in content
 
     def test_empty_benchmark_results_edge_case(self) -> None:
         """Test handling of empty benchmark results (edge case)."""
@@ -3297,17 +3411,3 @@ Benchmark completed."""
         # The specific values may change, but the structure should be consistent
         # with pairs of argument name and value
         assert len(DEV_MODE_BENCH_ARGS) >= 6  # At least 3 arg-value pairs
-
-    def test_numerical_accuracy_phrasing_flexibility(self) -> None:
-        """Test that numerical accuracy section doesn't hardcode sample size."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_root = Path(temp_dir)
-            generator = PerformanceSummaryGenerator(project_root)
-
-            # Get the numerical accuracy analysis without specific data
-            lines = generator._get_numerical_accuracy_analysis()
-            content = "\n".join(lines)
-
-            # Should use flexible phrasing instead of hardcoded "1000 random test cases"
-            assert "Based on random test cases:" in content
-            assert "Based on 1000 random test cases:" not in content

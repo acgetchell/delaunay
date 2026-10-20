@@ -125,10 +125,11 @@ use delaunay::prelude::geometry::{
 use delaunay::prelude::insertion::InsertionResult;
 use delaunay::prelude::insertion::{InsertionOutcome, InsertionStatistics};
 use delaunay::prelude::repair::DelaunayCheckPolicy;
-use delaunay::prelude::tds::{InvariantKind, TdsErrorKind, TriangulationValidationReport};
+use delaunay::prelude::tds::TdsErrorKind;
 use delaunay::prelude::validation::{
     DelaunayTriangulationValidationError, ValidationCadence, ValidationPolicy,
 };
+use delaunay::prelude::validation::{InvariantKind, TriangulationValidationReport};
 use delaunay::vertex;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 #[cfg(feature = "slow-tests")]
@@ -1628,7 +1629,7 @@ where
             match dt.finish() {
                 Ok(dt) => dt,
                 Err(error) => {
-                    let outcome = final_validation_kind(&error).map_or_else(
+                    let outcome = final_validation_kind(error.reason()).map_or_else(
                         || DebugOutcome::ConstructionFailure {
                             error: format!("draft publication failed: {error}"),
                         },

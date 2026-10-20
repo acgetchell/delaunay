@@ -111,6 +111,16 @@ binary(=proptest_sos)
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.ci.overrides]]
+# The nonzero 5D property exercises one complete exact SoS expansion per case
+# and can also cross the default budget on Windows runners.
+platform = 'cfg(windows)'
+filter = '''
+binary(=proptest_sos)
+& test(=prop_sos_insphere_nonzero_5d)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
 # A single compact T^3 periodic-image construction can cross the default
 # budget on Windows. Each test retains one construction so other platforms
 # keep the normal watchdog and the exception remains limited to this fixture.
@@ -130,6 +140,20 @@ retries = 0
 
 [[profile.debug.overrides]]
 filter = 'test(=builder::tests::test_builder_toroidal_t2_smoke) | test(=builder::tests::test_builder_toroidal_accepts_matching_explicit_global_topology)'
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.debug.overrides]]
+# These exact cospherical flip checks reach or exceed the 10-second debug
+# budget on hosted Linux and Windows runners. Preserve every fixture and
+# inverse-flip check with the same headroom across platforms in debug builds.
+filter = '''
+binary(=delaunay) & (
+    test(=core::algorithms::flips::contexts::tests::cospherical_k3_decisions_are_mutually_exclusive_4d)
+    | test(=core::algorithms::flips::contexts::tests::cospherical_k3_positive_linear_tie_5d)
+    | test(=core::algorithms::flips::contexts::tests::cospherical_k3_negative_linear_tie_5d)
+    | test(=core::algorithms::flips::contexts::tests::cospherical_k3_quadratic_tie_5d)
+)
+'''
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.debug.overrides]]
@@ -184,7 +208,8 @@ filter = '''
 (binary(=proptest_delaunay_triangulation)
 & test(=prop_on_suspicion_validates_cospherical_3d_sequences))
 | (binary(=proptest_sos)
-& test(=prop_sos_insphere_deterministic_5d))
+& (test(=prop_sos_insphere_deterministic_5d)
+   | test(=prop_sos_insphere_nonzero_5d)))
 '''
 slow-timeout = { period = "300s", terminate-after = 1 }
 

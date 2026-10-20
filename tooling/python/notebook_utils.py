@@ -63,6 +63,18 @@ def nonnegative_float_env(name: str, default: float) -> float:
     return value
 
 
+def unit_interval_float_env(name: str, default: float) -> float:
+    """Parse a finite float in the inclusive range [0, 1], including the default."""
+    raw_value = os.environ.get(name)
+    try:
+        value = default if raw_value is None else float(raw_value)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a finite float in [0, 1], got {raw_value!r}") from error
+    if not 0.0 <= value <= 1.0:
+        raise ValueError(f"{name} must be a finite float in [0, 1], got {value}")
+    return value
+
+
 def string_choice_env(name: str, default: str, choices: set[str]) -> str:
     """Parse a lower-case environment choice from a finite set."""
     value = os.environ.get(name, default).strip().lower()

@@ -302,10 +302,33 @@ def test_preupload_shell_requires_evidence_and_proven_absence(tmp_path: Path, fa
     assert marker.exists() == (failure == "none")
 
 
-def test_packaging_failure_stops_the_recipe(tmp_path: Path) -> None:
-    """Dependency or native Cargo failure prevents subsequent package verification."""
+@pytest.mark.parametrize(
+    "failure_index",
+    [
+        pytest.param(0, id="toolchain"),
+        pytest.param(1, id="metadata"),
+        pytest.param(2, id="default-package"),
+        pytest.param(3, id="all-features-package"),
+        pytest.param(None, id="success"),
+    ],
+)
+def test_packaging_stops_on_failure_and_completes_on_success(tmp_path: Path, failure_index: int | None) -> None:
+    """Reach each packaging stage and preserve its failure without running later work."""
+    expected_calls = [
+        "run --locked --no-sync --no-python-downloads research-repo-tools toolchain check",
+        "run --locked --group dev research-repo-tools toolchain run -- research-repo-tools validation cargo-metadata --package delaunay",
+        "run --locked --group dev research-repo-tools toolchain run -- cargo publish --locked --package delaunay --registry crates-io --dry-run",
+        "run --locked --group dev research-repo-tools toolchain run -- cargo publish --locked --package delaunay --registry crates-io --dry-run --all-features",
+    ]
+    failing_call = "" if failure_index is None else expected_calls[failure_index]
     calls = tmp_path / "calls"
-    runner = f"uv() {{ echo invoked >> {shlex.quote(calls.as_posix())}; return 17; }}\n"
+    runner = f"""uv() {{
+    printf '%s\\n' "$*" >> {shlex.quote(calls.as_posix())}
+    if [[ "$*" == {shlex.quote(failing_call)} ]]; then return 17; fi
+    return 0
+}}
+"""
     result = run_command("bash", ["--noprofile", "--norc", "-euc", runner + dry_run(ROOT, "release-package").stderr], check=False)
-    assert result.returncode == 17
-    assert calls.read_text(encoding="utf-8").splitlines() == ["invoked"]
+    assert result.returncode == (0 if failure_index is None else 17), result.stderr
+    expected_count = len(expected_calls) if failure_index is None else failure_index + 1
+    assert calls.read_text(encoding="utf-8").splitlines() == expected_calls[:expected_count]

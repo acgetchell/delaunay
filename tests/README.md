@@ -656,8 +656,10 @@ When contributing integration tests:
 
 ## Jaccard Similarity Testing Utilities
 
-The test suite uses Jaccard similarity for robust set-based comparisons, enabling fuzzy-tolerant validation that handles
-floating-point precision variations and near-degenerate cases.
+The test suite uses Jaccard similarity to describe overlap between sets using
+exact element equality. It does not measure coordinate error or provide a
+floating-point tolerance. Preservation tests require exact equality; Jaccard
+reports help explain mismatches.
 
 ### Available Utilities
 
@@ -683,22 +685,26 @@ use delaunay::prelude::query::{
 
 #### Assertion Macro
 
+Use a threshold below 1.0 only when the tested contract explicitly permits
+missing or extra set elements, as in this illustrative overlap comparison:
+
 ```rust
 use delaunay::assert_jaccard_gte;
+use std::collections::HashSet;
 
-let before = extract_vertex_coordinate_set(tri_before);
-let after = extract_vertex_coordinate_set(tri_after);
+let expected: HashSet<_> = [1, 2, 3].into_iter().collect();
+let approximate: HashSet<_> = [2, 3, 4].into_iter().collect();
 
 // With custom label (4-arg form)
 assert_jaccard_gte!(
-    &before,
-    &after,
-    0.99,  // threshold: minimum acceptable similarity
-    "Vertex preservation through operation"
+    &expected,
+    &approximate,
+    0.4,  // This example's Jaccard index is 0.5.
+    "Approximate set overlap"
 );
 
 // Without label (3-arg form) - uses default message
-assert_jaccard_gte!(&before, &after, 0.99);
+assert_jaccard_gte!(&expected, &approximate, 0.4);
 ```
 
 **On failure, provides detailed diagnostics:**
@@ -723,50 +729,77 @@ println!("{}", report);
 
 ### Threshold Conventions
 
-| Test Scenario | Threshold | Rationale |
+| Test Scenario | Required assertion | Rationale |
 |--------------|-----------|------------|
-| **Serialization** (vertex coords) | ≥ 0.99 | Strict preservation expected; allows minor floating-point drift |
-| **Storage backend** (edge topology) | ≥ 0.999 | Near-exact equivalence; backends should be equivalent |
-| **Hull reconstruction** (facet sets) | = 1.0 | Exact match when reconstructing from same TDS |
-| **Property tests** (diagnostics) | N/A | Report similarity on failure; maintain strict invariants |
+| **Serialization** (vertex identity and coords) | Exact UUID/coordinate-bit records | Preserve every vertex and its stored coordinate bits |
+| **Storage backend** (edge endpoints) | Exact canonical edge sets | Preserve every UUID pair under the same vertex identities |
+| **Hull reconstruction** (facet identifiers) | Exact facet-identifier sets | Match when reconstructing from the same TDS |
+| **Property tests** (diagnostics) | Contract-specific exact invariants | Report similarity on failure without relaxing the invariant |
+
+A score of 0.99 can accept losing one of 100 vertices; 0.999 can accept losing
+one of 1,000 edges. Neither establishes exact preservation.
 
 ### Usage Examples
 
 #### Vertex Coordinate Preservation
 
+Compare vertices by UUID and stored coordinate bits when testing a checkpoint
+round trip. A coordinate-only `HashSet<Point<D>>` omits identity and multiplicity.
+Take the snapshot after construction: `Point` canonicalizes signed zero when
+created, and serialization must preserve that constructed state.
+
 ```rust
-use delaunay::assert_jaccard_gte;
-use delaunay::prelude::query::extract_vertex_coordinate_set;
+use delaunay::prelude::query::format_jaccard_report;
+use std::collections::HashSet;
 
-let original_coords = extract_vertex_coordinate_set(tri);
-// ... perform operation (serialization, transformation, etc.) ...
-let result_coords = extract_vertex_coordinate_set(tri_after);
+let original_vertices: HashSet<_> = tri
+    .vertices()
+    .map(|(_, vertex)| (vertex.uuid(), vertex.point().coords().map(f64::to_bits)))
+    .collect();
+// ... serialize the constructed owner and restore it as tri_after ...
+let restored_vertices: HashSet<_> = tri_after
+    .vertices()
+    .map(|(_, vertex)| (vertex.uuid(), vertex.point().coords().map(f64::to_bits)))
+    .collect();
 
-assert_jaccard_gte!(
-    &original_coords,
-    &result_coords,
-    0.99,
-    "Serialization vertex preservation"
+assert_eq!(
+    original_vertices,
+    restored_vertices,
+    "{}",
+    format_jaccard_report(&original_vertices, &restored_vertices, "Original", "Restored")?
 );
 ```
 
+The Jaccard report is evaluated only on mismatch. Complete checkpoint tests
+also compare payloads, simplex connectivity, ordered neighbor slots, periodic
+offsets, and owner configuration; see the
+[checkpoint contract](../docs/construction_and_validation.md#owner-checkpoint-manifests).
+
 #### Edge Set Comparison
 
+These sets use vertex UUIDs, so the two backends must preserve the same vertex
+identities. They compare endpoint pairs; periodic edges with different offsets
+can share a pair. Complete complex equivalence also requires matching
+maximal-simplex connectivity and periodic offsets.
+
 ```rust
-use delaunay::prelude::query::extract_edge_set;
+use delaunay::prelude::query::{extract_edge_set, format_jaccard_report};
 
 let edges_a = extract_edge_set(tri_a)?;
 let edges_b = extract_edge_set(tri_b)?;
 
-assert_jaccard_gte!(
-    &edges_a,
-    &edges_b,
-    0.999,
-    "Storage backend edge-set equivalence"
+assert_eq!(
+    edges_a,
+    edges_b,
+    "{}",
+    format_jaccard_report(&edges_a, &edges_b, "Backend A", "Backend B")?
 );
 ```
 
 #### Hull Facet Topology
+
+The helper returns hashed facet identifiers. For collision-independent facet
+identity, compare canonical vertex-UUID facet signatures directly.
 
 ```rust
 use delaunay::prelude::query::{ConvexHull, extract_hull_facet_set};
@@ -777,12 +810,7 @@ let hull2 = ConvexHull::try_from_triangulation(tri)?;
 let facets1 = extract_hull_facet_set(&hull1);
 let facets2 = extract_hull_facet_set(&hull2);
 
-assert_jaccard_gte!(
-    &facets1,
-    &facets2,
-    1.0,
-    "Hull reconstruction consistency"
-);
+assert_eq!(facets1, facets2, "Hull reconstruction facet-identifier preservation");
 ```
 
 ### Design Decisions
@@ -798,7 +826,7 @@ assert_jaccard_gte!(
 
 - All `usize→f64` casts checked against 2^53 limit
 - Proper error handling via `JaccardComputationError`
-- No precision loss in computation
+- Exact integer-count conversion; the resulting `f64` ratio may be rounded
 
 **Determinism:**
 

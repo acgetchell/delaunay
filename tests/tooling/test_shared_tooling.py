@@ -7,6 +7,7 @@ import shlex
 import shutil
 import sys
 import tomllib
+from collections import Counter
 from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,6 +15,8 @@ from typing import TYPE_CHECKING
 import pytest
 from research_repo_tools.cli import main
 from research_repo_tools.process import run_command as run_safe_command
+
+import notebook_validation_rendering as validation_rendering
 
 if TYPE_CHECKING:
     import subprocess
@@ -85,6 +88,45 @@ def invoke_recipe(root: Path, recipe: str, *args: str) -> tuple[subprocess.Compl
     log = root / "calls.jsonl"
     calls: list[list[str]] = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
     return result, calls
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_figure_check_ignores_ambient_publish_destination(recording_recipes: Path, monkeypatch: pytest.MonkeyPatch, *, stale: bool) -> None:
+    """The real check recipe never publishes, even when its parent enables refreshes."""
+    root = recording_recipes
+    tracked = root / "docs/assets/validation"
+    tracked.mkdir(parents=True)
+    expected = {name: validation_rendering.PNG_SIGNATURE + name.encode() for name in validation_rendering.EXPECTED_VALIDATION_FIGURE_NAMES}
+    for name, content in expected.items():
+        (tracked / name).write_bytes(content)
+    monkeypatch.setenv("DELAUNAY_VALIDATION_DOC_FIGURE_DIR", "docs/assets/validation")
+    write_stub(
+        root / "bin",
+        "uv",
+        "import os, shutil, sys\nfrom pathlib import Path\n"
+        f"sys.path.insert(0, {str(Path(validation_rendering.__file__).parent)!r})\n"
+        "import notebook_validation_rendering as rendering\n"
+        "if 'execute' in sys.argv:\n"
+        "    generated = Path('target/notebooks/01_validation/validation_figures')\n"
+        "    generated.mkdir(parents=True)\n"
+        "    for name in rendering.EXPECTED_VALIDATION_FIGURE_NAMES:\n"
+        "        shutil.copyfile(Path('docs/assets/validation') / name, generated / name)\n"
+        f"    if {stale!r}:\n"
+        "        (generated / rendering.EXPECTED_VALIDATION_FIGURE_NAMES[0]).write_bytes(rendering.PNG_SIGNATURE + b'new figure')\n"
+        "    destination = os.environ.get('DELAUNAY_VALIDATION_DOC_FIGURE_DIR')\n"
+        "    Path('publish-switch.txt').write_text(destination or '', encoding='utf-8')\n"
+        "    if destination:\n"
+        "        rendering.publish_validation_figure_set(generated, Path(destination))\n"
+        "elif 'notebook_validation_rendering' in sys.argv:\n"
+        "    sys.exit(rendering.main(sys.argv[sys.argv.index('notebook_validation_rendering') + 1:]))\n",
+    )
+
+    result, _ = invoke_recipe(root, "validation-doc-figures-check")
+
+    assert {path.name: path.read_bytes() for path in tracked.iterdir()} == expected
+    assert (root / "publish-switch.txt").read_text(encoding="utf-8") == ""
+    assert result.returncode == int(stale), result.stderr
+    assert ("tracked validation figures are stale" in result.stderr) == stale
 
 
 def update_commands(recipe: str) -> list[list[str]]:
@@ -254,17 +296,22 @@ def test_active_document_rules_exclude_migrated_history(tmp_path: Path, monkeypa
 
 
 @pytest.mark.parametrize(
-    ("source_path", "rule"),
+    "source_path",
     [
-        ("src/triangulation/numeric_conversions.rs", "delaunay.rust.no-silent-conversion-fallbacks"),
-        ("src/core/tds/hash_collections.rs", "delaunay.rust.no-std-hash-collections-in-hot-src"),
+        "src/triangulation/numeric_conversions.rs",
+        "src/core/tds/hash_collections.rs",
+        "src/core/tds/snapshot.rs",
+        ".github/workflows/action_policy.yml",
     ],
 )
-def test_rust_policy_rules_cover_split_modules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_path: str, rule: str) -> None:
-    """Production path filters must retain guards after the module splits."""
+def test_policy_rules_cover_production_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_path: str) -> None:
+    """Unmodified production path filters must enforce the annotated fixture cases."""
     target = tmp_path / source_path
     target.parent.mkdir(parents=True)
-    target.write_text((ROOT / "tests/semgrep" / source_path).read_text(encoding="utf-8"), encoding="utf-8")
+    shutil.copyfile(ROOT / "tests/semgrep" / source_path, target)
+    source = target.read_text(encoding="utf-8")
+    expected = Counter(re.findall(r"(?:#|//) ruleid: ([\w.-]+)", source))
+    assert expected
     monkeypatch.setenv("SEMGREP_SETTINGS_FILE", str(tmp_path / "semgrep-settings.yml"))
     result = run_safe_command(
         "semgrep",
@@ -285,8 +332,7 @@ def test_rust_policy_rules_cover_split_modules(tmp_path: Path, monkeypatch: pyte
     )
     assert result.returncode == 1, result.stderr
     findings = json.loads(result.stdout)["results"]
-    assert len(findings) == 2
-    assert {finding["check_id"] for finding in findings} == {rule}
+    assert Counter(finding["check_id"] for finding in findings) == expected
     assert {Path(finding["path"]).resolve() for finding in findings} == {target.resolve()}
 
 
