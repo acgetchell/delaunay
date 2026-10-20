@@ -114,8 +114,8 @@ use crate::core::collections::{
 };
 use crate::core::operations::{InsertionTelemetry, InsertionTelemetryMode, SuspicionFlags};
 use crate::core::tds::{
-    InvariantError, InvariantKind, InvariantViolation, SimplexKey, Tds, TdsError, TopologyOwnerId,
-    TriangulationValidationReport, VertexKey,
+    SimplexKey, Tds, TdsError, TdsInvariantKind, TdsInvariantViolation, TdsValidationReport,
+    TopologyOwnerId, VertexKey,
 };
 use crate::topology::characteristics::euler::{
     FVector, TopologyClassification, count_boundary_simplices, count_simplices,
@@ -133,6 +133,9 @@ use crate::topology::manifold::{
 };
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, TopologyKind};
 use crate::triangulation::Triangulation;
+use crate::validation_report::{
+    InvariantError, InvariantKind, InvariantViolation, TriangulationValidationReport,
+};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -147,7 +150,7 @@ use uuid::Uuid;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::tds::InvariantError;
+/// use delaunay::prelude::validation::InvariantError;
 /// use delaunay::prelude::{construction::*, validation::*};
 ///
 /// # #[derive(Debug, thiserror::Error)]
@@ -553,6 +556,74 @@ impl From<ManifoldError> for InvariantError {
         match TriangulationValidationError::try_from(err) {
             Ok(source) => Self::Triangulation { source },
             Err(source) => Self::Tds { source },
+        }
+    }
+}
+
+/// Discriminant for compact Level 3 topology-validation summaries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TriangulationValidationErrorKind {
+    /// A facet had invalid manifold multiplicity.
+    ManifoldFacetMultiplicity,
+    /// A boundary ridge had invalid boundary-facet multiplicity.
+    BoundaryRidgeMultiplicity,
+    /// A closed topology contained an open boundary facet.
+    BoundaryFacetInClosedTopology,
+    /// A non-periodic topology contained periodic self-identification metadata.
+    PeriodicIdentificationInNonPeriodicTopology,
+    /// A requested ridge candidate was not present in any simplex.
+    RidgeNotFound,
+    /// A ridge link failed PL-manifold validation.
+    RidgeLinkNotManifold,
+    /// A vertex link failed PL-manifold validation.
+    VertexLinkNotManifold,
+    /// A high-dimensional link lacked construction evidence for its PL type.
+    HighDimensionalVertexLinkUnproven,
+    /// The intrinsic simplex-orientation constraints are contradictory.
+    NonOrientable,
+    /// Euler characteristic did not match the expected classification.
+    EulerCharacteristicMismatch,
+    /// A vertex was not incident to any simplex.
+    IsolatedVertex,
+    /// The simplex-neighbor graph was disconnected.
+    Disconnected,
+    /// Positive-orientation promotion did not converge.
+    OrientationPromotionNonConvergence,
+}
+
+impl From<&TriangulationValidationError> for TriangulationValidationErrorKind {
+    fn from(source: &TriangulationValidationError) -> Self {
+        match source {
+            TriangulationValidationError::ManifoldFacetMultiplicity { .. } => {
+                Self::ManifoldFacetMultiplicity
+            }
+            TriangulationValidationError::BoundaryRidgeMultiplicity { .. } => {
+                Self::BoundaryRidgeMultiplicity
+            }
+            TriangulationValidationError::BoundaryFacetInClosedTopology { .. } => {
+                Self::BoundaryFacetInClosedTopology
+            }
+            TriangulationValidationError::PeriodicIdentificationInNonPeriodicTopology {
+                ..
+            } => Self::PeriodicIdentificationInNonPeriodicTopology,
+            TriangulationValidationError::RidgeNotFound { .. } => Self::RidgeNotFound,
+            TriangulationValidationError::RidgeLinkNotManifold { .. } => Self::RidgeLinkNotManifold,
+            TriangulationValidationError::VertexLinkNotManifold { .. } => {
+                Self::VertexLinkNotManifold
+            }
+            TriangulationValidationError::HighDimensionalVertexLinkUnproven { .. } => {
+                Self::HighDimensionalVertexLinkUnproven
+            }
+            TriangulationValidationError::NonOrientable { .. } => Self::NonOrientable,
+            TriangulationValidationError::EulerCharacteristicMismatch { .. } => {
+                Self::EulerCharacteristicMismatch
+            }
+            TriangulationValidationError::IsolatedVertex { .. } => Self::IsolatedVertex,
+            TriangulationValidationError::Disconnected { .. } => Self::Disconnected,
+            TriangulationValidationError::OrientationPromotionNonConvergence { .. } => {
+                Self::OrientationPromotionNonConvergence
+            }
         }
     }
 }
@@ -995,7 +1066,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 
     /// Returns the first actionable Level 2 Combinatorial Consistency diagnostic, if any.
     #[must_use]
-    pub fn structure_diagnostic(&self) -> Option<InvariantViolation> {
+    pub fn structure_diagnostic(&self) -> Option<TdsInvariantViolation> {
         self.tds.structure_diagnostic()
     }
 
@@ -1006,9 +1077,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// # Errors
     ///
-    /// Returns a [`TriangulationValidationReport`] containing all invariant
+    /// Returns a [`TdsValidationReport`] containing all invariant
     /// violations if any structural validation step fails.
-    pub fn structure_report(&self) -> Result<(), TriangulationValidationReport> {
+    pub fn structure_report(&self) -> Result<(), TdsValidationReport> {
         self.tds.structure_report()
     }
 
@@ -1296,7 +1367,8 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     TriangulationBuildFailure, TriangulationBuilder,
     /// };
     /// use delaunay::prelude::geometry::FastKernel;
-    /// use delaunay::prelude::tds::{InvariantError, Tds};
+    /// use delaunay::prelude::validation::InvariantError;
+    /// use delaunay::prelude::tds::Tds;
     /// use delaunay::prelude::topology::spaces::GlobalTopology;
     ///
     /// # #[derive(Debug, thiserror::Error)]
@@ -2029,12 +2101,12 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
                 if report.violations.iter().any(|v| {
                     matches!(
                         v.kind,
-                        InvariantKind::VertexMappings | InvariantKind::SimplexMappings
+                        TdsInvariantKind::VertexMappings | TdsInvariantKind::SimplexMappings
                     )
                 }) {
-                    return Err(report);
+                    return Err(report.into());
                 }
-                violations.extend(report.violations);
+                violations.extend(report.violations.into_iter().map(InvariantViolation::from));
             }
         }
 
@@ -2220,12 +2292,12 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Soundness boundary: the scoped path checks coherent orientation, local
     /// pseudomanifold facet incidence, ridge links, and geometric simplex
     /// orientation. Those local checks preserve the affected mutation scope
-    /// when the pre-mutation value already carries the requested proof. An
+    /// when the pre-mutation value already carries the requested proof.
     /// Ridge links are a necessary fail-fast guard, not complete PL-manifold
     /// certification. An empty scope explicitly falls back to
     /// [`validate_mandatory_mutation_postconditions`](Self::validate_mandatory_mutation_postconditions).
-    /// See `REFERENCES.md`, "Scoped Local Validation and Flips" \[1\], for the
-    /// local-vs-global validation tradeoff and geometric conditioning context.
+    /// See [Scoped Local Validation and Flips \[4\]](https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md#scoped-local-validation-and-flips)
+    /// for the local-vs-global validation tradeoff.
     pub(crate) fn validate_mandatory_mutation_postconditions_for_simplices(
         &self,
         simplices: &[SimplexKey],
@@ -4853,5 +4925,140 @@ mod tests {
                 "default detailed insertion should not start validation timers"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+    use slotmap::KeyData;
+    use std::iter;
+
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "exhaustive mapping keeps each validation error adjacent to its expected stable kind"
+    )]
+    fn triangulation_validation_error_kind_from_error_preserves_all_variants() {
+        let vertex_key = VertexKey::from(KeyData::from_ffi(3));
+        let cases = [
+            (
+                TriangulationValidationError::ManifoldFacetMultiplicity {
+                    facet_key: 0xabc,
+                    simplex_count: 3,
+                },
+                TriangulationValidationErrorKind::ManifoldFacetMultiplicity,
+            ),
+            (
+                TriangulationValidationError::BoundaryRidgeMultiplicity {
+                    ridge_key: 0xdef,
+                    boundary_facet_count: 3,
+                },
+                TriangulationValidationErrorKind::BoundaryRidgeMultiplicity,
+            ),
+            (
+                TriangulationValidationError::BoundaryFacetInClosedTopology {
+                    topology: TopologyKind::Spherical,
+                    facet_key: 0x111,
+                    simplex_key: SimplexKey::from(KeyData::from_ffi(5)),
+                    simplex_uuid: Uuid::new_v4(),
+                    facet_index: 1,
+                },
+                TriangulationValidationErrorKind::BoundaryFacetInClosedTopology,
+            ),
+            (
+                TriangulationValidationError::PeriodicIdentificationInNonPeriodicTopology {
+                    topology: TopologyKind::Euclidean,
+                    facet_key: 0x222,
+                    simplex_key: SimplexKey::from(KeyData::from_ffi(6)),
+                    simplex_uuid: Uuid::new_v4(),
+                    facet_index: 2,
+                },
+                TriangulationValidationErrorKind::PeriodicIdentificationInNonPeriodicTopology,
+            ),
+            (
+                TriangulationValidationError::RidgeNotFound {
+                    ridge_vertices: iter::once(vertex_key).collect(),
+                },
+                TriangulationValidationErrorKind::RidgeNotFound,
+            ),
+            (
+                TriangulationValidationError::RidgeLinkNotManifold {
+                    ridge_key: 0x123,
+                    link_vertex_count: 4,
+                    link_edge_count: 2,
+                    max_degree: 3,
+                    degree_one_vertices: 1,
+                    connected: false,
+                },
+                TriangulationValidationErrorKind::RidgeLinkNotManifold,
+            ),
+            (
+                TriangulationValidationError::VertexLinkNotManifold {
+                    vertex_key,
+                    link_vertex_count: 4,
+                    link_simplex_count: 2,
+                    boundary_facet_count: 1,
+                    max_degree: 3,
+                    connected: false,
+                    interior_vertex: true,
+                },
+                TriangulationValidationErrorKind::VertexLinkNotManifold,
+            ),
+            (
+                TriangulationValidationError::HighDimensionalVertexLinkUnproven {
+                    vertex_key,
+                    dimension: 3,
+                },
+                TriangulationValidationErrorKind::HighDimensionalVertexLinkUnproven,
+            ),
+            (
+                TriangulationValidationError::EulerCharacteristicMismatch {
+                    computed: 0,
+                    expected: 1,
+                    classification: TopologyClassification::Ball(3),
+                },
+                TriangulationValidationErrorKind::EulerCharacteristicMismatch,
+            ),
+            (
+                TriangulationValidationError::IsolatedVertex {
+                    vertex_key,
+                    vertex_uuid: Uuid::new_v4(),
+                },
+                TriangulationValidationErrorKind::IsolatedVertex,
+            ),
+            (
+                TriangulationValidationError::Disconnected { simplex_count: 2 },
+                TriangulationValidationErrorKind::Disconnected,
+            ),
+            (
+                TriangulationValidationError::OrientationPromotionNonConvergence {
+                    residual_count: 1,
+                    sampled: vec![SimplexKey::from(KeyData::from_ffi(4))],
+                },
+                TriangulationValidationErrorKind::OrientationPromotionNonConvergence,
+            ),
+        ];
+
+        for (source, expected) in cases {
+            assert_eq!(TriangulationValidationErrorKind::from(&source), expected);
+        }
+    }
+
+    #[test]
+    fn triangulation_validation_error_kind_preserves_non_orientable() {
+        let source = TriangulationValidationError::NonOrientable {
+            simplex1_key: SimplexKey::from(KeyData::from_ffi(7)),
+            simplex1_uuid: Uuid::from_u128(7),
+            simplex1_facet_index: 1,
+            simplex2_key: SimplexKey::from(KeyData::from_ffi(8)),
+            simplex2_uuid: Uuid::from_u128(8),
+            simplex2_facet_index: 2,
+        };
+
+        assert_eq!(
+            TriangulationValidationErrorKind::from(&source),
+            TriangulationValidationErrorKind::NonOrientable
+        );
     }
 }

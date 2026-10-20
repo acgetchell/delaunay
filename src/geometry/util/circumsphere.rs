@@ -1161,8 +1161,8 @@ mod tests {
 
     #[test]
     fn test_circumcenter_nearly_degenerate_simplex() {
-        // Test with points that are nearly collinear (may succeed or fail gracefully)
-        let eps = 1e-3; // Use larger epsilon for more robustness
+        // The two independent off-axis displacements give nonzero volume.
+        let eps = 1e-3;
         let points: Vec<Point<3>> = vec![
             Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
@@ -1170,29 +1170,14 @@ mod tests {
             Point::try_new([0.5, 0.0, eps]).expect("finite point coordinates"), // Slightly off the plane
         ];
 
-        let result = circumcenter(&points);
-        // Should either succeed or fail gracefully (don't require success)
-        if let Ok(center) = result {
-            // If it succeeds, center should have finite coordinates
-            let coords = center.coords();
-            assert!(
-                coords.iter().all(|&x| x.is_finite()),
-                "Circumcenter coordinates should be finite"
-            );
-        } else {
-            // If it fails, that's acceptable for this nearly degenerate case
-        }
-    }
-
-    #[test]
-    fn test_circumcenter_empty_points() {
-        let points: Vec<Point<3>> = vec![];
-        let result = circumcenter(&points);
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            CircumcenterError::EmptyPointSet => {}
-            other => panic!("Expected EmptyPointSet error, got: {other:?}"),
+        let center = circumcenter(&points)
+            .expect("finite non-degenerate tetrahedron must have a circumcenter");
+        // The base edge gives x = 1/2. Equating squared distances to the
+        // origin and either off-axis vertex gives 2*eps*y = eps² - 1/4,
+        // with z = y by symmetry.
+        let off_axis = eps.mul_add(eps, -0.25) / (2.0 * eps);
+        for (&actual, expected) in center.coords().iter().zip([0.5, off_axis, off_axis]) {
+            assert_relative_eq!(actual, expected, epsilon = 0.0, max_relative = 1e-14);
         }
     }
 
@@ -1261,24 +1246,17 @@ mod tests {
 
     #[test]
     fn test_circumcenter_numerical_stability() {
-        // Test with points that could cause numerical instability
+        // A small translated right triangle has a known hypotenuse midpoint.
         let points: Vec<Point<2>> = vec![
             Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([1.000_000_1, 0.0]).expect("finite point coordinates"), // Very close to first point
             Point::try_new([1.000_000_1, 0.000_000_1]).expect("finite point coordinates"), // Forms very thin triangle
         ];
 
-        let result = circumcenter(&points);
-        // Should either succeed or fail gracefully (not panic)
-        if let Ok(center) = result {
-            // If it succeeds, center should have finite coordinates
-            let coords = center.coords();
-            assert!(
-                coords.iter().all(|&x| x.is_finite()),
-                "Circumcenter coordinates should be finite"
-            );
-        } else {
-            // If it fails, that's acceptable for this degenerate case
+        let center = circumcenter(&points)
+            .expect("finite non-degenerate right triangle must have a circumcenter");
+        for (&actual, expected) in center.coords().iter().zip([1.000_000_05, 5e-8]) {
+            assert_relative_eq!(actual, expected, epsilon = 0.0, max_relative = 1e-14);
         }
     }
 
@@ -1416,8 +1394,8 @@ mod tests {
 
     #[test]
     fn test_circumcenter_exact_fallback_near_singular_3d() {
-        // Near-degenerate tetrahedron: three vertices nearly coplanar with a
-        // tiny perturbation off the plane.  The resulting linear system is
+        // Near-degenerate tetrahedron: the fourth vertex lies barely off the
+        // plane of the first three. The resulting linear system is
         // ill-conditioned enough to trip DEFAULT_SINGULAR_TOL, exercising the
         // rationally formed fallback path.
         let eps = 1e-14; // Perturbation small enough to make LU reject
@@ -1438,40 +1416,22 @@ mod tests {
             })
         );
 
-        let result = circumcenter(&points);
-        // The exact solver should succeed where LU alone would fail or
-        // produce inaccurate results.
-        let center = result.expect("exact fallback should handle near-singular system");
-        let center_coords = center.coords();
-
-        // All coordinates must be finite
-        assert!(
-            center_coords.iter().all(|&x| x.is_finite()),
-            "Circumcenter coordinates should be finite"
-        );
-
-        // Verify equidistance: all vertices should be the same distance
-        // from the circumcenter.
-        let mut distances = points.iter().map(|p| {
-            let diff = [
-                p.coords()[0] - center_coords[0],
-                p.coords()[1] - center_coords[1],
-                p.coords()[2] - center_coords[2],
-            ];
-            LaVector::try_new(diff).unwrap().norm().unwrap()
-        });
-
-        let first_distance = distances.next().expect("fixture has vertices");
-        for distance in distances {
-            assert_relative_eq!(first_distance, distance, epsilon = 1e-6);
+        let center =
+            circumcenter(&points).expect("exact fallback should handle near-singular system");
+        // The two axis edges give x = y = 1/2. Equating squared distances
+        // to the origin and (1/2, 1/2, eps) gives 2*eps*z = eps² - 1/2.
+        // Direct coordinates detect the wrong sign/magnitude that rounded
+        // distance comparisons can hide at this scale (z ≈ -2.5e13).
+        let expected_z = eps.mul_add(eps, -0.5) / (2.0 * eps);
+        for (&actual, expected) in center.coords().iter().zip([0.5, 0.5, expected_z]) {
+            assert_relative_eq!(actual, expected, epsilon = 0.0, max_relative = 1e-14);
         }
     }
 
     #[test]
     fn test_circumcenter_exact_fallback_near_singular_2d() {
-        // Near-degenerate triangle: two vertices very close together.
-        // The system matrix has a row with tiny entries, likely tripping
-        // DEFAULT_SINGULAR_TOL.
+        // Near-collinear triangle with a tiny altitude: LU must reject the
+        // small pivot, while the exact system remains nonsingular.
         let eps = 1e-15;
         let points: Vec<Point<2>> = vec![
             Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
@@ -1479,17 +1439,23 @@ mod tests {
             Point::try_new([0.5, eps]).expect("finite point coordinates"), // Nearly collinear
         ];
 
-        let result = circumcenter(&points);
-        let center = result.expect("exact fallback should handle near-singular 2D system");
-        let center_coords = center.coords();
-
-        assert!(
-            center_coords.iter().all(|&x| x.is_finite()),
-            "Circumcenter coordinates should be finite"
+        let system = Matrix::try_from_rows([[1.0, 0.0], [0.5, eps]]).expect("finite system matrix");
+        assert_matches!(
+            system.lu(DEFAULT_SINGULAR_TOL),
+            Err(LaError::Singular {
+                reason: SingularityReason::Numerical { .. },
+                ..
+            })
         );
 
-        // x-coordinate should be near 0.5 (midpoint of base edge)
-        assert_relative_eq!(center_coords[0], 0.5, epsilon = 1e-6);
+        let center =
+            circumcenter(&points).expect("exact fallback should handle near-singular 2D system");
+        // The base edge gives x = 1/2. Equating squared distances to the
+        // origin and (1/2, eps) gives 2*eps*y = eps² - 1/4 (y ≈ -1.25e14).
+        let expected_y = eps.mul_add(eps, -0.25) / (2.0 * eps);
+        for (&actual, expected) in center.coords().iter().zip([0.5, expected_y]) {
+            assert_relative_eq!(actual, expected, epsilon = 0.0, max_relative = 1e-14);
+        }
     }
 
     #[test]

@@ -78,6 +78,9 @@ For D ≥ 7, `robust_insphere` falls back to a distance-based classification and
 preserves unresolved `BOUNDARY` results. Complete symbolic expansion shares the
 D ≤ 6 exact support boundary. Treat D ≥ 7 triangulation as experimental;
 explicit repair APIs are not available through the `ExactPredicates` gate there.
+If the distance fallback fails, `CoordinateConversionError::InsphereFallbackFailed`
+retains the exact-predicate dispatch failure in `exact_error` and exposes the
+concrete `CircumcenterError` as its primary `source`.
 
 ### Robust predicates (`geometry::robust_predicates`)
 
@@ -167,14 +170,19 @@ regions, or non-deterministic triangulations.
 
 To eliminate this, **all kernel call sites canonically sort simplex vertices by
 `VertexKey` identity** (`vk.data().as_ffi()`) before passing them to orientation
-or insphere predicates. This makes the existing slice-position SoS identity-based
-by construction: a vertex's perturbation priority depends only on its stable key,
-not on how the simplex happened to store its vertices.
+or insphere predicates. For a fixed simplex/query partition, this makes the
+perturbation priority depend on stable keys rather than simplex storage order.
+Reciprocal queries also need a consistent choice of query vertex; sorting the
+simplex alone does not fix the perturbation when a different vertex becomes the
+separate test point.
 
 **Convention for contributors:**
 
 - **Insphere calls:** sort all D+1 simplex vertices by `VertexKey` before calling
   `kernel.in_sphere()`. The test point is separate and not sorted.
+- **Reciprocal flip queries:** evaluate one partition: k=2 uses the larger-key
+  opposite vertex as the test point, and k=3 uses the largest-key triangle
+  vertex. Do not combine separately perturbed reciprocal queries with an OR.
 - **Orientation for facet comparison:** sort the D facet vertices by `VertexKey`;
   the extra vertex (opposite or query) is always appended last.
 - **Orientation for degeneracy check:** sort all D+1 vertices by `VertexKey`.
@@ -187,6 +195,16 @@ Helper functions in `src/core/util/canonical_points.rs` implement these patterns
 
 Both return typed `Result` values: `InvalidArity` identifies an unexpected vertex
 count, and `MissingVertex` identifies a key that cannot be resolved in the TDS.
+
+For a cospherical flip circuit whose D+1-vertex subsets are affinely independent,
+these query choices keep the lowest-key vertex first in both directions. If its
+first coordinate is `x` and the sphere center's first coordinate is `c`, the
+leading lifted-height change is `2*(x-c)*epsilon + epsilon^2`. The relevant
+cofactor is nonzero by affine independence. Even when the linear term vanishes,
+the quadratic term precedes the next coordinate's perturbation, `epsilon^3`.
+Thus the same vertex determines the tie in both directions. This argument is
+specific to nondegenerate flip circuits; it does not replace feasibility checks
+or establish arbitrary reciprocal-query equivalence for degenerate simplices.
 
 When adding new kernel call sites, **always** use canonical ordering. Failure to
 do so will re-introduce order-dependent SoS behavior.
@@ -435,13 +453,15 @@ if only the selected exact or epsilon equivalence should apply before insertion.
   arithmetic and duplicate-detection costs.
 - Use `FastKernel` when explicit degeneracy signals are useful but the
   diagnostic consistency check and higher-dimensional fallbacks are not. For
-  direct incremental insertion or exploratory batch construction, consider
-  setting `DelaunayRepairPolicy::EveryN(n)` (e.g. `n = 10`) instead of the
-  default `EveryInsertion` repair policy. Batch construction exposes this
-  through `ConstructionOptions::with_batch_repair_policy(...)` and still
-  performs final repair/validation. This reduces the frequency of the automatic
-  robust-fallback repair pass while still maintaining the Delaunay property
-  periodically. The consuming `DelaunayRefinementBuilder` flip-repair workflow
+  unpublished batch construction, `ConstructionOptions::with_batch_repair_policy(...)`
+  can schedule `DelaunayRepairPolicy::EveryN` with a nonzero insertion interval
+  instead of the default `EveryInsertion` policy. Final repair and Level 5
+  certification remain mandatory before publishing the owner. Direct insertion
+  into a published owner preserves its validity: required repair must succeed,
+  or Level 5 must pass without it, otherwise the insertion rolls back.
+  Validation cadence is a separate, non-mutating policy; it does not permit
+  temporarily invalid published owners.
+  The consuming `DelaunayRefinementBuilder` flip-repair workflow
   is available through D ≤ 6 because `FastKernel` carries the
   dimension-bounded exact predicate proof.
 - If you see retryable insertion errors, frequent perturbation retries, or skipped vertices,

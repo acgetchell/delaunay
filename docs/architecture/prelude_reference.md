@@ -34,6 +34,13 @@ The triangulation, Delaunayize, and validation preludes re-export
 promotion therefore remains recoverable without importing an unrelated
 construction prelude.
 
+The TDS prelude exposes `TdsInvariantKind`, `TdsInvariantViolation`, and
+`TdsValidationReport` for Levels 1–2. Structural report and diagnostic forwarding
+methods on higher owners use these same local types. Import the whole-stack
+`InvariantError`, `InvariantKind`, `InvariantViolation`, and
+`TriangulationValidationReport` from the validation prelude; they are not TDS
+exports. Higher-layer reports preserve local typed sources when composing them.
+
 The Delaunayize prelude explicitly lists its builder, outcome, and error types.
 It does not export the hidden `StrictDelaunayRefinement` and
 `FlipRepairDelaunayRefinement` state markers. Prefer inferred builder states;

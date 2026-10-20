@@ -128,9 +128,14 @@ pub enum InsphereConsistencyError {
 ///
 /// Returns [`CoordinateConversionError`] if `simplex_points.len() != D + 1`,
 /// if a coordinate cannot be converted for predicate evaluation, if the
-/// unsupported-dimension distance path cannot represent its intermediates,
+/// unsupported-dimension distance path cannot construct a circumcenter or
+/// represent its intermediates,
 /// or if strict insphere-consistency diagnostics are
 /// enabled and detect a determinant/distance disagreement.
+/// Fallback failures use [`CoordinateConversionError::InsphereFallbackFailed`],
+/// retaining the exact-predicate failure as typed context and the
+/// [`CircumcenterError`](crate::geometry::util::circumsphere::CircumcenterError)
+/// as the primary error source.
 ///
 /// # Complexity
 ///
@@ -210,13 +215,10 @@ fn robust_insphere_with_consistency<const D: usize>(
                 if let ConsistencyResult::Inconsistent(error) =
                     verify_insphere_consistency(simplex_points, test_point, result)
                 {
-                    let details = format!(
-                        "{error}; simplex_points={simplex_points:?}; test_point={test_point:?}"
-                    );
                     return Err(CoordinateConversionError::InsphereInconsistency {
+                        source: error,
                         simplex_points: format!("{simplex_points:?}"),
                         test_point: format!("{test_point:?}"),
-                        details,
                     });
                 }
             }
@@ -236,7 +238,12 @@ fn robust_insphere_with_consistency<const D: usize>(
     // boundary classification rather than laundering it through unsupported
     // symbolic expansion.
     cold_path();
-    insphere_distance(simplex_points, *test_point).map_err(|_| exact_error)
+    insphere_distance(simplex_points, *test_point).map_err(|source| {
+        CoordinateConversionError::InsphereFallbackFailed {
+            exact_error: Box::new(exact_error),
+            source: Box::new(source),
+        }
+    })
 }
 
 /// Robust insphere for a simplex already known to be in positive orientation.
@@ -284,12 +291,10 @@ fn robust_insphere_positive_oriented_with_consistency<const D: usize>(
         && let ConsistencyResult::Inconsistent(error) =
             verify_insphere_consistency(simplex_points, test_point, result)
     {
-        let details =
-            format!("{error}; simplex_points={simplex_points:?}; test_point={test_point:?}");
         return Err(CoordinateConversionError::InsphereInconsistency {
+            source: error,
             simplex_points: format!("{simplex_points:?}"),
             test_point: format!("{test_point:?}"),
-            details,
         });
     }
 
@@ -456,20 +461,55 @@ fn verify_insphere_consistency<const D: usize>(
 
 #[cfg(test)]
 mod tests {
-    use std::assert_matches;
+    use std::{assert_matches, error::Error};
 
     use num_traits::NumCast;
     use rand::{RngExt, SeedableRng};
 
     use super::*;
     use crate::geometry::matrix::{
-        LaVector, Matrix,
+        LaError, LaVector, Matrix,
         test_support::{matrix_get, with_la_stack_matrix},
     };
     use crate::geometry::predicates;
+    use crate::geometry::util::circumsphere::CircumcenterError;
 
     fn matrix_block_is_finite<const N: usize>(matrix: &Matrix<N>, k: usize) -> bool {
         (0..k).all(|row| (0..k).all(|column| matrix_get(matrix, row, column).unwrap().is_finite()))
+    }
+
+    fn standard_simplex_7d() -> [Point<7>; 8] {
+        let mut points = [Point::try_new([0.0; 7]).unwrap(); 8];
+        for (axis, point) in points[1..].iter_mut().enumerate() {
+            let mut coords = [0.0; 7];
+            coords[axis] = 1.0;
+            *point = Point::try_new(coords).unwrap();
+        }
+        points
+    }
+
+    fn assert_insphere_fallback_source(error: &CoordinateConversionError) -> &CircumcenterError {
+        let CoordinateConversionError::InsphereFallbackFailed {
+            exact_error,
+            source,
+        } = error
+        else {
+            panic!("expected typed geometric fallback failure, got {error:?}");
+        };
+        assert_eq!(
+            **exact_error,
+            CoordinateConversionError::UnsupportedMatrixDimension {
+                requested: 8,
+                max: 7,
+            }
+        );
+        assert_eq!(
+            error
+                .source()
+                .and_then(|cause| cause.downcast_ref::<Box<CircumcenterError>>()),
+            Some(source),
+        );
+        source
     }
 
     #[test]
@@ -613,23 +653,63 @@ mod tests {
 
     #[test]
     fn test_positive_oriented_insphere_uses_robust_fallback_above_stack_dimension() {
-        let simplex: Vec<Point<6>> = vec![
-            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
-        ];
-        assert_eq!(robust_orientation(&simplex).unwrap(), Orientation::POSITIVE);
-        let test_point =
-            Point::try_new([0.15, 0.15, 0.15, 0.15, 0.15, 0.15]).expect("finite point coordinates");
-
+        let simplex = standard_simplex_7d();
+        // The standard simplex has center (1/2, ..., 1/2) and radius sqrt(7)/2.
         assert_eq!(
-            robust_insphere_positive_oriented(&simplex, &test_point).unwrap(),
-            robust_insphere(&simplex, &test_point).unwrap()
+            relative_exact_insphere(&simplex, &simplex[0]),
+            Err(CoordinateConversionError::UnsupportedMatrixDimension {
+                requested: 8,
+                max: 7
+            })
         );
+        for (coords, expected) in [
+            ([0.5; 7], InSphere::INSIDE),
+            ([0.0; 7], InSphere::BOUNDARY),
+            ([2.0; 7], InSphere::OUTSIDE),
+        ] {
+            let query = Point::try_new(coords).unwrap();
+            assert_eq!(robust_insphere(&simplex, &query).unwrap(), expected);
+            assert_eq!(
+                robust_insphere_positive_oriented(&simplex, &query).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn insphere_fallback_preserves_unrepresentable_distance() {
+        let simplex = standard_simplex_7d();
+        let query = Point::try_new([f64::MAX; 7]).unwrap();
+        for result in [
+            robust_insphere(&simplex, &query),
+            robust_insphere_positive_oriented(&simplex, &query),
+        ] {
+            let error = result.unwrap_err();
+            assert_matches!(
+                assert_insphere_fallback_source(&error),
+                CircumcenterError::LinearAlgebraFailure {
+                    source: LaError::NonFinite { .. }
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn insphere_fallback_preserves_singular_geometry() {
+        let query = Point::try_new([0.0; 7]).unwrap();
+        let simplex = [query; 8];
+        for result in [
+            robust_insphere(&simplex, &query),
+            robust_insphere_positive_oriented(&simplex, &query),
+        ] {
+            let error = result.unwrap_err();
+            assert_matches!(
+                assert_insphere_fallback_source(&error),
+                CircumcenterError::LinearAlgebraFailure {
+                    source: LaError::Singular { .. }
+                }
+            );
+        }
     }
 
     #[test]
@@ -665,12 +745,35 @@ mod tests {
             robust_insphere_with_consistency(&simplex, &test_point, true).unwrap(),
             InSphere::INSIDE
         );
-        assert!(
-            matches!(
-                robust_insphere_positive_oriented_with_consistency(&simplex, &test_point, true),
-                Err(CoordinateConversionError::InsphereInconsistency { .. })
-            ),
-            "strict consistency should exercise the positive-oriented diagnostic error path"
+        let error = robust_insphere_positive_oriented_with_consistency(&simplex, &test_point, true)
+            .unwrap_err();
+        let expected_source = InsphereConsistencyError::DirectContradiction {
+            determinant_result: InSphere::OUTSIDE,
+            distance_result: InSphere::INSIDE,
+        };
+        let CoordinateConversionError::InsphereInconsistency {
+            source,
+            simplex_points,
+            test_point: witness_point,
+        } = &error
+        else {
+            panic!("expected typed insphere contradiction, got {error:?}");
+        };
+        assert_eq!(*source, expected_source);
+        assert_eq!(*simplex_points, format!("{simplex:?}"));
+        assert_eq!(*witness_point, format!("{test_point:?}"));
+        assert_eq!(
+            error
+                .source()
+                .and_then(|cause| cause.downcast_ref::<InsphereConsistencyError>()),
+            Some(source)
+        );
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "Insphere consistency check failed: {expected_source}; \
+                 simplex_points={simplex:?}; test_point={test_point:?}"
+            )
         );
     }
 
@@ -1799,5 +1902,9 @@ mod tests {
             Point::try_new([1.0, 1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates");
         let result = robust_insphere(&simplex, &cospherical).unwrap();
         assert_eq!(result, InSphere::BOUNDARY);
+        assert_eq!(
+            robust_insphere_positive_oriented(&simplex, &cospherical).unwrap(),
+            InSphere::BOUNDARY
+        );
     }
 }

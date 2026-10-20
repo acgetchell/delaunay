@@ -1,6 +1,6 @@
 //! Compile coverage for minimal payload bounds on queries, refinement, and borrowed wrappers.
 
-use std::{assert_matches, hash::Hasher, hint::black_box};
+use std::{assert_matches, cell::Cell, hash::Hasher, hint::black_box, rc::Rc};
 
 use delaunay::prelude::Triangulation;
 use delaunay::prelude::algorithms::{LocateError, locate, locate_with_stats};
@@ -8,19 +8,20 @@ use delaunay::prelude::construction::{
     DelaunayIncrementalBuilder, GlobalTopology, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::{
-    Coordinate, CoordinateValidationError, FastKernel, Point, QualityError, normalized_volume,
-    radius_ratio, surface_measure,
+    Coordinate, CoordinateValidationError, FastKernel, Orientation, Point, QualityError,
+    normalized_volume, radius_ratio, simplex_orientation, surface_measure,
 };
 use delaunay::prelude::query::{
     ConvexHull, ConvexHullFacetView, QueryError, TopologyIndexBuildError, extract_edge_set,
     extract_facet_identifier_set, extract_vertex_coordinate_set,
 };
 use delaunay::prelude::tds::{
-    AllFacetsIter, BoundaryFacetsIter, FacetToSimplicesIndex, FacetView, InvariantError,
-    OneSidedFacetsIter, SimplexFacetsIter, SimplexKey, Tds, TdsBuilder, VertexKey,
-    verify_facet_index_consistency,
+    AllFacetsIter, BoundaryFacetsIter, FacetToSimplicesIndex, FacetView, OneSidedFacetsIter,
+    SimplexFacetsIter, SimplexKey, Tds, TdsBuilder, VertexKey, verify_facet_index_consistency,
 };
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
+use delaunay::prelude::triangulation::TriangulationBuilder;
+use delaunay::prelude::validation::InvariantError;
 use delaunay::prelude::{dedup_vertices_exact, filter_vertices_excluding};
 use delaunay::{DelaunayRefinementBuilder, DelaunayTriangulation};
 use uuid::Uuid;
@@ -32,6 +33,21 @@ struct NotAKernel;
 struct ClonePayload(String);
 
 struct OpaquePayload;
+
+struct CloneOnlyPayload {
+    value: usize,
+    clones: Rc<Cell<usize>>,
+}
+
+impl Clone for CloneOnlyPayload {
+    fn clone(&self) -> Self {
+        self.clones.set(self.clones.get() + 1);
+        Self {
+            value: self.value,
+            clones: Rc::clone(&self.clones),
+        }
+    }
+}
 
 type NotAKernelTriangulation = Triangulation<NotAKernel, Payload, Payload, 2>;
 type NotAKernelDelaunay = DelaunayTriangulation<NotAKernel, Payload, Payload, 2>;
@@ -45,6 +61,10 @@ fn accepts_generic_try_set(_: GenericTrySetTopologyFn) {}
 fn storage_methods_compile(tri: &mut NotAKernelTriangulation) {
     let _ = tri.set_vertex_data(VertexKey::default(), Some(Payload));
     let _ = tri.set_simplex_data(SimplexKey::default(), Some(Payload));
+}
+
+fn tds_mutation_methods_compile(tds: &mut Tds<Payload, OpaquePayload, 2>) {
+    let _ = tds.remove_duplicate_simplices();
 }
 
 fn into_tds_compiles(tri: NotAKernelTriangulation) {
@@ -143,6 +163,102 @@ impl<const D: usize> Coordinate<D> for MinimalCoordinate<D> {
     }
 }
 
+/// Exercises both public promotion modes with only the agreed payload capability.
+fn check_clone_only_promotion<const D: usize>() {
+    let clones = Rc::new(Cell::new(0));
+    let vertices: Vec<_> = (0..=D)
+        .map(|index| {
+            let mut coords = [0.0; D];
+            if index > 0 {
+                coords[index - 1] = 1.0;
+            }
+            delaunay::vertex!(coords; data = CloneOnlyPayload {
+                value: index,
+                clones: Rc::clone(&clones),
+            })
+            .unwrap()
+        })
+        .collect();
+    let points: Vec<_> = vertices.iter().map(|vertex| *vertex.point()).collect();
+    let mut simplex: Vec<_> = (0..=D).collect();
+    if simplex_orientation(&points).unwrap() == Orientation::POSITIVE {
+        simplex.swap(0, 1);
+    }
+    let mut tds = TdsBuilder::new(&vertices, &[simplex])
+        .simplex_data_type::<CloneOnlyPayload>()
+        .build()
+        .unwrap();
+    let simplex_key = tds.simplex_keys().next().unwrap();
+    tds.set_simplex_data(
+        simplex_key,
+        Some(CloneOnlyPayload {
+            value: D + 1,
+            clones: Rc::clone(&clones),
+        }),
+    )
+    .unwrap();
+    let original_order = tds.simplex_vertices(simplex_key).unwrap().to_vec();
+    clones.set(0);
+
+    let canonical = TriangulationBuilder::new(tds, FastKernel::new())
+        .topology_guarantee(TopologyGuarantee::Pseudomanifold)
+        .canonicalizing()
+        .build()
+        .unwrap_or_else(|failure| panic!("{}", failure.reason()));
+    canonical.validate_realization().unwrap();
+    assert_ne!(
+        canonical.simplex_vertices(simplex_key).unwrap(),
+        original_order
+    );
+    assert!(
+        clones.get() > 0,
+        "canonicalization retains a recovery snapshot"
+    );
+    let tds = canonical.into_tds();
+    let owner = tds.topology_owner_id();
+    let generation = tds.generation();
+    clones.set(0);
+
+    let strict = TriangulationBuilder::new(tds, FastKernel::new())
+        .topology_guarantee(TopologyGuarantee::Pseudomanifold)
+        .build()
+        .unwrap_or_else(|failure| panic!("{}", failure.reason()));
+    strict.validate_realization().unwrap();
+    assert_eq!(clones.get(), 0, "strict promotion must not clone payloads");
+    let tds = strict.into_tds();
+    assert_eq!(tds.topology_owner_id(), owner);
+    assert_eq!(tds.generation(), generation);
+    assert_eq!(tds.number_of_vertices(), vertices.len());
+    for (_, vertex) in tds.vertices() {
+        let value = vertex.data().unwrap().value;
+        assert_eq!(vertex.uuid(), vertices[value].uuid());
+        assert_eq!(
+            vertex.point().to_array().map(f64::to_bits),
+            vertices[value].point().to_array().map(f64::to_bits)
+        );
+    }
+    assert_eq!(
+        tds.simplex(simplex_key).unwrap().data().unwrap().value,
+        D + 1
+    );
+}
+
+macro_rules! clone_only_promotion_tests {
+    ($dim:literal) => {
+        pastey::paste! {
+            #[test]
+            fn [<triangulation_promotion_accepts_clone_only_payloads_ $dim d>]() {
+                check_clone_only_promotion::<$dim>();
+            }
+        }
+    };
+}
+
+clone_only_promotion_tests!(2);
+clone_only_promotion_tests!(3);
+clone_only_promotion_tests!(4);
+clone_only_promotion_tests!(5);
+
 #[test]
 fn coordinate_trait_has_minimal_bounds() {
     let coordinate = MinimalCoordinate::<2>::try_new([1.0, 2.0]).unwrap();
@@ -177,6 +293,7 @@ fn triangulation_types_do_not_require_kernel_bounds() {
 #[test]
 fn storage_and_validation_methods_have_payload_agnostic_contracts() {
     let storage: fn(&mut NotAKernelTriangulation) = storage_methods_compile;
+    let tds_mutation: fn(&mut Tds<Payload, OpaquePayload, 2>) = tds_mutation_methods_compile;
     let demotion: fn(NotAKernelTriangulation) = into_tds_compiles;
     let triangulation_validation: fn(&NotAKernelTriangulation) = triangulation_validation_compiles;
     let delaunay_validation: fn(&DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2>) =
@@ -184,6 +301,7 @@ fn storage_and_validation_methods_have_payload_agnostic_contracts() {
 
     black_box((
         storage,
+        tds_mutation,
         demotion,
         triangulation_validation,
         delaunay_validation,

@@ -64,8 +64,8 @@ use std::{
 /// Errors that can occur while building or parsing durable TDS snapshots.
 ///
 /// Snapshots use UUIDs as interchange identities. Parsing a snapshot resolves
-/// those UUIDs into fresh storage-local slotmap keys and rejects incomplete or
-/// inconsistent topology before constructing a live [`Tds`].
+/// those UUIDs into fresh storage-local slotmap keys and rejects missing or
+/// inconsistent relationships before constructing a live [`Tds`].
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub(crate) enum TdsSnapshotError {
@@ -1188,6 +1188,14 @@ impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
 
         tds.assign_incident_simplices()
             .map_err(|source| TdsSnapshotError::IncidentSimplexRebuildFailed { source })?;
+        if vertex_count != 0 && tds.number_of_simplices() == 0 {
+            // Removing every simplex can leave a valid Levels 1–2 owner. Restore
+            // that snapshot without claiming construction is complete; builders
+            // and higher-layer promotion still require a full-dimensional seed.
+            tds.validate()
+                .map_err(|source| TdsSnapshotError::ValidationFailed { source })?;
+            return Ok(tds.into_verified());
+        }
         tds.publish()
             .map_err(|source| TdsSnapshotError::ValidationFailed { source })
     }

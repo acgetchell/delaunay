@@ -174,11 +174,11 @@ use delaunay::prelude::repair::{
 };
 use delaunay::prelude::tds::{
     AllFacetsIter as TdsAllFacetsIter, BoundaryFacetsIter as TdsBoundaryFacetsIter, EdgeKeyError,
-    EdgeView, FacetError, FacetIncidenceView as TdsFacetIncidenceView, FacetView, InvariantError,
-    NeighborSlot, OneSidedFacetsIter as TdsOneSidedFacetsIter,
-    SimplexFacetsIter as TdsSimplexFacetsIter, SimplexKey, Tds, TdsBuilder, TdsConstructionError,
-    TdsDraft, TdsDraftError, TdsDraftInsertionError, TdsError, TdsMutationError,
-    TopologyOwner as TdsTopologyOwner, TopologyOwnerId as TdsTopologyOwnerId, VertexKey,
+    EdgeView, FacetError, FacetIncidenceView as TdsFacetIncidenceView, FacetView, NeighborSlot,
+    OneSidedFacetsIter as TdsOneSidedFacetsIter, SimplexFacetsIter as TdsSimplexFacetsIter,
+    SimplexKey, Tds, TdsBuilder, TdsConstructionError, TdsDraft, TdsDraftError,
+    TdsDraftInsertionError, TdsError, TdsMutationError, TopologyOwner as TdsTopologyOwner,
+    TopologyOwnerId as TdsTopologyOwnerId, VertexKey,
 };
 use delaunay::prelude::topology::spaces::{
     GlobalTopology, GlobalTopologyModelError, LiftedLinkEdge, LiftedVertexId, SphericalMetric,
@@ -213,6 +213,7 @@ use delaunay::prelude::triangulation::{
     ValidationPolicy as TriangulationValidationPolicy, vertex as triangulation_vertex,
 };
 use delaunay::prelude::try_vertices_from_points as prelude_try_vertices_from_points;
+use delaunay::prelude::validation::InvariantError;
 use delaunay::prelude::validation::{
     DelaunayValidationError as FocusedDelaunayValidationError,
     DelaunayViolationDetail as FocusedDelaunayViolationDetail,

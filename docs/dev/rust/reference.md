@@ -112,11 +112,14 @@ precision or range can matter.
 
 Prefer repository helpers from `crate::geometry::util`, for example:
 
-- `safe_usize_to_scalar::<T>(value)`
-- `safe_scalar_to_f64(value)`
-- `safe_scalar_from_f64::<T>(value)`
-- `safe_coords_to_f64(coords)`
-- `safe_coords_from_f64::<T, D>(coords)`
+- `safe_usize_to_scalar(value)` converts a `usize` to `f64` with precision checking.
+- `try_finite_coords(&coords)` checks an `[f64; D]` and reports the first
+  non-finite coordinate's zero-based index.
+- `try_finite_scalar(value)` checks an `f64` and reports index zero on failure.
+
+The finite checks return unchanged values, preserving every finite bit pattern,
+including signed zero. Failures retain typed `CoordinateConversionError`
+diagnostics.
 
 Do not silence `clippy::cast_precision_loss` with `#[expect(...)]` simply
 because the current values are small. Use a safe conversion helper and handle
@@ -1064,8 +1067,9 @@ Before adding a dependency, consider:
 
 `Cargo.toml` owns the MSRV, and `rust-toolchain.toml` pins local and CI Rust to
 that version. Keep the toolchain profile minimal and the default component set
-limited to `clippy`, `rustfmt`, and `rust-src`; workflows or developers that
-need cross targets or additional components should install them explicitly.
+limited to `clippy`, `rustfmt`, `rust-src`, and `llvm-tools-preview` (for
+`cargo-llvm-cov` coverage). Workflows or developers that need cross targets or
+other components should install them explicitly.
 
 The explicit `Cargo.toml` package `include` list is the crates.io distribution
 boundary. Keep it aligned with the public library, examples, benchmarks,

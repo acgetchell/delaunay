@@ -41,9 +41,8 @@ use crate::core::collections::{
 use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
-    DelaunayValidationErrorKind, EntityKind, GeometricError, InvariantError,
-    NeighborValidationError, SimplexKey, Tds, TdsConstructionError, TdsError, TdsErrorKind,
-    TriangulationValidationErrorKind, VertexKey,
+    EntityKind, GeometricError, NeighborValidationError, SimplexKey, Tds, TdsConstructionError,
+    TdsError, TdsErrorKind, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::VertexValidationError;
@@ -63,7 +62,10 @@ use crate::triangulation::construction::{
 };
 use crate::triangulation::realization::TriangulationRealizationValidationError;
 use crate::triangulation::validation::TriangulationValidationError;
+use crate::triangulation::validation::TriangulationValidationErrorKind;
 use crate::validation::DelaunayTriangulationValidationError;
+use crate::validation::DelaunayValidationErrorKind;
+use crate::validation_report::InvariantError;
 use slotmap::Key;
 #[cfg(debug_assertions)]
 use std::cmp::Ordering;
@@ -1236,6 +1238,8 @@ pub enum InsertionErrorKind {
     DelaunayValidationFailed,
     /// Realized-geometry validation failed after insertion.
     RealizationValidationFailed,
+    /// Local geometric orientation evaluation or validation failed.
+    OrientationValidationFailed,
     /// Flip-based Delaunay repair failed.
     DelaunayRepairFailed,
     /// Duplicate coordinates were supplied.
@@ -1880,6 +1884,17 @@ pub enum InsertionError {
         source: TriangulationRealizationValidationError,
     },
 
+    /// Local orientation evaluation, canonicalization, or validation failed.
+    ///
+    /// Negative or degenerate simplices may permit a perturbation retry. Predicate
+    /// capability limits, coordinate range failures, and lifting errors do not.
+    #[error("Orientation validation failed: {source}")]
+    OrientationValidationFailed {
+        /// Typed triangulation-owned orientation failure and simplex context.
+        #[source]
+        source: TriangulationRealizationValidationError,
+    },
+
     /// Flip-based Delaunay repair failed.
     ///
     /// This variant is used when a Delaunay repair pass (local or fallback)
@@ -2082,6 +2097,11 @@ impl InsertionError {
             // geometric, orientation, or facet-multiplicity degeneracies.
             // Structural errors (missing simplices, broken invariants) won't be fixed by perturbation.
             Self::TopologyValidation { source } => Self::is_tds_error_retryable(source),
+            Self::OrientationValidationFailed { source } => matches!(
+                source,
+                TriangulationRealizationValidationError::NegativeSimplexOrientation { .. }
+                    | TriangulationRealizationValidationError::DegenerateSimplex { .. }
+            ),
             // Conflict region errors: only geometry-degeneracy variants are retryable.
             // Structural variants (invalid/missing simplex identity, predicate errors,
             // invalid facet bookkeeping, invalid simplex arity, missing simplex vertices,

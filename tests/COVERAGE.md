@@ -32,7 +32,8 @@ The XML report is written to:
 coverage/cobertura.xml
 ```
 
-The Codecov workflow installs Rust's `llvm-tools-preview` component, installs
+The repository toolchain includes Rust's `llvm-tools-preview` component for
+local coverage. The Codecov workflow also requests that component, installs
 `cargo-llvm-cov`, caches the installed cargo binary by version, runs
 `just coverage-ci`, verifies `coverage/cobertura.xml`, uploads that file to
 Codecov and Codacy, and archives the full `coverage/` directory.

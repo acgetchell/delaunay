@@ -44,7 +44,6 @@ jobs:
             clippy-sarif | \
             tee rust-clippy-results.sarif | \
             sarif-fmt
-        continue-on-error: true
 
       - name: Upload SARIF results
         if: >-

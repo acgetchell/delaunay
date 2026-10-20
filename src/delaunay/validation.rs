@@ -13,10 +13,7 @@ use crate::core::algorithms::flips::{
     verify_tds_via_flip_predicates_assuming_connected,
 };
 use crate::core::collections::ViolationBuffer;
-use crate::core::tds::{
-    InvariantError, InvariantKind, InvariantViolation, SimplexKey, Tds, TdsError, TopologyOwnerId,
-    TriangulationValidationReport,
-};
+use crate::core::tds::{SimplexKey, Tds, TdsError, TopologyOwnerId};
 use crate::core::traits::data_type::DataType;
 use crate::delaunay_model::DelaunayTriangulation;
 #[cfg(feature = "diagnostics")]
@@ -39,8 +36,45 @@ use crate::triangulation::validation::{
     TopologyCertificationEvidence, TopologyConstructionProvenance, TopologyGuarantee,
     TriangulationValidationError,
 };
+pub use crate::validation_report::{
+    InvariantError, InvariantKind, InvariantViolation, TriangulationValidationReport,
+};
 use std::num::NonZeroUsize;
 use thiserror::Error;
+
+/// Discriminant for compact Level 5 Delaunay-validation summaries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DelaunayValidationErrorKind {
+    /// Lower-layer TDS validation failed.
+    Tds,
+    /// Lower-layer topology validation failed.
+    Triangulation,
+    /// Lower-layer realized-geometry validation failed.
+    Realization,
+    /// Delaunay verification failed.
+    VerificationFailed,
+    /// Typed repair validation failed.
+    RepairOperationFailed,
+}
+
+impl From<&DelaunayTriangulationValidationError> for DelaunayValidationErrorKind {
+    fn from(source: &DelaunayTriangulationValidationError) -> Self {
+        match source {
+            DelaunayTriangulationValidationError::Tds { source: _ } => Self::Tds,
+            DelaunayTriangulationValidationError::Triangulation { source: _ } => {
+                Self::Triangulation
+            }
+            DelaunayTriangulationValidationError::Realization { source: _ } => Self::Realization,
+            DelaunayTriangulationValidationError::VerificationFailed { .. } => {
+                Self::VerificationFailed
+            }
+            DelaunayTriangulationValidationError::RepairOperationFailed { .. } => {
+                Self::RepairOperationFailed
+            }
+        }
+    }
+}
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Builds a detailed Level 5 empty-circumsphere diagnostic without claiming
@@ -1859,6 +1893,72 @@ mod tests {
             other => panic!(
                 "Expected DelaunayTriangulationValidationError::Triangulation with IsolatedVertex source, got {other:?}"
             ),
+        }
+    }
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+    use crate::core::algorithms::flips::DelaunayRepairPostconditionFailure;
+    use crate::topology::traits::topological_space::TopologyKind;
+
+    fn synthetic_delaunay_verification_error() -> DelaunayTriangulationValidationError {
+        DelaunayTriangulationValidationError::VerificationFailed {
+            source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
+                reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                    simplex_count: 1,
+                }),
+            })
+            .into(),
+        }
+    }
+
+    #[test]
+    fn delaunay_validation_error_kind_from_error_preserves_all_variants() {
+        let cases = [
+            (
+                DelaunayTriangulationValidationError::from(TdsError::InconsistentDataStructure {
+                    message: "dangling simplex".to_string(),
+                }),
+                DelaunayValidationErrorKind::Tds,
+            ),
+            (
+                DelaunayTriangulationValidationError::from(
+                    TriangulationValidationError::Disconnected { simplex_count: 2 },
+                ),
+                DelaunayValidationErrorKind::Triangulation,
+            ),
+            (
+                DelaunayTriangulationValidationError::Realization {
+                    source: Box::new(
+                        TriangulationRealizationValidationError::UnsupportedTopology {
+                            topology: TopologyKind::Hyperbolic,
+                            dimension: 2,
+                        },
+                    ),
+                },
+                DelaunayValidationErrorKind::Realization,
+            ),
+            (
+                synthetic_delaunay_verification_error(),
+                DelaunayValidationErrorKind::VerificationFailed,
+            ),
+            (
+                DelaunayTriangulationValidationError::RepairOperationFailed {
+                    operation: DelaunayRepairOperation::VertexRemoval,
+                    source: Box::new(DelaunayRepairError::PostconditionFailed {
+                        reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                            simplex_count: 1,
+                        }),
+                    }),
+                },
+                DelaunayValidationErrorKind::RepairOperationFailed,
+            ),
+        ];
+
+        for (source, expected) in cases {
+            assert_eq!(DelaunayValidationErrorKind::from(&source), expected);
         }
     }
 }

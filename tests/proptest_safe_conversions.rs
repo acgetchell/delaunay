@@ -1,39 +1,33 @@
-//! Property-based tests for safe conversion functions.
+//! Property tests for finite-coordinate checks and checked integer conversions.
 //!
-//! This module uses proptest to verify the correctness and safety of coordinate
-//! conversion functions, including:
-//! - `safe_usize_to_scalar` - Convert usize to float with precision checking
-//! - `safe_scalar_to_f64` - Convert coordinate scalar to f64
-//! - `safe_scalar_from_f64` - Convert f64 to coordinate scalar
-//! - `safe_coords_to_f64` - Convert coordinate arrays to f64
-//! - `safe_coords_from_f64` - Convert f64 arrays to coordinate scalars
-//!
-//! Properties verified:
-//! - Conversions succeed for values within safe ranges
-//! - Conversions fail gracefully for overflow/precision loss
-//! - Round-trip conversions preserve values where possible
-//! - Non-finite values (NaN, Infinity) are properly rejected
+//! Finite checks must preserve input bits and retain typed, indexed failures.
+//! Integer conversions must preserve values within their supported precision.
 
 #[macro_use]
 #[path = "common/proptest_config.rs"]
 mod proptest_config;
 
-use approx::assert_relative_eq;
-use delaunay::prelude::geometry::*;
+use delaunay::prelude::geometry::{
+    CoordinateConversionError, InvalidCoordinateValue, safe_usize_to_scalar, try_finite_coords,
+    try_finite_scalar,
+};
 use num_traits::cast;
-use proptest::prelude::*;
-// =============================================================================
-// TEST CONFIGURATION
-// =============================================================================
+use proptest::{prelude::*, test_runner::TestCaseError};
 
-/// Strategy for generating finite f64 coordinates
+/// Samples the full finite f64 bit-pattern space.
 fn finite_f64() -> impl Strategy<Value = f64> {
-    (-1000.0..1000.0).prop_filter("must be finite", |x: &f64| x.is_finite())
+    any::<u64>()
+        .prop_map(f64::from_bits)
+        .prop_filter("must be finite", |value| value.is_finite())
 }
 
-/// Strategy for generating non-finite f64 values (NaN, Infinity)
-fn non_finite_f64() -> impl Strategy<Value = f64> {
-    prop_oneof![Just(f64::NAN), Just(f64::INFINITY), Just(f64::NEG_INFINITY),]
+/// Pairs non-finite inputs with their expected typed diagnostic.
+fn non_finite_f64() -> impl Strategy<Value = (f64, InvalidCoordinateValue)> {
+    prop_oneof![
+        Just((f64::NAN, InvalidCoordinateValue::Nan)),
+        Just((f64::INFINITY, InvalidCoordinateValue::PositiveInfinity)),
+        Just((f64::NEG_INFINITY, InvalidCoordinateValue::NegativeInfinity)),
+    ]
 }
 
 /// Strategy for generating safe usize values (within f64 precision)
@@ -42,77 +36,39 @@ fn safe_usize() -> impl Strategy<Value = usize> {
     0..=9_007_199_254_740_992_usize // 2^53
 }
 
-// =============================================================================
-// SCALAR CONVERSION TESTS (MACRO-GENERATED)
-// =============================================================================
-
-// f64 input -> f64 output should match exactly
-macro_rules! gen_safe_scalar_to_f64_ok_f64 {
-    () => {
-        repo_proptest! {
-            #[test]
-            fn prop_safe_scalar_to_f64_succeeds_for_finite_f64(value in finite_f64()) {
-                let result: Result<f64, _> = safe_scalar_to_f64(value);
-                prop_assert!(result.is_ok(), "Conversion should succeed for finite f64");
-                prop_assert!((result.unwrap() - value).abs() < 1e-12, "Converted value should match original");
-            }
-        }
-    };
-}
-
-// f64 input -> f64 output
-macro_rules! gen_safe_scalar_from_f64_ok_f64 {
-    () => {
-        repo_proptest! {
-            #[test]
-            fn prop_safe_scalar_from_f64_succeeds_for_finite_f64(value in finite_f64()) {
-                let result: Result<f64, _> = safe_scalar_from_f64(value);
-                prop_assert!(result.is_ok(), "Conversion should succeed for finite f64");
-                prop_assert!((result.unwrap() - value).abs() < 1e-12, "Converted value should match original");
-            }
-        }
-    };
-}
-
-// Round-trip scalar tests
-macro_rules! gen_round_trip_scalar_f64_f64 {
-    () => {
-        repo_proptest! {
-            #[test]
-            fn prop_round_trip_f64_f64(value in finite_f64()) {
-                let converted: Result<f64, _> = safe_scalar_to_f64(value);
-                prop_assert!(converted.is_ok());
-                let back: Result<f64, _> = safe_scalar_from_f64(converted.unwrap());
-                prop_assert!(back.is_ok());
-                prop_assert!((back.unwrap() - value).abs() < 1e-12, "Round-trip should preserve f64 value");
-            }
-        }
-    };
-}
-
-// Non-finite rejection tests
 repo_proptest! {
-    /// Property: safe_scalar_to_f64 rejects non-finite values
     #[test]
-    fn prop_safe_scalar_to_f64_rejects_non_finite(value in non_finite_f64()) {
-        let result: Result<f64, _> = safe_scalar_to_f64(value);
-        prop_assert!(result.is_err(), "Conversion should fail for non-finite f64: {}", value);
-    }
-
-    /// Property: safe_scalar_from_f64 rejects non-finite values
-    #[test]
-    fn prop_safe_scalar_from_f64_rejects_non_finite(value in non_finite_f64()) {
-        let result: Result<f64, _> = safe_scalar_from_f64(value);
-        prop_assert!(result.is_err(), "Conversion should fail for non-finite f64: {}", value);
+    fn prop_finite_scalar_preserves_bits(value in finite_f64()) {
+        let checked = try_finite_scalar(value)
+            .map_err(|error| TestCaseError::fail(format!("finite scalar rejected: {error}")))?;
+        prop_assert_eq!(checked.to_bits(), value.to_bits());
     }
 }
 
-// Invoke macros
-gen_safe_scalar_to_f64_ok_f64!();
-
-gen_safe_scalar_from_f64_ok_f64!();
-
-gen_round_trip_scalar_f64_f64!();
+#[test]
+fn finite_scalar_classifies_non_finite_values() {
+    for (value, expected) in [
+        (f64::NAN, InvalidCoordinateValue::Nan),
+        (
+            f64::from_bits(0x7ff0_0000_0000_0001),
+            InvalidCoordinateValue::Nan,
+        ),
+        (
+            f64::from_bits(0xfff8_0000_0000_0001),
+            InvalidCoordinateValue::Nan,
+        ),
+        (f64::INFINITY, InvalidCoordinateValue::PositiveInfinity),
+        (f64::NEG_INFINITY, InvalidCoordinateValue::NegativeInfinity),
+    ] {
+        assert_eq!(
+            try_finite_scalar(value),
+            Err(CoordinateConversionError::NonFiniteValue {
+                coordinate_index: 0,
+                coordinate_value: expected,
+            })
+        );
+    }
+}
 
 // =============================================================================
 // USIZE CONVERSION TESTS (MACRO-GENERATED)
@@ -210,153 +166,73 @@ repo_proptest! {
 }
 
 // =============================================================================
-// COORDINATE ARRAY CONVERSION TESTS
+// FINITE COORDINATE CHECKS
 // =============================================================================
 
-// Macros to generate repeated coordinate array tests across dimensions
-macro_rules! gen_safe_coords_to_f64 {
+macro_rules! finite_coords_properties {
     ($dim:literal) => {
         pastey::paste! {
             repo_proptest! {
                 #[test]
-                fn [<prop_safe_coords_to_f64_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
-                    let result = safe_coords_to_f64(&coords);
-                    prop_assert!(result.is_ok(), "Conversion should succeed for finite {}D coords", $dim);
-                    let converted = result.unwrap();
-                    for i in 0..$dim {
-                        let diff = (converted[i] - coords[i]).abs();
-                        prop_assert!(diff < 1e-6, "Coordinate {} should match: {} vs {}", i, converted[i], coords[i]);
-                    }
+                fn [<prop_finite_coords_preserve_bits_ $dim d>](
+                    coords in prop::array::[<uniform $dim>](finite_f64())
+                ) {
+                    let checked = try_finite_coords(&coords)
+                        .map_err(|error| TestCaseError::fail(format!("finite coordinates rejected: {error}")))?;
+                    prop_assert_eq!(checked.map(f64::to_bits), coords.map(f64::to_bits));
+                }
+
+                #[test]
+                fn [<prop_finite_coords_report_first_invalid_index_ $dim d>](
+                    mut coords in prop::array::[<uniform $dim>](finite_f64()),
+                    first_invalid in 0_usize..$dim,
+                    (invalid, expected) in non_finite_f64(),
+                ) {
+                    // Later invalid coordinates must not replace the first diagnostic.
+                    coords[first_invalid..].fill(f64::NAN);
+                    coords[first_invalid] = invalid;
+                    prop_assert_eq!(
+                        try_finite_coords(&coords),
+                        Err(CoordinateConversionError::NonFiniteValue {
+                            coordinate_index: first_invalid,
+                            coordinate_value: expected,
+                        })
+                    );
                 }
             }
         }
     };
 }
 
-macro_rules! gen_safe_coords_from_f64 {
-    ($dim:literal) => {
-        pastey::paste! {
-            repo_proptest! {
-                #[test]
-                fn [<prop_safe_coords_from_f64_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
-                    let result: Result<[f64; $dim], _> = safe_coords_from_f64(&coords);
-                    prop_assert!(result.is_ok(), "Conversion should succeed for finite {}D coords", $dim);
-                    let converted = result.unwrap();
-                    for i in 0..$dim {
-                        let diff = (converted[i] - coords[i]).abs();
-                        prop_assert!(diff < 1e-10, "Coordinate {} should match: {} vs {}", i, converted[i], coords[i]);
-                    }
-                }
-            }
-        }
-    };
-}
+finite_coords_properties!(2);
+finite_coords_properties!(3);
+finite_coords_properties!(4);
+finite_coords_properties!(5);
 
-macro_rules! gen_round_trip_coords_f64_exact {
-    ($dim:literal) => {
-        pastey::paste! {
-            repo_proptest! {
-                #[test]
-                fn [<prop_round_trip_coords_ $dim d _exact>](coords in prop::array::[<uniform $dim>](finite_f64())) {
-                    let to_f64 = safe_coords_to_f64(&coords);
-                    prop_assert!(to_f64.is_ok());
-                    let back: Result<[f64; $dim], _> = safe_coords_from_f64(&to_f64.unwrap());
-                    prop_assert!(back.is_ok());
-                    let converted = back.unwrap();
-                    for i in 0..$dim {
-                        prop_assert!((converted[i] - coords[i]).abs() < 1e-12,
-                            "Round-trip f64 coordinate {} should be exact (within tolerance)", i);
-                    }
-                }
-            }
-        }
-    };
-}
-
-// Instantiate macros for specific dimensions
-gen_safe_coords_to_f64!(2);
-gen_safe_coords_to_f64!(3);
-
-gen_safe_coords_from_f64!(2);
-gen_safe_coords_from_f64!(3);
-
-gen_round_trip_coords_f64_exact!(4);
-
-// Keep 3D rejection tests
-repo_proptest! {
-    /// Property: Coordinate array with one NaN is rejected
-    #[test]
-    fn prop_coords_reject_nan_3d(good_coord in finite_f64(), nan_index in 0..3_usize) {
-        let mut coords = [good_coord; 3];
-        coords[nan_index] = f64::NAN;
-
-        let result: Result<[f64; 3], _> = safe_coords_from_f64(&coords);
-        prop_assert!(result.is_err(), "Array with NaN should be rejected");
-    }
-
-    /// Property: Coordinate array with one Infinity is rejected
-    #[test]
-    fn prop_coords_reject_infinity_3d(good_coord in finite_f64(), inf_index in 0..3_usize) {
-        let mut coords = [good_coord; 3];
-        coords[inf_index] = f64::INFINITY;
-
-        let result: Result<[f64; 3], _> = safe_coords_from_f64(&coords);
-        prop_assert!(result.is_err(), "Array with Infinity should be rejected");
-    }
-}
-
-// =============================================================================
-// EDGE CASE TESTS
-// =============================================================================
-
-/// Property: Zero coordinates convert correctly
 #[test]
-fn prop_zero_coords_convert_correctly_3d() {
-    let zeros = [0.0_f64; 3];
-    let result: Result<[f64; 3], _> = safe_coords_from_f64(&zeros);
-    assert!(result.is_ok());
-
-    let converted = result.unwrap();
-    for coord in &converted {
-        assert_relative_eq!(*coord, 0.0, epsilon = 1e-15);
+fn finite_checks_preserve_signed_zero_and_extreme_bits() -> Result<(), CoordinateConversionError> {
+    let coords = [
+        0.0,
+        -0.0,
+        f64::from_bits(1),
+        -f64::from_bits(1),
+        f64::MIN_POSITIVE,
+        -f64::MIN_POSITIVE,
+        f64::MAX,
+        f64::MIN,
+    ];
+    assert_eq!(
+        try_finite_coords(&coords)?.map(f64::to_bits),
+        coords.map(f64::to_bits)
+    );
+    for value in coords {
+        assert_eq!(try_finite_scalar(value)?.to_bits(), value.to_bits());
     }
+    Ok(())
 }
 
-repo_proptest! {
-
-    /// Property: Negative coordinates convert correctly
-    #[test]
-    fn prop_negative_coords_convert_3d(coords in prop::array::uniform3(finite_f64())) {
-        let negative_coords = coords.map(|x| -x.abs());
-        let result: Result<[f64; 3], _> = safe_coords_from_f64(&negative_coords);
-        prop_assert!(result.is_ok());
-
-        let converted = result.unwrap();
-        for (i, &coord) in converted.iter().enumerate() {
-            prop_assert!(
-                coord.partial_cmp(&0.0) != Some(core::cmp::Ordering::Greater),
-                "Negative coordinate {} should remain negative or zero",
-                i
-            );
-        }
-    }
-
-    /// Property: Very small values (near zero) convert correctly
-    #[test]
-    fn prop_small_values_convert(value in -1e-100..1e-100_f64) {
-        if !value.is_finite() {
-            return Ok(());
-        }
-
-        let result: Result<f64, _> = safe_scalar_from_f64(value);
-        prop_assert!(result.is_ok(), "Small finite value should convert");
-
-        let converted = result.unwrap();
-        let diff = (converted - value).abs();
-        prop_assert!(
-            diff < 1e-10 || (converted == 0.0 && value.abs() < 1e-100),
-            "Small value conversion: {} vs {} (diff: {})",
-            value, converted, diff
-        );
-    }
+#[test]
+fn finite_coords_accept_empty_array() -> Result<(), CoordinateConversionError> {
+    assert_eq!(try_finite_coords(&[])?, []);
+    Ok(())
 }

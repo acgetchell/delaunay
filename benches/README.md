@@ -28,10 +28,11 @@ boring and consistent.
 
 ## How The Workflow Fits Together
 
-Use `just ci` as the invariant validation gate and routine pre-commit check. It
-catches formatting, lint, test, documentation, example, and benchmark-harness
-compile errors. It does not publish benchmark data and does not replace
-measured before/after evidence for performance-sensitive code.
+Follow the [validation command selection matrix](../docs/dev/commands.md#validation-command-selection):
+use `just check` and targeted tests during iteration, focused validators for
+non-core changes, and `just ci` for final core Rust/public-behavior validation.
+These checks do not publish benchmark data or replace measured before/after
+evidence for performance-sensitive code.
 
 Use `just performance-local` for branch and PR work. It measures both revisions
 freshly in isolated worktrees on this machine and retains shared JSON evidence
@@ -43,21 +44,24 @@ formal, and tied to release artifacts and report metadata. Create a draft GitHub
 Release for an existing stable tag, then dispatch
 `.github/workflows/release-benchmarks.yml` with that `tag`. It validates the
 mutable draft, benchmarks the exact tag commit, attaches and digest-verifies
-`delaunay-vX.Y.Z-criterion-baseline.tar.gz`, and publishes only after success. That archive
+`delaunay-vX.Y.Z-criterion-baseline.tar.gz`, and leaves the release as a draft. That archive
 contains `PERFORMANCE_RESULTS.md`, raw Criterion data
 under `criterion/`, and `metadata.json`.
 
 Common maintainer flows:
 
-- Before committing or handing off code: run `just ci`.
+- Before committing or handing off code: run the scope-appropriate checks from
+  the command-selection matrix above.
 - Before pushing performance-sensitive Rust or benchmark changes: run
   `just perf-large-scale-smoke`, then `just performance-local` when the work
   is PR-ready.
 - During release PR preparation: run `just performance-release`, then
   `just performance-readme`, to update the curated report, archive its
   predecessor, and publish the matching README snapshot.
-- After the draft benchmark workflow publishes: confirm the release contains
-  `delaunay-vX.Y.Z-criterion-baseline.tar.gz`; use
+- After the draft benchmark workflow succeeds: review the attached
+  `delaunay-vX.Y.Z-criterion-baseline.tar.gz`, then follow the maintainer's
+  explicit [`just release-publish` step](../docs/RELEASING.md#7-publish-the-reviewed-draft-and-approve-cargo-publication).
+  Once the release is published, use
   `just performance-github-assets 'current-tag' 'baseline-tag'` when you need a
   report from stored release assets.
 

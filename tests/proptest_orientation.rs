@@ -5,14 +5,16 @@
 //! - orientation tamper detection (`OrientationViolation` or earlier neighbor-consistency rejection)
 //! - incremental insertion coherence after each successful insertion
 //!
-//! Tests are generated for dimensions 2D-5D (with 4D/5D ignored in regular
-//! test-integration runs due to runtime).
+//! Tests are generated for dimensions 2D-5D, with 5D gated by `slow-tests`.
 
 #![forbid(unsafe_code)]
 
 #[macro_use]
 #[path = "common/proptest_config.rs"]
 mod proptest_config;
+
+#[path = "common/full_dimensional_vertices.rs"]
+mod full_dimensional_vertices;
 
 use delaunay::prelude::construction::{
     DelaunayIncrementalBuilder, DelaunayTriangulation, TopologyGuarantee, Vertex,
@@ -21,6 +23,7 @@ use delaunay::prelude::geometry::*;
 use delaunay::prelude::insertion::InsertionOutcome;
 use delaunay::prelude::tds::{Tds, TdsError};
 use delaunay::try_vertices_from_points;
+use full_dimensional_vertices::full_dimensional_vertices;
 use proptest::prelude::*;
 use std::collections::HashSet;
 
@@ -159,63 +162,57 @@ macro_rules! gen_orientation_incremental_props {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             repo_proptest! {
-                /// Property: every insertion attempt preserves coherent orientation.
+                /// Property: every admitted vertex is inserted coherently and the builder finishes.
                 $(#[$attr])*
                 #[test]
                 fn [<prop_orientation_coherent_after_each_successful_insert_ $dim d>](
-                    vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
-                        $min_vertices..=$max_vertices
-                    ).prop_map(|points| {
-                        try_vertices_from_points(&points).expect("finite point coordinates")
-                    })
+                    vertices in full_dimensional_vertices::<$dim>($min_vertices, $max_vertices)
                 ) {
                     let mut dt: DelaunayIncrementalBuilder<_, (), (), $dim> =
                         DelaunayIncrementalBuilder::with_topology_guarantee(
                             TopologyGuarantee::PLManifold,
                     );
 
-                    for vertex in vertices {
-                        let vertex_count_before = dt.number_of_vertices();
-                        let simplex_count_before = dt.number_of_simplices();
-                        let result = dt.insert_best_effort_with_statistics(vertex);
-                        let inserted = matches!(
-                            result,
-                            Ok((InsertionOutcome::Inserted { .. }, _))
+                    for (index, vertex) in vertices.iter().copied().enumerate() {
+                        let (outcome, statistics) = dt
+                            .insert_best_effort_with_statistics(vertex)
+                            .map_err(|error| TestCaseError::fail(format!(
+                                "{}D insertion {index} of {vertex:?} failed: {error:?}",
+                                $dim,
+                            )))?;
+                        prop_assert!(
+                            matches!(outcome, InsertionOutcome::Inserted { .. }),
+                            "{}D insertion {} of {:?} skipped an admitted vertex: {:?}; statistics={:?}",
+                            $dim, index, vertex, outcome, statistics
+                        );
+                        prop_assert_eq!(
+                            dt.number_of_vertices(),
+                            index + 1,
+                            "{}D insertion {} must add exactly one vertex",
+                            $dim, index
                         );
 
                         prop_assert!(
                             dt.is_coherently_oriented(),
-                            "{}D: orientation must remain coherent after insertion attempt: {:?}",
-                            $dim,
-                            result
+                            "{}D: orientation must remain coherent after insertion {} of {:?}",
+                            $dim, index, vertex
                         );
                         let structure_validation = dt.validate_structure();
                         prop_assert!(
                             structure_validation.is_ok(),
-                            "{}D: structure must remain valid after insertion attempt: result={:?}, validation={:?}",
-                            $dim,
-                            result,
-                            structure_validation.err()
+                            "{}D: structure must remain valid after insertion {} of {:?}: {:?}",
+                            $dim, index, vertex, structure_validation.err()
                         );
-
-                        if !inserted {
-                            prop_assert_eq!(
-                                dt.number_of_vertices(),
-                                vertex_count_before,
-                                "{}D: rejected or skipped insertion must preserve the vertex count: {:?}",
-                                $dim,
-                                result
-                            );
-                            prop_assert_eq!(
-                                dt.number_of_simplices(),
-                                simplex_count_before,
-                                "{}D: rejected or skipped insertion must preserve the simplex count: {:?}",
-                                $dim,
-                                result
-                            );
-                        }
                     }
+
+                    // finish() certifies the published owner through Levels 1–5.
+                    let dt = dt.finish().map_err(|failure| TestCaseError::fail(format!(
+                        "{}D publication failed after {} successful insertions: {:?}",
+                        $dim, vertices.len(), failure.reason(),
+                    )))?;
+                    prop_assert_eq!(dt.number_of_vertices(), vertices.len());
+                    prop_assert!(dt.number_of_simplices() > 0);
+                    prop_assert!(dt.is_coherently_oriented());
                 }
             }
         }

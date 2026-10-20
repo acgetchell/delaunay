@@ -9,9 +9,6 @@ use crate::core::facet::FacetError;
 use crate::core::simplex::SimplexValidationError;
 use crate::core::vertex::VertexValidationError;
 use crate::geometry::traits::coordinate::CoordinateValues;
-use crate::triangulation::realization::TriangulationRealizationValidationError;
-use crate::triangulation::validation::TriangulationValidationError;
-use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -151,7 +148,7 @@ pub enum GeometricError {
 /// #     #[error(transparent)]
 /// #     TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
 /// #     #[error(transparent)]
-/// #     Invariant(#[from] delaunay::prelude::tds::InvariantError),
+/// #     Invariant(#[from] delaunay::prelude::validation::InvariantError),
 /// #     #[error(transparent)]
 /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
 /// #     #[error(transparent)]
@@ -966,21 +963,21 @@ impl From<TdsMutationError> for TdsError {
     }
 }
 
-/// Classifies the kind of triangulation invariant that failed during validation.
+/// Classifies the kind of Levels 1–2 invariant that failed during validation.
 ///
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::tds::InvariantKind;
+/// use delaunay::prelude::tds::TdsInvariantKind;
 ///
-/// let kind = InvariantKind::Topology;
-/// assert_eq!(kind, InvariantKind::Topology);
+/// let kind = TdsInvariantKind::NeighborConsistency;
+/// assert_eq!(kind, TdsInvariantKind::NeighborConsistency);
 /// ```
 ///
-/// This is used by [`TriangulationValidationReport`] to group related errors.
+/// This is used by [`TdsValidationReport`] to group related errors.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum InvariantKind {
+pub enum TdsInvariantKind {
     /// Per-vertex validity (finite coordinates, non-nil UUID, etc.).
     VertexValidity,
     /// Per-simplex validity (vertex count, duplicate vertices, nil UUID, etc.).
@@ -1005,222 +1002,42 @@ pub enum InvariantKind {
     NeighborConsistency,
     /// Coherent combinatorial orientation (adjacent simplices induce opposite facet orientations).
     CoherentOrientation,
-    /// Simplex neighbor graph connectivity (single connected component).
-    Connectedness,
-    /// Triangulation/topology invariants (manifold-with-boundary, Euler characteristic).
-    Topology,
-    /// Realized geometry (nondegenerate simplices, no illegal overlap).
-    Realization,
-    /// Delaunay empty-circumsphere property.
-    DelaunayProperty,
 }
 
-/// A union error type that can represent any layer's validation failure.
+/// A single Levels 1–2 invariant violation.
 ///
-/// # Examples
-///
-/// ```
-/// use delaunay::prelude::tds::{InvariantError, TdsError};
-///
-/// let err = InvariantError::Tds {
-///     source: TdsError::InconsistentDataStructure {
-///         message: "bad neighbors".to_string(),
-///     },
-/// };
-/// std::assert_matches!(err, InvariantError::Tds { .. });
-/// ```
-///
-/// This is used by [`TriangulationValidationReport`] so that diagnostic reporting can
-/// preserve structured errors from each layer (TDS / topology / Delaunay) without
-/// stringification.
-#[derive(Clone, Debug, Error, PartialEq)]
-#[non_exhaustive]
-pub enum InvariantError {
-    /// Level 1–2 (elements + TDS structure).
-    #[error(transparent)]
-    Tds {
-        /// Typed TDS source error.
-        #[from]
-        source: TdsError,
-    },
-
-    /// Level 3 (topology).
-    #[error(transparent)]
-    Triangulation {
-        /// Typed topology-validation source error.
-        #[from]
-        source: TriangulationValidationError,
-    },
-
-    /// Level 4 (realized geometry).
-    #[error(transparent)]
-    Realization {
-        /// Typed realization-validation source error.
-        #[from]
-        source: TriangulationRealizationValidationError,
-    },
-
-    /// Level 5 (Delaunay property).
-    #[error(transparent)]
-    Delaunay {
-        /// Typed Delaunay-validation source error.
-        #[from]
-        source: DelaunayTriangulationValidationError,
-    },
-}
-
-/// Discriminant for compact Level 3 topology-validation summaries.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum TriangulationValidationErrorKind {
-    /// A facet had invalid manifold multiplicity.
-    ManifoldFacetMultiplicity,
-    /// A boundary ridge had invalid boundary-facet multiplicity.
-    BoundaryRidgeMultiplicity,
-    /// A closed topology contained an open boundary facet.
-    BoundaryFacetInClosedTopology,
-    /// A non-periodic topology contained periodic self-identification metadata.
-    PeriodicIdentificationInNonPeriodicTopology,
-    /// A requested ridge candidate was not present in any simplex.
-    RidgeNotFound,
-    /// A ridge link failed PL-manifold validation.
-    RidgeLinkNotManifold,
-    /// A vertex link failed PL-manifold validation.
-    VertexLinkNotManifold,
-    /// A high-dimensional link lacked construction evidence for its PL type.
-    HighDimensionalVertexLinkUnproven,
-    /// The intrinsic simplex-orientation constraints are contradictory.
-    NonOrientable,
-    /// Euler characteristic did not match the expected classification.
-    EulerCharacteristicMismatch,
-    /// A vertex was not incident to any simplex.
-    IsolatedVertex,
-    /// The simplex-neighbor graph was disconnected.
-    Disconnected,
-    /// Positive-orientation promotion did not converge.
-    OrientationPromotionNonConvergence,
-}
-
-impl From<&TriangulationValidationError> for TriangulationValidationErrorKind {
-    fn from(source: &TriangulationValidationError) -> Self {
-        match source {
-            TriangulationValidationError::ManifoldFacetMultiplicity { .. } => {
-                Self::ManifoldFacetMultiplicity
-            }
-            TriangulationValidationError::BoundaryRidgeMultiplicity { .. } => {
-                Self::BoundaryRidgeMultiplicity
-            }
-            TriangulationValidationError::BoundaryFacetInClosedTopology { .. } => {
-                Self::BoundaryFacetInClosedTopology
-            }
-            TriangulationValidationError::PeriodicIdentificationInNonPeriodicTopology {
-                ..
-            } => Self::PeriodicIdentificationInNonPeriodicTopology,
-            TriangulationValidationError::RidgeNotFound { .. } => Self::RidgeNotFound,
-            TriangulationValidationError::RidgeLinkNotManifold { .. } => Self::RidgeLinkNotManifold,
-            TriangulationValidationError::VertexLinkNotManifold { .. } => {
-                Self::VertexLinkNotManifold
-            }
-            TriangulationValidationError::HighDimensionalVertexLinkUnproven { .. } => {
-                Self::HighDimensionalVertexLinkUnproven
-            }
-            TriangulationValidationError::NonOrientable { .. } => Self::NonOrientable,
-            TriangulationValidationError::EulerCharacteristicMismatch { .. } => {
-                Self::EulerCharacteristicMismatch
-            }
-            TriangulationValidationError::IsolatedVertex { .. } => Self::IsolatedVertex,
-            TriangulationValidationError::Disconnected { .. } => Self::Disconnected,
-            TriangulationValidationError::OrientationPromotionNonConvergence { .. } => {
-                Self::OrientationPromotionNonConvergence
-            }
-        }
-    }
-}
-
-/// Discriminant for compact Level 5 Delaunay-validation summaries.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum DelaunayValidationErrorKind {
-    /// Lower-layer TDS validation failed.
-    Tds,
-    /// Lower-layer topology validation failed.
-    Triangulation,
-    /// Lower-layer realized-geometry validation failed.
-    Realization,
-    /// Delaunay verification failed.
-    VerificationFailed,
-    /// Typed repair validation failed.
-    RepairOperationFailed,
-}
-
-impl From<&DelaunayTriangulationValidationError> for DelaunayValidationErrorKind {
-    fn from(source: &DelaunayTriangulationValidationError) -> Self {
-        match source {
-            DelaunayTriangulationValidationError::Tds { source: _ } => Self::Tds,
-            DelaunayTriangulationValidationError::Triangulation { source: _ } => {
-                Self::Triangulation
-            }
-            DelaunayTriangulationValidationError::Realization { source: _ } => Self::Realization,
-            DelaunayTriangulationValidationError::VerificationFailed { .. } => {
-                Self::VerificationFailed
-            }
-            DelaunayTriangulationValidationError::RepairOperationFailed { .. } => {
-                Self::RepairOperationFailed
-            }
-        }
-    }
-}
-
-/// A single invariant violation recorded during validation diagnostics.
-///
-/// # Examples
-///
-/// ```
-/// use delaunay::prelude::tds::{
-///     InvariantError, InvariantKind, InvariantViolation, TdsError,
-/// };
-///
-/// let violation = InvariantViolation {
-///     kind: InvariantKind::Topology,
-///     error: InvariantError::Tds {
-///         source: TdsError::InconsistentDataStructure {
-///             message: "bad neighbors".to_string(),
-///         },
-///     },
-/// };
-/// assert_eq!(violation.kind, InvariantKind::Topology);
-/// ```
+/// The source is always a typed [`TdsError`]; higher-layer diagnostics are
+/// represented by [`crate::validation::InvariantViolation`].
 #[derive(Clone, Debug)]
-pub struct InvariantViolation {
-    /// The kind of invariant that failed.
-    pub kind: InvariantKind,
-    /// The detailed validation error explaining the failure.
-    pub error: InvariantError,
+pub struct TdsInvariantViolation {
+    /// The local invariant group that failed.
+    pub kind: TdsInvariantKind,
+    /// The detailed element or structural validation error.
+    pub error: TdsError,
 }
 
-/// Aggregate report of one or more validation failures.
+/// Aggregate report of checkable Levels 1–2 validation failures.
 ///
-/// This is returned by
-/// [`DelaunayTriangulation::validation_report()`]
-/// to surface all failed invariants at once for debugging and test diagnostics.
-///
-/// [`DelaunayTriangulation::validation_report()`]: crate::DelaunayTriangulation::validation_report
+/// [`Tds::structure_report`](super::Tds::structure_report) checks Level 2;
+/// [`Tds::validation_report`](super::Tds::validation_report) also checks Level 1.
+/// Reports retain check order and the typed source of every failure.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::tds::TriangulationValidationReport;
+/// use delaunay::prelude::tds::{Tds, TdsValidationReport};
 ///
-/// let report = TriangulationValidationReport { violations: Vec::new() };
-/// assert!(report.is_empty());
+/// let tds = Tds::<(), (), 2>::empty();
+/// let result: Result<(), TdsValidationReport> = tds.validation_report();
+/// assert!(result.is_ok());
 /// ```
 #[derive(Clone, Debug)]
-pub struct TriangulationValidationReport {
-    /// The ordered list of invariant violations that occurred.
-    pub violations: Vec<InvariantViolation>,
+pub struct TdsValidationReport {
+    /// The ordered list of element and structural violations.
+    pub violations: Vec<TdsInvariantViolation>,
 }
 
-impl TriangulationValidationReport {
+impl TdsValidationReport {
     /// Returns `true` if no violations were recorded.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
@@ -1231,32 +1048,12 @@ impl TriangulationValidationReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::algorithms::flips::{DelaunayRepairError, DelaunayRepairPostconditionFailure};
     use crate::core::facet::FacetError;
     use crate::core::simplex::SimplexValidationError;
     use crate::core::util::uuid::UuidValidationError;
     use crate::core::vertex::VertexValidationError;
-    use crate::repair::DelaunayRepairOperation;
-    use crate::topology::characteristics::euler::TopologyClassification;
-    use crate::topology::traits::topological_space::TopologyKind;
-    use crate::triangulation::validation::TriangulationValidationError;
-    use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use slotmap::KeyData;
-    use std::{assert_matches, iter};
-
-    fn synthetic_delaunay_verification_error(
-        message: &str,
-    ) -> DelaunayTriangulationValidationError {
-        let _ = message;
-        DelaunayTriangulationValidationError::VerificationFailed {
-            source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
-                reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
-                    simplex_count: 1,
-                }),
-            })
-            .into(),
-        }
-    }
+    use std::assert_matches;
 
     fn assert_tds_error_kind(source: &TdsError, expected: TdsErrorKind) {
         assert_eq!(TdsErrorKind::from(source), expected);
@@ -1467,182 +1264,6 @@ mod tests {
         );
     }
 
-    #[test]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "exhaustive mapping keeps each validation error adjacent to its expected stable kind"
-    )]
-    fn triangulation_validation_error_kind_from_error_preserves_all_variants() {
-        let vertex_key = VertexKey::from(KeyData::from_ffi(3));
-        let cases = [
-            (
-                TriangulationValidationError::ManifoldFacetMultiplicity {
-                    facet_key: 0xabc,
-                    simplex_count: 3,
-                },
-                TriangulationValidationErrorKind::ManifoldFacetMultiplicity,
-            ),
-            (
-                TriangulationValidationError::BoundaryRidgeMultiplicity {
-                    ridge_key: 0xdef,
-                    boundary_facet_count: 3,
-                },
-                TriangulationValidationErrorKind::BoundaryRidgeMultiplicity,
-            ),
-            (
-                TriangulationValidationError::BoundaryFacetInClosedTopology {
-                    topology: TopologyKind::Spherical,
-                    facet_key: 0x111,
-                    simplex_key: SimplexKey::from(KeyData::from_ffi(5)),
-                    simplex_uuid: Uuid::new_v4(),
-                    facet_index: 1,
-                },
-                TriangulationValidationErrorKind::BoundaryFacetInClosedTopology,
-            ),
-            (
-                TriangulationValidationError::PeriodicIdentificationInNonPeriodicTopology {
-                    topology: TopologyKind::Euclidean,
-                    facet_key: 0x222,
-                    simplex_key: SimplexKey::from(KeyData::from_ffi(6)),
-                    simplex_uuid: Uuid::new_v4(),
-                    facet_index: 2,
-                },
-                TriangulationValidationErrorKind::PeriodicIdentificationInNonPeriodicTopology,
-            ),
-            (
-                TriangulationValidationError::RidgeNotFound {
-                    ridge_vertices: iter::once(vertex_key).collect(),
-                },
-                TriangulationValidationErrorKind::RidgeNotFound,
-            ),
-            (
-                TriangulationValidationError::RidgeLinkNotManifold {
-                    ridge_key: 0x123,
-                    link_vertex_count: 4,
-                    link_edge_count: 2,
-                    max_degree: 3,
-                    degree_one_vertices: 1,
-                    connected: false,
-                },
-                TriangulationValidationErrorKind::RidgeLinkNotManifold,
-            ),
-            (
-                TriangulationValidationError::VertexLinkNotManifold {
-                    vertex_key,
-                    link_vertex_count: 4,
-                    link_simplex_count: 2,
-                    boundary_facet_count: 1,
-                    max_degree: 3,
-                    connected: false,
-                    interior_vertex: true,
-                },
-                TriangulationValidationErrorKind::VertexLinkNotManifold,
-            ),
-            (
-                TriangulationValidationError::HighDimensionalVertexLinkUnproven {
-                    vertex_key,
-                    dimension: 3,
-                },
-                TriangulationValidationErrorKind::HighDimensionalVertexLinkUnproven,
-            ),
-            (
-                TriangulationValidationError::EulerCharacteristicMismatch {
-                    computed: 0,
-                    expected: 1,
-                    classification: TopologyClassification::Ball(3),
-                },
-                TriangulationValidationErrorKind::EulerCharacteristicMismatch,
-            ),
-            (
-                TriangulationValidationError::IsolatedVertex {
-                    vertex_key,
-                    vertex_uuid: Uuid::new_v4(),
-                },
-                TriangulationValidationErrorKind::IsolatedVertex,
-            ),
-            (
-                TriangulationValidationError::Disconnected { simplex_count: 2 },
-                TriangulationValidationErrorKind::Disconnected,
-            ),
-            (
-                TriangulationValidationError::OrientationPromotionNonConvergence {
-                    residual_count: 1,
-                    sampled: vec![SimplexKey::from(KeyData::from_ffi(4))],
-                },
-                TriangulationValidationErrorKind::OrientationPromotionNonConvergence,
-            ),
-        ];
-
-        for (source, expected) in cases {
-            assert_eq!(TriangulationValidationErrorKind::from(&source), expected);
-        }
-    }
-
-    #[test]
-    fn triangulation_validation_error_kind_preserves_non_orientable() {
-        let source = TriangulationValidationError::NonOrientable {
-            simplex1_key: SimplexKey::from(KeyData::from_ffi(7)),
-            simplex1_uuid: Uuid::from_u128(7),
-            simplex1_facet_index: 1,
-            simplex2_key: SimplexKey::from(KeyData::from_ffi(8)),
-            simplex2_uuid: Uuid::from_u128(8),
-            simplex2_facet_index: 2,
-        };
-
-        assert_eq!(
-            TriangulationValidationErrorKind::from(&source),
-            TriangulationValidationErrorKind::NonOrientable
-        );
-    }
-
-    #[test]
-    fn delaunay_validation_error_kind_from_error_preserves_all_variants() {
-        let cases = [
-            (
-                DelaunayTriangulationValidationError::from(TdsError::InconsistentDataStructure {
-                    message: "dangling simplex".to_string(),
-                }),
-                DelaunayValidationErrorKind::Tds,
-            ),
-            (
-                DelaunayTriangulationValidationError::from(
-                    TriangulationValidationError::Disconnected { simplex_count: 2 },
-                ),
-                DelaunayValidationErrorKind::Triangulation,
-            ),
-            (
-                DelaunayTriangulationValidationError::Realization {
-                    source: Box::new(
-                        TriangulationRealizationValidationError::UnsupportedTopology {
-                            topology: TopologyKind::Hyperbolic,
-                            dimension: 2,
-                        },
-                    ),
-                },
-                DelaunayValidationErrorKind::Realization,
-            ),
-            (
-                synthetic_delaunay_verification_error("non-Delaunay facet"),
-                DelaunayValidationErrorKind::VerificationFailed,
-            ),
-            (
-                DelaunayTriangulationValidationError::RepairOperationFailed {
-                    operation: DelaunayRepairOperation::VertexRemoval,
-                    source: Box::new(DelaunayRepairError::PostconditionFailed {
-                        reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
-                            simplex_count: 1,
-                        }),
-                    }),
-                },
-                DelaunayValidationErrorKind::RepairOperationFailed,
-            ),
-        ];
-
-        for (source, expected) in cases {
-            assert_eq!(DelaunayValidationErrorKind::from(&source), expected);
-        }
-    }
-
     // ---- Error variant Display / construction coverage ----
 
     #[test]
@@ -1722,72 +1343,6 @@ mod tests {
         // into_inner consumes the wrapper and returns the inner error.
         let recovered: TdsError = mutation.into_inner();
         assert_eq!(recovered, inner);
-    }
-
-    #[test]
-    fn test_invariant_error_from_tds_and_triangulation() {
-        let tds_err = TdsError::InconsistentDataStructure {
-            message: "test".to_string(),
-        };
-        let inv = InvariantError::from(tds_err);
-        assert_matches!(inv, InvariantError::Tds { source: _ });
-
-        let tri_err = TriangulationValidationError::EulerCharacteristicMismatch {
-            computed: 1,
-            expected: 2,
-            classification: TopologyClassification::Ball(3),
-        };
-        let inv = InvariantError::from(tri_err);
-        assert_matches!(inv, InvariantError::Triangulation { source: _ });
-    }
-
-    #[test]
-    fn test_invariant_error_from_delaunay_validation_error() {
-        let dt_err = synthetic_delaunay_verification_error("test");
-        let inv = InvariantError::from(dt_err);
-        assert_matches!(inv, InvariantError::Delaunay { source: _ });
-    }
-
-    #[test]
-    fn test_invariant_kind_all_variants_are_distinct() {
-        let kinds = [
-            InvariantKind::VertexValidity,
-            InvariantKind::SimplexValidity,
-            InvariantKind::SimplexCoordinateUniqueness,
-            InvariantKind::VertexMappings,
-            InvariantKind::SimplexMappings,
-            InvariantKind::SimplexVertexKeys,
-            InvariantKind::VertexIncidence,
-            InvariantKind::VertexToSimplicesIndex,
-            InvariantKind::DuplicateSimplices,
-            InvariantKind::FacetSharing,
-            InvariantKind::NeighborConsistency,
-            InvariantKind::CoherentOrientation,
-            InvariantKind::Connectedness,
-            InvariantKind::Topology,
-            InvariantKind::DelaunayProperty,
-        ];
-        // All variants must be copyable and comparable.
-        for (i, &a) in kinds.iter().enumerate() {
-            assert_eq!(a, a);
-            for &b in &kinds[i + 1..] {
-                assert_ne!(a, b);
-            }
-        }
-    }
-
-    #[test]
-    fn test_invariant_violation_stores_kind_and_error() {
-        let violation = InvariantViolation {
-            kind: InvariantKind::NeighborConsistency,
-            error: InvariantError::Tds {
-                source: TdsError::InconsistentDataStructure {
-                    message: "test".to_string(),
-                },
-            },
-        };
-        assert_eq!(violation.kind, InvariantKind::NeighborConsistency);
-        assert_matches!(violation.error, InvariantError::Tds { source: _ });
     }
 
     #[test]

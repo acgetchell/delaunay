@@ -44,7 +44,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
-use ciborium::value::Value;
+use ciborium::value::{Error as CiboriumValueError, Value};
 
 use std::{error::Error as StdError, fmt, marker::PhantomData, mem::size_of, str};
 
@@ -812,6 +812,54 @@ impl From<TdsSnapshotError> for DelaunayCheckpointTdsHydrationError {
     }
 }
 
+/// Failure to deserialize a checkpoint user payload from its authenticated value.
+///
+/// Retains the concrete Ciborium error in the standard error source chain while
+/// preserving checkpoint errors' `Clone` and `PartialEq` contracts. Equality
+/// compares the original Serde diagnostic, which is opaque caller-supplied text.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::checkpoint::DelaunayCheckpointPayloadError;
+/// use std::error::Error;
+///
+/// let error = DelaunayCheckpointPayloadError::from(
+///     ciborium::value::Error::Custom("payload rejected".to_owned()),
+/// );
+/// assert_eq!(error, error.clone());
+/// assert!(error.source().is_some_and(|source| source.is::<ciborium::value::Error>()));
+/// ```
+#[derive(Debug, Error)]
+#[error("{source}")]
+pub struct DelaunayCheckpointPayloadError {
+    #[source]
+    source: CiboriumValueError,
+}
+
+impl Clone for DelaunayCheckpointPayloadError {
+    fn clone(&self) -> Self {
+        let CiboriumValueError::Custom(message) = &self.source;
+        Self::from(CiboriumValueError::Custom(message.clone()))
+    }
+}
+
+impl PartialEq for DelaunayCheckpointPayloadError {
+    fn eq(&self, other: &Self) -> bool {
+        let CiboriumValueError::Custom(left) = &self.source;
+        let CiboriumValueError::Custom(right) = &other.source;
+        left == right
+    }
+}
+
+impl Eq for DelaunayCheckpointPayloadError {}
+
+impl From<CiboriumValueError> for DelaunayCheckpointPayloadError {
+    fn from(source: CiboriumValueError) -> Self {
+        Self { source }
+    }
+}
+
 /// Typed failures detected while building or verifying a Delaunay checkpoint.
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
@@ -931,6 +979,13 @@ pub enum DelaunayCheckpointError {
     PayloadSerialization {
         /// Serde serializer diagnostic supplied by the user payload.
         message: String,
+    },
+    /// An authenticated payload value was rejected by the requested Rust payload type.
+    #[error("failed to deserialize a checkpoint user payload: {source}")]
+    PayloadDeserialization {
+        /// Concrete value-deserialization failure, distinct from malformed CBOR.
+        #[source]
+        source: DelaunayCheckpointPayloadError,
     },
     /// A signed payload integer is outside digest-v1's canonical CBOR range.
     #[error("signed checkpoint payload integer {value} is outside the canonical CBOR range")]
@@ -1097,11 +1152,11 @@ impl PreparedPayload {
 
     /// Reconstructs the caller's payload type from the authenticated value.
     fn deserialize<T: DataDeserialize>(&self) -> Result<T, DelaunayCheckpointError> {
-        self.value
-            .deserialized()
-            .map_err(|source| DelaunayCheckpointError::TdsCodec {
-                message: source.to_string(),
-            })
+        self.value.deserialized().map_err(|source| {
+            DelaunayCheckpointError::PayloadDeserialization {
+                source: source.into(),
+            }
+        })
     }
 
     /// Writes this captured value into digest-v1's canonical representation.
@@ -2937,7 +2992,9 @@ where
     /// Returns:
     ///
     /// - [`DelaunayCheckpointLoadError::Checkpoint`] when metadata, manifest
-    ///   evidence, canonical payloads, or the embedded TDS image are invalid;
+    ///   evidence, canonical payloads, or the embedded TDS image are invalid, or
+    ///   when the requested payload type rejects an authenticated value
+    ///   ([`DelaunayCheckpointError::PayloadDeserialization`]);
     /// - [`DelaunayCheckpointLoadError::ValidationConfiguration`] when the
     ///   stored topology guarantee and validation policy are incompatible;
     /// - [`DelaunayCheckpointLoadError::ProvenanceReplay`],
@@ -2991,7 +3048,9 @@ where
     /// Returns:
     ///
     /// - [`DelaunayCheckpointLoadError::Checkpoint`] when metadata, manifest
-    ///   evidence, canonical payloads, or the embedded TDS image are invalid;
+    ///   evidence, canonical payloads, or the embedded TDS image are invalid, or
+    ///   when the requested payload type rejects an authenticated value
+    ///   ([`DelaunayCheckpointError::PayloadDeserialization`]);
     /// - [`DelaunayCheckpointLoadError::ValidationConfiguration`] when the
     ///   stored topology guarantee and validation policy are incompatible;
     /// - [`DelaunayCheckpointLoadError::ProvenanceReplay`],
@@ -3869,12 +3928,30 @@ mod tests {
         serde_json::to_value(triangulation).unwrap()
     }
 
+    /// Builds an authenticated checkpoint with integer vertex and simplex payloads.
+    fn triangle_checkpoint_with_payloads() -> serde_json::Value {
+        let vertices = [
+            vertex!([0.0, 0.0]; data = 10_u32).unwrap(),
+            vertex!([1.0, 0.0]; data = 20_u32).unwrap(),
+            vertex!([0.0, 1.0]; data = 30_u32).unwrap(),
+        ];
+        let mut triangulation = DelaunayTriangulationBuilder::new(&vertices)
+            .simplex_data_type::<u32>()
+            .build_with_kernel(&RobustKernel::new())
+            .unwrap();
+        let simplex_key = triangulation.simplices().next().unwrap().0;
+        triangulation
+            .set_simplex_data(simplex_key, Some(40))
+            .unwrap();
+        serde_json::to_value(triangulation).unwrap()
+    }
+
     /// Returns the typed schema-v2 load error for one corrupted 2D checkpoint.
     fn typed_checkpoint_error(checkpoint: serde_json::Value) -> DelaunayCheckpointLoadError {
         typed_checkpoint_error_with_payload::<(), ()>(checkpoint)
     }
 
-    /// Returns a typed load error for a corrupted 2D checkpoint with payloads.
+    /// Returns a typed error for a rejected 2D checkpoint load with payloads.
     fn typed_checkpoint_error_with_payload<U, V>(
         checkpoint: serde_json::Value,
     ) -> DelaunayCheckpointLoadError
@@ -3883,9 +3960,28 @@ mod tests {
         V: DataType,
     {
         serde_json::from_value::<DelaunayCheckpoint<U, V, 2>>(checkpoint)
-            .expect("metadata mutation should retain a decodable bounded envelope")
+            .expect("test fixture should retain a decodable bounded envelope")
             .try_into_delaunay()
-            .expect_err("corrupted checkpoint must be rejected")
+            .expect_err("checkpoint loading must fail")
+    }
+
+    fn payload_deserialization_source(error: &DelaunayCheckpointLoadError) -> &CiboriumValueError {
+        let DelaunayCheckpointLoadError::Checkpoint {
+            source: DelaunayCheckpointError::PayloadDeserialization { source },
+        } = error
+        else {
+            panic!("expected typed payload deserialization failure, got {error:?}");
+        };
+        assert_eq!(
+            error
+                .source()
+                .and_then(|cause| cause.downcast_ref::<DelaunayCheckpointPayloadError>()),
+            Some(source),
+        );
+        source
+            .source()
+            .and_then(|cause| cause.downcast_ref::<CiboriumValueError>())
+            .expect("payload error must retain its concrete Ciborium source")
     }
 
     /// Mutates the embedded CBOR TDS through a JSON-shaped test value.
@@ -3980,7 +4076,7 @@ mod tests {
             .unwrap();
         restored.validate().unwrap();
 
-        let mut invalid_schema = triangle_checkpoint();
+        let mut invalid_schema = triangle_checkpoint_with_payloads();
         invalid_schema["schema_version"] = serde_json::json!(99);
         let decoded: DelaunayCheckpoint<RejectingPayload, (), 2> =
             serde_json::from_value(invalid_schema).unwrap();
@@ -4677,11 +4773,11 @@ mod tests {
 
     #[test]
     fn manifest_digest_tampering_is_rejected() {
-        let mut checkpoint = triangle_checkpoint();
+        let mut checkpoint = triangle_checkpoint_with_payloads();
         checkpoint["manifest"]["digest"]["value"] = serde_json::json!("0".repeat(64));
 
         assert!(matches!(
-            typed_checkpoint_error(checkpoint),
+            typed_checkpoint_error_with_payload::<RejectingPayload, RejectingPayload>(checkpoint),
             DelaunayCheckpointLoadError::Checkpoint {
                 source: DelaunayCheckpointError::DigestMismatch { .. },
             }
@@ -4734,6 +4830,47 @@ mod tests {
             panic!("expected a typed missing simplex-vertex relationship");
         };
         assert!(!simplex_uuid.is_nil());
+    }
+
+    #[test]
+    fn checkpoint_payload_deserialization_is_distinct_from_invalid_cbor() {
+        let checkpoint = triangle_checkpoint_with_payloads();
+
+        // The same authenticated checkpoint loads with the original payload types.
+        let restored =
+            serde_json::from_value::<DelaunayCheckpoint<u32, u32, 2>>(checkpoint.clone())
+                .unwrap()
+                .try_into_delaunay()
+                .unwrap();
+        assert_eq!(restored.number_of_vertices(), 3);
+        assert_eq!(restored.simplices().next().unwrap().1.data(), Some(&40));
+
+        let errors = [
+            typed_checkpoint_error_with_payload::<bool, u32>(checkpoint.clone()),
+            typed_checkpoint_error_with_payload::<u32, bool>(checkpoint.clone()),
+            typed_checkpoint_error_with_payload::<RejectingPayload, u32>(checkpoint.clone()),
+            typed_checkpoint_error_with_payload::<u32, RejectingPayload>(checkpoint),
+        ];
+        for error in &errors {
+            assert_eq!(error, &error.clone());
+            let CiboriumValueError::Custom(message) = payload_deserialization_source(error);
+            assert!(
+                !message.is_empty(),
+                "payload failure should retain its diagnostic"
+            );
+        }
+        for error in &errors[2..] {
+            let CiboriumValueError::Custom(message) = payload_deserialization_source(error);
+            assert_eq!(message, "payload hydration must not run");
+        }
+        assert_ne!(
+            errors[0], errors[2],
+            "different diagnostics must compare unequal"
+        );
+        assert_eq!(
+            errors[2], errors[3],
+            "equal payload diagnostics must compare equal"
+        );
     }
 
     #[test]

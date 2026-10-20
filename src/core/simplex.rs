@@ -210,19 +210,6 @@ impl From<StackMatrixDispatchError> for SimplexValidationError {
     }
 }
 
-fn compare_vertices_by_coordinates<U, const D: usize>(
-    left: &Vertex<U, D>,
-    right: &Vertex<U, D>,
-) -> cmp::Ordering {
-    for (left_coord, right_coord) in left.point().coords().iter().zip(right.point().coords()) {
-        let ordering = left_coord.total_cmp(right_coord);
-        if ordering != cmp::Ordering::Equal {
-            return ordering;
-        }
-    }
-    cmp::Ordering::Equal
-}
-
 /// A typed neighbor slot for a simplex facet.
 ///
 /// This distinguishes the TDS states that nested `Option` storage used to blur:
@@ -1674,12 +1661,14 @@ impl<V, const D: usize> Simplex<V, D> {
 
 // Advanced implementation block for Simplex methods
 impl<V, const D: usize> Simplex<V, D> {
-    /// Compare two simplices by their vertex sets (using `Vertex::PartialEq`) for cross-TDS equality checking.
+    /// Compares simplices across TDS owners by coordinates and relative periodic offsets.
     ///
-    /// This method enables semantic comparison of simplices from different TDS instances by comparing
-    /// the actual Vertex objects using `Vertex::PartialEq` (coordinate-based comparison).
-    /// Two simplices are considered equal if they contain the same set of vertices (by coordinates),
-    /// regardless of order. This mirrors `Simplex::PartialEq` semantics but works across TDS boundaries.
+    /// Coordinates follow the exact equality semantics of `Vertex::PartialEq`.
+    /// Two simplices are equal if their coordinate–offset pairs agree up to vertex
+    /// permutation and a common lattice translation. Relative offsets still distinguish
+    /// different periodic simplices; missing offsets mean zero. This mirrors
+    /// `Simplex::PartialEq` with coordinates replacing storage-local vertex keys.
+    /// UUIDs and payloads do not participate.
     ///
     /// # Arguments
     ///
@@ -1689,8 +1678,8 @@ impl<V, const D: usize> Simplex<V, D> {
     ///
     /// # Returns
     ///
-    /// `true` if both simplices contain the same set of vertices (by coordinates), `false` otherwise.
-    /// Returns `false` if any vertex keys cannot be resolved.
+    /// `true` if both simplices have the same coordinate-based periodic identity.
+    /// Returns `false` if any vertex keys cannot be resolved or offset counts are malformed.
     ///
     /// # Examples
     ///
@@ -1762,32 +1751,34 @@ impl<V, const D: usize> Simplex<V, D> {
         other: &Self,
         other_tds: &Tds<U, V, D>,
     ) -> bool {
-        // Get vertices for both simplices
-        let self_vertices: Option<Vec<_>> = self
-            .vertices()
+        matches!(
+            (self.coordinate_signature(self_tds), other.coordinate_signature(other_tds)),
+            (Some(left), Some(right)) if left == right
+        )
+    }
+
+    /// Uses the same coordinate identity for cross-TDS matching and comparison.
+    /// Point storage is finite and canonicalizes signed zero, so coordinate bits
+    /// preserve Point equality without introducing approximate comparisons.
+    pub(crate) fn coordinate_signature<U>(
+        &self,
+        tds: &Tds<U, V, D>,
+    ) -> Option<SimplexCoordinateSignature<D>> {
+        let offsets = self.periodic_vertex_offsets();
+        if offsets.is_some_and(|offsets| offsets.len() != self.vertices.len()) {
+            return None;
+        }
+        let vertices = self
+            .vertices
             .iter()
-            .map(|&vkey| self_tds.vertex(vkey))
-            .collect();
-
-        let other_vertices: Option<Vec<_>> = other
-            .vertices()
-            .iter()
-            .map(|&vkey| other_tds.vertex(vkey))
-            .collect();
-
-        // If we couldn't resolve all vertex keys, simplices are not equal
-        let (Some(mut self_vertices), Some(mut other_vertices)) = (self_vertices, other_vertices)
-        else {
-            return false;
-        };
-
-        // Sort vertices for order-independent comparison (matches Simplex::PartialEq semantics)
-        // Use Vertex::PartialOrd which compares coordinates
-        self_vertices.sort_by(|a, b| compare_vertices_by_coordinates(a, b));
-        other_vertices.sort_by(|a, b| compare_vertices_by_coordinates(a, b));
-
-        // Compare using Vertex::PartialEq (coordinate-based)
-        self_vertices == other_vertices
+            .enumerate()
+            .map(|(index, &key)| {
+                let coords = tds.vertex(key)?.point().coords().map(f64::to_bits);
+                let offset = offsets.map_or([0; D], |offsets| offsets[index]);
+                Some((coords, offset))
+            })
+            .collect::<Option<SimplexVertexBuffer<_>>>()?;
+        Some(canonical_periodic_identity(vertices))
     }
 }
 
@@ -1795,20 +1786,49 @@ impl<V, const D: usize> Simplex<V, D> {
 // STANDARD TRAIT IMPLEMENTATIONS
 // =============================================================================
 
+/// A periodic simplex identity modulo a common lattice translation.
+pub(crate) type PeriodicSimplexIdentity<I, const D: usize> = SimplexVertexBuffer<(I, [i16; D])>;
+
+/// Coordinate bits replace storage-local keys when comparing different owners.
+pub(crate) type SimplexCoordinateSignature<const D: usize> = PeriodicSimplexIdentity<[u64; D], D>;
+
+/// Canonicalizes vertex permutations and common lattice shifts for equality,
+/// ordering, hashing, and duplicate detection. Sorting by identity and then
+/// offset selects the same anchor even when a periodic simplex repeats a vertex.
+/// Widening before subtraction represents every difference of two i8 offsets.
+pub(crate) fn canonical_periodic_identity<I: Ord, const D: usize>(
+    vertices: impl IntoIterator<Item = (I, [i8; D])>,
+) -> PeriodicSimplexIdentity<I, D> {
+    let mut identities: PeriodicSimplexIdentity<I, D> = vertices
+        .into_iter()
+        .map(|(identity, offset)| (identity, offset.map(i16::from)))
+        .collect();
+    identities.sort_unstable();
+    if let Some((_, anchor)) = identities.first() {
+        let anchor = *anchor;
+        for (_, offset) in &mut identities {
+            for (component, origin) in offset.iter_mut().zip(anchor) {
+                *component -= origin;
+            }
+        }
+    }
+    identities
+}
+
 /// Canonical identity used by equality, ordering, and hashing.
 ///
-/// Periodic simplices include each vertex's aligned lattice offset. Missing
-/// offsets normalize to zero, matching TDS duplicate validation, while the
+/// Periodic simplices include relative lattice offsets. Missing offsets mean
+/// zero, matching TDS duplicate validation, while the
 /// optional length records malformed crate-internal states.
 type SimplexIdentitySortKey<const D: usize> =
-    (SimplexVertexBuffer<(VertexKey, [i8; D])>, Option<usize>);
+    (PeriodicSimplexIdentity<VertexKey, D>, Option<usize>);
 
 /// Builds the canonical trait identity for one simplex.
 fn canonical_simplex_identity<V, const D: usize>(
     simplex: &Simplex<V, D>,
 ) -> SimplexIdentitySortKey<D> {
     let periodic_offsets = simplex.periodic_vertex_offsets.as_deref();
-    let mut identities: SimplexVertexBuffer<(VertexKey, [i8; D])> = simplex
+    let vertices = simplex
         .vertices
         .iter()
         .copied()
@@ -1819,9 +1839,8 @@ fn canonical_simplex_identity<V, const D: usize>(
                 .copied()
                 .unwrap_or([0_i8; D]);
             (key, offset)
-        })
-        .collect();
-    identities.sort_unstable();
+        });
+    let identities = canonical_periodic_identity(vertices);
 
     let malformed_offset_len = periodic_offsets
         .and_then(|offsets| (offsets.len() != simplex.vertices.len()).then_some(offsets.len()));
@@ -1830,10 +1849,11 @@ fn canonical_simplex_identity<V, const D: usize>(
 
 /// Equality of simplices based on their canonical vertex identities.
 ///
-/// Two simplices are equal if they contain the same set of vertex keys,
-/// regardless of order. Periodic simplices additionally compare the aligned
-/// `(vertex key, lattice offset)` identities used by TDS duplicate validation;
-/// absent offsets normalize to zero.
+/// Two simplices are equal if their vertex identities match, regardless of
+/// vertex order. Periodic simplices compare the aligned
+/// `(vertex key, relative lattice offset)` identities used by TDS duplicate
+/// validation. A common lattice shift does not change identity; absent offsets
+/// mean zero. Individual relative offsets still distinguish periodic simplices.
 /// This is fast (O(D log D)) and doesn't require TDS access.
 ///
 /// **Note**: This compares simplices within the same TDS context. For cross-TDS
@@ -1847,8 +1867,8 @@ impl<V, const D: usize> PartialEq for Simplex<V, D> {
 
 /// Order of simplices based on their canonical vertex identities.
 ///
-/// Periodic simplices include aligned lattice offsets after the sorted vertex
-/// keys, keeping ordering consistent with equality. Fast (O(D log D)) and
+/// Periodic simplices include relative lattice offsets after the sorted vertex
+/// keys, keeping ordering consistent with translation-invariant equality. Fast (O(D log D)) and
 /// doesn't require TDS access.
 impl<V, const D: usize> PartialOrd for Simplex<V, D> {
     #[inline]
@@ -1863,14 +1883,14 @@ impl<V, const D: usize> PartialOrd for Simplex<V, D> {
 
 /// Eq implementation for Simplex based on canonical vertex identities.
 ///
-/// Maintains the Eq contract with `PartialEq`: nonzero periodic offsets
-/// participate, while absent offsets match explicit zero offsets.
+/// Maintains the Eq contract with `PartialEq`: relative periodic offsets
+/// participate, while common shifts and absent versus zero offsets do not.
 impl<V, const D: usize> Eq for Simplex<V, D> {}
 
 /// Custom Hash implementation for Simplex using canonical vertex identities.
 ///
 /// This maintains the Eq/Hash contract: if `a == b`, then
-/// `hash(a) == hash(b)`, including periodic lattice offsets.
+/// `hash(a) == hash(b)`, including relative periodic lattice offsets.
 ///
 /// **Performance**: Fast O(D log D) hashing using stack-backed identity buffers.
 ///
@@ -2019,6 +2039,52 @@ mod tests {
     }
 
     /// Generates offset-alignment and malformed-length tests for each practical dimension.
+    /// Exercises the identity laws with translated, permuted, and repeated-key
+    /// simplices, including relative offsets outside the i8 range.
+    fn assert_periodic_identity<const D: usize>() {
+        let keys = synthetic_vertex_keys(D + 1);
+        let plain = Simplex::<(), D>::try_new(keys.clone()).unwrap();
+        let zeros = Simplex::try_new_periodic(keys.clone(), vec![[0; D]; D + 1]).unwrap();
+        let constant = Simplex::try_new_periodic(keys.clone(), vec![[i8::MAX; D]; D + 1]).unwrap();
+        assert_eq!(plain.partial_cmp(&constant), Some(cmp::Ordering::Equal));
+        assert_eq!(HashSet::from([plain, zeros, constant]).len(), 1);
+
+        for keys in [keys.clone(), vec![keys[0]; D + 1]] {
+            let mut offsets = vec![[i8::MIN; D]; D + 1];
+            for axis in 0..D {
+                offsets[axis + 1][axis] = 126;
+            }
+            let original =
+                Simplex::<(), D>::try_new_periodic(keys.clone(), offsets.clone()).unwrap();
+            let translated_offsets: Vec<_> = offsets
+                .iter()
+                .rev()
+                .map(|offset| offset.map(|x| x + 1))
+                .collect();
+            let translated = Simplex::try_new_periodic(
+                keys.iter().copied().rev().collect::<Vec<_>>(),
+                translated_offsets,
+            )
+            .unwrap();
+            assert_eq!(original, translated);
+            assert_eq!(
+                original.partial_cmp(&translated),
+                Some(cmp::Ordering::Equal)
+            );
+            let mut changed_offsets = offsets;
+            changed_offsets[1][0] = i8::MAX;
+            let changed = Simplex::try_new_periodic(keys, changed_offsets).unwrap();
+            assert_ne!(original, changed);
+            assert_ne!(original.partial_cmp(&changed), Some(cmp::Ordering::Equal));
+            let mut left_hash = DefaultHasher::new();
+            let mut right_hash = DefaultHasher::new();
+            original.hash(&mut left_hash);
+            translated.hash(&mut right_hash);
+            assert_eq!(left_hash.finish(), right_hash.finish());
+            assert_eq!(HashSet::from([original, translated, changed]).len(), 2);
+        }
+    }
+
     macro_rules! gen_periodic_offset_slot_tests {
         ($dim:literal, $uniform:path) => {
             pastey::paste! {
@@ -2038,6 +2104,7 @@ mod tests {
                         ),
                     ) {
                         let mut simplex = simplex_with_periodic_offsets::<$dim>(&offsets);
+                        let original = simplex.clone();
                         let mut expected: Vec<_> = simplex
                             .vertices()
                             .iter()
@@ -2064,6 +2131,22 @@ mod tests {
                             .collect();
                         prop_assert_eq!(actual, expected);
                         prop_assert!(simplex.is_valid().is_ok());
+                        let shift: [i8; $dim] = std::array::from_fn(|axis| {
+                            if offsets.iter().all(|offset| offset[axis] < i8::MAX) {
+                                1
+                            } else if offsets.iter().all(|offset| offset[axis] > i8::MIN) {
+                                -1
+                            } else {
+                                0
+                            }
+                        });
+                        let translated_offsets: Vec<_> = simplex.periodic_vertex_offsets().unwrap()
+                            .iter().map(|offset| std::array::from_fn(|axis| offset[axis] + shift[axis]))
+                            .collect();
+                        let mut translated = simplex.clone();
+                        translated.set_periodic_vertex_offsets(translated_offsets).unwrap();
+                        prop_assert_eq!(original.partial_cmp(&translated), Some(cmp::Ordering::Equal));
+                        prop_assert_eq!(HashSet::from([original, simplex, translated]).len(), 1);
                     }
                 }
 
@@ -2219,52 +2302,20 @@ mod tests {
         assert_eq!(simplex_b.data.as_ref().unwrap().0, "right");
     }
 
-    #[test]
-    fn periodic_equality_ordering_and_hash_include_offsets() {
-        let keys = synthetic_vertex_keys(3);
-        let non_periodic = Simplex::<(), 2>::try_new(keys.clone()).unwrap();
-        let zero_offset_periodic =
-            Simplex::<(), 2>::try_new_periodic(keys.clone(), vec![[0, 0]; 3]).unwrap();
-        let simplex =
-            Simplex::<(), 2>::try_new_periodic(keys.clone(), vec![[0, 0], [1, 0], [0, 1]]).unwrap();
-        let permuted = Simplex::<(), 2>::try_new_periodic(
-            vec![keys[2], keys[0], keys[1]],
-            vec![[0, 1], [0, 0], [1, 0]],
-        )
-        .unwrap();
-        let different_offset =
-            Simplex::<(), 2>::try_new_periodic(keys, vec![[0, 0], [2, 0], [0, 1]]).unwrap();
-
-        assert_eq!(simplex, permuted);
-        assert_eq!(simplex.partial_cmp(&permuted), Some(cmp::Ordering::Equal));
-        assert_ne!(simplex, different_offset);
-        assert_ne!(
-            simplex.partial_cmp(&different_offset),
-            Some(cmp::Ordering::Equal)
-        );
-        assert_eq!(non_periodic, zero_offset_periodic);
-        assert_eq!(
-            non_periodic.partial_cmp(&zero_offset_periodic),
-            Some(cmp::Ordering::Equal)
-        );
-
-        let mut non_periodic_hash = DefaultHasher::new();
-        let mut zero_offset_periodic_hash = DefaultHasher::new();
-        let mut simplex_hash = DefaultHasher::new();
-        let mut permuted_hash = DefaultHasher::new();
-        let mut different_offset_hash = DefaultHasher::new();
-        non_periodic.hash(&mut non_periodic_hash);
-        zero_offset_periodic.hash(&mut zero_offset_periodic_hash);
-        simplex.hash(&mut simplex_hash);
-        permuted.hash(&mut permuted_hash);
-        different_offset.hash(&mut different_offset_hash);
-        assert_eq!(
-            non_periodic_hash.finish(),
-            zero_offset_periodic_hash.finish()
-        );
-        assert_eq!(simplex_hash.finish(), permuted_hash.finish());
-        assert_ne!(simplex_hash.finish(), different_offset_hash.finish());
+    macro_rules! periodic_identity_dimensions {
+        ($($dim:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<periodic_equality_ordering_and_hash_ $dim d>]() {
+                        assert_periodic_identity::<$dim>();
+                    }
+                )+
+            }
+        };
     }
+
+    periodic_identity_dimensions!(2, 3, 4, 5);
 
     // Generate tests for dimensions 2D through 5D
     test_simplex_dimensions! {
@@ -2381,42 +2432,6 @@ mod tests {
     // =============================================================================
     // SIMPLEX EQUALITY TESTS
     // =============================================================================
-
-    #[test]
-    fn test_eq_by_vertices_same_coordinates_different_tds() {
-        // Create two separate TDS instances with identical vertex coordinates
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let dt1 = single_simplex_tds(&vertices);
-        let dt2 = single_simplex_tds(&vertices);
-
-        let simplex1 = dt1.simplices().next().unwrap().1;
-        let simplex2 = dt2.simplices().next().unwrap().1;
-
-        // Despite different DT instances (and thus different vertex keys),
-        // simplices should be equal by coordinates
-        assert!(simplex1.eq_by_vertices(&dt1, simplex2, &dt2));
-    }
-
-    #[test]
-    fn test_eq_by_vertices_2d() {
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-        ];
-        let dt1 = single_simplex_tds(&vertices);
-        let dt2 = single_simplex_tds(&vertices);
-
-        let simplex1 = dt1.simplices().next().unwrap().1;
-        let simplex2 = dt2.simplices().next().unwrap().1;
-
-        assert!(simplex1.eq_by_vertices(&dt1, simplex2, &dt2));
-    }
 
     #[test]
     fn simplex_from_tds_with_data() {

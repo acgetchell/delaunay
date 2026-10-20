@@ -72,6 +72,7 @@ serde_json = { version = "1.0.154", optional = true }
 sha2 = { version = "0.11.1", default-features = false }
 same-file = { version = "1.0.6", optional = true }
 slotmap = { version = "1.1.1", features = [ "serde" ] }
+tempfile = { version = "3.27.0", optional = true }
 thiserror = "2.0.21"
 uuid = { version = "1.28.0", features = [ "v4", "serde", "fast-rng" ] }
 
@@ -89,7 +90,7 @@ tracing-subscriber = { version = "0.3.23", features = [ "env-filter" ] }
 default = [  ]
 
 # Dependency-backed feature gates.
-cli = [ "dep:clap", "dep:same-file", "dep:serde_json" ] # Build the optional artifact and diagnostic binaries.
+cli = [ "dep:clap", "dep:same-file", "dep:serde_json", "dep:tempfile" ] # Build the optional artifact and diagnostic binaries.
 count-allocations = [ "dep:allocation-counter" ] # Enable allocation counting through the optional profiler dependency.
 
 # cfg-only feature gates.

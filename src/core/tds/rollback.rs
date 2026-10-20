@@ -418,8 +418,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 pub(crate) struct TdsOwnerRollbackTransaction<'owner, O, U, V, const D: usize>
 where
     O: TdsRollbackOwner<U, V, D>,
-    U: Clone,
-    V: Clone,
 {
     owner: &'owner mut O,
     finished: bool,
@@ -429,8 +427,6 @@ where
 impl<'owner, O, U, V, const D: usize> TdsOwnerRollbackTransaction<'owner, O, U, V, D>
 where
     O: TdsRollbackOwner<U, V, D>,
-    U: Clone,
-    V: Clone,
 {
     /// Begins an empty touched-record rollback window.
     pub(crate) fn begin(owner: &'owner mut O) -> Self {
@@ -476,8 +472,6 @@ impl<O, U, V, const D: usize> TdsRollbackWindow<U, V, D>
     for TdsOwnerRollbackTransaction<'_, O, U, V, D>
 where
     O: TdsRollbackOwner<U, V, D>,
-    U: Clone,
-    V: Clone,
 {
     fn rollback_tds_mut(&mut self) -> &mut Tds<U, V, D> {
         self.owner.rollback_tds_mut()
@@ -491,8 +485,6 @@ where
 impl<O, U, V, const D: usize> Drop for TdsOwnerRollbackTransaction<'_, O, U, V, D>
 where
     O: TdsRollbackOwner<U, V, D>,
-    U: Clone,
-    V: Clone,
 {
     fn drop(&mut self) {
         if !self.finished {
@@ -505,11 +497,7 @@ where
 pub(crate) type TdsRollbackTransaction<'tds, U, V, const D: usize> =
     TdsOwnerRollbackTransaction<'tds, Tds<U, V, D>, U, V, D>;
 
-impl<U, V, const D: usize> TdsOwnerRollbackTransaction<'_, Tds<U, V, D>, U, V, D>
-where
-    U: Clone,
-    V: Clone,
-{
+impl<U, V, const D: usize> TdsOwnerRollbackTransaction<'_, Tds<U, V, D>, U, V, D> {
     /// Borrows the mutable TDS for a mutation step inside the transaction.
     pub(crate) const fn tds_mut(&mut self) -> &mut Tds<U, V, D> {
         self.owner_mut()
@@ -517,10 +505,18 @@ where
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    /// Owned metadata that deliberately cannot be copied or cloned.
+    #[derive(Debug, PartialEq, serde::Serialize)]
+    pub(crate) struct NonClonePayload(pub u32);
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::core::collections::FastHashMap;
-    use crate::core::tds::TdsBuilder;
+    use crate::core::tds::rollback::test_support::NonClonePayload;
+    use crate::core::tds::{TdsBuilder, TdsSnapshot};
     use crate::vertex;
     use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
@@ -549,7 +545,9 @@ mod tests {
         identity: Arc<Uuid>,
     }
 
-    fn owner_snapshot<const D: usize>(tds: &Tds<u32, u32, D>) -> OwnerStateEvidence {
+    fn owner_snapshot<const D: usize>(
+        tds: &Tds<NonClonePayload, NonClonePayload, D>,
+    ) -> OwnerStateEvidence {
         OwnerStateEvidence {
             serialized: serde_json::to_value(tds).unwrap(),
             vertex_hints: tds
@@ -571,14 +569,17 @@ mod tests {
         }
     }
 
-    fn assert_owner_restored<const D: usize>(tds: &Tds<u32, u32, D>, before: &OwnerStateEvidence) {
+    fn assert_owner_restored<const D: usize>(
+        tds: &Tds<NonClonePayload, NonClonePayload, D>,
+        before: &OwnerStateEvidence,
+    ) {
         assert!(Arc::ptr_eq(tds.identity(), &before.identity));
         assert_eq!(&owner_snapshot(tds), before);
         tds.validate()
             .expect("restored owner must satisfy Levels 1-2");
     }
 
-    fn populated_owner<const D: usize>() -> (Tds<u32, u32, D>, VertexKey) {
+    fn populated_owner<const D: usize>() -> (Tds<NonClonePayload, NonClonePayload, D>, VertexKey) {
         let vertices: Vec<_> = (0..D + 2)
             .map(|slot| {
                 let mut coords = [0.0; D];
@@ -602,9 +603,17 @@ mod tests {
             tds.set_simplex_data(key, Some(u32::try_from(index).unwrap() + 100))
                 .unwrap();
         }
+        let tds = TdsSnapshot::try_from_validated_tds(&tds)
+            .unwrap()
+            .map_payloads(
+                |&value| NonClonePayload(value),
+                |&value| NonClonePayload(value),
+            )
+            .into_tds()
+            .unwrap();
         let removable = tds
             .vertices()
-            .find(|(_, vertex)| vertex.data() == Some(&1))
+            .find(|(_, vertex)| vertex.data() == Some(&NonClonePayload(1)))
             .map(|(key, _)| key)
             .unwrap();
         tds.validate()
@@ -619,14 +628,14 @@ mod tests {
             let mut transaction = TdsRollbackTransaction::begin(&mut tds);
             let parent_key = transaction
                 .tds_mut()
-                .insert_vertex_with_mapping(vertex![[4.0; D]; data = 90].unwrap())
+                .insert_vertex_with_mapping(vertex![[4.0; D]; data = NonClonePayload(90)].unwrap())
                 .unwrap();
             let savepoint = transaction.tds_mut().begin_rollback_savepoint();
             transaction.tds_mut().remove_vertex(removable).unwrap();
             transaction.tds_mut().remove_vertex(parent_key).unwrap();
             let child_key = transaction
                 .tds_mut()
-                .insert_vertex_with_mapping(vertex![[5.0; D]; data = 91].unwrap())
+                .insert_vertex_with_mapping(vertex![[5.0; D]; data = NonClonePayload(91)].unwrap())
                 .unwrap();
             transaction.tds_mut().commit_savepoint(savepoint);
             assert!(transaction.tds_mut().vertex(removable).is_none());
@@ -650,7 +659,7 @@ mod tests {
         transaction.tds_mut().remove_vertex(removable).unwrap();
         let rejected_key = transaction
             .tds_mut()
-            .insert_vertex_with_mapping(vertex![[4.0; D]; data = 90].unwrap())
+            .insert_vertex_with_mapping(vertex![[4.0; D]; data = NonClonePayload(90)].unwrap())
             .unwrap();
 
         transaction.restore();
@@ -659,7 +668,7 @@ mod tests {
 
         let committed_key = transaction
             .tds_mut()
-            .insert_vertex_with_mapping(vertex![[5.0; D]; data = 91].unwrap())
+            .insert_vertex_with_mapping(vertex![[5.0; D]; data = NonClonePayload(91)].unwrap())
             .unwrap();
         assert_ne!(rejected_key, committed_key);
         let committed = owner_snapshot(transaction.tds_mut());
@@ -667,7 +676,10 @@ mod tests {
 
         assert_owner_restored(&tds, &committed);
         assert!(tds.vertex(rejected_key).is_none());
-        assert_eq!(tds.vertex(committed_key).unwrap().data(), Some(&91));
+        assert_eq!(
+            tds.vertex(committed_key).unwrap().data(),
+            Some(&NonClonePayload(91))
+        );
         assert!(tds.generation() > before.generation);
         assert!(tds.rollback_journals.is_empty());
     }
@@ -680,7 +692,7 @@ mod tests {
             transaction.tds_mut().remove_vertex(removable).unwrap();
             let parent_key = transaction
                 .tds_mut()
-                .insert_vertex_with_mapping(vertex![[4.0; D]; data = 90].unwrap())
+                .insert_vertex_with_mapping(vertex![[4.0; D]; data = NonClonePayload(90)].unwrap())
                 .unwrap();
             transaction.tds_mut().validate().unwrap();
             let parent_state = owner_snapshot(transaction.tds_mut());
@@ -688,7 +700,7 @@ mod tests {
             transaction.tds_mut().remove_vertex(parent_key).unwrap();
             let child_key = transaction
                 .tds_mut()
-                .insert_vertex_with_mapping(vertex![[5.0; D]; data = 91].unwrap())
+                .insert_vertex_with_mapping(vertex![[5.0; D]; data = NonClonePayload(91)].unwrap())
                 .unwrap();
             transaction.tds_mut().rollback_savepoint(savepoint);
             assert_owner_restored(transaction.tds_mut(), &parent_state);

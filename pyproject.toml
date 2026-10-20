@@ -279,7 +279,7 @@ notebooks = [
 ]
 
 [tool.uv]
-required-version = "==0.13.1"
+required-version = "==0.13.2"
 # Semgrep 1.181.0 pins vulnerable MCP 1.29.0 and pywin32 311, whose wheels
 # stop at Python 3.14. Retain patched MCP 1.x and Python 3.15 Windows wheels.
 override-dependencies = [ "mcp==1.30.0", "pywin32==312; sys_platform == 'win32'" ]

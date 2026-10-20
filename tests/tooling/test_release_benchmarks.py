@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import sys
+import tarfile
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -12,6 +13,7 @@ import yaml
 from research_repo_tools.process import run_command
 from research_repo_tools.release_assets import GitHubRelease, ReleaseTarget, parse_release_target
 
+import benchmark_utils
 import release_benchmarks
 
 COMMIT = "a" * 40
@@ -136,6 +138,78 @@ def test_release_workflow_preserves_trusted_code_runtime_and_target() -> None:
     assert workflow.count('"$RUNNER_TEMP/release-tools/.venv/bin/python"') == 2
     assert 'preflight "$RUNNER_TEMP/release-target.json"' in workflow
     assert 'publish "$RUNNER_TEMP/release-target.json"' in workflow
+
+
+def test_release_workflow_staging_preserves_clean_source_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Execute workflow staging with real Git capture and archive creation, without sampling."""
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    checkout = tmp_path / "release checkout"
+    checkout.mkdir()
+    (checkout / ".gitignore").write_bytes((WORKFLOW.parents[2] / ".gitignore").read_bytes())
+    for args in (
+        ["init", "--quiet"],
+        ["add", ".gitignore"],
+        ["-c", "user.name=Release Test", "-c", "user.email=release@example.invalid", "commit", "--quiet", "-m", "release"],
+    ):
+        run_command("git", args, cwd=checkout, timeout=30)
+    expected_source = benchmark_utils._source_state(checkout, version=TAG, ref=TAG)
+    assert expected_source.git_clean is True
+
+    executables = tmp_path / "bin"
+    executables.mkdir()
+    just = executables / "just"
+    just.write_text('#!/bin/sh\nmkdir -p target/criterion\nprintf "raw samples\\n" > target/criterion/sample.json\n', encoding="utf-8")
+    just.chmod(0o755)
+    stub = tmp_path / "benchmark_boundary.py"
+    stub.write_text(
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        f"sys.path.insert(0, {str(Path(benchmark_utils.__file__).parent)!r})\n"
+        "import benchmark_utils\n"
+        "assert sys.argv[1:4] == ['run', '--locked', 'benchmark-utils']\n"
+        "command = sys.argv[4]\n"
+        "output = Path(sys.argv[sys.argv.index('--output') + 1])\n"
+        "if command == 'generate-summary':\n"
+        "    output.write_text('benchmark summary\\n', encoding='utf-8')\n"
+        "elif command == 'create-release-benchmark-metadata':\n"
+        "    tag = sys.argv[sys.argv.index('--tag') + 1]\n"
+        "    source = benchmark_utils._source_state(Path.cwd(), version=tag, ref=tag)\n"
+        "    output.write_text(json.dumps(benchmark_utils._source_state_payload(source)), encoding='utf-8')\n"
+        "else:\n"
+        "    raise AssertionError(command)\n",
+        encoding="utf-8",
+    )
+    uv = executables / "uv"
+    uv.write_text(
+        f'#!/bin/sh\nexec {shlex.quote(Path(sys.executable).as_posix())} {shlex.quote(stub.as_posix())} "$@"\n',
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    output = tmp_path / "github-output"
+    environment = os.environ | {
+        "PATH": f"{executables}{os.pathsep}{os.environ.get('PATH', '')}",
+        "GITHUB_OUTPUT": output.as_posix(),
+        "RELEASE_TAG": TAG,
+    }
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    for name in ("Generate release benchmark summary", "Package release Criterion baseline"):
+        command = next(step["run"] for step in workflow["jobs"]["release-baseline"]["steps"] if step.get("name") == name)
+        run_command("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", command], cwd=checkout, env=environment, timeout=30)
+
+    assert output.read_text(encoding="utf-8") == f"asset={ASSET}\n"
+    with tarfile.open(checkout / ASSET) as archive:
+        members = {member.name.removeprefix("./"): member for member in archive.getmembers() if member.isfile()}
+        assert set(members) == {"PERFORMANCE_RESULTS.md", "criterion/sample.json", "metadata.json"}
+        contents: dict[str, bytes] = {}
+        for name, member in members.items():
+            extracted = archive.extractfile(member)
+            assert extracted is not None
+            with extracted:
+                contents[name] = extracted.read()
+    assert contents["PERFORMANCE_RESULTS.md"] == b"benchmark summary\n"
+    assert contents["criterion/sample.json"] == b"raw samples\n"
+    assert json.loads(contents["metadata.json"]) == benchmark_utils._source_state_payload(expected_source)
 
 
 @pytest.mark.parametrize(

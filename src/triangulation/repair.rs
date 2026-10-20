@@ -16,7 +16,7 @@ use crate::core::collections::{
     SimplexKeyBuffer, SimplexKeySet, SmallBuffer, VertexKeySet, fast_hash_set_with_capacity,
 };
 use crate::core::facet::FacetHandle;
-use crate::core::tds::{InvariantError, SimplexKey, TdsError, VertexKey};
+use crate::core::tds::{SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::quality::{QualityError, QualitySimplexVerticesError, radius_ratio};
@@ -24,6 +24,7 @@ use crate::geometry::traits::coordinate::CoordinateConversionValue;
 use crate::triangulation::Triangulation;
 use crate::triangulation::rollback::TriangulationRollbackTransaction;
 use crate::triangulation::validation::TriangulationValidationError;
+use crate::validation_report::InvariantError;
 use std::env;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -136,7 +137,8 @@ pub fn insertion_error_to_vertex_removal_error(
         InsertionError::TopologyValidationFailed { source, .. } => {
             InvariantError::Triangulation { source }
         }
-        InsertionError::RealizationValidationFailed { source } => {
+        InsertionError::RealizationValidationFailed { source }
+        | InsertionError::OrientationValidationFailed { source } => {
             InvariantError::Realization { source }
         }
         InsertionError::DelaunayValidationFailed { source } => InvariantError::Delaunay { source },

@@ -16,7 +16,8 @@
 //! # References
 //!
 //! - O. Devillers, S. Pion, and M. Teillaud, "Walking in a Triangulation",
-//!   International Journal of Foundations of Computer Science, 2001.
+//!   International Journal of Foundations of Computer Science 13(2), 181–199 (2002).
+//!   See the [point-location bibliography](https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md#point-location-in-triangulations).
 //! - CGAL Triangulation_3 documentation
 
 use crate::core::collections::{

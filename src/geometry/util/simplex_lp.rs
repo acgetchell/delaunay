@@ -678,9 +678,11 @@ enum RevisedSimplexResult {
 
 /// Maximizes an exact objective subject to `matrix * x = rhs` and `x >= 0`.
 ///
-/// Phase I introduces one artificial variable per equality. Bland's pivot
-/// ordering makes degenerate exact-arithmetic bases deterministic and avoids
+/// Phase I introduces one artificial variable per equality. [Bland's pivot
+/// rule](https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md#point-in-polytope-testing)
+/// makes degenerate exact-arithmetic bases deterministic and avoids
 /// cycling. Artificial variables are pivoted out at zero before Phase II.
+/// The explicit iteration budget can still return `Failed` before termination.
 fn maximize_nonnegative_equality_linear_program(
     matrix: &[Vec<BigRational>],
     rhs: &[BigRational],

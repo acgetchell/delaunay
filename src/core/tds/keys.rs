@@ -21,7 +21,7 @@ new_key_type! {
         /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
         /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
         /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-        /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+        /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
         /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
         /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
         /// #     #[error(transparent)]
@@ -63,7 +63,7 @@ new_key_type! {
         /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
         /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
         /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-        /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
+        /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::validation::InvariantError),
         /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
         /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
         /// #     #[error(transparent)]

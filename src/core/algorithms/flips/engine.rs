@@ -15,10 +15,11 @@ use super::{
     facet_key_from_vertices, facet_order, facet_vertices_from_simplex,
     flip_would_create_nonmanifold_facets_any, flip_would_duplicate_simplex_any,
     normalized_facet_order_with_offsets, orient_replacement_simplices,
-    periodic_offsets_or_zero_frame, permutation_odd, repair_trace_enabled,
-    replacement_simplex_periodic_offsets, robust_orientation, validate_replacement_orientation,
-    vertices_to_points, wire_cavity_neighbors,
+    periodic_offsets_or_zero_frame, repair_trace_enabled, replacement_simplex_periodic_offsets,
+    robust_orientation, validate_replacement_orientation, vertices_to_points,
+    wire_cavity_neighbors,
 };
+use crate::core::util::permutation::permutation_odd;
 
 pub(super) fn snapshot_removed_simplex_vertices<U, V, const D: usize>(
     tds: &Tds<U, V, D>,

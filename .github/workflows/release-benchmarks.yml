@@ -77,11 +77,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p release-benchmark-artifacts
+          # Keep generated staging out of the clean-source snapshot used by metadata.
+          mkdir -p target/release-benchmark-artifacts
           just bench-latest 3600
           uv run --locked benchmark-utils generate-summary \
             --strict \
-            --output release-benchmark-artifacts/PERFORMANCE_RESULTS.md
+            --output target/release-benchmark-artifacts/PERFORMANCE_RESULTS.md
 
       - name: Package release Criterion baseline
         id: package-baseline
@@ -95,14 +96,14 @@ jobs:
             exit 1
           fi
 
-          cp -r target/criterion release-benchmark-artifacts/criterion
+          cp -r target/criterion target/release-benchmark-artifacts/criterion
           uv run --locked benchmark-utils create-release-benchmark-metadata \
             --tag "$RELEASE_TAG" \
-            --criterion-dir release-benchmark-artifacts/criterion \
-            --output release-benchmark-artifacts/metadata.json
+            --criterion-dir target/release-benchmark-artifacts/criterion \
+            --output target/release-benchmark-artifacts/metadata.json
 
           asset="delaunay-${RELEASE_TAG}-criterion-baseline.tar.gz"
-          tar -czf "$asset" -C release-benchmark-artifacts .
+          tar -czf "$asset" -C target/release-benchmark-artifacts .
           echo "asset=$asset" >> "$GITHUB_OUTPUT"
 
       - name: Upload temporary release benchmark artifact

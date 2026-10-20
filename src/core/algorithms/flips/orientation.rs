@@ -12,6 +12,7 @@ use super::{
     robust_orientation, should_emit_postcondition_facet_debug, should_emit_ridge_debug,
     simplex_extras_for_ridge, validate_periodic_offset_len, vertices_to_points,
 };
+use crate::core::util::permutation::permutation_odd;
 
 /// Chooses replacement-simplex parity from the oriented cavity boundary.
 pub(super) fn orient_replacement_simplices<U, V, const D: usize>(
@@ -584,44 +585,6 @@ pub(super) fn facet_order(
         }
     }
     Ok(order)
-}
-
-/// Returns whether the permutation from `source_order` to `target_order` is odd.
-pub(super) fn permutation_odd<Id: PartialEq>(
-    source_order: &[Id],
-    target_order: &[Id],
-) -> Option<bool> {
-    if source_order.len() != target_order.len() {
-        return None;
-    }
-
-    let mut target_positions: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> =
-        SmallBuffer::with_capacity(source_order.len());
-    let mut used_target_indices: SmallBuffer<bool, MAX_PRACTICAL_DIMENSION_SIZE> =
-        SmallBuffer::from_elem(false, target_order.len());
-
-    for source_vertex in source_order {
-        let mut matched_target_position = None;
-        for (target_idx, target_vertex) in target_order.iter().enumerate() {
-            if target_vertex == source_vertex && !used_target_indices[target_idx] {
-                matched_target_position = Some(target_idx);
-                used_target_indices[target_idx] = true;
-                break;
-            }
-        }
-        target_positions.push(matched_target_position?);
-    }
-
-    let mut inversion_count = 0usize;
-    for i in 0..target_positions.len() {
-        for j in (i + 1)..target_positions.len() {
-            if target_positions[i] > target_positions[j] {
-                inversion_count += 1;
-            }
-        }
-    }
-
-    Some(inversion_count % 2 == 1)
 }
 
 /// Ensures Delaunay-repair replacement simplices have positive geometric orientation.
@@ -1573,13 +1536,6 @@ mod tests {
                         Err(FlipError::InvalidFlipContext { .. }),
                         "invalid facet-order constraints should surface as invalid context"
                     );
-
-                    let mut odd_target_vertices = simplex_vertices.clone();
-                    odd_target_vertices.swap(1, 2);
-                    let odd_target = vertex_key_buffer(&odd_target_vertices);
-                    assert_eq!(permutation_odd(&source, &odd_target), Some(true));
-                    assert_eq!(permutation_odd(&source, &short), None);
-                    assert_eq!(permutation_odd(&source, &neighbor), None);
                 }
 
                 #[test]

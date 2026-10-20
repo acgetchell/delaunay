@@ -7,8 +7,9 @@
 use delaunay::flips::{BistellarFlips, FlipError, SimplexKey};
 use delaunay::geometry::kernel::{AdaptiveKernel, ExactPredicates};
 use delaunay::prelude::construction::{
-    ConstructionOptions, ConstructionStatistics, DelaunayIncrementalBuilder, DelaunayTriangulation,
-    DelaunayTriangulationBuilder, InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex,
+    ConstructionOptions, ConstructionStatistics, DelaunayIncrementalBuilder,
+    DelaunayIncrementalBuilderError, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeError};
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
@@ -23,18 +24,224 @@ use delaunay::prelude::ordering::{
 use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
 use delaunay::prelude::query::{ConvexHull, extract_hull_facet_set};
 use delaunay::prelude::repair::DelaunayRepairError;
-use delaunay::prelude::tds::{InvariantError, Tds, TdsBuilder};
+use delaunay::prelude::tds::{Tds, TdsBuilder, TdsBuilderError};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind};
 use delaunay::prelude::triangulation::{
     Triangulation, TriangulationBuilder, TriangulationBuilderError, TriangulationEditError,
     TriangulationSnapshot,
 };
+use delaunay::prelude::validation::InvariantError;
 use delaunay::prelude::validation::{
     DelaunayTriangulationValidationError, TriangulationRealizationValidationError,
     TriangulationValidationError, ValidationPolicy,
 };
 use delaunay::vertex;
 use uuid::Uuid;
+
+#[derive(Debug, thiserror::Error)]
+enum VertexOnlyTdsRegressionError {
+    #[error(transparent)]
+    Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    #[error(transparent)]
+    Build(#[from] TdsBuilderError),
+    #[error(transparent)]
+    Mutation(#[from] delaunay::prelude::tds::TdsMutationError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    CborEncode(#[from] ciborium::ser::Error<std::io::Error>),
+    #[error(transparent)]
+    CborDecode(#[from] ciborium::de::Error<std::io::Error>),
+    #[error("vertex-only TDS unexpectedly promoted to a triangulation")]
+    UnexpectedPromotion,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum IncrementalFinishRegressionError {
+    #[error(transparent)]
+    Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    #[error(transparent)]
+    Incremental(#[from] DelaunayIncrementalBuilderError),
+    #[error(transparent)]
+    Validation(#[from] DelaunayTriangulationValidationError),
+    #[error("an incomplete builder unexpectedly published a triangulation")]
+    UnexpectedPublication,
+    #[error("recovered builder lost vertex at input index {index}")]
+    MissingVertex { index: usize },
+}
+
+fn assert_vertex_only_tds_round_trip<const D: usize>() -> Result<(), VertexOnlyTdsRegressionError> {
+    let mut vertices = vec![vertex!([0.25; D]; data = 0_usize)?];
+    for axis in 0..D {
+        let mut coords = [0.25; D];
+        coords[axis] = 1.25;
+        vertices.push(vertex!(coords; data = axis + 1)?);
+    }
+    // Completed construction still requires a simplex for a nonempty input.
+    assert!(matches!(
+        TdsBuilder::<_, D>::new(&vertices, &[]).build(),
+        Err(TdsBuilderError::EmptySimplices)
+    ));
+    let mut original: Tds<usize, (), D> =
+        TdsBuilder::new(&vertices, &[(0..=D).collect()]).build()?;
+    let simplex_keys: Vec<_> = original.simplices().map(|(key, _)| key).collect();
+    assert_eq!(original.remove_simplices_by_keys(&simplex_keys)?, 1);
+    assert!(original.validate().is_ok());
+
+    let json = serde_json::to_vec(&original)?;
+    let from_json: Tds<usize, (), D> = serde_json::from_slice(&json)?;
+    let mut cbor = Vec::new();
+    ciborium::into_writer(&original, &mut cbor)?;
+    let from_cbor: Tds<usize, (), D> = ciborium::from_reader(cbor.as_slice())?;
+    let mut expected: Vec<_> = vertices
+        .iter()
+        .map(|vertex| {
+            (
+                vertex.uuid(),
+                vertex.point().coords().map(f64::to_bits),
+                vertex.data().copied(),
+            )
+        })
+        .collect();
+    expected.sort_unstable();
+
+    for mut restored in [from_json, from_cbor] {
+        assert_eq!(restored.number_of_vertices(), D + 1);
+        assert_eq!(restored.number_of_simplices(), 0);
+        assert!(restored.validate().is_ok());
+        assert!(
+            restored
+                .vertices()
+                .all(|(_, vertex)| vertex.incident_simplex().is_none())
+        );
+        let mut actual: Vec<_> = restored
+            .vertices()
+            .map(|(_, vertex)| {
+                (
+                    vertex.uuid(),
+                    vertex.point().coords().map(f64::to_bits),
+                    vertex.data().copied(),
+                )
+            })
+            .collect();
+        actual.sort_unstable();
+        assert_eq!(actual, expected);
+
+        // Restoring Levels 1–2 must not confer construction or higher-layer proof.
+        for canonicalizing in [false, true] {
+            let builder = TriangulationBuilder::new(restored, RobustKernel::new());
+            let builder = if canonicalizing {
+                builder.canonicalizing()
+            } else {
+                builder
+            };
+            let Err(failure) = builder.build() else {
+                return Err(VertexOnlyTdsRegressionError::UnexpectedPromotion);
+            };
+            assert!(matches!(
+                failure.reason(),
+                TriangulationBuilderError::RealizationValidation { source }
+                    if matches!(source.as_ref(),
+                        TriangulationRealizationValidationError::IncompleteConstruction { vertex_count }
+                            if *vertex_count == D + 1)
+            ));
+            restored = failure.into_owner();
+            assert!(restored.validate().is_ok());
+            assert_eq!(serde_json::to_vec(&restored)?, json);
+        }
+    }
+    Ok(())
+}
+
+fn assert_incremental_finish_recovery<const D: usize>()
+-> Result<(), IncrementalFinishRegressionError>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
+    let mut vertices = vec![vertex!([0.0; D]; data = 0_usize)?];
+    for axis in 0..D {
+        let mut coords = [0.0; D];
+        coords[axis] = 1.0;
+        vertices.push(vertex!(coords; data = axis + 1)?);
+    }
+    let mut builder: DelaunayIncrementalBuilder<_, usize, (), D> =
+        DelaunayIncrementalBuilder::with_kernel(AdaptiveKernel::new());
+    let mut keys = Vec::new();
+    for (index, vertex) in vertices[..D].iter().enumerate() {
+        keys.push(builder.insert_vertex(*vertex)?);
+        let Err(failure) = builder.finish() else {
+            return Err(IncrementalFinishRegressionError::UnexpectedPublication);
+        };
+        assert!(matches!(failure.reason(),
+            DelaunayIncrementalBuilderError::IncompleteBootstrap { dimension, vertex_count }
+                if *dimension == D && *vertex_count == index + 1
+        ));
+        assert_eq!(failure.owner().number_of_vertices(), index + 1);
+        builder = failure.into_owner();
+        for (index, (key, expected)) in keys.iter().zip(&vertices).enumerate() {
+            let Some(actual) = builder.vertex(*key) else {
+                return Err(IncrementalFinishRegressionError::MissingVertex { index });
+            };
+            assert_eq!(actual.uuid(), expected.uuid());
+            assert_eq!(
+                actual.point().coords().map(f64::to_bits),
+                expected.point().coords().map(f64::to_bits)
+            );
+            assert_eq!(actual.data(), expected.data());
+        }
+    }
+    keys.push(builder.insert_vertex(vertices[D])?);
+    let finished = builder
+        .finish()
+        .map_err(delaunay::RefinementError::into_reason)?;
+    finished.validate()?;
+    assert_eq!(finished.number_of_vertices(), D + 1);
+    assert_eq!(finished.number_of_simplices(), 1);
+    for (index, (key, expected)) in keys.iter().zip(&vertices).enumerate() {
+        let Some(actual) = finished.vertex(*key) else {
+            return Err(IncrementalFinishRegressionError::MissingVertex { index });
+        };
+        assert_eq!(actual.uuid(), expected.uuid());
+        assert_eq!(
+            actual.point().coords().map(f64::to_bits),
+            expected.point().coords().map(f64::to_bits)
+        );
+        assert_eq!(actual.data(), expected.data());
+    }
+    Ok(())
+}
+
+macro_rules! vertex_only_tds_regression_tests {
+    ($dim:literal) => {
+        pastey::paste! {
+            #[test]
+            fn [<regression_vertex_only_tds_round_trip_ $dim d>]() -> Result<(), VertexOnlyTdsRegressionError> {
+                assert_vertex_only_tds_round_trip::<$dim>()
+            }
+        }
+    };
+}
+
+vertex_only_tds_regression_tests!(2);
+vertex_only_tds_regression_tests!(3);
+vertex_only_tds_regression_tests!(4);
+vertex_only_tds_regression_tests!(5);
+
+macro_rules! incremental_finish_regression_tests {
+    ($dim:literal) => {
+        pastey::paste! {
+            #[test]
+            fn [<regression_incremental_finish_recovery_ $dim d>]() -> Result<(), IncrementalFinishRegressionError> {
+                assert_incremental_finish_recovery::<$dim>()
+            }
+        }
+    };
+}
+
+incremental_finish_regression_tests!(2);
+incremental_finish_regression_tests!(3);
+incremental_finish_regression_tests!(4);
+incremental_finish_regression_tests!(5);
 
 fn assert_coplanar_hull_extension_and_snapshot_independence<const D: usize>()
 where
@@ -1799,4 +2006,152 @@ fn regression_issue_204_4d_500_local_repair_budget() {
     dt.as_triangulation()
         .validate_realization()
         .expect("#204 regression triangulation must pass Levels 1-4 validation");
+}
+
+mod tds_equality {
+    //! Coordinate-based equality across independently constructed TDS owners.
+
+    use delaunay::prelude::geometry::{
+        CoordinateConversionError, CoordinateValidationError, Point,
+    };
+    use delaunay::prelude::tds::{
+        Tds, TdsBuilder, TdsBuilderError, TdsError, Vertex, VertexValidationError,
+    };
+    use delaunay::vertex;
+    use uuid::Uuid;
+
+    #[derive(Debug, thiserror::Error)]
+    enum TestError {
+        #[error(transparent)]
+        Point {
+            #[from]
+            source: CoordinateValidationError,
+        },
+        #[error(transparent)]
+        Coordinates {
+            #[from]
+            source: CoordinateConversionError,
+        },
+        #[error(transparent)]
+        Vertex {
+            #[from]
+            source: VertexValidationError,
+        },
+        #[error(transparent)]
+        Build {
+            #[from]
+            source: TdsBuilderError,
+        },
+        #[error(transparent)]
+        Validation {
+            #[from]
+            source: TdsError,
+        },
+    }
+
+    type TestResult<T = ()> = Result<T, TestError>;
+
+    /// Two simplices sharing the facet opposite the origin. Swapping endpoint UUID
+    /// ranks reverses UUID-based simplex ordering without changing connectivity.
+    fn adjacent_simplices<const D: usize>(
+        swap_uuid_ranks: bool,
+        permute_storage: bool,
+    ) -> TestResult<Tds<usize, (), D>> {
+        let mut coords = vec![[0.0; D]];
+        for axis in 0..D {
+            let mut point = [0.0; D];
+            point[axis] = 1.0;
+            coords.push(point);
+        }
+        coords.push([1.0; D]);
+
+        let mut vertices = Vec::new();
+        for (index, coords) in coords.into_iter().enumerate() {
+            let rank = if swap_uuid_ranks && (index == 0 || index == D + 1) {
+                D + 1 - index
+            } else {
+                index
+            };
+            let uuid =
+                Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_0000 + rank as u128 + 1);
+            vertices.push(Vertex::try_new_with_uuid(
+                Point::try_new(coords)?,
+                uuid,
+                Some(if swap_uuid_ranks { index + 100 } else { index }),
+            )?);
+        }
+        let mut simplices = vec![(0..=D).collect::<Vec<_>>(), (1..=D + 1).collect()];
+        if permute_storage {
+            vertices.reverse();
+            for simplex in &mut simplices {
+                for index in simplex.iter_mut() {
+                    *index = D + 1 - *index;
+                }
+                simplex.reverse();
+            }
+            simplices.reverse();
+        }
+        let tds = TdsBuilder::new(&vertices, &simplices).build()?;
+        tds.validate()?;
+        Ok(tds)
+    }
+
+    macro_rules! equality_dimensions {
+        ($($dim:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<equality_ignores_uuid_payload_and_storage_order_ $dim d>]() -> TestResult {
+                        let original = adjacent_simplices::<$dim>(false, false)?;
+                        let reranked = adjacent_simplices::<$dim>(true, false)?;
+                        let reordered = adjacent_simplices::<$dim>(true, true)?;
+
+                        assert_eq!(original, reranked);
+                        assert_eq!(reranked, reordered);
+                        assert_eq!(reordered, original);
+                        Ok(())
+                    }
+                )+
+            }
+        };
+    }
+
+    equality_dimensions!(2, 3, 4, 5);
+
+    #[test]
+    fn equality_distinguishes_square_diagonals() -> TestResult {
+        let vertices: [Vertex<(), 2>; 4] = [
+            vertex!([0.0, 0.0])?,
+            vertex!([1.0, 0.0])?,
+            vertex!([0.0, 1.0])?,
+            vertex!([1.0, 1.0])?,
+        ];
+        let left = TdsBuilder::new(&vertices, &[vec![0, 1, 2], vec![1, 2, 3]]).build()?;
+        let right = TdsBuilder::new(&vertices, &[vec![0, 1, 3], vec![0, 2, 3]]).build()?;
+        left.validate()?;
+        right.validate()?;
+        assert_ne!(left, right);
+        Ok(())
+    }
+
+    #[test]
+    fn equality_matches_coincident_vertices_by_their_incidence() -> TestResult {
+        // Equal coordinates are allowed in distinct simplices. Reversing the two
+        // origin vertices must not pair their different stars in insertion order.
+        let mut vertices: [Vertex<(), 2>; 6] = [
+            vertex!([0.0, 0.0])?,
+            vertex!([1.0, 0.0])?,
+            vertex!([0.0, 1.0])?,
+            vertex!([0.0, 0.0])?,
+            vertex!([-1.0, 0.0])?,
+            vertex!([0.0, -1.0])?,
+        ];
+        let left = TdsBuilder::new(&vertices, &[vec![0, 1, 2], vec![3, 4, 5]]).build()?;
+        vertices.swap(0, 3);
+        let right = TdsBuilder::new(&vertices, &[vec![3, 1, 2], vec![0, 4, 5]]).build()?;
+        left.validate()?;
+        right.validate()?;
+        assert_eq!(left, right);
+        Ok(())
+    }
 }

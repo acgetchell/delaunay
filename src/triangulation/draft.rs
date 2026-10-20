@@ -3,7 +3,6 @@
 #![forbid(unsafe_code)]
 
 use crate::core::tds::Tds;
-use crate::core::traits::data_type::DataType;
 use crate::geometry::kernel::Kernel;
 use crate::refinement::RefinementError;
 use crate::topology::traits::topological_space::GlobalTopology;
@@ -82,8 +81,8 @@ impl<K, U, V, const D: usize> TriangulationDraft<K, U, V, D> {
 impl<K, U, V, const D: usize> TriangulationDraft<K, U, V, D>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
+    U: Clone,
+    V: Clone,
 {
     /// Publishes already-normalized TDS storage without a canonicalizing clone.
     pub(crate) fn finish_strict(
@@ -263,10 +262,11 @@ mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tds::{GeometricError, InvariantError, TdsBuilder, TdsError};
+    use crate::core::tds::TdsBuilder;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::topology::traits::topological_space::TopologyKind;
     use crate::triangulation::validation::TriangulationValidationError;
+    use crate::validation_report::InvariantError;
     use crate::vertex;
     use std::assert_matches;
 
@@ -358,9 +358,7 @@ mod tests {
         assert_matches!(
             failure.reason(),
             TriangulationBuilderError::GeometricNondegeneracy { source }
-                if matches!(source.as_ref(), TdsError::Geometric {
-                    source: GeometricError::DegenerateOrientation { .. },
-                })
+                if matches!(source.as_ref(), TriangulationRealizationValidationError::DegenerateSimplex { dimension: 2, .. })
         );
 
         let mut recovered = failure.into_owner();

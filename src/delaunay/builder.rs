@@ -98,8 +98,8 @@ use crate::core::collections::{
 };
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
-    ExplicitSimplexParseError, InvariantError, ParsedTdsInput, SimplexKey, TdsBuilder,
-    TdsBuilderError, TdsConstructionError, TdsError, TdsMutationError, VertexKey,
+    ExplicitSimplexParseError, ParsedTdsInput, SimplexKey, TdsBuilder, TdsBuilderError,
+    TdsConstructionError, TdsError, TdsMutationError, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
@@ -125,6 +125,7 @@ use crate::triangulation::validation::{
     ValidationPolicy,
 };
 use crate::validation::DelaunayTriangulationValidationError;
+use crate::validation_report::InvariantError;
 
 use num_traits::{ToPrimitive, cast};
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
@@ -880,9 +881,9 @@ pub enum ExplicitConstructionError {
     /// Geometric nondegeneracy validation failed after assembly.
     #[error("Geometric nondegeneracy validation failed during explicit construction: {source}")]
     GeometricNondegeneracy {
-        /// Underlying TDS/geometric validation error.
+        /// Underlying triangulation-owned geometric validation error.
         #[source]
-        source: Box<TdsError>,
+        source: Box<TriangulationRealizationValidationError>,
     },
     /// Level 4 realization validation failed before returning the wrapper.
     #[error("Realization validation failed during explicit construction: {source}")]

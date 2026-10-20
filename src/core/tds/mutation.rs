@@ -12,7 +12,9 @@ use crate::core::collections::{
     SimplexRemovalBuffer, SmallBuffer, VertexKeySet, fast_hash_map_with_capacity,
     fast_hash_set_with_capacity,
 };
-use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
+use crate::core::simplex::{
+    NeighborSlot, Simplex, SimplexValidationError, canonical_periodic_identity,
+};
 use crate::core::vertex::Vertex;
 use crate::refinement::RefinementError;
 use std::collections::VecDeque;
@@ -508,7 +510,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             });
         }
 
-        let mut vertex_uuid_offsets = SimplexUuidSortKey::<D>::new();
+        let mut vertex_uuid_offsets = SmallBuffer::<_, MAX_PRACTICAL_DIMENSION_SIZE>::new();
         for (vertex_idx, &vertex_key) in vertices.iter().enumerate() {
             let vertex = self
                 .vertices
@@ -523,9 +525,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             let offset = periodic_offsets.map_or([0_i8; D], |offsets| offsets[vertex_idx]);
             vertex_uuid_offsets.push((vertex.uuid(), offset));
         }
-        vertex_uuid_offsets.sort_unstable();
-
-        Ok(vertex_uuid_offsets)
+        Ok(canonical_periodic_identity(vertex_uuid_offsets))
     }
 
     /// Rejects a candidate simplex that duplicates an existing maximal simplex.
@@ -2367,7 +2367,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         Ok(())
     }
 
-    /// Removes duplicate simplices with identical vertex sets.
+    /// Removes duplicate simplices with identical vertex identities and relative
+    /// periodic offsets. Vertex order and common lattice shifts are ignored.
     ///
     /// Returns the number of duplicate simplices that were removed.
     ///
@@ -2376,9 +2377,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// maintain data structure invariants and prevent stale references. If the
     /// rebuild or validation fails, the original structure is restored.
     ///
-    /// When duplicates are present, the rollback snapshot cost is linear in the
-    /// size of the stored topology. The method therefore requires stored
-    /// coordinates and payloads to be cloneable so rollback can preserve them.
+    /// The rollback journal retains removed simplices by ownership and records
+    /// topology fields changed during rebuilding. Payloads are not cloned.
     ///
     /// # Errors
     ///
@@ -2400,11 +2400,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn remove_duplicate_simplices(&mut self) -> Result<usize, TdsMutationError>
-    where
-        U: Clone,
-        V: Clone,
-    {
+    pub fn remove_duplicate_simplices(&mut self) -> Result<usize, TdsMutationError> {
         let mut unique_simplices = FastHashMap::default();
         let mut simplices_to_remove = SimplexRemovalBuffer::new();
 
@@ -2488,6 +2484,7 @@ mod tests {
     use crate::core::simplex::Simplex;
     use crate::core::tds::TdsBuilder;
     use crate::core::tds::errors::TriangulationConstructionState;
+    use crate::core::tds::rollback::test_support::NonClonePayload;
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
@@ -2539,6 +2536,68 @@ mod tests {
     // =============================================================================
     // TEST HELPER FUNCTIONS
     // =============================================================================
+
+    fn assert_periodic_duplicate_transitions<const D: usize>() {
+        let mut vertices = vec![vertex!([0.0; D]).unwrap()];
+        for axis in 0..D {
+            let mut coords = [0.0; D];
+            coords[axis] = 1.0;
+            vertices.push(vertex!(coords).unwrap());
+        }
+        let original: Tds<(), (), D> = TdsBuilder::new(&vertices, &[(0..=D).collect()])
+            .build()
+            .unwrap();
+        original.validate().unwrap();
+
+        // Absent offsets, explicit zeros, and nonzero common shifts are duplicates.
+        for shift in [None, Some(0), Some(i8::MIN), Some(i8::MAX)] {
+            let mut tds = original.clone();
+            let keys: Vec<_> = tds
+                .simplices()
+                .next()
+                .unwrap()
+                .1
+                .vertices()
+                .iter()
+                .copied()
+                .rev()
+                .collect();
+            let candidate = shift.map_or_else(
+                || Simplex::try_new(keys.clone()).unwrap(),
+                |shift| Simplex::try_new_periodic(keys.clone(), vec![[shift; D]; D + 1]).unwrap(),
+            );
+            let existing_uuid = tds.simplices().next().unwrap().1.uuid();
+            let candidate_uuid = candidate.uuid();
+            // Include private indexes, mappings, identity, generation, and hints;
+            // semantic PartialEq intentionally omits some of that state.
+            let before = format!("{tds:?}");
+            let generation = tds.generation();
+            let error = tds
+                .insert_simplex_with_mapping(candidate.clone())
+                .unwrap_err();
+            assert_matches!(error, TdsConstructionError::ValidationError {
+                source: TdsError::DuplicateSimplices { simplex_pairs, .. }
+            } if simplex_pairs == [[existing_uuid, candidate_uuid]]);
+            assert_eq!(format!("{tds:?}"), before);
+            tds.validate().unwrap();
+
+            // The same vertex set with a different relative offset is not a duplicate.
+            let mut offsets = vec![[0; D]; D + 1];
+            offsets[0][0] = 1;
+            let distinct = Simplex::try_new_periodic(keys, offsets).unwrap();
+            tds.validate_no_duplicate_simplex_on_insert(&distinct)
+                .unwrap();
+
+            // Deliberately inject the rejected duplicate to exercise recovery.
+            tds.insert_simplex_bypassing_topology_checks_for_test(candidate)
+                .unwrap();
+            assert_eq!(tds.remove_duplicate_simplices().unwrap(), 1);
+            assert_eq!(tds.number_of_simplices(), 1);
+            assert!(tds.generation() > generation);
+            assert_eq!(tds, original);
+            tds.validate().unwrap();
+        }
+    }
 
     fn initial_simplex_vertices_3d() -> [Vertex<(), 3>; 4] {
         [
@@ -3761,37 +3820,20 @@ mod tests {
         tds.normalize_coherent_orientation().unwrap();
         assert!(tds.is_coherently_oriented());
     }
-    #[test]
-    fn test_remove_duplicate_simplices_removes_exact_duplicates() {
-        let mut tds: Tds<(), (), 2> = Tds::empty();
-        let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
-            .unwrap();
-        let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
-            .unwrap();
-        let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
-            .unwrap();
-
-        // Insert the same simplex twice
-        tds.insert_simplex_with_mapping(
-            Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
-        )
-        .unwrap();
-        tds.insert_simplex_bypassing_topology_checks_for_test(
-            Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(tds.number_of_simplices(), 2);
-        let generation_before = tds.generation();
-
-        let removed = tds.remove_duplicate_simplices().unwrap();
-        assert_eq!(removed, 1);
-        assert_eq!(tds.number_of_simplices(), 1);
-        assert!(tds.generation() > generation_before);
-        assert!(tds.is_valid().is_ok());
+    macro_rules! periodic_duplicate_dimensions {
+        ($($dim:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<test_periodic_duplicate_transitions_ $dim d>]() {
+                        assert_periodic_duplicate_transitions::<$dim>();
+                    }
+                )+
+            }
+        };
     }
+
+    periodic_duplicate_dimensions!(2, 3, 4, 5);
 
     #[test]
     fn test_remove_duplicate_simplices_noop_when_no_duplicates() {
@@ -3806,51 +3848,54 @@ mod tests {
 
     #[test]
     fn test_remove_duplicate_simplices_rolls_back_when_rebuild_fails() {
-        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let mut tds: Tds<NonClonePayload, NonClonePayload, 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]; data = NonClonePayload(0)).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]; data = NonClonePayload(1)).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]; data = NonClonePayload(2)).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, -1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]; data = NonClonePayload(3)).unwrap())
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(vertex!([0.5, -0.5]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.5, -0.5]; data = NonClonePayload(4)).unwrap())
             .unwrap();
 
         // Three distinct triangles share edge v0-v1, so global neighbor
         // assignment will reject the complex after duplicate removal starts.
         tds.insert_simplex_with_mapping(
-            Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            Simplex::try_new_with_data(vec![v0, v1, v2], Some(NonClonePayload(100))).unwrap(),
         )
         .unwrap();
         tds.insert_simplex_bypassing_topology_checks_for_test(
-            Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            Simplex::try_new_with_data(vec![v0, v1, v2], Some(NonClonePayload(101))).unwrap(),
         )
         .unwrap();
         tds.insert_simplex_bypassing_topology_checks_for_test(
-            Simplex::try_new_with_data(vec![v0, v1, v3], None).unwrap(),
+            Simplex::try_new_with_data(vec![v0, v1, v3], Some(NonClonePayload(102))).unwrap(),
         )
         .unwrap();
         let oversharing_candidate_key = tds
             .insert_simplex_bypassing_topology_checks_for_test(
-                Simplex::try_new_with_data(vec![v0, v1, v4], None).unwrap(),
+                Simplex::try_new_with_data(vec![v0, v1, v4], Some(NonClonePayload(103))).unwrap(),
             )
             .unwrap();
         let oversharing_candidate = tds.simplex(oversharing_candidate_key).unwrap();
         let expected_candidate_uuid = oversharing_candidate.uuid();
-        let expected_facet_key = Tds::<(), (), 2>::periodic_facet_key_from_simplex_vertices(
-            oversharing_candidate,
-            oversharing_candidate.vertices(),
-            2,
-        )
-        .unwrap();
-        let before = tds.clone();
+        let expected_facet_key =
+            Tds::<NonClonePayload, NonClonePayload, 2>::periodic_facet_key_from_simplex_vertices(
+                oversharing_candidate,
+                oversharing_candidate.vertices(),
+                2,
+            )
+            .unwrap();
+        // Include payloads and runtime state even though this injected fixture
+        // cannot pass the serializer's validation boundary.
+        let before = format!("{tds:?}");
         let generation_before = tds.generation();
 
         let error = tds.remove_duplicate_simplices().unwrap_err();
@@ -3868,7 +3913,7 @@ mod tests {
         );
         assert_eq!(tds.number_of_simplices(), 4);
         assert_eq!(tds.generation(), generation_before);
-        assert_eq!(tds, before);
+        assert_eq!(format!("{tds:?}"), before);
     }
 
     #[test]
@@ -4059,41 +4104,6 @@ mod tests {
             TdsConstructionError::ValidationError { source: TdsError::InconsistentDataStructure {
                 message
             } } if message.contains("Failed to derive periodic facet key")
-        );
-        assert_eq!(tds.number_of_simplices(), 1);
-        assert_eq!(tds.generation(), generation_before);
-        assert_eq!(tds.simplex_key_from_uuid(&candidate_uuid), None);
-    }
-
-    #[test]
-    fn test_insert_simplex_with_mapping_rejects_duplicate_simplex_without_mutation() {
-        let mut tds: Tds<(), (), 2> = Tds::empty();
-        let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
-            .unwrap();
-        let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
-            .unwrap();
-        let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
-            .unwrap();
-
-        tds.insert_simplex_with_mapping(
-            Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
-        )
-        .unwrap();
-        let candidate = Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap();
-        let candidate_uuid = candidate.uuid();
-        let existing_uuid = tds.simplices().next().unwrap().1.uuid();
-        let generation_before = tds.generation();
-
-        let err = tds.insert_simplex_with_mapping(candidate).unwrap_err();
-
-        assert_matches!(
-            err,
-            TdsConstructionError::ValidationError {
-                source: TdsError::DuplicateSimplices { simplex_pairs, .. }
-            } if simplex_pairs == [[existing_uuid, candidate_uuid]]
         );
         assert_eq!(tds.number_of_simplices(), 1);
         assert_eq!(tds.generation(), generation_before);

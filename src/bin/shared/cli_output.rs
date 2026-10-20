@@ -2,9 +2,11 @@
 
 //! Validated artifact destinations and contextual output errors for the CLI.
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     fmt::{self, Display, Formatter},
-    fs::{self, File},
+    fs,
     io::{self, BufWriter, Write},
     path::{Path, PathBuf},
 };
@@ -32,8 +34,8 @@ impl ArtifactPath {
         &self.requested
     }
 
-    /// Create this destination's parent directories and truncate the output file.
-    pub fn create_writer(&self) -> Result<BufWriter<File>, ArtifactOutputError> {
+    /// Create this destination's parent directories without opening the file.
+    pub fn create_parent(&self) -> Result<(), ArtifactOutputError> {
         if let Some(parent) = self
             .requested
             .parent()
@@ -45,11 +47,76 @@ impl ArtifactPath {
             })?;
         }
 
-        let file = File::create(&self.requested).map_err(|source| ArtifactOutputError::Open {
-            path: self.requested.clone(),
-            source,
-        })?;
-        Ok(BufWriter::new(file))
+        Ok(())
+    }
+
+    fn json_destination_permissions(&self) -> Result<Option<fs::Permissions>, ArtifactOutputError> {
+        match fs::symlink_metadata(self.as_path()) {
+            Ok(metadata) if metadata.is_file() => Ok(Some(metadata.permissions())),
+            Ok(_) => Err(ArtifactOutputError::UnsupportedDestination {
+                path: self.requested.clone(),
+            }),
+            Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(source) => Err(ArtifactOutputError::Inspect {
+                path: self.requested.clone(),
+                source,
+            }),
+        }
+    }
+
+    fn write_json(&self, value: &impl Serialize) -> Result<(), ArtifactOutputError> {
+        let permissions = self.json_destination_permissions()?;
+        self.create_parent()?;
+        let parent = self
+            .requested
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(".delaunay-json-");
+        // Match File::create's mode for new outputs without widening an existing
+        // file's permissions while its replacement is being written.
+        #[cfg(unix)]
+        {
+            builder.permissions(permissions.unwrap_or_else(|| fs::Permissions::from_mode(0o666)));
+        }
+        #[cfg(not(unix))]
+        let _ = permissions;
+        let mut temporary =
+            builder
+                .tempfile_in(parent)
+                .map_err(|source| ArtifactOutputError::Open {
+                    path: self.requested.clone(),
+                    source,
+                })?;
+        {
+            let mut writer = BufWriter::new(temporary.as_file_mut());
+            serde_json::to_writer_pretty(&mut writer, value).map_err(|source| {
+                ArtifactOutputError::Serialize {
+                    destination: ArtifactDestination::Path(self.requested.clone()),
+                    source,
+                }
+            })?;
+            writer.flush().map_err(|source| self.flush_error(source))?;
+        }
+
+        // Recheck after serialization, which may take time or invoke caller code.
+        if let Some(permissions) = self.json_destination_permissions()? {
+            temporary
+                .as_file()
+                .set_permissions(permissions)
+                .map_err(|source| ArtifactOutputError::Publish {
+                    path: self.requested.clone(),
+                    source,
+                })?;
+        }
+        temporary
+            .persist(&self.requested)
+            .map_err(|error| ArtifactOutputError::Publish {
+                path: self.requested.clone(),
+                source: error.error,
+            })?;
+        Ok(())
     }
 
     /// Attach this destination to a final artifact-flush failure.
@@ -62,19 +129,16 @@ impl ArtifactPath {
 }
 
 /// Write pretty JSON to a validated path or to stdout.
+///
+/// File output replaces the destination atomically after serialization and flush
+/// succeed. Existing symlinks and non-regular files are rejected. Parent-directory
+/// symlinks are allowed. This does not synchronize data to disk for crash durability.
 pub fn write_json_output(
     value: &impl Serialize,
     path: Option<&ArtifactPath>,
 ) -> Result<(), ArtifactOutputError> {
     if let Some(path) = path {
-        let mut writer = path.create_writer()?;
-        serde_json::to_writer_pretty(&mut writer, value).map_err(|source| {
-            ArtifactOutputError::Serialize {
-                destination: ArtifactDestination::Path(path.as_path().to_owned()),
-                source,
-            }
-        })?;
-        writer.flush().map_err(|source| path.flush_error(source))?;
+        path.write_json(value)?;
     } else {
         let stdout = io::stdout();
         let mut handle = stdout.lock();
@@ -114,6 +178,23 @@ pub enum ArtifactOutputError {
     /// An empty output path cannot identify a file.
     #[error("artifact path must not be empty")]
     EmptyPath,
+    /// The destination's file type could not be inspected.
+    #[error("failed to inspect JSON artifact {path:?}: {source}")]
+    Inspect {
+        /// Requested artifact path.
+        path: PathBuf,
+        /// Underlying operating-system error.
+        #[source]
+        source: io::Error,
+    },
+    /// JSON publication requires a missing destination or an ordinary file.
+    #[error(
+        "JSON artifact {path:?} must be a regular file or a new path; symlinks are not allowed"
+    )]
+    UnsupportedDestination {
+        /// Requested artifact path.
+        path: PathBuf,
+    },
     /// An artifact parent directory could not be created.
     #[error("failed to create artifact directory {path:?}: {source}")]
     CreateParent {
@@ -144,6 +225,15 @@ pub enum ArtifactOutputError {
     /// A final artifact flush failed.
     #[error("failed to flush artifact {path:?}: {source}")]
     Flush {
+        /// Requested artifact path.
+        path: PathBuf,
+        /// Underlying operating-system error.
+        #[source]
+        source: io::Error,
+    },
+    /// The completed JSON temporary file could not replace the destination.
+    #[error("failed to publish JSON artifact {path:?}: {source}")]
+    Publish {
         /// Requested artifact path.
         path: PathBuf,
         /// Underlying operating-system error.

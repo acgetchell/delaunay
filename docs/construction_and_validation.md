@@ -68,6 +68,14 @@ exists, its bootstrap workspace owns a `TdsDraft`. Once connectivity is
 publishable, it establishes Levels 1–2, then Levels 3–4, then Level 5. Later
 insertions use the verified owner's transactional mutation path.
 
+`DelaunayIncrementalBuilder::finish()` returns a `RefinementError` on failure,
+retaining the unchanged builder and its `DelaunayIncrementalBuilderError` reason.
+For an incomplete bootstrap, recover it with `into_owner()`, insert the remaining
+vertices, and retry `finish()`. Use `reason()` to inspect the rejection or
+`into_parts()` to retain both values. Callers that intentionally abandon the
+builder can use `.map_err(RefinementError::into_reason)` to propagate only the
+diagnostic.
+
 Construction and insertion are separate responsibilities even though both may
 process vertices one at a time:
 
@@ -478,7 +486,12 @@ boundaries:
   the same final Levels 3–4 proof. That successful transformation may change
   simplex ordering and generation. A storage-linear TDS snapshot makes the
   mutation failure-atomic. Both modes return `TriangulationBuildFailure` with
-  the exact input TDS if publication fails.
+  the exact input TDS if publication fails. Orientation normalization preserves
+  `TriangulationRealizationValidationError` through
+  `InsertionError::OrientationValidationFailed`, including predicate and
+  periodic-lift causes with simplex/vertex identities. Unsupported predicate
+  dimensions and numerical range failures are not perturbation-retryable;
+  negative or degenerate local orientations retain their geometric retry policy.
 - `DelaunayRefinementBuilder` is the sole Level 5 publication path from an
   existing `Triangulation`. Its default `.build()` terminal checks Level 5
   without mutation or a rollback snapshot. Its `.repair_by_flips()` type state
@@ -557,11 +570,21 @@ The library separates **construction-time** failures from **validation-time** in
 
 ### Reporting (full diagnostics)
 
+`Tds::structure_report()` and `Tds::validation_report()` return
+`Result<(), TdsValidationReport>` for Level 2 and cumulative Levels 1–2,
+respectively. Each `TdsInvariantViolation` contains a `TdsInvariantKind` and a
+typed `TdsError`. The structural forwarding methods on `Triangulation` and
+`DelaunayTriangulation` return these same local report/diagnostic types.
+Import them from `delaunay::prelude::tds`.
+
 `DelaunayTriangulation::validation_report()` returns `Result<(), TriangulationValidationReport>`.
 On failure, the `Err(TriangulationValidationReport)` contains a `Vec<InvariantViolation>`; each
 `InvariantViolation` stores an `InvariantKind` plus an `InvariantError` **enum** that wraps the
 structured error from the failing layer (`TdsError`, `TriangulationValidationError`,
 `TriangulationRealizationValidationError`, or `DelaunayTriangulationValidationError`).
+These whole-stack types belong to `delaunay::validation` and
+`delaunay::prelude::validation`. Converting a `TdsValidationReport` with `.into()`
+preserves the order, category, and typed cause of every local violation.
 
 ---
 
@@ -628,6 +651,13 @@ Higher owners may query the TDS or request those checked transitions, but they
 cannot obtain mutable storage or edit its fields directly. An incomplete
 `Tds` can still be valid at Levels 1–2; construction completion additionally
 requires a full-dimensional simplex and an atomic cumulative audit.
+
+In particular, removing every simplex may leave a valid `Tds` containing only
+vertices. Its serialized snapshot can be loaded again, preserving vertex UUIDs,
+coordinates, and payloads. Loading this snapshot establishes Levels 1–2 while
+keeping construction incomplete: nonempty `TdsBuilder` construction still
+requires explicit simplices, and `TriangulationBuilder` rejects the restored
+vertex-only state. The completely empty complex remains a completed state.
 
 The serde boundaries mirror those proof owners. Serializing `Tds` produces a
 Levels 1–2 snapshot. Serializing `DelaunayTriangulation` produces a versioned
@@ -704,6 +734,11 @@ Deserialize `DelaunayCheckpoint<U, V, D>` first when tooling needs typed load
 failures. `try_into_delaunay` restores `RobustKernel<f64>`;
 `try_into_delaunay_with_kernel` restores the same TDS, topology guarantee,
 global topology, and validation policy with a caller-supplied exact kernel.
+Within `DelaunayCheckpointLoadError::Checkpoint`, malformed embedded CBOR returns
+`DelaunayCheckpointError::TdsCodec`, while an authenticated value rejected by the
+requested vertex or simplex payload type returns `PayloadDeserialization`. Its
+`DelaunayCheckpointPayloadError` source retains the concrete Ciborium error.
+Schema and digest checks run before user payload deserialization.
 The direct `Deserialize` implementation for `DelaunayTriangulation` is only the
 convenience adapter for `RobustKernel<f64>` and necessarily converts domain
 failures into the outer codec's error type. In D >= 4, multi-simplex Euclidean
@@ -1132,8 +1167,10 @@ tests and diagnostics.
     is inconclusive.
   - `DelaunayTriangulation::validation_report()` (Levels 1–5): Levels 1-4 plus the certified
     O(simplices) Level 5 path, or Levels 1-4 plus the O(simplices × vertices) Level 5 fallback.
-- **Space**: O(1) validation workspace for the local verifier; report output and fallback working sets
-  scale with the number of reported violations.
+- **Space**: O(simplices) auxiliary space for the local verifier at fixed
+  dimension: repair queues and deduplication sets hold facets, ridges, edges,
+  and triangles, with dimension-dependent face counts. Reports additionally
+  store their reported violations.
 
 Strict proof promotions move their input owners and do not clone canonical TDS
 storage. `delaunayize` requires O(vertices + simplices) rollback storage while
@@ -1211,10 +1248,11 @@ Start: Do you need to validate?
   combinatorial bookkeeping (roughly O(simplices × D²)).
 - Level 4 Valid Realization checks simplex degeneracy and pairwise realized-simplex
   intersections, using bounding boxes before exact rational witness construction.
-- Level 5 `DelaunayTriangulation::is_valid_delaunay()` verifies the implemented
-  Delaunay predicate family after Level 4 realization validation. For complete
-  Euclidean point sets it accepts a successful local certificate and otherwise
-  uses the exact global empty-circumsphere check.
+- Level 5 `DelaunayTriangulation::is_valid_delaunay()` audits only the implemented
+  Delaunay predicate family, relying on the owner's lower-layer proof. For
+  complete Euclidean point sets it accepts a successful local certificate and
+  otherwise uses the exact global empty-circumsphere check. Use `validate()` for
+  an explicit cumulative Levels 1–5 audit, including Level 4 realization.
 - The O(simplices × vertices) empty-circumsphere path is the Euclidean fallback
   when connectivity lacks complete-point-set provenance or the stronger local
   flip-normal-form check fails or is inconclusive.
@@ -1264,7 +1302,8 @@ fn test_my_triangulation_operation() {
 
 ```rust
 use delaunay::prelude::query::*;
-use delaunay::prelude::tds::{InvariantError, TdsError};
+use delaunay::prelude::validation::InvariantError;
+use delaunay::prelude::tds::TdsError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DevelopmentValidationError {
@@ -1293,7 +1332,8 @@ pub fn my_algorithm(
 
 ```rust
 use delaunay::prelude::query::*;
-use delaunay::prelude::tds::{InvariantError, TdsError};
+use delaunay::prelude::validation::InvariantError;
+use delaunay::prelude::tds::TdsError;
 use delaunay::prelude::validation::{
     DelaunayTriangulationValidationError, TriangulationRealizationValidationError,
 };

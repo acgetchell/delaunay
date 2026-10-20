@@ -236,7 +236,9 @@ def validate_duplicate_simplex_witness(case_index: int, level: int, witness: Vis
 
 
 def validate_isolated_point_witness(case_index: int, level: int, witness: VisualWitness) -> None:
-    """Verify that isolated-point witnesses are unused by every simplex."""
+    """Require Level 3 isolated points and verify they are unused by every simplex."""
+    if level == 3 and not witness.isolated_points:
+        raise ValueError(f"cases[{case_index}] Level 3 must include an isolated point witness")
     used_points = {point_index for simplex in witness.simplices for point_index in simplex}
     for point_index in sorted(witness.isolated_points):
         if point_index in used_points:
@@ -258,6 +260,8 @@ def validate_degenerate_simplex_witness(case_index: int, level: int, witness: Vi
         simplices_context = f"cases[{case_index}].visual.simplices"
         simplex = simplex_by_index(witness.simplices, simplex_index, simplices_context)
         area = abs(triangle_signed_area(witness.points, simplex, f"{simplices_context}[{simplex_index}]"))
+        if not math.isfinite(area):
+            raise ValueError(f"{simplices_context}[{simplex_index}] area must be finite, got {area}")
         if area > VISUAL_AREA_TOLERANCE:
             raise ValueError(f"cases[{case_index}].visual.simplices[{simplex_index}] area {area} exceeds degeneracy tolerance {VISUAL_AREA_TOLERANCE}")
 
@@ -465,7 +469,7 @@ VALIDATION_HIERARCHY_LAYERS = (
             "Are realized simplices nondegenerate?",
             "Do simplices intersect only along shared faces?",
             "Do toroidal lifts fit valid periodic charts?",
-            "Do spherical simplices separate the sphere center?",
+            "Do spherical simplex hyperplanes avoid the center?",
             "Does the active realization model support the check?",
         ),
         color="#fef3c7",
@@ -477,7 +481,7 @@ VALIDATION_HIERARCHY_LAYERS = (
         scope=("Delaunay optimality",),
         questions=(
             "Do selected geometric predicates accept every cell?",
-            "Do local k=2/k=3 flip predicates and inverses pass?",
+            "For Euclidean owners: local certificate or exact fallback?",
             "Do Euclidean/toroidal empty-circumsphere checks pass?",
             "Do spherical empty-cap / ambient hull-facet checks pass?",
             "Is Delaunay optimality certified for the active model?",
@@ -810,10 +814,11 @@ def draw_level_4_glyph(axis: Any, family_index: int) -> None:
         axis.text(0.50, 0.84, "lift mismatch", fontsize=8.5, ha="center", color="#991b1b")
     elif family_index == 4:
         axis.add_patch(_plotting_backend().circle((0.50, 0.50), 0.30, fill=False, edgecolor="#64748b", linewidth=1.5))
-        axis.plot([0.26, 0.76], [0.66, 0.62], color="#dc2626", linewidth=2.0)
+        axis.plot([0.20, 0.80], [0.50, 0.50], color="#dc2626", linewidth=2.0)
+        glyph_nodes(axis, ((0.20, 0.50), (0.80, 0.50)))
         axis.scatter([0.50], [0.50], s=30, color="#0f172a")
         axis.text(0.50, 0.39, "center", fontsize=8, ha="center")
-        axis.text(0.50, 0.82, "same side", fontsize=8, ha="center", color="#991b1b")
+        axis.text(0.50, 0.84, "hyperplane through center", fontsize=8, ha="center", color="#991b1b")
     else:
         axis.add_patch(_plotting_backend().rectangle((0.18, 0.36), 0.64, 0.30, facecolor="white", edgecolor="#64748b", linewidth=1.4))
         axis.text(0.36, 0.52, "model", fontsize=9, weight="bold", ha="center")

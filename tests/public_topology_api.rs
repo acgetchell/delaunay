@@ -12,7 +12,9 @@ use delaunay::prelude::TopologyGuarantee;
 use delaunay::prelude::Vertex;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateConversionError, ExactPredicates};
 use delaunay::prelude::query::*;
-use delaunay::prelude::tds::{SimplexKey, TdsError, VertexKey};
+use delaunay::prelude::tds::{
+    SimplexKey, TdsError, TdsInvariantViolation, TdsValidationReport, VertexKey,
+};
 use delaunay::prelude::validation::ManifoldError;
 use delaunay::vertex;
 use std::collections::HashSet;
@@ -134,13 +136,17 @@ fn owner_level_structure_validation_helpers_succeed_on_valid_topology()
 
     assert!(dt.is_valid_structure().is_ok());
     assert!(dt.validate_structure().is_ok());
-    assert!(dt.structure_diagnostic().is_none());
-    assert!(dt.structure_report().is_ok());
+    let diagnostic: Option<TdsInvariantViolation> = dt.structure_diagnostic();
+    let report: Result<(), TdsValidationReport> = dt.structure_report();
+    assert!(diagnostic.is_none());
+    assert!(report.is_ok());
 
     assert!(tri.is_valid_structure().is_ok());
     assert!(tri.validate_structure().is_ok());
-    assert!(tri.structure_diagnostic().is_none());
-    assert!(tri.structure_report().is_ok());
+    let diagnostic: Option<TdsInvariantViolation> = tri.structure_diagnostic();
+    let report: Result<(), TdsValidationReport> = tri.structure_report();
+    assert!(diagnostic.is_none());
+    assert!(report.is_ok());
 
     Ok(())
 }

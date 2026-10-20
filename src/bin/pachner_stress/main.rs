@@ -1626,7 +1626,12 @@ fn three_distinct_indices(rng: &mut (impl Rng + ?Sized), len: usize) -> Option<[
 
 /// Open a progress CSV and write its stable header.
 fn create_progress_writer(path: &ArtifactPath) -> Result<BufWriter<File>, PachnerStressError> {
-    let mut writer = path.create_writer()?;
+    path.create_parent()?;
+    let file = File::create(path.as_path()).map_err(|source| ArtifactOutputError::Open {
+        path: path.as_path().to_owned(),
+        source,
+    })?;
+    let mut writer = BufWriter::new(file);
     writeln!(
         writer,
         "schema_version,dimension,label,mode,validation_scope,sequence,completed_steps,configured_steps,\

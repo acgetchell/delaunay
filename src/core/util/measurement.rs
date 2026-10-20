@@ -2,6 +2,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+
 /// Memory measurement helper for allocation tracking in examples, tests, and benchmarks.
 ///
 /// Available only with the `count-allocations` feature, which installs the allocation-counting
@@ -19,9 +21,11 @@
 ///
 /// # Panics
 ///
-/// Panics if `f` panics. The internal `expect()` call is used because a
-/// normally returning closure is guaranteed to set the result. The profiler also panics
-/// when its supported nesting limit of 64 measurements is exceeded.
+/// If `f` unwinds, the profiler finishes its measurement before the original
+/// panic payload is resumed. Changes made by `f` are not rolled back.
+/// The internal `expect()` is unreachable because the measured closure always
+/// records its outcome. The upstream profiler may also panic when its nesting
+/// limit is exceeded; recovery from a profiler-internal failure is not guaranteed.
 ///
 /// # Examples
 ///
@@ -40,17 +44,22 @@ pub fn measure_with_result<F, R>(f: F) -> (R, allocation_counter::AllocationInfo
 where
     F: FnOnce() -> R,
 {
-    let mut result: Option<R> = None;
+    let mut result = None;
     let info = allocation_counter::measure(|| {
-        result = Some(f());
+        // Let the profiler pop its frame even when the callback unwinds. No
+        // caller state is inspected after a panic; its payload is resumed below.
+        result = Some(catch_unwind(AssertUnwindSafe(f)));
     });
-    (result.expect("Closure should have set result"), info)
+    match result.expect("Measured closure should have recorded its outcome") {
+        Ok(value) => (value, info),
+        Err(payload) => resume_unwind(payload),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::Cell;
+    use std::{cell::Cell, hint::black_box, ptr};
 
     fn non_negative(value: i64) -> u64 {
         u64::try_from(value.max(0)).unwrap_or(0)
@@ -116,15 +125,60 @@ mod tests {
 
     #[test]
     fn test_measure_with_result_panics_propagate() {
-        let should_panic = std::hint::black_box(true);
-        let result = std::panic::catch_unwind(|| {
-            let _ = measure_with_result(|| -> i32 {
-                assert!(!should_panic, "boom");
-                0
-            });
+        let calls = Cell::new(0);
+        // More sequential failures than the profiler's nesting limit must not
+        // consume measurement frames, including when both nested calls unwind.
+        for index in 0..128 {
+            let payload = Box::new(index);
+            let address = ptr::from_ref(payload.as_ref());
+            let panic = catch_unwind(AssertUnwindSafe(|| {
+                measure_with_result(|| {
+                    measure_with_result(|| -> () {
+                        calls.set(calls.get() + 1);
+                        resume_unwind(payload);
+                    })
+                })
+            }))
+            .expect_err("the original panic should propagate");
+            let payload = panic
+                .downcast::<i32>()
+                .expect("panic payload type is preserved");
+            assert!(ptr::eq(payload.as_ref(), address));
+            assert_eq!(*payload, index);
+            assert_eq!(calls.get(), index + 1);
+
+            let (value, info) = measure_with_result(|| 7);
+            assert_eq!(value, 7);
+            assert_eq!(info, allocation_counter::AllocationInfo::default());
+        }
+    }
+
+    #[test]
+    fn test_measure_with_result_nested_panic_restores_outer_measurement() {
+        // Allocate the panic payload outside the measurement and retain it
+        // until afterward. resume_unwind also avoids panic-hook allocations.
+        let payload = Box::new(73_u32);
+        let ((panic, inner), outer) = measure_with_result(|| {
+            let before = black_box(vec![0_u8; 1024]);
+            let panic = catch_unwind(|| measure_with_result(|| -> () { resume_unwind(payload) }))
+                .expect_err("the nested panic should propagate");
+            let (after, inner) = measure_with_result(|| black_box(vec![0_u8; 32]));
+            drop(after);
+            drop(before);
+            (panic, inner)
         });
 
-        assert!(result.is_err());
+        assert_eq!(*panic.downcast::<u32>().unwrap(), 73);
+        assert_eq!(inner.count_total, 1);
+        assert_eq!(inner.bytes_total, 32);
+        assert_eq!(inner.count_current, 1);
+        assert_eq!(inner.bytes_current, 32);
+        assert!(
+            outer.bytes_total >= 1024 + 32,
+            "outer allocation totals: {outer:?}"
+        );
+        assert_eq!(outer.count_current, 0);
+        assert_eq!(outer.bytes_current, 0);
     }
 
     #[test]
@@ -138,12 +192,12 @@ mod tests {
         // Verify that we got an AllocationInfo struct by accessing its fields
         // This validates that the function properly returns allocation info
         // We access all fields to ensure the struct is properly constructed
-        std::hint::black_box(&alloc_info.bytes_total);
-        std::hint::black_box(&alloc_info.count_total);
-        std::hint::black_box(&alloc_info.bytes_current);
-        std::hint::black_box(&alloc_info.count_current);
-        std::hint::black_box(&alloc_info.bytes_max);
-        std::hint::black_box(&alloc_info.count_max);
+        black_box(&alloc_info.bytes_total);
+        black_box(&alloc_info.count_total);
+        black_box(&alloc_info.bytes_current);
+        black_box(&alloc_info.count_current);
+        black_box(&alloc_info.bytes_max);
+        black_box(&alloc_info.count_max);
 
         // Test that we can actually use the allocation info
         // For a vec![0u8; 1024], we expect some allocation to have occurred
