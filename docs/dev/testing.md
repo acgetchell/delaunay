@@ -453,9 +453,10 @@ translated 5D and complete 6D exact SoS expansion checks, including the D=6
 adaptive-kernel checks that repeat the complete expansion, receive a focused
 60-second override because their irreducible cold-path work can cross the
 default boundary on hosted runners.
-The four 4D–5D cospherical flip-consistency checks receive a Windows-only
+The four 4D–5D cospherical flip-consistency checks receive a platform-neutral
 60-second debug override because their exact forward/inverse predicate work
-reaches that boundary there. Their fixtures and release budgets are unchanged.
+reaches that boundary on hosted Linux and Windows runners. Their fixtures and
+release budgets are unchanged.
 
 The release integration profile similarly grants 60 seconds on Windows only
 to the promoted 4D property families that sit at the 10-second boundary there.

@@ -3201,16 +3201,15 @@ class TestPerformanceSummaryGenerator:
     def test_generate_summary_strict_rejects_manifest_result_with_malformed_estimate(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """The runtime manifest makes a skipped malformed CI estimate an explicit gap."""
         generator = PerformanceSummaryGenerator(tmp_path)
+        write_complete_release_signal_coverage(tmp_path)
+        estimates_dir = generator.circumsphere_results_dir / "validation" / "malformed" / "20" / "base"
+        estimates_dir.mkdir(parents=True)
+        (estimates_dir / "estimates.json").write_text("{ invalid json", encoding=UTF8)
         manifest_path = tmp_path / "target" / "criterion" / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE
-        manifest_path.parent.mkdir(parents=True)
-        results = complete_ci_performance_results()
-        manifest_path.write_text("\n".join([result.benchmark_id for result in results] + ["validation/malformed/20"]) + "\n", encoding=UTF8)
+        manifest_path.write_text("validation/malformed/20\n", encoding=UTF8)
         output_file = tmp_path / "summary.md"
 
-        with (
-            patch.object(generator, "_parse_ci_performance_suite_results", return_value=results),
-            patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=complete_circumsphere_results(generator)),
-        ):
+        with patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=complete_circumsphere_results(generator)):
             success = generator.generate_summary(output_path=output_file, strict=True)
 
         assert success is False

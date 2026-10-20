@@ -134,9 +134,8 @@ slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.debug.overrides]]
 # These exact cospherical flip checks reach or exceed the 10-second debug
-# budget on Windows runners. Preserve every fixture and inverse-flip check,
-# with the normal watchdog retained on other platforms and in release builds.
-platform = 'cfg(windows)'
+# budget on hosted Linux and Windows runners. Preserve every fixture and
+# inverse-flip check with the same headroom across platforms in debug builds.
 filter = '''
 binary(=delaunay) & (
     test(=core::algorithms::flips::contexts::tests::cospherical_k3_decisions_are_mutually_exclusive_4d)
