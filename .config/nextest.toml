@@ -111,6 +111,16 @@ binary(=proptest_sos)
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 [[profile.ci.overrides]]
+# The nonzero 5D property exercises one complete exact SoS expansion per case
+# and can also cross the default budget on Windows runners.
+platform = 'cfg(windows)'
+filter = '''
+binary(=proptest_sos)
+& test(=prop_sos_insphere_nonzero_5d)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
 # A single compact T^3 periodic-image construction can cross the default
 # budget on Windows. Each test retains one construction so other platforms
 # keep the normal watchdog and the exception remains limited to this fixture.
@@ -198,7 +208,8 @@ filter = '''
 (binary(=proptest_delaunay_triangulation)
 & test(=prop_on_suspicion_validates_cospherical_3d_sequences))
 | (binary(=proptest_sos)
-& test(=prop_sos_insphere_deterministic_5d))
+& (test(=prop_sos_insphere_deterministic_5d)
+   | test(=prop_sos_insphere_nonzero_5d)))
 '''
 slow-timeout = { period = "300s", terminate-after = 1 }
 

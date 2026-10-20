@@ -472,7 +472,9 @@ narrowest applicable platform, integration-binary, and test-name filters so
 unrelated tests retain the normal budget. The deterministic 5D SoS in-sphere
 property also receives a cross-platform 60-second override because each
 generated case performs two complete exact expansions and can cross the
-hosted-runner boundary.
+hosted-runner boundary. The matching 5D nonzero property receives 60 seconds
+on Windows, where its single expansion per case can also exceed the default
+budget. Both retain the coverage profile's five-minute instrumented budget.
 
 For test-only changes, run only the matching focused recipe. If multiple test
 target classes changed, compose those focused recipes once each. Use
