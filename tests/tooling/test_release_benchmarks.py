@@ -171,7 +171,7 @@ def test_release_workflow_staging_preserves_clean_source_identity(tmp_path: Path
         "command = sys.argv[4]\n"
         "output = Path(sys.argv[sys.argv.index('--output') + 1])\n"
         "if command == 'generate-summary':\n"
-        "    output.write_text('benchmark summary\\n', encoding='utf-8')\n"
+        "    output.write_bytes(b'benchmark summary\\n')\n"
         "elif command == 'create-release-benchmark-metadata':\n"
         "    tag = sys.argv[sys.argv.index('--tag') + 1]\n"
         "    source = benchmark_utils._source_state(Path.cwd(), version=tag, ref=tag)\n"

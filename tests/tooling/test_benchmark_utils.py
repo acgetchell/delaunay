@@ -732,7 +732,7 @@ def test_bench_compare_cli_reports_file_failure_without_replacing_report(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "bench-compare:" in captured.err
-    assert str(missing if stage == "sample" else output) in captured.err
+    assert repr(str(missing if stage == "sample" else output)) in captured.err
     assert "Traceback" not in captured.err
     if stage == "sample":
         renderer.assert_not_called()

@@ -308,8 +308,8 @@ def test_policy_rules_cover_production_paths(tmp_path: Path, monkeypatch: pytest
     """Unmodified production path filters must enforce the annotated fixture cases."""
     target = tmp_path / source_path
     target.parent.mkdir(parents=True)
-    source = (ROOT / "tests/semgrep" / source_path).read_text(encoding="utf-8")
-    target.write_text(source, encoding="utf-8")
+    shutil.copyfile(ROOT / "tests/semgrep" / source_path, target)
+    source = target.read_text(encoding="utf-8")
     expected = Counter(re.findall(r"(?:#|//) ruleid: ([\w.-]+)", source))
     assert expected
     monkeypatch.setenv("SEMGREP_SETTINGS_FILE", str(tmp_path / "semgrep-settings.yml"))

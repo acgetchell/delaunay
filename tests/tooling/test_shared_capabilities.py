@@ -79,7 +79,8 @@ def test_profile_metadata_cli_rejects_invalid_manifest_before_capture(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "delaunay-profile-metadata:" in captured.err
-    assert str(manifest_path) in captured.err
+    expected_path = repr(str(manifest_path)) if manifest is None else str(manifest_path)
+    assert expected_path in captured.err
     assert "No such file" in captured.err if manifest is None else "package.version" in captured.err
     assert "Traceback" not in captured.err
 
@@ -117,7 +118,7 @@ def test_profile_metadata_cli_reports_failure_and_cleans_temporary_configuration
         assert "probe failure\n" in captured.err
     else:
         publisher.assert_called_once_with({output: b"new metadata\n"})
-        assert str(output) in captured.err
+        assert repr(str(output)) in captured.err
         assert "publication denied" in captured.err
 
 
