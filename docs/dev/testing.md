@@ -460,8 +460,9 @@ release budgets are unchanged.
 
 The release integration profile similarly grants 60 seconds on Windows only
 to the promoted 4D property families that sit at the 10-second boundary there.
-The 5D local-neighbor repair guardrail receives the same focused Windows-only
-headroom because its hosted-runner runtime can cross that boundary.
+The 5D local-neighbor repair guardrail receives the same focused headroom
+across platforms because its hosted-runner runtime can cross that boundary;
+coverage retains its five-minute instrumented budget.
 The cospherical 3D `OnSuspicion` sequence property receives the same focused
 headroom across platforms because hosted runners can cross the default
 integration-test watchdog. The isolated downstream checkpoint fixture receives
