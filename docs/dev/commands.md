@@ -193,7 +193,7 @@ parameterized implementation helpers live in `just/helpers.just`.
 
 Tool declarations live in their authoritative consumer files: exact uv and Cargo
 tool pins in `pyproject.toml`, Python in `.python-version`, and Rust plus components
-in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.1.9` from PyPI
+in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.2.3` from PyPI
 and is included by `dev`. Before the first Just invocation, run:
 
 ```bash
@@ -217,11 +217,19 @@ users configure `TECTONIC_DEP_BACKEND=vcpkg`, `VCPKG_ROOT`, and a matching
 `x64-windows-static-md`, which avoids requiring native dependency DLLs on PATH;
 see [vcpkg's Rust linking contract](https://docs.rs/vcpkg/latest/vcpkg/).
 
-Managed Rust and Cargo tools live in the shared package's versioned cache.
+Managed Rust, Cargo tools, and release binaries live in the shared package's versioned cache.
 Recipes select them with `toolchain run`, which verifies versions and fails when
 an installation is incomplete; an ambient executable cannot satisfy a managed
 pin. `just tools-check` inspects without syncing or downloading Python.
 `just tools-export` exports verified paths to GitHub Actions.
+
+`just tools-python-check` checks inherited Ruff, ty and pytest pins explicitly.
+`just tools-sync-binaries` repairs only declared release binaries, including
+prebuilt dprint and rumdl. `just tools-clean` previews obsolete managed installs;
+include other consumers with `--keep-root PATH`, and use `--apply` only after
+reviewing the plan. The separate `just clean` retains its build-artifact cleanup.
+Retention roots must pass the installed shared release's Python-baseline checks.
+`just update-cargo-tools --dry-run` and `just update-uv --dry-run` preview upgrades.
 
 `just update` runs `update-tools` before `update-dependencies`, stopping on the
 first failure. Completed package-manager steps remain applied. uv upgrades through
@@ -234,9 +242,12 @@ owner and reconcile `tool.uv.required-version` before retrying.
 `update-dependencies` composes Cargo and Python updates while retaining tool pins.
 The Cargo override advances requirements and lockfiles for the root and isolated
 `tests/fixtures/checkpoint_no_float_roundtrip/` resolution roots. Python updates
-advance exact direct dev pins, preserve included tooling constraints and intentional
-ranges, refresh the entire `uv.lock`, and explicitly sync dev with managed Rust
-available, including when `default-groups = []`. `update-tools` preserves dependency requirements and
+use shared `deps update-python --all-projects` to advance exact direct dev pins,
+preserve included tooling constraints and intentional ranges, refresh the entire
+`uv.lock`, and explicitly sync dev with managed Rust available, including when
+`default-groups = []`. Additional independent uv projects must be declared under
+`tool.research-repo-tools.deps.python-projects`; none are currently needed here.
+`update-tools` preserves dependency requirements and
 locks. Change the shared package version explicitly through uv, refresh the lock,
 review its release notes, and rerun setup. `deps update-tools` is the separate
 legacy interface for user-installed tools; this repository uses managed TOML pins.
@@ -244,6 +255,11 @@ legacy interface for user-installed tools; this repository uses managed TOML pin
 Agents should **prefer running `just` commands instead of invoking the
 underlying tools directly**. The justfile ensures the correct flags,
 configuration, and tool ordering are used.
+
+For occasional shared operations, `just files`, `just templates`, `just tectonic`,
+`just validate`, and `just performance` forward explicit arguments to the public
+CLI. Declarative performance commands require a consumer-owned configuration;
+the established Delaunay performance recipes retain their scientific policy.
 
 Examples:
 
@@ -417,7 +433,10 @@ keeps tracked Python and Rust tests visible to both local validation and the
 hosted SARIF workflow. The paired reports require complete selected-input
 coverage and matching active findings. Deliberate violations
 under `tests/semgrep/` remain excluded from repository scans and are exercised
-only by `just semgrep-test`.
+only by `just semgrep-test`. Focused Rustdoc import tests use the shared,
+line-preserving `rust_blocks` extractor. The optional aggregate `--rust-docs`
+scan failed paired-report completeness with this repository's rule scopes on
+v0.2.3, so the scan and prose-fixture gates retain their validated native mode.
 
 `just test` is tests-only. `test-integration-compile` is an explicit no-run
 smoke recipe for cases where a compile-only check is the desired validator; do
@@ -1003,6 +1022,21 @@ Run with:
 just action-lint
 ```
 
+`just update-actions --dry-run` previews exact SHA and version-comment updates
+for workflow identities in `.github/action-updates.toml`. `--check` detects available updates without writing;
+omit the flag to apply them deliberately. This stage stays separate from
+`just update`. The publishing authentication action and privileged Dependabot
+workflow retain their dedicated review and are excluded from automatic updates.
+The upstream updater accepts workflow YAML only. setup-uv remains on the
+Dependabot path so its workflow and setup-composite references stay coupled.
+CodeQL uses an explicit action-release target because its latest GitHub release
+is a bundle tag that the shared updater rejects as a semantic version.
+
+The shared strict Actions allowlist checker requires identity entries ending
+in `@*`. The existing selected-actions policy restricts the publishing action
+to an exact commit, so the repository retains that policy and its local Semgrep
+allowlist rather than loosening the publishing restriction.
+
 `just zizmor` uses the repository's pinned scanner with the `regular` persona.
 It takes a token from `ZIZMOR_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`, in
 that order, then tries `gh auth token` for `GH_HOST` (default `github.com`).
@@ -1087,6 +1121,11 @@ JSON/SARIF reports from `target/security/` for seven days, including on findings
 | Validate crates.io metadata and dry-run the package | `just publish-check` |
 | Run full GitHub-equivalent CI | `just ci` |
 | Run perf-profile benchmarks | `just bench` |
+| Summarize retained Cobertura coverage by file | `just coverage-report [ARGS...]` |
+| Inspect notebook cells without execution | `just notebook-inspect PATH [ARGS...]` |
+| Preview notebook restoration and cleanup | `just notebook-reset [ARGS...]` |
+| Preview obsolete managed installations | `just tools-clean [--keep-root PATH]` |
+| Preview selected Actions pin updates | `just update-actions --dry-run` |
 
 ---
 

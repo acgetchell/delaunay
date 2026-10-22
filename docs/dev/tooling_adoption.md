@@ -1,7 +1,7 @@
 # Shared tooling adoption
 
 The repository now pins the published
-[research-repo-tools v0.1.9](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.1.9)
+[research-repo-tools v0.2.3](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.2.3)
 PyPI distribution in runtime dependencies, the tooling/dev groups, and the
 notebook extra/group. `uv.lock` records exact registry artifacts and hashes.
 Python follows the shared package's 3.15 floor. Ruff, ty and pytest inherit exact
