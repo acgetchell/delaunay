@@ -41,12 +41,12 @@ def write_stub(directory: Path, name: str, source: str) -> None:
 
 def test_published_pin_configuration_and_inventory() -> None:
     groups = MANIFEST["dependency-groups"]
-    assert groups["tooling"] == ["research-repo-tools[python-tools]==0.1.9"]
+    assert groups["tooling"] == ["research-repo-tools[python-tools]==0.2.3"]
     assert {"include-group": "tooling"} in groups["dev"]
-    assert version("research-repo-tools") == "0.1.9"
+    assert version("research-repo-tools") == "0.2.3"
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     package = next(item for item in lock["package"] if item["name"] == "research-repo-tools")
-    assert package["version"] == "0.1.9"
+    assert package["version"] == "0.2.3"
     assert package["source"] == {"registry": "https://pypi.org/simple"}
     assert MANIFEST["tool"]["uv"]["required-version"].startswith("==")
     tools = MANIFEST["tool"]["research-repo-tools"]["toolchain"]["cargo"]
@@ -146,26 +146,7 @@ def update_commands(recipe: str) -> list[list[str]]:
             ["update", "--manifest-path", FIXTURE_MANIFEST],
         )
     ]
-    python = [
-        [*UPDATE_PREFIX, "deps", "update-python"],
-        ["lock", "--upgrade"],
-        [
-            "run",
-            "--locked",
-            "--no-sync",
-            "--no-python-downloads",
-            "research-repo-tools",
-            "toolchain",
-            "run",
-            "--",
-            "uv",
-            "sync",
-            "--locked",
-            "--managed-python",
-            "--group",
-            "dev",
-        ],
-    ]
+    python = [[*UPDATE_PREFIX, "deps", "update-python", "--all-projects"]]
     return {
         "update": tools + cargo + python,
         "update-tools": tools,
@@ -189,7 +170,7 @@ def test_update_composition_and_boundaries(recording_recipes: Path, recipe: str)
     assert {path: path.read_bytes() for path in files} == before
 
 
-@pytest.mark.parametrize("step", range(1, 12))
+@pytest.mark.parametrize("step", range(1, 10))
 def test_update_failure_stops_later_steps(recording_recipes: Path, monkeypatch: pytest.MonkeyPatch, step: int) -> None:
     monkeypatch.setenv("FAIL_STEP", str(step))
     result, calls = invoke_recipe(recording_recipes, "update")

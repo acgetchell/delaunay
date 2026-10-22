@@ -219,6 +219,12 @@ coverage-ci: _ensure-cargo-llvm-cov
     mkdir -p coverage
     {{ managed }} cargo llvm-cov nextest {{ _coverage_base_args }} --cobertura --output-path coverage/cobertura.xml -P coverage
 
+# Summarize retained Cobertura coverage by file without running tests.
+[group('tests and coverage')]
+[positional-arguments]
+coverage-report *args:
+    {{ rrt }} coverage report "$@"
+
 # Run the large-scale 2D diagnostic fixture with progress output.
 [group('diagnostics')]
 debug-large-scale-2d n="36000" repair_every="1": _ensure-nextest
@@ -253,6 +259,12 @@ docs-version-check:
 [group('tests and coverage')]
 examples: _ensure-uv
     {{ managed }} research-repo-tools validation cargo-examples tooling/examples.toml
+
+# List selected inputs or run a shared file operation with explicit arguments.
+[group('build and setup')]
+[positional-arguments]
+files +args:
+    {{ rrt }} files "$@"
 
 # Fix (mutating): apply formatters/auto-fixes
 [group('workflows')]
@@ -308,6 +320,12 @@ markdown-fix: _ensure-rumdl
 notebook *args: _ensure-uv
     uv run --locked --group dev --group notebooks research-repo-tools notebooks launch "$@"
 
+# Review selected notebooks with the declared shared advisory policy.
+[group('notebooks and papers')]
+[positional-arguments]
+notebook-advise +files: _ensure-uv
+    uv run --locked --group dev --group notebooks research-repo-tools notebooks advise "$@"
+
 # Run routine non-executing notebook validation.
 [group('notebooks and papers')]
 notebook-check: _ensure-uv
@@ -329,10 +347,22 @@ notebook-clear-outputs-all: _ensure-uv
 notebook-execute notebook="notebooks/00_quickstart.ipynb" output_dir="target/notebooks" timeout="600": _ensure-uv
     uv run --locked --group dev --group notebooks research-repo-tools notebooks execute {{ quote(notebook) }} --output-dir {{ quote(output_dir) }} --timeout {{ quote(timeout) }}
 
+# Inspect notebook cells and structural repair needs without execution.
+[group('notebooks and papers')]
+[positional-arguments]
+notebook-inspect +files: _ensure-uv
+    {{ rrt }} notebooks inspect "$@"
+
 # Check notebook structure and output hygiene without code linting.
 [group('notebooks and papers')]
 notebook-output-check: _ensure-uv
     uv run --locked --group dev --group notebooks research-repo-tools files run --include 'notebooks/*.ipynb' --exclude '**/.ipynb_checkpoints/**' -- uv run --locked --group dev --group notebooks research-repo-tools notebooks check
+
+# Preview notebook restoration and cleanup; pass --apply to perform it.
+[group('notebooks and papers')]
+[positional-arguments]
+notebook-reset *args: _ensure-uv
+    {{ rrt }} notebooks reset "$@"
 
 # Restore tracked source notebooks and remove generated notebook artifacts.
 [group('notebooks and papers')]
@@ -555,6 +585,12 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
 
     echo ""
     echo "✅ Large-scale smoke guard passed for 2D-5D"
+
+# Run a shared declarative performance operation with explicit configuration.
+[group('benchmarks and performance')]
+[positional-arguments]
+performance +args: _ensure-uv
+    {{ managed }} research-repo-tools performance "$@"
 
 # Promote performance documentation solely from the retained canonical artifacts.
 [group('benchmarks and performance')]
@@ -890,6 +926,18 @@ tag version: release-version-check
 tag-force version: release-version-check
     {{ rrt }} changelog tag {{ quote(version) }} --force
 
+# Discover or export existing native Tectonic dependencies without installation.
+[group('build and setup')]
+[positional-arguments]
+tectonic +args: _ensure-uv
+    {{ rrt }} tectonic "$@"
+
+# Export a shared configuration or workflow template.
+[group('build and setup')]
+[positional-arguments]
+templates +args: _ensure-uv
+    {{ rrt }} templates "$@"
+
 # Run maintained Rust and Python correctness buckets once.
 [group('workflows')]
 test: test-rust test-python
@@ -1008,10 +1056,26 @@ toml-parse-check: _ensure-uv
 tools-check:
     uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain check
 
+# Preview obsolete managed installations; pass --apply to delete selected installs.
+[group('build and setup')]
+[positional-arguments]
+tools-clean *args:
+    uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain clean "$@"
+
 # Export verified managed paths for GitHub Actions.
 [group('build and setup')]
 tools-export:
     uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain export
+
+# Check inherited Python tool declarations, lock entries, and executables.
+[group('build and setup')]
+tools-python-check:
+    uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain python-tools-check
+
+# Install or repair only declared release binaries in the existing environment.
+[group('build and setup')]
+tools-sync-binaries:
+    uv run --locked --no-sync --no-python-downloads python -I -X utf8 -m research_repo_tools toolchain sync-binaries
 
 # Check for unused direct Cargo dependencies.
 [group('validation')]
@@ -1022,6 +1086,12 @@ unused-deps: _ensure-cargo-machete
 [group('build and setup')]
 update: update-tools update-dependencies
     @echo "✅ Repository dependencies and tools updated."
+
+# Preview or apply the explicitly selected GitHub Actions pin updates.
+[group('build and setup')]
+[positional-arguments]
+update-actions *args: _ensure-uv
+    uv run --locked --only-group tooling --inexact research-repo-tools actions update --policy .github/action-updates.toml .github/workflows "$@"
 
 # Advance Cargo dependency declarations and lockfile entries for every resolution root.
 [doc('Update repository Cargo dependency requirements and lockfiles.')]
@@ -1035,8 +1105,9 @@ update-cargo-dependencies:
 # Upgrade declared Cargo tools and publish verified exact TOML pins.
 [doc('Upgrade only declared managed Cargo tools.')]
 [group('build and setup')]
-update-cargo-tools:
-    uv run --locked --only-group tooling --inexact research-repo-tools toolchain upgrade
+[positional-arguments]
+update-cargo-tools *args:
+    uv run --locked --only-group tooling --inexact research-repo-tools toolchain upgrade "$@"
 
 # Advance Cargo and exact Python development requirements plus their lockfiles.
 [doc('Update Cargo and Python development requirements plus all Cargo/uv locked dependencies.')]
@@ -1047,9 +1118,7 @@ update-dependencies: update-cargo-dependencies update-python-dependencies
 [doc('Update exact dependency-groups.dev pins and uv.lock through uv.')]
 [group('build and setup')]
 update-python-dependencies:
-    uv run --locked --only-group tooling --inexact research-repo-tools deps update-python
-    uv lock --upgrade
-    uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain run -- uv sync --locked --managed-python --group dev
+    uv run --locked --only-group tooling --inexact research-repo-tools deps update-python --all-projects
 
 # Upgrade uv and managed Cargo tools, then synchronize the declared environment.
 [group('build and setup')]
@@ -1057,8 +1126,9 @@ update-tools: update-uv update-cargo-tools setup-tools
 
 # Upgrade uv through its installation owner and reconcile the project declaration.
 [group('build and setup')]
-update-uv:
-    uv run --no-config --no-sync --no-python-downloads research-repo-tools deps update-uv
+[positional-arguments]
+update-uv *args:
+    uv run --no-config --no-sync --no-python-downloads research-repo-tools deps update-uv "$@"
 
 # Update release metadata; optional date and predecessor arguments support offline preparation.
 [doc('Update package, citation, lockfile, and non-artifact documentation release versions.')]
@@ -1068,6 +1138,12 @@ update-version tag *args: _ensure-gh
     {{ rrt }} release update "$@"
     {{ managed }} cargo metadata --locked --format-version 1 --no-deps > /dev/null
     {{ rrt }} release check
+
+# Run explicitly configured validation commands through the managed toolchain.
+[group('validation')]
+[positional-arguments]
+validate configuration *names: _ensure-uv
+    {{ managed }} research-repo-tools validation run "$@"
 
 # Refresh reviewer-facing validation diagrams from the reproducible notebook.
 [group('notebooks and papers')]

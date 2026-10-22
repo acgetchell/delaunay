@@ -105,6 +105,10 @@ jobs:
           fi
           echo "::endgroup::"
 
+          echo "::group::Per-file coverage summary"
+          just coverage-report --prefix src/ --limit 30
+          echo "::endgroup::"
+
           echo "::group::Test result verification"
           # Nextest outputs to target/nextest/<profile>/<path-from-config>.
           if [ ! -f target/nextest/coverage/test-results/junit.xml ]; then

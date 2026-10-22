@@ -17,7 +17,7 @@ uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
 The installed package and tooling/notebook groups pin
-`research-repo-tools==0.1.9`. Shared CLI commands and documented Python APIs own
+`research-repo-tools==0.2.3`. Shared CLI commands and documented Python APIs own
 setup, maintenance, source inventory, subprocesses, archive extraction, worktree
 lifecycle, Criterion parsing, file transactions and notebook infrastructure.
 Retained adapters own Delaunay science and policy. The

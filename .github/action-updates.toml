@@ -1,0 +1,17 @@
+# Explicit opt-in targets for `just update-actions`; unrelated references stay pinned.
+# The publishing authentication action and privileged Dependabot workflow require
+# their existing dedicated review and are deliberately absent.
+# setup-uv stays coupled to the setup composite, which this upstream updater
+# does not support; Dependabot retains that cross-file update path.
+[actions]
+"actions/cache" = "latest"
+"actions/checkout" = "latest"
+"actions/upload-artifact" = "latest"
+"actions-rust-lang/setup-rust-toolchain" = "latest"
+"codacy/codacy-analysis-cli-action" = "latest"
+"codacy/codacy-coverage-reporter-action" = "latest"
+"codecov/codecov-action" = "latest"
+# CodeQL's latest release is a bundle tag; select the reviewed action release.
+"github/codeql-action/analyze" = "v4.38.3"
+"github/codeql-action/init" = "v4.38.3"
+"github/codeql-action/upload-sarif" = "v4.38.3"

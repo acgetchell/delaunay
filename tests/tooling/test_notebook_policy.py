@@ -12,7 +12,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_notebook_spelling_is_declared_to_shared_lint() -> None:
-    assert load(root=REPO_ROOT).notebooks.id_pattern == r"[a-z0-9]+(?:-[a-z0-9]+)*"
+    policy = load(root=REPO_ROOT).notebooks
+    assert policy.id_pattern == r"[a-z0-9]+(?:-[a-z0-9]+)*"
+    assert policy.prohibit_installs is True
 
 
 @pytest.mark.parametrize(

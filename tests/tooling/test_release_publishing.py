@@ -229,7 +229,7 @@ def test_oidc_job_installs_only_minimal_locked_publication_tools() -> None:
     bootstrap = next(step for step in steps if step.get("name") == "Install locked publication tooling")
     assert "uv sync --locked --managed-python --only-group tooling --no-install-project" in bootstrap["run"]
     manifest = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert manifest["dependency-groups"]["tooling"] == ["research-repo-tools[python-tools]==0.1.9"]
+    assert manifest["dependency-groups"]["tooling"] == ["research-repo-tools[python-tools]==0.2.3"]
 
 
 def test_oidc_rust_setup_exports_the_declared_minimal_toolchain(tmp_path: Path) -> None:
@@ -279,6 +279,10 @@ def test_account_payloads_match_workflow_identity_and_require_tag_review() -> No
     allowed = json.loads((settings / "actions-selected.json").read_bytes())
     assert [pattern for pattern in allowed["patterns_allowed"] if pattern.startswith("rust-lang/crates-io-auth-action@")] == [auth]
     assert allowed["verified_allowed"] is False
+    updates = tomllib.loads((ROOT / ".github/action-updates.toml").read_text(encoding="utf-8"))["actions"]
+    assert "rust-lang/crates-io-auth-action" not in updates
+    assert "astral-sh/setup-uv" not in updates
+    assert "acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml" not in updates
     auto_merge = (ROOT / ".github/workflows/dependabot-auto-merge.yml").read_text(encoding="utf-8")
     assert '".github/workflows/publish-crates.yml"' not in auto_merge
 

@@ -31,6 +31,13 @@ imports and deterministic repository-root discovery near the beginning, seed
 random behavior that affects interpretation, and ensure cells run top to bottom
 in a fresh kernel.
 
+The shared `prohibit-installs` policy rejects literal dependency installation
+commands in notebook cells. Declare dependencies in the managed environment
+instead. `just notebook-inspect PATH --no-preview` inventories cells and repair
+needs without executing them; `just notebook-advise PATH --strict` checks the
+declared advisory policy. `just notebook-reset` previews the configured restore
+and cleanup plan; pass `--apply` only when ready to perform it.
+
 ## Validation And Execution
 
 Routine validation is lint-only:
