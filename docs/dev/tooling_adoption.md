@@ -11,8 +11,13 @@ the lock and consumer checks.
 
 The locked Semgrep runs in the same Python 3.15 environment. The uv overrides
 select patched MCP 1.30.0 and, on Windows, pywin32 312 with Python 3.15 wheels;
-Semgrep's own pins still select MCP 1.29.0 and pywin32 311. Native Linux and
-Windows execution must be verified by their CI jobs.
+Semgrep's own pins still select MCP 1.29.0 and pywin32 311. Its OpenTelemetry
+1.37 pins also require a compatible API/SDK/exporter 1.45.1 and instrumentation
+0.66b1 override set to address [GHSA-xcq7-p3pf-p88h][otel-advisory]. Retire these
+overrides when Semgrep's constraints permit the patched dependencies directly.
+Native Linux and Windows execution must be verified by their CI jobs.
+
+[otel-advisory]: https://github.com/advisories/GHSA-xcq7-p3pf-p88h
 
 The Rust dependency is now the published la-stack 0.5.0, retaining disabled
 default features and the `exact` feature. This dependency refresh makes the
