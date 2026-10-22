@@ -183,6 +183,33 @@ def test_promotion_and_frozen_revalidation_use_installed_helpers(cargo: CargoFix
     assert [call[1] for call in cargo.calls if call[0] == "cargo"] == ["--version", "package", "--version", "package"]
 
 
+def test_local_evidence_precedes_release_and_never_runs_cargo(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """An inspecting host needs neither the producer toolchain nor an Actions event."""
+    for key in ("GITHUB_EVENT_PATH", "GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF", "GITHUB_SHA", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.chdir(cargo.root)
+    monkeypatch.setattr(sys, "argv", ["release_artifacts.py", "evidence"])
+    monkeypatch.setattr(promotion, "run_command", lambda *_args, **_kwargs: pytest.fail("local evidence must not run Cargo or rustc"))
+    assert promotion.main() == 0
+    frozen = capsys.readouterr().out.strip()
+    selected = json.loads(frozen)
+    assert (selected["tag"], selected["commit"], selected["artifact"]["id"]) == (f"v{VERSION}", COMMIT, 456)
+    assert "release_id" not in selected
+    monkeypatch.setattr(sys, "argv", ["release_artifacts.py", "evidence", "--identity", frozen])
+    assert promotion.main() == 0
+    assert capsys.readouterr().out.strip() == frozen
+    cargo.artifact["id"] = 999
+    assert promotion.main() == 1
+    assert capsys.readouterr().out == ""
+
+
+def test_local_evidence_cannot_replace_workflow_promotion(cargo: CargoFixture) -> None:
+    selected = promotion.evidence(cargo.root)
+    with pytest.raises(ValueError, match="selection changed"):
+        promotion.verify(cargo.root, expected=selected)
+    assert not cargo.calls
+
+
 @pytest.mark.parametrize("failure", ["none", "empty", "malformed", "changed", "unavailable"])
 def test_cli_hands_frozen_evidence_to_approval_or_fails_without_output(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
     """Round-trip the actual Actions output, including lost or invalid handoffs."""
@@ -258,16 +285,18 @@ def test_artifact_fixture_identity_does_not_change_with_the_clock(cargo: CargoFi
 
 
 @pytest.mark.parametrize("field", ["event", "head_sha", "head_branch", "workflow_id", "path", "name", "repository", "head_repository", "conclusion"])
-def test_untrusted_or_failed_main_run_never_repackages(cargo: CargoFixture, field: str) -> None:
+@pytest.mark.parametrize("operation", [promotion.evidence, promotion.verify])
+def test_untrusted_or_failed_main_run_never_repackages(cargo: CargoFixture, field: str, operation: Any) -> None:
     cargo.run[field] = {"full_name": "other/repo", "id": 8} if "repository" in field else "wrong"
     with pytest.raises(ValueError, match=r"repository|identity|main-push|successful|positive integer"):
-        promotion.verify(cargo.root)
+        operation(cargo.root)
     assert not cargo.calls
 
 
 @pytest.mark.parametrize("job_index", range(4))
 @pytest.mark.parametrize("failure", ["missing", "failed", "partial-rerun", "skipped-step"])
-def test_every_native_and_package_gate_is_required(cargo: CargoFixture, job_index: int, failure: str) -> None:
+@pytest.mark.parametrize("operation", [promotion.evidence, promotion.verify])
+def test_every_native_and_package_gate_is_required(cargo: CargoFixture, job_index: int, failure: str, operation: Any) -> None:
     job = cargo.jobs[job_index]
     if failure == "missing":
         cargo.jobs.remove(job)
@@ -278,12 +307,13 @@ def test_every_native_and_package_gate_is_required(cargo: CargoFixture, job_inde
     else:
         job["steps"][0]["conclusion"] = "skipped"
     with pytest.raises(ValueError, match=r"attempt|succeed|step"):
-        promotion.verify(cargo.root)
+        operation(cargo.root)
     assert not cargo.calls
 
 
 @pytest.mark.parametrize("failure", ["missing", "expired", "wrong-run", "wrong-commit", "wrong-repository", "damaged-zip"])
-def test_immutable_artifact_failures_block_repackaging(cargo: CargoFixture, failure: str) -> None:
+@pytest.mark.parametrize("operation", [promotion.evidence, promotion.verify])
+def test_immutable_artifact_failures_block_repackaging(cargo: CargoFixture, failure: str, operation: Any) -> None:
     if failure == "missing":
         cargo.missing_artifact = True
     elif failure == "expired":
@@ -294,15 +324,16 @@ def test_immutable_artifact_failures_block_repackaging(cargo: CargoFixture, fail
         field_name = {"wrong-run": "id", "wrong-commit": "head_sha", "wrong-repository": "repository_id"}[failure]
         cargo.artifact["workflow_run"][field_name] = "wrong"
     with pytest.raises(ValueError, match=r"artifact|ZIP"):
-        promotion.verify(cargo.root)
+        operation(cargo.root)
     assert not cargo.calls
 
 
 @pytest.mark.parametrize("field", ["commit", "version", "run_id", "run_attempt", "repository", "sha256", "tools", "file"])
-def test_producer_manifest_must_match_actual_source_bytes_and_tools(cargo: CargoFixture, field: str) -> None:
+@pytest.mark.parametrize("operation", [promotion.evidence, promotion.verify])
+def test_producer_manifest_must_match_actual_source_bytes_and_tools(cargo: CargoFixture, field: str, operation: Any) -> None:
     cargo.manifest[field] = "wrong"
     with pytest.raises(ValueError, match="manifest differs"):
-        promotion.verify(cargo.root)
+        operation(cargo.root)
     assert not any(call[1] == "package" for call in cargo.calls)
 
 

@@ -24,6 +24,10 @@ The retained Python ownership is explicit:
 | `publish_readme_performance` | Geometric-mean group summaries and retained-report consistency |
 | `profiling_metadata` | Dynamic CI mode/filter labels over shared capture and publication |
 | `release_benchmarks` | Trusted workflow handoff, tagged checkout and refusal to replace an existing release baseline |
+| `release_artifacts` | Cargo archive/source checks, native/package job policy and frozen approval identity over shared validation helpers |
+| `release_changelog` | Temporary citation-date default pending [research-repo-tools #130][citation-date] |
+
+[citation-date]: https://github.com/acgetchell/research-repo-tools/issues/130
 
 Generic setup, subprocesses, file discovery, Criterion parsing/pairing, host
 probes, notebook infrastructure, paper/PDF maintenance, SARIF and publication

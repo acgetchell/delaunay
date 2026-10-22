@@ -260,6 +260,64 @@ def _candidate(commit: str, *, attempts: int = 30) -> dict[str, Any]:
     return {"run_id": run["id"], "run_attempt": run["run_attempt"], "jobs": jobs, "artifact": selected}
 
 
+def _download_verified(selection: dict[str, Any], retained: Path, *, reproduce_root: Path | None = None) -> dict[str, Any]:
+    """Check the retained package on any host; reproduction also binds local tools."""
+    commit, version = selection["commit"], selection["tag"].removeprefix("v")
+    name = f"delaunay-{version}.crate"
+    download_artifact(REPOSITORY, _object(selection["artifact"]), retained, (name, MANIFEST))
+    evidence = _json((retained / MANIFEST).read_bytes())
+    recorded_tools = evidence.get("tools")
+    if (
+        not isinstance(recorded_tools, dict)
+        or set(recorded_tools) != {"cargo", "rustc"}
+        or any(not isinstance(value, str) or not value.strip() for value in recorded_tools.values())
+    ):
+        msg = "Cargo artifact manifest differs from the required producer tool identities"
+        raise ValueError(msg)
+    wanted = {
+        "schema": 1,
+        "repository": REPOSITORY,
+        "commit": commit,
+        "version": version,
+        "run_id": selection["run_id"],
+        "run_attempt": selection["run_attempt"],
+        "file": name,
+        "sha256": _digest(retained / name),
+        "tools": recorded_tools if reproduce_root is None else _tool_identity(reproduce_root),
+    }
+    if evidence != wanted:
+        msg = "Cargo artifact manifest differs from its archive, source, tools or validation attempt"
+        raise ValueError(msg)
+    _check_crate(retained / name, commit, version)
+    return evidence
+
+
+def _unchanged(root: Path, selection: dict[str, Any]) -> None:
+    if _identity(root) != (selection["commit"], selection["tag"].removeprefix("v")) or _candidate(selection["commit"], attempts=1) != {
+        key: selection[key] for key in ("run_id", "run_attempt", "jobs", "artifact")
+    }:
+        msg = "Cargo source or validation evidence changed during promotion"
+        raise ValueError(msg)
+
+
+def evidence(root: Path, *, expected: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Verify retained main evidence locally before a release is published.
+
+    This works across hosts without Cargo or a release event. The publication
+    workflow separately requires that event and byte-identical repackaging with
+    the producer's tools before credentials are obtained.
+    """
+    commit, version = _identity(root)
+    selection = {"schema": 1, "tag": f"v{version}", "commit": commit, **_candidate(commit)}
+    if expected is not None and selection != expected:
+        msg = "Cargo validation selection changed; inspect the original run before publishing"
+        raise ValueError(msg)
+    with tempfile.TemporaryDirectory(prefix="delaunay-evidence-") as directory:
+        _download_verified(selection, Path(directory) / "retained")
+        _unchanged(root, selection)
+    return selection
+
+
 def verify(root: Path, *, expected: dict[str, Any] | None = None) -> dict[str, Any]:
     """Verify exact main evidence and byte-identical repackaging without builds.
 
@@ -300,37 +358,17 @@ def verify(root: Path, *, expected: dict[str, Any] | None = None) -> dict[str, A
     with tempfile.TemporaryDirectory(prefix="delaunay-promotion-") as directory:
         temporary = Path(directory)
         retained = temporary / "retained"
-        download_artifact(REPOSITORY, _object(selection["artifact"]), retained, (name, MANIFEST))
-        evidence = _json((retained / MANIFEST).read_bytes())
-        wanted = {
-            "schema": 1,
-            "repository": REPOSITORY,
-            "commit": commit,
-            "version": version,
-            "run_id": selection["run_id"],
-            "run_attempt": selection["run_attempt"],
-            "file": name,
-            "sha256": _digest(retained / name),
-            "tools": _tool_identity(root),
-        }
-        if evidence != wanted:
-            msg = "Cargo artifact manifest differs from its archive, source, tools or validation attempt"
-            raise ValueError(msg)
-        _check_crate(retained / name, commit, version)
+        retained_evidence = _download_verified(selection, retained, reproduce_root=root)
         run_command(
             "cargo",
             ["package", "--locked", "--package", "delaunay", "--registry", "crates-io", "--no-verify", "--target-dir", str(temporary / "cargo")],
             cwd=root,
             timeout=600,
         )
-        if _digest(temporary / "cargo" / "package" / name) != evidence["sha256"]:
+        if _digest(temporary / "cargo" / "package" / name) != retained_evidence["sha256"]:
             msg = "Cargo repackaging differs from the main-verified archive; upload is blocked"
             raise ValueError(msg)
-        if _identity(root) != (commit, version) or _candidate(commit, attempts=1) != {
-            key: selection[key] for key in ("run_id", "run_attempt", "jobs", "artifact")
-        }:
-            msg = "Cargo source or validation evidence changed during promotion"
-            raise ValueError(msg)
+        _unchanged(root, selection)
     return selection
 
 
@@ -340,12 +378,17 @@ def main() -> int:
     commands = parser.add_subparsers(dest="mode", required=True)
     producer = commands.add_parser("create", help="retain the main-push verified archive")
     producer.add_argument("output", type=Path)
+    local = commands.add_parser("evidence", help="verify retained main evidence before publication, without Cargo")
+    local.add_argument("--identity", default="", help="optional previously selected evidence JSON")
     commands.add_parser("verify", help="verify/reproduce exact main evidence without building")
     args = parser.parse_args()
     try:
         root = Path.cwd()
         if args.mode == "create":
             create(root, args.output)
+        elif args.mode == "evidence":
+            selection = evidence(root, expected=_json(args.identity) if args.identity else None)
+            print(_encode(selection).decode("utf-8"), end="")
         else:
             frozen = os.environ.get("PROMOTION_SELECTION")
             selection = verify(root, expected=None if frozen is None else _json(frozen))

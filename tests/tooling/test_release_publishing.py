@@ -176,6 +176,32 @@ def test_publish_recipe_reaches_installed_explicit_approval_parser(monkeypatch: 
     assert requested == [TAG]
 
 
+@pytest.mark.parametrize("failure", [False, True])
+def test_real_publish_recipe_requires_retained_evidence_before_publication(tmp_path: Path, *, failure: bool) -> None:
+    """A missing main artifact must leave the GitHub draft unpublished."""
+    (tmp_path / "justfile").write_text(f"import '{(ROOT / 'justfile').as_posix()}'\n", encoding="utf-8")
+    calls = tmp_path / "calls"
+    provider = json.dumps({"tagName": TAG, "name": TAG, "body": "generated notes"})
+    runner = (
+        "uv() {\n"
+        '  case "$*" in\n'
+        '    *"changelog notes "*) printf "%s\\n" "generated notes" ;;\n'
+        '    *"release_artifacts.py evidence "*)\n'
+        f'      printf "%s\\n" evidence >> {shlex.quote(calls.as_posix())}\n'
+        f"      return {17 if failure else 0} ;;\n"
+        '    *"release publish "*)\n'
+        f'      printf "%s\\n" publish >> {shlex.quote(calls.as_posix())} ;;\n'
+        "    *) return 0 ;;\n"
+        "  esac\n"
+        "}\n"
+        f"gh() {{ printf '%s\\n' {shlex.quote(provider)}; }}\n"
+        "export -f uv gh\n"
+    )
+    result = run_command("bash", ["--noprofile", "--norc", "-euc", runner + f"just release-publish {shlex.quote(TAG)}"], cwd=tmp_path, check=False)
+    assert (result.returncode == 0) is not failure, result.stderr
+    assert calls.read_text(encoding="utf-8").splitlines() == (["evidence"] if failure else ["evidence", "publish"])
+
+
 def test_workflow_limits_credentials_and_verifies_clean_packages() -> None:
     """Credential-free builds precede approval, revalidation and a serialized upload."""
     workflow = yaml.safe_load(WORKFLOW.read_bytes())

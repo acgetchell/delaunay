@@ -145,15 +145,18 @@ changelog-archive:
 changelog-check:
     {{ rrt }} changelog check
 
-# Preview normalized and rotated history without publishing files.
+# Preview changelog generation; tagged previews reuse the prepared citation date.
 [group('release')]
-changelog-preview:
-    {{ managed }} research-repo-tools changelog generate --dry-run
+[positional-arguments]
+changelog-preview *args:
+    {{ managed }} uv run --locked --no-sync python tooling/python/release_changelog.py --dry-run "$@"
 
-# Generate a prospective release using an explicit UTC date.
+# Generate a prospective release using the citation date, or an explicit ISO date.
 [group('release')]
-changelog-release tag date:
-    {{ managed }} research-repo-tools changelog generate --tag {{ quote(tag) }} --date {{ quote(date) }}
+changelog-release tag date="":
+    {{ managed }} uv run --locked --no-sync python tooling/python/release_changelog.py --tag {{ quote(tag) }} --date {{ quote(date) }}
+
+alias changelog-unreleased := changelog-release
 
 # Run every non-mutating validator outside the test suites.
 [group('workflows')]
@@ -791,6 +794,11 @@ python-typecheck: _ensure-uv
 release-artifact +args:
     uv run --locked --no-sync python tooling/python/release_artifacts.py "$@"
 
+# Verify retained main CI evidence for the clean checkout without rebuilding.
+[group('release')]
+release-evidence identity="":
+    uv run --locked --no-sync python tooling/python/release_artifacts.py evidence --identity {{ quote(identity) }}
+
 # Require the immutable release event and successful checks on its exact commit.
 [group('release')]
 release-gate tag: (_release-notes-check tag)
@@ -815,7 +823,7 @@ release-package: _ensure-toolchain
 
 # Publish a reviewed, benchmark-equipped draft using the maintainer's GitHub session.
 [group('release')]
-release-publish tag: (_release-notes-check tag)
+release-publish tag: (_release-notes-check tag) release-evidence
     {{ rrt }} release publish {{ quote(tag) }} --approve
 
 # Verify the stable GitHub release, benchmark asset, and exact crates.io version.

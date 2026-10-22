@@ -39,6 +39,19 @@ all-feature Cargo package builds before retaining an archive. Release jobs requi
 the exact archive to reproduce without builds, rechecking the frozen selection
 after deployment approval. Cargo remains the native uploader and repackages the
 verified clean source; it does not directly upload the downloaded archive.
+The local `release-evidence` recipe verifies the same retained archive without
+Cargo or a release event on any host. `release-publish` requires this check
+before making the reviewed draft immutable; the workflow separately enforces
+the published event, producer-tool equality and byte-identical repackaging.
+
+The release recipes follow la-stack's command contract. A small citation-date
+adapter supplies an explicit date to the shared changelog generator for
+`changelog-release` / `changelog-unreleased` and tagged previews. It validates the
+prepared version/date without reading the clock or changing metadata; generation
+and publication remain shared-package operations. This is temporary generic
+code pending [research-repo-tools #130](https://github.com/acgetchell/research-repo-tools/issues/130),
+which also replaces la-stack's adapter. Remove it when that capability is
+published and adopted; v0.2.3 still requires an explicit prospective date.
 
 Tag-specific scientific benchmark production and provenance, protected-branch
 and generated-notes checks, immutable GitHub Releases, crates.io OIDC approval,
