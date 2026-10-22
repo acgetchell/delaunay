@@ -167,14 +167,17 @@ just changelog-unreleased "$TAG"
 This generates `CHANGELOG.md` as though the target tag already existed,
 archives completed minor series under `docs/archives/changelog/`, and
 uses `date-released` already recorded in `CITATION.cff`. No `RELEASE_DATE`
-shell variable is needed. The citation version must match the target tag and
-the date must be valid `YYYY-MM-DD`; invalid metadata stops generation before
-files change. `changelog-release` is the same recipe name supported by la-stack.
+shell variable is needed. With this default-date path, the citation version must
+match the target tag and the date must be valid `YYYY-MM-DD`; invalid metadata
+stops generation before files change. `changelog-release` is the same recipe
+name supported by la-stack.
 
 Use `just changelog-preview --tag "$TAG"` for a read-only preview with the same
 date default. An explicit date is still available as the second argument to
-`changelog-unreleased`, or as `--date YYYY-MM-DD` for the preview. To advance the
-declared date deliberately, run `just update-version "$TAG" --date YYYY-MM-DD`
+`changelog-unreleased`, or as `--date YYYY-MM-DD` for the preview. An explicit
+date bypasses the adapter's citation lookup and version check; the shared
+generator still validates the supplied date. To advance the declared date
+deliberately, run `just update-version "$TAG" --date YYYY-MM-DD`
 before regenerating. Run the final version check to verify the heading matches
 Cargo metadata and the citation date. Review the generated changelog and archive
 changes; do not edit them manually.
