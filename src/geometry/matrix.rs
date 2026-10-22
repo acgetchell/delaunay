@@ -2,7 +2,7 @@
 //!
 //! This module is Delaunay's boundary around the stack-allocated linear algebra
 //! functionality provided by `la-stack`.  Geometry code should depend on the
-//! local [`Matrix`] alias, checked access helpers, determinant wrappers, and
+//! local [`Matrix`] alias, checked access helpers, determinant filters, and
 //! error conversions here rather than reaching into `la-stack` internals
 //! directly.
 //!
@@ -17,6 +17,11 @@
 //! matrix elimination. Already-derived rational inputs
 //! stay exact through `RationalMatrix` and `RationalVector`, with explicit
 //! rounding only at a public coordinate boundary.
+//! Provisional intersection bases use backend LU, Gram construction, and
+//! checked dot products; their tolerance and exact certificate checks remain
+//! geometry policy. Rectangular rank selection, rational scalar expressions,
+//! and symbolic perturbation polynomials remain local because the backend's
+//! square-matrix and binary64 vector APIs do not represent those operations.
 //!
 //! Fixed-size distances use [`la_stack::Vector::norm`], which can return a finite
 //! length even when its square overflows. Rounded squared quantities use
@@ -27,13 +32,18 @@
 //! dependency. Construct a vector with [`la_stack::Vector::try_new`], then call
 //! [`norm`](la_stack::Vector::norm) or [`norm_squared`](la_stack::Vector::norm_squared)
 //! and handle the typed backend errors.
+//!
+//! The former `determinant(&matrix)` helper has also been removed. Use
+//! [`Matrix::det`] for a floating-point estimate, preserving numerical
+//! singularity errors, or [`Matrix::det_sign_exact`] when an exact sign or
+//! exact singularity classification is required.
 
 #![forbid(unsafe_code)]
 
 /// Typed errors from the stack-allocated linear algebra backend.
 ///
 /// Delaunay re-exports this backend error type at the matrix boundary so public
-/// wrappers such as [`determinant`] can preserve exact failure context without
+/// geometry errors can preserve exact failure context without
 /// exposing the rest of `la-stack` to downstream callers.
 pub use la_stack::LaError;
 use la_stack::Matrix as LaMatrix;
@@ -226,33 +236,6 @@ pub(crate) fn matrix_fast_filter<const D: usize>(
     }
 }
 
-/// Compute a determinant, returning `Ok(0.0)` for singular matrices.
-///
-/// Other backend failures are returned as typed [`LaError`] values.
-///
-/// # Errors
-///
-/// Returns [`LaError`] for non-singular backend failures such as non-finite
-/// intermediate determinant computations.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::geometry::{LaError, Matrix, determinant};
-///
-/// let m = Matrix::<2>::zero();
-/// assert_eq!(determinant(&m)?, 0.0);
-/// # Ok::<(), LaError>(())
-/// ```
-#[inline]
-pub fn determinant<const D: usize>(m: &Matrix<D>) -> Result<f64, LaError> {
-    match m.det() {
-        Ok(det) => Ok(det),
-        Err(LaError::Singular { .. }) => Ok(0.0),
-        Err(source) => Err(source),
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::{Matrix, StackMatrixDispatchError};
@@ -283,8 +266,6 @@ pub(crate) mod test_support {
 mod tests {
     use super::*;
     use std::assert_matches;
-
-    use approx::assert_relative_eq;
 
     #[test]
     fn try_with_la_stack_matrix_returns_err_on_unsupported_dim() {
@@ -351,26 +332,5 @@ mod tests {
                 },
             }
         );
-    }
-
-    #[test]
-    fn determinant_returns_finite_value_for_regular_matrix() {
-        let matrix = Matrix::<2>::try_from_rows([[4.0, 2.0], [1.0, 3.0]]).unwrap();
-
-        assert_relative_eq!(determinant(&matrix).unwrap(), 10.0);
-    }
-
-    #[test]
-    fn determinant_returns_zero_for_singular_matrix() {
-        let matrix = Matrix::<2>::try_from_rows([[1.0, 2.0], [2.0, 4.0]]).unwrap();
-
-        assert_relative_eq!(determinant(&matrix).unwrap(), 0.0);
-    }
-
-    #[test]
-    fn determinant_preserves_nonfinite_backend_error() {
-        let matrix = Matrix::<2>::try_from_rows([[1.0e200, 0.0], [0.0, 1.0e200]]).unwrap();
-
-        assert_matches!(determinant(&matrix), Err(LaError::NonFinite { .. }));
     }
 }

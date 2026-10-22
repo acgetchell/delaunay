@@ -67,6 +67,9 @@ General vector norms use a direct `la-stack` dependency and `la_stack::Vector`.
 The former `hypot` and `squared_norm` utility/prelude exports have been removed.
 The geometry prelude retains `LaError` so callers can inspect backend causes
 returned by Delaunay APIs; it does not export the internal vector alias.
+The former `determinant` helper is also removed: call `Matrix::det()` for an
+estimate, or `Matrix::det_sign_exact()` for an exact sign. The estimate preserves
+numerical singularity errors instead of treating them as proof of a zero determinant.
 
 ## Policy
 

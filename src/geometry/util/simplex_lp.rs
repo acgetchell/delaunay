@@ -8,20 +8,17 @@
 
 use core::array::from_fn;
 
-use la_stack::{BigInt, BigRational, FromPrimitive, Signed, ToPrimitive};
+use la_stack::{BigInt, BigRational, FromPrimitive, MAX_RATIONAL_MATRIX_DISPATCH_DIM, Signed};
 
 use crate::geometry::matrix::{
-    Interval, LaError, LaVector, RationalVector, solve_exact_runtime_system,
+    ExactF64Conversion, Interval, LaError, LaVector, Matrix, RationalVector, Tolerance,
+    gram_matrix, solve_exact_runtime_system,
 };
 use crate::geometry::realization::{
     LabeledSimplexRealization, SimplexIntersectionWitness, SimplexRealizationBuffer,
 };
 
 /// Tries cheap candidate separators in the normal space of one shared face.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the separator search is one bounded projection-and-certification workflow"
-)]
 pub(in crate::geometry) fn shared_face_fast_confinement<L, const D: usize>(
     first: &LabeledSimplexRealization<L, D>,
     second: &LabeledSimplexRealization<L, D>,
@@ -56,25 +53,16 @@ where
         return false;
     }
     let base = shared_coordinates[0];
-    let shared_deltas: Vec<Vec<f64>> = shared_coordinates[1..]
+    let shared_deltas: Result<Vec<_>, _> = shared_coordinates[1..]
         .iter()
-        .map(|coordinates| {
-            coordinates
-                .iter()
-                .zip(base)
-                .map(|(coordinate, base_coordinate)| coordinate - base_coordinate)
-                .collect()
-        })
+        .map(|coordinates| LaVector::try_new(from_fn(|axis| coordinates[axis] - base[axis])))
         .collect();
-    let gram: Vec<Vec<f64>> = shared_deltas
-        .iter()
-        .map(|left| {
-            shared_deltas
-                .iter()
-                .map(|right| dot_product_f64(left, right))
-                .collect()
-        })
-        .collect();
+    let Ok(shared_deltas) = shared_deltas else {
+        return false;
+    };
+    let Some(gram) = shared_face_gram(&shared_deltas) else {
+        return false;
+    };
 
     let mut axis = [0.0; D];
     let mut normalized_rays = Vec::with_capacity(2 * D);
@@ -121,7 +109,11 @@ where
     for _ in 0..16 {
         let mut adjusted = false;
         for ray in &normalized_rays {
-            let projection = dot_product_f64(&refined_axis, ray);
+            let Ok(projection) = LaVector::try_new(refined_axis)
+                .and_then(|axis| axis.dot(&LaVector::try_new(*ray)?))
+            else {
+                return false;
+            };
             if projection < 1.0 {
                 let correction = 1.0 - projection;
                 for (value, component) in refined_axis.iter_mut().zip(ray) {
@@ -138,23 +130,40 @@ where
         && provisional_axis_certifies_confinement(first, second, shared_labels, &refined_axis)
 }
 
+/// Keeps runtime Gram dispatch out of the single-shared-vertex path.
+fn shared_face_gram<const D: usize>(deltas: &[LaVector<D>]) -> Option<Vec<Vec<f64>>> {
+    if deltas.is_empty() {
+        return Some(Vec::new());
+    }
+    la_stack::try_with_stack_matrix!(deltas.len(), |mut matrix| -> Result<_, LaError> {
+        matrix = gram_matrix(&from_fn(|index| deltas[index]))?;
+        Ok(matrix
+            .into_rows()
+            .into_iter()
+            .map(Vec::from)
+            .collect::<Vec<_>>())
+    })
+    .ok()
+}
+
 /// Removes provisional components tangent to the shared affine face.
 fn project_ray_orthogonal_to_shared_face<const D: usize>(
     mut ray: [f64; D],
-    shared_deltas: &[Vec<f64>],
+    shared_deltas: &[LaVector<D>],
     gram: &[Vec<f64>],
 ) -> Option<[f64; D]> {
     if shared_deltas.is_empty() {
         return Some(ray);
     }
-    let residuals: Vec<_> = shared_deltas
+    let vector = LaVector::try_new(ray).ok()?;
+    let residuals: Result<Vec<_>, _> = shared_deltas
         .iter()
-        .map(|delta| dot_product_f64(delta, &ray))
+        .map(|delta| delta.dot(&vector))
         .collect();
-    let correction = solve_f64_system(gram.to_vec(), residuals)?;
+    let correction = solve_f64_system(gram, &residuals.ok()?)?;
     for (coordinate, value) in ray.iter_mut().enumerate() {
         for (coefficient, delta) in correction.iter().zip(shared_deltas) {
-            *value = (-coefficient).mul_add(delta[coordinate], *value);
+            *value = (-coefficient).mul_add(delta.as_array()[coordinate], *value);
         }
     }
     ray.iter().all(|value| value.is_finite()).then_some(ray)
@@ -662,6 +671,7 @@ enum ExactLinearProgramResult {
 }
 
 /// Result of one revised-simplex optimization phase.
+#[derive(Debug)]
 enum RevisedSimplexResult {
     /// The current basis is optimal.
     Optimal {
@@ -934,7 +944,10 @@ fn navigate_simplex_basis_f64(
     entering_variable_count: usize,
     basis: &mut [usize],
 ) -> Option<Vec<f64>> {
-    let float_matrix = rational_matrix_to_f64(matrix)?;
+    let float_matrix: Vec<_> = matrix
+        .iter()
+        .map(|row| rationals_to_f64(row))
+        .collect::<Option<_>>()?;
     let float_rhs = rationals_to_f64(rhs)?;
     let float_objective = rationals_to_f64(objective)?;
     navigate_simplex_basis_f64_values(
@@ -970,7 +983,7 @@ fn navigate_simplex_basis_f64_values(
 
     for _ in 0..MAX_SIMPLEX_ITERATIONS {
         let current_basis_matrix = basis_matrix_f64(matrix, basis)?;
-        let mut basic_solution = solve_f64_system(current_basis_matrix.clone(), rhs.to_vec())?;
+        let mut basic_solution = solve_f64_system(&current_basis_matrix, rhs)?;
         if basic_solution
             .iter()
             .any(|&value| value < -FEASIBILITY_TOLERANCE)
@@ -985,24 +998,27 @@ fn navigate_simplex_basis_f64_values(
 
         let basic_objective: Vec<_> = basis.iter().map(|&index| objective[index]).collect();
         let dual_solution = solve_f64_system(
-            transpose_square_matrix_f64(&current_basis_matrix),
-            basic_objective,
+            &transpose_square_matrix_f64(&current_basis_matrix),
+            &basic_objective,
         )?;
 
-        let entering = (0..entering_variable_count)
-            .filter(|candidate| !basis.contains(candidate))
-            .find(|&candidate| {
-                let column = matrix_column_f64(matrix, candidate);
-                let dual_contribution = dot_product_f64(&dual_solution, &column);
-                let scale = 1.0 + objective[candidate].abs() + dual_contribution.abs();
-                objective[candidate] - dual_contribution > REDUCED_COST_TOLERANCE * scale
-            });
+        let mut entering = None;
+        for candidate in (0..entering_variable_count).filter(|candidate| !basis.contains(candidate))
+        {
+            let column = matrix_column_f64(matrix, candidate);
+            let dual_contribution = dot_product_f64(&dual_solution, &column)?;
+            let scale = 1.0 + objective[candidate].abs() + dual_contribution.abs();
+            if objective[candidate] - dual_contribution > REDUCED_COST_TOLERANCE * scale {
+                entering = Some(candidate);
+                break;
+            }
+        }
         let Some(entering) = entering else {
             return Some(dual_solution);
         };
 
         let direction =
-            solve_f64_system(current_basis_matrix, matrix_column_f64(matrix, entering))?;
+            solve_f64_system(&current_basis_matrix, &matrix_column_f64(matrix, entering))?;
         let leaving = direction
             .iter()
             .enumerate()
@@ -1135,8 +1151,7 @@ fn pivot_artificial_variables_out_f64(
         let Some(current_basis_matrix) = basis_matrix_f64(matrix, basis) else {
             return false;
         };
-        let Some(basic_solution) = solve_f64_system(current_basis_matrix.clone(), rhs.to_vec())
-        else {
+        let Some(basic_solution) = solve_f64_system(&current_basis_matrix, rhs) else {
             return false;
         };
         if basic_solution[basis_position].abs() > ZERO_TOLERANCE {
@@ -1146,11 +1161,8 @@ fn pivot_artificial_variables_out_f64(
         let replacement = (0..original_variable_count)
             .filter(|candidate| !basis.contains(candidate))
             .find(|&candidate| {
-                solve_f64_system(
-                    current_basis_matrix.clone(),
-                    matrix_column_f64(matrix, candidate),
-                )
-                .is_some_and(|direction| direction[basis_position].abs() > PIVOT_TOLERANCE)
+                solve_f64_system(&current_basis_matrix, &matrix_column_f64(matrix, candidate))
+                    .is_some_and(|direction| direction[basis_position].abs() > PIVOT_TOLERANCE)
             });
         let Some(replacement) = replacement else {
             return false;
@@ -1415,7 +1427,7 @@ where
         .collect();
 
     let mut provisional_affine = axis.to_vec();
-    provisional_affine.push(-dot_product_f64(axis, shared_coordinates[0]));
+    provisional_affine.push(-dot_product_f64(axis, shared_coordinates[0])?);
     if provisional_affine.iter().any(|value| !value.is_finite()) {
         return None;
     }
@@ -1600,16 +1612,11 @@ fn certify_optimal_basis(
     })
 }
 
-/// Converts an exact rational matrix to finite f64 values for basis navigation.
-fn rational_matrix_to_f64(matrix: &[Vec<BigRational>]) -> Option<Vec<Vec<f64>>> {
-    matrix.iter().map(|row| rationals_to_f64(row)).collect()
-}
-
-/// Converts exact rationals to finite f64 values for provisional calculations.
+/// Explicitly rounds exact rationals to finite f64 values for provisional calculations.
 fn rationals_to_f64(values: &[BigRational]) -> Option<Vec<f64>> {
     values
         .iter()
-        .map(|value| value.to_f64().filter(|converted| converted.is_finite()))
+        .map(|value| value.to_rounded_f64().ok())
         .collect()
 }
 
@@ -1643,70 +1650,66 @@ fn transpose_square_matrix_f64(matrix: &[Vec<f64>]) -> Vec<Vec<f64>> {
         .collect()
 }
 
-/// Computes a floating-point dot product used only for provisional pivot selection.
-fn dot_product_f64(left: &[f64], right: &[f64]) -> f64 {
-    left.iter()
-        .zip(right)
-        .map(|(left, right)| left * right)
-        .sum()
+/// Adapts runtime LP vectors to the backend's checked dot product.
+///
+/// LP constraint vectors fit the exact basis dispatch limit. Zero padding
+/// preserves the dot product without introducing a second arithmetic kernel.
+/// Rejection abandons provisional navigation and leaves certification to the
+/// exact path.
+fn dot_product_f64(left: &[f64], right: &[f64]) -> Option<f64> {
+    if left.len() != right.len() || left.len() > MAX_RATIONAL_MATRIX_DISPATCH_DIM {
+        return None;
+    }
+    let left = LaVector::<MAX_RATIONAL_MATRIX_DISPATCH_DIM>::try_new(from_fn(|index| {
+        left.get(index).copied().unwrap_or(0.0)
+    }))
+    .ok()?;
+    let right =
+        LaVector::try_new(from_fn(|index| right.get(index).copied().unwrap_or(0.0))).ok()?;
+    left.dot(&right).ok()
 }
 
-/// Solves a small floating-point system with scaled partial pivoting.
-#[expect(
-    clippy::needless_range_loop,
-    reason = "index-based elimination keeps pivot row/column operations explicit"
-)]
-fn solve_f64_system(mut matrix: Vec<Vec<f64>>, mut rhs: Vec<f64>) -> Option<Vec<f64>> {
-    const PIVOT_TOLERANCE: f64 = 1.0e-14;
-
+/// Admits a runtime LP basis for provisional LU solving in `la-stack`.
+///
+/// Six-dimensional intersection programs have eight constraints, one beyond
+/// the backend's binary64 dispatch macro but within its const-generic LU and
+/// rational basis support. Every candidate still requires exact certification.
+fn solve_f64_system(matrix: &[Vec<f64>], rhs: &[f64]) -> Option<Vec<f64>> {
     let dimension = rhs.len();
     if matrix.len() != dimension || matrix.iter().any(|row| row.len() != dimension) {
         return None;
     }
+    if dimension == 8 {
+        return solve_provisional_system(Matrix::<8>::zero(), matrix, rhs).ok();
+    }
+    la_stack::try_with_stack_matrix!(dimension, |stack_matrix| -> Result<_, LaError> {
+        solve_provisional_system(stack_matrix, matrix, rhs)
+    })
+    .ok()
+}
 
-    for pivot_column in 0..dimension {
-        let pivot_row = (pivot_column..dimension).max_by(|&left, &right| {
-            matrix[left][pivot_column]
-                .abs()
-                .total_cmp(&matrix[right][pivot_column].abs())
-        })?;
-        let row_scale = matrix[pivot_row]
-            .iter()
-            .map(|&value| value.abs())
-            .fold(0.0_f64, f64::max);
-        if !row_scale.is_finite()
-            || matrix[pivot_row][pivot_column].abs() <= PIVOT_TOLERANCE * row_scale.max(1.0)
-        {
-            return None;
-        }
-        if pivot_row != pivot_column {
-            matrix.swap(pivot_column, pivot_row);
-            rhs.swap(pivot_column, pivot_row);
-        }
-
-        for row in pivot_column + 1..dimension {
-            let factor = matrix[row][pivot_column] / matrix[pivot_column][pivot_column];
-            matrix[row][pivot_column] = 0.0;
-            for column in pivot_column + 1..dimension {
-                matrix[row][column] =
-                    factor.mul_add(-matrix[pivot_column][column], matrix[row][column]);
-            }
-            rhs[row] = factor.mul_add(-rhs[pivot_column], rhs[row]);
+/// Converts an admitted basis and supplies the LP's conservative pivot policy.
+fn solve_provisional_system<const N: usize>(
+    mut stack_matrix: Matrix<N>,
+    matrix: &[Vec<f64>],
+    rhs: &[f64],
+) -> Result<Vec<f64>, LaError> {
+    let mut scale = 1.0_f64;
+    for (row, values) in matrix.iter().enumerate() {
+        for (column, &value) in values.iter().enumerate() {
+            stack_matrix.set(row, column, value)?;
+            scale = scale.max(value.abs());
         }
     }
-
-    let mut solution = vec![0.0; dimension];
-    for row in (0..dimension).rev() {
-        let mut sum = rhs[row];
-        for column in row + 1..dimension {
-            sum = matrix[row][column].mul_add(-solution[column], sum);
-        }
-        solution[row] = sum / matrix[row][row];
-        if !solution[row].is_finite() {
-            return None;
-        }
-    }
-    Some(solution)
+    let rhs = LaVector::try_new(from_fn(|index| rhs[index]))?;
+    // LU accepts an absolute threshold. Scale it by the original coefficient
+    // maximum; rejecting a small pivot selects exact navigation, never a
+    // geometric singularity classification.
+    let tolerance = Tolerance::try_new(1.0e-14 * scale)?;
+    stack_matrix
+        .lu(tolerance)?
+        .solve(rhs)
+        .map(|solution| solution.into_array().to_vec())
 }
 
 /// Extracts the square matrix formed by the current basis columns.
@@ -1821,7 +1824,6 @@ fn rational_one() -> BigRational {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::matrix::ExactF64Conversion;
     use crate::geometry::realization::{SimplexIntersectionFailure, validate_simplex_intersection};
     use approx::assert_abs_diff_eq;
     use proptest::prelude::*;
@@ -2208,6 +2210,83 @@ mod tests {
     }
 
     separator_ray_tests!(2, 3, 4, 5);
+
+    #[test]
+    fn provisional_lp_bases_preserve_pivoting_and_scale_through_dimension_eight() {
+        // An upper bidiagonal matrix with diagonal 2 and superdiagonal 1
+        // maps the all-ones vector to [3, ..., 3, 2]. Rotating its rows
+        // forces pivoting without changing that analytically known solution.
+        for dimension in 2..=8 {
+            for scale in [1.0, 1.0e150] {
+                let mut matrix = vec![vec![0.0; dimension]; dimension];
+                let mut rhs = vec![3.0 * scale; dimension];
+                for (index, row) in matrix.iter_mut().enumerate() {
+                    row[index] = 2.0 * scale;
+                    if index + 1 < dimension {
+                        row[index + 1] = scale;
+                    }
+                }
+                rhs[dimension - 1] = 2.0 * scale;
+                matrix.rotate_left(1);
+                rhs.rotate_left(1);
+                let solution = solve_f64_system(&matrix, &rhs).unwrap();
+                assert_eq!(solution.len(), dimension);
+                for value in solution {
+                    assert_abs_diff_eq!(value, 1.0, epsilon = 1.0e-14);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn provisional_lp_basis_rejects_invalid_and_unusable_systems() {
+        assert_matches!(solve_f64_system(&[], &[]).as_deref(), Some([]));
+        assert!(solve_f64_system(&[vec![1.0]], &[]).is_none());
+        assert!(solve_f64_system(&[vec![]], &[1.0]).is_none());
+        assert!(solve_f64_system(&[vec![0.0]], &[1.0]).is_none());
+        assert!(solve_f64_system(&vec![vec![0.0; 9]; 9], &[0.0; 9]).is_none());
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(solve_f64_system(&[vec![invalid]], &[1.0]).is_none());
+            assert!(solve_f64_system(&[vec![1.0]], &[invalid]).is_none());
+        }
+        assert!(solve_f64_system(&[vec![0.5]], &[f64::MAX]).is_none());
+    }
+
+    #[test]
+    fn exact_simplex_recovers_when_provisional_lu_rejects_a_small_pivot() {
+        let delta = 2.0_f64.powi(-48);
+        let matrix = vec![vec![1.0, 1.0], vec![1.0, 1.0 + delta]];
+        let rhs = [2.0, 2.0 + delta];
+        assert!(solve_f64_system(&matrix, &rhs).is_none());
+        let matrix = exact_matrix_from_f64(&matrix);
+        let rhs: Vec<_> = rhs.into_iter().map(rational_from_f64).collect();
+        let objective = [rational_one(), rational_zero()];
+        let mut basis = [0, 1];
+        assert_matches!(
+            revised_simplex_maximize(&matrix, &rhs, &objective, 2, &mut basis),
+            RevisedSimplexResult::Optimal { solution, objective_value }
+                if solution == vec![rational_one(), rational_one()]
+                    && objective_value == rational_one()
+        );
+    }
+
+    #[test]
+    fn provisional_dot_product_admits_only_matching_finite_lp_vectors() {
+        assert_abs_diff_eq!(dot_product_f64(&[], &[]).unwrap(), 0.0);
+        for dimension in 1..=8 {
+            let mut right = vec![0.0; dimension];
+            right[dimension - 1] = -3.0;
+            assert_abs_diff_eq!(
+                dot_product_f64(&vec![2.0; dimension], &right).unwrap(),
+                -6.0
+            );
+        }
+        assert!(dot_product_f64(&[1.0], &[]).is_none());
+        assert!(dot_product_f64(&[1.0; 9], &[1.0; 9]).is_none());
+        assert!(dot_product_f64(&[f64::NAN], &[1.0]).is_none());
+        assert!(dot_product_f64(&[1.0], &[f64::INFINITY]).is_none());
+        assert!(dot_product_f64(&[f64::MAX], &[2.0]).is_none());
+    }
 
     #[test]
     fn rational_lp_bases_round_trip_through_dimension_eight() {

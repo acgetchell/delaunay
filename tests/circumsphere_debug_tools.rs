@@ -923,7 +923,9 @@ fn build_and_analyze_matrix(simplex_vertices: &[Vertex<i32, 3>]) -> (f64, bool) 
         );
     }
 
-    let det = determinant(&matrix).expect("manual in-sphere matrix determinant should be finite");
+    let det = matrix
+        .det()
+        .expect("manual in-sphere matrix determinant should be finite");
     println!();
     println!("Determinant: {det:.6}");
 
