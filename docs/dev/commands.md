@@ -1217,8 +1217,13 @@ PR is merged:
 just tag vX.Y.Z
 ```
 
-The release workflow uses `just release-package` to verify clean default and
-all-feature Cargo packages without upload credentials. `just publish-check`
+Trusted main-push CI uses `just release-package` to verify clean default and
+all-feature Cargo packages without upload credentials, then `just release-artifact
+create OUTPUT` retains the archive and source/run/tool manifest for 30 days.
+The release workflow uses `just release-artifact verify` to retrieve the exact
+main artifact and require byte-identical repackaging without rebuilding. After
+deployment approval, it revalidates the same frozen selection before requesting
+an upload token. `just publish-check`
 remains the local metadata/package preview that permits uncommitted edits.
 `just release-gate TAG` requires the immutable published event, reviewed commit,
 native CI checks and benchmark asset; `just release-publish TAG` approves a

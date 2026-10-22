@@ -785,6 +785,12 @@ python-sync: _ensure-uv
 python-typecheck: _ensure-uv
     uv run --locked --group dev --group notebooks research-repo-tools python typecheck
 
+# Retain or verify the trusted main Cargo archive without uploading.
+[group('release')]
+[positional-arguments]
+release-artifact +args:
+    uv run --locked --no-sync python tooling/python/release_artifacts.py "$@"
+
 # Require the immutable release event and successful checks on its exact commit.
 [group('release')]
 release-gate tag: (_release-notes-check tag)

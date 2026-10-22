@@ -373,12 +373,23 @@ generated notes. Human authentication is essential: publishing with a workflow's
 `GITHUB_TOKEN` does not trigger the separate `release: published` workflow.
 
 The publishing workflow checks out `github.sha`, rechecks the published event's
-repository, release ID, tag/ref/commit and evidence, then runs `just release-package`.
-It also reads the captured release ID to require GitHub's immutable state.
+repository, release ID, tag/ref/commit and evidence, and requires GitHub's immutable
+state. `just release-artifact verify` selects the successful trusted `main`-push
+CI run for that full commit. It requires all three native CI jobs and the package
+producer to have completed their required steps successfully in the same attempt.
+It downloads the retained Cargo package by immutable artifact ID, verifies the ZIP
+digest and exact inventory, and checks its source, version, tool identities and
+archive digest. The nested Cargo archive is limited to 64 MiB expanded, 4,096
+regular files, and 1 MiB per metadata file; ambiguous paths and links are rejected.
+Download errors redact signed URL query credentials from diagnostics.
+Repackaging with `cargo package --locked --no-verify` must produce
+identical bytes; no package build or second native test matrix runs at release time.
 After the `verify` job succeeds and the `publish` job is waiting for approval,
 approve the `crates-io` environment deployment in GitHub.
 The upload job rechecks the gate and requires proven absence of the exact registry
-version after approval, then obtains a short-lived OIDC token. Only that job has
+version after approval. It revalidates the frozen run/attempt, job IDs and artifact
+identity selected by `verify`, downloads that same artifact, and repeats the byte
+comparison before obtaining a short-lived OIDC token. Only that job has
 `id-token: write`; it has no repository write permission or dependency caches.
 Uploads for `delaunay` are serialized without cancellation.
 
@@ -386,11 +397,19 @@ The OIDC-enabled upload job installs only the pinned uv, the declared minimal
 Rust toolchain, and the locked `tooling` Python group. It does not run the full
 development setup, install the local Python project, or install managed Cargo tools.
 
-The verification job builds default and all-feature packages without upload
-credentials. After approval, Cargo repackages the same clean, revalidated commit
-with `--locked --no-verify`, so build scripts do not run with the crates.io token.
-The dry-run archive is not transferred between jobs, and byte-identical archives
-are not asserted. This follows [Cargo's native publication model](https://doc.rust-lang.org/cargo/commands/cargo-publish.html).
+The main CI producer runs `just release-package` after the complete native matrix,
+building default and all-feature packages without upload credentials. It retains
+the verified `.crate` and `validation.json` as `cargo-package-ATTEMPT` for 30 days.
+PR and manually dispatched runs cannot supply promotion evidence.
+
+Cargo's upload command still repackages the same clean source using
+`--locked --no-verify`; stable Cargo has no prebuilt-archive upload option.
+The byte comparisons establish reproducibility against the main-verified archive
+before credentials are obtained. The workflow retains Cargo as the uploader and
+does not claim that Cargo consumes the downloaded file directly. Build scripts do
+not run with the crates.io token. See [Cargo's native publication model](https://doc.rust-lang.org/cargo/commands/cargo-publish.html).
+Release benchmark measurements, captured target identity, raw Criterion evidence
+and draft review retain their existing tag-specific gates.
 
 ### 8. Verify registry availability and downstream resolution
 
@@ -424,6 +443,17 @@ commit, benchmark run, publishing run, registry URL/checksum and consumer result
 in #618. Keep that issue open until the next approved publication is verified.
 
 ### Recovering a failed run
+
+Cargo promotion fails on missing, expired, ambiguous or failed evidence, partial
+reruns, mismatched source/tools/bytes, and evidence changed while waiting for
+approval. It never rebuilds as a fallback or substitutes PR artifacts. Inspect
+the run/attempt and immutable artifact recorded in the verification step. Within
+GitHub's 30-day rerun window, rerun **all jobs** of the original exact-commit
+main-push CI run; individual-job and failed-jobs-only reruns cannot supply the
+complete attempt proof. Then rerun the whole publishing workflow so its approval
+selection is captured afresh. Evidence older than that window requires a new
+reviewed main commit and a new release candidate/version, preserving published
+tags and registry versions. Do not use manual CI dispatch to replace a main push.
 
 A benchmark failure leaves the GitHub release as a draft. Crates.io upload or
 post-upload verification failures occur after the GitHub release is published;

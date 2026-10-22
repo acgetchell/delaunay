@@ -119,6 +119,7 @@ delaunay/
 │       ├── performance_artifacts.py
 │       ├── profiling_metadata.py
 │       ├── publish_readme_performance.py
+│       ├── release_artifacts.py
 │       └── release_benchmarks.py
 ├── AGENTS.md
 ├── Cargo.toml
@@ -174,6 +175,8 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
 - `docs/architecture/` contains focused architecture references.
 - `tooling/python/release_benchmarks.py` owns release benchmark handoff policy;
   the shared package owns remote release identity and publication checks.
+- `tooling/python/release_artifacts.py` binds native Cargo package evidence and
+  approval handoff to the shared trusted-main selection and retrieval APIs.
 - `.github/` contains issue templates, workflow definitions, and
   repository-integrated automation.
 

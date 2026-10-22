@@ -6,10 +6,10 @@ PyPI distribution in runtime dependencies, the tooling/dev groups, and the
 notebook extra/group. `uv.lock` records exact registry artifacts and hashes.
 Python follows the shared package's 3.15 floor. Ruff, ty and pytest inherit exact
 versions from the package's `python-tools` extra; no independent floating
-requirements remain. The uv declaration is 0.13.1, matching the installed
-manager used for the lock and consumer checks.
+requirements remain. `pyproject.toml` owns the exact uv declaration used for
+the lock and consumer checks.
 
-Semgrep 1.181.0 runs in the same Python 3.15 environment. The uv overrides
+The locked Semgrep runs in the same Python 3.15 environment. The uv overrides
 select patched MCP 1.30.0 and, on Windows, pywin32 312 with Python 3.15 wheels;
 Semgrep's own pins still select MCP 1.29.0 and pywin32 311. Native Linux and
 Windows execution must be verified by their CI jobs.
@@ -20,6 +20,37 @@ upstream APIs available; numerical delegation remains tracked by
 [#577](https://github.com/acgetchell/delaunay/issues/577),
 [#579](https://github.com/acgetchell/delaunay/issues/579), and
 [#610](https://github.com/acgetchell/delaunay/issues/610).
+
+## v0.2.3 Cargo artifact promotion
+
+Delaunay consumes the published `release_validation.ValidationPolicy`,
+`select_main_run`, `validate_jobs` and `download_artifact` interfaces. The shared
+package owns trusted exact-commit main-run selection, complete-attempt job
+verification and immutable ZIP integrity/inventory checks. Its Python
+wheel/sdist verifier and producer-specific promotion CLI are not Cargo adapters.
+The published `ci.export_environment` helper writes verified selection JSON
+directly to `GITHUB_OUTPUT`, preserving existing records and failing on export
+errors. Evidence transport does not depend on Just's stdout.
+
+`tooling/python/release_artifacts.py` owns Cargo archive/source/version inspection,
+the Delaunay native/package step policy, retained package/tool manifest and the
+release-event handoff. Main CI runs the complete native matrix and default plus
+all-feature Cargo package builds before retaining an archive. Release jobs require
+the exact archive to reproduce without builds, rechecking the frozen selection
+after deployment approval. Cargo remains the native uploader and repackages the
+verified clean source; it does not directly upload the downloaded archive.
+
+Tag-specific scientific benchmark production and provenance, protected-branch
+and generated-notes checks, immutable GitHub Releases, crates.io OIDC approval,
+registry absence and visibility checks retain their existing owners. No package
+version beyond 0.2.3 is required. Missing/expired/partial-rerun evidence fails
+without rebuilding; [release recovery](../RELEASING.md#recovering-a-failed-run)
+defines the 30-day retention and complete-main-attempt recovery policy.
+
+Consumer regressions use real Cargo/ZIP fixtures and the installed shared public
+interfaces, modeling GitHub transport and native Cargo execution. Native hosted
+producer/promotion and the next approved publication remain rollout evidence;
+local tests do not establish that those workflows have executed.
 
 ## Ownership
 
@@ -329,8 +360,8 @@ These follow-up results are native aarch64 macOS evidence.
 
 ## Dependabot automation
 
-The Dependabot caller uses the same reusable workflow revision as la-stack and
-MCMC: `cbb2ea6dee8866b3f0547bca935aef48fdd71707` from
+The Dependabot caller pins the reviewed reusable workflow revision
+`7282cbd90cf5cd0ca8a1c8a01d3fed520f04eb2f` from
 `acgetchell/research-repo-tools`. This workflow pin is independent of the PyPI
 package pin. Its reviewed `pull_request_target` job runs from trusted base
 definitions without checking out or executing PR code and receives no repository

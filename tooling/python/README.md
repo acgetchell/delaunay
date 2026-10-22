@@ -43,6 +43,12 @@ just tag vX.Y.Z
 uv run --locked --group dev research-repo-tools --help
 ```
 
+Cargo promotion uses `just release-artifact create OUTPUT` in trusted main CI
+after the default/all-feature package builds. `just release-artifact verify`
+checks exact-commit native evidence and byte-identical repackaging during release
+verification and after deployment approval. These commands never upload a crate;
+see [release gates and recovery](../../docs/RELEASING.md).
+
 Changelog generation normalizes history and retains Unreleased and the latest
 minor series in the root, with older series under `docs/archives/changelog/`.
 Metadata preparation is separate. `update-version` defaults to UTC today
