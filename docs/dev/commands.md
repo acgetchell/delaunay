@@ -1196,11 +1196,11 @@ history, and rotates completed minor series into `docs/archives/changelog/`.
 `just changelog-archive` repairs rotation/navigation without regenerating commits.
 `just release-notes TAG` reads retained root or archived notes.
 
-Prepare metadata separately, then generate with an explicit UTC date:
+Prepare metadata separately, then generate using its declared citation date:
 
 ```bash
 just update-version vX.Y.Z --date YYYY-MM-DD --previous-release vA.B.C
-just changelog-release vX.Y.Z YYYY-MM-DD
+just changelog-unreleased vX.Y.Z
 just release-version-check
 just publish-check
 ```
@@ -1209,7 +1209,10 @@ Metadata updates default to the current UTC date and discover published stable
 GitHub history when the predecessor is omitted. The `declared` date policy
 permits tagging on a later day without rewriting the preparation date. If that
 declared date is deliberately advanced, repeat metadata preparation and
-generation. Final validation requires matching target
+generation. `changelog-release TAG [DATE]` and `changelog-unreleased TAG [DATE]`
+name the same operation; the optional ISO date overrides the citation default.
+`changelog-preview --tag TAG` uses that default without writing files and also
+accepts `--date YYYY-MM-DD`. Final validation requires matching target
 heading and citation dates. Create an annotated local tag only after the release
 PR is merged:
 
@@ -1217,8 +1220,17 @@ PR is merged:
 just tag vX.Y.Z
 ```
 
-The release workflow uses `just release-package` to verify clean default and
-all-feature Cargo packages without upload credentials. `just publish-check`
+Trusted main-push CI uses `just release-package` to verify clean default and
+all-feature Cargo packages without upload credentials, then `just release-artifact
+create OUTPUT` retains the archive and source/run/tool manifest for 30 days.
+`just release-evidence [IDENTITY]` validates the retained archive for the clean
+checkout without Cargo or a published release event; an optional identity must
+match the previous selection. `release-publish` requires this evidence before
+making the GitHub release immutable.
+The release workflow uses `just release-artifact verify` to retrieve the exact
+main artifact and require byte-identical repackaging without rebuilding. After
+deployment approval, it revalidates the same frozen selection before requesting
+an upload token. `just publish-check`
 remains the local metadata/package preview that permits uncommitted edits.
 `just release-gate TAG` requires the immutable published event, reviewed commit,
 native CI checks and benchmark asset; `just release-publish TAG` approves a

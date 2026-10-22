@@ -20,6 +20,58 @@ later UTC date intentionally advances the declared release date. Crossing
 midnight alone requires no update: the `declared` date policy allows preparation
 and tagging on different UTC days when citation and changelog dates agree.
 Repeated `performance-release` runs can produce different measurements.
+With unchanged history and configuration, repeating `changelog-unreleased`
+reuses the declared citation date even after UTC midnight.
+
+## Contents
+
+- [Reusable CI evidence](#reusable-ci-evidence)
+- [Prepare the environment](#prepare-the-environment)
+- [Step 1: Prepare the release PR](#step-1-prepare-the-release-pr)
+- [Step 2: Publish after the PR is merged](#step-2-publish-after-the-pr-is-merged)
+- [Configure or verify Trusted Publishing](#configure-trusted-publishing-before-the-next-release)
+
+## Reusable CI evidence
+
+The publishing process uses the installed `research-repo-tools==0.2.3`
+validation helpers. `tooling/python/release_artifacts.py` supplies Delaunay's
+Cargo policy. After all three native `just ci` jobs succeed on a protected
+`main` push, `just release-package` builds and verifies clean default and
+all-feature packages without upload credentials. CI retains the verified
+`.crate` and `validation.json` as `cargo-package-ATTEMPT` for 30 days.
+
+`just release-evidence` verifies this retained evidence for the clean current
+checkout. It requires the exact successful main-push run, all required jobs and
+steps from the same attempt, and one nonexpired artifact retrieved by immutable
+ID. It validates the ZIP digest and inventory, manifest, crate digest, source
+commit and version without running Cargo. It works from macOS, Linux or Windows;
+the producer's recorded tool identities need not match the inspecting host.
+PR, manual-dispatch and partial-rerun results cannot replace main-push evidence.
+
+The release workflow additionally requires a matching published release event
+and byte-identical repackaging with the producer's tools, before and after
+deployment approval. Its selected run, attempt, jobs and artifact pass directly
+through `GITHUB_OUTPUT` using the shared helper; shell stdout is only a display
+channel. Local evidence inspection cannot substitute for these workflow gates.
+Release metadata, exact-commit SARIF checks, durable Criterion evidence,
+immutable release state, registry absence and human approval remain required.
+
+The release commands share la-stack's operator-facing roles:
+
+| Recipe | Purpose |
+| --- | --- |
+| `changelog-unreleased TAG [DATE]` | Generate prospective notes using the prepared citation date by default |
+| `changelog-preview [--tag TAG] [--date DATE]` | Preview the same generation without publishing files |
+| `performance-release [CURRENT BASELINE]` | Measure, retain and promote release performance evidence |
+| `performance-readme` | Publish the README snapshot from validated, promoted measurements |
+| `release-package` | Build and verify clean Cargo packages without uploading |
+| `release-evidence [IDENTITY]` | Verify retained main CI evidence, optionally requiring a previous selection |
+| `release-publish TAG` | Check notes and CI evidence, then approve the reviewed GitHub draft |
+| `release-verify TAG` | Verify GitHub assets and the exact crates.io version |
+
+Delaunay retains its scientific measurement adapter and default/all-feature
+coverage. Its performance evidence format and explicit-pair repair behavior
+remain documented below; la-stack has a separate measurement harness.
 
 ## Prepare the environment
 
@@ -109,18 +161,26 @@ Review the resulting metadata diff before continuing.
 ### 3. Generate the release changelog
 
 ```bash
-RELEASE_DATE="$(date -u +%F)"
-just changelog-release "$TAG" "$RELEASE_DATE"
+just changelog-unreleased "$TAG"
 ```
 
 This generates `CHANGELOG.md` as though the target tag already existed,
 archives completed minor series under `docs/archives/changelog/`, and
-uses the explicit UTC date supplied by `RELEASE_DATE`. If preparation crossed
-UTC midnight, reuse the date in `CITATION.cff` or deliberately advance it by
-rerunning `just update-version "$TAG"` first. Metadata preparation is separate;
-run the final version check after generation to verify the target heading matches
+uses `date-released` already recorded in `CITATION.cff`. No `RELEASE_DATE`
+shell variable is needed. With this default-date path, the citation version must
+match the target tag and the date must be valid `YYYY-MM-DD`; invalid metadata
+stops generation before files change. `changelog-release` is the same recipe
+name supported by la-stack.
+
+Use `just changelog-preview --tag "$TAG"` for a read-only preview with the same
+date default. An explicit date is still available as the second argument to
+`changelog-unreleased`, or as `--date YYYY-MM-DD` for the preview. An explicit
+date bypasses the adapter's citation lookup and version check; the shared
+generator still validates the supplied date. To advance the declared date
+deliberately, run `just update-version "$TAG" --date YYYY-MM-DD`
+before regenerating. Run the final version check to verify the heading matches
 Cargo metadata and the citation date. Review the generated changelog and archive
-changes. Do not edit generated changelog files manually.
+changes; do not edit them manually.
 
 ### 4. Generate release performance measurements
 
@@ -243,7 +303,7 @@ Rerun `just performance-release "$TAG" "vA.B.C"` with the same baseline,
 then rerun `just performance-readme`. When the release has only absolute
 measurements, rerun `just bench-perf-summary` instead.
 
-Rerun `just changelog-release "$TAG" "$RELEASE_DATE"`, review and stage only the regenerated
+Rerun `just changelog-unreleased "$TAG"`, review and stage only the regenerated
 release outputs, commit that update separately, and rerun the final release and
 publish gates.
 
@@ -282,7 +342,7 @@ git push origin "$TAG"
 ### 4. Verify the release commit
 
 ```bash
-just release-package
+just release-evidence
 ```
 
 Require successful native `CI` builds on Linux, macOS and Windows, plus Clippy
@@ -292,12 +352,16 @@ topological regressions, feature coverage, examples and benchmark compilation.
 The publishing policy in `pyproject.toml` binds all five check names to GitHub
 Actions app ID `15368`. CodeRabbit and human review remain protected-PR
 requirements; CodeRabbit does not run on the merged `main` commit. Missing,
-pending, cancelled or failed native checks block publication. If a bot merge did
-not trigger push CI, dispatch the existing CI/security workflows on `main` and
-verify their `headSha` equals the release commit.
+pending, cancelled or failed native checks block publication. Also require the
+main-push package producer to have completed in that same attempt.
+Manual CI dispatch cannot supply promotion evidence. If the original main-push
+run failed, rerun all its jobs within GitHub's 30-day rerun window. If no eligible
+run exists, land a new reviewed commit that triggers main-push CI before tagging
+and publishing it; do not move an already published tag.
 
-Native Cargo verifies clean default and all-feature packages and resolves the
-required published `la-stack` dependency from crates.io. The local
+The main CI producer verifies clean default and all-feature packages and resolves
+the required published `la-stack` dependency from crates.io. Local evidence
+inspection downloads and checks its retained artifact without rebuilding. The local
 `publish-check` permits dirty release-PR artifacts; `release-package` and the
 upload workflow never use `--allow-dirty`.
 
@@ -368,17 +432,29 @@ gh run list --workflow publish-crates.yml --limit 5
 This command authorizes GitHub Release publication. The shared gate checks the
 clean checkout, stable tag/package metadata, remote tag commit, protected default
 branch ancestry, successful exact-commit checks and required baseline asset.
-The local recipe also requires the release title and body to match the tag and
+The local recipe first requires retained main CI evidence through
+`release-evidence`, and the release title and body must match the tag and
 generated notes. Human authentication is essential: publishing with a workflow's
 `GITHUB_TOKEN` does not trigger the separate `release: published` workflow.
 
 The publishing workflow checks out `github.sha`, rechecks the published event's
-repository, release ID, tag/ref/commit and evidence, then runs `just release-package`.
-It also reads the captured release ID to require GitHub's immutable state.
+repository, release ID, tag/ref/commit and evidence, and requires GitHub's immutable
+state. `just release-artifact verify` selects the successful trusted `main`-push
+CI run for that full commit. It requires all three native CI jobs and the package
+producer to have completed their required steps successfully in the same attempt.
+It downloads the retained Cargo package by immutable artifact ID, verifies the ZIP
+digest and exact inventory, and checks its source, version, tool identities and
+archive digest. The nested Cargo archive is limited to 64 MiB expanded, 4,096
+regular files, and 1 MiB per metadata file; ambiguous paths and links are rejected.
+Download errors redact signed URL query credentials from diagnostics.
+Repackaging with `cargo package --locked --no-verify` must produce
+identical bytes; no package build or second native test matrix runs at release time.
 After the `verify` job succeeds and the `publish` job is waiting for approval,
 approve the `crates-io` environment deployment in GitHub.
 The upload job rechecks the gate and requires proven absence of the exact registry
-version after approval, then obtains a short-lived OIDC token. Only that job has
+version after approval. It revalidates the frozen run/attempt, job IDs and artifact
+identity selected by `verify`, downloads that same artifact, and repeats the byte
+comparison before obtaining a short-lived OIDC token. Only that job has
 `id-token: write`; it has no repository write permission or dependency caches.
 Uploads for `delaunay` are serialized without cancellation.
 
@@ -386,11 +462,14 @@ The OIDC-enabled upload job installs only the pinned uv, the declared minimal
 Rust toolchain, and the locked `tooling` Python group. It does not run the full
 development setup, install the local Python project, or install managed Cargo tools.
 
-The verification job builds default and all-feature packages without upload
-credentials. After approval, Cargo repackages the same clean, revalidated commit
-with `--locked --no-verify`, so build scripts do not run with the crates.io token.
-The dry-run archive is not transferred between jobs, and byte-identical archives
-are not asserted. This follows [Cargo's native publication model](https://doc.rust-lang.org/cargo/commands/cargo-publish.html).
+Cargo's upload command still repackages the same clean source using
+`--locked --no-verify`; stable Cargo has no prebuilt-archive upload option.
+The byte comparisons establish reproducibility against the main-verified archive
+before credentials are obtained. The workflow retains Cargo as the uploader and
+does not claim that Cargo consumes the downloaded file directly. Build scripts do
+not run with the crates.io token. See [Cargo's native publication model](https://doc.rust-lang.org/cargo/commands/cargo-publish.html).
+Release benchmark measurements, captured target identity, raw Criterion evidence
+and draft review retain their existing tag-specific gates.
 
 ### 8. Verify registry availability and downstream resolution
 
@@ -424,6 +503,17 @@ commit, benchmark run, publishing run, registry URL/checksum and consumer result
 in #618. Keep that issue open until the next approved publication is verified.
 
 ### Recovering a failed run
+
+Cargo promotion fails on missing, expired, ambiguous or failed evidence, partial
+reruns, mismatched source/tools/bytes, and evidence changed while waiting for
+approval. It never rebuilds as a fallback or substitutes PR artifacts. Inspect
+the run/attempt and immutable artifact recorded in the verification step. Within
+GitHub's 30-day rerun window, rerun **all jobs** of the original exact-commit
+main-push CI run; individual-job and failed-jobs-only reruns cannot supply the
+complete attempt proof. Then rerun the whole publishing workflow so its approval
+selection is captured afresh. Evidence older than that window requires a new
+reviewed main commit and a new release candidate/version, preserving published
+tags and registry versions. Do not use manual CI dispatch to replace a main push.
 
 A benchmark failure leaves the GitHub release as a draft. Crates.io upload or
 post-upload verification failures occur after the GitHub release is published;
@@ -470,14 +560,22 @@ Follow the current [crates.io setup requirements](https://crates.io/docs/trusted
 Trusted Publishing requires an already-published crate and crate ownership;
 initial publication uses an API token. `delaunay` already exists, so no throwaway
 version or initial upload is needed. As its owner, register this exact identity
-under the crate's Settings → Trusted Publishing:
+under the crate's [Settings → Trusted Publishing](https://crates.io/crates/delaunay/settings):
 
 | Field | Value |
 | --- | --- |
+| Publisher | GitHub |
 | Repository owner | `acgetchell` |
 | Repository name | `delaunay` |
 | Workflow filename | `publish-crates.yml` |
-| Environment | `crates-io` |
+| Environment name | `crates-io` |
+
+Choose **Add**, enter the values above, and submit **Add** on the registration
+form. Use only the workflow filename, without `.github/workflows/`.
+Although the form calls the environment optional, include `crates-io` to bind
+this publisher to the approval gate. Verify the saved row shows all four
+identity fields and owner ID `434849`. An existing matching row needs no new
+registration. Adding the publisher does not publish a crate version.
 
 Create GitHub's `crates-io` environment with required maintainer reviewers,
 administrator bypass disabled, and selected deployment tags matching `v*` only
@@ -503,12 +601,17 @@ Validate the source with `just check-config`, `just python-check`,
 providers and never upload crates. Native CI and successful approved publication
 remain separate rollout evidence.
 
-On October 18, 2026, the repository API confirmed release immutability enabled
-and the published `v0.8.2` release immutable. The settings payloads above were
-applied and read back: `crates-io` requires `acgetchell` review, permits self-review,
-disables administrator bypass, and allows only `v*` tags. The Actions allowlist
-now includes only the exact reviewed authentication-action commit alongside
-its existing entries. Authenticated crates.io settings showed no trusted
-publishers; the maintainer will register that identity. This is configuration
-evidence, not evidence of a successful upload. Re-read live settings before
-changing them, preserving any newer entries, and record publication in #618.
+On October 22, 2026, authenticated crates.io settings confirmed the exact
+publisher above, including owner ID `434849` and environment `crates-io`.
+GitHub API readback confirmed release immutability enabled, required
+`acgetchell` review with self-review permitted, administrator bypass disabled,
+and `v*` tags only. The Actions allowlist contains the exact reviewed
+authentication-action commit. These values match the workflow on GitHub and
+the artifact-promotion changes.
+
+The crates.io **Require trusted publishing for all new versions** option was
+unchecked: API-token publication remains possible. That optional account
+restriction is separate from registering the publisher. This readback validates
+configuration; the next approved release must still establish successful OIDC
+publication and clean downstream resolution for #618. Re-read live settings
+before changing them, preserving newer entries.

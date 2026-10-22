@@ -176,6 +176,32 @@ def test_publish_recipe_reaches_installed_explicit_approval_parser(monkeypatch: 
     assert requested == [TAG]
 
 
+@pytest.mark.parametrize("failure", [False, True])
+def test_real_publish_recipe_requires_retained_evidence_before_publication(tmp_path: Path, *, failure: bool) -> None:
+    """A missing main artifact must leave the GitHub draft unpublished."""
+    (tmp_path / "justfile").write_text(f"import '{(ROOT / 'justfile').as_posix()}'\n", encoding="utf-8")
+    calls = tmp_path / "calls"
+    provider = json.dumps({"tagName": TAG, "name": TAG, "body": "generated notes"})
+    runner = (
+        "uv() {\n"
+        '  case "$*" in\n'
+        '    *"changelog notes "*) printf "%s\\n" "generated notes" ;;\n'
+        '    *"release_artifacts.py evidence "*)\n'
+        f'      printf "%s\\n" evidence >> {shlex.quote(calls.as_posix())}\n'
+        f"      return {17 if failure else 0} ;;\n"
+        '    *"release publish "*)\n'
+        f'      printf "%s\\n" publish >> {shlex.quote(calls.as_posix())} ;;\n'
+        "    *) return 0 ;;\n"
+        "  esac\n"
+        "}\n"
+        f"gh() {{ printf '%s\\n' {shlex.quote(provider)}; }}\n"
+        "export -f uv gh\n"
+    )
+    result = run_command("bash", ["--noprofile", "--norc", "-euc", runner + f"just release-publish {shlex.quote(TAG)}"], cwd=tmp_path, check=False)
+    assert (result.returncode == 0) is not failure, result.stderr
+    assert calls.read_text(encoding="utf-8").splitlines() == (["evidence"] if failure else ["evidence", "publish"])
+
+
 def test_workflow_limits_credentials_and_verifies_clean_packages() -> None:
     """Credential-free builds precede approval, revalidation and a serialized upload."""
     workflow = yaml.safe_load(WORKFLOW.read_bytes())
@@ -184,10 +210,10 @@ def test_workflow_limits_credentials_and_verifies_clean_packages() -> None:
     jobs = workflow["jobs"]
     assert jobs["publish"]["needs"] == "verify"
     assert jobs["publish"]["environment"] == "crates-io"
-    assert jobs["verify"]["permissions"] == {"contents": "read", "checks": "read"}
-    assert jobs["publish"]["permissions"] == {"contents": "read", "checks": "read", "id-token": "write"}
+    assert jobs["verify"]["permissions"] == {"contents": "read", "checks": "read", "actions": "read"}
+    assert jobs["publish"]["permissions"] == {"contents": "read", "checks": "read", "actions": "read", "id-token": "write"}
     assert "github.repository == 'acgetchell/delaunay'" in jobs["verify"]["if"]
-    assert jobs["verify"]["steps"][-1]["run"] == "just release-package"
+    assert jobs["verify"]["steps"][-1]["run"] == "just release-artifact verify"
     assert "CARGO_REGISTRY_TOKEN" not in yaml.safe_dump({"env": workflow["env"], "verify": jobs["verify"]})
     for job in jobs.values():
         assert job["steps"][0]["with"] == {"ref": "${{ github.sha }}", "fetch-depth": 0, "persist-credentials": False}
@@ -285,6 +311,58 @@ def test_account_payloads_match_workflow_identity_and_require_tag_review() -> No
     assert "acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml" not in updates
     auto_merge = (ROOT / ".github/workflows/dependabot-auto-merge.yml").read_text(encoding="utf-8")
     assert '".github/workflows/publish-crates.yml"' not in auto_merge
+
+
+@pytest.mark.parametrize("mode", ["normal", "quiet", "failed"])
+def test_promotion_output_survives_real_just_and_reaches_approval(tmp_path: Path, mode: str) -> None:
+    """Exercise workflow shells and Just without using stdout as evidence."""
+    workflow = yaml.safe_load(WORKFLOW.read_bytes())
+    verify = workflow["jobs"]["verify"]["steps"][-1]
+    approval = next(step for step in workflow["jobs"]["publish"]["steps"] if "PROMOTION_SELECTION" in step.get("env", {}))
+    root = tmp_path / "consumer with spaces"
+    root.mkdir()
+    (root / "justfile").write_text(f"import '{(ROOT / 'justfile').as_posix()}'\n", encoding="utf-8")
+    output = root / "github output"
+    frozen = json.dumps({"run_id": 123, "run_attempt": 1, "artifact": {"id": 456, "digest": "sha256:" + "a" * 64}}, sort_keys=True)
+    # Only the producer is substituted. The CLI round-trip tests independently
+    # exercise validation and file emission using the installed shared helpers.
+    producer = (
+        "uv() {\n"
+        '  [[ "$*" == "run --locked --no-sync python tooling/python/release_artifacts.py verify" ]] || return 90\n'
+        '  if [[ "$FIXTURE_EXIT" != 0 ]]; then return "$FIXTURE_EXIT"; fi\n'
+        '  printf "selection=%s\\n" "$FIXTURE_SELECTION" >> "$GITHUB_OUTPUT"\n'
+        '  printf "%s\\n" "human-readable confirmation"\n'
+        "}\n"
+        "export -f uv\n"
+    )
+    script = verify["run"]
+    if mode == "quiet":
+        script = "just --quiet " + script.removeprefix("just ")
+    environment = {
+        **{
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"BASH_ENV", "SHELLOPTS", "BASHOPTS", "JUST_QUIET", "JUST_DRY_RUN", "PROMOTION_SELECTION"}
+        },
+        "GITHUB_OUTPUT": str(output),
+        "FIXTURE_SELECTION": frozen,
+        "FIXTURE_EXIT": "17" if mode == "failed" else "0",
+    }
+    result = run_command("bash", ["--noprofile", "--norc", "-euc", producer + script], cwd=root, env=environment, check=False)
+    assert result.returncode == (17 if mode == "failed" else 0), result.stderr
+    if mode == "failed":
+        assert not output.exists()
+        return
+    assert output.read_text(encoding="utf-8").splitlines() == ["selection=" + frozen]
+    environment["PROMOTION_SELECTION"] = output.read_text(encoding="utf-8").split("=", 1)[1].rstrip("\n")
+    consumer = (
+        "uv() {\n"
+        '  [[ "$*" == "run --locked --no-sync python tooling/python/release_artifacts.py verify" ]] || return 90\n'
+        '  [[ "$PROMOTION_SELECTION" == "$FIXTURE_SELECTION" ]]\n'
+        "}\n"
+    )
+    approved = run_command("bash", ["--noprofile", "--norc", "-euc", consumer + approval["run"]], cwd=root, env=environment, check=False)
+    assert approved.returncode == 0, approved.stderr
 
 
 @pytest.mark.parametrize(("failure", "expected_exit"), [("none", 0), ("evidence", 1), ("present", 1), ("unavailable", 2)])

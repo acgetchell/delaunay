@@ -27,6 +27,9 @@ jobs:
     permissions:
       contents: read
       checks: read
+      actions: read
+    outputs:
+      selection: ${{ steps.promotion.outputs.selection }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,8 +48,11 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: just release-gate "$RELEASE_TAG"
 
-      - name: Verify default and all-feature Cargo packages without uploading
-        run: just release-package
+      - name: Verify main Cargo artifact without rebuilding
+        id: promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: just release-artifact verify
 
   publish:
     needs: verify
@@ -56,6 +62,7 @@ jobs:
     permissions:
       contents: read
       checks: read
+      actions: read
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,12 +99,18 @@ jobs:
           just --set rrt 'uv run --locked --no-sync research-repo-tools' release-gate "$RELEASE_TAG"
           uv run --locked --no-sync research-repo-tools release registry "$RELEASE_TAG" --expect absent
 
+      - name: Revalidate the frozen Cargo promotion after approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROMOTION_SELECTION: ${{ needs.verify.outputs.selection }}
+        run: uv run --locked --no-sync python tooling/python/release_artifacts.py verify
+
       - name: Obtain a short-lived crates.io token
         id: auth
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
-      # Repackage the same clean, revalidated source verified by the first job.
-      # Build scripts run only in that job, without publication credentials.
+      # Cargo repackages the clean source whose archive matched main byte-for-byte.
+      # Default/all-feature package builds ran in main CI without credentials.
       - name: Package and upload verified source without building
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
