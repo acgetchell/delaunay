@@ -114,9 +114,9 @@ use crate::topology::traits::{
 };
 use crate::triangulation::Triangulation;
 use crate::triangulation::builder::{TriangulationBuilder, TriangulationBuilderError};
+pub use crate::triangulation::construction::PeriodicQuotientFacetKeyDerivationFailure;
 use crate::triangulation::construction::{
-    FinalDelaunayValidationContext, FinalTopologyValidationContext,
-    PeriodicQuotientFacetKeyDerivationFailure, TriangulationConstructionError,
+    FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
 };
 use crate::triangulation::insertion::record_duplicate_detection_metrics;
 use crate::triangulation::locality::{
@@ -762,6 +762,13 @@ pub enum DelaunayConstructionRetryFailure {
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum DelaunayConstructionFailure {
+    /// The dimension's required simplex arity cannot be represented by `usize`.
+    #[error("dimension {dimension} requires an unrepresentable simplex point count")]
+    UnrepresentableDimension {
+        /// Spatial dimension whose minimum point count overflows.
+        dimension: usize,
+    },
+
     /// Lower-layer TDS construction failed.
     #[error("TDS construction failed: {reason}")]
     Tds {
@@ -1717,13 +1724,19 @@ impl TryFrom<f64> for DedupTolerance {
 }
 
 /// Policy controlling optional preprocessing to remove duplicate vertices.
+///
+/// With Hilbert ordering, `Exact` and `Epsilon` also coalesce points that share
+/// a quantized Hilbert grid cell. Distinct coordinates can therefore be skipped
+/// even when they are farther apart than the epsilon tolerance. Choose a
+/// non-Hilbert insertion order to avoid that additional coalescing. `Off`
+/// disables this grid-cell removal, while per-insertion duplicate checks remain.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[non_exhaustive]
 pub enum DedupPolicy {
     /// Do not apply explicit preprocessing dedup.
     ///
-    /// Batch construction still keeps its built-in Hilbert and per-insertion
-    /// duplicate defenses; exact duplicates can still be skipped and reported
+    /// Batch construction still keeps its per-insertion duplicate defenses;
+    /// exact duplicates can still be skipped and reported
     /// through [`ConstructionStatistics`].
     #[default]
     Off,

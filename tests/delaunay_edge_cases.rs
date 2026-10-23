@@ -20,8 +20,6 @@ use delaunay::prelude::generators::{
 };
 use delaunay::prelude::geometry::RobustKernel;
 use delaunay::vertex;
-use rand::SeedableRng;
-use rand::seq::SliceRandom;
 use std::num::NonZeroUsize;
 
 const EXACT_PREDICATE_FAST_POINT_COUNT: NonZeroUsize = nonzero(8);
@@ -87,20 +85,6 @@ macro_rules! test_debug_info {
     }};
 }
 
-macro_rules! test_debug_warn {
-    ($($arg:tt)*) => {{
-        #[cfg(feature = "diagnostics")]
-        {
-            init_tracing();
-            tracing::warn!($($arg)*);
-        }
-        #[cfg(not(feature = "diagnostics"))]
-        {
-            let _ = format_args!($($arg)*);
-        }
-    }};
-}
-
 // =========================================================================
 // Regression Tests - Known Failing Configurations
 // =========================================================================
@@ -146,10 +130,6 @@ test_regression_config!(
 );
 
 #[test]
-#[expect(
-    clippy::collapsible_if,
-    reason = "test keeps nested invariant checks aligned with diagnostic messages"
-)]
 #[expect(
     clippy::too_many_lines,
     reason = "edge-case regression test keeps construction and validation assertions together"
@@ -252,29 +232,9 @@ fn debug_issue_120_empty_circumsphere_5d() {
         robust_stats.max_queue_len
     );
     let dt_robust = converted_robust.triangulation;
-    if let Err(err) = dt_robust.is_valid_delaunay() {
-        test_debug_warn!("[Issue #120 debug] robust triangulation still invalid: {err:?}");
-    }
-    let mut rng = rand::rngs::StdRng::seed_from_u64(0x1200_5eed);
-    for attempt in 0..20 {
-        let mut shuffled = vertices.clone();
-        shuffled.shuffle(&mut rng);
-        if let Ok(dt_alt) = DelaunayTriangulation::builder(&shuffled)
-            .topology_guarantee(TopologyGuarantee::PLManifold)
-            .build()
-        {
-            if dt_alt.is_valid_delaunay().is_ok() {
-                test_debug_info!(
-                    "[Issue #120 debug] found valid triangulation after shuffle attempt {}",
-                    attempt + 1
-                );
-                break;
-            }
-        }
-        if attempt == 19 {
-            test_debug_warn!("[Issue #120 debug] no valid triangulation found in 20 shuffles");
-        }
-    }
+    dt_robust.is_valid_delaunay().unwrap_or_else(|err| {
+        panic!("5D robust configuration violates Delaunay property: {err:?}");
+    });
     for (simplex_key, simplex) in dt.simplices() {
         test_debug_info!("[Issue #120 debug] simplex {simplex_key:?}:");
         for &vkey in simplex.vertices() {

@@ -89,6 +89,33 @@ pub enum FlipPredicateError {
         #[source]
         source: CoordinateValidationError,
     },
+    /// More than one periodic image lies strictly inside the selected simplex.
+    #[error("proposed k=1 vertex has multiple interior periodic images in simplex {simplex_key:?}")]
+    K1PeriodicImageAmbiguous {
+        /// Simplex selected for subdivision.
+        simplex_key: SimplexKey,
+    },
+    /// The bounding box cannot exclude images outside the stored i8 offset range.
+    ///
+    /// This is a conservative unsupported-range error, not a claim that an
+    /// unrepresentable image actually lies inside the simplex.
+    #[error(
+        "k=1 periodic image search for simplex {simplex_key:?} exceeds the stored offset range on axis {axis}"
+    )]
+    K1PeriodicImageOffsetRange {
+        /// Simplex selected for subdivision.
+        simplex_key: SimplexKey,
+        /// Axis whose image bounds exceed the supported range.
+        axis: usize,
+    },
+    /// The Cartesian product of bounded periodic images exceeds the search budget.
+    #[error("k=1 periodic image search for simplex {simplex_key:?} exceeds {limit} candidates")]
+    K1PeriodicImageSearchLimit {
+        /// Simplex selected for subdivision.
+        simplex_key: SimplexKey,
+        /// Maximum number of images checked for strict containment.
+        limit: usize,
+    },
 }
 
 impl FlipPredicateError {
@@ -344,6 +371,16 @@ pub enum FlipContextError {
     /// Inverse predicate evaluation had no removed-simplex frame.
     #[error("inverse flip predicate requires at least one removed simplex frame")]
     MissingRemovedSimplexFrame,
+    /// A new periodic vertex has no geometrically selected offset.
+    #[error(
+        "new periodic vertex {vertex_key:?} requires a selected offset in simplex {simplex_key:?}"
+    )]
+    MissingInsertedVertexPeriodicOffset {
+        /// Newly inserted vertex.
+        vertex_key: VertexKey,
+        /// Simplex whose chart is used for subdivision.
+        simplex_key: SimplexKey,
+    },
 }
 
 /// Non-recursive summary of a flip error that reached another flip error path.

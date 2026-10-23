@@ -1993,6 +1993,8 @@ rules:
       exclude:
         - "/benches/ci_performance_suite.rs"
         - "/benches/common/flip_workflows.rs"
+        # Fixed repair fixtures use primitive flips, which have no prelude exports.
+        - "/benches/delaunay_repair.rs"
     patterns:
       - pattern-either:
           - pattern-regex: '^\s*use\s+delaunay::(builder|construction|core|delaunayize|diagnostics|flips)::'
@@ -3277,7 +3279,9 @@ rules:
       include:
         - "/notebooks/**/*.ipynb"
         - "/tests/semgrep/notebooks/**/*.ipynb"
-    pattern-regex: '(?s)"id":\s*"(?:summarize|plot)[^"]*"[\s\S]*?"source":\s*\[[\s\S]*?"[^"]*(?:pl|pd)\.read_csv\s*\('
+    pattern-regex: |-
+      (?sx)"id":\s*"(?:summarize|plot)[^"]*"(?:(?!"cell_type"\s*:).)*?
+      "source":\s*\[(?:"(?:\\.|[^"\\])*"|[^"\]])*?"(?:\\.|[^"\\])*(?:pl|pd)\.read_csv\s*\(
 
   - id: delaunay.notebook.no-eager-frame-plot-source
     languages:

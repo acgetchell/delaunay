@@ -1428,6 +1428,9 @@ class PerformanceSummaryGenerator:
     def _measurement_provenance_lines(self, *, required: bool) -> list[str]:
         """Render verified retained provenance, or mark it unavailable when optional."""
         if not (self.circumsphere_results_dir / "delaunay-evidence.json").exists():
+            if required:
+                msg = "Strict summary generation requires retained measurement evidence (delaunay-evidence.json)."
+                raise ValueError(msg)
             return []
         try:
             measurement = _load_fresh_measurement(self.circumsphere_results_dir).sources[0][1]
@@ -1461,7 +1464,7 @@ class PerformanceSummaryGenerator:
 
         Args:
             generator_name: Name of the tool generating the summary (for attribution)
-            require_measurement_evidence: Reject stale or unreadable retained measurement evidence.
+            require_measurement_evidence: Reject missing, stale, or unreadable retained measurement evidence.
 
         Returns:
             Formatted markdown content as string
@@ -2171,7 +2174,8 @@ class PerformanceSummaryGenerator:
             "just performance-local",
             "```",
             "",
-            "Ratios require matching recorded harness, configuration, and measurement-plan identities.",
+            "Ratios require compatible recorded harness, normalized measurement plan, toolchain, host, and confidence settings.",
+            "Configuration digests retain provenance; they need not match when the measured revisions differ.",
             "",
             "### Customization",
             "",

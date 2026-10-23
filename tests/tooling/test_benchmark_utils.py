@@ -275,6 +275,80 @@ def write_complete_release_signal_coverage(project_root: Path) -> None:
             write_estimate(project_root / "target", (group, "fixture"), 1_000.0)
 
 
+def write_complete_summary_measurement(project_root: Path, *, cargo_profile: str = "perf") -> Path:
+    """Retain complete raw summary fixtures through the real evidence serializers."""
+    ci_cases = (
+        ("tds_new_2d/tds_new/10", 10),
+        ("boundary_facets/fixture", 25),
+        ("convex_hull/fixture", 20),
+        ("convex_hull_queries/fixture", 20),
+        ("validation/fixture", 15),
+        ("incremental_insert/fixture", 15),
+        ("explicit_import/fixture", 10),
+        ("proof_boundaries/fixture", 10),
+        ("bistellar_flips_3d/fixture", 10),
+    )
+    # Keep directory spelling distinct from semantic Criterion IDs, as in the
+    # circumsphere benchmark. Counts are fixture inputs, not observed policy.
+    cases = [("ci_performance_suite", name, name, count) for name, count in ci_cases]
+    cases.extend(("circumsphere_containment", name, name, 100) for name in ("random/insphere", "circumcenter/fixture"))
+    cases.extend(
+        ("circumsphere_containment", f"{dimension}d_{method}", f"{dimension}d/{method}", 100)
+        for dimension in range(2, 6)
+        for method in ("insphere", "insphere_distance", "insphere_lifted")
+    )
+    cases.extend(
+        ("circumsphere_containment", f"edge_cases_{dimension}d_{position}_{method}", f"edge_cases_{dimension}d_{position}/{method}", 100)
+        for dimension in range(2, 6)
+        for position in ("boundary_point", "far_point")
+        for method in ("insphere", "distance", "lifted")
+    )
+    cases.extend(
+        (
+            ("cold_path_predicates", "predicates/hot/case", "predicates/hot/case", 100),
+            ("locate", "locate/no_hint/3d/case", "locate/no_hint/3d/case", 10),
+            ("realization_validation", "realization_validation/case", "realization_validation/case", 100),
+        ),
+    )
+    criterion = project_root / "target" / "criterion"
+    for _target, directory, full_id, count in cases:
+        write_named_estimate(project_root / "target", tuple(directory.split("/")), "new", 1_000.0, full_id=full_id)
+        sample_dir = criterion / directory / "new"
+        (sample_dir / "sample.json").write_text(json.dumps({"iters": [1] * count, "times": [1_000] * count}), encoding=UTF8)
+        estimates = json.loads((sample_dir / "estimates.json").read_bytes())
+        estimates["mean"] = estimates["median"]
+        (sample_dir / "estimates.json").write_text(json.dumps(estimates), encoding=UTF8)
+    inventory = CriterionInventory(
+        tuple(
+            (target, tuple(full_id for owner, _directory, full_id, _count in cases if owner == target))
+            for target in benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
+        ),
+    )
+    policy = benchmark_utils._sampling_policy(inventory.expected)
+    inventory_payload = serialize_inventory(inventory)
+    policy_payload = serialize_policy(policy)
+    (criterion / benchmark_utils.MEASUREMENT_INVENTORY_FILE).write_bytes(inventory_payload)
+    (criterion / benchmark_utils.MEASUREMENT_POLICY_FILE).write_bytes(policy_payload)
+    sample = Sample(tuple((full_id, read_estimate(criterion / directory / "new/estimates.json")) for _target, directory, full_id, _count in cases))
+    provenance = Provenance(
+        "a" * 40,
+        "b" * 64,
+        "c" * 64,
+        (
+            ("delaunay.cargo-profile", cargo_profile),
+            ("delaunay.inventory", json.dumps(json.loads(inventory_payload))),
+            ("delaunay.sampling-policy", policy_payload.decode()),
+            ("delaunay.scientific-preflight", "passed"),
+            ("delaunay.sample", "new"),
+            ("delaunay.raw-sample-sha256", benchmark_utils._criterion_sample_digest(criterion, "new")),
+        ),
+    )
+    payload, manifest = serialize_evidence(Evidence(serialize_sample(sample), SAMPLE_SCHEMA, (("measurement", provenance),)))
+    (criterion / "delaunay-sample.json").write_bytes(payload)
+    (criterion / "delaunay-evidence.json").write_bytes(manifest)
+    return criterion
+
+
 def write_versioned_release_asset_metadata(root: Path, *, tag: str, commit: str) -> dict[str, object]:
     """Write and return complete release-asset metadata for loader tests."""
     write_named_estimate(root, ("validation", "validate_3d", "750"), "new", 1_000_000.0)
@@ -944,7 +1018,7 @@ def test_promote_performance_report_rolls_back_every_destination_on_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A failed archive-index update must leave all promoted files unchanged."""
+    """A failure after one visible replacement must restore every destination."""
     source = tmp_path / "performance.md"
     current = tmp_path / "docs" / "performance.md"
     archive_dir = tmp_path / "docs" / "archive" / "performance"
@@ -970,13 +1044,29 @@ def test_promote_performance_report_rolls_back_every_destination_on_failure(
         encoding=UTF8,
     )
 
-    def fail_index_update(_archive_dir: Path, _additional: tuple[str, ...] = ()) -> str:
-        msg = "index write failed"
-        raise OSError(msg)
+    destinations = (current, index, archived, durable.payload, durable.provenance)
+    original = {path: path.read_bytes() if path.exists() else None for path in destinations}
+    original_tree = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    replace_path = Path.replace
+    replaced: list[Path] = []
+    failed: list[Path] = []
 
-    monkeypatch.setattr(benchmark_utils, "_archive_index_text", fail_index_update)
+    def fail_after_first_replacement(path: Path, target: str | os.PathLike[str]) -> Path:
+        destination = Path(target)
+        if destination in destinations and not failed:
+            if replaced:
+                assert replaced[0].read_bytes() != original[replaced[0]]
+                failed.append(destination)
+                msg = "publication failed after first replacement"
+                raise OSError(msg)
+            result = replace_path(path, target)
+            replaced.append(destination)
+            return result
+        return replace_path(path, target)
 
-    with pytest.raises(OSError, match="index write failed"):
+    monkeypatch.setattr(Path, "replace", fail_after_first_replacement)
+
+    with pytest.raises(OSError, match="publication failed after first replacement"):
         promote_performance_report(
             source=source,
             artifacts=artifacts,
@@ -988,11 +1078,10 @@ def test_promote_performance_report_rolls_back_every_destination_on_failure(
             expected=benchmark_utils.PerformanceReportId(current_tag="v0.8.0", baseline_tag="v0.7.8"),
         )
 
-    assert current.read_text(encoding=UTF8) == delaunay_report("0.7.8", "v0.7.7")
-    assert index.read_text(encoding=UTF8) == "old index\n"
-    assert not archived.exists()
-    assert not durable.payload.exists()
-    assert not durable.provenance.exists()
+    assert len(failed) == 1
+    assert len(replaced) == 1
+    assert {path: path.read_bytes() if path.exists() else None for path in destinations} == original
+    assert {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == original_tree
 
 
 def test_promote_performance_report_rejects_conflicting_existing_archive_before_mutation(tmp_path: Path) -> None:
@@ -2922,15 +3011,11 @@ class TestPerformanceSummaryGenerator:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
-            write_complete_release_signal_coverage(project_root)
+            write_complete_summary_measurement(project_root)
 
             output_file = Path(temp_dir) / "test_summary.md"
 
-            with (
-                patch.object(generator, "_parse_ci_performance_suite_results", return_value=complete_ci_performance_results()),
-                patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=complete_circumsphere_results(generator)),
-            ):
-                success = generator.generate_summary(output_path=output_file, run_benchmarks=True)
+            success = generator.generate_summary(output_path=output_file, run_benchmarks=True)
 
             assert success is True
             mock_run_plan.assert_called_once_with(
@@ -2948,16 +3033,12 @@ class TestPerformanceSummaryGenerator:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
-            write_complete_release_signal_coverage(project_root)
+            requested_profile = "release"
+            write_complete_summary_measurement(project_root, cargo_profile=requested_profile)
 
             output_file = Path(temp_dir) / "test_summary.md"
 
-            requested_profile = "release"
-            with (
-                patch.object(generator, "_parse_ci_performance_suite_results", return_value=complete_ci_performance_results()),
-                patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=complete_circumsphere_results(generator)),
-            ):
-                success = generator.generate_summary(output_path=output_file, run_benchmarks=True, cargo_profile=requested_profile)
+            success = generator.generate_summary(output_path=output_file, run_benchmarks=True, cargo_profile=requested_profile)
 
             assert success is True
             mock_run_plan.assert_called_once_with(
@@ -3022,23 +3103,52 @@ class TestPerformanceSummaryGenerator:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
-            write_complete_release_signal_coverage(project_root)
+            write_complete_summary_measurement(project_root)
             output_file = Path(temp_dir) / "test_summary.md"
-            circumsphere_results = complete_circumsphere_results(generator)
-            with (
-                patch.object(generator, "_parse_ci_performance_suite_results", return_value=complete_ci_performance_results()),
-                patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=circumsphere_results),
-            ):
-                success = generator.generate_summary(
-                    output_path=output_file,
-                    run_benchmarks=False,
-                    strict=True,
-                )
+            success = generator.generate_summary(
+                output_path=output_file,
+                run_benchmarks=False,
+                strict=True,
+            )
 
             assert success is True
             content = output_file.read_text(encoding=UTF8)
             assert "Reference fallback timings" not in content
             assert "section is incomplete" not in content
+            assert "Scientific preflight**: passed; complete raw Criterion evidence verified" in content
+            assert f"Measured base commit**: {'a' * 40}" in content
+            assert "Measured Cargo profile**: perf" in content
+
+    @pytest.mark.parametrize("mode", ["strict", "fresh"])
+    @pytest.mark.parametrize("existing_output", [False, True])
+    def test_generate_summary_requires_retained_measurement_before_replacing_output(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        mode: str,
+        existing_output: bool,
+    ) -> None:
+        """Complete timings without their retained manifest cannot replace a report."""
+        criterion = write_complete_summary_measurement(tmp_path)
+        (criterion / "delaunay-evidence.json").unlink()
+        raw_files = {path.relative_to(criterion): path.read_bytes() for path in criterion.rglob("*") if path.is_file()}
+        output = tmp_path / "summary.md"
+        prior = b"previous report\r\n"
+        if existing_output:
+            output.write_bytes(prior)
+        generator = PerformanceSummaryGenerator(tmp_path)
+        with patch("benchmark_utils.run_release_signal_measurement_plan", return_value={}) as run_plan:
+            success = generator.generate_summary(output_path=output, strict=mode == "strict", run_benchmarks=mode == "fresh")
+
+        assert success is False
+        assert run_plan.call_count == int(mode == "fresh")
+        assert (output.read_bytes() if output.exists() else None) == (prior if existing_output else None)
+        assert {path.relative_to(criterion): path.read_bytes() for path in criterion.rglob("*") if path.is_file()} == raw_files
+        assert list(tmp_path.glob(".summary.md.*.tmp")) == []
+        captured = capsys.readouterr()
+        assert "requires retained measurement evidence (delaunay-evidence.json)" in captured.err
+        assert "Generated performance summary" not in captured.out
+        assert "Traceback" not in captured.err
 
     def test_release_signal_report_coverage_is_derived_from_every_planned_section(self, tmp_path: Path) -> None:
         """Every executable target should own exactly one visible report-coverage row."""
@@ -3221,19 +3331,17 @@ class TestPerformanceSummaryGenerator:
     def test_generate_summary_atomic_replace_failure_preserves_previous_report(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A final replacement failure leaves the previous tracked report byte-identical."""
         generator = PerformanceSummaryGenerator(tmp_path)
-        write_complete_release_signal_coverage(tmp_path)
+        write_complete_summary_measurement(tmp_path)
         output_file = tmp_path / "summary.md"
-        output_file.write_text("previous report\n", encoding=UTF8)
+        previous_report = b"previous report\r\n"
+        output_file.write_bytes(previous_report)
 
-        with (
-            patch.object(generator, "_parse_ci_performance_suite_results", return_value=complete_ci_performance_results()),
-            patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=complete_circumsphere_results(generator)),
-            patch.object(Path, "replace", side_effect=OSError("injected replace failure")),
-        ):
+        with patch.object(Path, "replace", side_effect=OSError("injected replace failure")) as replace_file:
             success = generator.generate_summary(output_path=output_file, strict=True)
 
         assert success is False
-        assert output_file.read_text(encoding=UTF8) == "previous report\n"
+        replace_file.assert_called_once_with(output_file.resolve())
+        assert output_file.read_bytes() == previous_report
         assert list(tmp_path.glob(".summary.md.*.tmp")) == []
         captured = capsys.readouterr()
         assert "injected replace failure" in captured.err

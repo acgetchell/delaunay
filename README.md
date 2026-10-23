@@ -324,19 +324,7 @@ compare same-machine performance, then publish curated release evidence. A fast
 run that violates triangulation, predicate, topology, or diagnostic invariants
 is a failed run, not a performance improvement.
 
-For ordinary local validation:
-
-```bash
-just check
-just test
-just examples
-```
-
-For full CI parity:
-
-```bash
-just ci
-```
+See [CONTRIBUTING.md][contributing-guide] for local validation and CI checks.
 
 Performance-sensitive work uses Criterion suites and same-machine baselines:
 

@@ -149,7 +149,7 @@ pub trait Kernel<const D: usize>: Clone {
     ///
     /// Returns:
     /// - `-1`: Point is outside the circumsphere
-    /// - `0`: Point is on the circumsphere (within numerical tolerance)
+    /// - `0`: Point is on the circumsphere according to the kernel's predicate
     /// - `+1`: Point is inside the circumsphere
     ///
     /// **Note:** [`AdaptiveKernel`] resolves boundary cases via Simulation
@@ -569,20 +569,24 @@ impl<const D: usize> Kernel<D> for RobustKernel<f64> {
 /// - **`SoS` insphere** — cospherical ties are broken deterministically,
 ///   so every insphere query returns ±1 (never 0/BOUNDARY)
 ///
-/// If you need configurable tolerance, explicit `BOUNDARY`/`DEGENERATE`
-/// signals, or diagnostic consistency checks, use [`RobustKernel`] via
+/// If you need exact `BOUNDARY`/`DEGENERATE` signals without symbolic
+/// tie-breaking, use [`RobustKernel`] via
 /// the explicit-kernel constructors (`with_kernel`, `build_with_kernel`).
 ///
 /// # Evaluation strategy
 ///
 /// **Orientation** (exact + `SoS` tie-breaking):
-/// 1. **Fast filter**: `det_direct()` + `det_errbound()` (provable for D ≤ 4)
-/// 2. **Exact arithmetic**: `det_sign_exact()` via Bareiss algorithm in `BigRational`
+/// 1. **Fast filter**: `det_direct()` + `det_errbound()` for D ≤ 3
+///    (the homogeneous matrix has order `D + 1`)
+/// 2. **Exact arithmetic**: `det_sign_exact()` using integer arithmetic,
+///    with direct expansion through matrix order 4 and Bareiss elimination above it
 /// 3. **`SoS` tie-breaking**: Simulation of Simplicity for degenerate cases
 ///
 /// **Insphere** (exact + `SoS` tie-breaking):
-/// 1. **Fast filter** + **exact arithmetic** (same as orientation)
-/// 2. **`SoS` tie-breaking**: Simulation of Simplicity for cospherical cases
+/// 1. **Fast filter**: outward-rounded intervals on query-relative coordinates
+///    through D = 6
+/// 2. **Exact arithmetic**: rational query-relative determinant evaluation
+/// 3. **`SoS` tie-breaking**: Simulation of Simplicity for cospherical cases
 ///
 /// # Examples
 ///
@@ -640,7 +644,7 @@ impl<const D: usize> Kernel<D> for AdaptiveKernel<f64> {
             });
         }
 
-        // Layer 1+2: exact sign via fast filter + Bareiss in BigRational.
+        // Layers 1+2: fast filter followed by exact integer determinant evaluation.
         // Delegates to robust_orientation to avoid duplicating the homogeneous
         // matrix construction and exact determinant pipeline.
         let exact = robust_orientation(points)?;

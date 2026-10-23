@@ -16,7 +16,7 @@ use crate::core::tds::{
     RawTdsSnapshot, SimplexKey, Tds, TdsError, TdsMutationError, TdsSnapshot, TdsSnapshotError,
     ValidatedTdsSerialization, VertexKey,
 };
-use crate::core::traits::data_type::{DataDeserialize, DataSerialize, DataType};
+use crate::core::traits::data_type::{DataDeserialize, DataSerialize};
 use crate::core::vertex::Vertex;
 use crate::delaunay_model::DelaunayTriangulation;
 use crate::geometry::kernel::{ExactPredicates, Kernel, RobustKernel};
@@ -2733,8 +2733,8 @@ where
 
 impl<U, V, const D: usize> DelaunayCheckpointV1<U, V, D>
 where
-    U: DataType,
-    V: DataType,
+    U: Clone,
+    V: Clone,
 {
     /// Restores a legacy checkpoint with the default robust kernel.
     ///
@@ -2982,8 +2982,8 @@ impl<U, V, const D: usize> DelaunayCheckpoint<U, V, D> {
 
 impl<U, V, const D: usize> DelaunayCheckpoint<U, V, D>
 where
-    U: DataType,
-    V: DataType,
+    U: Clone + DataDeserialize,
+    V: Clone + DataDeserialize,
 {
     /// Restores the checkpoint with the default robust exact-predicate kernel.
     ///
@@ -3268,8 +3268,8 @@ fn restore_tds_with_provenance<K, U, V, const D: usize>(
 >
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
+    U: Clone,
+    V: Clone,
 {
     DelaunayTriangulation::try_restore_with_provenance(
         tds,
@@ -3288,8 +3288,8 @@ fn restore_checkpoint<K, U, V, const D: usize>(
 ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayCheckpointLoadError>
 where
     K: ExactPredicates<D>,
-    U: DataType,
-    V: DataType,
+    U: Clone + DataDeserialize,
+    V: Clone + DataDeserialize,
 {
     if wire.schema_version != DELAUNAY_CHECKPOINT_SCHEMA_VERSION {
         return Err(DelaunayCheckpointError::UnsupportedSchemaVersion {
@@ -3617,8 +3617,8 @@ where
 impl<'de, U, V, const D: usize> Deserialize<'de>
     for DelaunayTriangulation<RobustKernel<f64>, U, V, D>
 where
-    U: DataType,
-    V: DataType,
+    U: Clone + DataDeserialize,
+    V: Clone + DataDeserialize,
     RobustKernel<f64>: ExactPredicates<D>,
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
@@ -3636,6 +3636,7 @@ mod tests {
     use super::*;
     use crate::core::operations::DelaunayInsertionState;
     use crate::core::simplex::Simplex;
+    use crate::core::traits::data_type::DataType;
     #[cfg(feature = "count-allocations")]
     use crate::core::util::measure_with_result;
     use crate::delaunay_model::EuclideanDelaunayReportDomain;

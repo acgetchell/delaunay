@@ -2,7 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::checkpoint::DelaunayCheckpoint;
 use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationBuilder, Vertex,
@@ -57,21 +57,33 @@ fn checkpoint_benches(criterion: &mut Criterion) {
     group.throughput(Throughput::Elements(64));
 
     group.bench_function("manifest", |bencher| {
-        bencher.iter(|| black_box(triangulation.checkpoint_manifest()).or_abort());
+        bencher.iter_batched(
+            || (),
+            |()| black_box(triangulation.checkpoint_manifest()).or_abort(),
+            BatchSize::LargeInput,
+        );
     });
     group.bench_function("json", |bencher| {
-        bencher.iter(|| black_box(to_vec(black_box(&triangulation))).or_abort());
+        bencher.iter_batched(
+            || (),
+            |()| black_box(to_vec(black_box(&triangulation))).or_abort(),
+            BatchSize::LargeInput,
+        );
     });
     group.bench_function("json_load", |bencher| {
-        bencher.iter(|| {
-            let checkpoint: DelaunayCheckpoint<u32, u32, 2> =
-                from_slice(black_box(&checkpoint_json)).or_abort();
-            black_box(
-                checkpoint
-                    .try_into_delaunay_with_kernel(AdaptiveKernel::new())
-                    .or_abort(),
-            );
-        });
+        bencher.iter_batched(
+            || (),
+            |()| {
+                let checkpoint: DelaunayCheckpoint<u32, u32, 2> =
+                    from_slice(black_box(&checkpoint_json)).or_abort();
+                black_box(
+                    checkpoint
+                        .try_into_delaunay_with_kernel(AdaptiveKernel::new())
+                        .or_abort(),
+                )
+            },
+            BatchSize::LargeInput,
+        );
     });
     group.finish();
 }

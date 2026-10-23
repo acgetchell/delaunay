@@ -422,7 +422,7 @@ mod allocation_contracts {
                         assert_eq!(dt.number_of_vertices(), vertex_count + 1);
                         assert!(dt.vertex(vertex_key).is_some());
                         assert_post_bootstrap_insertion_budget::<D>(&info);
-                        black_box(dt);
+                        black_box(dt)
                     },
                     criterion::BatchSize::LargeInput,
                 );

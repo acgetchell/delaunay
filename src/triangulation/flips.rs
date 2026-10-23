@@ -189,10 +189,10 @@ pub(crate) fn validate_flip_topology<K, U, V, const D: usize>(
 /// with [`DelaunayTriangulation::into_triangulation`](crate::DelaunayTriangulation::into_triangulation)
 /// before editing, then recertify or delaunayize the result.
 ///
-/// ```compile_fail
+/// ```compile_fail,E0277
 /// use delaunay::prelude::construction::DelaunayTriangulation;
 /// use delaunay::prelude::geometry::AdaptiveKernel;
-/// use delaunay::prelude::pachner::BistellarFlips;
+/// use delaunay::flips::BistellarFlips;
 ///
 /// fn requires_topology_edits<T: BistellarFlips<2>>() {}
 ///
@@ -205,6 +205,11 @@ pub trait BistellarFlips<const D: usize> {
     type VertexData;
 
     /// Apply a forward k=1 move (simplex split) by inserting a vertex into a simplex.
+    ///
+    /// Periodic coordinates may be canonical, as returned by
+    /// [`Triangulation::simplex_barycenter`]. The unique strictly interior lattice
+    /// image is selected in the simplex's lifted chart. Stored coordinates and
+    /// the vertex UUID are preserved; replacement slots store the selected offset.
     ///
     /// # Errors
     ///
@@ -254,7 +259,10 @@ pub trait BistellarFlips<const D: usize> {
     /// same unchanged triangulation state. These include simplex liveness,
     /// duplicate inserted-vertex UUIDs, exact replacement-simplex degeneracy,
     /// and strict containment in the selected simplex's active affine chart.
-    /// Periodic containment is evaluated in the simplex's lifted local frame.
+    /// Periodic containment searches the simplex's lifted local frame for a unique
+    /// strictly interior image. The search checks at most 4096 bounding-box images
+    /// and conservatively rejects bounds that may require offsets outside `i8`.
+    /// Ambiguous images and unsupported searches return typed predicate errors.
     /// The returned feasibility report omits the inserted vertex key because
     /// that key is allocated only by the mutating executor.
     ///
@@ -705,9 +713,12 @@ where
         simplex_key: SimplexKey,
         vertex: Vertex<U, D>,
     ) -> Result<FlipInfo<D>, FlipError> {
-        let _ = self.can_flip_k1_insert(simplex_key, &vertex)?;
+        validate_flip_topology(self, TopologicalOperation::InsertVertex)?;
+        let topology_model = self.global_topology.model();
+        let (_, periodic_offset) =
+            validate_bistellar_flip_k1_insert(&self.tds, &topology_model, simplex_key, &vertex)?;
         apply_realized_flip(self, TopologicalOperation::InsertVertex, |tri| {
-            apply_bistellar_flip_k1_raw(&mut tri.tds, simplex_key, vertex)
+            apply_bistellar_flip_k1_raw(&mut tri.tds, simplex_key, vertex, periodic_offset)
         })
     }
 
@@ -719,6 +730,7 @@ where
         validate_flip_topology(self, TopologicalOperation::InsertVertex)?;
         let topology_model = self.global_topology.model();
         validate_bistellar_flip_k1_insert(&self.tds, &topology_model, simplex_key, vertex)
+            .map(|(feasibility, _)| feasibility)
     }
 
     fn flip_k1_remove(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {

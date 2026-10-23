@@ -2238,12 +2238,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
                     if let Some(existing_neighbor_flip_state) = flip_assignment.get(&neighbor_key) {
                         if *existing_neighbor_flip_state != required_neighbor_flip_state {
-                            return Err(TdsError::InconsistentDataStructure {
-                                message: format!(
-                                    "Contradictory orientation constraints while normalizing simplices {:?} and {:?}",
-                                    simplex.uuid(),
-                                    neighbor_simplex.uuid(),
-                                ),
+                            return Err(TdsError::ContradictoryOrientationConstraints {
+                                simplex1_uuid: simplex.uuid(),
+                                simplex2_uuid: neighbor_simplex.uuid(),
                             });
                         }
                     } else {

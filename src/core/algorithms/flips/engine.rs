@@ -54,6 +54,7 @@ pub(super) fn apply_bistellar_flip_with_k_raw<U, V, const D: usize>(
     direction: FlipDirection,
     orientation_policy: ReplacementOrientationPolicy,
     validation_scope: FlipValidationScope,
+    newly_inserted_vertex: Option<(VertexKey, [i8; D])>,
 ) -> Result<AppliedFlip<D>, FlipError>
 where
     U: DataType,
@@ -77,6 +78,7 @@ where
         removed_simplices,
         direction,
         orientation_policy,
+        newly_inserted_vertex,
     )?;
 
     let new_simplices = apply_prepared_flip_mutation(
@@ -124,6 +126,7 @@ where
         context.direction,
         ReplacementOrientationPolicy::AllowSigned,
         FlipValidationScope::FullTds,
+        None,
     )?
     .info)
 }
@@ -150,6 +153,7 @@ where
         context.direction,
         ReplacementOrientationPolicy::AllowSigned,
         FlipValidationScope::FullTds,
+        None,
     )?
     .info)
 }
@@ -163,6 +167,10 @@ where
     clippy::too_many_lines,
     reason = "Keep exact feasibility checks aligned with the mutating flip preflight"
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Preparation carries the selected periodic image only for k=1 insertion"
+)]
 pub(super) fn prepare_bistellar_flip<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     k_move: usize,
@@ -171,6 +179,7 @@ pub(super) fn prepare_bistellar_flip<U, V, const D: usize>(
     removed_simplices: &SimplexKeyBuffer,
     direction: FlipDirection,
     orientation_policy: ReplacementOrientationPolicy,
+    newly_inserted_vertex: Option<(VertexKey, [i8; D])>,
 ) -> Result<PreparedFlip<D>, FlipError> {
     if k_move == 0 || k_move > D + 1 {
         return Err(FlipContextError::InvalidMoveSize {
@@ -286,6 +295,12 @@ pub(super) fn prepare_bistellar_flip<U, V, const D: usize>(
             return Err(FlipError::NonManifoldFacet);
         }
 
+        // A periodic k=1 preflight already proved strict containment and all
+        // replacement orientations in the selected lifted chart. Raw canonical
+        // coordinates can be collinear even when those lifted simplices are not.
+        if newly_inserted_vertex.is_some() {
+            continue;
+        }
         let points = vertices_to_points(tds, vertices)?;
 
         // Exact orientation: reject degenerate simplices and canonicalize to
@@ -321,11 +336,20 @@ pub(super) fn prepare_bistellar_flip<U, V, const D: usize>(
         }
     }
 
-    let newly_inserted_vertex = if k_move == 1 {
-        inserted_face_vertices.first().copied()
-    } else {
-        None
-    };
+    if k_move == 1 && newly_inserted_vertex.is_none() {
+        for &simplex_key in removed_simplices {
+            if tds
+                .simplex(simplex_key)
+                .is_some_and(|simplex| simplex.periodic_vertex_offsets().is_some())
+            {
+                return Err(FlipContextError::MissingInsertedVertexPeriodicOffset {
+                    vertex_key: inserted_face_vertices[0],
+                    simplex_key,
+                }
+                .into());
+            }
+        }
+    }
     let mut new_simplex_offsets = replacement_simplex_periodic_offsets(
         tds,
         &new_simplex_vertices,
@@ -739,7 +763,7 @@ where
             });
         }
         if neighbor_key == simplex_key {
-            if simplex_allows_periodic_self_neighbor(simplex) {
+            if Tds::<U, V, D>::allows_periodic_self_neighbor(simplex) {
                 continue;
             }
             return Err(TdsValidationFailure::InvalidNeighbors {
@@ -791,16 +815,6 @@ where
     }
 
     Ok(())
-}
-
-/// Mirrors TDS validation's periodic self-neighbor allowance locally.
-pub(super) fn simplex_allows_periodic_self_neighbor<V, const D: usize>(
-    simplex: &Simplex<V, D>,
-) -> bool {
-    let Some(offsets) = simplex.periodic_vertex_offsets() else {
-        return false;
-    };
-    !offsets.is_empty() && offsets.len() == simplex.number_of_vertices()
 }
 
 /// Requires two simplices sharing an affected facet to point back to each other.
@@ -1615,6 +1629,7 @@ mod tests {
                 ctx.direction,
                 ReplacementOrientationPolicy::AllowSigned,
                 FlipValidationScope::LocalCavity,
+                None,
             )
             .unwrap();
             transaction.commit();
@@ -2078,7 +2093,7 @@ mod tests {
 
                     let new_vertex = vertex!([0.1; $dim]).unwrap();
                     let new_uuid = new_vertex.uuid();
-                    let _info = apply_bistellar_flip_k1_raw(&mut tds, simplex_key, new_vertex)
+                    let _info = apply_bistellar_flip_k1_raw(&mut tds, simplex_key, new_vertex, None)
                         .unwrap();
                     assert!(tds.is_valid().is_ok());
 

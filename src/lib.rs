@@ -691,9 +691,8 @@ mod core {
             pub use self::moves::*;
             use self::orientation::{
                 debug_postcondition_facet_context, debug_ridge_context, facet_order,
-                k1_inserted_vertex_periodic_offset, normalized_facet_order_with_offsets,
-                orient_replacement_simplices, replacement_simplex_periodic_offsets,
-                validate_replacement_orientation,
+                normalized_facet_order_with_offsets, orient_replacement_simplices,
+                replacement_simplex_periodic_offsets, validate_replacement_orientation,
             };
             pub use self::repair::*;
             use self::repair_queue::{
@@ -1089,7 +1088,7 @@ pub use crate::construction::{
     DelaunayConstructionRepairPhase, DelaunayConstructionRetryFailure, DelaunayError,
     DelaunayResult, DelaunayTriangulationConstructionError,
     DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
-    InsertionOrderStrategy, RetryPolicy,
+    InsertionOrderStrategy, PeriodicQuotientFacetKeyDerivationFailure, RetryPolicy,
 };
 pub use crate::core::algorithms::insertion::{
     CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind, DelaunayRepairFailureContext,
@@ -1521,7 +1520,8 @@ pub mod prelude {
         DelaunayTriangulationValidationError, DelaunayVerificationError,
         DelaunayVerificationErrorKind, DuplicateDetectionMetrics, FinalDelaunayValidationContext,
         FinalTopologyValidationContext, InitialSimplexStrategy, InsertionOrderStrategy,
-        InsertionResult, InvariantError, InvariantKind, InvariantViolation, PlManifoldRepairError,
+        InsertionResult, InvariantError, InvariantKind, InvariantViolation,
+        PeriodicQuotientFacetKeyDerivationFailure, PlManifoldRepairError,
         PlManifoldRepairRefinementError, PlManifoldRepairStage, PlManifoldRepairStats,
         RefinementError, RepairDecision, RepairSkipReason, RetryPolicy, SphericalDelaunayBuilder,
         SphericalDelaunayConstructionError, SphericalDelaunayTriangulation,
@@ -1661,7 +1661,7 @@ pub mod prelude {
             DelaunayConstructionRepairPhase, DelaunayConstructionRetryFailure, DelaunayError,
             DelaunayResult, DelaunayTriangulationConstructionError,
             DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
-            InsertionOrderStrategy, RetryPolicy,
+            InsertionOrderStrategy, PeriodicQuotientFacetKeyDerivationFailure, RetryPolicy,
         };
         pub use crate::core::util::DeduplicationError;
         pub use crate::geometry::coordinate_range::{
@@ -1766,8 +1766,8 @@ pub mod prelude {
         pub use crate::validation_report::InvariantError;
         pub use crate::vertex;
         pub use crate::{
-            InsertionError, LocalFacetRepairGuard, RefinementError,
-            SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
+            InsertionError, LocalFacetRepairGuard, PeriodicQuotientFacetKeyDerivationFailure,
+            RefinementError, SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
             TriangulationBuildFailure, TriangulationBuilder, TriangulationBuilderError,
             TriangulationConstructionError, TriangulationRealizationIntersectionDetail,
             TriangulationRealizationSimplexDetail, TriangulationRealizationSimplexPairDetail,
@@ -1832,7 +1832,7 @@ pub mod prelude {
     ///
     /// Unified Pachner imports do not expose the primitive flip methods:
     ///
-    /// ```compile_fail
+    /// ```compile_fail,E0599
     /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::pachner::*;
     ///
@@ -1843,7 +1843,7 @@ pub mod prelude {
     ///     vertex![0.0, 1.0, 0.0]?,
     ///     vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?.into_triangulation();
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };

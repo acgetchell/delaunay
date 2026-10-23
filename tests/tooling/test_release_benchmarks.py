@@ -159,7 +159,7 @@ def test_release_workflow_staging_preserves_clean_source_identity(tmp_path: Path
     executables = tmp_path / "bin"
     executables.mkdir()
     just = executables / "just"
-    just.write_text('#!/bin/sh\nmkdir -p target/criterion\nprintf "raw samples\\n" > target/criterion/sample.json\n', encoding="utf-8")
+    just.write_text('#!/bin/sh\nmkdir -p target/criterion\nprintf "raw samples\\n" > target/criterion/sample.json\n', encoding="utf-8", newline="\n")
     just.chmod(0o755)
     stub = tmp_path / "benchmark_boundary.py"
     stub.write_text(
@@ -184,6 +184,7 @@ def test_release_workflow_staging_preserves_clean_source_identity(tmp_path: Path
     uv.write_text(
         f'#!/bin/sh\nexec {shlex.quote(Path(sys.executable).as_posix())} {shlex.quote(stub.as_posix())} "$@"\n',
         encoding="utf-8",
+        newline="\n",
     )
     uv.chmod(0o755)
     output = tmp_path / "github-output"
@@ -223,7 +224,7 @@ def test_release_workflow_launcher_ignores_incompatible_ambient_uv(tmp_path: Pat
     runtime = tmp_path / "release-tools"
     python = runtime / ".venv/bin/python"
     python.parent.mkdir(parents=True)
-    python.write_text(f'#!/bin/sh\nexec {shlex.quote(Path(sys.executable).as_posix())} "$@"\n', encoding="utf-8")
+    python.write_text(f'#!/bin/sh\nexec {shlex.quote(Path(sys.executable).as_posix())} "$@"\n', encoding="utf-8", newline="\n")
     python.chmod(0o755)
     adapter = runtime / "release_benchmarks.py"
     adapter.write_text("import json, sys\nprint(json.dumps([__file__, *sys.argv[1:]]))\n", encoding="utf-8")
@@ -233,6 +234,7 @@ def test_release_workflow_launcher_ignores_incompatible_ambient_uv(tmp_path: Pat
     uv.write_text(
         '#!/bin/sh\nprintf "incompatible uv version\\n" >&2\nprintf "called\\n" > "$RUNNER_TEMP/ambient-uv-called"\nexit 2\n',
         encoding="utf-8",
+        newline="\n",
     )
     uv.chmod(0o755)
     checkout = tmp_path / "release-checkout"

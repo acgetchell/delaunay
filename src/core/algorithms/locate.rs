@@ -33,6 +33,7 @@ use crate::core::util::canonical_points::{
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateConversionError;
+use crate::topology::traits::topological_space::TopologyKind;
 use std::env;
 use std::fmt::{self, Write as _};
 use std::hash::{Hash, Hasher};
@@ -97,7 +98,7 @@ pub enum LocateResult {
     OnEdge(SimplexKey),
     /// Point is on a vertex
     OnVertex(VertexKey),
-    /// Point is outside the convex hull
+    /// Point is outside every simplex in the triangulation.
     Outside,
 }
 
@@ -117,6 +118,13 @@ pub enum LocateError {
     /// Triangulation has no simplices.
     #[error("Cannot locate in empty triangulation")]
     EmptyTriangulation,
+
+    /// The owner's coordinate model needs a different location algorithm.
+    #[error("point location is unsupported for {topology:?} topology")]
+    UnsupportedTopology {
+        /// The unsupported topology model.
+        topology: TopologyKind,
+    },
 
     /// Simplex reference is invalid.
     #[error("Invalid simplex reference: {simplex_key:?}")]
@@ -658,6 +666,8 @@ fn collect_ridge_fan_extra_simplices(
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocateFallbackReason {
+    /// The walk reached a boundary that need not bound a convex domain.
+    BoundaryReached,
     /// The facet-walking traversal revisited a previously seen simplex.
     CycleDetected,
     /// The facet-walking traversal exceeded the maximum step budget.
@@ -688,7 +698,7 @@ pub struct LocateFallback {
 /// Statistics describing how point location was performed.
 ///
 /// The primary purpose of this type is **observability**: callers can detect when the fast
-/// facet-walking path failed to make progress (cycle/step-limit) and a scan fallback was used.
+/// facet-walking path reached a boundary or failed to make progress and a scan was used.
 ///
 /// # Examples
 ///
@@ -743,11 +753,13 @@ pub(crate) struct LocateTrace {
 /// Locate a point in the triangulation using facet walking (correctness-first).
 ///
 /// This function attempts a fast facet-walking traversal starting from `hint` (when provided).
-/// If a cycle or step limit is detected, it falls back to a brute-force scan to guarantee
-/// termination.
+/// A boundary exit, cycle, or step limit falls back to a brute-force scan. A mesh
+/// boundary need not bound a convex domain, so crossing it does not prove that
+/// the query lies outside every simplex.
 ///
-/// If you need to detect when the fast path did not behave (cycle/step limit), use
-/// [`locate_with_stats`].
+/// This low-level algorithm uses stored Euclidean coordinates. It does not
+/// interpret periodic offsets or other coordinate models; use an owner-level
+/// query to check model support. Use [`locate_with_stats`] for fallback telemetry.
 ///
 /// # Arguments
 ///
@@ -871,12 +883,12 @@ where
 ///
 /// This performs the same algorithm as [`locate`], but returns a [`LocateStats`] struct
 /// that indicates whether the caller-provided hint was used and whether a scan fallback was
-/// required (cycle detected / step limit).
+/// required (boundary reached, cycle detected, or step limit).
 ///
 /// # Errors
 ///
-/// Returns `LocateError` only for structural/predicate failures. Cycles and step limits are not
-/// treated as errors; they trigger the scan fallback and are recorded in the returned stats.
+/// Returns `LocateError` only for structural/predicate failures. Boundary exits,
+/// cycles, and step limits trigger the scan fallback and are recorded in the stats.
 ///
 /// # Examples
 ///
@@ -929,8 +941,8 @@ where
 /// Locate a point and keep the final walked simplex for local exterior repair.
 ///
 /// This mirrors [`locate_with_stats`] but also exposes the last facet-walk simplex
-/// before the algorithm concluded.  For [`LocateResult::Outside`] without a scan
-/// fallback, that simplex is adjacent to the hull facet crossed by the query point.
+/// before the algorithm concluded. A boundary exit retains the simplex adjacent
+/// to the crossed facet even when the scan locates the point elsewhere.
 pub(crate) fn locate_with_trace<K, U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     kernel: &K,
@@ -999,8 +1011,14 @@ where
                     found_outside_facet = true;
                     break;
                 }
+                // A valid Euclidean complex need not be convex: this boundary
+                // can separate the current simplex from another containing one.
+                stats.fallback = Some(LocateFallback {
+                    reason: LocateFallbackReason::BoundaryReached,
+                    steps: stats.walk_steps,
+                });
                 return Ok(LocateTrace {
-                    result: LocateResult::Outside,
+                    result: locate_by_scan(tds, kernel, point)?,
                     stats,
                     terminal_simplex: current_simplex,
                 });
@@ -2359,51 +2377,6 @@ mod tests {
     }
 
     #[test]
-    fn test_locate_point_inside_2d() {
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-        ];
-        let dt = single_simplex_tds(&vertices);
-        let kernel = FastKernel::<f64>::new();
-
-        // Point inside the triangle
-        let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
-        let result = locate(&dt, &kernel, &point, None);
-
-        match result {
-            Ok(LocateResult::InsideSimplex(simplex_key)) => {
-                assert!(dt.contains_simplex(simplex_key));
-            }
-            _ => panic!("Expected point to be inside a simplex, got {result:?}"),
-        }
-    }
-
-    #[test]
-    fn test_locate_point_inside_3d() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let dt = single_simplex_tds(&vertices);
-        let kernel = FastKernel::<f64>::new();
-
-        // Point inside the tetrahedron
-        let point = Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates");
-        let result = locate(&dt, &kernel, &point, None);
-
-        match result {
-            Ok(LocateResult::InsideSimplex(simplex_key)) => {
-                assert!(dt.contains_simplex(simplex_key));
-            }
-            _ => panic!("Expected point to be inside a simplex, got {result:?}"),
-        }
-    }
-
-    #[test]
     fn test_locate_point_outside_2d() {
         let vertices = vec![
             vertex!([0.0, 0.0]).unwrap(),
@@ -2598,11 +2571,15 @@ mod tests {
             let point = Point::try_new($inside_point).expect("finite point coordinates");
             let result = locate(&dt, &kernel, &point, None);
 
-            assert!(
-                matches!(result, Ok(LocateResult::InsideSimplex(_))),
-                "Expected point to be inside a simplex in {}-simplex",
-                $dim
-            );
+            match result {
+                Ok(LocateResult::InsideSimplex(simplex_key)) => {
+                    assert!(dt.contains_simplex(simplex_key));
+                }
+                other => panic!(
+                    "Expected point to be inside a live simplex in {}-simplex, got {other:?}",
+                    $dim
+                ),
+            }
         }};
     }
 

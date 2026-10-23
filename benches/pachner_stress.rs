@@ -139,8 +139,7 @@ fn k1_remove_fixture(
         },
     );
     let vertex_key = dt
-        .vertices()
-        .find_map(|(vertex_key, vertex)| (vertex.uuid() == vertex_uuid).then_some(vertex_key))
+        .vertex_key_from_uuid(&vertex_uuid)
         .or_abort(format_args!("missing inserted k=1 vertex {vertex_uuid}"));
     assert_eq!(inserted.inserted_face_vertices.as_slice(), &[vertex_key]);
     assert!(!inserted.new_simplices.is_empty());
@@ -213,12 +212,7 @@ fn inserted_edge(dt: &FlipTriangulation<4>, vertices: &[VertexKey]) -> EdgeKey {
             vertices.len()
         ));
     };
-    dt.edges()
-        .find(|edge| {
-            let (first, second) = edge.endpoints();
-            (first == *a && second == *b) || (first == *b && second == *a)
-        })
-        .or_abort(format_args!("inserted k=2 edge {a:?}-{b:?} is missing"))
+    dt.edge_key(*a, *b).or_abort()
 }
 
 /// Converts a reported inserted face into an inverse k=3 triangle handle.
@@ -256,7 +250,7 @@ fn bench_pachner_move(
                     let result = attempt_pachner_move(dt, pachner_move);
                     black_box(&result);
                 }
-                black_box(triangulations);
+                black_box(triangulations)
             },
             BatchSize::LargeInput,
         );
@@ -280,7 +274,7 @@ fn bench_pachner_round_trip(
                     let backward = attempt_pachner_move(dt, inverse);
                     black_box((&forward, &backward));
                 }
-                black_box(triangulations);
+                black_box(triangulations)
             },
             BatchSize::LargeInput,
         );

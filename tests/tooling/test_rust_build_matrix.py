@@ -52,7 +52,7 @@ def run_host_guard(tmp_path: Path, script: str, expected: str, compiler: str) ->
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     rustc = fake_bin / "rustc"
-    rustc.write_text("#!/usr/bin/env bash\nprintf '%s' \"$COMPILER_INFO\"\n", encoding="utf-8")
+    rustc.write_text("#!/usr/bin/env bash\nprintf '%s' \"$COMPILER_INFO\"\n", encoding="utf-8", newline="\n")
     rustc.chmod(0o755)
     env = {
         **os.environ,

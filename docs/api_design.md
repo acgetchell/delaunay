@@ -739,10 +739,12 @@ The fallback rebuild path preserves simplex payloads
 when a rebuilt simplex has the same vertex UUID set as exactly one original simplex;
 changed or ambiguous simplices receive no payload.
 
-### Explicitly Deferred
+### Related Topology Repair
 
-- Dedicated targeted repair stages for boundary-ridge multiplicity,
-  ridge-link manifoldness, and vertex-link manifoldness (#304).
+Boundary-ridge multiplicity, ridge-link manifoldness, and vertex-link
+manifoldness repairs are available through `Tds::repair_pl_manifold_topology`.
+That topology repair workflow is separate from the Delaunay builder's
+flip-based geometric repair.
 
 ## Further Reading
 

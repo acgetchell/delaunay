@@ -31,12 +31,12 @@
 
 use crate::core::algorithms::flips::DelaunayRepairError;
 use crate::core::algorithms::locate::{
-    ConflictError, LocateError, LocateResult, extract_cavity_boundary,
+    ConflictError, LocateError, LocateResult, extract_cavity_boundary, find_conflict_region,
 };
 use crate::core::collections::spatial_hash_grid::HashGridIndexError;
 use crate::core::collections::{
-    FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer,
-    SmallBuffer, VertexKeyBuffer,
+    CavityBoundaryBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE,
+    SimplexKeyBuffer, SmallBuffer, VertexKeyBuffer,
 };
 use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::simplex::{Simplex, SimplexValidationError};
@@ -46,7 +46,7 @@ use crate::core::tds::{
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::VertexValidationError;
-use crate::geometry::kernel::Kernel;
+use crate::geometry::kernel::{Kernel, RobustKernel};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::quality::QualityError;
@@ -422,6 +422,26 @@ pub enum TdsValidationFailure {
         simplex_key: SimplexKey,
     },
 
+    /// Canonical vertex incidence has an unexpected number of entries.
+    #[error("vertex-to-simplices index has {actual} simplex incidences, expected {expected}")]
+    VertexIncidenceCountMismatch {
+        /// Observed incidence count.
+        actual: usize,
+        /// Count implied by simplex vertex membership.
+        expected: usize,
+    },
+
+    /// Coherent-orientation constraints contradict one another.
+    #[error(
+        "contradictory orientation constraints between simplices {simplex1_uuid} and {simplex2_uuid}"
+    )]
+    ContradictoryOrientationConstraints {
+        /// UUID of the first simplex in the contradictory constraint.
+        simplex1_uuid: uuid::Uuid,
+        /// UUID of the second simplex in the contradictory constraint.
+        simplex2_uuid: uuid::Uuid,
+    },
+
     /// Internal TDS consistency failed.
     #[error("internal data structure inconsistency: {message}")]
     InconsistentDataStructure {
@@ -613,6 +633,16 @@ impl From<TdsError> for TdsValidationFailure {
             } => Self::VertexIncidenceMismatch {
                 vertex_key,
                 simplex_key,
+            },
+            TdsError::VertexIncidenceCountMismatch { actual, expected } => {
+                Self::VertexIncidenceCountMismatch { actual, expected }
+            }
+            TdsError::ContradictoryOrientationConstraints {
+                simplex1_uuid,
+                simplex2_uuid,
+            } => Self::ContradictoryOrientationConstraints {
+                simplex1_uuid,
+                simplex2_uuid,
             },
             TdsError::InconsistentDataStructure { message } => {
                 Self::InconsistentDataStructure { message }
@@ -3778,6 +3808,122 @@ where
     Ok(())
 }
 
+/// Finds every finite component of an exterior Delaunay conflict cavity.
+///
+/// The infinite cells visible from the query join the finite conflict components.
+/// Seeding each visible hull facet therefore finds components that a single finite
+/// simplex walk can miss. Closed, unperturbed circumspheres keep exact coplanar
+/// interfaces on both sides of the cavity instead of splitting them through `SoS`.
+/// The caller must supply a Euclidean Delaunay triangulation of its convex hull.
+pub(crate) fn find_exterior_conflict_region<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    point: &Point<D>,
+) -> Result<SimplexKeyBuffer, InsertionError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let kernel = RobustKernel::<f64>::new();
+    let visible_facets = find_visible_boundary_facets(tds, &kernel, point)?;
+    let mut conflicts = SimplexKeyBuffer::new();
+    let mut conflict_membership = FastHashSet::default();
+    let mut seeds = FastHashSet::default();
+    for facet in visible_facets {
+        let seed = facet.simplex_key();
+        if conflict_membership.contains(&seed) || !seeds.insert(seed) {
+            continue;
+        }
+        for simplex_key in find_conflict_region(tds, &kernel, point, seed)? {
+            if conflict_membership.insert(simplex_key) {
+                conflicts.push(simplex_key);
+            }
+        }
+    }
+    Ok(conflicts)
+}
+
+/// Builds the nondegenerate cone surface of a complete exterior conflict cavity.
+///
+/// Finite conflict components need not form a closed ball before adding the
+/// visible infinite cells. Preserve their full membership: cone their interfaces
+/// with surviving cells and their nonvisible hull faces, and add the visible hull
+/// faces of surviving cells. A coplanar conflict-owned hull face is replaced by
+/// the new hull triangulation, not by a zero-volume cone. Internal interfaces are
+/// never dropped; the ordinary orientation check rejects an invalid flat one.
+pub(crate) fn exterior_cavity_boundary<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    point: &Point<D>,
+    conflict_simplices: &SimplexKeyBuffer,
+) -> Result<CavityBoundaryBuffer, InsertionError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let conflict_set: FastHashSet<_> = conflict_simplices.iter().copied().collect();
+    let kernel = RobustKernel::<f64>::new();
+    let mut boundary = CavityBoundaryBuffer::new();
+    for &simplex_key in conflict_simplices {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(CavityFillingError::MissingBoundarySimplex { simplex_key })?;
+        if simplex.number_of_vertices() != D + 1 {
+            return Err(CavityFillingError::WrongSimplexArity {
+                simplex_key,
+                actual: simplex.number_of_vertices(),
+                expected: D + 1,
+            }
+            .into());
+        }
+        let points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> = simplex
+            .vertices()
+            .iter()
+            .map(|&vertex_key| {
+                tds.vertex(vertex_key)
+                    .map(|vertex| *vertex.point())
+                    .ok_or_else(|| {
+                        missing_boundary_vertex(vertex_key, simplex_key, "exterior cavity")
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+        let original_orientation =
+            kernel
+                .orientation(&points)
+                .map_err(|source| InsertionError::HullExtension {
+                    reason: HullExtensionReason::PredicateFailed { source },
+                })?;
+        for facet_index in 0..=D {
+            let neighbor = simplex.neighbor_key(facet_index).flatten();
+            if neighbor.is_some_and(|key| conflict_set.contains(&key)) {
+                continue;
+            }
+            if neighbor.is_none() {
+                let mut cone_points = points.clone();
+                cone_points[facet_index] = *point;
+                let cone_orientation = kernel.orientation(&cone_points).map_err(|source| {
+                    InsertionError::HullExtension {
+                        reason: HullExtensionReason::PredicateFailed { source },
+                    }
+                })?;
+                if cone_orientation == 0 || cone_orientation != original_orientation {
+                    continue;
+                }
+            }
+            let facet_index =
+                u8::try_from(facet_index).map_err(|_| NeighborWiringError::FacetIndexOverflow {
+                    facet_index,
+                    max: u8::MAX,
+                })?;
+            boundary.push(FacetHandle::from_validated(simplex_key, facet_index));
+        }
+    }
+    boundary.extend(
+        find_visible_boundary_facets(tds, &kernel, point)?
+            .into_iter()
+            .filter(|facet| !conflict_set.contains(&facet.simplex_key())),
+    );
+    Ok(boundary)
+}
+
 /// Extend the convex hull by connecting an exterior vertex to visible boundary facets.
 ///
 /// This function is used when a vertex is outside the current convex hull.
@@ -4925,6 +5071,85 @@ mod tests {
         tds.mark_topology_modified_for_test();
     }
 
+    fn assert_exterior_cavity_excludes_flat_hull_cones<const D: usize>() {
+        let mut vertices = vec![vertex!([0.0; D]).unwrap()];
+        for axis in 0..D {
+            let mut coordinates = [0.0; D];
+            coordinates[axis] = 1.0;
+            vertices.push(vertex!(coordinates).unwrap());
+        }
+        let tds = tds_from_specs(&vertices, &[(0..=D).collect()]);
+        let mut coordinates = [0.0; D];
+        coordinates[0] = 0.75;
+        coordinates[1] = 0.75;
+        let point = Point::try_new(coordinates).unwrap();
+
+        // The unit simplex has sphere equation sum(x_i^2) = sum(x_i).
+        // The query's exact power deficit is 3/8, so its sole simplex conflicts.
+        // The facet opposite 0 is visible; those opposite e3,...,eD are
+        // coplanar. Only the facets opposite e1 and e2 support physical cones.
+        let conflicts = find_exterior_conflict_region(&tds, &point).unwrap();
+        assert_eq!(conflicts.len(), 1);
+        let boundary = exterior_cavity_boundary(&tds, &point, &conflicts).unwrap();
+        assert_eq!(boundary.len(), 2);
+        let mut omitted = boundary
+            .iter()
+            .map(|facet| {
+                let simplex = tds.simplex(facet.simplex_key()).unwrap();
+                let opposite = simplex.vertices()[usize::from(facet.facet_index())];
+                tds.vertex(opposite).unwrap().uuid()
+            })
+            .collect::<Vec<_>>();
+        omitted.sort_unstable();
+        let mut expected = vec![vertices[1].uuid(), vertices[2].uuid()];
+        expected.sort_unstable();
+        assert_eq!(omitted, expected);
+    }
+
+    macro_rules! exterior_cavity_coplanar_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<exterior_cavity_excludes_flat_hull_cones_ $dim d>]() {
+                    assert_exterior_cavity_excludes_flat_hull_cones::<$dim>();
+                }
+            }
+        };
+    }
+
+    exterior_cavity_coplanar_tests!(2);
+    exterior_cavity_coplanar_tests!(3);
+    exterior_cavity_coplanar_tests!(4);
+    exterior_cavity_coplanar_tests!(5);
+
+    #[test]
+    fn exterior_cavity_excludes_coplanar_surviving_hull_face_3d() {
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0, 0.0]).unwrap(),
+            vertex!([2.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 2.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+        ];
+        let tds = tds_from_specs(&vertices, &[vec![0, 1, 2, 4], vec![0, 2, 3, 4]]);
+        let point = Point::try_new([1.0, -0.5, 0.0]).unwrap();
+        // Exact centers are (1,1/2,1/2) and (3/4,1,1/2), with query power
+        // deficits 1/4 and -3/4. Only ABCE conflicts; ACDE must survive.
+        let conflicts = find_exterior_conflict_region(&tds, &point).unwrap();
+        assert_eq!(conflicts.len(), 1);
+        let boundary = exterior_cavity_boundary(&tds, &point, &conflicts).unwrap();
+        assert_eq!(boundary.len(), 2);
+        for facet in boundary {
+            // The surviving ACD hull face is coplanar with the query and must
+            // not produce a cone. Both physical cones come from ABCE's faces.
+            assert_eq!(facet.simplex_key(), conflicts[0]);
+            let simplex = tds.simplex(facet.simplex_key()).unwrap();
+            let opposite = simplex.vertices()[usize::from(facet.facet_index())];
+            let uuid = tds.vertex(opposite).unwrap().uuid();
+            assert!(uuid == vertices[0].uuid() || uuid == vertices[1].uuid());
+        }
+    }
+
     #[test]
     fn test_topology_validation_context_display() {
         let cases = [
@@ -5887,6 +6112,47 @@ mod tests {
                 expected_odd_permutation: false,
             }
         );
+    }
+
+    #[test]
+    fn structural_diagnostics_retain_typed_context_and_are_not_retryable() {
+        let sources = [
+            TdsError::VertexIncidenceCountMismatch {
+                actual: 2,
+                expected: 3,
+            },
+            TdsError::ContradictoryOrientationConstraints {
+                simplex1_uuid: uuid::Uuid::from_u128(1),
+                simplex2_uuid: uuid::Uuid::from_u128(2),
+            },
+        ];
+        assert_eq!(
+            TdsErrorKind::from(&sources[0]),
+            TdsErrorKind::VertexIncidenceCountMismatch
+        );
+        assert_eq!(
+            TdsErrorKind::from(&sources[1]),
+            TdsErrorKind::ContradictoryOrientationConstraints
+        );
+        let [incidence, orientation] = sources.map(TdsValidationFailure::from);
+        assert_matches!(
+            incidence,
+            TdsValidationFailure::VertexIncidenceCountMismatch {
+                actual: 2,
+                expected: 3
+            }
+        );
+        assert_matches!(
+            orientation,
+            TdsValidationFailure::ContradictoryOrientationConstraints { simplex1_uuid, simplex2_uuid }
+                if simplex1_uuid.as_u128() == 1 && simplex2_uuid.as_u128() == 2
+        );
+        assert!(!InsertionError::is_tds_validation_failure_retryable(
+            &incidence
+        ));
+        assert!(!InsertionError::is_tds_validation_failure_retryable(
+            &orientation
+        ));
     }
 
     #[test]

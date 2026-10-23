@@ -548,7 +548,7 @@ where
                 | DelaunayRepairError::PostconditionFailed { .. }),
             ) => {
                 // Robust fallback: retry with `RobustKernel` which guarantees exact
-                // predicate evaluation. This covers 99.9%+ of repair failures.
+                // predicate evaluation without promising convergence of flips.
                 //
                 // If the robust pass also fails, return an error so the
                 // insertion transaction can roll back. Batch workflows that
@@ -671,7 +671,7 @@ mod tests {
     use crate::flips::BistellarFlips;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::incremental_builder::DelaunayIncrementalBuilder;
-    use crate::repair::DelaunayRepairPolicy;
+    use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
     use crate::topology::traits::topological_space::GlobalTopology;
     use crate::vertex;
     use slotmap::KeyData;
@@ -1077,6 +1077,91 @@ mod tests {
         );
         assert!(!dt.vertices().any(|(_, v)| v.uuid() == transient_uuid));
         assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn end_only_pyramid_insertion_is_globally_valid_or_rolls_back() {
+        let vertices = [
+            vertex!([-1.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+        ];
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        dt.set_delaunay_check_policy(DelaunayCheckPolicy::EndOnly);
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::EveryInsertion;
+        dt.validate().unwrap();
+        let topology_before = serde_json::to_value(&dt.tri.tds).unwrap();
+        let identity_before = Arc::clone(dt.tri.tds.identity());
+        let generation_before = dt.tri.tds.generation();
+        let vertex_keys_before: Vec<_> = dt
+            .vertices()
+            .map(|(key, vertex)| (key, vertex.incident_simplex()))
+            .collect();
+        let simplex_keys_before: Vec<_> = dt.simplices().map(|(key, _)| key).collect();
+        let configuration_before = (
+            dt.tri.topology_guarantee,
+            dt.tri.global_topology,
+            dt.tri.validation_policy,
+        );
+        let provenance_before = dt.tri.topology_construction_provenance;
+        let report_domain_before = dt.euclidean_report_domain;
+        let insertion_state_before = dt.insertion_state;
+        let inserted = vertex!([0.0, -0.5, 0.0]).unwrap();
+        let inserted_uuid = inserted.uuid();
+
+        match dt.insert_vertex(inserted) {
+            Ok(key) => {
+                assert_eq!(dt.number_of_vertices(), 5);
+                assert_eq!(dt.vertex(key).unwrap().uuid(), inserted_uuid);
+            }
+            Err(_error) => {
+                assert_eq!(serde_json::to_value(&dt.tri.tds).unwrap(), topology_before);
+                assert!(Arc::ptr_eq(dt.tri.tds.identity(), &identity_before));
+                assert_eq!(dt.tri.tds.generation(), generation_before);
+                assert_eq!(
+                    dt.vertices()
+                        .map(|(key, vertex)| (key, vertex.incident_simplex()))
+                        .collect::<Vec<_>>(),
+                    vertex_keys_before
+                );
+                assert_eq!(
+                    dt.simplices().map(|(key, _)| key).collect::<Vec<_>>(),
+                    simplex_keys_before
+                );
+                assert_eq!(
+                    (
+                        dt.tri.topology_guarantee,
+                        dt.tri.global_topology,
+                        dt.tri.validation_policy,
+                    ),
+                    configuration_before
+                );
+                assert_eq!(dt.tri.topology_construction_provenance, provenance_before);
+                assert_eq!(dt.euclidean_report_domain, report_domain_before);
+                assert_eq!(
+                    (
+                        dt.insertion_state.last_inserted_simplex,
+                        dt.insertion_state.delaunay_repair_policy,
+                        dt.insertion_state.delaunay_check_policy,
+                        dt.insertion_state.delaunay_repair_insertion_count,
+                        dt.insertion_state.use_global_repair_fallback,
+                    ),
+                    (
+                        insertion_state_before.last_inserted_simplex,
+                        insertion_state_before.delaunay_repair_policy,
+                        insertion_state_before.delaunay_check_policy,
+                        insertion_state_before.delaunay_repair_insertion_count,
+                        insertion_state_before.use_global_repair_fallback,
+                    )
+                );
+            }
+        }
+        // Query the Triangulation layer to force the global all-vertices scan,
+        // independently of the Delaunay owner's optimized local certificate.
+        assert!(dt.tri.delaunay_violation_report(None).unwrap().is_valid());
+        dt.validate().unwrap();
     }
 
     fn wedge_two_s2_complexes_share_vertex_tds() -> (Tds<(), (), 2>, SimplexKey, SimplexKey) {

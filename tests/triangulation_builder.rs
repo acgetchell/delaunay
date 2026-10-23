@@ -1465,8 +1465,10 @@ fn test_explicit_error_variant_tds_orientation_normalization() {
             source: ExplicitConstructionError::TdsOrientationNormalization { source },
         } if matches!(
             source.as_ref(),
-            TdsError::InconsistentDataStructure { message }
-                if message.contains("Contradictory orientation constraints")
+            TdsError::ContradictoryOrientationConstraints {
+                simplex1_uuid,
+                simplex2_uuid,
+            } if simplex1_uuid != simplex2_uuid
         )
     );
 }

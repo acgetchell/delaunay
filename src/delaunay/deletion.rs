@@ -126,7 +126,7 @@ where
     U: DataType,
     V: DataType,
 {
-    /// Deletes a vertex and retriangulates the resulting cavity using fan triangulation.
+    /// Deletes a vertex by clipping a supporting hull corner or retriangulating its cavity.
     ///
     /// This operation delegates to the core triangulation layer, which:
     /// 1. Finds all simplices containing the vertex
@@ -138,6 +138,9 @@ where
     /// Fast-path: if the vertex star is a simplex (exactly D+1 incident simplices with
     /// consistent adjacency), this method collapses it via the **inverse k=1** bistellar
     /// flip. Otherwise it falls back to fan triangulation.
+    /// A Euclidean hull corner is removed without replacement simplices when exact
+    /// predicates certify that every exposed facet supports all surviving vertices.
+    /// This clipping path still validates topology and realization before publication.
     ///
     /// This operation is topology-preserving on success: it returns `Ok` only after the
     /// post-deletion triangulation satisfies the required manifold and topology invariants. A

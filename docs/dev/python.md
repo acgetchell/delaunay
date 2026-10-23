@@ -52,7 +52,7 @@ treating `.ipynb` files as ordinary Python scripts.
   `ANN204`, `ANN205`, and `ANN206`.
 - Move annotation-only imports behind `if TYPE_CHECKING`; Ruff's configured
   `TC` rules, including `TC003`, apply to fixtures as well as scripts.
-- On Python 3.14, use native deferred annotations and bare type names compatible
+- On Python 3.15, use native deferred annotations and bare type names compatible
   with `UP037`. Do not add `from __future__ import annotations` solely for lint
   compliance. Document any runtime annotation consumer that requires strings.
 - Prefer concrete standard-library types over `Any`, `dict`, or bare `Mock`

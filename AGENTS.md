@@ -45,6 +45,16 @@ workflow references do not need to be loaded preemptively.
 
 ## Non-Negotiable Rules
 
+- **Scientific correctness is the acceptance criterion.** A passing test suite
+  does not by itself establish numerical or topological validity. When a
+  legitimate regression test fails, agents MUST correct the production code
+  while preserving the original input and intended behavior. Never weaken
+  assertions, substitute easier fixtures, reduce coverage, skip the test, or
+  replace expected success with accepted failure merely to obtain a green run.
+  Change a test's contract only when independent evidence demonstrates that its
+  mathematics, fixture, or expectation is wrong; explain that evidence and
+  preserve meaningful regression coverage. Typed errors and rollback are
+  required safeguards, not substitutes for supported successful behavior.
 - **Do not mutate version-control state** unless the maintainer explicitly asks.
   Never run `git commit`, `git push`, `git tag`, or ref/index-mutating Git
   commands by default. Use `git --no-pager` for read-only Git commands.

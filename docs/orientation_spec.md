@@ -159,7 +159,8 @@ them when a periodic-aware caller needs lifted facet identity.
 `Tds::normalize_coherent_orientation()` walks each connected component of the
 simplex-neighbor graph. It assigns a boolean "flip this simplex" state by propagating
 facet-parity constraints. If it finds contradictory constraints, it returns
-`TdsError::InconsistentDataStructure`; otherwise it swaps vertex slots `0` and
+`TdsError::ContradictoryOrientationConstraints` with both simplex UUIDs;
+otherwise it swaps vertex slots `0` and
 `1` in every simplex assigned `true`.
 
 `Tds::is_valid()` includes coherent orientation as a Level 2 Combinatorial Consistency check

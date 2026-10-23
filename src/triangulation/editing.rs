@@ -98,9 +98,11 @@ where
             })
     }
 
-    /// Deletes a vertex by retriangulating its cavity, preserving Levels 1–4.
+    /// Deletes a vertex by hull clipping or cavity retriangulation, preserving Levels 1–4.
     ///
     /// Returns the number of removed simplices, or zero for a missing key.
+    /// A supporting Euclidean hull corner needs no replacement simplices; exact
+    /// predicates certify the exposed facets before its star is removed.
     /// Fan filling need not produce a Delaunay triangulation. New simplices have
     /// no payload, and surviving entities retain UUIDs and payloads. Failure
     /// restores the complete owner and retains the typed operation or invariant

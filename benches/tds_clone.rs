@@ -2,7 +2,7 @@
 
 //! Benchmark: full clone cost and borrowed topology-view construction (2D-5D)
 //!
-//! The clone cases retain the historical whole-owner baseline. The topology
+//! The clone cases measure whole-owner cloning with destruction outside timing. The topology
 //! view cases verify that proof-bearing incidence borrowing remains constant
 //! cost while adjacency construction keeps its separately measured index cost.
 //!
@@ -13,7 +13,7 @@
 //! cargo bench --profile perf --bench tds_clone
 //! ```
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, ExactPredicates};
@@ -111,7 +111,11 @@ fn bench_dimension<const D: usize>(
             ),
             &source,
             |b, source| {
-                b.iter(|| black_box(source.triangulation.clone()));
+                b.iter_batched(
+                    || (),
+                    |()| black_box(source.triangulation.clone()),
+                    BatchSize::LargeInput,
+                );
             },
         );
     }
@@ -139,7 +143,11 @@ fn bench_topology_views<const D: usize>(
         b.iter(|| black_box(source.triangulation.incidence()));
     });
     group.bench_function("adjacency_index", |b| {
-        b.iter(|| black_box(source.triangulation.adjacency().or_abort()));
+        b.iter_batched(
+            || (),
+            |()| black_box(source.triangulation.adjacency().or_abort()),
+            BatchSize::LargeInput,
+        );
     });
     group.finish();
 }

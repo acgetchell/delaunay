@@ -93,6 +93,8 @@ impl<const D: usize> SphericalSimplex<D> {
     ///
     /// Returns [`SphericalSimplexError`] when `vertices` is not a valid simplex
     /// over a point set of size `vertex_count`.
+    /// Returns [`SphericalSimplexError::UnrepresentableDimension`] when `D + 1`
+    /// cannot be represented as a `usize`.
     ///
     /// # Examples
     ///
@@ -108,7 +110,9 @@ impl<const D: usize> SphericalSimplex<D> {
         vertices: Vec<usize>,
         vertex_count: usize,
     ) -> Result<Self, SphericalSimplexError> {
-        let expected = D + 1;
+        let expected = D
+            .checked_add(1)
+            .ok_or(SphericalSimplexError::UnrepresentableDimension { dimension: D })?;
         if vertices.len() != expected {
             return Err(SphericalSimplexError::InvalidArity {
                 dimension: D,
@@ -1507,6 +1511,13 @@ fn intrinsic_error(source: InvariantError) -> SphericalDelaunayValidationError {
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SphericalSimplexError {
+    /// The dimension's required simplex arity cannot be represented by `usize`.
+    #[error("spherical {dimension}D simplex vertex count is unrepresentable")]
+    UnrepresentableDimension {
+        /// Intrinsic simplex dimension whose vertex count overflows.
+        dimension: usize,
+    },
+
     /// A simplex did not contain exactly `D + 1` vertices.
     #[error("spherical {dimension}D simplex requires {expected} vertices, got {actual}")]
     InvalidArity {
@@ -2000,6 +2011,48 @@ mod tests {
             spherical_triangle([0, 2, 3], vertex_count),
             spherical_triangle([1, 2, 3], vertex_count),
         ]
+    }
+
+    /// Prove that only complete index tuples cross the simplex boundary.
+    fn check_spherical_simplex_arity<const D: usize>() {
+        let expected = D + 1;
+        let indices: Vec<_> = (0..expected).collect();
+        let simplex = SphericalSimplex::<D>::try_new(indices.clone(), expected).unwrap();
+        assert_eq!(simplex.vertex_indices(), indices);
+        assert_eq!(simplex.dimension(), D);
+        assert_eq!(
+            SphericalSimplex::<D>::try_new(Vec::new(), expected),
+            Err(SphericalSimplexError::InvalidArity {
+                dimension: D,
+                expected,
+                actual: 0,
+            })
+        );
+    }
+
+    macro_rules! spherical_simplex_arity_tests {
+        ($($dimension:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<spherical_simplex_arity_ $dimension d>]() {
+                        check_spherical_simplex_arity::<$dimension>();
+                    }
+                )+
+            }
+        };
+    }
+
+    spherical_simplex_arity_tests!(2, 3, 4, 5);
+
+    #[test]
+    fn spherical_simplex_rejects_unrepresentable_dimension() {
+        assert_eq!(
+            SphericalSimplex::<{ usize::MAX }>::try_new(Vec::new(), 0),
+            Err(SphericalSimplexError::UnrepresentableDimension {
+                dimension: usize::MAX
+            })
+        );
     }
 
     #[test]

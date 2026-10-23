@@ -72,7 +72,7 @@ bench-ci:
 # Render a Markdown comparison against a saved Criterion baseline.
 [group('benchmarks and performance')]
 bench-compare baseline="last" suite="release-signal" scope="release-signal": _ensure-uv
-    {{ managed }} uv run --locked benchmark-utils bench-compare "{{ baseline }}" --suite "{{ suite }}" --scope "{{ scope }}"
+    {{ managed }} uv run --locked benchmark-utils bench-compare {{ quote(baseline) }} --suite {{ quote(suite) }} --scope {{ quote(scope) }}
 
 # Compile benchmark harnesses without running them.
 [group('benchmarks and performance')]
@@ -83,7 +83,7 @@ bench-compile:
 # Run the curated release-signal benchmark set and leave Criterion `new` output.
 [group('benchmarks and performance')]
 bench-latest bench_timeout="1800": _ensure-uv
-    {{ managed }} uv run --locked benchmark-utils run-release-signal --bench-timeout {{ bench_timeout }}
+    {{ managed }} uv run --locked benchmark-utils run-release-signal --bench-timeout {{ quote(bench_timeout) }}
 
 # Run latest measurements and render the latest-vs-last performance report.
 [group('benchmarks and performance')]
@@ -101,7 +101,7 @@ bench-perf-summary: _ensure-uv
 # Execute every curated release fixture once without producing timing evidence.
 [group('benchmarks and performance')]
 bench-preflight bench_timeout="600": _ensure-uv
-    {{ managed }} uv run --locked benchmark-utils run-release-signal --preflight-only --bench-timeout {{ bench_timeout }}
+    {{ managed }} uv run --locked benchmark-utils run-release-signal --preflight-only --bench-timeout {{ quote(bench_timeout) }}
 
 # Save a Criterion baseline for a Delaunay benchmark suite.
 [group('benchmarks and performance')]

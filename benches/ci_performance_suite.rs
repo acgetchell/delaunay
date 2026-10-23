@@ -855,7 +855,7 @@ fn bench_k1_roundtrip_case<const D: usize>(
             || base_dt.clone(),
             |mut dt| {
                 roundtrip_k1(&mut dt, simplex_key);
-                black_box(dt);
+                black_box(dt)
             },
             BatchSize::LargeInput,
         );
@@ -875,7 +875,7 @@ fn bench_k2_forward_case<const D: usize>(
             || base_dt.clone(),
             |mut dt| {
                 forward_k2(&mut dt, facet);
-                black_box(dt);
+                black_box(dt)
             },
             BatchSize::LargeInput,
         );
@@ -895,7 +895,7 @@ fn bench_k2_roundtrip_case<const D: usize>(
             || base_dt.clone(),
             |mut dt| {
                 roundtrip_k2(&mut dt, facet);
-                black_box(dt);
+                black_box(dt)
             },
             BatchSize::LargeInput,
         );
@@ -915,7 +915,7 @@ fn bench_k3_forward_case<const D: usize>(
             || base_dt.clone(),
             |mut dt| {
                 forward_k3(&mut dt, ridge);
-                black_box(dt);
+                black_box(dt)
             },
             BatchSize::LargeInput,
         );
@@ -935,7 +935,7 @@ fn bench_k3_roundtrip_case<const D: usize>(
             || base_dt.clone(),
             |mut dt| {
                 roundtrip_k3(&mut dt, ridge);
-                black_box(dt);
+                black_box(dt)
             },
             BatchSize::LargeInput,
         );
@@ -1137,13 +1137,13 @@ macro_rules! benchmark_tds_new_dimension {
                     });
                     emit_construction_metric::<$dim>(&bench_id, &vertices, options);
 
-                    b.iter(|| {
+                    b.iter_batched(|| (), |()| {
                         match DelaunayTriangulation::builder(&vertices)
                             .construction_options(options)
                             .build()
                         {
                             Ok(dt) => {
-                                black_box(dt);
+                                black_box(dt)
                             }
                             Err(err) => {
                                 let error = format!("{err:?}");
@@ -1157,7 +1157,7 @@ macro_rules! benchmark_tds_new_dimension {
                                 ));
                             }
                         }
-                    });
+                    }, BatchSize::LargeInput);
             });
 
             group.bench_with_input(
@@ -1176,13 +1176,13 @@ macro_rules! benchmark_tds_new_dimension {
                         );
                         emit_construction_metric::<$dim>(&adv_bench_id, &vertices, options);
 
-                        b.iter(|| {
+                        b.iter_batched(|| (), |()| {
                             match DelaunayTriangulation::builder(&vertices)
                                 .construction_options(options)
                                 .build()
                             {
                                 Ok(dt) => {
-                                    black_box(dt);
+                                    black_box(dt)
                                 }
                                 Err(err) => {
                                     let error = format!("{err:?}");
@@ -1195,7 +1195,7 @@ macro_rules! benchmark_tds_new_dimension {
                                     ));
                                 }
                             }
-                        });
+                        }, BatchSize::LargeInput);
                 },
             );
 
@@ -1445,10 +1445,10 @@ fn bench_insert_case<const D: usize>(
     group.bench_function(
         BenchmarkId::new(format!("insert_{dimension}d{}", dataset.suffix()), count),
         |b| {
-            b.iter_batched(
+            b.iter_batched_ref(
                 || (base_dt.clone(), insert_vertices.to_vec()),
-                |(mut dt, vertices)| {
-                    for vertex in vertices {
+                |(dt, vertices)| {
+                    for &vertex in vertices.iter() {
                         match black_box(dt.insert_vertex(vertex)) {
                             Ok(_) => {}
                             Err(error) => {
@@ -1484,17 +1484,21 @@ fn bench_explicit_import_case<const D: usize>(
     group.bench_function(
         BenchmarkId::new(format!("import_pseudomanifold_{D}d"), parameter),
         |b| {
-            b.iter(|| {
-                let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(
-                    &fixture.vertices,
-                    &fixture.simplices,
-                )
-                .or_abort()
-                .topology_guarantee(TopologyGuarantee::Pseudomanifold)
-                .build_triangulation()
-                .or_abort();
-                black_box(dt);
-            });
+            b.iter_batched(
+                || (),
+                |()| {
+                    let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(
+                        &fixture.vertices,
+                        &fixture.simplices,
+                    )
+                    .or_abort()
+                    .topology_guarantee(TopologyGuarantee::Pseudomanifold)
+                    .build_triangulation()
+                    .or_abort();
+                    black_box(dt)
+                },
+                BatchSize::LargeInput,
+            );
         },
     );
 }
@@ -1520,7 +1524,7 @@ fn bench_proof_boundary_case<const D: usize>(
                             .global_topology(fixture.global_topology)
                             .build()
                             .or_abort(),
-                    );
+                    )
                 },
                 BatchSize::LargeInput,
             );
@@ -1542,7 +1546,7 @@ fn bench_proof_boundary_case<const D: usize>(
                             .canonicalizing()
                             .build()
                             .or_abort(),
-                    );
+                    )
                 },
                 BatchSize::LargeInput,
             );
@@ -1558,7 +1562,7 @@ fn bench_proof_boundary_case<const D: usize>(
                         DelaunayRefinementBuilder::new(triangulation)
                             .build()
                             .or_abort(),
-                    );
+                    )
                 },
                 BatchSize::LargeInput,
             );

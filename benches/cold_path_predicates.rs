@@ -4,7 +4,7 @@
 //!
 //! This benchmark exercises the hot Stage-1 path of the [`insphere`] /
 //! [`insphere_lifted`] predicates (and implicitly the orientation predicate they
-//! both invoke) in 2D–4D, plus a Stage-2-dominant 5D reference. A secondary
+//! both invoke) in 2D–4D, plus a 5D reference whose orientation uses exact arithmetic. A secondary
 //! centered-query group retains its historical `near_boundary` benchmark
 //! identifier for saved-baseline compatibility, but it does not independently
 //! establish Stage-2 entry. The `exact_fallback` group uses known cospherical
@@ -13,14 +13,14 @@
 //!
 //! ## Stage anatomy
 //!
-//! Both `insphere_from_matrix` and `orientation_from_matrix` are structured as:
+//! Orientation uses a determinant error bound through D = 3, followed by an
+//! exact integer determinant (direct expansion through matrix order 4, then
+//! Bareiss elimination). In-sphere uses query-relative outward-rounded
+//! intervals through D = 6, followed by an exact rational determinant.
+//! Non-finite or unrepresentable intermediates return typed errors.
 //!
-//! 1. Stage 1 (hot): f64 fast filter with Shewchuk-style errbound.
-//! 2. Stage 2 (cold): exact sign via Bareiss — only reached for ambiguous f64
-//!    results or D ≥ 5.
-//! 3. Stage 3 (very cold): non-finite fallback.
-//!
-//! Random, well-separated inputs hit Stage 1 almost exclusively. The
+//! Well-separated inputs can pass the in-sphere interval filter even in 5D.
+//! The
 //! `near_boundary` group samples a small cube around the standard simplex's
 //! circumsphere center. It measures a distinct centered-query workload, not a
 //! proven Stage-2 workload.

@@ -48,7 +48,7 @@ def test_analysis_pipeline_status(
     for tool in ("cargo", "clippy-sarif", "sarif-fmt"):
         program = executables / tool
         body = "printf 'analysis output\\n'\n" if tool == "cargo" else "cat\n"
-        program.write_text(f"#!/usr/bin/env bash\n{body}exit {exit_code if tool == failed_tool else 0}\n", encoding="utf-8")
+        program.write_text(f"#!/usr/bin/env bash\n{body}exit {exit_code if tool == failed_tool else 0}\n", encoding="utf-8", newline="\n")
         program.chmod(0o755)
     (tmp_path / "profiling-results").mkdir()
     result = run_command(
@@ -93,7 +93,7 @@ def test_monthly_profiling_gate(tmp_path: Path, event: str, day: str, expected: 
         assert job["needs"] == "schedule-gate"
         assert job["if"] == "needs.schedule-gate.outputs.run == 'true'"
     date = tmp_path / "date"
-    date.write_text('#!/usr/bin/env bash\n[[ "$*" == "-u +%d" ]] || exit 2\nprintf "%s\\n" "$TEST_DAY"\n', encoding="utf-8")
+    date.write_text('#!/usr/bin/env bash\n[[ "$*" == "-u +%d" ]] || exit 2\nprintf "%s\\n" "$TEST_DAY"\n', encoding="utf-8", newline="\n")
     date.chmod(0o755)
     output = tmp_path / "output"
     run_command(

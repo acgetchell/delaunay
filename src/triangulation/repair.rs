@@ -10,7 +10,7 @@ use crate::core::algorithms::insertion::{
     external_facets_for_boundary, fill_cavity_replacing_simplices, repair_neighbor_pointers,
     repair_neighbor_pointers_local, wire_cavity_neighbors,
 };
-use crate::core::algorithms::locate::extract_cavity_boundary;
+use crate::core::algorithms::locate::{ConflictError, extract_cavity_boundary};
 use crate::core::collections::{
     CLEANUP_OPERATION_BUFFER_SIZE, FacetIssuesMap, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE,
     SimplexKeyBuffer, SimplexKeySet, SmallBuffer, VertexKeySet, fast_hash_set_with_capacity,
@@ -19,7 +19,10 @@ use crate::core::facet::FacetHandle;
 use crate::core::tds::{SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::geometry::kernel::Kernel;
+use crate::geometry::point::Point;
+use crate::geometry::predicates::Orientation;
 use crate::geometry::quality::{QualityError, QualitySimplexVerticesError, radius_ratio};
+use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::CoordinateConversionValue;
 use crate::triangulation::Triangulation;
 use crate::triangulation::rollback::TriangulationRollbackTransaction;
@@ -42,6 +45,8 @@ const ORIENTATION_NORMALIZATION_BUDGET: usize = 3;
 pub enum TriangulationRepairOperation {
     /// Extracting the boundary of the vertex-removal cavity.
     CavityBoundaryExtraction,
+    /// Certifying that vertex removal exposes supporting Euclidean hull facets.
+    HullSupportValidation,
     /// Filling the cavity with a fan triangulation.
     FanTriangulation,
     /// Canonicalizing the new fan simplices after filling.
@@ -68,6 +73,7 @@ impl fmt::Display for TriangulationRepairOperation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::CavityBoundaryExtraction => f.write_str("vertex-removal cavity extraction"),
+            Self::HullSupportValidation => f.write_str("vertex-removal hull support validation"),
             Self::FanTriangulation => f.write_str("vertex-removal fan triangulation"),
             Self::FanOrientationCanonicalization => {
                 f.write_str("vertex-removal fan orientation canonicalization")
@@ -529,7 +535,7 @@ where
     U: DataType,
     V: DataType,
 {
-    /// Removes a vertex and retriangulates the resulting cavity using fan triangulation.
+    /// Removes a vertex by clipping a supporting hull corner or filling its cavity.
     ///
     /// This operation maintains topological consistency by:
     /// 1. Finding all simplices containing the vertex
@@ -538,6 +544,10 @@ where
     /// 4. Filling the cavity with a fan triangulation (pick apex, connect to all boundary facets)
     /// 5. Wiring neighbors to maintain consistency
     /// 6. Removing the vertex itself
+    ///
+    /// A Euclidean boundary vertex whose opposite star facets support all surviving
+    /// vertices needs no replacement fan: removing its star clips a convex corner.
+    /// Exact orientation signs certify that case before direct transactional removal.
     ///
     /// **Fan Triangulation**: The cavity is filled by picking one boundary vertex as an apex
     /// and connecting it to all boundary facets. This follows the local cavity-retriangulation
@@ -631,6 +641,19 @@ where
                 .map(VertexRemovalOutcome::without_repair_seeds)?);
         }
 
+        // A convex hull corner can be clipped without filling its star. Coning
+        // its opposite facets instead would add simplices over surviving cells.
+        if self.vertex_removal_exposes_supporting_hull(
+            vertex_key,
+            &simplices_to_remove,
+            &boundary_facets,
+        )? {
+            return self
+                .remove_vertex_with_invariant_checks(vertex_key)
+                .map(VertexRemovalOutcome::without_repair_seeds)
+                .map_err(VertexRemovalError::from);
+        }
+
         let affected_vertices =
             self.affected_vertices_for_vertex_removal(&simplices_to_remove, vertex_key)?;
 
@@ -644,6 +667,109 @@ where
             apex_vertex_key,
             proof_options,
         )
+    }
+
+    /// Certifies direct hull clipping using exact signs against every surviving vertex.
+    ///
+    /// The facets opposite the removed vertex become the new hull. Each must
+    /// support all surviving points on the closed side opposite the removed
+    /// vertex. Full topology and realization validation still gate publication.
+    fn vertex_removal_exposes_supporting_hull(
+        &self,
+        vertex_key: VertexKey,
+        simplices_to_remove: &[SimplexKey],
+        boundary_facets: &[FacetHandle],
+    ) -> Result<bool, VertexRemovalError> {
+        if !self.global_topology.is_euclidean() {
+            return Ok(false);
+        }
+        let mut touches_hull = false;
+        for facet in boundary_facets {
+            let simplex =
+                self.tds
+                    .simplex(facet.simplex_key())
+                    .ok_or_else(|| TdsError::SimplexNotFound {
+                        simplex_key: facet.simplex_key(),
+                        context: "vertex-removal hull membership".to_string(),
+                    })?;
+            // Every cavity simplex contains vertex_key. A boundary facet other
+            // than its opposite facet therefore contains the removed vertex.
+            if simplex.vertices().get(usize::from(facet.facet_index())) != Some(&vertex_key) {
+                touches_hull = true;
+                break;
+            }
+        }
+        if !touches_hull {
+            return Ok(false);
+        }
+        for &simplex_key in simplices_to_remove {
+            if !self.vertex_removal_facet_supports_survivors(vertex_key, simplex_key)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Tests one exposed link facet without symbolic perturbation or tolerances.
+    fn vertex_removal_facet_supports_survivors(
+        &self,
+        removed_vertex: VertexKey,
+        simplex_key: SimplexKey,
+    ) -> Result<bool, VertexRemovalError> {
+        let simplex = self
+            .tds
+            .simplex(simplex_key)
+            .ok_or_else(|| TdsError::SimplexNotFound {
+                simplex_key,
+                context: "vertex-removal supporting facet".to_string(),
+            })?;
+        let Some(removed_index) = simplex
+            .vertices()
+            .iter()
+            .position(|&key| key == removed_vertex)
+        else {
+            return Err(TdsError::InconsistentDataStructure {
+                message: format!(
+                    "vertex-removal star simplex {simplex_key:?} omits {removed_vertex:?}"
+                ),
+            }
+            .into());
+        };
+        let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> = simplex
+            .vertices()
+            .iter()
+            .map(|&key| {
+                self.tds
+                    .vertex(key)
+                    .map(|vertex| *vertex.point())
+                    .ok_or_else(|| TdsError::VertexNotFound {
+                        vertex_key: key,
+                        context: "vertex-removal supporting facet".to_string(),
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+        let orientation = |points: &[Point<D>]| {
+            robust_orientation(points).map_err(|source| VertexRemovalError::Operation {
+                operation: TriangulationRepairOperation::HullSupportValidation,
+                source: Box::new(InsertionError::ConflictRegion {
+                    source: ConflictError::PredicateError { source },
+                }),
+            })
+        };
+        let removed_side = orientation(&points)?;
+        if removed_side == Orientation::DEGENERATE {
+            return Ok(false);
+        }
+        for (key, vertex) in self.tds.vertices() {
+            if key == removed_vertex || simplex.contains_vertex(key) {
+                continue;
+            }
+            points[removed_index] = *vertex.point();
+            if orientation(&points)? == removed_side {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Removes a vertex through fan cavity filling and rolls back on postcondition failure.

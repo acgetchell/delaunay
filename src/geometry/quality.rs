@@ -744,6 +744,7 @@ mod tests {
     use crate::core::tds::Tds;
     use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::FastKernel;
+    use crate::geometry::util::{CircumcenterFailureReason, DegenerateGeometry, DegenerateMeasure};
     use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
     use crate::triangulation::Triangulation;
     use crate::vertex;
@@ -1267,33 +1268,32 @@ mod tests {
 
     #[test]
     fn test_radius_ratio_perfectly_collinear_3points() {
-        // Three points on a line - perfectly degenerate for 2D triangulation.
-        // Currently, collinear points are accepted during construction but produce
-        // degenerate simplices with very poor quality metrics.
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([2.0, 0.0]).unwrap(), // Collinear
-        ];
-        let dt_result: Result<
-            DelaunayTriangulation<_, (), (), 2>,
-            DelaunayTriangulationConstructionError,
-        > = DelaunayTriangulation::builder(&vertices).build();
-
-        // Construction may succeed with collinear points, but quality metrics
-        // should detect the degeneracy
-        if let Ok(dt) = dt_result {
-            let simplex_key = dt.simplices().next().unwrap().0;
-            let ratio_result = radius_ratio(dt.as_triangulation(), simplex_key);
-            let vol_result = normalized_volume(dt.as_triangulation(), simplex_key);
-
-            // At least one quality metric should detect the degeneracy
-            assert!(
-                ratio_result.is_err() || vol_result.is_err(),
-                "Quality metrics should detect degenerate collinear simplex"
-            );
-        }
-        // If construction fails, that's also acceptable for degenerate input
+        let (tri, key) = quality_fixture(
+            &[[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]],
+            None,
+            GlobalTopology::Euclidean,
+        );
+        let QualityError::Circumradius { source } = radius_ratio(&tri, key).unwrap_err() else {
+            panic!("a collinear circumradius must report its singular basis");
+        };
+        assert_matches!(
+            *source,
+            CircumcenterError::LinearAlgebraFailure {
+                source: la_stack::LaError::Singular { .. }
+            }
+        );
+        let QualityError::Volume { source } = normalized_volume(&tri, key).unwrap_err() else {
+            panic!("a collinear simplex must retain its typed volume failure");
+        };
+        assert_matches!(
+            *source,
+            CircumcenterError::InvalidMeasure {
+                reason: CircumcenterFailureReason::DegenerateSimplex {
+                    measure: DegenerateMeasure::Volume,
+                    degeneracy: DegenerateGeometry::CollinearPoints,
+                },
+            }
+        );
     }
 
     #[test]
@@ -1837,49 +1837,32 @@ let simplex_key = dt.simplices().next().unwrap().0;
 
     #[test]
     fn test_degenerate_simplex_error_details() {
-        // Test that degenerate errors include helpful details when they occur.
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([2.0, 1e-20]).unwrap(), // Nearly collinear
-        ];
-        let dt_result: Result<
-            DelaunayTriangulation<_, (), (), 2>,
-            DelaunayTriangulationConstructionError,
-        > = DelaunayTriangulation::builder(&vertices).build();
-
-        match dt_result {
-            Ok(dt) => {
-                let simplex_key = dt.simplices().next().unwrap().0;
-
-                let result = radius_ratio(dt.as_triangulation(), simplex_key);
-                if let Err(QualityError::DegenerateSimplex {
-                    measure, observed, ..
-                }) = result
-                {
-                    // Should include numeric information when we surface a degenerate simplex
-                    assert_matches!(
-                        measure,
-                        QualityDegeneracyMeasure::Inradius
-                            | QualityDegeneracyMeasure::Volume
-                            | QualityDegeneracyMeasure::AverageEdgeLength
-                            | QualityDegeneracyMeasure::EdgeLengthPower
-                    );
-                    assert_matches!(observed, CoordinateConversionValue::Scalar(_));
-                }
-            }
-            Err(DelaunayTriangulationConstructionError::Triangulation {
-                source: DelaunayConstructionFailure::GeometricDegeneracy { .. },
-            }) => {
-                // In some numeric regimes, degeneracy is now detected at construction
-                // time instead of by the quality metrics. That is still acceptable
-                // as long as it is reported via the dedicated GeometricDegeneracy
-                // error variant.
-            }
-            Err(other) => {
-                panic!("Unexpected triangulation error for degenerate simplex test: {other}")
-            }
-        }
+        let (tri, key) = quality_fixture(
+            &[[0.0, 0.0], [1.0, 0.0], [2.0, 1.0e-20]],
+            None,
+            GlobalTopology::Euclidean,
+        );
+        let QualityError::DegenerateSimplex {
+            measure,
+            observed,
+            epsilon,
+            avg_edge_length,
+        } = radius_ratio(&tri, key).unwrap_err()
+        else {
+            panic!("a tiny inradius must report scale-aware degeneracy");
+        };
+        assert_eq!(measure, QualityDegeneracyMeasure::Inradius);
+        assert_relative_eq!(scalar_payload(&observed), 2.5e-21, max_relative = 1.0e-12);
+        assert_relative_eq!(
+            scalar_payload(&epsilon),
+            4.0e-8 / 3.0,
+            max_relative = 1.0e-12
+        );
+        assert_relative_eq!(
+            scalar_payload(&avg_edge_length.unwrap()),
+            4.0 / 3.0,
+            max_relative = 1.0e-12
+        );
     }
 
     #[test]

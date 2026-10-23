@@ -46,6 +46,15 @@ store-success-output = false
 store-failure-output = true
 
 [[profile.ci.overrides]]
+# This 20-point sequence checks exact realization and empty spheres at every
+# prefix. Its 7.6-second native release run needs hosted-runner headroom.
+filter = '''
+binary(=delaunay)
+& test(=triangulation::insertion::tests::test_former_perturbation_retry_sequence_succeeds_exactly_4d)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
 # These promoted 4D property families finish with little or no margin under
 # the 10-second budget on Windows runners. Keep the normal budget elsewhere.
 platform = 'cfg(windows)'
@@ -139,6 +148,24 @@ inherits = "ci"
 retries = 0
 
 [[profile.debug.overrides]]
+# Full exact validation at every prefix takes 133 seconds in native debug.
+# Preserve the complete sequence and its assertions in the normal CI suite.
+filter = '''
+binary(=delaunay)
+& test(=triangulation::insertion::tests::test_former_perturbation_retry_sequence_succeeds_exactly_4d)
+'''
+slow-timeout = { period = "300s", terminate-after = 1 }
+
+[[profile.debug.overrides]]
+# Correct exterior insertion lets more prefixes reach full realization checks;
+# the unchanged insertion/rollback contract takes 20 seconds in native debug.
+filter = '''
+binary(=delaunay)
+& test(=triangulation::validation::tests::pl_manifold_insertion_without_repair_preserves_delaunay_owner_or_rolls_back)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.debug.overrides]]
 filter = 'test(=builder::tests::test_builder_toroidal_t2_smoke) | test(=builder::tests::test_builder_toroidal_accepts_matching_explicit_global_topology)'
 slow-timeout = { period = "60s", terminate-after = 1 }
 
@@ -212,6 +239,8 @@ filter = '''
 | (binary(=proptest_sos)
 & (test(=prop_sos_insphere_deterministic_5d)
    | test(=prop_sos_insphere_nonzero_5d)))
+| (binary(=delaunay)
+& test(=triangulation::insertion::tests::test_former_perturbation_retry_sequence_succeeds_exactly_4d))
 '''
 slow-timeout = { period = "300s", terminate-after = 1 }
 

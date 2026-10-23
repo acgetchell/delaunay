@@ -387,10 +387,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             })
             .sum::<usize>();
         if incidence_count != expected_incidence_count {
-            return Err(TdsError::InconsistentDataStructure {
-                message: format!(
-                    "Vertex-to-simplices index has {incidence_count} simplex incidences, expected {expected_incidence_count}"
-                ),
+            return Err(TdsError::VertexIncidenceCountMismatch {
+                actual: incidence_count,
+                expected: expected_incidence_count,
             });
         }
 
@@ -3254,11 +3253,12 @@ mod tests {
         );
         assert!(!tds.is_coherently_oriented());
 
+        let simplex_uuid = simplex.uuid();
         let err = tds.normalize_coherent_orientation().unwrap_err();
         assert_matches!(
             err,
-            TdsError::InconsistentDataStructure { message }
-                if message.contains("Contradictory orientation constraints")
+            TdsError::ContradictoryOrientationConstraints { simplex1_uuid, simplex2_uuid }
+                if simplex1_uuid == simplex_uuid && simplex2_uuid == simplex_uuid
         );
     }
 
@@ -3871,9 +3871,10 @@ mod tests {
         let err = tds.validate_vertex_to_simplices_index().unwrap_err();
         assert_matches!(
             &err,
-            TdsError::InconsistentDataStructure { message }
-                if message.contains("2 simplex incidences")
-                    && message.contains("expected 3")
+            TdsError::VertexIncidenceCountMismatch {
+                actual: 2,
+                expected: 3
+            }
         );
         let _ = simplex_key;
 

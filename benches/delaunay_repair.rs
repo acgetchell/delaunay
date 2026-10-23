@@ -3,8 +3,8 @@
 //! Benchmark: consuming `Triangulation` to `DelaunayTriangulation` conversion.
 //!
 //! Fixtures are built with a `build_triangulation*` terminal, which returns a
-//! valid Levels 1-4 triangulation without running batch or final Level 5 repair,
-//! so well-conditioned random fixtures typically still carry Delaunay violations.
+//! valid Levels 1-4 triangulation without running batch or final Level 5 repair.
+//! Construction may already produce a Delaunay triangulation.
 //! The benchmark then times the public `delaunayize` entry point on a clone of
 //! each prepared fixture.
 //!
@@ -12,8 +12,8 @@
 //! seed, so the measured closure never times a repair failure chain. Case
 //! labels record whether the prepared fixture was `violating` or already
 //! `delaunay`, so baseline comparisons notice when a fixture changes meaning.
-//! A separate `repair_transaction_pressure` case selects fixtures whose probe
-//! run performs at least one direct flip without fallback rebuild,
+//! A separate `repair_transaction_pressure` case applies a fixed geometric flip
+//! during setup and requires the probe to repair it without fallback rebuild,
 //! isolating the public repair path most sensitive to per-flip rollback
 //! snapshots. Compare that case with `tds_clone.rs` when evaluating journaled or
 //! reusable rollback designs.
@@ -32,6 +32,7 @@ use criterion::{
     BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
     measurement::WallTime,
 };
+use delaunay::flips::BistellarFlips;
 use delaunay::prelude::construction::{DelaunayTriangulationBuilder, Vertex};
 use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeOutcome};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
@@ -48,15 +49,19 @@ use std::time::Duration;
 pub mod bench_utils;
 use bench_utils::{OrAbort, abort_benchmark};
 
-const SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
-const SEED_SEARCH_ATTEMPTS: usize = 16;
 const SAMPLE_SIZE: usize = 10;
 const WARM_UP_TIME: Duration = Duration::from_millis(500);
 const MEASUREMENT_TIME: Duration = Duration::from_secs(2);
 const TRANSACTION_PRESSURE_MIN_FLIPS: NonZeroUsize = NonZeroUsize::MIN;
-const TRANSACTION_PRESSURE_SEED_SALT: u64 = 0xA511_E9B3_6C4D_27F1;
 
 type BenchTriangulation<const D: usize> = Triangulation<AdaptiveKernel<f64>, (), (), D>;
+
+#[derive(Clone, Copy)]
+struct RepairFixture {
+    requested_vertices: usize,
+    seed: u64,
+    flipped_facet_vertices: &'static [usize],
+}
 
 #[derive(Clone, Copy)]
 enum RepairFixtureRequirement {
@@ -106,13 +111,6 @@ fn point_bounds() -> CoordinateRange<f64> {
     CoordinateRange::try_new(0.0_f64, 1.0).or_abort()
 }
 
-/// Derive a deterministic, dimension-specific seed for one benchmark case.
-fn seed_for_case<const D: usize>(requested_vertices: usize, seed_base: u64) -> u64 {
-    let vertices = u64::try_from(requested_vertices).or_abort();
-    let dimension = u64::try_from(D).or_abort();
-    seed_base ^ vertices.wrapping_mul(SEED_SALT) ^ dimension.rotate_left(32)
-}
-
 /// Generate the minimal full-dimensional simplex points.
 fn simplex_points<const D: usize>() -> Vec<Point<D>> {
     let mut points = Vec::with_capacity(D + 1);
@@ -138,20 +136,61 @@ fn generate_vertices<const D: usize>(requested_vertices: usize, seed: u64) -> Ve
     try_vertices_from_points(&points).or_abort()
 }
 
+/// Introduce a fixed violation without relying on incidental construction defects.
+fn flip_fixture_facet<const D: usize>(
+    triangulation: &mut BenchTriangulation<D>,
+    vertices: &[Vertex<(), D>],
+    input_indices: &[usize],
+) where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
+    if input_indices.is_empty() {
+        return;
+    }
+    if input_indices.len() != D {
+        abort_benchmark(format_args!("{D}D fixture facet has incorrect arity"));
+    }
+    let vertex_ids: Vec<_> = input_indices
+        .iter()
+        .map(|&index| {
+            vertices
+                .get(index)
+                .unwrap_or_else(|| {
+                    abort_benchmark(format_args!(
+                        "{D}D fixture facet references missing input vertex {index}"
+                    ))
+                })
+                .uuid()
+        })
+        .collect();
+    let facet = triangulation
+        .facets()
+        .map(OrAbort::or_abort)
+        .find(|facet| {
+            facet
+                .vertices()
+                .all(|vertex| vertex_ids.contains(&vertex.uuid()))
+        })
+        .map_or_else(
+            || {
+                abort_benchmark(format_args!(
+                    "{D}D fixture no longer contains fixed facet {input_indices:?}"
+                ))
+            },
+            |facet| facet.handle(),
+        );
+    triangulation.flip_k2(facet).or_abort();
+}
+
 /// Build one repair fixture whose repair is verified to converge.
 ///
-/// Seeds are searched until construction succeeds and a throwaway clone
-/// completes the consuming `delaunayize` workflow, so the measured closure
-/// never times a repair failure chain.
-fn build_source<const D: usize>(requested_vertices: usize, seed_base: u64) -> RepairSource<D>
+/// A fixed seed must construct successfully, and a throwaway clone must complete
+/// the consuming `delaunayize` workflow before any timings are collected.
+fn build_source<const D: usize>(fixture: RepairFixture) -> RepairSource<D>
 where
     AdaptiveKernel<f64>: ExactPredicates<D>,
 {
-    build_source_with_requirement(
-        requested_vertices,
-        seed_base,
-        RepairFixtureRequirement::AnyConvergent,
-    )
+    build_source_with_requirement(fixture, RepairFixtureRequirement::AnyConvergent)
 }
 
 /// Build one repair fixture whose probe satisfies the requested repair behavior.
@@ -160,50 +199,52 @@ where
 /// flip-based repair with performed flips, keeping fallback rebuild setup out
 /// of the benchmark case that is meant to expose per-flip snapshot cost.
 fn build_source_with_requirement<const D: usize>(
-    requested_vertices: usize,
-    seed_base: u64,
+    fixture: RepairFixture,
     requirement: RepairFixtureRequirement,
 ) -> RepairSource<D>
 where
     AdaptiveKernel<f64>: ExactPredicates<D>,
 {
-    for attempt in 0..SEED_SEARCH_ATTEMPTS {
-        let attempt_seed = u64::try_from(attempt).or_abort();
-        let seed = seed_for_case::<D>(requested_vertices, seed_base)
-            ^ attempt_seed.wrapping_mul(SEED_SALT.rotate_left(17));
-        let vertices = generate_vertices::<D>(requested_vertices, seed);
-        let Ok(triangulation) = DelaunayTriangulationBuilder::new(&vertices).build_triangulation()
-        else {
-            continue;
-        };
-
-        let Ok(probe) = DelaunayRefinementBuilder::new(triangulation.clone())
-            .repair_by_flips()
-            .build()
-        else {
-            continue;
-        };
-        if !requirement.accepts(&probe.outcome) {
-            continue;
-        }
-
-        let violating = triangulation
-            .delaunay_violation_report(None)
-            .is_ok_and(|report| !report.is_valid());
-        return RepairSource {
-            vertex_count: triangulation.number_of_vertices(),
-            simplex_count: triangulation.number_of_simplices(),
-            violating,
-            probe_flips_performed: probe.outcome.delaunay_repair.flips_performed,
-            triangulation,
-        };
+    let RepairFixture {
+        requested_vertices,
+        seed,
+        flipped_facet_vertices,
+    } = fixture;
+    let vertices = generate_vertices::<D>(requested_vertices, seed);
+    let mut triangulation = DelaunayTriangulationBuilder::new(&vertices)
+        .build_triangulation()
+        .unwrap_or_else(|error| {
+            abort_benchmark(format_args!(
+                "{D}D repair fixture seed {seed:#x} failed construction: {error}"
+            ))
+        });
+    flip_fixture_facet(&mut triangulation, &vertices, flipped_facet_vertices);
+    let probe = DelaunayRefinementBuilder::new(triangulation.clone())
+        .repair_by_flips()
+        .build()
+        .unwrap_or_else(|error| {
+            abort_benchmark(format_args!(
+                "{D}D repair fixture seed {seed:#x} failed its repair probe: {error}"
+            ))
+        });
+    if !requirement.accepts(&probe.outcome) {
+        abort_benchmark(format_args!(
+            "{D}D repair fixture seed {seed:#x} no longer satisfies {}",
+            requirement.description()
+        ));
     }
 
-    abort_benchmark(format!(
-        "no {} {D}D fixture built for {requested_vertices} vertices \
-         after {SEED_SEARCH_ATTEMPTS} seeds",
-        requirement.description()
-    ))
+    let violating = !triangulation
+        .delaunay_violation_report(None)
+        .or_abort()
+        .is_valid();
+    RepairSource {
+        vertex_count: triangulation.number_of_vertices(),
+        simplex_count: triangulation.number_of_simplices(),
+        violating,
+        probe_flips_performed: probe.outcome.delaunay_repair.flips_performed,
+        triangulation,
+    }
 }
 
 /// Report benchmark throughput in total stored vertices plus simplices.
@@ -216,9 +257,8 @@ fn triangulation_element_count<const D: usize>(source: &RepairSource<D>) -> u64 
 fn bench_repair_dimension<const D: usize>(
     c: &mut Criterion,
     dim_label: &str,
-    counts: &[usize],
-    seed_base: u64,
-    transaction_pressure_vertices: usize,
+    fixtures: &[RepairFixture],
+    transaction_pressure_fixture: RepairFixture,
 ) where
     AdaptiveKernel<f64>: ExactPredicates<D>,
 {
@@ -227,8 +267,8 @@ fn bench_repair_dimension<const D: usize>(
     group.warm_up_time(WARM_UP_TIME);
     group.measurement_time(MEASUREMENT_TIME);
 
-    for &requested_vertices in counts {
-        let source = build_source::<D>(requested_vertices, seed_base);
+    for &fixture in fixtures {
+        let source = build_source::<D>(fixture);
         let delaunay_state = if source.violating {
             "violating"
         } else {
@@ -240,8 +280,8 @@ fn bench_repair_dimension<const D: usize>(
             BenchmarkId::new(
                 "delaunayize",
                 format!(
-                    "{delaunay_state}_vertices_{}_simplices_{}",
-                    source.vertex_count, source.simplex_count
+                    "{delaunay_state}_vertices_{}_simplices_{}_seed_{:016x}",
+                    source.vertex_count, source.simplex_count, fixture.seed
                 ),
             ),
             &source,
@@ -254,7 +294,7 @@ fn bench_repair_dimension<const D: usize>(
                                 .repair_by_flips()
                                 .build()
                                 .or_abort(),
-                        );
+                        )
                     },
                     BatchSize::SmallInput,
                 );
@@ -262,11 +302,7 @@ fn bench_repair_dimension<const D: usize>(
         );
     }
 
-    bench_transaction_pressure_case(
-        &mut group,
-        transaction_pressure_vertices,
-        seed_base ^ TRANSACTION_PRESSURE_SEED_SALT,
-    );
+    bench_transaction_pressure_case::<D>(&mut group, transaction_pressure_fixture);
 
     group.finish();
 }
@@ -274,14 +310,12 @@ fn bench_repair_dimension<const D: usize>(
 /// Register the public repair case selected to exercise transactional rollback journals.
 fn bench_transaction_pressure_case<const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
-    requested_vertices: usize,
-    seed_base: u64,
+    fixture: RepairFixture,
 ) where
     AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     let source = build_source_with_requirement::<D>(
-        requested_vertices,
-        seed_base,
+        fixture,
         RepairFixtureRequirement::DirectFlipRepair {
             min_flips: TRANSACTION_PRESSURE_MIN_FLIPS,
         },
@@ -292,8 +326,12 @@ fn bench_transaction_pressure_case<const D: usize>(
         BenchmarkId::new(
             "repair_transaction_pressure",
             format!(
-                "flip_repair_vertices_{}_simplices_{}_probe_flips_{}",
-                source.vertex_count, source.simplex_count, source.probe_flips_performed
+                "flip_repair_vertices_{}_simplices_{}_probe_flips_{}_seed_{:016x}_facet_{:?}",
+                source.vertex_count,
+                source.simplex_count,
+                source.probe_flips_performed,
+                fixture.seed,
+                fixture.flipped_facet_vertices,
             ),
         ),
         &source,
@@ -306,7 +344,7 @@ fn bench_transaction_pressure_case<const D: usize>(
                             .repair_by_flips()
                             .build()
                             .or_abort(),
-                    );
+                    )
                 },
                 BatchSize::SmallInput,
             );
@@ -316,22 +354,102 @@ fn bench_transaction_pressure_case<const D: usize>(
 
 /// Benchmark 2D flip-based Delaunay repair.
 fn bench_delaunay_repair_2d(c: &mut Criterion) {
-    bench_repair_dimension::<2>(c, "2d", &[500, 2_000], 0x2EFA_0000_0000_0002, 2_000);
+    bench_repair_dimension::<2>(
+        c,
+        "2d",
+        &[
+            RepairFixture {
+                requested_vertices: 500,
+                seed: 0x2AA3_BE4E_9D7A_5906,
+                flipped_facet_vertices: &[],
+            },
+            RepairFixture {
+                requested_vertices: 2_000,
+                seed: 0x3F9C_F930_75E9_6412,
+                flipped_facet_vertices: &[],
+            },
+        ],
+        RepairFixture {
+            requested_vertices: 2_000,
+            seed: 0x9A8D_1083_19A4_43E3,
+            flipped_facet_vertices: &[0, 223],
+        },
+    );
 }
 
 /// Benchmark 3D flip-based Delaunay repair.
 fn bench_delaunay_repair_3d(c: &mut Criterion) {
-    bench_repair_dimension::<3>(c, "3d", &[150, 500], 0x2EFA_0000_0000_0003, 500);
+    bench_repair_dimension::<3>(
+        c,
+        "3d",
+        &[
+            RepairFixture {
+                requested_vertices: 150,
+                seed: 0x9A7B_52B3_95A4_B44D,
+                flipped_facet_vertices: &[],
+            },
+            RepairFixture {
+                requested_vertices: 500,
+                seed: 0x2AA3_BE4F_9D7A_5907,
+                flipped_facet_vertices: &[],
+            },
+        ],
+        RepairFixture {
+            requested_vertices: 500,
+            seed: 0x8FB2_57FC_F137_7EF6,
+            flipped_facet_vertices: &[0, 23, 204],
+        },
+    );
 }
 
 /// Benchmark 4D flip-based Delaunay repair.
 fn bench_delaunay_repair_4d(c: &mut Criterion) {
-    bench_repair_dimension::<4>(c, "4d", &[50, 100], 0x2EFA_0000_0000_0004, 100);
+    bench_repair_dimension::<4>(
+        c,
+        "4d",
+        &[
+            RepairFixture {
+                requested_vertices: 50,
+                seed: 0xC82F_C63E_DC8C_3C20,
+                flipped_facet_vertices: &[],
+            },
+            RepairFixture {
+                requested_vertices: 100,
+                seed: 0xE351_8C71_B918_7837,
+                flipped_facet_vertices: &[],
+            },
+        ],
+        RepairFixture {
+            requested_vertices: 100,
+            seed: 0x4640_65C2_D555_5FC8,
+            flipped_facet_vertices: &[0, 2, 35, 98],
+        },
+    );
 }
 
 /// Benchmark 5D flip-based Delaunay repair.
 fn bench_delaunay_repair_5d(c: &mut Criterion) {
-    bench_repair_dimension::<5>(c, "5d", &[25, 40], 0x2EFA_0000_0000_0005, 40);
+    bench_repair_dimension::<5>(
+        c,
+        "5d",
+        &[
+            RepairFixture {
+                requested_vertices: 25,
+                seed: 0x5D90_E318_6E46_1E09,
+                flipped_facet_vertices: &[],
+            },
+            RepairFixture {
+                requested_vertices: 40,
+                seed: 0x9651_04FE_E3A3_6365,
+                flipped_facet_vertices: &[],
+            },
+        ],
+        RepairFixture {
+            requested_vertices: 40,
+            seed: 0x3340_ED4D_8FEE_44D0,
+            flipped_facet_vertices: &[0, 2, 11, 24, 25],
+        },
+    );
 }
 
 criterion_group!(

@@ -165,6 +165,39 @@ impl<const D: usize, K> HashGridIndex<D, K> {
         self.key_for_coords(coords).is_some()
     }
 
+    /// Proves that the Moore neighborhood covers the rounded inclusive distance
+    /// comparison used by insertion, otherwise requiring the caller's scan.
+    ///
+    /// A nonnegative FMA sum of squares is at least each rounded component
+    /// square. Thus an accepted component's exact square is below the successor
+    /// of the rounded threshold square. Round its square root upward, then allow
+    /// one more successor for the rounding of the coordinate subtraction.
+    /// Outward-rounded endpoints enclose every possible stored coordinate;
+    /// division by the positive cell size and floor are monotone, so their keys
+    /// enclose every possible candidate key as well. Exceptional square scales
+    /// use the scan rather than assuming the stable-norm path has this bound.
+    pub(crate) fn covers_rounded_distance(&self, coords: &[f64; D], tolerance: f64) -> bool {
+        if !tolerance.is_finite() || tolerance <= 0.0 {
+            return false;
+        }
+        let squared = tolerance * tolerance;
+        if !squared.is_normal() || !squared.next_up().is_finite() {
+            return false;
+        }
+        let radius = squared.next_up().sqrt().next_up().next_up();
+        let Some(base) = self.key_for_coords(coords) else {
+            return false;
+        };
+        let lower = coords.map(|coordinate| (coordinate - radius).next_down());
+        let upper = coords.map(|coordinate| (coordinate + radius).next_up());
+        let (Some(lower), Some(upper)) = (self.key_for_coords(&lower), self.key_for_coords(&upper))
+        else {
+            return false;
+        };
+        (0..D)
+            .all(|axis| lower.0[axis] >= base.0[axis] - 1.0 && upper.0[axis] <= base.0[axis] + 1.0)
+    }
+
     /// Insert a vertex into the appropriate grid cell.
     ///
     /// If the index is not usable, or the point cannot be keyed robustly, the
@@ -341,6 +374,17 @@ mod tests {
     use approx::assert_abs_diff_eq;
     use slotmap::SlotMap;
     use std::assert_matches;
+
+    #[test]
+    fn test_rounded_distance_coverage_requires_a_conservative_key_range() {
+        let grid: HashGridIndex<2> = HashGridIndex::try_new(1.0).unwrap();
+        assert!(grid.covers_rounded_distance(&[0.25, 0.25], 1.0));
+        assert!(!grid.covers_rounded_distance(&[-f64::from_bits(1), 0.25], 1.0));
+        assert!(!grid.covers_rounded_distance(&[0.25, 0.25], 0.0));
+        assert!(!grid.covers_rounded_distance(&[0.25, 0.25], 1.0e-200));
+        assert!(!grid.covers_rounded_distance(&[0.25, 0.25], 1.0e200));
+        assert!(!grid.covers_rounded_distance(&[f64::MAX, 0.25], 1.0));
+    }
 
     #[test]
     fn test_hash_grid_index_try_new_rejects_invalid_cell_size() {

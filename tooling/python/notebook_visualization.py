@@ -463,21 +463,24 @@ def normalized_point(point: Point3, limits: AxisLimits) -> Point3:
 
 def face_centroid(face: Face, point_map: Mapping[str, Point3]) -> Point3:
     """Return the centroid of one triangular face."""
-    points = [point_map[vertex_id] for vertex_id in face]
-    return (
-        sum(point[0] for point in points) / 3.0,
-        sum(point[1] for point in points) / 3.0,
-        sum(point[2] for point in points) / 3.0,
-    )
+    return polygon_centroid((point_map[face[0]], point_map[face[1]], point_map[face[2]]))
 
 
 def polygon_centroid(points: HullFacet) -> Point3:
     """Return the centroid of one triangular polygon."""
-    return (
-        sum(point[0] for point in points) / 3.0,
-        sum(point[1] for point in points) / 3.0,
-        sum(point[2] for point in points) / 3.0,
-    )
+    return _point_mean(points)
+
+
+def _point_mean(points: Sequence[Point3]) -> Point3:
+    """Average nonempty finite points without overflowing intermediate sums."""
+    coordinates = []
+    for axis in range(3):
+        scale = max(abs(point[axis]) for point in points)
+        # Normalizing first bounds the sum by the point count, and the final
+        # average remains within the finite input range even near float max.
+        coordinate = 0.0 if scale == 0.0 else (math.fsum(point[axis] / scale for point in points) / len(points)) * scale
+        coordinates.append(coordinate)
+    return (coordinates[0], coordinates[1], coordinates[2])
 
 
 def convex_hull_facets(data: JsonObject) -> list[HullFacet]:
@@ -508,13 +511,7 @@ def display_priority(point: Point3, limits: AxisLimits) -> tuple[float, float, f
 
 
 def _edge_midpoint(edge: Edge, point_map: Mapping[str, Point3]) -> Point3:
-    left_point = point_map[edge[0]]
-    right_point = point_map[edge[1]]
-    return (
-        (left_point[0] + right_point[0]) / 2.0,
-        (left_point[1] + right_point[1]) / 2.0,
-        (left_point[2] + right_point[2]) / 2.0,
-    )
+    return _point_mean((point_map[edge[0]], point_map[edge[1]]))
 
 
 def in_readme_cutaway(point: Point3, limits: AxisLimits) -> bool:

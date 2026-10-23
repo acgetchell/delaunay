@@ -1928,6 +1928,9 @@ mod tests {
     {
         match validate_simplex_intersection(first, second) {
             Ok(()) => IntersectionClassification::Valid,
+            Err(SimplexIntersectionFailure::UnsupportedDimension { dimension, max }) => {
+                panic!("agreement fixture dimension {dimension} exceeds exact support {max}");
+            }
             Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { .. }) => {
                 IntersectionClassification::Invalid
             }

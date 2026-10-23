@@ -25,7 +25,6 @@ pub mod bench_utils;
 use bench_utils::{OrAbort, abort_benchmark};
 
 const REALISTIC_SEED: u64 = 0x482;
-const SEED_SEARCH_LIMIT: u64 = 64;
 
 /// Builds the standard D-simplex with vertices at the origin and coordinate axes.
 fn standard_simplex_coordinates<const D: usize>() -> Vec<[f64; D]> {
@@ -134,24 +133,25 @@ where
     AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     let bounds = CoordinateRange::try_new(-100.0, 100.0).or_abort();
-    for offset in 0..SEED_SEARCH_LIMIT {
-        let seed = REALISTIC_SEED.wrapping_add(offset);
-        let points =
-            generate_random_points_in_range_seeded::<D>(vertex_count, bounds, seed).or_abort();
-        let vertices = try_vertices_from_points(&points).or_abort();
-        if let Ok(triangulation) = DelaunayTriangulationBuilder::new(&vertices).build()
-            && triangulation
-                .as_triangulation()
-                .validate_realization()
-                .is_ok()
-        {
-            return triangulation;
-        }
-    }
-
-    abort_benchmark(format_args!(
-        "failed to build a valid {D}D realization benchmark fixture after {SEED_SEARCH_LIMIT} seeds"
-    ));
+    let points = generate_random_points_in_range_seeded::<D>(vertex_count, bounds, REALISTIC_SEED)
+        .or_abort();
+    let vertices = try_vertices_from_points(&points).or_abort();
+    let triangulation = DelaunayTriangulationBuilder::new(&vertices)
+        .build()
+        .unwrap_or_else(|error| {
+            abort_benchmark(format_args!(
+                "{D}D realization fixture seed {REALISTIC_SEED:#x} failed construction: {error}"
+            ))
+        });
+    triangulation
+        .as_triangulation()
+        .validate_realization()
+        .unwrap_or_else(|error| {
+            abort_benchmark(format_args!(
+                "{D}D realization fixture seed {REALISTIC_SEED:#x} failed validation: {error}"
+            ));
+        });
+    triangulation
 }
 
 /// Registers one whole-triangulation Level 4 validation case.
@@ -167,7 +167,10 @@ fn register_realistic_validation<const D: usize>(
         u64::try_from(simplex_count).or_abort(),
     ));
     group.bench_function(
-        BenchmarkId::new(format!("{D}d"), format!("{vertex_count}v")),
+        BenchmarkId::new(
+            format!("{D}d"),
+            format!("{vertex_count}v_seed_{REALISTIC_SEED:016x}"),
+        ),
         |b| {
             b.iter(|| {
                 let _ =

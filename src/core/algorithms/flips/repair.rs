@@ -12,12 +12,12 @@
 use super::{
     AllFacetsIter, BistellarFlipKind, DataType, DelaunayRepairError,
     DelaunayRepairPostconditionFailure, DelaunayRepairVerificationContext, Duration, EdgeKey,
-    FacetHandle, FastHashMap, FastHashSet, FlipDirection, FlipError, FlipSignature, GlobalTopology,
-    GlobalTopologyModelAdapter, Instant, Kernel, LastAppliedFlip, MAX_REPEAT_SIGNATURE,
-    RepairAttemptConfig, RepairDiagnostics, RepairQueueOrder, RepairQueues, RidgeHandle,
-    RobustKernel, SimplexKey, SimplexKeyBuffer, Tds, TdsRollbackTransaction, TdsRollbackWindow,
-    TopologicalOperation, TopologyGuarantee, TriangleHandle, VecDeque, VertexKey,
-    apply_delaunay_flip_k2, build_k2_flip_context, build_k2_flip_context_from_edge,
+    FacetHandle, FastHashMap, FastHashSet, FlipContext, FlipDirection, FlipError, FlipSignature,
+    GlobalTopology, GlobalTopologyModelAdapter, Instant, Kernel, LastAppliedFlip,
+    MAX_REPEAT_SIGNATURE, RepairAttemptConfig, RepairDiagnostics, RepairQueueOrder, RepairQueues,
+    RidgeHandle, RobustKernel, SimplexKey, SimplexKeyBuffer, Tds, TdsRollbackTransaction,
+    TdsRollbackWindow, TopologicalOperation, TopologyGuarantee, TriangleHandle, VecDeque,
+    VertexKey, apply_delaunay_flip_k2, build_k2_flip_context, build_k2_flip_context_from_edge,
     build_k3_flip_context, build_k3_flip_context_from_triangle, debug_postcondition_facet_context,
     debug_ridge_context, default_max_flips, delaunay_violation_k2_for_facet,
     delaunay_violation_k3_for_ridge, duration_nanos_saturating, emit_repair_debug_summary,
@@ -1559,6 +1559,62 @@ pub(super) fn resolve_postcondition_predicate_failure(
     }
 }
 
+/// Replays a nonflippable circuit without symbolic perturbation in the same chart.
+/// An inconclusive exact replay cannot certify the current geometry.
+fn geometric_k2_postcondition_violation<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    topology_model: &GlobalTopologyModelAdapter<D>,
+    context: &FlipContext<D, 2>,
+    config: &RepairAttemptConfig,
+    diagnostics: &mut RepairDiagnostics,
+) -> Result<bool, DelaunayRepairError> {
+    is_delaunay_violation_k2(
+        tds,
+        &RobustKernel::new(),
+        topology_model,
+        context,
+        config,
+        diagnostics,
+    )
+    .map_err(|source| {
+        verification_failed(
+            DelaunayRepairVerificationContext::LocalK2PostconditionVerification,
+            source,
+        )
+    })
+}
+
+/// Builds the typed local violation, optionally including coordinate diagnostics.
+fn local_k2_postcondition_failure<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    facet: FacetHandle,
+    context: &FlipContext<D, 2>,
+) -> DelaunayRepairError {
+    let debug_details = if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+        let removed_details: Vec<_> = context
+            .removed_face_vertices
+            .iter()
+            .filter_map(|&vkey| tds.vertex(vkey).map(|vertex| (vkey, *vertex.point())))
+            .collect();
+        let inserted_details: Vec<_> = context
+            .inserted_face_vertices
+            .iter()
+            .filter_map(|&vkey| tds.vertex(vkey).map(|vertex| (vkey, *vertex.point())))
+            .collect();
+        Some(format!(
+            "removed_face={removed_details:?}; inserted_face={inserted_details:?}"
+        ))
+    } else {
+        None
+    };
+    DelaunayRepairError::PostconditionFailed {
+        reason: Box::new(DelaunayRepairPostconditionFailure::LocalK2Violation {
+            facet,
+            debug_details,
+        }),
+    }
+}
+
 /// Rechecks queued facets after repair so unresolved k=2 violations surface as
 /// postcondition failures instead of latent invalid triangulations.
 #[expect(
@@ -1613,10 +1669,21 @@ where
                     }
                 };
 
-                if flip_degenerate {
+                // A forbidden replacement does not certify the current geometry.
+                // Only a perturbation-only violation may be ignored: replay the
+                // same circuit and chart without SoS before accepting this facet.
+                if flip_degenerate
+                    && !geometric_k2_postcondition_violation(
+                        tds,
+                        topology_model,
+                        &context,
+                        config,
+                        diagnostics,
+                    )?
+                {
                     if repair_trace_enabled() {
                         tracing::debug!(
-                            "[repair] postcondition k=2 violation unresolved due to degenerate flip (facet={facet:?})"
+                            "[repair] postcondition k=2 perturbation-only violation has a degenerate replacement (facet={facet:?})"
                         );
                     }
                     continue;
@@ -1633,29 +1700,7 @@ where
                     diagnostics,
                     last_applied_flip,
                 );
-                let debug_details = if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
-                    let removed_details: Vec<_> = context
-                        .removed_face_vertices
-                        .iter()
-                        .filter_map(|&vkey| tds.vertex(vkey).map(|vertex| (vkey, *vertex.point())))
-                        .collect();
-                    let inserted_details: Vec<_> = context
-                        .inserted_face_vertices
-                        .iter()
-                        .filter_map(|&vkey| tds.vertex(vkey).map(|vertex| (vkey, *vertex.point())))
-                        .collect();
-                    Some(format!(
-                        "removed_face={removed_details:?}; inserted_face={inserted_details:?}"
-                    ))
-                } else {
-                    None
-                };
-                return Err(DelaunayRepairError::PostconditionFailed {
-                    reason: Box::new(DelaunayRepairPostconditionFailure::LocalK2Violation {
-                        facet,
-                        debug_details,
-                    }),
-                });
+                return Err(local_k2_postcondition_failure(tds, facet, &context));
             }
             Ok(false) => {
                 // No violation detected.
@@ -2007,6 +2052,8 @@ mod tests {
     use crate::core::tds::TdsBuilder;
     use crate::core::test_support::snapshot_topology;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
+    use crate::geometry::point::Point;
+    use crate::geometry::traits::coordinate::CoordinateConversionError;
     use crate::triangulation::validation::TopologyGuarantee;
     use crate::vertex;
     use slotmap::KeyData;
@@ -2041,6 +2088,119 @@ mod tests {
 
     fn synthetic_simplex_key(index: u64) -> SimplexKey {
         SimplexKey::from(KeyData::from_ffi(index))
+    }
+
+    /// Models a deterministic positive perturbation of an exact cospherical tie.
+    #[derive(Clone)]
+    struct InsideBoundaryKernel;
+
+    impl Kernel<3> for InsideBoundaryKernel {
+        type Scalar = f64;
+
+        fn orientation(&self, points: &[Point<3>]) -> Result<i32, CoordinateConversionError> {
+            RobustKernel::new().orientation(points)
+        }
+
+        fn in_sphere(
+            &self,
+            simplex_points: &[Point<3>],
+            test_point: &Point<3>,
+        ) -> Result<i32, CoordinateConversionError> {
+            RobustKernel::new()
+                .in_sphere(simplex_points, test_point)
+                .map(|classification| {
+                    if classification == 0 {
+                        1
+                    } else {
+                        classification
+                    }
+                })
+        }
+    }
+
+    /// ABCD and ABCE fill a convex pyramid; ABDE is always coplanar.
+    fn nonflippable_pyramid_tds(apex_y: f64) -> Tds<(), (), 3> {
+        let vertices = [
+            vertex!([-1.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, apex_y, 0.0]).unwrap(),
+        ];
+        TdsBuilder::new(&vertices, &[vec![0, 1, 2, 3], vec![0, 2, 1, 4]])
+            .build()
+            .unwrap()
+    }
+
+    fn verify_pyramid_k2_postcondition<K: Kernel<3, Scalar = f64>>(
+        tds: &Tds<(), (), 3>,
+        kernel: &K,
+        mode: PostconditionMode,
+    ) -> Result<(), DelaunayRepairError> {
+        let (simplex_key, simplex) = tds.simplices().next().unwrap();
+        let facet_index = simplex
+            .neighbors()
+            .unwrap()
+            .position(|neighbor| neighbor.is_some())
+            .unwrap();
+        let facet =
+            FacetHandle::try_new(tds, simplex_key, u8::try_from(facet_index).unwrap()).unwrap();
+        let context = build_k2_flip_context(tds, facet).unwrap();
+        assert!(k2_flip_would_create_degenerate_simplex(tds, &context).unwrap());
+        let mut queue = VecDeque::from([(facet, 0)]);
+        verify_postcondition_k2_facets(
+            tds,
+            kernel,
+            &GlobalTopology::Euclidean.model(),
+            &mut queue,
+            &RepairAttemptConfig {
+                attempt: 0,
+                queue_order: RepairQueueOrder::Fifo,
+                max_flips_override: None,
+            },
+            &mut RepairDiagnostics::default(),
+            mode,
+            None,
+        )
+    }
+
+    #[test]
+    fn nonflippable_positive_insphere_fails_strict_and_repair_postconditions() {
+        // ABCD has center (0,0,0), radius 1; E has squared radius 1/4.
+        // The unavailable 2->3 move cannot excuse this strict geometric violation.
+        let tds = nonflippable_pyramid_tds(-0.5);
+        for mode in [PostconditionMode::Strict, PostconditionMode::Repair] {
+            for result in [
+                verify_pyramid_k2_postcondition(&tds, &RobustKernel::new(), mode),
+                verify_pyramid_k2_postcondition(&tds, &AdaptiveKernel::new(), mode),
+            ] {
+                assert_matches!(
+                    result,
+                    Err(DelaunayRepairError::PostconditionFailed { reason })
+                        if matches!(reason.as_ref(), DelaunayRepairPostconditionFailure::LocalK2Violation { .. })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nonflippable_cospherical_perturbation_remains_acceptable() {
+        // All five vertices lie on the unit sphere. The controlled positive
+        // tie exercises the same branch as a SoS choice without depending on
+        // which direction the symbolic ordering chooses for this circuit.
+        let tds = nonflippable_pyramid_tds(-1.0);
+        let points = [
+            Point::try_from([-1.0, 0.0, 0.0]).unwrap(),
+            Point::try_from([1.0, 0.0, 0.0]).unwrap(),
+            Point::try_from([0.0, 0.0, 1.0]).unwrap(),
+            Point::try_from([0.0, 1.0, 0.0]).unwrap(),
+        ];
+        let query = Point::try_from([0.0, -1.0, 0.0]).unwrap();
+        assert_eq!(RobustKernel::new().in_sphere(&points, &query).unwrap(), 0);
+        assert_eq!(InsideBoundaryKernel.in_sphere(&points, &query).unwrap(), 1);
+        for mode in [PostconditionMode::Strict, PostconditionMode::Repair] {
+            verify_pyramid_k2_postcondition(&tds, &InsideBoundaryKernel, mode).unwrap();
+        }
     }
 
     #[test]

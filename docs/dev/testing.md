@@ -444,7 +444,10 @@ the smallest stable set of test names; do not raise the whole debug profile.
 The periodic T^2 builder smoke test and its matching-explicit-topology variant
 have a 60-second override because debug exact-geometry cost varies materially
 by platform. They remain in the normal suite because they cover distinct public
-builder contracts and are fast in release builds. The optimized 5D intersection
+builder contracts and are fast in release builds.
+The certified periodic T^3 point-location regression is gated by `slow-tests`
+because constructing its complete quotient exceeds the default test budget.
+The optimized 5D intersection
 agreement checks and bounded randomized 6D agreement check receive
 platform-neutral 60-second overrides because they can reach the 10-second
 boundary on hosted runners. The randomized 5D full-report
@@ -457,6 +460,14 @@ The four 4D–5D cospherical flip-consistency checks receive a platform-neutral
 60-second debug override because their exact forward/inverse predicate work
 reaches that boundary on hosted Linux and Windows runners. Their fixtures and
 release budgets are unchanged.
+
+The exact 20-point 4D exterior-insertion regression retains its complete input
+and per-prefix realization and empty-sphere assertions in normal CI. Measured
+native runtimes are 133 seconds in debug and 7.6 seconds in release, so its
+named overrides allow 300 seconds in debug/coverage and 60 seconds in release.
+The insertion-without-repair owner/rollback regression retains its assertions
+with a 60-second debug override after a measured 20-second run. These overrides
+do not change unrelated test budgets or move either contract out of normal CI.
 
 The release integration profile similarly grants 60 seconds on Windows only
 to the promoted 4D property families that sit at the 10-second boundary there.

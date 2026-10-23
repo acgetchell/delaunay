@@ -14,7 +14,7 @@
 //! cargo bench --locked --profile perf --bench topology_guarantee_construction
 //! ```
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::construction::{
     DelaunayIncrementalBuilder, TopologyGuarantee, Vertex, vertex,
 };
@@ -103,7 +103,11 @@ fn bench_dimension<const D: usize>(
                 // Prove the measured mode produces a Levels 1-3-valid result
                 // without charging certification to Criterion's timed loop.
                 validate_preflight(vertices, ValidationPolicy::Always);
-                b.iter(|| black_box(construct_with_policy(vertices, ValidationPolicy::Always)));
+                b.iter_batched(
+                    || (),
+                    |()| black_box(construct_with_policy(vertices, ValidationPolicy::Always)),
+                    BatchSize::LargeInput,
+                );
             },
         );
 
@@ -112,12 +116,16 @@ fn bench_dimension<const D: usize>(
             &vertices,
             |b, vertices| {
                 validate_preflight(vertices, ValidationPolicy::ExplicitOnly);
-                b.iter(|| {
-                    black_box(construct_with_policy(
-                        vertices,
-                        ValidationPolicy::ExplicitOnly,
-                    ))
-                });
+                b.iter_batched(
+                    || (),
+                    |()| {
+                        black_box(construct_with_policy(
+                            vertices,
+                            ValidationPolicy::ExplicitOnly,
+                        ))
+                    },
+                    BatchSize::LargeInput,
+                );
             },
         );
     }

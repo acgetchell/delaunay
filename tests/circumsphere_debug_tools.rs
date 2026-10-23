@@ -10,7 +10,7 @@
 //! ```bash
 //! cargo test --test circumsphere_debug_tools test_2d_circumsphere_debug -- --nocapture
 //! cargo test --test circumsphere_debug_tools test_3d_circumsphere_debug -- --nocapture
-//! cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
+//! cargo test --test circumsphere_debug_tools -- --nocapture
 //! ```
 
 use delaunay::prelude::construction::Vertex;
@@ -29,13 +29,6 @@ macro_rules! test_output {
 macro_rules! test_points {
     ($($coords:expr => $desc:expr),* $(,)?) => {
         vec![$( ($coords, $desc) ),*]
-    };
-}
-
-// Macro for running multiple tests in sequence
-macro_rules! run_tests {
-    ($($test_fn:ident),* $(,)?) => {
-        $( $test_fn(); )*
     };
 }
 
@@ -98,11 +91,6 @@ fn test_all_orientations_debug() {
 }
 
 #[test]
-fn test_all_basic_debug() {
-    run_all_basic_tests();
-}
-
-#[test]
 fn test_3d_simplex_analysis_debug() {
     test_3d_simplex_analysis();
 }
@@ -143,11 +131,6 @@ fn test_4d_methods_debug() {
 }
 
 #[test]
-fn test_all_debug() {
-    run_all_debug_tests();
-}
-
-#[test]
 fn test_single_2d_point_debug() {
     test_single_2d_point();
 }
@@ -160,16 +143,6 @@ fn test_single_3d_point_debug() {
 #[test]
 fn test_single_4d_point_debug() {
     test_single_4d_point();
-}
-
-#[test]
-fn test_all_single_points_debug() {
-    test_all_single_points();
-}
-
-#[test]
-fn test_everything_debug() {
-    run_everything();
 }
 
 /// Test 2D circumsphere methods with a triangle
@@ -1200,61 +1173,6 @@ fn compare_circumsphere_methods() {
     }
 }
 
-/// Run all basic dimensional tests and orientation tests
-fn run_all_basic_tests() {
-    println!("Running all basic tests...");
-    println!();
-
-    run_tests!(
-        test_2d_circumsphere,
-        test_3d_circumsphere,
-        test_4d_circumsphere,
-        test_all_orientations
-    );
-
-    println!("All basic tests completed!");
-}
-
-/// Run all debug tests
-fn run_all_debug_tests() {
-    println!("Running all debug tests...");
-    println!();
-
-    run_tests!(
-        test_3d_simplex_analysis,
-        test_3d_matrix_analysis,
-        debug_3d_circumsphere_properties,
-        debug_4d_circumsphere_properties,
-        compare_circumsphere_methods,
-        demonstrate_orientation_impact_on_circumsphere,
-        test_circumsphere_containment,
-        test_4d_circumsphere_methods
-    );
-
-    println!("All debug tests completed!");
-}
-
-/// Run all tests and all debug functions
-fn run_everything() {
-    println!("Running everything...");
-    println!();
-
-    // Run all basic tests
-    run_all_basic_tests();
-
-    println!();
-    println!("{}", "=".repeat(60));
-    println!("Now running debug tests...");
-    println!("{}", "=".repeat(60));
-    println!();
-
-    // Run all debug tests
-    run_all_debug_tests();
-
-    println!();
-    println!("Everything completed successfully!");
-}
-
 /// Test a single specific 2D point against triangle circumsphere
 fn test_single_2d_point() {
     println!("Testing single 2D point against triangle circumsphere");
@@ -1382,19 +1300,4 @@ fn test_single_4d_point() {
     }
 
     println!("Single 4D point test completed.\n");
-}
-
-/// Test single specific points in all dimensions
-fn test_all_single_points() {
-    println!("Testing single specific points in all dimensions");
-    println!("================================================");
-    println!();
-
-    run_tests!(
-        test_single_2d_point,
-        test_single_3d_point,
-        test_single_4d_point
-    );
-
-    println!("All single point tests completed!");
 }

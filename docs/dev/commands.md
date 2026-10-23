@@ -1101,6 +1101,7 @@ JSON/SARIF reports from `target/security/` for seven days, including on findings
 | Validate `Cargo.toml`/`Cargo.lock` synchronization | `just cargo-lock-check` |
 | Validate configuration-only changes | `just check-config` |
 | Validate Python scripts/tests | `just python-check` and `just test-python` |
+| Lint deliberate static-analysis Python fixtures | `just python-fixture-lint` |
 | Validate notebook changes | `just notebook-check` |
 | Verify tracked validation figures are current | `just validation-doc-figures-check` |
 | Validate shell script changes | `just shell-check` |

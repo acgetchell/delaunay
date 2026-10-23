@@ -199,11 +199,13 @@ pub(super) fn replacement_simplex_periodic_offsets<U, V, const D: usize>(
     simplices: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
     removed_simplices: &[SimplexKey],
     external_facets: &[FacetHandle],
-    newly_inserted_vertex: Option<VertexKey>,
+    newly_inserted_vertex: Option<(VertexKey, [i8; D])>,
 ) -> Result<ReplacementPeriodicOffsets<D>, FlipError> {
     let source_simplices =
         replacement_periodic_source_simplices(removed_simplices, external_facets);
-    if !replacement_sources_use_periodic_offsets(tds, &source_simplices)? {
+    if !replacement_sources_use_periodic_offsets(tds, &source_simplices)?
+        && newly_inserted_vertex.is_none()
+    {
         return Ok(SmallBuffer::from_elem(None, simplices.len()));
     }
 
@@ -215,10 +217,10 @@ pub(super) fn replacement_simplex_periodic_offsets<U, V, const D: usize>(
     for vertices in simplices {
         let mut offsets = PeriodicOffsetBuffer::<D>::with_capacity(vertices.len());
         for &vertex_key in vertices {
-            let offset = if Some(vertex_key) == newly_inserted_vertex
-                && !source_simplices_contain_vertex(tds, &source_simplices, vertex_key)?
+            let offset = if let Some((inserted_key, offset)) = newly_inserted_vertex
+                && vertex_key == inserted_key
             {
-                new_vertex_periodic_offset_in_frame(tds, target_simplex_key)?
+                offset
             } else {
                 periodic_offset_lifted_into_simplex(
                     tds,
@@ -267,45 +269,6 @@ pub(super) fn replacement_sources_use_periodic_offsets<U, V, const D: usize>(
         }
     }
     Ok(uses_periodic_offsets)
-}
-
-/// Checks whether a vertex already has a periodic representative in any source simplex.
-pub(super) fn source_simplices_contain_vertex<U, V, const D: usize>(
-    tds: &Tds<U, V, D>,
-    source_simplices: &[SimplexKey],
-    vertex_key: VertexKey,
-) -> Result<bool, FlipError> {
-    for &simplex_key in source_simplices {
-        let simplex = tds
-            .simplex(simplex_key)
-            .ok_or(FlipError::MissingSimplex { simplex_key })?;
-        if simplex.contains_vertex(vertex_key) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// Places a newly inserted k=1 vertex in the target simplex's local lattice sheet.
-pub(super) fn new_vertex_periodic_offset_in_frame<U, V, const D: usize>(
-    tds: &Tds<U, V, D>,
-    target_simplex_key: SimplexKey,
-) -> Result<[i8; D], FlipError> {
-    let target_simplex = tds
-        .simplex(target_simplex_key)
-        .ok_or(FlipError::MissingSimplex {
-            simplex_key: target_simplex_key,
-        })?;
-    k1_inserted_vertex_periodic_offset(target_simplex_key, target_simplex)
-}
-
-/// Selects the local lattice sheet used by both k=1 preflight and mutation planning.
-pub(super) fn k1_inserted_vertex_periodic_offset<V, const D: usize>(
-    simplex_key: SimplexKey,
-    simplex: &Simplex<V, D>,
-) -> Result<[i8; D], FlipError> {
-    let offsets = periodic_offsets_or_zero_frame(simplex_key, simplex)?;
-    Ok(offsets.first().copied().unwrap_or([0_i8; D]))
 }
 
 /// Finds the target facet opposite the source facet, if the simplices share it.

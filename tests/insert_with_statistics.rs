@@ -210,8 +210,18 @@ fn delaunay_insert_with_statistics_multiple_vertices_4d() {
     }
 
     assert_eq!(successful_insertions + skipped, input_count);
+    assert_eq!(successful_insertions, input_count);
     assert_eq!(dt.number_of_vertices(), successful_insertions);
     assert!(total_attempts >= input_count); // At least 1 attempt per vertex
+    let published = dt.finish().unwrap();
+    published.validate().unwrap();
+    assert!(
+        published
+            .as_triangulation()
+            .delaunay_violation_report(None)
+            .unwrap()
+            .is_valid()
+    );
 }
 
 #[test]
@@ -229,14 +239,67 @@ fn delaunay_insert_with_statistics_handles_degenerate_k2_flips_4d() {
         vertex!([0.8, 0.1, 0.1, 0.1]).unwrap(),
     ];
 
-    for v in vertices {
+    for &v in &vertices {
         let result = dt.insert_with_statistics(v);
         assert!(result.is_ok(), "4D insertion failed: {result:?}");
     }
 
     assert_eq!(dt.number_of_vertices(), 7);
-    assert!(dt.validate_structure().is_ok());
-    assert!(dt.finish().is_ok());
+    let published = dt.finish().unwrap();
+    published.validate().unwrap();
+    // The global scan supplies a separate check from the owner's local certificate.
+    assert!(
+        published
+            .as_triangulation()
+            .delaunay_violation_report(None)
+            .unwrap()
+            .is_valid()
+    );
+    for input in &vertices {
+        let (_, actual) = published
+            .vertices()
+            .find(|(_, vertex)| vertex.uuid() == input.uuid())
+            .unwrap();
+        assert_eq!(
+            actual.point().coords().map(f64::to_bits),
+            input.point().coords().map(f64::to_bits)
+        );
+    }
+    let mut actual_simplices: Vec<Vec<_>> = published
+        .simplices()
+        .map(|(_, simplex)| {
+            let mut indices: Vec<_> = simplex
+                .vertices()
+                .iter()
+                .map(|&key| {
+                    let uuid = published.vertex(key).unwrap().uuid();
+                    vertices
+                        .iter()
+                        .position(|vertex| vertex.uuid() == uuid)
+                        .unwrap()
+                })
+                .collect();
+            indices.sort_unstable();
+            indices
+        })
+        .collect();
+    actual_simplices.sort_unstable();
+    // Independent oracle: exact rational circumcenters for all 21 five-point
+    // subsets of the original f64 coordinates. Retain only empty spheres;
+    // no full-dimensional subset has a cospherical tie with another input.
+    assert_eq!(
+        actual_simplices,
+        [
+            [0, 1, 2, 3, 6],
+            [0, 1, 2, 4, 6],
+            [0, 1, 3, 4, 6],
+            [0, 2, 3, 4, 5],
+            [0, 2, 3, 5, 6],
+            [0, 2, 4, 5, 6],
+            [0, 3, 4, 5, 6],
+            [2, 3, 4, 5, 6],
+        ]
+    );
 }
 
 #[test]
