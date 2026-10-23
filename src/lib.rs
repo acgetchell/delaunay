@@ -2124,7 +2124,7 @@ pub mod prelude {
                 CoordinateRangeOrdering, InvalidCoordinateValue,
             },
             kernel::{AdaptiveKernel, ExactPredicates, FastKernel, Kernel, RobustKernel},
-            matrix::{LaError, Matrix, MatrixError, determinant},
+            matrix::{LaError, Matrix, MatrixError},
             periodic::{ToroidalDomain, ToroidalDomainError},
             point::Point,
             predicates::{
