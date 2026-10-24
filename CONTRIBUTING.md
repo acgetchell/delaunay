@@ -48,12 +48,13 @@ Open a new terminal if setup changed PATH. No shared-package checkout or generat
 bootstrap launcher is needed. Repository Python tooling is described in
 [docs/dev/python.md][dev-python] and [tooling/python/README.md][python-readme].
 
-Build the development profile and discover the available commands:
+Build the development profile:
 
 ```bash
 just setup
-just
 ```
+
+For library usage and command discovery, see the [README Quickstart](README.md#-quickstart).
 
 ## Contributor Workflow
 

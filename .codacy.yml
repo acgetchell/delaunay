@@ -83,5 +83,6 @@ exclude_paths:
   - "docs/archive/**"
   - "docs/archives/changelog/**"
   - "tests/tooling/**"
+  - "tests/papers/**"
   # Semgrep fixtures intentionally contain bad examples for rule tests.
   - "tests/semgrep/**"

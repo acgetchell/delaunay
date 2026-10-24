@@ -1,5 +1,7 @@
 # delaunay
 
+<!-- Keep the three compact badge rows; allow their explicit line breaks. -->
+<!-- markdownlint-disable MD033 -->
 [![DOI](https://badgen.net/badge/DOI/10.5281%2Fzenodo.16931097/blue)](https://doi.org/10.5281/zenodo.16931097)
 [![Crates.io](https://badgen.net/crates/v/delaunay)](https://crates.io/crates/delaunay)
 [![Downloads](https://badgen.net/crates/d/delaunay)](https://crates.io/crates/delaunay)
@@ -14,6 +16,7 @@
 [![OSV-Scanner][osv-badge]][osv-workflow]
 [![Gitleaks][gitleaks-badge]][gitleaks-workflow]
 [![zizmor][zizmor-badge]][zizmor-workflow]
+<!-- markdownlint-enable MD033 -->
 
 D-dimensional [Delaunay triangulations] and [convex hulls][Convex hulls] in [Rust], with exact predicates,
 deterministic degeneracy handling, explicit topology validation, and bistellar flips for finite point sets.
@@ -60,7 +63,7 @@ directly in vertices and simplices with external [secondary maps][Secondary maps
 vertex- and simplex-keyed algorithm use, and the entire data structure is
 serializable/deserializable. Written in safe Rust with no unsafe code.
 
-<!-- Preserve links to the former Use this crate when heading. -->
+<!-- Keep this compatibility anchor stable. -->
 <!-- markdownlint-disable-next-line MD033 -->
 <a id="use-this-crate-when"></a>
 
