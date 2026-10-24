@@ -57,7 +57,7 @@ def workflow_trigger_paths(path: Path) -> tuple[set[str], set[str]]:
 
 def test_recipe_declarations_are_lexicographically_sorted() -> None:
     """Recipe source order should support direct lookup by name."""
-    for path in (JUSTFILE, HELPER_JUSTFILE):
+    for path in (JUSTFILE, HELPER_JUSTFILE, REPO_ROOT / "papers/recipes.just"):
         names = RECIPE_DECLARATION.findall(path.read_text(encoding="utf-8"))
 
         assert names == sorted(names), path
@@ -87,6 +87,7 @@ def test_bare_just_lists_every_public_command() -> None:
 def test_default_discovers_new_recipes_without_a_help_edit(tmp_path: Path) -> None:
     """Adding a command automatically changes bare Just's generated reference."""
     shutil.copytree(REPO_ROOT / "just", tmp_path / "just")
+    shutil.copytree(REPO_ROOT / "papers", tmp_path / "papers")
     (tmp_path / "justfile").write_text(
         JUSTFILE.read_text(encoding="utf-8") + '\n# A newly added command.\n[group("test")]\nzz-new-command argument="example":\n    @exit 99\n',
         encoding="utf-8",
@@ -105,7 +106,7 @@ def test_local_and_ci_setup_use_the_locked_package() -> None:
     assert "cargo install" not in action
     assert "uv run --locked --managed-python --only-group tooling research-repo-tools setup" in (REPO_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
     assert "CONTRIBUTING.md#getting-started" in (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    for workflow_name in ("audit.yml", "benchmarks.yml", "papers.yml"):
+    for workflow_name in ("audit.yml", "benchmarks.yml"):
         pull_request_paths, push_paths = workflow_trigger_paths(REPO_ROOT / ".github" / "workflows" / workflow_name)
         assert ".github/actions/setup-just/**" in pull_request_paths
         assert ".github/actions/setup-just/**" in push_paths
@@ -491,8 +492,6 @@ def test_cargo_tool_guards_reuse_pinned_helper() -> None:
         "_ensure-rumdl",
         "_ensure-samply",
         "_ensure-taplo",
-        "_ensure-tectonic",
-        "_ensure-tex-fmt",
         "_ensure-typos",
         "_ensure-zizmor",
     )
@@ -541,7 +540,7 @@ def test_uv_backed_recipes_reuse_locked_guard() -> None:
         dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
         assert "_ensure-uv" in dependencies, name
     setup = json.dumps(recipes["setup-tools"]["body"])
-    assert "research-repo-tools tectonic discover --format shell" in setup
+    assert "tectonic" not in setup
     assert "uv run --locked --managed-python --only-group tooling research-repo-tools setup" in setup
 
 
@@ -574,30 +573,6 @@ def test_performance_workflow_tracks_every_harness_input() -> None:
     for path in required_paths:
         assert path in pull_request_paths
         assert path in push_paths
-
-
-def test_paper_workflow_tracks_validation_figure_producers() -> None:
-    """Paper checks should run when Rust or notebook figure producers change."""
-    workflow_path = REPO_ROOT / ".github" / "workflows" / "papers.yml"
-    pull_request_paths, push_paths = workflow_trigger_paths(workflow_path)
-    required_paths = (
-        ".python-version",
-        ".github/actions/setup-just/**",
-        "Cargo.lock",
-        "Cargo.toml",
-        "just/**",
-        "rust-toolchain.toml",
-        "tooling/python/notebook_validation_rendering.py",
-        "src/**",
-    )
-
-    for path in required_paths:
-        assert path in pull_request_paths
-        assert path in push_paths
-
-    workflow = workflow_path.read_text(encoding="utf-8")
-    assert "just validation-doc-figures-check" in workflow
-    assert "git status --porcelain -- docs/assets/validation" not in workflow
 
 
 def test_ci_composes_non_mutating_canonical_validation_figure_check() -> None:

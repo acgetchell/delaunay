@@ -13,50 +13,6 @@ concurrency:
   cancel-in-progress: true
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/papers.yml"
-      - ".github/actions/setup-just/**"
-      - ".python-version"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "docs/assets/validation/**"
-      - "just/**"
-      - "justfile"
-      - "notebooks/01_validation.ipynb"
-      - "papers/**"
-      - "pyproject.toml"
-      - "rust-toolchain.toml"
-      - "tooling/python/notebook_utils.py"
-      - "tooling/python/notebook_validation.py"
-      - "tooling/python/notebook_validation_rendering.py"
-      - "tooling/python/notebook_visualization.py"
-      - "src/**"
-      - "uv.lock"
-  pull_request:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/papers.yml"
-      - ".github/actions/setup-just/**"
-      - ".python-version"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "docs/assets/validation/**"
-      - "just/**"
-      - "justfile"
-      - "notebooks/01_validation.ipynb"
-      - "papers/**"
-      - "pyproject.toml"
-      - "rust-toolchain.toml"
-      - "tooling/python/notebook_utils.py"
-      - "tooling/python/notebook_validation.py"
-      - "tooling/python/notebook_validation_rendering.py"
-      - "tooling/python/notebook_visualization.py"
-      - "src/**"
-      - "uv.lock"
   workflow_dispatch:
 
 env:
@@ -87,66 +43,42 @@ jobs:
 
       - name: Install paper system dependencies
         shell: bash
-        run: |
-          set -euo pipefail
-          export PATH="/Library/TeX/texbin:$PATH"
-          echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
-          if ! command -v chktex >/dev/null; then
-            if ! command -v tlmgr >/dev/null; then
-              brew install --cask basictex
-            fi
-            # Keep both operations on one mirror; CTAN redirects can select different revisions.
-            texlive_repository="https://ctan.math.illinois.edu/systems/texlive/tlnet"
-            tlmgr_path="$(command -v tlmgr)"
-            sudo "$tlmgr_path" --repository "$texlive_repository" update --self
-            sudo "$tlmgr_path" --repository "$texlive_repository" install chktex
-          fi
-          chktex --version
+        run: bash papers/ci-setup.sh
 
       - name: Resolve Tectonic bundle cache
         id: tectonic_cache
         shell: bash
         run: |
           set -euo pipefail
-          cache_dir="$(tectonic -X show user-cache-dir)"
+          cache_dir="$(
+            uv run --locked --group dev --group papers research-repo-tools \
+              --root . --config papers/tooling.toml toolchain run -- tectonic -X show user-cache-dir
+          )"
           if [[ -z "$cache_dir" ]]; then
             echo "::error::Tectonic returned an empty user cache directory."
             exit 1
           fi
           mkdir -p "$cache_dir"
           echo "path=$cache_dir" >> "$GITHUB_OUTPUT"
+          uv run --locked --group papers python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          config = tomllib.loads(Path("papers/tooling.toml").read_text(encoding="utf-8"))
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write("version=" + config["toolchain"]["cargo"]["tectonic"] + "\n")
+          PY
 
       - name: Cache Tectonic bundle
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.tectonic_cache.outputs.path }}
-          key: tectonic-bundle-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup_just.outputs.tectonic-version }}
+          key: tectonic-bundle-${{ runner.os }}-${{ runner.arch }}-${{ steps.tectonic_cache.outputs.version }}
 
       - name: Warm Tectonic bundle cache
         shell: bash
-        run: |
-          set -euo pipefail
-          warmup_dir="$RUNNER_TEMP/tectonic-warmup"
-          warmup_source="$warmup_dir/warmup.tex"
-          mkdir -p "$warmup_dir"
-          printf '%s\n' \
-            '\documentclass{article}' \
-            '\begin{document}' \
-            'Tectonic bundle cache warmup.' \
-            '\end{document}' > "$warmup_source"
-
-          for attempt in 1 2 3 4; do
-            if tectonic --outdir "$warmup_dir" "$warmup_source"; then
-              exit 0
-            fi
-            if [[ "$attempt" -eq 4 ]]; then
-              echo "::error::Unable to warm the Tectonic bundle cache after $attempt attempts."
-              exit 1
-            fi
-            delay=$((attempt * 15))
-            echo "::warning::Tectonic bundle download failed; retrying in ${delay}s."
-            sleep "$delay"
-          done
+        run: bash papers/ci-warmup.sh
 
       - name: Build and compare papers
         run: |

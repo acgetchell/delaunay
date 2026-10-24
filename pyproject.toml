@@ -27,7 +27,7 @@ classifiers = [
 # Project dependencies
 dependencies = [
     "packaging>=26.3",
-    "research-repo-tools[papers]==0.2.3",
+    "research-repo-tools==0.2.3",
 ]
 
 [project.optional-dependencies]
@@ -65,7 +65,7 @@ py-modules = [
 
 [tool.ruff]
 line-length = 160
-src = [ "tooling/python", "tests/tooling" ]
+src = [ "tooling/python", "tests/tooling", "tests/papers" ]
 # Notebooks use the shared native Ruff/ty notebook validator.
 include = [ "*.py", "*.pyi" ]
 
@@ -176,6 +176,7 @@ ignore = [
 # Test names and class groupings already document behavior; avoid requiring
 # docstrings for each pytest case while still checking production scripts.
 "tests/tooling/test_*.py" = [ "S101", "SLF001", "D101", "D102", "D103" ]
+"tests/papers/test_*.py" = [ "S101", "SLF001", "D101", "D102", "D103" ]
 # Standalone static-analysis fixtures are not packages or public APIs. Keep
 # exception/process/write violations intact, without disabling typing or imports.
 "tests/semgrep/tests/tooling/python_exceptions.py" = [
@@ -265,6 +266,7 @@ dev = [
     "shfmt-py>=4.2.0",
     "yamllint>=1.38.0",
 ]
+papers = [ "research-repo-tools[papers,python-tools]==0.2.3" ]
 notebooks = [
     "research-repo-tools[notebooks,python-tools]==0.2.3",
     "ipykernel>=7.4.0",
@@ -297,6 +299,7 @@ override-dependencies = [
 [tool.uv.dependency-groups]
 tooling = { requires-python = ">=3.15" }
 notebooks = { requires-python = ">=3.15" }
+papers = { requires-python = ">=3.15" }
 
 [tool.research-repo-tools]
 schema = 1
@@ -327,8 +330,6 @@ git-cliff = "2.14.2"
 samply = "0.13.1"
 sarif-fmt = "0.8.0"
 taplo-cli = "0.10.0"
-tectonic = "0.17.0"
-tex-fmt = "0.5.7"
 typos-cli = "1.51.1"
 zizmor = "1.31.1"
 
@@ -353,14 +354,6 @@ scratch-dir = "target/notebooks/jupyter"
 sources = [ "notebooks" ]
 scratch = [ "target/notebooks" ]
 checkpoints = [ "notebooks/.ipynb_checkpoints" ]
-
-[tool.research-repo-tools.papers.documents.validation]
-tex = "papers/validation.tex"
-pdf = "target/papers/validation/validation.pdf"
-identity = "papers/validation.tex"
-min-pages = 1
-require-text = [ "Validation Architecture in delaunay", "REFERENCES" ]
-forbid-text = [ '\today', "Manuscript submitted to ACM" ]
 
 [tool.research-repo-tools.text]
 line-limit = 160

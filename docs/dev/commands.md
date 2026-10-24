@@ -197,25 +197,20 @@ in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.2.3` from PyPI
 and is included by `dev`. Before the first Just invocation, run:
 
 ```bash
-tectonic_environment="$(uv run --locked --managed-python --only-group tooling research-repo-tools tectonic discover --format shell)"
-eval "$tectonic_environment"
 uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
-Provision Git, a POSIX shell, platform compiler/linker prerequisites, and Tectonic's
-native libraries first. Shared setup installs and verifies declared versions,
+Provision Git, a POSIX shell, and platform compiler/linker prerequisites first.
+Shared setup installs and verifies declared versions,
 installs Just through its pinned `rust-just` dependency, configures shell PATH,
 and synchronizes dev with managed Rust available. Open a new terminal if PATH
-changed. `just setup-tools` repeats that setup after checking consumer native
-libraries. GitHub CLI, jq, chktex, and CodeRabbit remain system prerequisites for
+changed. `just setup-tools` repeats that setup. GitHub CLI, jq, and CodeRabbit remain system prerequisites for
 the recipes that need them. No sibling checkout, local wheel override, generated
 launcher, or editable shared-package install is used.
 
-The source command above is for Bash, including Git Bash on Windows. PowerShell
-users configure `TECTONIC_DEP_BACKEND=vcpkg`, `VCPKG_ROOT`, and a matching
-`VCPKGRS_TRIPLET` before invoking the same uv command directly. Windows CI selects
-`x64-windows-static-md`, which avoids requiring native dependency DLLs on PATH;
-see [vcpkg's Rust linking contract](https://docs.rs/vcpkg/latest/vcpkg/).
+The uv setup command works in Bash and PowerShell. Optional paper production has
+additional native prerequisites and an explicit setup command documented in
+[`papers/README.md`](../../papers/README.md); ordinary setup and CI require no TeX tools.
 
 Managed Rust, Cargo tools, and release binaries live in the shared package's versioned cache.
 Recipes select them with `toolchain run`, which verifies versions and fails when
@@ -256,7 +251,7 @@ Agents should **prefer running `just` commands instead of invoking the
 underlying tools directly**. The justfile ensures the correct flags,
 configuration, and tool ordering are used.
 
-For occasional shared operations, `just files`, `just templates`, `just tectonic`,
+For occasional shared operations, `just files`, `just templates`,
 `just validate`, and `just performance` forward explicit arguments to the public
 CLI. Declarative performance commands require a consumer-owned configuration;
 the established Delaunay performance recipes retain their scientific policy.
@@ -855,71 +850,29 @@ routine notebook checks do not regenerate the tracked hero.
 
 ## Paper Build
 
-Publication-facing TeX lives under `papers/`. The source `.tex` file and the
-compiled reviewer `.pdf` live side by side, while LaTeX auxiliary files are
-ignored and build under `target/papers/`.
-
-Commands:
+Paper production is an opt-in maintainer workflow. Its setup, recipes, tool pins,
+PDF policies, and CI helpers live under [`papers/`](../../papers/README.md), with
+tests under `tests/papers/`. It shares the root Python environment and `uv.lock`.
+The root Just entry point imports `papers/recipes.just`:
 
 ```bash
-just paper-cli
-just validation-doc-figures
-just validation-doc-figures-check
-just paper-tex-fmt-check
-just paper-tex-lint
-just paper-build
-just paper-pdf-check
+just paper-setup
 just paper-check
 just paper-artifact-check
-just paper-refresh
-just papers
 ```
 
-`just paper-cli` builds the local `delaunay` binary used by paper notebooks
-before nbconvert starts its execution timeout. `just validation-doc-figures`
-refreshes the canonical PNG files under `docs/assets/validation/`, which are
-reused directly by `papers/validation.tex`. It validates the complete six-file
-set in staging and publishes it transactionally, preserving the prior complete
-set if rendering or publication fails. `just validation-doc-figures-check`
-uses the same generator under `target/` and compares the complete set without
-modifying tracked files. `just ci` composes that check on macOS, the canonical
-paper-artifact platform. Ordinary notebook validation and direct interactive
-execution do not refresh tracked figures. `just paper-tex-fmt-check` runs `tex-fmt --check`,
-and `just paper-tex-lint` runs `chktex` over `papers/*.tex`. `just paper-build`
-compiles
-`papers/validation.tex` with Tectonic in `target/papers/validation/` without
-changing tracked files. `just paper-pdf-check` uses the uv-managed
-`paper-pdf-check` helper to verify that target-built PDF opens, has pages,
-includes expected title/reference text, and does not contain the literal
-`\today`. `just paper-check` lints, builds, and sanity-checks a paper without
-refreshing tracked artifacts. `just paper-artifact-check` additionally compares
-the rebuilt and tracked reviewer PDFs page by page using extracted text and page
-geometry, avoiding a false requirement that platform-native PDF internals be
-byte-identical. `just paper-refresh` runs the basic check before copying the
-target-built PDF to `papers/validation.pdf`. `just papers` refreshes the
-canonical figures and reviewer PDF through those named artifact owners.
+`just paper-check` tests the paper tooling, checks TeX formatting and lint,
+compiles under `target/papers/`, and checks the resulting PDF.
+`just paper-artifact-check` also compares that build with the tracked reviewer
+PDF. Both preserve tracked sources and artifacts. `just paper-refresh` explicitly
+publishes the checked PDF; `just papers` also refreshes the shared figures.
+The Papers CI workflow runs only by manual dispatch.
 
-Tectonic and `tex-fmt` are pinned managed Cargo tools. `chktex` comes from a
-TeX distribution or system package manager. Local MacTeX commands live under
-`/Library/TeX/texbin`; prepend that directory to PATH when needed.
-`research-repo-tools tectonic discover` owns native library discovery:
-pkg-config, FreeType, Graphite2, ICU, libpng, and zlib on macOS;
-fontconfig and OpenSSL additionally on Linux. Windows MSVC uses matching vcpkg
-libraries with `TECTONIC_DEP_BACKEND=vcpkg`. Shared setup passes that native
-environment through to Cargo. Paper CI installs the platform packages explicitly,
-caches the versioned Tectonic bundle, and warms cold bundles with bounded retries.
-
-Reviewer-facing validation diagrams under `docs/assets/validation/` use the
-same deterministic notebook with a separate explicit output switch:
-
-```bash
-just validation-doc-figures
-just validation-doc-figures-check
-```
-
-Routine notebook checks and the non-mutating currentness check write only under
-`target/`; neither tracked documentation nor paper figures are refreshed
-implicitly.
+Shared validation notebooks and canonical figures remain documentation-owned.
+`just notebook-cli` builds their Rust CLI; `just validation-doc-figures-check`
+regenerates figures under `target/` and compares them without publication.
+Normal macOS CI retains this documentation check and requires no TeX tools.
+Only `just validation-doc-figures` explicitly refreshes the canonical figure set.
 
 ---
 

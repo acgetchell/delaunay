@@ -36,9 +36,6 @@ _ensure-cargo-llvm-cov: _ensure-toolchain
 
 _ensure-cargo-machete: _ensure-toolchain
 
-_ensure-chktex: _ensure-uv
-    {{ rrt }} validation require chktex
-
 _ensure-dprint: _ensure-toolchain
 
 _ensure-gh: _ensure-uv
@@ -66,10 +63,6 @@ _ensure-shfmt: _ensure-uv
     uv run --locked shfmt --version >/dev/null
 
 _ensure-taplo: _ensure-toolchain
-
-_ensure-tectonic: _ensure-toolchain
-
-_ensure-tex-fmt: _ensure-toolchain
 
 _ensure-toolchain:
     uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain check

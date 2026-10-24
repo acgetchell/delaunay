@@ -1,9 +1,47 @@
 # Roadmap
 
-This page tracks current follow-up work at a high level. Historical task
-snapshots live in [`archive/`](archive/).
+This page separates upcoming v0.8.3 release preparation, completed release
+baselines, and future work. The [limitations guide](limitations.md) owns the
+current supported operation and geometry scope. Historical task snapshots
+live in [`archive/`](archive/).
+
+## v0.8.3 Release Preparation
+
+v0.8.3 is the upcoming release, not a published baseline. The current checkout
+requires Rust 1.99.1 and includes the following changes since v0.8.2:
+
+- **Checked ownership boundaries:** `Tds` owns Levels 1–2,
+  `Triangulation` owns general geometry and topology through Levels 1–4, and
+  `DelaunayTriangulation` adds Level 5. General vertex editing, Pachner moves,
+  and persistence use these boundaries rather than implicitly retaining a
+  Delaunay proof after topology changes.
+- **Geometry and recovery fixes:** exterior insertion, hull-corner deletion,
+  periodic stellar insertion, point location, duplicate detection, and failed
+  insertion recovery preserve their scientific contracts and typed errors.
+  Unsupported periodic location and exact intersection dimensions fail
+  explicitly; these safeguards do not expand the supported geometry range.
+- **Numerical backend adoption:** `la-stack` 0.5.1 supplies the delegated
+  numerical kernels, while Delaunay retains geometric certification and
+  fallback policy. The built-in `ExactPredicates` contract still stops at D=6.
+- **Persistence contracts:** general triangulation snapshots and Delaunay
+  checkpoints restore their owning validation levels, preserve coordinate
+  storage, and expose recoverable load failures with the required payload bounds.
+- **Tooling and release evidence:** the published `research-repo-tools` package
+  supplies shared maintenance, managed tools, and evidence primitives. Cargo
+  release workflows validate retained archives and trusted exact-commit CI
+  evidence; benchmark comparisons retain their scientific provenance rules.
+
+Release preparation still includes coordinated package/citation metadata and
+generated changelog updates, the required native validation, and the benchmark
+and publication gates in [RELEASING.md](RELEASING.md). A completed local check
+does not establish hosted CI, fresh performance measurements, or publication.
+The [changelog](../CHANGELOG.md) owns the detailed generated release notes.
 
 ## Release Sequence
+
+The following entries describe earlier baselines and longer-term candidates.
+Their compiler versions, measurements, and artifact identities belong to those
+releases; they are not current setup instructions.
 
 ### v0.7.8 pre-v0.8.0 cleanup (released)
 
@@ -25,15 +63,15 @@ Key takeaways from v0.7.8:
 - `delaunayize` now consumes a Levels 1–4 triangulation, keeps intermediate
   flip-repair state private, and publishes only a Levels 1–5 result; raw-TDS
   PL-manifold repair is an orthogonal pre-restoration workflow.
-- The release benchmark summary remains the current public performance snapshot
-  for construction throughput, generated simplex counts, and circumsphere
-  predicate behavior.
+- The release benchmark summary recorded construction throughput, generated
+  simplex counts, and circumsphere predicate behavior for that baseline.
 
 ### v0.8.0 paper-facing API and topology push (released)
 
 v0.8.0 delivered the paper-facing API and topology work deferred from v0.7.8.
-It requires Rust 1.97.1, including the completed audit of the 1.97.1 toolchain
-surface.
+That release required Rust 1.97.1 and included the completed audit of that
+toolchain surface. Its [reviewer artifact guide](../papers/ARTIFACT.md) retains
+the original release identity, commands, and benchmark exception.
 
 - **Pachner/Edit API shape (#252/#253/#350/#337):** unified the Pachner move API,
   expanded public flip benchmark coverage, added Monte-Carlo stress benchmarks,
@@ -62,6 +100,8 @@ surface.
 
 ### v0.8.1 validation evidence and performance follow-up
 
+This released baseline completed the following validation work:
+
 - **Level 4 realization validation (#482/#559):** completed the independent
   randomized and degenerate 2D–5D agreement campaign for the revised
   simplex-intersection narrow phase and added focused narrow-phase and
@@ -71,42 +111,78 @@ surface.
   path while preserving exhaustive fallback diagnostics, with 2D–5D agreement
   tests and performance canaries.
 
+### v0.8.2 corrected benchmark baseline
+
+v0.8.2 established the corrected benchmark contract and release metadata
+baseline. Cross-release performance claims must respect that contract boundary;
+old timings are not made comparable by relabeling them. See the
+[generated v0.8.2 notes](../CHANGELOG.md) and [benchmark guide](../benches/README.md).
+
 ### v0.9.0 and later horizon
 
-v0.9.0 is the right parking lot for work that is valuable but larger or less
-tightly coupled to the v0.8.0 paper/API push:
+These are future candidates, not commitments for v0.8.3 or a fixed v0.9.0
+schedule. Scientific correctness and supporting evidence determine readiness.
 
-- **Broader geometry features (#299/#63/#136):** constrained Delaunay
-  triangulations, Voronoi diagrams, and weakly-visible hull facets.
-- **Built-in visualization and high-dimensional tuning (#106):** any native
-  plotting layer and convex-hull buffer allocation work for D > 7.
+- **Broader geometry:** constrained Delaunay triangulations
+  ([#299](https://github.com/acgetchell/delaunay/issues/299)), Voronoi diagrams
+  ([#63](https://github.com/acgetchell/delaunay/issues/63)), and weakly-visible
+  hull facets ([#136](https://github.com/acgetchell/delaunay/issues/136)).
+- **Concurrent topology mutation:** establish correctness, conflict, rollback,
+  and performance evidence before adopting a scheduler
+  ([#495](https://github.com/acgetchell/delaunay/issues/495)).
+- **Construction rollback:** replace per-insertion topology snapshots with a
+  narrower undo log while preserving failure atomicity
+  ([#510](https://github.com/acgetchell/delaunay/issues/510)).
+- **Exact intersection validation:** extend the separate simplex-intersection
+  adapter through 8D, including the larger exact systems that geometry requires
+  ([#659](https://github.com/acgetchell/delaunay/issues/659)). This does not
+  itself extend the Delaunay kernel or construction dimension contract.
+- **High-dimensional hull buffers:** investigate allocation beyond D=7
+  ([#106](https://github.com/acgetchell/delaunay/issues/106)).
+- **Public builder polish:** use downstream experience before finalizing the
+  construction API for v1.0.0
+  ([#497](https://github.com/acgetchell/delaunay/issues/497)).
+- **Shared tooling adoption:** retire remaining generic orchestration only
+  after the needed supported upstream capabilities are published
+  ([#648](https://github.com/acgetchell/delaunay/issues/648),
+  [#653](https://github.com/acgetchell/delaunay/issues/653)).
+- **Spherical integration:** extend the bounded `S^2`/`S^3` prototype to the
+  broader spherical construction, realization, and editing contract
+  ([#414](https://github.com/acgetchell/delaunay/issues/414)).
+- **Toroidal scaling:** make `T^4`/`T^5` periodic quotient construction scalable
+  and independently validated before enabling it
+  ([#416](https://github.com/acgetchell/delaunay/issues/416)).
 
 ## Ongoing Performance Monitoring
 
-- **2D-5D shared large-scale monitoring (#340/#341/#342):** keep
+- **2D–5D shared large-scale monitoring:** keep
   `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` aligned so
   performance work is measured across the supported small-dimensional range
-  instead of tuned for one dimension at another's expense. The current defaults
-  are calibrated as roughly one-minute release-mode runs on maintainer hardware:
-  2D=36,000, 3D=7,500, 4D=800, and 5D=140. Heavier explicit probes such as
-  2D=40,000, 3D=10,000, and 5D=150 remain useful for release characterization.
+  instead of tuned for one dimension at another's expense. The `justfile` owns
+  current defaults; the [benchmark guide](../benches/README.md#release-mode-debug-defaults)
+  owns workload sizes and dated maintainer-hardware timings.
 - **Criterion performance canaries:** keep smaller `ci_performance_suite`
   canaries for the same construction path so PR regression checks remain
   practical under Criterion's repeated sampling model.
-- **4D large-scale monitoring (#204/#340):** keep the 3000-point release-mode
-  debug harness as an optional manual investigation recipe; its multi-minute
-  runtime is too large for routine CI.
-- **5D feasibility (#342):** keep the 150-point release-mode harness as the
-  current practical 5D baseline while optimizing toward the 1000-point target.
-  The 200-vertex case is a useful heavier probe but currently sits closer to
-  two minutes than one.
+- **Heavy manual probes:** treat thousands-point 4D and larger 5D workloads as
+  explicit characterization work. The completed
+  [5D feasibility investigation #342](https://github.com/acgetchell/delaunay/issues/342)
+  is historical context, not an open target or an input-size guarantee.
+- **Release evidence:** preserve the legacy [performance report](performance.md)
+  and dated investigations with their original identities. Publish replacement
+  reports and README summaries only from validated retained evidence through
+  their named workflows; a documentation refresh does not regenerate timings.
 
 ## Not Implemented Today
 
 - Constrained Delaunay triangulations.
+- Concurrent topology mutation or multi-threaded construction.
+- Full spherical integration beyond the bounded `S^2`/`S^3` prototype, or
+  hyperbolic triangulation semantics.
+- Massively parallel, GPU, or out-of-core construction.
+- Native Rust plotting or viewer APIs; notebook visualization and JSON export
+  are already available.
 - Voronoi diagram extraction.
-- Built-in visualization.
-- Massively parallel, GPU, or out-of-core meshing.
 
 See [`limitations.md`](limitations.md) for current operational limits and
 [`archive/todo_2026-04-23.md`](archive/todo_2026-04-23.md) for the retired
