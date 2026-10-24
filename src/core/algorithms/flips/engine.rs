@@ -1067,6 +1067,89 @@ mod tests {
         }
         vertices
     }
+
+    /// Checks that flip-trial self-links require periodic chart metadata.
+    fn assert_flip_trial_self_neighbor_requires_periodic_offsets<const D: usize>() {
+        let mut tds: Tds<(), (), D> = Tds::empty();
+        let vertices = insert_standard_simplex_vertices(&mut tds);
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vertices, None).unwrap())
+            .unwrap();
+        let mut neighbors = vec![None; D + 1];
+        neighbors[D] = Some(simplex_key);
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .set_neighbors_from_keys(neighbors)
+            .unwrap();
+
+        let simplex = tds.simplex(simplex_key).unwrap();
+        assert_eq!(
+            validate_flip_trial_simplex_neighbors(&tds, simplex_key, simplex, &[]),
+            Err(TdsValidationFailure::InvalidNeighbors {
+                reason: NeighborValidationError::NonPeriodicSelfNeighbor {
+                    simplex_key,
+                    simplex_uuid: simplex.uuid(),
+                    facet_index: D,
+                },
+            })
+        );
+
+        // The same local link is admissible with per-vertex periodic offsets.
+        // This checks the flip-trial rule, not the topology of a whole quotient.
+        let mut offsets = vec![[0_i8; D]; D + 1];
+        offsets[D] = [1_i8; D];
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .set_periodic_vertex_offsets(offsets)
+            .unwrap();
+        let simplex = tds.simplex(simplex_key).unwrap();
+        validate_flip_trial_simplex_neighbors(&tds, simplex_key, simplex, &[]).unwrap();
+    }
+
+    /// Checks that a retired key cannot remain linked even while still in storage.
+    fn assert_flip_trial_rejects_removed_neighbor<const D: usize>() {
+        let mut tds: Tds<(), (), D> = Tds::empty();
+        let vertices = insert_standard_simplex_vertices(&mut tds);
+        let mut neighbor_vertices = vertices[..D].to_vec();
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vertices, None).unwrap())
+            .unwrap();
+        let mut reflected = [0.0; D];
+        reflected[D - 1] = -1.0;
+        neighbor_vertices.push(
+            tds.insert_vertex_with_mapping(vertex!(reflected).unwrap())
+                .unwrap(),
+        );
+        // Opposite sides of the shared facet need opposite facet orderings.
+        neighbor_vertices.swap(0, 1);
+        let neighbor_key = tds
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(neighbor_vertices, None).unwrap(),
+            )
+            .unwrap();
+        tds.assign_neighbors().unwrap();
+        tds.is_valid().unwrap();
+
+        let simplex = tds.simplex(simplex_key).unwrap();
+        assert_eq!(simplex.neighbor_key(D), Some(Some(neighbor_key)));
+        validate_flip_trial_simplex_neighbors(&tds, simplex_key, simplex, &[]).unwrap();
+        let neighbor = tds.simplex(neighbor_key).unwrap();
+        validate_flip_trial_simplex_neighbors(&tds, neighbor_key, neighbor, &[]).unwrap();
+
+        assert_eq!(
+            validate_flip_trial_simplex_neighbors(&tds, simplex_key, simplex, &[neighbor_key]),
+            Err(TdsValidationFailure::InvalidNeighbors {
+                reason: NeighborValidationError::ReferencedRemovedNeighbor {
+                    simplex_key,
+                    simplex_uuid: simplex.uuid(),
+                    facet_index: D,
+                    neighbor_key,
+                },
+            })
+        );
+        tds.is_valid().unwrap();
+    }
+
     fn assert_local_orientation_error_preserves_facet_evidence<const D: usize>() {
         let mut tds: Tds<(), (), D> = Tds::empty();
         let vertices = insert_standard_simplex_vertices(&mut tds);
@@ -1162,6 +1245,27 @@ mod tests {
     local_orientation_evidence_tests!(3);
     local_orientation_evidence_tests!(4);
     local_orientation_evidence_tests!(5);
+
+    macro_rules! flip_trial_neighbor_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<flip_trial_self_neighbor_requires_periodic_offsets_ $dim d>]() {
+                    assert_flip_trial_self_neighbor_requires_periodic_offsets::<$dim>();
+                }
+
+                #[test]
+                fn [<flip_trial_rejects_removed_neighbor_ $dim d>]() {
+                    assert_flip_trial_rejects_removed_neighbor::<$dim>();
+                }
+            }
+        };
+    }
+
+    flip_trial_neighbor_tests!(2);
+    flip_trial_neighbor_tests!(3);
+    flip_trial_neighbor_tests!(4);
+    flip_trial_neighbor_tests!(5);
 
     /// Asserts exact vertex-to-periodic-offset slot pairing independent of simplex orientation.
     fn assert_simplex_offsets_by_vertex<const D: usize>(
