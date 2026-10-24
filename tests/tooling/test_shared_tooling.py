@@ -51,7 +51,9 @@ def test_published_pin_configuration_and_inventory() -> None:
     assert MANIFEST["tool"]["uv"]["required-version"].startswith("==")
     tools = MANIFEST["tool"]["research-repo-tools"]["toolchain"]["cargo"]
     assert all(re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", pin) for pin in tools.values())
-    assert {"cargo-edit", "cargo-audit", "cargo-nextest", "samply", "tectonic", "tex-fmt", "clippy-sarif", "sarif-fmt"} <= tools.keys()
+    assert {"cargo-edit", "cargo-audit", "cargo-nextest", "samply", "clippy-sarif", "sarif-fmt"} <= tools.keys()
+    assert {"tectonic", "tex-fmt"}.isdisjoint(tools)
+    assert groups["papers"] == ["research-repo-tools[papers,python-tools]==0.2.3"]
     assert "just" not in tools
     assert "cargo-update" not in tools
 
@@ -61,6 +63,7 @@ def recording_recipes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Execute the merged Justfile with local recording processes only."""
     (tmp_path / "justfile").write_bytes((ROOT / "justfile").read_bytes())
     shutil.copytree(ROOT / "just", tmp_path / "just")
+    shutil.copytree(ROOT / "papers", tmp_path / "papers")
     for name in ("pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".python-version"):
         (tmp_path / name).write_bytes((ROOT / name).read_bytes())
     fixture = tmp_path / FIXTURE_MANIFEST
@@ -134,7 +137,6 @@ def update_commands(recipe: str) -> list[list[str]]:
     tools = [
         ["run", "--no-config", "--no-sync", "--no-python-downloads", "research-repo-tools", "deps", "update-uv"],
         [*UPDATE_PREFIX, "toolchain", "upgrade"],
-        ["run", "--locked", "--managed-python", "--only-group", "tooling", "research-repo-tools", "tectonic", "discover", "--format", "shell"],
         ["run", "--locked", "--managed-python", "--only-group", "tooling", "research-repo-tools", "setup"],
     ]
     cargo = [
@@ -170,7 +172,7 @@ def test_update_composition_and_boundaries(recording_recipes: Path, recipe: str)
     assert {path: path.read_bytes() for path in files} == before
 
 
-@pytest.mark.parametrize("step", range(1, 10))
+@pytest.mark.parametrize("step", range(1, 9))
 def test_update_failure_stops_later_steps(recording_recipes: Path, monkeypatch: pytest.MonkeyPatch, step: int) -> None:
     monkeypatch.setenv("FAIL_STEP", str(step))
     result, calls = invoke_recipe(recording_recipes, "update")

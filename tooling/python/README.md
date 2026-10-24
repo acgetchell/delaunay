@@ -7,12 +7,10 @@ directly.
 
 ## Prerequisites
 
-Install the declared uv version, Git, and platform build prerequisites, including
-Tectonic's native libraries. Initialize the pinned PyPI toolchain with:
+Install the declared uv version, Git, and platform compiler/linker prerequisites.
+Initialize the pinned PyPI toolchain with:
 
 ```bash
-tectonic_environment="$(uv run --locked --managed-python --only-group tooling research-repo-tools tectonic discover --format shell)"
-eval "$tectonic_environment"
 uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 

@@ -37,6 +37,7 @@ _feature_unit_filter := '''test(core::util::measurement::)
   | test(decoded_checkpoint_manifest_inspection_is_zero_allocation)'''
 
 import 'just/helpers.just'
+import 'papers/recipes.just'
 
 # List every public command and its arguments directly from Just.
 [default]
@@ -299,12 +300,14 @@ json-check: _ensure-jq
 justfile-fmt:
     just --fmt
     just --fmt --justfile just/helpers.just
+    just --fmt --justfile papers/recipes.just
 
 # Check root and helper justfile formatting without modifying them.
 [group('validation')]
 justfile-fmt-check:
     just --fmt --check
     just --fmt --check --justfile just/helpers.just
+    just --fmt --check --justfile papers/recipes.just
 
 # Check Markdown formatting and raw line length.
 [group('validation')]
@@ -318,57 +321,62 @@ markdown-fix: _ensure-rumdl
     {{ managed }} research-repo-tools files run --include '*.md' --exclude CHANGELOG.md --exclude 'docs/archive/**' --exclude 'docs/archives/changelog/**' -- rumdl check --fix
 
 # Launch configured JupyterLab with private session caches.
-[group('notebooks and papers')]
+[group('notebooks')]
 [positional-arguments]
 notebook *args: _ensure-uv
     uv run --locked --group dev --group notebooks research-repo-tools notebooks launch "$@"
 
 # Review selected notebooks with the declared shared advisory policy.
-[group('notebooks and papers')]
+[group('notebooks')]
 [positional-arguments]
 notebook-advise +files: _ensure-uv
     uv run --locked --group dev --group notebooks research-repo-tools notebooks advise "$@"
 
 # Run routine non-executing notebook validation.
-[group('notebooks and papers')]
+[group('notebooks')]
 notebook-check: _ensure-uv
     uv run --locked --group dev --group notebooks research-repo-tools files run --include 'notebooks/*.ipynb' --exclude '**/.ipynb_checkpoints/**' -- uv run --locked --group dev --group notebooks research-repo-tools notebooks lint
     uv run --locked --group dev --group notebooks research-repo-tools files run --include 'notebooks/*.ipynb' --exclude '**/.ipynb_checkpoints/**' -- uv run --locked --group dev --group notebooks research-repo-tools notebooks advise
 
 # Clear outputs from one source notebook in place.
-[group('notebooks and papers')]
+[group('notebooks')]
 notebook-clear-outputs notebook="notebooks/00_quickstart.ipynb": _ensure-uv
     uv run --locked --group dev --group notebooks research-repo-tools notebooks clear {{ quote(notebook) }}
 
 # Clear outputs from every source notebook in place.
-[group('notebooks and papers')]
+[group('notebooks')]
 notebook-clear-outputs-all: _ensure-uv
     uv run --locked --group dev --group notebooks research-repo-tools files run --include 'notebooks/*.ipynb' --exclude '**/.ipynb_checkpoints/**' -- uv run --locked --group dev --group notebooks research-repo-tools notebooks clear
 
+# Build the CLI used by notebooks before nbconvert starts its execution timer.
+[group('notebooks')]
+notebook-cli:
+    {{ managed }} cargo build --locked --profile perf --features cli --bin delaunay
+
 # Execute one notebook into target/notebooks without modifying its source.
-[group('notebooks and papers')]
+[group('notebooks')]
 notebook-execute notebook="notebooks/00_quickstart.ipynb" output_dir="target/notebooks" timeout="600": _ensure-uv
     uv run --locked --group dev --group notebooks research-repo-tools notebooks execute {{ quote(notebook) }} --output-dir {{ quote(output_dir) }} --timeout {{ quote(timeout) }}
 
 # Inspect notebook cells and structural repair needs without execution.
-[group('notebooks and papers')]
+[group('notebooks')]
 [positional-arguments]
 notebook-inspect +files: _ensure-uv
     {{ rrt }} notebooks inspect "$@"
 
 # Check notebook structure and output hygiene without code linting.
-[group('notebooks and papers')]
+[group('notebooks')]
 notebook-output-check: _ensure-uv
     uv run --locked --group dev --group notebooks research-repo-tools files run --include 'notebooks/*.ipynb' --exclude '**/.ipynb_checkpoints/**' -- uv run --locked --group dev --group notebooks research-repo-tools notebooks check
 
 # Preview notebook restoration and cleanup; pass --apply to perform it.
-[group('notebooks and papers')]
+[group('notebooks')]
 [positional-arguments]
 notebook-reset *args: _ensure-uv
     {{ rrt }} notebooks reset "$@"
 
 # Restore tracked source notebooks and remove generated notebook artifacts.
-[group('notebooks and papers')]
+[group('notebooks')]
 notebook-reset-from-git source="index":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -380,7 +388,7 @@ notebook-reset-from-git source="index":
     fi
 
 # Install the optional notebook dependency group.
-[group('notebooks and papers')]
+[group('notebooks')]
 notebook-setup: _ensure-uv
     uv run --locked --group dev --group notebooks research-repo-tools notebooks sync
 
@@ -395,118 +403,6 @@ pachner-stress-3d attempts="100" vertices="9000" validate_every="10" output_dir=
 # Run one 4D direct Pachner stress workload with topology-scope reports enabled.
 [group('benchmarks and performance')]
 pachner-stress-4d attempts="100" vertices="1000" validate_every="10" output_dir="target/pachner_stress/4d" mode="round-trip": (_pachner-stress-dim "4d" vertices attempts validate_every output_dir mode)
-
-# Check that one target-built paper is structurally equivalent to its tracked reviewer PDF.
-[group('notebooks and papers')]
-paper-artifact-check paper="validation": (paper-check paper)
-    #!/usr/bin/env bash
-    set -euo pipefail
-    paper={{ quote(paper) }}
-    case "$paper" in
-        ""|*[!A-Za-z0-9_-]*)
-            echo "❌ Invalid paper name: $paper"
-            echo "   Use only ASCII letters, digits, underscores, and hyphens."
-            exit 1
-            ;;
-    esac
-    {{ rrt }} papers check --paper "$paper" \
-        --reference "papers/${paper}.pdf"
-
-# Compile one paper with Tectonic under target/papers/.
-[group('notebooks and papers')]
-paper-build paper="validation": _ensure-tectonic _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    paper={{ quote(paper) }}
-    case "$paper" in
-        ""|*[!A-Za-z0-9_-]*)
-            echo "❌ Invalid paper name: $paper"
-            echo "   Use only ASCII letters, digits, underscores, and hyphens."
-            exit 1
-            ;;
-    esac
-    paper_source="papers/${paper}.tex"
-    build_dir="target/papers/${paper}"
-    if [ ! -f "$paper_source" ]; then
-        echo "❌ Paper source not found: $paper_source"
-        exit 1
-    fi
-    rm -rf "$build_dir"
-    mkdir -p "$build_dir"
-    source_date_epoch="$({{ rrt }} papers source-date --paper "$paper")"
-    export SOURCE_DATE_EPOCH="$source_date_epoch"
-    {{ managed }} tectonic --keep-intermediates --keep-logs --outdir "$build_dir" "$paper_source"
-    {{ rrt }} papers normalize --paper "$paper"
-    echo "📄 Paper PDF built: $build_dir/${paper}.pdf"
-
-# Compile and check one paper without refreshing tracked artifacts.
-[group('notebooks and papers')]
-paper-check paper="validation": paper-tex-fmt-check paper-tex-lint (paper-build paper) && (paper-pdf-check paper)
-
-# Remove generated paper build artifacts under target/papers.
-[group('notebooks and papers')]
-paper-clean:
-    rm -rf target/papers
-
-# Build the CLI used by paper notebooks before nbconvert starts its execution timer.
-[group('notebooks and papers')]
-paper-cli:
-    {{ managed }} cargo build --locked --profile perf --features cli --bin delaunay
-
-# Check the target-built PDF for basic readability.
-[group('notebooks and papers')]
-paper-pdf-check paper="validation": _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    paper={{ quote(paper) }}
-    case "$paper" in
-        ""|*[!A-Za-z0-9_-]*)
-            echo "❌ Invalid paper name: $paper"
-            echo "   Use only ASCII letters, digits, underscores, and hyphens."
-            exit 1
-            ;;
-    esac
-    {{ rrt }} papers check --paper "$paper"
-
-# Refresh one tracked reviewer PDF after its non-mutating checks pass.
-[group('notebooks and papers')]
-paper-refresh paper="validation": (paper-check paper)
-    #!/usr/bin/env bash
-    set -euo pipefail
-    paper={{ quote(paper) }}
-    case "$paper" in
-        ""|*[!A-Za-z0-9_-]*)
-            echo "❌ Invalid paper name: $paper"
-            echo "   Use only ASCII letters, digits, underscores, and hyphens."
-            exit 1
-            ;;
-    esac
-    reviewer_pdf="papers/${paper}.pdf"
-    {{ rrt }} papers normalize --paper "$paper" --output "$reviewer_pdf"
-    echo "📄 Reviewer PDF refreshed: $reviewer_pdf"
-
-# Format publication-facing TeX sources.
-[group('notebooks and papers')]
-paper-tex-fmt: _ensure-tex-fmt
-    {{ managed }} tex-fmt papers/*.tex
-
-# Check publication-facing TeX formatting without modifying files.
-[group('notebooks and papers')]
-paper-tex-fmt-check: _ensure-tex-fmt
-    {{ managed }} tex-fmt --check papers/*.tex
-
-# Lint publication-facing TeX sources with ChkTeX.
-[group('notebooks and papers')]
-paper-tex-lint: _ensure-chktex
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # 24 conflicts with tex-fmt's indented figure labels.
-    chktex -q -n 1 -n 8 -n 24 -n 46 papers/*.tex
-
-# Refresh notebook-owned paper figures, lint TeX, compile, and sanity-check PDFs.
-[group('notebooks and papers')]
-papers: validation-doc-figures (paper-refresh "validation")
-    @echo "📚 Paper workflow complete!"
 
 # Quick pre-push 2D-5D large-scale wall-clock smoke guard.
 [group('benchmarks and performance')]
@@ -892,10 +788,6 @@ setup: setup-tools build
 [doc('Install and verify repository development tools.')]
 [group('build and setup')]
 setup-tools:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tectonic_environment="$(uv run --locked --managed-python --only-group tooling research-repo-tools tectonic discover --format shell)"
-    eval "$tectonic_environment"
     uv run --locked --managed-python --only-group tooling research-repo-tools setup
 
 # Run ShellCheck and verify shfmt formatting.
@@ -924,8 +816,8 @@ spell-check: _ensure-typos
     {{ managed }} research-repo-tools files run --exclude typos.toml -- typos --config typos.toml --force-exclude --exclude typos.toml --
 
 # Deliberately refresh the slow notebook-backed spherical README hero.
-[group('notebooks and papers')]
-spherical-readme-hero: _ensure-uv paper-cli
+[group('notebooks')]
+spherical-readme-hero: _ensure-uv notebook-cli
     #!/usr/bin/env bash
     set -euo pipefail
     DELAUNAY_SPHERICAL_HERO_FIGURE="docs/assets/readme/delaunay_spherical_readme.png" just notebook-execute notebooks/02_spherical_hero.ipynb target/docs/notebooks 1800
@@ -939,12 +831,6 @@ tag version: release-version-check
 [group('release')]
 tag-force version: release-version-check
     {{ rrt }} changelog tag {{ quote(version) }} --force
-
-# Discover or export existing native Tectonic dependencies without installation.
-[group('build and setup')]
-[positional-arguments]
-tectonic +args: _ensure-uv
-    {{ rrt }} tectonic "$@"
 
 # Export a shared configuration or workflow template.
 [group('build and setup')]
@@ -1160,16 +1046,16 @@ validate configuration *names: _ensure-uv
     {{ managed }} research-repo-tools validation run "$@"
 
 # Refresh reviewer-facing validation diagrams from the reproducible notebook.
-[group('notebooks and papers')]
-validation-doc-figures: _ensure-uv paper-cli
+[group('notebooks')]
+validation-doc-figures: _ensure-uv notebook-cli
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p docs/assets/validation
     DELAUNAY_BINARY="{{ perf_delaunay_binary }}" DELAUNAY_VALIDATION_DOC_FIGURE_DIR="docs/assets/validation" just notebook-execute notebooks/01_validation.ipynb target/docs/notebooks
 
 # Regenerate validation diagrams under target/ and compare them with tracked artifacts.
-[group('notebooks and papers')]
-validation-doc-figures-check: _ensure-uv paper-cli
+[group('notebooks')]
+validation-doc-figures-check: _ensure-uv notebook-cli
     #!/usr/bin/env bash
     set -euo pipefail
     check_root="target/docs/validation-figure-check"

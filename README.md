@@ -1,34 +1,45 @@
 # delaunay
 
+<!-- Keep the three compact badge rows; allow their explicit line breaks. -->
+<!-- markdownlint-disable MD033 -->
 [![DOI](https://badgen.net/badge/DOI/10.5281%2Fzenodo.16931097/blue)](https://doi.org/10.5281/zenodo.16931097)
 [![Crates.io](https://badgen.net/crates/v/delaunay)](https://crates.io/crates/delaunay)
 [![Downloads](https://badgen.net/crates/d/delaunay)](https://crates.io/crates/delaunay)
 [![License](https://badgen.net/github/license/acgetchell/delaunay)](https://github.com/acgetchell/delaunay/blob/main/LICENSE)
-[![Docs.rs](https://docs.rs/delaunay/badge.svg)](https://docs.rs/delaunay)
+[![Docs.rs](https://docs.rs/delaunay/badge.svg)](https://docs.rs/delaunay)<br>
 [![CI][ci-badge]][ci-workflow]
-[![CodeQL][codeql-badge]][codeql-workflow]
-[![rust-clippy analyze][clippy-badge]][clippy-workflow]
+[![Clippy][clippy-badge]][clippy-workflow]
 [![codecov](https://codecov.io/gh/acgetchell/delaunay/graph/badge.svg?token=WT7qZGT9bO)](https://codecov.io/gh/acgetchell/delaunay)
+[![Codacy Code Quality][codacy-badge]][codacy-dashboard]<br>
+[![CodeQL][codeql-badge]][codeql-workflow]
 [![Audit dependencies][audit-badge]][audit-workflow]
-[![Codacy Badge][codacy-badge]][codacy-dashboard]
+[![OSV-Scanner][osv-badge]][osv-workflow]
+[![Gitleaks][gitleaks-badge]][gitleaks-workflow]
+[![zizmor][zizmor-badge]][zizmor-workflow]
+<!-- markdownlint-enable MD033 -->
 
 D-dimensional [Delaunay triangulations] and [convex hulls][Convex hulls] in [Rust], with exact predicates,
 deterministic degeneracy handling, explicit topology validation, and bistellar flips for finite point sets.
+
+Security checks include source analysis, Rust and Python dependency audits, secret scanning, and GitHub Actions security analysis.
+See [SECURITY.md][security-policy] for supported versions and private vulnerability reporting.
 
 ![S² Delaunay triangulation with 160 points][readme-hero]
 
 ## Contents
 
 - [Introduction](#-introduction)
-- [Features](#-features)
+- [Use this crate for](#use-this-crate-for)
 - [API at a glance](#api-at-a-glance)
 - [Quickstart](#-quickstart)
+- [Features](#-features)
 - [Scientific Basis](#-scientific-basis)
 - [Validation Model](#-validation-model)
 - [Documentation Map](#readme-documentation-map)
 - [Ecosystem](#-ecosystem)
 - [Benchmarking](#-benchmarking)
 - [Limitations and Roadmap](#readme-limitations-and-roadmap)
+- [Project History](#-project-history)
 - [Contributing](#-contributing)
 - [Citation](#-citation)
 - [References](#-references)
@@ -52,12 +63,17 @@ directly in vertices and simplices with external [secondary maps][Secondary maps
 vertex- and simplex-keyed algorithm use, and the entire data structure is
 serializable/deserializable. Written in safe Rust with no unsafe code.
 
-Use this crate when you want:
+<!-- Keep this compatibility anchor stable. -->
+<!-- markdownlint-disable-next-line MD033 -->
+<a id="use-this-crate-when"></a>
+
+## Use this crate for
 
 - Delaunay triangulations or convex hulls in 2D through 5D.
 - Exact predicates and deterministic SoS handling for degenerate inputs.
 - PL-manifold checks and explicit topology guarantees.
 - PL-manifold-aware editing via bistellar flips and bounded Delaunay repair.
+- General triangulations with validated geometry and topology independent of the Delaunay property.
 - Typed construction, insertion, validation, topology, and repair diagnostics.
 - Valid-realization checks for Euclidean, toroidal, and spherical models independent of Delaunay predicates.
 - Validation reports that separate element, combinatorial, intrinsic topology, realization, and
@@ -67,46 +83,13 @@ This is not a replacement for full meshing packages such as [CGAL], TetGen, or G
 constrained Delaunay triangulations, direct Voronoi extraction, out-of-core meshing, GPU/parallel
 meshing, or production-scale dynamic remeshing.
 
-## ✨ Features
-
-- [x] Batch construction controls for insertion order, deduplication, repair cadence, and deterministic
-  retries.
-- [x] Complete set of bistellar flip / [Pachner moves] through D=5 via the Edit API, plus bounded
-  Delaunay repair.
-- [x] Configurable predicate kernels: `AdaptiveKernel` by default for deterministic SoS tie-breaking,
-  `RobustKernel` for exact diagnostics and higher-dimensional fallbacks, and `FastKernel` for a lean
-  filtered-exact path that preserves degeneracy signals through D ≤ 6.
-- [x] D-dimensional [Convex hulls] and [Delaunay triangulations].
-- [x] Euclidean construction and periodic `T^2`/`T^3` image-point quotients through
-  `DelaunayTriangulationBuilder`.
-- [x] Exact predicates, stack-allocated linear algebra through [la-stack], and deterministic SoS
-  degeneracy handling.
-- [x] Focused public preludes for common construction, query, geometry, repair, topology, and diagnostic
-  workflows.
-- [x] Geometry measures and simplex quality metrics such as simplex volume, inradius, radius ratio, and
-  normalized volume, plus Jaccard set-similarity diagnostics.
-- [x] Incremental insertion, insertion statistics, and transactional `delete_vertex` rollback on failed
-  repair/canonicalization.
-- [x] JSON-exportable simplicial-complex primitives with stable vertex/simplex UUIDs for notebooks and
-  downstream analysis tools.
-- [x] [Jupyter] notebook interface for quickstart visualization, generated JSON artifacts, and README
-  hero image reproduction.
-- [x] Optional Cargo feature gates for allocation counting, diagnostics, benchmark logging, and slow
-  correctness tests.
-- [x] PL-manifold validation by default, with pseudomanifold checks available as an explicit opt-out.
-- [x] Prototype spherical `S^2`/`S^3` construction through `SphericalDelaunayBuilder`, with
-  Level 3 Intrinsic PL Topology, spherical Level 4 realization checks, and spherical Level 5
-  empty-cap predicate checks.
-- [x] Safe Rust: `#![forbid(unsafe_code)]`.
-- [x] Serialization/deserialization through [JSON].
-- [x] Topology-aware simplex barycenters for local-editing workflows, including periodic image-point
-  lifting and canonicalization.
-- [x] Vertex/simplex payloads plus secondary maps for caller-owned algorithm state.
-
-See [CHANGELOG.md][changelog] for release history and [`docs/roadmap.md`][roadmap] for
-current direction, near-term candidates, and non-goals.
-
 ## API at a glance
+
+The public API separates three owners: `Tds` validates elements and connectivity
+through Levels 1–2, `Triangulation` adds topology and realization through Levels 3–4,
+and `DelaunayTriangulation` adds the Level 5 Delaunay contract. Use `Triangulation`
+for general geometric editing and `DelaunayTriangulation` when operations must
+preserve the Delaunay property.
 
 Use these public entry points with the linked recipes and runnable examples.
 The full [import selector][import-selector] stays in the API documentation.
@@ -114,23 +97,26 @@ Here, `dt` is a `DelaunayTriangulation` and `tri` is a `Triangulation`.
 
 | Capability | Public entry points | Learn by doing |
 |---|---|---|
-| Construction and configuration | `DelaunayTriangulationBuilder`, `ConstructionOptions` | [Recipe][construction-recipe] |
+| Construction and configuration | `DelaunayTriangulationBuilder`, `TriangulationBuilder` | [Recipe][construction-recipe] |
 | Insertion and vertex deletion | `dt.insert_with_statistics()`, `dt.delete_vertex()` | [Lifecycle example][lifecycle-example] |
+| Payloads, checkpoints, JSON, export | `Vertex`, `Simplex`, `prelude::checkpoint` | [JSON][data-example]; [export][mesh-export-guide] |
 | Queries, quality, and hulls | `dt.locate()`, `radius_ratio()`, `ConvexHull` | [Example][hull-example] |
-| Validation and diagnostics | `dt.validate()`, `dt.validation_report()`, `tri.realization_report()` | [Guide][Construction and Validation Guide] |
 | Repair and Pachner editing | `DelaunayRefinementBuilder`, `PachnerMoves` | [Repair][repair-example]; [editing][pachner-example] |
 | Toroidal/spherical construction | `.try_toroidal()`, `SphericalDelaunayBuilder` | [Torus][toroidal-example]; [sphere][spherical-example] |
-| Payloads, checkpoints, JSON, export | `Vertex`, `Simplex`, `prelude::checkpoint` | [JSON][data-example]; [export][mesh-export-guide] |
+| Validation and diagnostics | `dt.validate()`, `dt.validation_report()`, `tri.realization_report()` | [Guide][Construction and Validation Guide] |
 
 Toroidal construction covers `T^2` and compact `T^3`; spherical construction is a
 bounded `S^2`/`S^3` prototype. These library workflows use default features. The
 [diagnostics example][diagnostics-example] requires `diagnostics`; the notebook/binary
 workflow below requires `cli`. [Checkpoint contracts][checkpoint-guide] describe
 versioned persistence; `dt.to_visualization_data()` creates a detached export.
-Pachner moves preserve
-their promised topology/realization scope; use repair and Level 5 validation when
-you need the Delaunay property. See [scope and limitations][limitations-guide]
-before choosing a dimension or geometric model.
+
+Use `build_triangulation()` when construction should stop at Levels 1–4, or
+`build()` for a Delaunay result. For Pachner editing, consume a Delaunay owner
+with `into_triangulation()`, edit the `Triangulation`, and use
+`DelaunayRefinementBuilder` to certify or repair Level 5 afterward. Point location
+and general vertex editing have geometry-specific restrictions; see
+[scope and limitations][limitations-guide] before choosing a model or operation.
 
 ## 🚀 Quickstart
 
@@ -146,10 +132,8 @@ Choose the path that matches your use case:
 Add the crate to your project:
 
 ```bash
-cargo add delaunay@0.8.2
+cargo add delaunay
 ```
-
-Use `cargo add delaunay` instead if you want Cargo to select the newest published release.
 
 - Rust 1.99.1 or newer. The minimum supported version is declared in
   `Cargo.toml`, while `rust-toolchain.toml` pins the exact repository toolchain.
@@ -232,6 +216,47 @@ succeed, preserving an existing file on failure. Destination symlinks and
 non-regular files are rejected; symlinked parent directories are supported. JSON
 written to stdout and progress CSV output continue to stream directly.
 
+## ✨ Features
+
+- [x] Batch construction controls for insertion order, deduplication, repair cadence, and deterministic
+  retries.
+- [x] Complete set of bistellar flip / [Pachner moves] through D=5 on `Triangulation`, plus bounded
+  Delaunay repair.
+- [x] Configurable predicate kernels: `AdaptiveKernel` by default for deterministic SoS tie-breaking,
+  `RobustKernel` for exact diagnostics and higher-dimensional fallbacks, and `FastKernel` for a lean
+  filtered-exact path that preserves degeneracy signals through D ≤ 6.
+- [x] D-dimensional [Convex hulls] and [Delaunay triangulations].
+- [x] Euclidean construction and periodic `T^2`/`T^3` image-point quotients through
+  `DelaunayTriangulationBuilder`.
+- [x] Exact predicates, stack-allocated linear algebra through [la-stack], and deterministic SoS
+  degeneracy handling.
+- [x] Focused public preludes for common construction, query, geometry, repair, topology, and diagnostic
+  workflows.
+- [x] General `Triangulation` construction, queries, Euclidean vertex editing, and persistence through
+  Levels 1–4, with explicit refinement to a `DelaunayTriangulation` when Level 5 is required.
+- [x] Geometry measures and simplex quality metrics such as simplex volume, inradius, radius ratio, and
+  normalized volume, plus Jaccard set-similarity diagnostics.
+- [x] Incremental insertion, insertion statistics, and transactional `delete_vertex` rollback on failed
+  repair/canonicalization.
+- [x] JSON-exportable simplicial-complex primitives with stable vertex/simplex UUIDs for notebooks and
+  downstream analysis tools.
+- [x] [Jupyter] notebook interface for quickstart visualization, generated JSON artifacts, and README
+  hero image reproduction.
+- [x] Optional Cargo feature gates for allocation counting, diagnostics, benchmark logging, and slow
+  correctness tests.
+- [x] PL-manifold validation by default, with pseudomanifold checks available as an explicit opt-out.
+- [x] Prototype spherical `S^2`/`S^3` construction through `SphericalDelaunayBuilder`, with
+  Level 3 Intrinsic PL Topology, spherical Level 4 realization checks, and spherical Level 5
+  empty-cap predicate checks.
+- [x] Safe Rust: `#![forbid(unsafe_code)]`.
+- [x] Serialization/deserialization through [JSON].
+- [x] Topology-aware simplex barycenters for local-editing workflows, including periodic image-point
+  lifting and canonicalization.
+- [x] Vertex/simplex payloads plus secondary maps for caller-owned algorithm state.
+
+See [CHANGELOG.md][changelog] for release history and [`docs/roadmap.md`][roadmap] for
+current direction, near-term candidates, and non-goals.
+
 ## 🧪 Scientific Basis
 
 The crate separates the abstract simplicial complex, its coordinate realization,
@@ -299,22 +324,25 @@ exposition, see [`papers/validation.tex`][validation-paper-source] and the compi
 - [Performance Report][performance-report] - Legacy release-to-release benchmark evidence without a retained artifact bundle.
 - [Property Testing Summary][property-testing-guide] - Property-test layout and coverage summary.
 - [Releasing][releasing-guide] - Changelog, benchmark, and publish workflow.
-- [Roadmap][roadmap] - Current release sequence and deferred feature tracks.
+- [Roadmap][roadmap] - Current release preparation, ongoing work, and future candidates.
 - [Scientific Basis][scientific-basis-guide] - API selection, scientific scope, assumptions, methods, and supporting sources.
 - [Topology][topology-guide] - Level 3 Intrinsic PL Topology validation, orientability, and global topology models.
 - [Workflows][workflows-guide] - Practical recipes for construction, repair, toroidal domains, payloads, and flips.
 
+Within this crate, `src/core/tds/` owns the checked TDS, `src/triangulation/` owns general
+triangulations and topology editing, and `src/delaunay/` owns Delaunay construction, refinement,
+and maintenance. `src/geometry/` supplies predicates and geometric helpers; `src/topology/`
+supplies topology models and checks. See [Code Organization][code-organization-guide] for the ownership map.
+
 ## 🧩 Ecosystem
 
-`delaunay` sits in a small Rust research stack:
+`delaunay` is part of a Rust research ecosystem with public libraries and shared development tooling:
 
-- [`la-stack`](https://crates.io/crates/la-stack) - stack-allocated linear algebra, exact rational determinants, and exact linear solves.
 - [`causal-triangulations`](https://crates.io/crates/causal-triangulations) - downstream CDT research crate built on
   Delaunay-backed geometry primitives.
-
-Within this crate, `src/core/` owns the topology data structures, `src/geometry/` owns predicates and
-geometric helpers, `src/delaunay/` owns user-facing construction/query/repair APIs, and `src/topology/`
-owns topology spaces and validation.
+- [`la-stack`](https://crates.io/crates/la-stack) - stack-allocated linear algebra, exact rational determinants, and exact linear solves.
+- [`markov-chain-monte-carlo`](https://crates.io/crates/markov-chain-monte-carlo) - composable Metropolis-Hastings sampling and proposal interfaces.
+- [`research-repo-tools`](https://github.com/acgetchell/research-repo-tools) - shared Python tooling for development, validation, and releases.
 
 ## 📈 Benchmarking
 
@@ -356,23 +384,38 @@ No retained release-comparison bundle has been published to the README yet.
 
 ## 🛣️ Limitations and Roadmap
 
-Current routine construction coverage targets 2D through 5D. Exact orientation, relative in-sphere,
-and complete symbolic tie-breaking are available through D=6. The in-sphere fast path bounds the
-determinant with outward-rounded intervals; its cold path forms the relative matrix exactly from the
-original binary64 coordinates before asking `la-stack`'s `RationalMatrix` for the sign. For D≥7,
-`robust_insphere` and `RobustKernel::in_sphere` use a floating-point circumcenter/radius
-fallback without exact-sign protection near degeneracy; `AdaptiveKernel` reports the unsupported
-dimension. Built-in point-driven constructors require `ExactPredicates` and are supported through D=6.
+| Model | Current construction scope | Important limits |
+|---|---|---|
+| Euclidean | Broad 2D–5D coverage; built-in point-driven construction through D=6. | 6D coverage is more limited; cost rises with dimension. |
+| Toroidal | Periodic image-point quotients on `T^2` and compact `T^3`. | `T^4`/`T^5` construction fails fast. |
+| Spherical | Bounded `S^2`/`S^3` construction through a separate builder. | Points must enclose the origin; general mutable integration is future work. |
 
-`.try_toroidal([..])` builds a periodic quotient through the image-point method. It is validated on
-`T^2` and compact `T^3`, while `T^4`/`T^5` fail fast pending scalable quotient work.
+Caller-facing coordinates are finite `f64`. Built-in exact predicates and complete SoS tie-breaking
+support D ≤ 6; higher-dimensional robust fallbacks do not extend the `ExactPredicates` construction
+contract. See the [Numerical Robustness Guide][exact predicates] for filter and fallback details.
 
-Not implemented today: constrained Delaunay triangulations, Voronoi diagram extraction, built-in
-visualization, massively parallel/GPU construction, out-of-core meshing, full spherical integration
-beyond the bounded `S^2`/`S^3` prototype, and hyperbolic triangulation semantics.
+Point location currently requires Euclidean geometry. General `Triangulation` vertex insertion and
+deletion are also Euclidean; periodic edits use chart-bound Pachner proposals. The toroidal builder
+canonicalizes coordinates and applies deterministic perturbations of at most approximately `2^-32`
+of each domain period, preserving vertex UUIDs and payloads.
+
+Construction is single-threaded and in-memory. Constrained Delaunay triangulations, direct Voronoi
+extraction, concurrent topology mutation, GPU/out-of-core construction, full spherical integration,
+and hyperbolic triangulation semantics remain future work. Notebook visualization and JSON export
+are available; a native Rust plotting or viewer layer is not provided.
 
 See [`docs/limitations.md`][limitations-guide] for operational limits and [`docs/roadmap.md`][roadmap]
 for current follow-up work and later feature tracks.
+
+## 🚧 Project History
+
+This crate was originally maintained in
+[`oovm/shape-rs`](https://github.com/oovm/shape-rs) through
+[version `0.1.0`](https://docs.rs/delaunay/0.1.0/delaunay/).
+
+Starting with version `0.3.4`, maintenance transferred to
+[this repository](https://github.com/acgetchell/delaunay), which hosts a
+rewritten d-dimensional implementation focused on computational geometry research.
 
 ## 🤝 Contributing
 
@@ -427,16 +470,22 @@ This project is licensed under the [BSD 3-Clause License](https://github.com/acg
 ---
 
 [Rust]: https://rust-lang.org
-[audit-badge]: https://github.com/acgetchell/delaunay/actions/workflows/audit.yml/badge.svg
+[audit-badge]: https://github.com/acgetchell/delaunay/actions/workflows/audit.yml/badge.svg?branch=main
 [audit-workflow]: https://github.com/acgetchell/delaunay/actions/workflows/audit.yml
-[ci-badge]: https://github.com/acgetchell/delaunay/actions/workflows/ci.yml/badge.svg
+[ci-badge]: https://github.com/acgetchell/delaunay/actions/workflows/ci.yml/badge.svg?branch=main
 [ci-workflow]: https://github.com/acgetchell/delaunay/actions/workflows/ci.yml
-[clippy-badge]: https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml/badge.svg
+[clippy-badge]: https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml/badge.svg?branch=main
 [clippy-workflow]: https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml
 [codacy-badge]: https://app.codacy.com/project/badge/Grade/3cad94f994f5434d877ae77f0daee692
 [codacy-dashboard]: https://app.codacy.com/gh/acgetchell/delaunay/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade
-[codeql-badge]: https://github.com/acgetchell/delaunay/actions/workflows/codeql.yml/badge.svg
+[codeql-badge]: https://github.com/acgetchell/delaunay/actions/workflows/codeql.yml/badge.svg?branch=main
 [codeql-workflow]: https://github.com/acgetchell/delaunay/actions/workflows/codeql.yml
+[gitleaks-badge]: https://github.com/acgetchell/delaunay/actions/workflows/gitleaks.yml/badge.svg?branch=main
+[gitleaks-workflow]: https://github.com/acgetchell/delaunay/actions/workflows/gitleaks.yml
+[osv-badge]: https://github.com/acgetchell/delaunay/actions/workflows/osv.yml/badge.svg?branch=main
+[osv-workflow]: https://github.com/acgetchell/delaunay/actions/workflows/osv.yml
+[zizmor-badge]: https://github.com/acgetchell/delaunay/actions/workflows/zizmor.yml/badge.svg?branch=main
+[zizmor-workflow]: https://github.com/acgetchell/delaunay/actions/workflows/zizmor.yml
 [CGAL]: https://www.cgal.org/
 [Convex hulls]: https://en.wikipedia.org/wiki/Convex_hull
 [Delaunay triangulations]: https://en.wikipedia.org/wiki/Delaunay_triangulation
@@ -487,6 +536,7 @@ This project is licensed under the [BSD 3-Clause License](https://github.com/acg
 [repair-example]: https://github.com/acgetchell/delaunay/blob/main/examples/delaunayize_repair.rs
 [roadmap]: https://github.com/acgetchell/delaunay/blob/main/docs/roadmap.md
 [scientific-basis-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/scientific_basis.md
+[security-policy]: https://github.com/acgetchell/delaunay/blob/main/SECURITY.md
 [spherical-example]: https://github.com/acgetchell/delaunay/blob/main/examples/spherical_construction.rs
 [spherical-notebook]: https://github.com/acgetchell/delaunay/blob/main/notebooks/02_spherical_hero.ipynb
 [topology-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/topology.md

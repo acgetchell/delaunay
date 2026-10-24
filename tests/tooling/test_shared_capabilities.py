@@ -9,10 +9,8 @@ from unittest.mock import Mock
 
 import pytest
 import yaml
-from research_repo_tools.cli import main
 from research_repo_tools.config import load
 from research_repo_tools.notebook_testing import isolated_project
-from research_repo_tools.paper_dates import read_source_date
 from research_repo_tools.process import run_command
 from research_repo_tools.sarif import split
 
@@ -120,30 +118,6 @@ def test_profile_metadata_cli_reports_failure_and_cleans_temporary_configuration
         publisher.assert_called_once_with({output: b"new metadata\n"})
         assert repr(str(output)) in captured.err
         assert "publication denied" in captured.err
-
-
-def test_retained_validation_paper_satisfies_consumer_policy() -> None:
-    assert read_source_date(ROOT / "papers/validation.tex").raw
-    assert (
-        main(
-            [
-                "--root",
-                str(ROOT),
-                "papers",
-                "check",
-                "papers/validation.pdf",
-                "--require-text",
-                "Validation Architecture in delaunay",
-                "--require-text",
-                "REFERENCES",
-                "--forbid-text",
-                r"\today",
-                "--forbid-text",
-                "Manuscript submitted to ACM",
-            ]
-        )
-        == 0
-    )
 
 
 def test_codacy_policy_selects_only_repository_opengrep_rules(tmp_path: Path) -> None:

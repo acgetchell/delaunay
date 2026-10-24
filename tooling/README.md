@@ -7,11 +7,14 @@ Shared infrastructure is called directly through the package's CLI or public
 Python APIs.
 
 Optional shared operations are available through `just files`, `just templates`,
-`just tectonic`, `just validate`, and `just performance`, each taking the public
+`just validate`, and `just performance`, each taking the public
 CLI's arguments and explicit configuration. `just coverage-report` summarizes
 retained Cobertura data. Notebook inspection and reset previews, managed-store
 cleanup previews, binary-only repair, Python pin checks, and selected Actions
 update previews have focused recipes listed by bare `just`.
+
+Optional paper commands and configuration live under [`papers/`](../papers/README.md),
+with their tests under `tests/papers/`. They use the same root environment and lockfile.
 
 The retained Python ownership is explicit:
 

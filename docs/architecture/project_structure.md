@@ -73,6 +73,10 @@ delaunay/
 ├── papers/
 │   ├── ARTIFACT.md
 │   ├── README.md
+│   ├── ci-setup.sh
+│   ├── ci-warmup.sh
+│   ├── recipes.just
+│   ├── tooling.toml
 │   ├── validation.bib
 │   ├── validation.pdf
 │   └── validation.tex
@@ -97,6 +101,7 @@ delaunay/
 │   ├── triangulation/
 │   └── lib.rs
 ├── tests/
+│   ├── papers/
 │   ├── semgrep/
 │   ├── tooling/
 │   ├── proptest_*.rs
@@ -167,7 +172,8 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
 - `papers/` contains the reviewer artifact index, publication-facing
   TeX/BibTeX sources, and tracked reviewer PDFs. The artifact index is software
   release packaging rather than author-owned manuscript prose. Paper figures
-  reuse canonical assets under `docs/assets/`.
+  reuse canonical assets under `docs/assets/`. Optional paper recipes, tool pins,
+  PDF policies, and CI helpers live here; their Python tests live in `tests/papers/`.
 - `docs/` contains user documentation, contributor guidance, architecture
   references, archived design notes, and templates.
 - `docs/dev/` contains operational rules for agents and contributors, indexed
@@ -193,6 +199,8 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
   only repository-required components.
 - `pyproject.toml` owns Python dependencies, the exact shared tooling pin,
   uv/Cargo tool declarations, and consumer validation/release configuration.
+  The optional `papers` group shares the root environment and lockfile;
+  `papers/tooling.toml` declares only the opt-in TeX tools and PDF policies.
   The pinned PyPI package owns common maintenance implementations and regression
   tests; local recipes retain the consumer command surface.
 - `justfile` is the command entry point. Architecture docs should link to
