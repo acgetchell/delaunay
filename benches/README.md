@@ -389,7 +389,7 @@ operations abort on error so a failed path cannot silently publish a fast result
 | `pl_manifold_repair.rs` | Over-shared facet and targeted topology repair | 2D/3D synthetic repair fixtures | <1 min | PL-manifold repair tuning |
 | `profiling_suite.rs` | Large-scale construction, memory, query, validation profiling | 2D/3D 10k, 4D 3k, 5D 1k | ~2-3 hr | Manual/monthly |
 | `realization_validation.rs` | Level 4 narrow phase and whole validation | Realistic/near-degenerate 2D-5D | ~1-5 min | Level 4 tuning |
-| `delete_vertex.rs` | Vertex deletion and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex deletion |
+| `delete_vertex.rs` | Vertex deletion and rollback cost | 2D/3D seeded cases; 4D/5D inverse-k1; 2D-5D rollback | ~1-5 min | Vertex deletion |
 | `locate.rs` | Point-location facet-walk latency (no-hint vs exact-hint) | 2D-5D fixed cases | ~1-3 min | Locate/walk tuning |
 | `math_kernels.rs` | Geometry and topology kernels | 170 cases: geometry 2D-6D, others 2D-5D | Several minutes | Manual kernel investigations |
 | `tds_clone.rs` | Owner clone and topology-view cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback and incidence baselines |
@@ -405,6 +405,23 @@ This is an intentional incompatible replacement for the earlier unit-payload
 workload: unit-payload timings and saved Criterion baselines must not be compared
 with this identity. Delete or rename an old saved checkpoint baseline and create
 a fresh `u32-payloads-v1` baseline before drawing performance conclusions.
+
+### Vertex Deletion Scope
+
+The 2D/3D success cases pin their seed, fixture family, and input vertex index;
+setup fails if that exact deletion no longer succeeds. The 4D/5D success cases
+measure inverse-k1 removal of the interior point `[0.1; D]` from a subdivided
+canonical simplex: six vertices and five simplices in 4D, seven vertices and six
+simplices in 5D. They use the default public Delaunay builder and deletion policy,
+with preflight validation through Levels 1-5 and an exact vertex-star check.
+The IDs include `inverse_k1` and actual counts; these cases replace the earlier
+general 4D/5D success workloads and require fresh timing baselines.
+
+General fan deletion revokes the construction provenance required to certify
+larger high-dimensional PL vertex links, so arbitrary 4D/5D mesh deletion is
+outside this success benchmark's scope. The separate minimal-simplex rollback
+cases remain in 2D-5D. All fixture construction and preflight checks stay outside
+timing; the measured public deletion retains its own invariant checks.
 
 ## Selection Guide
 
@@ -725,15 +742,17 @@ workloads with the current toolchain before choosing a helper for performance.
 cargo bench --profile perf --bench cold_path_predicates -- --noplot
 ```
 
-`cold_path_predicates.rs` tracks the fast f64 filter path and the exact
-Bareiss fallback path used by `insphere`, `insphere_lifted`, and the orientation
-predicate they invoke. The hot group uses well-separated random queries. The
+`cold_path_predicates.rs` tracks the fast filter and exact fallback paths used
+by `insphere`, `insphere_lifted`, and their orientation predicates. Orientation
+uses a determinant error bound through D = 3 and an exact integer determinant
+otherwise. In-sphere uses query-relative interval filtering through D = 6 and
+an exact rational fallback. The hot group uses well-separated random queries. The
 historically named `near_boundary` group samples around the circumsphere center
 and remains only for saved-baseline compatibility; it does not establish exact
 fallback. The `exact_fallback` group validates known cospherical 2D-4D fixtures
 before timing them, making it the benchmark's correctness-certified Stage-2
-signal. The 5D hot group remains Stage-2-dominant because the fast determinant
-bound is unavailable at that matrix size.
+signal. The 5D hot group requires exact orientation, but its in-sphere interval
+filter can still succeed.
 
 ## Profiling Suite
 

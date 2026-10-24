@@ -49,6 +49,7 @@ fn bench_overshared_facets_orphan_cleanup(c: &mut Criterion) {
                     |mut tds| {
                         let stats = repair_overshared_facet_orphan_cleanup_3d(&mut tds).or_abort();
                         let _ = black_box(stats);
+                        black_box(tds)
                     },
                     BatchSize::SmallInput,
                 );
@@ -104,6 +105,7 @@ fn bench_targeted_fixture<const D: usize>(
                 |mut tds| {
                     let stats = repair_targeted_pl_manifold_topology(&mut tds).or_abort();
                     let _ = black_box(stats);
+                    black_box(tds)
                 },
                 BatchSize::SmallInput,
             );

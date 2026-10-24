@@ -340,7 +340,8 @@ def test_canonical_performance_recipes_share_the_cross_repository_contract() -> 
 
     command = dry_run(REPO_ROOT, "bench-compare", ("v0.7.8", "query", "all-benches"))
     rendered = command.stdout + command.stderr
-    assert 'bench-compare "v0.7.8" --suite "query" --scope "all-benches"' in rendered
+    bench_command = next(line for line in rendered.splitlines() if "benchmark-utils bench-compare " in line)
+    assert shlex.split(bench_command)[-6:] == ["bench-compare", "v0.7.8", "--suite", "query", "--scope", "all-benches"]
 
     for name in ("performance-github-assets", "performance-release"):
         parameters = recipes[name]["parameters"]
@@ -355,6 +356,24 @@ def test_canonical_performance_recipes_share_the_cross_repository_contract() -> 
 
     readme_command = dry_run(REPO_ROOT, "performance-readme")
     assert "uv run --locked publish-readme-performance" in readme_command.stdout + readme_command.stderr
+
+
+@pytest.mark.parametrize("argument", ["two words", "quote'and\"quote", "$(printf injected); #"])
+def test_bench_compare_preserves_literal_arguments(tmp_path: Path, argument: str) -> None:
+    """Comparison arguments remain single literal shell words, regardless of quote style."""
+    command = dry_run(REPO_ROOT, "bench-compare", (argument, argument, argument))
+    bench_command = next(line for line in (command.stdout + command.stderr).splitlines() if "benchmark-utils bench-compare " in line)
+    captured = tmp_path / "bench-args"
+    script = f"""
+uv() {{
+    printf '%s\\0' "$@" > {shlex.quote(captured.as_posix())}
+}}
+{bench_command}
+"""
+    result = run_safe_command("bash", ["-c", script], cwd=tmp_path, check=False, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+    assert captured.read_bytes().decode("utf-8").split("\0")[-7:] == ["bench-compare", argument, "--suite", argument, "--scope", argument, ""]
 
 
 def test_canonical_performance_recipes_shell_quote_tag_arguments() -> None:

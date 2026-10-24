@@ -931,8 +931,7 @@ pub fn roundtrip_k1<const D: usize>(
         })?;
 
     let new_key = dt
-        .vertices()
-        .find_map(|(vertex_key, vertex)| (vertex.uuid() == new_uuid).then_some(vertex_key))
+        .vertex_key_from_uuid(&new_uuid)
         .ok_or(FlipWorkflowError::MissingInsertedVertex { uuid: new_uuid })?;
     dt.flip_k1_remove(new_key)
         .map_err(|source| FlipWorkflowError::InverseFlipFailed {
@@ -1425,21 +1424,7 @@ fn find_live_edge<const D: usize>(
     a: VertexKey,
     b: VertexKey,
 ) -> Result<EdgeKey, EdgeKeyError> {
-    if a == b {
-        return Err(EdgeKeyError::DuplicateEndpoint { endpoint: a });
-    }
-    if !dt.contains_vertex_key(a) {
-        return Err(EdgeKeyError::MissingEndpoint { endpoint: a });
-    }
-    if !dt.contains_vertex_key(b) {
-        return Err(EdgeKeyError::MissingEndpoint { endpoint: b });
-    }
-    dt.edges()
-        .find(|edge| {
-            let (first, second) = edge.endpoints();
-            (first == a && second == b) || (first == b && second == a)
-        })
-        .ok_or(EdgeKeyError::EdgeNotFound { v0: a, v1: b })
+    dt.edge_key(a, b)
 }
 
 /// Resolves vertex keys to points.

@@ -803,6 +803,7 @@ mod tests {
     use super::super::support::vertex_point_with_optional_lift;
     use super::super::*;
     use super::*;
+    use crate::core::algorithms::insertion::repair_neighbor_pointers;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::vertex;
@@ -1069,7 +1070,7 @@ mod tests {
         let topology_model = toroidal_model::<2>();
         let interior_candidate = vertex!([0.25, 0.25]).unwrap();
 
-        let feasibility = validate_bistellar_flip_k1_insert(
+        let (feasibility, offset) = validate_bistellar_flip_k1_insert(
             &tds,
             &topology_model,
             simplex_key,
@@ -1077,6 +1078,7 @@ mod tests {
         )
         .expect("lifted replacement simplices should be non-degenerate");
         assert_eq!(feasibility.kind, BistellarFlipKind::from_validated(1, 2));
+        assert_eq!(offset, Some([0, 0]));
 
         let boundary_candidate = vertex!([0.5, 0.0]).unwrap();
         assert_eq!(
@@ -1115,7 +1117,7 @@ mod tests {
     }
 
     #[test]
-    fn k1_periodic_preflight_reports_candidate_lift_overflow() {
+    fn k1_periodic_preflight_excludes_overflowing_images_outside_finite_bounds() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let vertices = vec![
             tds.insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
@@ -1137,17 +1139,11 @@ mod tests {
 
         let error =
             validate_bistellar_flip_k1_insert(&tds, &topology_model, simplex_key, &candidate)
-                .expect_err("candidate lift should overflow its selected lattice sheet");
+                .expect_err("every finite image lies outside this simplex");
         assert_matches!(
             error,
-            FlipError::PredicateFailure { reason }
-                if matches!(
-                    reason.as_ref(),
-                    FlipPredicateError::K1InsertedVertexLift {
-                        simplex_key: rejected,
-                        source: GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value },
-                    } if *rejected == simplex_key && value.is_infinite()
-                )
+            FlipError::K1InsertionOutsideSimplex { simplex_key: rejected, .. }
+                if rejected == simplex_key
         );
     }
 
@@ -1172,6 +1168,169 @@ mod tests {
                 .expect_err("degenerate lifted source should fail preflight"),
             FlipError::DegenerateSimplex
         );
+    }
+
+    fn check_k1_periodic_wrapping_and_slot_order<const D: usize>() {
+        // Lifted simplex: a=(-1/4,...,-1/4), a+(1/2)e_i.
+        // The candidate (-3/16,...,-3/16) has exact barycentric coordinates
+        // 1/8 at each axis vertex and 1-D/8 at a, all positive for D=2..5.
+        // Its canonical representative is (13/16,...,13/16).
+        for rotation in 0..=D {
+            let mut tds: Tds<(), (), D> = Tds::empty();
+            let mut vertices = vec![
+                tds.insert_vertex_with_mapping(vertex!([0.75; D]).unwrap())
+                    .unwrap(),
+            ];
+            let mut offsets = vec![[-1; D]];
+            for axis in 0..D {
+                let mut coords = [0.75; D];
+                coords[axis] = 0.25;
+                vertices.push(
+                    tds.insert_vertex_with_mapping(vertex!(coords).unwrap())
+                        .unwrap(),
+                );
+                let mut offset = [-1; D];
+                offset[axis] = 0;
+                offsets.push(offset);
+            }
+            vertices.rotate_left(rotation);
+            offsets.rotate_left(rotation);
+            let simplex_key = tds
+                .insert_simplex_with_mapping(Simplex::try_new_periodic(vertices, offsets).unwrap())
+                .unwrap();
+            let model = toroidal_model::<D>();
+            let lifted = vertex!([-0.1875; D]).unwrap();
+            let (_, lifted_offset) =
+                validate_bistellar_flip_k1_insert(&tds, &model, simplex_key, &lifted).unwrap();
+            assert_eq!(lifted_offset, Some([0; D]));
+
+            let canonical = vertex!([0.8125; D]).unwrap();
+            let uuid = canonical.uuid();
+            let bits = canonical.point().coords().map(f64::to_bits);
+            let (_, chosen_offset) =
+                validate_bistellar_flip_k1_insert(&tds, &model, simplex_key, &canonical).unwrap();
+            assert_eq!(chosen_offset, Some([-1; D]));
+            let info = apply_bistellar_flip_k1_raw(&mut tds, simplex_key, canonical, chosen_offset)
+                .unwrap();
+            let inserted = tds.vertex_key_from_uuid(&uuid).unwrap();
+            assert_eq!(
+                tds.vertex(inserted)
+                    .unwrap()
+                    .point()
+                    .coords()
+                    .map(f64::to_bits),
+                bits
+            );
+            assert_eq!(tds.vertex(inserted).unwrap().uuid(), uuid);
+            for key in info.new_simplices {
+                let simplex = tds.simplex(key).unwrap();
+                let slot = simplex
+                    .vertices()
+                    .iter()
+                    .position(|&key| key == inserted)
+                    .unwrap();
+                assert_eq!(simplex.periodic_vertex_offsets().unwrap()[slot], [-1; D]);
+            }
+            tds.is_valid().unwrap();
+        }
+    }
+
+    #[test]
+    fn k1_periodic_wrapping_and_slot_order_2d_through_5d() {
+        check_k1_periodic_wrapping_and_slot_order::<2>();
+        check_k1_periodic_wrapping_and_slot_order::<3>();
+        check_k1_periodic_wrapping_and_slot_order::<4>();
+        check_k1_periodic_wrapping_and_slot_order::<5>();
+    }
+
+    fn k1_periodic_scaled_simplex<const D: usize>(scale: f64) -> (Tds<(), (), D>, SimplexKey) {
+        let mut tds = Tds::empty();
+        let mut vertices = vec![
+            tds.insert_vertex_with_mapping(vertex!([0.0; D]).unwrap())
+                .unwrap(),
+        ];
+        for axis in 0..D {
+            let mut coords = [0.0; D];
+            coords[axis] = scale;
+            vertices.push(
+                tds.insert_vertex_with_mapping(vertex!(coords).unwrap())
+                    .unwrap(),
+            );
+        }
+        let key = tds
+            .insert_simplex_with_mapping(
+                Simplex::try_new_periodic(vertices, vec![[0; D]; D + 1]).unwrap(),
+            )
+            .unwrap();
+        repair_neighbor_pointers(&mut tds).unwrap();
+        (tds, key)
+    }
+
+    #[test]
+    fn k1_periodic_raw_requires_selected_image_and_rolls_back() {
+        let (mut tds, simplex_key) = k1_periodic_scaled_simplex::<2>(1.0);
+        tds.is_valid().unwrap();
+        let before = serde_json::to_value(&tds).unwrap();
+        let candidate = vertex!([0.25; 2]).unwrap();
+        let uuid = candidate.uuid();
+        {
+            let mut transaction = crate::core::tds::TdsRollbackTransaction::begin(&mut tds);
+            let error =
+                apply_bistellar_flip_k1_raw(transaction.tds_mut(), simplex_key, candidate, None)
+                    .unwrap_err();
+            assert_matches!(error, FlipError::InvalidFlipContext { reason } if matches!(*reason, FlipContextError::MissingInsertedVertexPeriodicOffset { simplex_key: key, .. } if key == simplex_key));
+        }
+        assert_eq!(serde_json::to_value(&tds).unwrap(), before);
+        assert!(tds.vertex_key_from_uuid(&uuid).is_none());
+        tds.is_valid().unwrap();
+    }
+
+    #[test]
+    fn k1_periodic_preflight_rejects_ambiguous_images() {
+        let (tds, simplex_key) = k1_periodic_scaled_simplex::<2>(3.0);
+        let before = serde_json::to_value(&tds).unwrap();
+        // Both (1/4,1/4) and (5/4,1/4) are strictly inside x+y<3.
+        let error = validate_bistellar_flip_k1_insert(
+            &tds,
+            &toroidal_model(),
+            simplex_key,
+            &vertex!([0.25; 2]).unwrap(),
+        )
+        .unwrap_err();
+        assert_matches!(error, FlipError::PredicateFailure { reason } if matches!(*reason, FlipPredicateError::K1PeriodicImageAmbiguous { simplex_key: key } if key == simplex_key));
+        assert_eq!(serde_json::to_value(&tds).unwrap(), before);
+    }
+
+    #[test]
+    fn k1_periodic_preflight_rejects_unrepresentable_image_bounds() {
+        let (tds, simplex_key) = k1_periodic_scaled_simplex::<2>(1.0);
+        let before = serde_json::to_value(&tds).unwrap();
+        // The unique interior image is (1/4,1/4), requiring offset +129.
+        let error = validate_bistellar_flip_k1_insert(
+            &tds,
+            &toroidal_model(),
+            simplex_key,
+            &vertex!([-128.75, 0.25]).unwrap(),
+        )
+        .unwrap_err();
+        assert_matches!(error, FlipError::PredicateFailure { reason } if matches!(*reason, FlipPredicateError::K1PeriodicImageOffsetRange { simplex_key: key, axis: 0 } if key == simplex_key));
+        assert_eq!(serde_json::to_value(&tds).unwrap(), before);
+    }
+
+    #[test]
+    fn k1_periodic_preflight_bounds_cartesian_search() {
+        let (tds, simplex_key) = k1_periodic_scaled_simplex::<3>(17.0);
+        let before = serde_json::to_value(&tds).unwrap();
+        // 17 choices on each axis exceed the 4096-image predicate budget.
+        let error = validate_bistellar_flip_k1_insert(
+            &tds,
+            &toroidal_model(),
+            simplex_key,
+            &vertex!([0.25; 3]).unwrap(),
+        )
+        .unwrap_err();
+        assert_matches!(error, FlipError::PredicateFailure { reason } if matches!(*reason, FlipPredicateError::K1PeriodicImageSearchLimit { simplex_key: key, limit: 4096 } if key == simplex_key));
+        assert_eq!(serde_json::to_value(&tds).unwrap(), before);
     }
 
     fn insert_periodic_simplex_with_lifted_vertex<const D: usize>(

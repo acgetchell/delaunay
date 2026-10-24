@@ -8,6 +8,15 @@
 //! operation's own transactional snapshot and invariant validation, which is the
 //! behavior this benchmark is meant to track.
 //!
+//! The 2D/3D success cases retain fixed seeded workloads and explicit input
+//! targets. The 4D/5D success cases measure only inverse-k1 deletion of the
+//! interior vertex in a canonical simplex subdivision, using the default public
+//! builder, deletion policy, and validation through Levels 1-5. General fan
+//! deletion revokes the construction provenance needed to certify larger
+//! high-dimensional PL vertex links. The inverse-k1 IDs name this narrower
+//! workload and its actual size; they do not represent large-mesh deletion.
+//! Minimal-simplex rollback cases remain separate in every dimension.
+//!
 //! Intended for **manual** runs (not part of the CI performance suite).
 //!
 //! Run with:
@@ -18,6 +27,7 @@
 use std::{hint::black_box, time::Duration};
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::TopologyGuarantee;
 use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, ExactPredicates, Point};
@@ -32,7 +42,6 @@ use bench_utils::{OrAbort, OrAbortWithContext, abort_benchmark};
 
 const INTERIOR_RADIUS_MIN: f64 = 0.15;
 const INTERIOR_RADIUS_SPAN: f64 = 0.70;
-const NEAR_BOUNDARY_EPSILON: f64 = 1.0e-9;
 const NEAR_DEGENERATE_EPSILON: f64 = 1.0e-10;
 const COSPHERICAL_CENTER: f64 = 0.5;
 const COSPHERICAL_RADIUS: f64 = 0.25;
@@ -46,8 +55,6 @@ fn interior_bounds() -> CoordinateRange<f64> {
     CoordinateRange::try_new(0.0_f64, 1.0).or_abort()
 }
 const LARGE_COORDINATE_JITTER: f64 = 1.0e3;
-const SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
-const SEED_SEARCH_ATTEMPTS: usize = 64;
 const SAMPLE_SIZE: usize = 10;
 const WARM_UP_TIME: Duration = Duration::from_millis(500);
 const MEASUREMENT_TIME: Duration = Duration::from_secs(2);
@@ -57,7 +64,6 @@ type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f
 struct DeletionSource<const D: usize> {
     vertex_count: usize,
     simplex_count: usize,
-    fixture_kind: FixtureKind,
     triangulation: BenchTriangulation<D>,
     vertex_key: VertexKey,
 }
@@ -65,57 +71,28 @@ struct DeletionSource<const D: usize> {
 #[derive(Clone, Copy)]
 enum FixtureKind {
     Interior,
-    NearBoundary,
     Cospherical,
     NearDegenerate,
     LargeCoordinate,
 }
 
-const FIXTURE_KINDS: [FixtureKind; 5] = [
-    FixtureKind::Interior,
-    FixtureKind::NearBoundary,
-    FixtureKind::Cospherical,
-    FixtureKind::NearDegenerate,
-    FixtureKind::LargeCoordinate,
-];
+#[derive(Clone, Copy)]
+struct DeletionFixture {
+    requested_vertices: usize,
+    seed: u64,
+    fixture_kind: FixtureKind,
+    input_index: usize,
+}
 
 impl FixtureKind {
     const fn label(self) -> &'static str {
         match self {
             Self::Interior => "interior",
-            Self::NearBoundary => "near_boundary",
             Self::Cospherical => "cospherical",
             Self::NearDegenerate => "near_degenerate",
             Self::LargeCoordinate => "large_coordinate",
         }
     }
-
-    const fn index(self) -> usize {
-        match self {
-            Self::Interior => 0,
-            Self::NearBoundary => 1,
-            Self::Cospherical => 2,
-            Self::NearDegenerate => 3,
-            Self::LargeCoordinate => 4,
-        }
-    }
-}
-
-/// Derive a deterministic, dimension-specific seed for one benchmark case.
-fn seed_for_case<const D: usize>(requested_vertices: usize, seed_base: u64) -> u64 {
-    let vertices = u64::try_from(requested_vertices).or_abort();
-    let dimension = u64::try_from(D).or_abort();
-    seed_base ^ vertices.wrapping_mul(SEED_SALT) ^ dimension.rotate_left(32)
-}
-
-/// Pick the preferred geometric fixture for one benchmark case.
-fn preferred_fixture_kind<const D: usize>(case_index: usize) -> FixtureKind {
-    FIXTURE_KINDS[(D + case_index) % FIXTURE_KINDS.len()]
-}
-
-/// Cycle through all fixture kinds during seed search, starting with the preferred kind.
-const fn fixture_kind_for_attempt(preferred_kind: FixtureKind, attempt: usize) -> FixtureKind {
-    FIXTURE_KINDS[(preferred_kind.index() + attempt) % FIXTURE_KINDS.len()]
 }
 
 /// Convert a bounded benchmark index to `f64` without unchecked casts.
@@ -133,7 +110,6 @@ fn generate_vertices<const D: usize>(
     let mut points = simplex_points::<D>();
     let generated_points = match fixture_kind {
         FixtureKind::Interior => generate_interior_points(generated_count, seed),
-        FixtureKind::NearBoundary => generate_near_boundary_points(generated_count, seed),
         FixtureKind::Cospherical => generate_cospherical_points(generated_count, seed),
         FixtureKind::NearDegenerate => generate_near_degenerate_simplex(generated_count, seed),
         FixtureKind::LargeCoordinate => generate_large_coordinate_points(generated_count, seed),
@@ -162,26 +138,6 @@ fn generate_interior_points<const D: usize>(count: usize, seed: u64) -> Vec<Poin
     points
 }
 
-/// Generate points close to coordinate-boundary facets of the canonical simplex.
-fn generate_near_boundary_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
-    let raw_points =
-        generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed).or_abort();
-    let mut points = Vec::with_capacity(count);
-
-    for (index, raw_point) in raw_points.iter().enumerate() {
-        let mut coords = [0.0; D];
-        let direction = normalized_positive_direction(raw_point);
-        let near_boundary_axis = index % D;
-        for (coord, direction_coord) in coords.iter_mut().zip(direction) {
-            *coord = 0.98 * direction_coord;
-        }
-        coords[near_boundary_axis] = NEAR_BOUNDARY_EPSILON * usize_to_f64(index + 1);
-        points.push(finite_point(coords));
-    }
-
-    points
-}
-
 /// Generate points on a shared sphere to stress cospherical predicates.
 fn generate_cospherical_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
     let raw_points =
@@ -200,7 +156,11 @@ fn generate_cospherical_points<const D: usize>(count: usize, seed: u64) -> Vec<P
     points
 }
 
-/// Generate points close to a lower-dimensional diagonal simplex.
+/// Generate points on an affine line in real arithmetic, perturbed by rounding.
+///
+/// The axis-dependent epsilon tilts the line, and the seed translates it; neither
+/// supplies transverse thickness. The full fixture also includes a canonical
+/// simplex, so its input set still spans the ambient dimension.
 fn generate_near_degenerate_simplex<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
     let seed_offset = f64::from(u32::try_from(seed % 997).or_abort()) * 1.0e-14;
     let denominator = usize_to_f64(count + 1);
@@ -312,55 +272,125 @@ fn centered_unit_direction<const D: usize>(point: &Point<D>) -> [f64; D] {
     direction
 }
 
-/// Find a vertex whose deletion succeeds for the prepared triangulation.
-fn successful_deletion_vertex<const D: usize>(
-    triangulation: &BenchTriangulation<D>,
-) -> Option<VertexKey> {
-    for (vertex_key, _) in triangulation.vertices() {
-        let mut candidate = triangulation.clone();
-        if candidate.delete_vertex(vertex_key).is_ok() {
-            return Some(vertex_key);
-        }
-    }
-
-    None
-}
-
-/// Build the source triangulation for successful interior-deletion measurements.
-fn build_success_source<const D: usize>(
-    requested_vertices: usize,
-    seed_base: u64,
-    preferred_kind: FixtureKind,
-) -> DeletionSource<D>
+/// Build the source triangulation for a fixed successful vertex deletion measurement.
+fn build_success_source<const D: usize>(fixture: DeletionFixture) -> DeletionSource<D>
 where
     AdaptiveKernel<f64>: ExactPredicates<D>,
 {
-    for attempt in 0..SEED_SEARCH_ATTEMPTS {
-        let attempt_seed = u64::try_from(attempt).or_abort();
-        let seed = seed_for_case::<D>(requested_vertices, seed_base)
-            ^ attempt_seed.wrapping_mul(SEED_SALT.rotate_left(17));
-        let fixture_kind = fixture_kind_for_attempt(preferred_kind, attempt);
-        let vertices = generate_vertices::<D>(requested_vertices, seed, fixture_kind);
-        let Ok(triangulation) = DelaunayTriangulation::builder(&vertices).build() else {
-            continue;
-        };
-        let Some(vertex_key) = successful_deletion_vertex(&triangulation) else {
-            continue;
-        };
+    let DeletionFixture {
+        requested_vertices,
+        seed,
+        fixture_kind,
+        input_index,
+    } = fixture;
+    let vertices = generate_vertices::<D>(requested_vertices, seed, fixture_kind);
+    // Pin the input vertex independently of storage order and of which
+    // deletions the current implementation accepts.
+    let selected_vertex = vertices.get(input_index).or_abort(format_args!(
+        "{D}D deletion fixture seed {seed:#x} has no input vertex {input_index}"
+    ));
+    let triangulation = DelaunayTriangulation::builder(&vertices)
+        .build()
+        .unwrap_or_else(|error| {
+            abort_benchmark(format_args!(
+                "{D}D {} deletion fixture seed {seed:#x} failed construction: {error}",
+                fixture_kind.label()
+            ))
+        });
+    let vertex_key = triangulation
+        .vertex_key_from_uuid(&selected_vertex.uuid())
+        .or_abort(format_args!(
+            "{D}D deletion fixture seed {seed:#x} lost input vertex {input_index}"
+        ));
+    let mut probe = triangulation.clone();
+    probe.delete_vertex(vertex_key).unwrap_or_else(|error| {
+        abort_benchmark(format_args!(
+            "{D}D {} deletion fixture seed {seed:#x}, input vertex {input_index} failed deletion: {error}",
+            fixture_kind.label()
+        ))
+    });
 
-        return DeletionSource {
-            vertex_count: triangulation.number_of_vertices(),
-            simplex_count: triangulation.number_of_simplices(),
-            fixture_kind,
-            triangulation,
-            vertex_key,
-        };
+    DeletionSource {
+        vertex_count: triangulation.number_of_vertices(),
+        simplex_count: triangulation.number_of_simplices(),
+        triangulation,
+        vertex_key,
+    }
+}
+
+/// Build and validate the exact star used by the 4D/5D inverse-k1 measurements.
+fn build_inverse_k1_source<const D: usize>() -> DeletionSource<D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
+    let mut points = simplex_points::<D>();
+    // Positive coordinates with sum 0.4 in 4D or 0.5 in 5D establish a strictly
+    // interior point, with a large margin relative to floating-point rounding.
+    points.push(finite_point([0.1; D]));
+    let vertices = try_vertices_from_points(&points).or_abort();
+    let triangulation: BenchTriangulation<D> =
+        DelaunayTriangulation::builder(&vertices).build().or_abort();
+    assert_eq!(
+        triangulation.topology_guarantee(),
+        TopologyGuarantee::PLManifold
+    );
+    triangulation.validate().or_abort();
+    assert_eq!(triangulation.number_of_vertices(), D + 2);
+    assert_eq!(triangulation.number_of_simplices(), D + 1);
+
+    let removed_uuid = vertices[D + 1].uuid();
+    let vertex_key = triangulation
+        .vertex_key_from_uuid(&removed_uuid)
+        .or_abort("inverse-k1 fixture lost the selected interior input");
+    let canonical_keys: Vec<_> = vertices[..=D]
+        .iter()
+        .map(|vertex| {
+            triangulation
+                .vertex_key_from_uuid(&vertex.uuid())
+                .or_abort("inverse-k1 fixture lost a canonical input")
+        })
+        .collect();
+    let mut omitted_counts = vec![0_usize; D + 1];
+    for (_, simplex) in triangulation.simplices() {
+        assert!(simplex.contains_vertex(vertex_key));
+        assert_eq!(simplex.number_of_vertices(), D + 1);
+        let omitted: Vec<_> = canonical_keys
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &key)| (!simplex.contains_vertex(key)).then_some(index))
+            .collect();
+        assert_eq!(
+            omitted.len(),
+            1,
+            "inverse-k1 star must cover each outer facet"
+        );
+        omitted_counts[omitted[0]] += 1;
+    }
+    assert!(omitted_counts.iter().all(|&count| count == 1));
+
+    let mut probe = triangulation.clone();
+    assert_eq!(probe.delete_vertex(vertex_key).or_abort(), D + 1);
+    probe.validate().or_abort();
+    assert_eq!(probe.number_of_vertices(), D + 1);
+    assert_eq!(probe.number_of_simplices(), 1);
+    assert!(probe.vertex_key_from_uuid(&removed_uuid).is_none());
+    for vertex in &vertices[..=D] {
+        let key = probe
+            .vertex_key_from_uuid(&vertex.uuid())
+            .or_abort("inverse-k1 deletion lost a surviving canonical input");
+        assert!(
+            probe
+                .simplices()
+                .all(|(_, simplex)| simplex.contains_vertex(key))
+        );
     }
 
-    abort_benchmark(format!(
-        "no successful {D}D delete_vertex fixture found for {requested_vertices} vertices \
-             after {SEED_SEARCH_ATTEMPTS} seeds across all fixture kinds"
-    ))
+    DeletionSource {
+        vertex_count: triangulation.number_of_vertices(),
+        simplex_count: triangulation.number_of_simplices(),
+        triangulation,
+        vertex_key,
+    }
 }
 
 /// Build the source triangulation for invalid-deletion rollback measurements.
@@ -380,7 +410,6 @@ where
     DeletionSource {
         vertex_count: triangulation.number_of_vertices(),
         simplex_count: triangulation.number_of_simplices(),
-        fixture_kind: FixtureKind::Interior,
         triangulation,
         vertex_key,
     }
@@ -396,8 +425,7 @@ fn triangulation_element_count<const D: usize>(source: &DeletionSource<D>) -> u6
 fn bench_success_dimension<const D: usize>(
     c: &mut Criterion,
     dim_label: &str,
-    counts: &[usize],
-    seed_base: u64,
+    fixtures: &[DeletionFixture],
 ) where
     AdaptiveKernel<f64>: ExactPredicates<D>,
 {
@@ -406,22 +434,20 @@ fn bench_success_dimension<const D: usize>(
     group.warm_up_time(WARM_UP_TIME);
     group.measurement_time(MEASUREMENT_TIME);
 
-    for (case_index, &requested_vertices) in counts.iter().enumerate() {
-        let source = build_success_source::<D>(
-            requested_vertices,
-            seed_base,
-            preferred_fixture_kind::<D>(case_index),
-        );
+    for &fixture in fixtures {
+        let source = build_success_source::<D>(fixture);
         group.throughput(Throughput::Elements(triangulation_element_count(&source)));
 
         group.bench_with_input(
             BenchmarkId::new(
                 "delete_vertex",
                 format!(
-                    "{}_vertices_{}_simplices_{}",
-                    source.fixture_kind.label(),
+                    "{}_vertices_{}_simplices_{}_seed_{:016x}_input_vertex_{}",
+                    fixture.fixture_kind.label(),
                     source.vertex_count,
-                    source.simplex_count
+                    source.simplex_count,
+                    fixture.seed,
+                    fixture.input_index
                 ),
             ),
             &source,
@@ -430,12 +456,51 @@ fn bench_success_dimension<const D: usize>(
                     || source.triangulation.clone(),
                     |mut triangulation| {
                         black_box(triangulation.delete_vertex(source.vertex_key).or_abort());
+                        black_box(triangulation)
                     },
                     BatchSize::SmallInput,
                 );
             },
         );
     }
+
+    group.finish();
+}
+
+/// Register one fixed inverse-k1 success case with its actual owner size.
+fn bench_inverse_k1_dimension<const D: usize>(c: &mut Criterion, dim_label: &str)
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
+    let source = build_inverse_k1_source::<D>();
+    let mut group = c.benchmark_group(format!("delete_vertex/success/{dim_label}"));
+    group.sample_size(SAMPLE_SIZE);
+    group.warm_up_time(WARM_UP_TIME);
+    group.measurement_time(MEASUREMENT_TIME);
+    group.throughput(Throughput::Elements(triangulation_element_count(&source)));
+
+    group.bench_with_input(
+        BenchmarkId::new(
+            "delete_vertex",
+            format!(
+                "inverse_k1_vertices_{}_simplices_{}_input_vertex_{}",
+                source.vertex_count,
+                source.simplex_count,
+                D + 1
+            ),
+        ),
+        &source,
+        |b, source| {
+            b.iter_batched(
+                || source.triangulation.clone(),
+                |mut triangulation| {
+                    black_box(triangulation.delete_vertex(source.vertex_key).or_abort());
+                    black_box(triangulation)
+                },
+                BatchSize::SmallInput,
+            );
+        },
+    );
 
     group.finish();
 }
@@ -466,6 +531,7 @@ where
                 || source.triangulation.clone(),
                 |mut triangulation| {
                     black_box(triangulation.delete_vertex(source.vertex_key).unwrap_err());
+                    black_box(triangulation)
                 },
                 BatchSize::SmallInput,
             );
@@ -477,22 +543,68 @@ where
 
 /// Benchmark successful 2D vertex deletion.
 fn bench_delete_vertex_success_2d(c: &mut Criterion) {
-    bench_success_dimension::<2>(c, "2d", &[100, 500, 2_000], 0xD2AA_0000_0000_0001);
+    bench_success_dimension::<2>(
+        c,
+        "2d",
+        &[
+            DeletionFixture {
+                requested_vertices: 100,
+                seed: 0x1F01_8C77_B918_7835,
+                fixture_kind: FixtureKind::Cospherical,
+                input_index: 3,
+            },
+            DeletionFixture {
+                requested_vertices: 500,
+                seed: 0xD6F3_BE4E_9D7A_5905,
+                fixture_kind: FixtureKind::NearDegenerate,
+                input_index: 4,
+            },
+            DeletionFixture {
+                requested_vertices: 2_000,
+                seed: 0xC3CC_F930_75E9_6411,
+                fixture_kind: FixtureKind::LargeCoordinate,
+                input_index: 3,
+            },
+        ],
+    );
 }
 
 /// Benchmark successful 3D vertex deletion.
 fn bench_delete_vertex_success_3d(c: &mut Criterion) {
-    bench_success_dimension::<3>(c, "3d", &[50, 150, 500], 0xD3AA_0000_0000_0002);
+    bench_success_dimension::<3>(
+        c,
+        "3d",
+        &[
+            DeletionFixture {
+                requested_vertices: 50,
+                seed: 0x357F_C639_DC8C_3C18,
+                fixture_kind: FixtureKind::NearDegenerate,
+                input_index: 0,
+            },
+            DeletionFixture {
+                requested_vertices: 150,
+                seed: 0x672B_52B3_95A4_B44C,
+                fixture_kind: FixtureKind::LargeCoordinate,
+                input_index: 5,
+            },
+            DeletionFixture {
+                requested_vertices: 500,
+                seed: 0xD7F3_BE4F_9D7A_5906,
+                fixture_kind: FixtureKind::Interior,
+                input_index: 5,
+            },
+        ],
+    );
 }
 
-/// Benchmark successful 4D vertex deletion.
+/// Benchmark 4D inverse-k1 vertex deletion.
 fn bench_delete_vertex_success_4d(c: &mut Criterion) {
-    bench_success_dimension::<4>(c, "4d", &[20, 50, 100], 0xD4AA_0000_0000_0003);
+    bench_inverse_k1_dimension::<4>(c, "4d");
 }
 
-/// Benchmark successful 5D vertex deletion.
+/// Benchmark 5D inverse-k1 vertex deletion.
 fn bench_delete_vertex_success_5d(c: &mut Criterion) {
-    bench_success_dimension::<5>(c, "5d", &[12, 25, 40], 0xD5AA_0000_0000_0004);
+    bench_inverse_k1_dimension::<5>(c, "5d");
 }
 
 /// Benchmark rollback for invalid lower-dimensional remnants.

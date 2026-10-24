@@ -8,7 +8,7 @@
 //! never supplies a high-dimensional PL-link proof.
 
 use crate::core::tds::{RawTdsSnapshot, Tds, ValidatedTdsSerialization};
-use crate::core::traits::data_type::{DataDeserialize, DataSerialize, DataType};
+use crate::core::traits::data_type::{DataDeserialize, DataSerialize};
 use crate::geometry::kernel::Kernel;
 use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
 use crate::triangulation::Triangulation;
@@ -108,8 +108,8 @@ struct SnapshotWire {
 /// Decoding validates UUID relationships and TDS invariants; it does not yet
 /// certify topology or realization. The kernel is chosen explicitly at restoration.
 /// Serialization through [`Triangulation`] borrows payloads and requires only
-/// `Serialize`, with no `Clone` bound. Restoring the owner retains the usual
-/// [`DataType`] bounds of [`TriangulationBuilder`].
+/// `Serialize`, with no `Clone` bound. Promoting a decoded snapshot requires only
+/// `Clone` payloads, matching [`TriangulationBuilder`].
 /// Present payloads containing null/unit values are rejected during serialization
 /// because CBOR cannot distinguish all nested `Option` states. Use explicit
 /// tagged enums for those values; an absent entity payload remains supported.
@@ -123,8 +123,8 @@ pub struct TriangulationSnapshot<U, V, const D: usize> {
 
 impl<U, V, const D: usize> TriangulationSnapshot<U, V, D>
 where
-    U: DataType,
-    V: DataType,
+    U: Clone,
+    V: Clone,
 {
     /// Restores exact connectivity with the supplied kernel and proves Levels 1–4.
     ///
@@ -310,8 +310,8 @@ where
 impl<'de, K, U, V, const D: usize> Deserialize<'de> for Triangulation<K, U, V, D>
 where
     K: Kernel<D, Scalar = f64> + Default,
-    U: DataType,
-    V: DataType,
+    U: Clone + DataDeserialize,
+    V: Clone + DataDeserialize,
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
     where

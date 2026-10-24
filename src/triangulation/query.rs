@@ -1823,10 +1823,13 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// callers on the `Triangulation` API while preserving the same typed
     /// location result.
     ///
+    /// Only Euclidean coordinate models are supported. Periodic owners require
+    /// location in aligned covering-space charts and are rejected explicitly.
+    ///
     /// # Errors
     ///
-    /// Returns [`LocateError`] if structural data or predicates fail during the
-    /// facet-walking query.
+    /// Returns [`LocateError::UnsupportedTopology`] for non-Euclidean owners,
+    /// or another [`LocateError`] if structural data or predicates fail.
     ///
     /// # Examples
     ///
@@ -1865,15 +1868,22 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     where
         K: Kernel<D, Scalar = f64>,
     {
+        if !self.global_topology.is_euclidean() {
+            return Err(LocateError::UnsupportedTopology {
+                topology: self.topology_kind(),
+            });
+        }
         locate_in_tds(&self.tds, &self.kernel, point, hint)
     }
 
     /// Locates a point and returns facet-walk traversal statistics.
     ///
+    /// Like [`Self::locate`], this supports only Euclidean coordinate models.
+    ///
     /// # Errors
     ///
-    /// Returns [`LocateError`] if structural data or predicates fail during the
-    /// facet-walking query.
+    /// Returns [`LocateError::UnsupportedTopology`] for non-Euclidean owners,
+    /// or another [`LocateError`] if structural data or predicates fail.
     ///
     /// # Examples
     ///
@@ -1912,6 +1922,11 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     where
         K: Kernel<D, Scalar = f64>,
     {
+        if !self.global_topology.is_euclidean() {
+            return Err(LocateError::UnsupportedTopology {
+                topology: self.topology_kind(),
+            });
+        }
         locate_with_stats_in_tds(&self.tds, &self.kernel, point, hint)
     }
 
@@ -2447,14 +2462,73 @@ impl<K, U, V> Triangulation<K, U, V, 2> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tds::Tds;
+    use crate::core::algorithms::locate::LocateFallbackReason;
+    use crate::core::tds::{Tds, TdsBuilder};
     use crate::delaunay_model::DelaunayTriangulation;
-    use crate::geometry::kernel::FastKernel;
+    use crate::geometry::kernel::{FastKernel, RobustKernel};
+    use crate::triangulation::builder::TriangulationBuilder;
     use crate::vertex;
 
     use slotmap::KeyData;
     use std::assert_matches;
     use std::collections::HashSet;
+
+    #[test]
+    fn locate_nonconvex_disk_from_every_hint() {
+        let vertices = [
+            vertex!([0.0, 0.0]).unwrap(), // A
+            vertex!([2.0, 0.0]).unwrap(), // B
+            vertex!([2.0, 1.0]).unwrap(), // C
+            vertex!([1.0, 1.0]).unwrap(), // D
+            vertex!([1.0, 2.0]).unwrap(), // E
+            vertex!([0.0, 2.0]).unwrap(), // F
+        ];
+        let simplices = [vec![0, 1, 3], vec![1, 2, 3], vec![0, 3, 5], vec![3, 4, 5]];
+        let tds: Tds<(), (), 2> = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+        let tri = TriangulationBuilder::new(tds, RobustKernel::new())
+            .canonicalizing()
+            .build()
+            .unwrap();
+        tri.validate_realization().unwrap();
+        let simplex_with_vertices = |indices: [usize; 3]| {
+            tri.simplices()
+                .find(|(_, simplex)| {
+                    indices.iter().all(|&index| {
+                        simplex.vertices().iter().any(|&key| {
+                            tri.tds.vertex(key).unwrap().uuid() == vertices[index].uuid()
+                        })
+                    })
+                })
+                .map(|(key, _)| key)
+                .unwrap()
+        };
+        let containing = simplex_with_vertices([1, 2, 3]);
+        let misleading_hint = simplex_with_vertices([3, 4, 5]);
+        // Strict barycentric weights in BCD are (1/4, 1/2, 1/4).
+        let inside = Point::try_new([1.75, 0.75]).unwrap();
+        let hints = std::iter::once(None).chain(tri.simplices().map(|(key, _)| Some(key)));
+        for hint in hints {
+            let expected = LocateResult::InsideSimplex(containing);
+            assert_eq!(tri.locate(&inside, hint).unwrap(), expected);
+            let (located, stats) = tri.locate_with_stats(&inside, hint).unwrap();
+            assert_eq!(located, expected);
+            if hint == Some(misleading_hint) {
+                assert_eq!(
+                    stats.fallback.unwrap().reason,
+                    LocateFallbackReason::BoundaryReached
+                );
+            }
+            // The notch is within the convex hull but outside the realized disk.
+            for coords in [[1.5, 1.5], [3.0, 3.0]] {
+                let outside = Point::try_new(coords).unwrap();
+                assert_eq!(tri.locate(&outside, hint).unwrap(), LocateResult::Outside);
+                assert_eq!(
+                    tri.locate_with_stats(&outside, hint).unwrap().0,
+                    LocateResult::Outside
+                );
+            }
+        }
+    }
 
     #[test]
     fn simplex_barycenter_rejects_periodic_offsets_under_euclidean_topology() {
@@ -3291,7 +3365,10 @@ mod tests {
 
         assert_matches!(
             tri.tds.validate_vertex_to_simplices_index(),
-            Err(TdsError::InconsistentDataStructure { .. })
+            Err(TdsError::VertexIncidenceCountMismatch {
+                actual: 2,
+                expected: 3,
+            })
         );
     }
 

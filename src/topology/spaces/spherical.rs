@@ -40,8 +40,9 @@ impl<const D: usize> SphericalPoint<D> {
     ///
     /// # Errors
     ///
-    /// Returns [`SphericalPointError`] when the coordinate count is not `D + 1`,
-    /// any coordinate is non-finite, or the input vector has zero norm.
+    /// Returns [`SphericalPointError`] when `D + 1` is unrepresentable, the
+    /// coordinate count is not `D + 1`, any coordinate is non-finite, or the
+    /// input vector has zero norm.
     ///
     /// # Examples
     ///
@@ -63,8 +64,8 @@ impl<const D: usize> SphericalPoint<D> {
     /// # Errors
     ///
     /// Returns [`SphericalPointError`] when `radius` is not finite and positive,
-    /// the coordinate count is not `D + 1`, any coordinate is non-finite, or the
-    /// input vector has zero norm. Returns
+    /// `D + 1` is unrepresentable, the coordinate count is not `D + 1`, any
+    /// coordinate is non-finite, or the input vector has zero norm. Returns
     /// [`SphericalPointError::UnrepresentableNormalization`] if radius scaling
     /// cannot preserve the computed unit direction within the type's tolerance.
     ///
@@ -90,8 +91,10 @@ impl<const D: usize> SphericalPoint<D> {
     ///
     /// # Errors
     ///
-    /// Returns [`SphericalPointError::InvalidAmbientCoordinateCount`] unless the
-    /// slice has `D + 1` entries, [`SphericalPointError::NonFiniteCoordinate`] if
+    /// Returns [`SphericalPointError::UnrepresentableDimension`] when `D + 1`
+    /// cannot be represented as a `usize`, or
+    /// [`SphericalPointError::InvalidAmbientCoordinateCount`] unless the slice
+    /// has `D + 1` entries. Returns [`SphericalPointError::NonFiniteCoordinate`] if
     /// any entry is non-finite, or [`SphericalPointError::ZeroNorm`] if all entries
     /// are zero.
     ///
@@ -122,6 +125,8 @@ impl<const D: usize> SphericalPoint<D> {
     /// Returns [`SphericalPointError::UnrepresentableNormalization`] if scaling
     /// a finite nonzero direction to `radius` exceeds the unit-coordinate
     /// tolerance documented on [`SphericalPoint`].
+    /// Returns [`SphericalPointError::UnrepresentableDimension`] when `D + 1`
+    /// cannot be represented as a `usize`.
     ///
     /// # Examples
     ///
@@ -139,7 +144,8 @@ impl<const D: usize> SphericalPoint<D> {
         radius: f64,
     ) -> Result<Self, SphericalPointError> {
         validate_radius(radius)?;
-        let expected = Self::ambient_dimension_for_intrinsic();
+        let expected = Self::ambient_dimension_for_intrinsic()
+            .ok_or(SphericalPointError::UnrepresentableDimension { dimension: D })?;
         if coords.len() != expected {
             return Err(SphericalPointError::InvalidAmbientCoordinateCount {
                 dimension: D,
@@ -187,21 +193,24 @@ impl<const D: usize> SphericalPoint<D> {
     /// ```
     #[must_use]
     pub const fn ambient_dimension(&self) -> usize {
-        Self::ambient_dimension_for_intrinsic()
+        self.coords.len()
     }
 
     /// Returns the ambient coordinate dimension for this intrinsic `D`.
+    ///
+    /// Returns `None` when `D + 1` is not representable as a `usize`.
     ///
     /// # Examples
     ///
     /// ```rust
     /// use delaunay::prelude::topology::spaces::SphericalPoint;
     ///
-    /// assert_eq!(SphericalPoint::<4>::ambient_dimension_for_intrinsic(), 5);
+    /// assert_eq!(SphericalPoint::<4>::ambient_dimension_for_intrinsic(), Some(5));
+    /// assert_eq!(SphericalPoint::<{ usize::MAX }>::ambient_dimension_for_intrinsic(), None);
     /// ```
     #[must_use]
-    pub const fn ambient_dimension_for_intrinsic() -> usize {
-        D + 1
+    pub const fn ambient_dimension_for_intrinsic() -> Option<usize> {
+        D.checked_add(1)
     }
 
     /// Returns the radius this point was normalized to.
@@ -294,7 +303,7 @@ impl<const D: usize> SphericalMetric<D> {
     /// let metric = SphericalMetric::<2>::unit();
     ///
     /// assert_eq!(metric.radius(), 1.0);
-    /// assert_eq!(metric.ambient_dimension(), 3);
+    /// assert_eq!(metric.ambient_dimension(), Some(3));
     /// ```
     #[must_use]
     pub const fn unit() -> Self {
@@ -340,16 +349,21 @@ impl<const D: usize> SphericalMetric<D> {
 
     /// Returns the ambient coordinate dimension `D + 1`.
     ///
+    /// Returns `None` when `D + 1` is not representable as a `usize`. A metric
+    /// stores only its radius; unlike a [`SphericalPoint`], it does not prove
+    /// that ambient coordinates of this dimension can be stored.
+    ///
     /// # Examples
     ///
     /// ```rust
     /// use delaunay::prelude::topology::spaces::SphericalMetric;
     ///
-    /// assert_eq!(SphericalMetric::<3>::unit().ambient_dimension(), 4);
+    /// assert_eq!(SphericalMetric::<3>::unit().ambient_dimension(), Some(4));
+    /// assert_eq!(SphericalMetric::<{ usize::MAX }>::unit().ambient_dimension(), None);
     /// ```
     #[must_use]
-    pub const fn ambient_dimension(self) -> usize {
-        D + 1
+    pub const fn ambient_dimension(self) -> Option<usize> {
+        SphericalPoint::<D>::ambient_dimension_for_intrinsic()
     }
 
     /// Canonicalizes raw ambient coordinates onto this metric's radius.
@@ -362,6 +376,8 @@ impl<const D: usize> SphericalMetric<D> {
     /// are zero. Returns [`SphericalPointError::UnrepresentableNormalization`]
     /// if this metric's radius cannot preserve the finite nonzero direction
     /// within the unit-coordinate tolerance documented on [`SphericalPoint`].
+    /// Returns [`SphericalPointError::UnrepresentableDimension`] when `D + 1`
+    /// cannot be represented as a `usize`.
     ///
     /// # Examples
     ///
@@ -385,7 +401,8 @@ impl<const D: usize> SphericalMetric<D> {
     ///
     /// # Errors
     ///
-    /// Returns the coordinate-count, non-finite-coordinate, zero-norm, or
+    /// Returns the unrepresentable-dimension, coordinate-count,
+    /// non-finite-coordinate, zero-norm, or
     /// [`SphericalPointError::UnrepresentableNormalization`] errors described
     /// by [`Self::canonicalize`]. Even a finite nonzero input can fail when
     /// this metric's radius cannot preserve its direction within the
@@ -477,6 +494,13 @@ impl<const D: usize> SphericalMetric<D> {
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum SphericalPointError {
+    /// The intrinsic dimension's ambient arity cannot be represented by `usize`.
+    #[error("spherical S^{dimension} ambient coordinate count is unrepresentable")]
+    UnrepresentableDimension {
+        /// Intrinsic sphere dimension whose ambient coordinate count overflows.
+        dimension: usize,
+    },
+
     /// Raw coordinate arity did not match `D + 1`.
     #[error("spherical S^{dimension} points require {expected} ambient coordinates, got {actual}")]
     InvalidAmbientCoordinateCount {
@@ -689,6 +713,69 @@ mod tests {
 
     fn assert_unit_norm(coords: &[f64]) {
         assert_relative_eq!(squared_norm(coords), 1.0, epsilon = 1e-12);
+    }
+
+    /// Check arity publication and rejection across supported small dimensions.
+    fn check_spherical_ambient_arity<const D: usize>() {
+        let expected = D + 1;
+        let mut coords = vec![0.0; expected];
+        coords[0] = 1.0;
+        let point = SphericalPoint::<D>::try_from_slice(&coords).unwrap();
+        assert_eq!(point.ambient_dimension(), expected);
+        assert_eq!(
+            SphericalPoint::<D>::ambient_dimension_for_intrinsic(),
+            Some(expected)
+        );
+        assert_eq!(
+            SphericalMetric::<D>::unit().ambient_dimension(),
+            Some(expected)
+        );
+        assert_eq!(
+            SphericalPoint::<D>::try_from_slice(&coords[..D]),
+            Err(SphericalPointError::InvalidAmbientCoordinateCount {
+                dimension: D,
+                expected,
+                actual: D,
+            })
+        );
+        assert_unit_norm(point.coords());
+    }
+
+    macro_rules! spherical_ambient_arity_tests {
+        ($($dimension:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<spherical_ambient_arity_ $dimension d>]() {
+                        check_spherical_ambient_arity::<$dimension>();
+                    }
+                )+
+            }
+        };
+    }
+
+    spherical_ambient_arity_tests!(2, 3, 4, 5);
+
+    #[test]
+    fn spherical_coordinates_reject_unrepresentable_dimension() {
+        let error = SphericalPointError::UnrepresentableDimension {
+            dimension: usize::MAX,
+        };
+        assert_eq!(
+            SphericalPoint::<{ usize::MAX }>::ambient_dimension_for_intrinsic(),
+            None
+        );
+        assert_eq!(
+            SphericalPoint::<{ usize::MAX }>::try_from_slice(&[]),
+            Err(error.clone())
+        );
+        assert_eq!(
+            SphericalPoint::<{ usize::MAX }>::try_new([]),
+            Err(error.clone())
+        );
+        let metric = SphericalMetric::<{ usize::MAX }>::unit();
+        assert_eq!(metric.ambient_dimension(), None);
+        assert_eq!(metric.canonicalize_slice(&[]), Err(error));
     }
 
     #[test]

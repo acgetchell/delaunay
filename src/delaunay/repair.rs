@@ -137,7 +137,8 @@ impl DelaunayRepairPolicy {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DelaunayCheckPolicy {
-    /// Run global Delaunay validation once after batch construction (e.g. `new()` / `with_kernel()`).
+    /// Run global Delaunay validation once after batch construction
+    /// (the builder's `build()` / `build_with_kernel()`).
     ///
     /// Incremental insertion does not automatically run a final global check because there is no
     /// intrinsic “end” signal; call

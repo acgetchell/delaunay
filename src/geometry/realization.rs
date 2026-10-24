@@ -338,6 +338,16 @@ pub struct SimplexIntersectionWitness<L> {
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum SimplexIntersectionFailure<L> {
+    /// Exact intersection certification requires a matrix larger than the backend supports.
+    #[error(
+        "exact simplex-intersection validation does not support dimension {dimension} (maximum {max})"
+    )]
+    UnsupportedDimension {
+        /// Requested coordinate dimension.
+        dimension: usize,
+        /// Largest dimension supported by the complete exact fallback.
+        max: usize,
+    },
     /// The first simplex basis is singular, so barycentric coordinates are undefined.
     #[error("simplex barycentric basis is singular")]
     SingularBarycentricBasis,
@@ -515,10 +525,13 @@ pub fn periodic_simplex_span<L, const D: usize>(
 ///
 /// This is the pure geometric core of Level 4 overlap validation. It uses
 /// exact rational barycentric arithmetic after coordinates have been parsed as
-/// finite f64 values.
+/// finite f64 values. Exact intersection certification currently supports
+/// dimensions through 7; extending the exact solver dispatch is tracked in
+/// [issue #659](https://github.com/acgetchell/delaunay/issues/659).
 ///
 /// # Errors
 ///
+/// Returns [`SimplexIntersectionFailure::UnsupportedDimension`] above dimension 7.
 /// Returns [`SimplexIntersectionFailure::SingularBarycentricBasis`] when the
 /// first simplex cannot define barycentric coordinates, or
 /// [`SimplexIntersectionFailure::IntersectionOutsideSharedFace`] when the
@@ -556,6 +569,14 @@ pub fn validate_simplex_intersection<L, const D: usize>(
 where
     L: Clone + Eq,
 {
+    // Active-set certification needs order D + 1. The rational matrix dispatcher
+    // supports orders through 8; an unsupported solve must never look infeasible.
+    if D > 7 {
+        return Err(SimplexIntersectionFailure::UnsupportedDimension {
+            dimension: D,
+            max: 7,
+        });
+    }
     let shared_labels = shared_labels(first, second);
     let basis_orientation = realization_orientation(first);
     if basis_orientation == Some(Orientation::DEGENERATE) {
@@ -948,6 +969,34 @@ mod tests {
             SimplexIntersectionFailure::IntersectionOutsideSharedFace { witness, .. }
                 if witness.first_only_witness.iter().any(|label| [0, 1, 2].contains(label))
                     && witness.second_only_witness.iter().any(|label| [3, 4, 5].contains(label))
+        );
+    }
+
+    #[test]
+    fn eight_dimensional_intersections_fail_closed() {
+        let mut coords = vec![[0.0; 8]];
+        for axis in 0..8 {
+            let mut point = [0.0; 8];
+            point[axis] = 1.0;
+            coords.push(point);
+        }
+        let first = LabeledSimplexRealization::try_new(0..9, coords.clone()).unwrap();
+        let second = LabeledSimplexRealization::try_new(9..18, coords).unwrap();
+        // The two labeled simplices coincide geometrically, with no shared face.
+        assert_matches!(
+            validate_simplex_intersection(&first, &second),
+            Err(SimplexIntersectionFailure::UnsupportedDimension {
+                dimension: 8,
+                max: 7
+            })
+        );
+        // Even a shared-face shortcut must respect the advertised support bound.
+        assert_matches!(
+            validate_simplex_intersection(&first, &first),
+            Err(SimplexIntersectionFailure::UnsupportedDimension {
+                dimension: 8,
+                max: 7
+            })
         );
     }
 

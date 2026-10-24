@@ -13,7 +13,7 @@
 //!   measuring the hint fast path used by locality-aware callers such as
 //!   incremental insertion.
 //!
-//! Intended for **manual** runs (not part of the CI performance suite).
+//! Included in the curated performance workflow and available for manual runs.
 //!
 //! Run with:
 //! ```bash
@@ -38,9 +38,7 @@ pub mod bench_utils;
 use bench_utils::{OrAbort, abort_benchmark};
 
 const SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
-const SEED_SEARCH_ATTEMPTS: usize = 16;
 const QUERY_COUNT: usize = 64;
-const QUERY_CANDIDATE_FACTOR: usize = 8;
 const SAMPLE_SIZE: usize = 10;
 const WARM_UP_TIME: Duration = Duration::from_millis(500);
 const MEASUREMENT_TIME: Duration = Duration::from_secs(2);
@@ -48,6 +46,7 @@ const MEASUREMENT_TIME: Duration = Duration::from_secs(2);
 type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 
 struct LocateSource<const D: usize> {
+    seed: u64,
     vertex_count: usize,
     simplex_count: usize,
     triangulation: BenchTriangulation<D>,
@@ -67,7 +66,7 @@ fn point_bounds() -> CoordinateRange<f64> {
     CoordinateRange::try_new(0.0_f64, 1.0).or_abort()
 }
 
-/// Coordinate range used for query candidates, interior to the point cloud.
+/// Range of interpolation weights used for the fixed query batch.
 fn query_bounds() -> CoordinateRange<f64> {
     CoordinateRange::try_new(0.25_f64, 0.75).or_abort()
 }
@@ -77,51 +76,58 @@ fn build_source<const D: usize>(requested_vertices: usize, seed_base: u64) -> Lo
 where
     AdaptiveKernel<f64>: ExactPredicates<D>,
 {
-    for attempt in 0..SEED_SEARCH_ATTEMPTS {
-        let attempt_seed = u64::try_from(attempt).or_abort();
-        let seed = seed_for_case::<D>(requested_vertices, seed_base)
-            ^ attempt_seed.wrapping_mul(SEED_SALT.rotate_left(17));
-        let points =
-            generate_random_points_in_range_seeded::<D>(requested_vertices, point_bounds(), seed)
-                .or_abort();
-        let vertices: Vec<Vertex<(), D>> = try_vertices_from_points(&points).or_abort();
-        let Ok(triangulation) = DelaunayTriangulationBuilder::new(&vertices).build() else {
-            continue;
-        };
+    let seed = seed_for_case::<D>(requested_vertices, seed_base);
+    let points =
+        generate_random_points_in_range_seeded::<D>(requested_vertices, point_bounds(), seed)
+            .or_abort();
+    let vertices: Vec<Vertex<(), D>> = try_vertices_from_points(&points).or_abort();
+    let triangulation = DelaunayTriangulationBuilder::new(&vertices)
+        .build()
+        .unwrap_or_else(|error| {
+            abort_benchmark(format_args!(
+                "{D}D locate fixture seed {seed:#x} failed construction: {error}"
+            ))
+        });
 
-        let candidates = generate_random_points_in_range_seeded::<D>(
-            QUERY_COUNT * QUERY_CANDIDATE_FACTOR,
-            query_bounds(),
-            seed ^ SEED_SALT,
-        )
+    // A positive combination of every point in a full-dimensional input lies
+    // strictly inside its convex hull. Interpolating that centroid toward fixed
+    // input vertices keeps every coefficient positive while spreading queries
+    // through the fixture. No locate result chooses or rejects a query.
+    let point_count = f64::from(u32::try_from(points.len()).or_abort());
+    let mut centroid = [0.0; D];
+    for point in &points {
+        for (center, coordinate) in centroid.iter_mut().zip(point.coords()) {
+            *center += coordinate / point_count;
+        }
+    }
+    let weights =
+        generate_random_points_in_range_seeded::<D>(QUERY_COUNT, query_bounds(), seed ^ SEED_SALT)
+            .or_abort();
+    let mut hinted_queries = Vec::with_capacity(QUERY_COUNT);
+    for (query_index, weights) in weights.into_iter().enumerate() {
+        let target = points[query_index % points.len()].coords();
+        let weight = weights.coords()[0];
+        let query = Point::try_from(std::array::from_fn(|axis| {
+            weight.mul_add(target[axis] - centroid[axis], centroid[axis])
+        }))
         .or_abort();
-
-        let mut hinted_queries = Vec::with_capacity(QUERY_COUNT);
-        for query in candidates {
-            if hinted_queries.len() == QUERY_COUNT {
-                break;
-            }
-            let located = triangulation.locate(&query, None).or_abort();
-            if let LocateResult::InsideSimplex(simplex_key) = located {
-                hinted_queries.push((query, simplex_key));
-            }
-        }
-        if hinted_queries.len() < QUERY_COUNT {
-            continue;
-        }
-
-        return LocateSource {
-            vertex_count: triangulation.number_of_vertices(),
-            simplex_count: triangulation.number_of_simplices(),
-            triangulation,
-            hinted_queries,
+        // Retain the fail-closed check for rounding and construction changes.
+        let located = triangulation.locate(&query, None).or_abort();
+        let LocateResult::InsideSimplex(simplex_key) = located else {
+            abort_benchmark(format_args!(
+                "{D}D locate fixture seed {seed:#x}, query {query_index} must be interior"
+            ));
         };
+        hinted_queries.push((query, simplex_key));
     }
 
-    abort_benchmark(format!(
-        "no {D}D locate fixture with {QUERY_COUNT} interior queries found for \
-         {requested_vertices} vertices after {SEED_SEARCH_ATTEMPTS} seeds"
-    ))
+    LocateSource {
+        seed,
+        vertex_count: triangulation.number_of_vertices(),
+        simplex_count: triangulation.number_of_simplices(),
+        triangulation,
+        hinted_queries,
+    }
 }
 
 /// Register the no-hint and exact-hint locate cases for one dimension.
@@ -139,6 +145,9 @@ fn bench_locate_dimension<const D: usize>(
         .collect();
     let queries_per_iteration = u64::try_from(QUERY_COUNT).or_abort();
 
+    // The group already identifies locate and its hint mode. Omit a redundant
+    // function component so full IDs fit Criterion's 100-character discovery
+    // titles while retaining all fixture and query-batch identity fields.
     {
         let mut group = c.benchmark_group(format!("locate/no_hint/{dim_label}"));
         group.sample_size(SAMPLE_SIZE);
@@ -147,13 +156,10 @@ fn bench_locate_dimension<const D: usize>(
         for source in &sources {
             group.throughput(Throughput::Elements(queries_per_iteration));
             group.bench_with_input(
-                BenchmarkId::new(
-                    "locate",
-                    format!(
-                        "vertices_{}_simplices_{}",
-                        source.vertex_count, source.simplex_count
-                    ),
-                ),
+                BenchmarkId::from_parameter(format!(
+                    "vertices_{}_simplices_{}_seed_{:016x}_input_hull_queries_v1_{QUERY_COUNT}",
+                    source.vertex_count, source.simplex_count, source.seed
+                )),
                 source,
                 |b, source| {
                     b.iter(|| {
@@ -175,13 +181,10 @@ fn bench_locate_dimension<const D: usize>(
         for source in &sources {
             group.throughput(Throughput::Elements(queries_per_iteration));
             group.bench_with_input(
-                BenchmarkId::new(
-                    "locate",
-                    format!(
-                        "vertices_{}_simplices_{}",
-                        source.vertex_count, source.simplex_count
-                    ),
-                ),
+                BenchmarkId::from_parameter(format!(
+                    "vertices_{}_simplices_{}_seed_{:016x}_input_hull_queries_v1_{QUERY_COUNT}",
+                    source.vertex_count, source.simplex_count, source.seed
+                )),
                 source,
                 |b, source| {
                     b.iter(|| {

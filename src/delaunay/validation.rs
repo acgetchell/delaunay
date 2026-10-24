@@ -14,7 +14,6 @@ use crate::core::algorithms::flips::{
 };
 use crate::core::collections::ViolationBuffer;
 use crate::core::tds::{SimplexKey, Tds, TdsError, TopologyOwnerId};
-use crate::core::traits::data_type::DataType;
 use crate::delaunay_model::DelaunayTriangulation;
 #[cfg(feature = "diagnostics")]
 use crate::delaunay_property_validation::debug_print_first_delaunay_violation as debug_print_first_tds_delaunay_violation;
@@ -1099,8 +1098,8 @@ where
         construction_provenance: TopologyConstructionProvenance,
     ) -> Result<(Self, TopologyCertificationEvidence), DelaunayTdsRestorationError<K, U, V, D>>
     where
-        U: DataType,
-        V: DataType,
+        U: Clone,
+        V: Clone,
     {
         let (triangulation, topology_evidence) = TriangulationBuilder::new(tds, kernel)
             .topology_guarantee(topology_guarantee)
@@ -1123,6 +1122,7 @@ mod tests {
         DelaunayRepairDiagnostics, DelaunayRepairPostconditionFailure, RepairQueueOrder,
     };
     use crate::core::tds::{TdsBuilder, VertexKey};
+    use crate::core::traits::data_type::DataType;
     use crate::core::vertex::Vertex;
     use crate::delaunay_model::EuclideanDelaunayReportDomain;
     use crate::geometry::coordinate_range::CoordinateRange;
@@ -1430,6 +1430,37 @@ mod tests {
         let brute_force = tds_delaunay_violation_report(&tds, None).unwrap();
         assert!(!report.is_valid());
         assert_eq!(report, brute_force);
+    }
+
+    #[test]
+    fn complete_point_set_nonflippable_pyramid_matches_global_report() {
+        let vertices = [
+            test_vertex([-1.0, 0.0, 0.0]),
+            test_vertex([1.0, 0.0, 0.0]),
+            test_vertex([0.0, 0.0, 1.0]),
+            test_vertex([0.0, 1.0, 0.0]),
+            test_vertex([0.0, -0.5, 0.0]),
+        ];
+        let simplices = [vec![0, 1, 2, 3], vec![0, 2, 1, 4]];
+        let tri =
+            DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+                .unwrap()
+                .build_triangulation()
+                .unwrap();
+        tri.validate_realization().unwrap();
+        let mut dt =
+            DelaunayTriangulationDraft::from_triangulation(tri).into_unproven_delaunay_for_test();
+        // The two tetrahedra cover the convex hull of all five vertices.
+        // This is the geometric precondition for the optimized certificate.
+        dt.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
+
+        // Independent analytic witness: ABCD's circumsphere is the unit sphere;
+        // E is strictly inside it, despite coplanarity of the proposed ABDE.
+        let global = tds_delaunay_violation_report(&dt.tri.tds, None).unwrap();
+        assert!(!global.is_valid());
+        assert_eq!(dt.delaunay_violation_report(None).unwrap(), global);
+        assert!(dt.is_valid_delaunay().is_err());
+        assert!(dt.delaunay_report().is_err());
     }
 
     #[test]

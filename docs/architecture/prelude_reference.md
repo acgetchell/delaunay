@@ -34,6 +34,11 @@ The triangulation, Delaunayize, and validation preludes re-export
 promotion therefore remains recoverable without importing an unrelated
 construction prelude.
 
+Construction and generic triangulation errors share
+`PeriodicQuotientFacetKeyDerivationFailure`. The payload is available from
+`delaunay::construction`, the crate root, and both focused preludes so callers
+can match periodic facet-key failures without importing implementation modules.
+
 The TDS prelude exposes `TdsInvariantKind`, `TdsInvariantViolation`, and
 `TdsValidationReport` for Levels 1–2. Structural report and diagnostic forwarding
 methods on higher owners use these same local types. Import the whole-stack

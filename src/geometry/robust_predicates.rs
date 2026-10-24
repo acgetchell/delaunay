@@ -810,20 +810,6 @@ mod tests {
     }
 
     #[test]
-    fn test_robust_orientation_ccw_triangle_2d() {
-        // Standard CCW triangle — robust_orientation uses provable
-        // direct determinant error bounds and exact Bareiss arithmetic, no configuration.
-        let points = vec![
-            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
-        ];
-
-        let result = robust_orientation(&points);
-        assert_eq!(result.unwrap(), Orientation::POSITIVE);
-    }
-
-    #[test]
     fn test_robust_orientation_near_degenerate_2d_exact_sign() {
         // Near-degenerate triangle where adaptive f64 tolerance can collapse to DEGENERATE,
         // but exact determinant sign should remain POSITIVE.

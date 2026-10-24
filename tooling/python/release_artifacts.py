@@ -24,7 +24,7 @@ from typing import Any
 
 from research_repo_tools.ci import export_environment
 from research_repo_tools.files import replace_many
-from research_repo_tools.process import format_exception_diagnostics, run_command
+from research_repo_tools.process import ExecutableNotFoundError, format_exception_diagnostics, run_command
 from research_repo_tools.release_validation import ValidationPolicy, download_artifact, select_main_run, validate_jobs
 
 REPOSITORY = "acgetchell/delaunay"
@@ -401,6 +401,7 @@ def main() -> int:
                 summary.write("### Verified Cargo promotion\n\n```json\n" + _encode(selection).decode("utf-8") + "```\n")
             print(f"Verified Cargo promotion: main run {selection['run_id']}, attempt {selection['run_attempt']}, artifact {selection['artifact']['id']}.")
     except (
+        ExecutableNotFoundError,
         OSError,
         ValueError,
         TypeError,

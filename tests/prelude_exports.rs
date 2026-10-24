@@ -19,6 +19,7 @@ use delaunay::builder::DelaunayTriangulationBuilder as BuilderModuleBuilder;
 use delaunay::construction::{
     ConstructionOptions as ConstructionModuleOptions,
     InsertionOrderStrategy as ConstructionModuleInsertionOrderStrategy,
+    PeriodicQuotientFacetKeyDerivationFailure as ConstructionModulePeriodicFacetFailure,
 };
 use delaunay::delaunayize::{
     DelaunayRefinementBuilder as ModuleDelaunayRefinementBuilder,
@@ -64,8 +65,9 @@ use delaunay::prelude::construction::{
     FinalDelaunayValidationContext, FinalTopologyValidationContext,
     GlobalTopologyModelError as ConstructionGlobalTopologyModelError, InsertionOrderStrategy,
     InvalidCoordinateValue as ConstructionInvalidCoordinateValue,
-    InvalidPositiveScalar as ConstructionInvalidPositiveScalar, RandomPointGenerationError,
-    SimplexValidationError,
+    InvalidPositiveScalar as ConstructionInvalidPositiveScalar,
+    PeriodicQuotientFacetKeyDerivationFailure as ConstructionPeriodicFacetFailure,
+    RandomPointGenerationError, SimplexValidationError,
     SpatialIndexConstructionFailure as ConstructionSpatialIndexConstructionFailure,
     SphericalDelaunayBuilder, SphericalDelaunayConstructionError, SphericalDelaunayTriangulation,
     SphericalDelaunayValidationError, SphericalSimplex, SphericalSimplexError,
@@ -196,8 +198,9 @@ use delaunay::prelude::triangulation::{
     ConflictSimplexView as TriangulationConflictSimplexView, EdgeIndex as GenericEdgeIndex,
     FastKernel as TriangulationFastKernel, IncidenceView as GenericIncidenceView,
     InsertionError as TriangulationInsertionError, ManifoldError as TriangulationManifoldError,
-    OneSidedFacetsIter as TriangulationOneSidedFacetsIter, QueryError as TriangulationQueryError,
-    RidgeCandidate as TriangulationRidgeCandidate,
+    OneSidedFacetsIter as TriangulationOneSidedFacetsIter,
+    PeriodicQuotientFacetKeyDerivationFailure as TriangulationPeriodicFacetFailure,
+    QueryError as TriangulationQueryError, RidgeCandidate as TriangulationRidgeCandidate,
     RidgeCandidateError as TriangulationRidgeCandidateError,
     RidgeHandle as TriangulationRidgeHandle, RidgeLinkView as TriangulationRidgeLinkView,
     RidgeQuery as TriangulationRidgeQuery, RidgeView as TriangulationRidgeView,
@@ -246,6 +249,7 @@ use delaunay::prelude::{
     InitialSimplexUnexpectedInsertionStage as RootInitialSimplexUnexpectedInsertionStage,
     InvariantError as RootInvariantError, InvariantKind as RootInvariantKind,
     InvariantViolation as RootInvariantViolation,
+    PeriodicQuotientFacetKeyDerivationFailure as RootPreludePeriodicFacetFailure,
     PlManifoldRepairStage as RootPreludePlManifoldRepairStage,
     RidgeCandidate as RootRidgeCandidate, RidgeCandidateError as RootRidgeCandidateError,
     RidgeHandle as RootRidgeHandle, RidgeLinkView as RootRidgeLinkView,
@@ -293,6 +297,7 @@ use delaunay::{
     DelaunayConstructionRetryFailure as RootConstructionRetryFailure,
     DelaunayTriangulationConstructionError as RootDelaunayTriangulationConstructionError,
     DelaunayTriangulationValidationError as RootDelaunayTriangulationValidationError,
+    PeriodicQuotientFacetKeyDerivationFailure as RootPeriodicFacetFailure,
     PlManifoldRepairStage as RootPlManifoldRepairStage,
     SimplexBarycenterError as RootSimplexBarycenterError,
     SimplexDataFillError as RootSimplexDataFillError,
@@ -1157,6 +1162,45 @@ fn construction_prelude_covers_typed_construction_failure_variants() {
         cavity_failure,
         DelaunayConstructionFailure::InsertionCavityFilling {
             source: CavityFillingError::EmptyFanTriangulation,
+        }
+    );
+}
+
+#[test]
+fn construction_errors_expose_periodic_facet_failure_fields() {
+    let module_reason = ConstructionModulePeriodicFacetFailure::RelativeOffsetOutOfRange {
+        axis: 2,
+        component: -1,
+    };
+    let root_reason: RootPeriodicFacetFailure = module_reason;
+    let prelude_reason: RootPreludePeriodicFacetFailure = root_reason;
+    let construction_reason: ConstructionPeriodicFacetFailure = prelude_reason;
+    let reason: TriangulationPeriodicFacetFailure = construction_reason;
+    let generic_error = GenericTriangulationConstructionError::PeriodicQuotientFacetKeyDerivation {
+        facet_index: 3,
+        reason,
+    };
+    assert_matches!(
+        generic_error,
+        GenericTriangulationConstructionError::PeriodicQuotientFacetKeyDerivation {
+            facet_index: 3,
+            reason: TriangulationPeriodicFacetFailure::RelativeOffsetOutOfRange {
+                axis: 2,
+                component: -1,
+            },
+        }
+    );
+    let error = DelaunayTriangulationConstructionError::from(generic_error);
+    assert_matches!(
+        error,
+        DelaunayTriangulationConstructionError::Triangulation {
+            source: DelaunayConstructionFailure::PeriodicQuotientFacetKeyDerivation {
+                facet_index: 3,
+                reason: ConstructionPeriodicFacetFailure::RelativeOffsetOutOfRange {
+                    axis: 2,
+                    component: -1,
+                },
+            },
         }
     );
 }

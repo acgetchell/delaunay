@@ -44,11 +44,11 @@ pub trait DataSerde: DataSerialize + DataDeserialize {}
 
 impl<T> DataSerde for T where T: DataSerialize + DataDeserialize {}
 
-/// Trait alias for data types that can be stored in vertices and simplices.
+/// Combined payload contract for APIs that need copying, identity, diagnostics, and serde.
 ///
-/// This trait alias captures all the requirements for data types that can be associated
-/// with vertices and simplices in the triangulation data structure. Data types must implement
-/// `Copy` to enable efficient passing by value and to avoid ownership complications.
+/// This trait combines the requirements used by higher-level construction and mutation
+/// APIs. Basic vertex and TDS storage is unconstrained; individual operations require
+/// only the traits they use. APIs with this combined bound require `Copy`.
 ///
 /// # Required Traits
 ///
@@ -79,10 +79,12 @@ impl<T> DataSerde for T where T: DataSerialize + DataDeserialize {}
 ///
 /// # String Data Limitations
 ///
-/// **String types have significant limitations:**
-/// - `String` doesn't work (doesn't implement `Copy`)
-/// - `&str` has complex lifetime issues that make it impractical
-/// - `&'static str` works but only for compile-time constants
+/// `String` and string slices can be stored in `Vertex` and `Tds`, but they do not
+/// satisfy this combined contract:
+/// - `String` does not implement `Copy`.
+/// - Neither `&str` nor `&'static str` implements `DeserializeOwned`: deserializing
+///   a borrowed string requires the input lifetime to outlive that string reference.
+///   A string literal's static lifetime does not remove this restriction.
 ///
 /// **Recommended alternatives for string-like data:**
 /// - Numeric IDs with external `HashMap` lookup (most flexible)
@@ -90,7 +92,8 @@ impl<T> DataSerde for T where T: DataSerialize + DataDeserialize {}
 /// - Custom Copy enums for predefined categories
 /// - Fixed-size byte arrays for very short strings
 ///
-/// See the `vertex_string_data_usage_examples` test for detailed examples.
+/// The `vertex_string_data_usage_examples` test demonstrates unconstrained vertex
+/// storage, not conformance to `DataType`.
 pub trait DataType: DataCopy + DataIdentity + DataDebug + DataSerde {}
 
 // Blanket implementation for all types that satisfy the bounds

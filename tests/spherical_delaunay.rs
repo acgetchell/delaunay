@@ -48,7 +48,7 @@ fn spherical_metric_slice_constructors_preserve_radius_metadata() {
     let metric =
         SphericalMetric::<2>::try_new(2.0).expect("positive finite radius should define a metric");
     assert_close(metric.radius(), 2.0, 0.0);
-    assert_eq!(metric.ambient_dimension(), 3);
+    assert_eq!(metric.ambient_dimension(), Some(3));
 
     let point = SphericalPoint::<2>::try_from_slice(&[3.0, 0.0, 4.0])
         .expect("unit point should canonicalize from a slice");

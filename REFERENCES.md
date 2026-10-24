@@ -311,8 +311,9 @@ These references ensure the library's geometric computations are mathematically 
   *Mathematics of Computation* 22, no. 103 (1968): 565-578.
   DOI: [10.1090/S0025-5718-1968-0226829-0](https://doi.org/10.1090/S0025-5718-1968-0226829-0)
 
-  The Bareiss fraction-free elimination algorithm is used by `la_stack::Matrix::det_sign_exact`
-  to compute provably correct determinant signs in exact `BigRational` arithmetic.
+  `la_stack::Matrix::det_sign_exact` computes determinant signs in exact integer
+  arithmetic, using direct expansion through matrix order 4 and Bareiss
+  fraction-free elimination for larger matrices.
 
 ### Geometric Tie-Breaking and Deterministic Perturbations
 

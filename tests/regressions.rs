@@ -6,6 +6,9 @@
 
 use delaunay::flips::{BistellarFlips, FlipError, SimplexKey};
 use delaunay::geometry::kernel::{AdaptiveKernel, ExactPredicates};
+use delaunay::prelude::checkpoint::{
+    DelaunayCheckpoint, DelaunayCheckpointLoadError, DelaunayCheckpointV1,
+};
 use delaunay::prelude::construction::{
     ConstructionOptions, ConstructionStatistics, DelaunayIncrementalBuilder,
     DelaunayIncrementalBuilderError, DelaunayTriangulation, DelaunayTriangulationBuilder,
@@ -14,7 +17,8 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::delaunayize::{DelaunayRefinementBuilder, DelaunayizeError};
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
 use delaunay::prelude::geometry::{
-    CoordinateRange, InSphere, Point, RobustKernel, insphere, insphere_lifted,
+    CoordinateConversionError, CoordinateRange, InSphere, Point, RobustKernel, insphere,
+    insphere_lifted,
 };
 use delaunay::prelude::insertion::{HullExtensionReason, InsertionError};
 use delaunay::prelude::ordering::{
@@ -24,7 +28,7 @@ use delaunay::prelude::ordering::{
 use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
 use delaunay::prelude::query::{ConvexHull, extract_hull_facet_set};
 use delaunay::prelude::repair::DelaunayRepairError;
-use delaunay::prelude::tds::{Tds, TdsBuilder, TdsBuilderError};
+use delaunay::prelude::tds::{Tds, TdsBuilder, TdsBuilderError, TdsMutationError};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind};
 use delaunay::prelude::triangulation::{
     Triangulation, TriangulationBuilder, TriangulationBuilderError, TriangulationEditError,
@@ -36,7 +40,60 @@ use delaunay::prelude::validation::{
     TriangulationValidationError, ValidationPolicy,
 };
 use delaunay::vertex;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+// Deliberately lacks Copy, Hash, Ord, PartialEq, and Debug.
+#[derive(Clone, Deserialize, Serialize)]
+struct PersistencePayload {
+    label: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum PersistencePayloadRegressionError {
+    #[error(transparent)]
+    Coordinate {
+        #[from]
+        source: CoordinateConversionError,
+    },
+    #[error(transparent)]
+    Tds {
+        #[from]
+        source: TdsBuilderError,
+    },
+    #[error(transparent)]
+    Mutation {
+        #[from]
+        source: TdsMutationError,
+    },
+    #[error(transparent)]
+    Triangulation {
+        #[from]
+        source: TriangulationBuilderError,
+    },
+    #[error(transparent)]
+    Realization {
+        #[from]
+        source: TriangulationRealizationValidationError,
+    },
+    #[error(transparent)]
+    Delaunay {
+        #[from]
+        source: DelaunayTriangulationValidationError,
+    },
+    #[error(transparent)]
+    Codec {
+        #[from]
+        source: serde_json::Error,
+    },
+    #[error(transparent)]
+    Checkpoint {
+        #[from]
+        source: DelaunayCheckpointLoadError,
+    },
+    #[error("the persistence fixture unexpectedly contains no simplex")]
+    MissingSimplex,
+}
 
 #[derive(Debug, thiserror::Error)]
 enum VertexOnlyTdsRegressionError {
@@ -211,6 +268,125 @@ where
     Ok(())
 }
 
+// These generic bodies also prevent promotion from regaining serde bounds.
+fn promote_clone_only_snapshot<U: Clone, V: Clone, const D: usize>(
+    snapshot: TriangulationSnapshot<U, V, D>,
+) -> Result<Triangulation<RobustKernel<f64>, U, V, D>, TriangulationBuilderError>
+where
+    RobustKernel<f64>: ExactPredicates<D>,
+{
+    snapshot
+        .try_into_triangulation(RobustKernel::new())
+        .map_err(delaunay::RefinementError::into_reason)
+}
+
+fn restore_clone_only_legacy_checkpoint<U: Clone, V: Clone, const D: usize>(
+    checkpoint: DelaunayCheckpointV1<U, V, D>,
+) -> Result<DelaunayTriangulation<RobustKernel<f64>, U, V, D>, DelaunayCheckpointLoadError>
+where
+    RobustKernel<f64>: ExactPredicates<D>,
+{
+    checkpoint.try_into_delaunay()
+}
+
+fn assert_minimal_payload_persistence<const D: usize>()
+-> Result<(), PersistencePayloadRegressionError>
+where
+    RobustKernel<f64>: ExactPredicates<D>,
+{
+    let mut vertices = vec![vertex!([0.0; D]; data = PersistencePayload {
+        label: "origin".to_owned(),
+    })?];
+    for axis in 0..D {
+        let mut coords = [0.0; D];
+        coords[axis] = 1.0;
+        vertices.push(vertex!(coords; data = PersistencePayload {
+            label: format!("axis-{axis}"),
+        })?);
+    }
+    let tds = TdsBuilder::new(&vertices, &[(0..=D).collect()])
+        .simplex_data_type::<PersistencePayload>()
+        .build()?;
+    let mut original = TriangulationBuilder::new(tds, RobustKernel::new())
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .validation_policy(ValidationPolicy::Always)
+        .canonicalizing()
+        .build()
+        .map_err(delaunay::RefinementError::into_reason)?;
+    let simplex_key = original
+        .simplices()
+        .next()
+        .map(|(key, _)| key)
+        .ok_or(PersistencePayloadRegressionError::MissingSimplex)?;
+    original.set_simplex_data(
+        simplex_key,
+        Some(PersistencePayload {
+            label: "simplex".to_owned(),
+        }),
+    )?;
+
+    let json = serde_json::to_vec(&original)?;
+    let expected: serde_json::Value = serde_json::from_slice(&json)?;
+    let snapshot: TriangulationSnapshot<PersistencePayload, PersistencePayload, D> =
+        serde_json::from_slice(&json)?;
+    let promoted = promote_clone_only_snapshot(snapshot)?;
+    let deserialized: Triangulation<RobustKernel<f64>, PersistencePayload, PersistencePayload, D> =
+        serde_json::from_slice(&json)?;
+    for restored in [promoted, deserialized] {
+        restored.validate_realization()?;
+        assert_eq!(serde_json::to_value(&restored)?, expected);
+    }
+
+    let original = DelaunayRefinementBuilder::new(original)
+        .build()
+        .map_err(delaunay::RefinementError::into_reason)?;
+    let json = serde_json::to_vec(&original)?;
+    let expected: serde_json::Value = serde_json::from_slice(&json)?;
+    let checkpoint: DelaunayCheckpoint<PersistencePayload, PersistencePayload, D> =
+        serde_json::from_slice(&json)?;
+    let restored = checkpoint.try_into_delaunay_with_kernel(RobustKernel::new())?;
+    let deserialized: DelaunayTriangulation<
+        RobustKernel<f64>,
+        PersistencePayload,
+        PersistencePayload,
+        D,
+    > = serde_json::from_slice(&json)?;
+    for restored in [restored, deserialized] {
+        restored.validate()?;
+        assert_eq!(serde_json::to_value(&restored)?, expected);
+    }
+
+    let legacy_wire = serde_json::json!({
+        "schema_version": 1,
+        "tds": original.into_triangulation().into_tds(),
+        "topology_guarantee": "pl_manifold",
+        "global_topology": {"kind": "euclidean"},
+        "validation_policy": "always",
+    });
+    let legacy: DelaunayCheckpointV1<PersistencePayload, PersistencePayload, D> =
+        serde_json::from_value(legacy_wire)?;
+    let restored = restore_clone_only_legacy_checkpoint(legacy)?;
+    restored.validate()?;
+    assert_eq!(serde_json::to_value(&restored)?, expected);
+    Ok(())
+}
+
+macro_rules! minimal_payload_persistence_regression_tests {
+    ($dim:literal) => {
+        pastey::paste! {
+            #[test]
+            fn [<regression_minimal_payload_persistence_ $dim d>]() -> Result<(), PersistencePayloadRegressionError> {
+                assert_minimal_payload_persistence::<$dim>()
+            }
+        }
+    };
+}
+
+minimal_payload_persistence_regression_tests!(2);
+minimal_payload_persistence_regression_tests!(3);
+minimal_payload_persistence_regression_tests!(4);
+minimal_payload_persistence_regression_tests!(5);
+
 macro_rules! vertex_only_tds_regression_tests {
     ($dim:literal) => {
         pastey::paste! {
@@ -370,6 +546,33 @@ coplanar_hull_regression_tests!(3);
 coplanar_hull_regression_tests!(4);
 coplanar_hull_regression_tests!(5);
 
+/// Compares geometric connectivity to fixture indices without relying on UUID ordering.
+fn simplex_indices_4d(
+    dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 4>,
+    inputs: &[Vertex<(), 4>],
+) -> Vec<Vec<usize>> {
+    let mut simplices: Vec<Vec<_>> = dt
+        .simplices()
+        .map(|(_, simplex)| {
+            let mut indices: Vec<_> = simplex
+                .vertices()
+                .iter()
+                .map(|&key| {
+                    let uuid = dt.vertex(key).unwrap().uuid();
+                    inputs
+                        .iter()
+                        .position(|vertex| vertex.uuid() == uuid)
+                        .unwrap()
+                })
+                .collect();
+            indices.sort_unstable();
+            indices
+        })
+        .collect();
+    simplices.sort_unstable();
+    simplices
+}
+
 /// Replays the two minimized snapshot-property failures from PR #612 CI.
 fn assert_ci_hull_snapshot_insertion_4d(
     exterior: [f64; 4],
@@ -419,23 +622,7 @@ fn assert_ci_hull_snapshot_insertion_4d(
     // Independent oracle: enumerate all 21 five-vertex subsets, solve their
     // circumcenters with exact rational Gaussian elimination on the f64 inputs,
     // and retain only empty circumspheres. Neither fixture has cospherical ties.
-    let mut actual_simplices: Vec<Vec<_>> = dt
-        .simplices()
-        .map(|(_, simplex)| {
-            let mut indices: Vec<_> = simplex
-                .vertices()
-                .iter()
-                .map(|&key| {
-                    let uuid = dt.vertex(key).unwrap().uuid();
-                    inputs.iter().position(|v| v.uuid() == uuid).unwrap()
-                })
-                .collect();
-            indices.sort_unstable();
-            indices
-        })
-        .collect();
-    actual_simplices.sort_unstable();
-    assert_eq!(actual_simplices, expected_simplices);
+    assert_eq!(simplex_indices_4d(&dt, &inputs), expected_simplices);
 }
 
 #[test]
@@ -515,17 +702,198 @@ fn regression_max_volume_seed_fallback_preserves_hull_snapshot_4d() {
                 .any(|(_, vertex)| vertex.uuid() == input.uuid())
         );
     }
+    // Construction may use its documented perturbation retries. The follow-on
+    // insertion must preserve the actual published vertices and their keys.
+    let before_insertion: Vec<_> = dt.vertices().map(|(key, vertex)| (key, *vertex)).collect();
 
     let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
     let original_facets = extract_hull_facet_set(&hull);
-    dt.insert_vertex(vertex!([0.0, 0.0, 0.0, -89.499_405_743_184]).unwrap())
+    let inserted = vertex!([0.0, 0.0, 0.0, -89.499_405_743_184]).unwrap();
+    let key = dt
+        .insert_vertex(inserted)
         .expect("the CI follow-on insertion must succeed");
+    assert_eq!(dt.vertex(key).unwrap().uuid(), inserted.uuid());
     dt.validate().expect("insertion must preserve Levels 1-5");
+    assert!(
+        dt.as_triangulation()
+            .delaunay_violation_report(None)
+            .unwrap()
+            .is_valid()
+    );
     assert_eq!(dt.number_of_vertices(), vertices.len() + 1);
     assert_eq!(extract_hull_facet_set(&hull), original_facets);
     let updated_hull = ConvexHull::try_from_triangulation(dt.as_triangulation())
         .expect("the updated triangulation must also have a valid hull");
     assert!(updated_hull.number_of_facets() >= 5);
+
+    for (key, before) in before_insertion {
+        let actual = dt
+            .vertex(key)
+            .expect("insertion must preserve existing keys");
+        assert_eq!(actual.uuid(), before.uuid());
+        assert_eq!(
+            actual.point().coords().map(f64::to_bits),
+            before.point().coords().map(f64::to_bits)
+        );
+    }
+    assert_eq!(
+        dt.vertex(key).unwrap().point().coords().map(f64::to_bits),
+        inserted.point().coords().map(f64::to_bits)
+    );
+    let inputs: Vec<_> = vertices.into_iter().chain([inserted]).collect();
+    // Independent oracle: enumerate all 56 five-point subsets and solve their
+    // circumcenters over exact rationals representing the constructor's f64
+    // output and the new point. Construction perturbs vertex 6 below z = 0;
+    // the resulting 10 empty-sphere simplices have no cospherical ties.
+    assert_eq!(
+        simplex_indices_4d(&dt, &inputs),
+        [
+            [0, 1, 2, 3, 4],
+            [0, 1, 2, 3, 6],
+            [0, 1, 2, 4, 6],
+            [0, 1, 3, 6, 7],
+            [0, 2, 3, 5, 6],
+            [0, 3, 5, 6, 7],
+            [1, 2, 3, 5, 6],
+            [1, 2, 3, 5, 7],
+            [1, 2, 5, 6, 7],
+            [1, 3, 5, 6, 7],
+        ]
+    );
+}
+
+/// A supporting hull corner is clipped without replacing surviving simplices.
+fn assert_hull_corner_deletion<const D: usize>(
+    vertices: &[Vertex<(), D>],
+) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
+    let mut dt = DelaunayTriangulationBuilder::new(vertices).build().unwrap();
+    dt.validate().unwrap();
+    assert_eq!(dt.number_of_vertices(), vertices.len());
+    let removed = dt.vertex_key_from_uuid(&vertices[0].uuid()).unwrap();
+    let survivors: Vec<_> = dt
+        .vertices()
+        .filter(|(key, _)| *key != removed)
+        .map(|(key, vertex)| {
+            (
+                key,
+                vertex.uuid(),
+                vertex.point().coords().map(f64::to_bits),
+            )
+        })
+        .collect();
+    let retained_simplices: Vec<_> = dt
+        .simplices()
+        .filter(|(_, simplex)| !simplex.contains_vertex(removed))
+        .map(|(key, simplex)| (key, simplex.vertices().to_vec()))
+        .collect();
+    assert_eq!(dt.number_of_simplices() - retained_simplices.len(), D);
+
+    let mut tri = dt.clone().into_triangulation();
+    assert_eq!(tri.delete_vertex(removed).unwrap(), D);
+    tri.validate().unwrap();
+    tri.validate_realization().unwrap();
+    assert_eq!(dt.delete_vertex(removed).unwrap(), D);
+    dt.validate().unwrap();
+    assert!(
+        dt.as_triangulation()
+            .delaunay_violation_report(None)
+            .unwrap()
+            .is_valid()
+    );
+
+    for actual in [&tri, dt.as_triangulation()] {
+        assert_eq!(actual.number_of_vertices(), survivors.len());
+        assert!(actual.vertex(removed).is_none());
+        assert_eq!(actual.number_of_simplices(), retained_simplices.len());
+        for &(key, uuid, coordinate_bits) in &survivors {
+            let vertex = actual
+                .vertex(key)
+                .expect("surviving vertex keys must remain live");
+            assert_eq!(vertex.uuid(), uuid);
+            assert_eq!(vertex.point().coords().map(f64::to_bits), coordinate_bits);
+        }
+        for (key, vertices) in &retained_simplices {
+            assert_eq!(actual.simplex(*key).unwrap().vertices(), vertices);
+        }
+        let hull = ConvexHull::try_from_triangulation(actual)
+            .expect("the exposed facets must support every surviving vertex");
+        assert!(hull.number_of_facets() > D);
+    }
+    dt
+}
+
+fn assert_simplex_hull_corner_deletion<const D: usize>()
+where
+    AdaptiveKernel<f64>: ExactPredicates<D>,
+{
+    // For 2D through 5D, p = [1/8; D] lies strictly inside the standard
+    // simplex. Removing the origin exposes its D opposite star facets. The
+    // existing simplex [e1,...,eD,p] is exactly the remaining convex hull.
+    let mut vertices = vec![vertex!([0.0; D]).unwrap()];
+    for axis in 0..D {
+        let mut point = [0.0; D];
+        point[axis] = 1.0;
+        vertices.push(vertex!(point).unwrap());
+    }
+    vertices.push(vertex!([0.125; D]).unwrap());
+    let dt = assert_hull_corner_deletion(&vertices);
+    assert_eq!(dt.number_of_simplices(), 1);
+    let mut actual_vertices: Vec<_> = dt
+        .simplices()
+        .next()
+        .unwrap()
+        .1
+        .vertices()
+        .iter()
+        .map(|&key| dt.vertex(key).unwrap().uuid())
+        .collect();
+    let mut expected_vertices: Vec<_> = vertices[1..].iter().map(Vertex::uuid).collect();
+    actual_vertices.sort_unstable();
+    expected_vertices.sort_unstable();
+    assert_eq!(actual_vertices, expected_vertices);
+}
+
+macro_rules! hull_corner_deletion_regression_tests {
+    ($dim:expr) => {
+        pastey::paste! {
+            #[test]
+            fn [<regression_delete_hull_corner_has_no_replacement_cavity_ $dim d>]() {
+                assert_simplex_hull_corner_deletion::<$dim>();
+            }
+        }
+    };
+}
+
+hull_corner_deletion_regression_tests!(2);
+hull_corner_deletion_regression_tests!(3);
+hull_corner_deletion_regression_tests!(4);
+hull_corner_deletion_regression_tests!(5);
+
+#[test]
+fn regression_delete_vertex_near_degenerate_benchmark_3d() {
+    // Preserve the exact 50-point benchmark workload and input-index-0 target:
+    // seed 0x357f_c639_dc8c_3c18, 46 rounded affine-line points, and the full
+    // canonical simplex. All three origin-star facets support the survivors.
+    let mut vertices = vec![
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+    ];
+    let seed_offset = f64::from(u32::try_from(0x357F_C639_DC8C_3C18_u64 % 997).unwrap()) * 1.0e-14;
+    for index in 0..46_u32 {
+        let factor = f64::from(index + 1);
+        let diagonal = factor / 47.0;
+        let point = std::array::from_fn(|axis| {
+            (1.0e-10 * f64::from(u32::try_from(axis + 1).unwrap()))
+                .mul_add(factor, diagonal + seed_offset)
+        });
+        vertices.push(vertex!(point).unwrap());
+    }
+    let _ = assert_hull_corner_deletion(&vertices);
 }
 
 #[test]
@@ -1875,6 +2243,49 @@ fn regression_issue_551_periodic_k1_preflight_success_matches_commit() {
     trial
         .validate_realization()
         .expect("successful periodic k=1 insertion must preserve Level 4 realization");
+}
+
+#[test]
+fn regression_periodic_k1_accepts_canonical_wrapped_barycenter() {
+    let mut dt = periodic_regression_fixture_t2().into_triangulation();
+    let simplex_key = periodic_simplex_key(
+        &dt,
+        [
+            ([0.131_152_949_166_187_8, 0.113_961_030_586_907_43], [0, 0]),
+            ([0.262_461_179_900_496_8, 0.795_584_412_305_938_3], [0, -1]),
+            ([0.343_614_129_000_127_8, 0.859_545_442_942_608_2], [0, -1]),
+        ],
+    );
+    let coords = *dt.simplex_barycenter(simplex_key).unwrap().coords();
+    assert!(
+        coords[1] > 0.9,
+        "negative lifted barycenter must wrap across the seam"
+    );
+    let candidate = vertex!(coords).unwrap();
+    let uuid = candidate.uuid();
+    let before = snapshot_periodic_topology(&dt);
+    let feasibility = dt.can_flip_k1_insert(simplex_key, &candidate).unwrap();
+    assert_eq!(snapshot_periodic_topology(&dt), before);
+    let info = dt.flip_k1_insert(simplex_key, candidate).unwrap();
+    assert_eq!(feasibility.removed_simplices, info.removed_simplices);
+    let key = dt.vertex_key_from_uuid(&uuid).unwrap();
+    assert_eq!(
+        dt.vertex(key).unwrap().point().coords().map(f64::to_bits),
+        coords.map(f64::to_bits)
+    );
+    for (_, simplex) in dt
+        .simplices()
+        .filter(|(_, simplex)| simplex.vertices().contains(&key))
+    {
+        let slot = simplex
+            .vertices()
+            .iter()
+            .position(|&vertex| vertex == key)
+            .unwrap();
+        assert_eq!(simplex.periodic_vertex_offsets().unwrap()[slot], [0, -1]);
+    }
+    dt.validate_realization()
+        .expect("canonical barycenter insertion must preserve Levels 1-4");
 }
 
 /// The 35-vertex 3D seed `0xE30C78582376677C` produces a Hilbert-ordered

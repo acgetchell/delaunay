@@ -548,7 +548,7 @@ where
                 | DelaunayRepairError::PostconditionFailed { .. }),
             ) => {
                 // Robust fallback: retry with `RobustKernel` which guarantees exact
-                // predicate evaluation. This covers 99.9%+ of repair failures.
+                // predicate evaluation without promising convergence of flips.
                 //
                 // If the robust pass also fails, return an error so the
                 // insertion transaction can roll back. Batch workflows that
@@ -671,7 +671,7 @@ mod tests {
     use crate::flips::BistellarFlips;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::incremental_builder::DelaunayIncrementalBuilder;
-    use crate::repair::DelaunayRepairPolicy;
+    use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
     use crate::topology::traits::topological_space::GlobalTopology;
     use crate::vertex;
     use slotmap::KeyData;
@@ -1077,6 +1077,33 @@ mod tests {
         );
         assert!(!dt.vertices().any(|(_, v)| v.uuid() == transient_uuid));
         assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn end_only_pyramid_insertion_succeeds_and_is_globally_valid() {
+        let vertices = [
+            vertex!([-1.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+        ];
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        dt.set_delaunay_check_policy(DelaunayCheckPolicy::EndOnly);
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::EveryInsertion;
+        dt.validate().unwrap();
+        let inserted = vertex!([0.0, -0.5, 0.0]).unwrap();
+        let inserted_uuid = inserted.uuid();
+
+        let key = dt
+            .insert_vertex(inserted)
+            .expect("the valid pyramid insertion must succeed");
+        assert_eq!(dt.number_of_vertices(), 5);
+        assert_eq!(dt.vertex(key).unwrap().uuid(), inserted_uuid);
+        // Query the Triangulation layer to force the global all-vertices scan,
+        // independently of the Delaunay owner's optimized local certificate.
+        assert!(dt.tri.delaunay_violation_report(None).unwrap().is_valid());
+        dt.validate().unwrap();
     }
 
     fn wedge_two_s2_complexes_share_vertex_tds() -> (Tds<(), (), 2>, SimplexKey, SimplexKey) {

@@ -26,6 +26,26 @@ NAME = f"delaunay-{VERSION}.crate"
 TOOLS = {"cargo": "cargo 1.99.1", "rustc": "rustc 1.99.1\nhost: x86_64-unknown-linux-gnu"}
 
 
+def test_main_reports_missing_executable_without_publication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """Executable discovery failures use the ordinary CLI recovery diagnostic."""
+    prior_output = tmp_path / "retained-selection.json"
+    prior_output.write_bytes(b"previous retained selection\r\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", str(tmp_path / "missing-bin"))
+    monkeypatch.setattr(sys, "argv", ["release_artifacts.py", "evidence"])
+
+    assert promotion.main() == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Cargo promotion failed:" in captured.err
+    assert "git" in captured.err
+    assert "not found" in captured.err.lower()
+    assert promotion.RECOVERY in captured.err
+    assert "Traceback" not in captured.err
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == {prior_output.name: b"previous retained selection\r\n"}
+
+
 def crate_bytes(*, dirty: bool = False, commit: str = COMMIT, version: str = VERSION) -> bytes:
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w:gz") as archive:

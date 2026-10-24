@@ -151,7 +151,6 @@ const QUERY_RESULTS_BUFFER_SIZE: usize = 1024; // For bounded query result colle
 const DEFAULT_SEED: u64 = 42;
 const QUERY_SEED: u64 = 123;
 const MAX_QUERY_RESULTS: usize = 1_000;
-const VALIDATION_SEED_SEARCH_LIMIT: u64 = 64;
 
 /// Memory usage information for benchmarking, in KiB.
 #[cfg_attr(
@@ -428,13 +427,13 @@ where
     }
 
     group.bench_function("construct", |b| {
-        b.iter_batched(
+        b.iter_batched_ref(
             || {
                 let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
                 benchmark_vertices_from_generated_points(&points)
             },
             |vertices| {
-                let dt = construct_triangulation::<D>(black_box(&vertices), seed);
+                let dt = construct_triangulation::<D>(black_box(vertices.as_slice()), seed);
                 black_box(dt)
             },
             BatchSize::LargeInput,
@@ -494,15 +493,15 @@ where
         group.measurement_time(bench_time(120));
     }
 
-    let seed = seed_for_case::<D>(n_points);
-    let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
-    let vertices = benchmark_vertices_from_generated_points(&points);
-    let dt = construct_triangulation::<D>(&vertices, seed);
-    let tri = dt.as_triangulation();
-
-    group.throughput(Throughput::Elements(tri.number_of_simplices() as u64));
-
+    let fixture = OnceLock::new();
     group.bench_function("validate_topology", |b| {
+        let dt = fixture.get_or_init(|| {
+            let seed = seed_for_case::<D>(n_points);
+            let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
+            let vertices = benchmark_vertices_from_generated_points(&points);
+            construct_triangulation::<D>(&vertices, seed)
+        });
+        let tri = dt.as_triangulation();
         b.iter(|| {
             if let Err(error) = tri.is_valid_topology() {
                 abort_benchmark(format_args!(
@@ -529,17 +528,18 @@ where
         group.measurement_time(bench_time(120));
     }
 
-    let seed = seed_for_case::<D>(n_points);
-    let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
-    let vertices = benchmark_vertices_from_generated_points(&points);
-    let dt = construct_triangulation::<D>(&vertices, seed);
-    let simplex_keys: Vec<_> = dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
-
-    group.throughput(Throughput::Elements(simplex_keys.len() as u64));
-
+    let fixture = OnceLock::new();
     group.bench_function("find_neighbors_all_simplices", |b| {
+        let (dt, simplex_keys) = fixture.get_or_init(|| {
+            let seed = seed_for_case::<D>(n_points);
+            let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
+            let vertices = benchmark_vertices_from_generated_points(&points);
+            let dt = construct_triangulation::<D>(&vertices, seed);
+            let simplex_keys: Vec<_> = dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
+            (dt, simplex_keys)
+        });
         b.iter(|| {
-            for &simplex_key in &simplex_keys {
+            for &simplex_key in simplex_keys {
                 for neighbor in dt.simplex_neighbors(simplex_key) {
                     black_box(neighbor);
                 }
@@ -565,12 +565,14 @@ where
         group.measurement_time(bench_time(120));
     }
 
-    let seed = seed_for_case::<D>(n_points);
-    let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
-    let vertices = benchmark_vertices_from_generated_points(&points);
-    let dt = construct_triangulation::<D>(&vertices, seed);
-
+    let fixture = OnceLock::new();
     group.bench_function("iterate_all_vertices", |b| {
+        let dt = fixture.get_or_init(|| {
+            let seed = seed_for_case::<D>(n_points);
+            let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
+            let vertices = benchmark_vertices_from_generated_points(&points);
+            construct_triangulation::<D>(&vertices, seed)
+        });
         b.iter(|| {
             let mut count = 0;
             for (_, vertex) in dt.vertices() {
@@ -598,14 +600,14 @@ where
         group.measurement_time(bench_time(120));
     }
 
-    let seed = seed_for_case::<D>(n_points);
-    let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
-    let vertices = benchmark_vertices_from_generated_points(&points);
-    let dt = construct_triangulation::<D>(&vertices, seed);
-
-    group.throughput(Throughput::Elements(dt.number_of_simplices() as u64));
-
+    let fixture = OnceLock::new();
     group.bench_function("iterate_all_simplices", |b| {
+        let dt = fixture.get_or_init(|| {
+            let seed = seed_for_case::<D>(n_points);
+            let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
+            let vertices = benchmark_vertices_from_generated_points(&points);
+            construct_triangulation::<D>(&vertices, seed)
+        });
         b.iter(|| {
             let mut count = 0;
             for (simplex_key, _) in dt.simplices() {
@@ -1017,50 +1019,39 @@ macro_rules! benchmark_validation_components_dimension {
                 PointDistribution::Random
             };
             let suffix = if is_adversarial { "_adversarial" } else { "" };
-            let mut last_error = None;
-            let dt = (0..VALIDATION_SEED_SEARCH_LIMIT)
-                .find_map(|offset| {
-                    let seed = DEFAULT_SEED.wrapping_add(offset);
-                    let points = gen_points::<$dim>($count, distribution, seed);
-                    let vertices = benchmark_vertices_from_generated_points(&points);
-                    let builder = DelaunayTriangulationBuilder::new(&vertices);
-                    let builder = if is_adversarial {
-                        let attempts = retry_attempts(8);
-                        builder.construction_options(
-                            ConstructionOptions::default().with_retry_policy(
-                                RetryPolicy::Shuffled {
-                                    attempts,
-                                    base_seed: Some(seed),
-                                },
-                            ),
-                        )
-                    } else {
-                        builder
-                    };
-
-                    match builder.build() {
-                        Ok(dt) => Some(dt),
-                        Err(err) => {
-                            last_error = Some(format!("{err}"));
-                            None
-                        }
-                    }
-                })
-                .unwrap_or_else(|| {
+            let seed = DEFAULT_SEED;
+            let fixture = OnceLock::new();
+            let prepare = || {
+                let points = gen_points::<$dim>($count, distribution, seed);
+                let vertices = benchmark_vertices_from_generated_points(&points);
+                let builder = DelaunayTriangulationBuilder::new(&vertices);
+                let builder = if is_adversarial {
+                    let attempts = retry_attempts(8);
+                    builder.construction_options(
+                        ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
+                            attempts,
+                            base_seed: Some(seed),
+                        }),
+                    )
+                } else {
+                    builder
+                };
+                builder.build().unwrap_or_else(|error| {
                     abort_benchmark(format_args!(
-                        "failed to build {}D validation component benchmark triangulation \
-                         after {} seeds (last error: {})",
+                        "{}D validation component fixture{suffix} seed {seed:#x} failed: {error}",
                         $dim,
-                        VALIDATION_SEED_SEARCH_LIMIT,
-                        last_error.unwrap_or_else(|| "none".to_string())
                     ));
-                });
+                })
+            };
 
-            let mut group = c.benchmark_group(format!("validation_components_{}d{}", $dim, suffix));
+            let mut group = c.benchmark_group(format!(
+                "validation_components_{}d{}_seed_{seed:016x}", $dim, suffix
+            ));
             group.measurement_time(bench_time(15));
             group.throughput(Throughput::Elements($count as u64));
 
             group.bench_function("is_valid_structure", |b| {
+                let dt = fixture.get_or_init(prepare);
                 b.iter(|| {
                     if let Err(error) = black_box(dt.is_valid_structure()) {
                         abort_benchmark(format_args!(
@@ -1071,6 +1062,7 @@ macro_rules! benchmark_validation_components_dimension {
             });
 
             group.bench_function("is_valid_topology", |b| {
+                let dt = fixture.get_or_init(prepare);
                 b.iter(|| {
                     if let Err(error) = black_box(dt.as_triangulation().is_valid_topology()) {
                         abort_benchmark(format_args!(
@@ -1081,6 +1073,7 @@ macro_rules! benchmark_validation_components_dimension {
             });
 
             group.bench_function("validate_realization", |b| {
+                let dt = fixture.get_or_init(prepare);
                 b.iter(|| {
                     if let Err(error) = black_box(dt.as_triangulation().validate_realization()) {
                         abort_benchmark(format_args!(
@@ -1091,6 +1084,7 @@ macro_rules! benchmark_validation_components_dimension {
             });
 
             group.bench_function("is_valid_delaunay", |b| {
+                let dt = fixture.get_or_init(prepare);
                 b.iter(|| {
                     if let Err(error) = black_box(dt.is_valid_delaunay()) {
                         abort_benchmark(format_args!(
@@ -1101,6 +1095,7 @@ macro_rules! benchmark_validation_components_dimension {
             });
 
             group.bench_function("validate", |b| {
+                let dt = fixture.get_or_init(prepare);
                 b.iter(|| {
                     if let Err(error) = black_box(dt.validate()) {
                         abort_benchmark(format_args!(
@@ -1145,7 +1140,7 @@ fn bench_bottlenecks(c: &mut Criterion) {
             BenchmarkId::new("boundary_facets_3d", count),
             &count,
             |b, &count| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || {
                         let points =
                             gen_points::<3>(count, PointDistribution::Random, DEFAULT_SEED);
@@ -1172,7 +1167,7 @@ fn bench_bottlenecks(c: &mut Criterion) {
             BenchmarkId::new("convex_hull_3d", count),
             &count,
             |b, &count| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     || {
                         let points =
                             gen_points::<3>(count, PointDistribution::Random, DEFAULT_SEED);
@@ -1184,7 +1179,7 @@ fn bench_bottlenecks(c: &mut Criterion) {
                     |dt| {
                         let hull =
                             ConvexHull::try_from_triangulation(dt.as_triangulation()).or_abort();
-                        let _ = black_box(hull);
+                        black_box(hull)
                     },
                     BatchSize::LargeInput,
                 );

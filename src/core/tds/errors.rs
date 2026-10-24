@@ -762,6 +762,24 @@ pub enum TdsError {
         /// Simplex listed for the vertex but missing that vertex in storage.
         simplex_key: SimplexKey,
     },
+    /// Canonical vertex incidence has an unexpected number of entries.
+    #[error("Vertex-to-simplices index has {actual} simplex incidences, expected {expected}")]
+    VertexIncidenceCountMismatch {
+        /// Observed incidence count.
+        actual: usize,
+        /// Count implied by simplex vertex membership.
+        expected: usize,
+    },
+    /// A connected component cannot satisfy every coherent-orientation constraint.
+    #[error(
+        "Contradictory orientation constraints between simplices {simplex1_uuid} and {simplex2_uuid}"
+    )]
+    ContradictoryOrientationConstraints {
+        /// UUID of the first simplex in the contradictory constraint.
+        simplex1_uuid: Uuid,
+        /// UUID of the second simplex in the contradictory constraint.
+        simplex2_uuid: Uuid,
+    },
     /// Internal data structure inconsistency.
     ///
     /// This is the fallback for structural invariant violations that carry
@@ -858,6 +876,10 @@ pub enum TdsErrorKind {
     RemovedSimplexStillIncident,
     /// Canonical incidence disagreed with simplex vertex membership.
     VertexIncidenceMismatch,
+    /// Canonical incidence had an unexpected number of entries.
+    VertexIncidenceCountMismatch,
+    /// Coherent-orientation constraints contradicted one another.
+    ContradictoryOrientationConstraints,
     /// Internal TDS state was inconsistent.
     InconsistentDataStructure,
     /// A geometric validation failure occurred.
@@ -891,6 +913,10 @@ impl From<&TdsError> for TdsErrorKind {
             TdsError::IndexOutOfBounds { .. } => Self::IndexOutOfBounds,
             TdsError::RemovedSimplexStillIncident { .. } => Self::RemovedSimplexStillIncident,
             TdsError::VertexIncidenceMismatch { .. } => Self::VertexIncidenceMismatch,
+            TdsError::VertexIncidenceCountMismatch { .. } => Self::VertexIncidenceCountMismatch,
+            TdsError::ContradictoryOrientationConstraints { .. } => {
+                Self::ContradictoryOrientationConstraints
+            }
             TdsError::InconsistentDataStructure { .. } => Self::InconsistentDataStructure,
             TdsError::Geometric { source: _ } => Self::Geometric,
             TdsError::FacetError { source: _ } => Self::FacetError,

@@ -12,9 +12,8 @@ use super::{
     RepairAttemptConfig, RepairDiagnostics, ReplacementOrientationPolicy,
     ReplacementPeriodicOffsets, ReplacementSimplexVertices, RidgeHandle, Simplex, SimplexKey,
     SimplexKeyBuffer, SmallBuffer, Tds, TdsConstructionFailure, TriangleHandle, Vertex, VertexKey,
-    VertexKeyList, apply_bistellar_flip_dynamic_raw, apply_bistellar_flip_raw,
-    apply_bistellar_flip_with_k_raw, collect_simplices_around_ridge, env,
-    facet_vertices_from_simplex, k1_inserted_vertex_periodic_offset, lift_vertex_point,
+    VertexKeyList, apply_bistellar_flip_dynamic_raw, apply_bistellar_flip_with_k_raw,
+    collect_simplices_around_ridge, env, facet_vertices_from_simplex, lift_vertex_point,
     matching_source_simplex, missing_opposite_for_simplex, once, periodic_offsets_or_zero_frame,
     predicate_key_from_vertices, prepare_bistellar_flip, ridge_vertices_from_simplex,
     robust_orientation, simplex_extras_for_ridge, vertex_point, vertex_point_lifted_into_simplex,
@@ -73,6 +72,7 @@ where
         &context.removed_simplices,
         context.direction,
         ReplacementOrientationPolicy::AllowSigned,
+        None,
     )?
     .into_feasibility())
 }
@@ -96,6 +96,7 @@ pub(crate) fn validate_bistellar_flip_dynamic<U, V, const D: usize>(
         &context.removed_simplices,
         context.direction,
         ReplacementOrientationPolicy::AllowSigned,
+        None,
     )?
     .into_feasibility())
 }
@@ -117,6 +118,7 @@ pub(super) fn validate_delaunay_flip_dynamic<U, V, const D: usize>(
         &context.removed_simplices,
         context.direction,
         ReplacementOrientationPolicy::RequirePositive,
+        None,
     )?;
     Ok(())
 }
@@ -139,6 +141,7 @@ where
         context.direction,
         ReplacementOrientationPolicy::RequirePositive,
         FlipValidationScope::LocalCavity,
+        None,
     )
 }
 
@@ -163,6 +166,7 @@ where
         context.direction,
         ReplacementOrientationPolicy::RequirePositive,
         FlipValidationScope::LocalCavity,
+        None,
     )
 }
 
@@ -189,6 +193,7 @@ where
         context.direction,
         ReplacementOrientationPolicy::RequirePositive,
         FlipValidationScope::LocalCavity,
+        None,
     )
 }
 
@@ -1172,17 +1177,12 @@ where
 }
 
 /// Lifts a proposed k=1 vertex into the same simplex-local chart used by mutation planning.
-pub(super) fn k1_inserted_vertex_point_in_simplex_frame<U, V, const D: usize>(
+pub(super) fn k1_inserted_vertex_point_in_simplex_frame<U, const D: usize>(
     topology_model: &GlobalTopologyModelAdapter<D>,
     simplex_key: SimplexKey,
-    simplex: &Simplex<V, D>,
     vertex: &Vertex<U, D>,
+    periodic_offset: Option<[i8; D]>,
 ) -> Result<Point<D>, FlipError> {
-    let periodic_offset = if topology_model.supports_periodic_orientation_offsets() {
-        Some(k1_inserted_vertex_periodic_offset(simplex_key, simplex)?)
-    } else {
-        None
-    };
     let lifted_coords = topology_model
         .lift_for_orientation(*vertex.point().coords(), periodic_offset)
         .map_err(|source| FlipPredicateError::K1InsertedVertexLift {
@@ -1205,7 +1205,7 @@ pub(super) fn validate_k1_insertion_realization<U, V, const D: usize>(
     simplex_key: SimplexKey,
     simplex: &Simplex<V, D>,
     vertex: &Vertex<U, D>,
-) -> Result<(), FlipError>
+) -> Result<Option<[i8; D]>, FlipError>
 where
     U: DataType,
     V: DataType,
@@ -1234,8 +1234,45 @@ where
         return Err(FlipError::DegenerateSimplex);
     }
 
-    let inserted_point =
-        k1_inserted_vertex_point_in_simplex_frame(topology_model, simplex_key, simplex, vertex)?;
+    if let Some(domain) = topology_model.periodic_domain()
+        && use_offsets
+    {
+        return select_k1_periodic_image(
+            topology_model,
+            simplex_key,
+            simplex,
+            &simplex_points,
+            simplex_orientation,
+            vertex,
+            domain.periods(),
+        )
+        .map(Some);
+    }
+    let inserted_point = k1_inserted_vertex_point_in_simplex_frame::<U, D>(
+        topology_model,
+        simplex_key,
+        vertex,
+        None,
+    )?;
+    validate_k1_point_containment(
+        simplex_key,
+        simplex,
+        &simplex_points,
+        simplex_orientation,
+        inserted_point,
+    )?;
+    Ok(None)
+}
+
+/// Exact barycentric-sign test in an already lifted, nondegenerate simplex.
+fn validate_k1_point_containment<V, const D: usize>(
+    simplex_key: SimplexKey,
+    simplex: &Simplex<V, D>,
+    simplex_points: &[Point<D>],
+    simplex_orientation: Orientation,
+    inserted_point: Point<D>,
+) -> Result<(), FlipError> {
+    let mut touches_boundary = false;
     for (omit_index, &opposite_vertex) in simplex.vertices().iter().enumerate() {
         let mut replacement_points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::with_capacity(D + 1);
@@ -1255,7 +1292,8 @@ where
                 )
             })?;
         if replacement_orientation == Orientation::DEGENERATE {
-            return Err(FlipError::DegenerateSimplex);
+            touches_boundary = true;
+            continue;
         }
 
         let expected_orientation = if omit_index.is_multiple_of(2) {
@@ -1276,7 +1314,143 @@ where
         }
     }
 
-    Ok(())
+    if touches_boundary {
+        Err(FlipError::DegenerateSimplex)
+    } else {
+        Ok(())
+    }
+}
+
+/// Enumerates all supported lattice images that can meet the lifted bounding box.
+///
+/// For a positive period the correctly rounded FMA lift is monotone in the
+/// integer offset. Checking the two adjacent excluded offsets therefore proves
+/// that every further excluded offset misses the finite bounding box. If that
+/// proof fails, report unsupported range rather than claiming uniqueness or
+/// exteriority. Infinite trial coordinates are outside the finite box; they are
+/// never passed to a predicate. No rounded division or nearest-image heuristic
+/// is used to construct these bounds.
+fn k1_periodic_axis_candidates<const D: usize>(
+    simplex_key: SimplexKey,
+    simplex_points: &[Point<D>],
+    coords: &[f64; D],
+    periods: &[f64; D],
+) -> Result<[Vec<i8>; D], FlipError> {
+    let mut candidates = std::array::from_fn(|_| Vec::new());
+    for axis in 0..D {
+        let (mut lower, mut upper) = (coords[axis], coords[axis]);
+        if let Some(first) = simplex_points.first() {
+            lower = first.coords()[axis];
+            upper = lower;
+        }
+        for point in simplex_points {
+            lower = lower.min(point.coords()[axis]);
+            upper = upper.max(point.coords()[axis]);
+        }
+        let below = (-129.0_f64).mul_add(periods[axis], coords[axis]);
+        let above = 128.0_f64.mul_add(periods[axis], coords[axis]);
+        if below >= lower || above <= upper {
+            return Err(
+                FlipPredicateError::K1PeriodicImageOffsetRange { simplex_key, axis }.into(),
+            );
+        }
+        for offset in i8::MIN..=i8::MAX {
+            let lifted = f64::from(offset).mul_add(periods[axis], coords[axis]);
+            if lower <= lifted && lifted <= upper {
+                candidates[axis].push(offset);
+            }
+        }
+    }
+    Ok(candidates)
+}
+
+fn select_k1_periodic_image<U, V, const D: usize>(
+    topology_model: &GlobalTopologyModelAdapter<D>,
+    simplex_key: SimplexKey,
+    simplex: &Simplex<V, D>,
+    simplex_points: &[Point<D>],
+    simplex_orientation: Orientation,
+    vertex: &Vertex<U, D>,
+    periods: &[f64; D],
+) -> Result<[i8; D], FlipError> {
+    const IMAGE_LIMIT: usize = 4096;
+    let axes = k1_periodic_axis_candidates(
+        simplex_key,
+        simplex_points,
+        vertex.point().coords(),
+        periods,
+    )?;
+    // An empty axis makes the product empty, even if earlier axes alone would
+    // exceed the budget. Preserve the exact outside diagnostic in that case.
+    let mut count = usize::from(!axes.iter().any(Vec::is_empty));
+    for axis in &axes {
+        count = count
+            .checked_mul(axis.len())
+            .filter(|&count| count <= IMAGE_LIMIT)
+            .ok_or(FlipPredicateError::K1PeriodicImageSearchLimit {
+                simplex_key,
+                limit: IMAGE_LIMIT,
+            })?;
+    }
+    let mut selected = None;
+    let mut rejection = None;
+    let mut boundary = false;
+    for image_index in 0..count {
+        let mut remainder = image_index;
+        let offset = std::array::from_fn(|axis| {
+            let offset = axes[axis][remainder % axes[axis].len()];
+            remainder /= axes[axis].len();
+            offset
+        });
+        let point = k1_inserted_vertex_point_in_simplex_frame::<U, D>(
+            topology_model,
+            simplex_key,
+            vertex,
+            Some(offset),
+        )?;
+        match validate_k1_point_containment(
+            simplex_key,
+            simplex,
+            simplex_points,
+            simplex_orientation,
+            point,
+        ) {
+            Ok(()) => {
+                if selected.replace(offset).is_some() {
+                    return Err(FlipPredicateError::K1PeriodicImageAmbiguous { simplex_key }.into());
+                }
+            }
+            Err(FlipError::DegenerateSimplex) => boundary = true,
+            Err(error @ FlipError::K1InsertionOutsideSimplex { .. }) => {
+                rejection.get_or_insert(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if let Some(offset) = selected {
+        return Ok(offset);
+    }
+    if boundary {
+        return Err(FlipError::DegenerateSimplex);
+    }
+    if let Some(error) = rejection {
+        return Err(error);
+    }
+    // No image reaches even the bounding box. The unshifted point necessarily
+    // crosses a facet; use that exact sign to supply the usual outside diagnostic.
+    validate_k1_point_containment(
+        simplex_key,
+        simplex,
+        simplex_points,
+        simplex_orientation,
+        *vertex.point(),
+    )?;
+    // A strict interior point would have appeared as the zero-offset candidate.
+    Err(FlipPredicateError::K1PeriodicImageOffsetRange {
+        simplex_key,
+        axis: 0,
+    }
+    .into())
 }
 
 /// Validate a forward k=1 move (simplex split) without mutating the TDS.
@@ -1291,7 +1465,7 @@ pub(crate) fn validate_bistellar_flip_k1_insert<U, V, const D: usize>(
     topology_model: &GlobalTopologyModelAdapter<D>,
     simplex_key: SimplexKey,
     vertex: &Vertex<U, D>,
-) -> Result<FlipFeasibility<D>, FlipError>
+) -> Result<(FlipFeasibility<D>, Option<[i8; D]>), FlipError>
 where
     U: DataType,
     V: DataType,
@@ -1339,15 +1513,19 @@ where
             }
         }
     }
-    validate_k1_insertion_realization(tds, topology_model, simplex_key, simplex, vertex)?;
+    let periodic_offset =
+        validate_k1_insertion_realization(tds, topology_model, simplex_key, simplex, vertex)?;
 
-    Ok(FlipFeasibility {
-        kind: BistellarFlipKind::from_validated(1, D),
-        direction: FlipDirection::Forward,
-        removed_simplices: once(simplex_key).collect(),
-        removed_face_vertices,
-        inserted_face_vertices: None,
-    })
+    Ok((
+        FlipFeasibility {
+            kind: BistellarFlipKind::from_validated(1, D),
+            direction: FlipDirection::Forward,
+            removed_simplices: once(simplex_key).collect(),
+            removed_face_vertices,
+            inserted_face_vertices: None,
+        },
+        periodic_offset,
+    ))
 }
 
 /// Apply a forward k=1 move without rollback.
@@ -1358,6 +1536,7 @@ pub(crate) fn apply_bistellar_flip_k1_raw<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     simplex_key: SimplexKey,
     vertex: Vertex<U, D>,
+    periodic_offset: Option<[i8; D]>,
 ) -> Result<FlipInfo<D>, FlipError>
 where
     U: DataType,
@@ -1373,7 +1552,18 @@ where
         }
     })?;
     let context = build_k1_forward_context_from_simplex(tds, simplex_key, vertex_key)?;
-    apply_bistellar_flip_raw::<U, V, D, 1>(tds, &context)
+    Ok(apply_bistellar_flip_with_k_raw(
+        tds,
+        1,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+        &context.removed_simplices,
+        context.direction,
+        ReplacementOrientationPolicy::AllowSigned,
+        FlipValidationScope::FullTds,
+        periodic_offset.map(|offset| (vertex_key, offset)),
+    )?
+    .info)
 }
 
 /// Apply an inverse k=1 move without rollback.
@@ -2995,7 +3185,7 @@ mod tests {
 
         let new_vertex = vertex!([0.1; 4]).unwrap();
         let new_uuid = new_vertex.uuid();
-        let info = apply_bistellar_flip_k1_raw(&mut tds, simplex_key, new_vertex).unwrap();
+        let info = apply_bistellar_flip_k1_raw(&mut tds, simplex_key, new_vertex, None).unwrap();
 
         assert_eq!(info.kind.k(), 1);
         assert_eq!(info.new_simplices.len(), 5);
@@ -3151,7 +3341,7 @@ mod tests {
 
         let new_vertex = vertex!([0.1; 5]).unwrap();
         let new_uuid = new_vertex.uuid();
-        let info = apply_bistellar_flip_k1_raw(&mut tds, simplex_key, new_vertex).unwrap();
+        let info = apply_bistellar_flip_k1_raw(&mut tds, simplex_key, new_vertex, None).unwrap();
 
         assert_eq!(info.kind.k(), 1);
         assert_eq!(info.new_simplices.len(), 6);
@@ -3185,7 +3375,7 @@ mod tests {
 
         let new_vertex = vertex!([0.2, 0.2]).unwrap();
         let new_uuid = new_vertex.uuid();
-        let info = apply_bistellar_flip_k1_raw(&mut tds, simplex, new_vertex).unwrap();
+        let info = apply_bistellar_flip_k1_raw(&mut tds, simplex, new_vertex, None).unwrap();
 
         assert_eq!(info.kind.k(), 1);
         assert_eq!(info.kind.d(), 2);

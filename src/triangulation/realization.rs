@@ -273,6 +273,17 @@ pub enum TriangulationRealizationValidationError {
         source: CoordinateConversionError,
     },
 
+    /// Exact intersection certification is unavailable in this coordinate dimension.
+    #[error(
+        "exact simplex-intersection validation does not support dimension {dimension} (maximum {max})"
+    )]
+    UnsupportedIntersectionDimension {
+        /// Requested coordinate dimension.
+        dimension: usize,
+        /// Largest dimension supported by exact intersection certification.
+        max: usize,
+    },
+
     /// Exact rational barycentric construction found a singular simplex basis.
     #[error(
         "simplex {simplex_uuid} (key {simplex_key:?}) has a singular barycentric basis in dimension {dimension}"
@@ -402,6 +413,8 @@ pub enum TriangulationRealizationValidationErrorKind {
     CoordinateValidation,
     /// The robust orientation predicate failed.
     PredicateFailed,
+    /// The coordinate dimension exceeds exact intersection support.
+    UnsupportedIntersectionDimension,
     /// Exact barycentric coordinates could not be computed.
     SingularBarycentricBasis,
     /// Two simplices overlap outside their shared face.
@@ -447,6 +460,9 @@ impl From<&TriangulationRealizationValidationError>
             TriangulationRealizationValidationError::PredicateFailed { .. } => {
                 Self::PredicateFailed
             }
+            TriangulationRealizationValidationError::UnsupportedIntersectionDimension {
+                ..
+            } => Self::UnsupportedIntersectionDimension,
             TriangulationRealizationValidationError::SingularBarycentricBasis { .. } => {
                 Self::SingularBarycentricBasis
             }
@@ -1675,6 +1691,12 @@ fn validate_simplex_pair_intersection<const D: usize>(
 ) -> Result<(), TriangulationRealizationValidationError> {
     match validate_simplex_intersection(&first.realization, &second.realization) {
         Ok(()) => Ok(()),
+        Err(SimplexIntersectionFailure::UnsupportedDimension { dimension, max }) => Err(
+            TriangulationRealizationValidationError::UnsupportedIntersectionDimension {
+                dimension,
+                max,
+            },
+        ),
         Err(SimplexIntersectionFailure::SingularBarycentricBasis) => Err(
             TriangulationRealizationValidationError::SingularBarycentricBasis {
                 simplex_key: first.key,
@@ -2127,6 +2149,69 @@ mod tests {
         assert_single_simplex_realizes::<3>();
         assert_single_simplex_realizes::<4>();
         assert_single_simplex_realizes::<5>();
+    }
+
+    #[test]
+    fn unsupported_intersection_dimension_remains_typed_through_validation_layers() {
+        let mut coords = vec![[0.0; 8]];
+        for axis in 0..8 {
+            let mut point = [0.0; 8];
+            point[axis] = 1.0;
+            coords.push(point);
+        }
+        // Test the private geometry adapter directly: an 8D simplex exceeds
+        // the TDS owner's supported arity. Distinct labels with identical
+        // geometry intersect in their complete interiors.
+        let realized = [1_u64, 10].map(|first_key| {
+            let vertex_keys: SimplexVertexKeyBuffer = (first_key..first_key + 9)
+                .map(|index| VertexKey::from(slotmap::KeyData::from_ffi(index)))
+                .collect();
+            let vertex_uuids = (first_key..first_key + 9)
+                .map(|index| Uuid::from_u128(u128::from(index)))
+                .collect();
+            let labels = vertex_keys.iter().map(|&key| RealizedVertexIdentity {
+                key,
+                offset: [0_i64; 8],
+            });
+            let realization =
+                LabeledSimplexRealization::try_new(labels, coords.iter().copied()).unwrap();
+            RealizedSimplex {
+                key: SimplexKey::from(slotmap::KeyData::from_ffi(first_key)),
+                uuid: Uuid::from_u128(u128::from(first_key)),
+                vertex_keys,
+                vertex_uuids,
+                realization,
+            }
+        });
+        let error = validate_simplex_pair_intersection(&realized[0], &realized[1]).unwrap_err();
+        assert_matches!(
+            error,
+            TriangulationRealizationValidationError::UnsupportedIntersectionDimension {
+                dimension: 8,
+                max: 7,
+            }
+        );
+        assert_realization_error_kind(
+            &error,
+            TriangulationRealizationValidationErrorKind::UnsupportedIntersectionDimension,
+        );
+        assert_eq!(
+            realization_error_from_invariant(InvariantError::Realization {
+                source: error.clone(),
+            }),
+            error
+        );
+        assert_matches!(
+            DelaunayTriangulationValidationError::from(error),
+            DelaunayTriangulationValidationError::Realization { source }
+                if matches!(
+                    source.as_ref(),
+                    TriangulationRealizationValidationError::UnsupportedIntersectionDimension {
+                        dimension: 8,
+                        max: 7,
+                    }
+                )
+        );
     }
 
     #[test]

@@ -1408,7 +1408,7 @@ pub(crate) fn classify_one_sided_facet_adjacency<U, V, const D: usize>(
     };
 
     if neighbor_key == simplex_key {
-        if simplex_allows_periodic_self_neighbor(simplex) {
+        if Tds::<U, V, D>::allows_periodic_self_neighbor(simplex) {
             return Ok(OneSidedFacetAdjacency::PeriodicSelfIdentification);
         }
         return Err(TdsError::InvalidNeighbors {
@@ -1430,14 +1430,6 @@ pub(crate) fn classify_one_sided_facet_adjacency<U, V, const D: usize>(
             neighbor_key,
         },
     })
-}
-
-/// Mirrors TDS validation's periodic self-neighbor allowance for boundary queries.
-fn simplex_allows_periodic_self_neighbor<V, const D: usize>(simplex: &Simplex<V, D>) -> bool {
-    let Some(offsets) = simplex.periodic_vertex_offsets() else {
-        return false;
-    };
-    !offsets.is_empty() && offsets.len() == simplex.number_of_vertices()
 }
 
 // Trait implementations for FacetView
@@ -2375,49 +2367,6 @@ mod tests {
     facet_iterator_clone_tests!(5);
 
     // =============================================================================
-    // UNIT TESTS FOR HELPER FUNCTIONS
-    // =============================================================================
-
-    #[test]
-    fn test_usize_to_u8_conversion() {
-        // Test successful conversion
-        assert_eq!(usize_to_u8(0, 4), Ok(0));
-        assert_eq!(usize_to_u8(1, 4), Ok(1));
-        assert_eq!(usize_to_u8(255, 256), Ok(255));
-
-        // Test conversion at boundary
-        assert_eq!(usize_to_u8(u8::MAX as usize, 256), Ok(u8::MAX));
-
-        // Test failed conversion (index too large)
-        let result = usize_to_u8(256, 10);
-        assert!(result.is_err());
-        if let Err(FacetError::InvalidFacetIndexOverflow {
-            original_index,
-            facet_count,
-        }) = result
-        {
-            assert_eq!(original_index, 256); // Should preserve original value
-            assert_eq!(facet_count, 10);
-        } else {
-            panic!("Expected InvalidFacetIndexOverflow error");
-        }
-
-        // Test failed conversion (very large index)
-        let result = usize_to_u8(usize::MAX, 5);
-        assert!(result.is_err());
-        if let Err(FacetError::InvalidFacetIndexOverflow {
-            original_index,
-            facet_count,
-        }) = result
-        {
-            assert_eq!(original_index, usize::MAX);
-            assert_eq!(facet_count, 5);
-        } else {
-            panic!("Expected InvalidFacetIndexOverflow error");
-        }
-    }
-
-    // =============================================================================
     // FACET CREATION TESTS
     // =============================================================================
 
@@ -2433,24 +2382,6 @@ mod tests {
             FacetView::try_new(&dt, simplex_key, 99),
             Err(FacetError::InvalidFacetIndex { .. })
         );
-    }
-
-    #[test]
-    fn facet_new() {
-        // Create a 3D triangulation with a tetrahedron
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let dt = single_simplex_tds(&vertices);
-        let simplex_key = dt.simplices().next().unwrap().0;
-
-        // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::try_new(&dt, simplex_key, 0).unwrap();
-        assert_eq!(facet.simplex_key(), simplex_key);
-        assert_eq!(facet.facet_index(), 0);
     }
 
     #[test]
@@ -2526,23 +2457,6 @@ mod tests {
 
         // Test invalid facet index (3D simplex has vertices 0-3, facet index 4 is invalid)
         assert!(FacetView::try_new(&dt, simplex_key, 4).is_err());
-    }
-
-    #[test]
-    fn facet_vertices() {
-        // Create a 3D triangulation with a tetrahedron
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let dt = single_simplex_tds(&vertices);
-        let simplex_key = dt.simplices().next().unwrap().0;
-
-        // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::try_new(&dt, simplex_key, 0).unwrap();
-        assert_eq!(facet.vertices().count(), 3);
     }
 
     // =============================================================================

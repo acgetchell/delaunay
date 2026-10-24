@@ -339,7 +339,7 @@ where
         mut self,
         savepoint: TdsRollbackSavepoint,
         inserted_vertex_key: VertexKey,
-        inserted_coords: [f64; D],
+        spatial_index_before: Option<HashGridIndex<D>>,
         insertion_state_before: DelaunayInsertionState,
     ) -> Result<
         DelaunayTriangulation<K, U, V, D>,
@@ -354,7 +354,7 @@ where
                 self.tds = tds_draft;
                 self.restore_auxiliary_after_failed_insertion(
                     inserted_vertex_key,
-                    &inserted_coords,
+                    spatial_index_before,
                     insertion_state_before,
                 );
                 return Err(RefinementError::new(
@@ -381,7 +381,7 @@ where
                 self.tds = TdsDraft::from_rolled_back_storage(tds);
                 self.restore_auxiliary_after_failed_insertion(
                     inserted_vertex_key,
-                    &inserted_coords,
+                    spatial_index_before,
                     insertion_state_before,
                 );
                 return Err(RefinementError::new(
@@ -409,7 +409,7 @@ where
                 self.tds = TdsDraft::from_rolled_back_storage(tds);
                 self.restore_auxiliary_after_failed_insertion(
                     inserted_vertex_key,
-                    &inserted_coords,
+                    spatial_index_before,
                     insertion_state_before,
                 );
                 Err(RefinementError::new(
@@ -424,7 +424,7 @@ where
     fn restore_auxiliary_after_failed_insertion(
         &mut self,
         inserted_vertex_key: VertexKey,
-        inserted_coords: &[f64; D],
+        spatial_index_before: Option<HashGridIndex<D>>,
         insertion_state_before: DelaunayInsertionState,
     ) {
         assert_eq!(
@@ -432,9 +432,7 @@ where
             Some(inserted_vertex_key),
             "bootstrap publication must roll back its most recent vertex"
         );
-        if let Some(index) = self.spatial_index.as_mut() {
-            index.remove_vertex(&inserted_vertex_key, inserted_coords);
-        }
+        self.spatial_index = spatial_index_before;
         self.insertion_state = insertion_state_before;
     }
 }
@@ -867,7 +865,9 @@ where
         let result = match &mut self.state {
             DelaunayIncrementalBuilderState::Bootstrap(state) => {
                 let publication_savepoint = state.tds.begin_rollback_savepoint();
-                let inserted_coords = *vertex.point().coords();
+                // Bootstrap contains at most D vertices. Preserve the complete
+                // small cache, including usability, across first publication.
+                let spatial_index_before = state.spatial_index.clone();
                 let insertion_state_before = state.insertion_state;
                 let (outcome, statistics) = match state.insert_vertex(vertex) {
                     Ok(result) => result,
@@ -892,7 +892,7 @@ where
                         match candidate.try_into_owner_after_insertion(
                             publication_savepoint,
                             vertex_key,
-                            inserted_coords,
+                            spatial_index_before,
                             insertion_state_before,
                         ) {
                             Ok(triangulation) => publication = Some(triangulation),
@@ -1459,5 +1459,52 @@ mod tests {
         assert_eq!(state.tds.number_of_simplices(), 0);
         assert!(state.tds.vertex(first_key).is_some());
         assert!(state.tds.vertex(second_key).is_some());
+    }
+
+    #[test]
+    fn failed_publication_restores_spatial_index_before_valid_retry() {
+        let mut builder: DelaunayIncrementalBuilder<_, (), (), 2> =
+            DelaunayIncrementalBuilder::new();
+        builder.insert_vertex(vertex![0.0, 0.0].unwrap()).unwrap();
+        builder.insert_vertex(vertex![1.0, 0.0].unwrap()).unwrap();
+        let DelaunayIncrementalBuilderState::Bootstrap(before) = &builder.state else {
+            panic!("two 2D vertices cannot publish");
+        };
+        let owner_before = before.tds.topology_owner_id();
+        let generation_before = before.tds.topology_generation();
+        let keys_before = before.vertex_keys.clone();
+        let insertion_before = format!("{:?}", before.insertion_state);
+        let grid_before = before.spatial_index.as_ref().unwrap().debug_snapshot();
+        assert!(before.spatial_index.as_ref().unwrap().is_usable());
+
+        // This collinear point disables grid keying before publication rejects it.
+        assert!(
+            builder
+                .insert_vertex(vertex![1.0e10, 0.0].unwrap())
+                .is_err()
+        );
+        let DelaunayIncrementalBuilderState::Bootstrap(restored) = &builder.state else {
+            panic!("failed publication must restore bootstrap state");
+        };
+        assert_eq!(restored.tds.topology_owner_id(), owner_before);
+        assert_eq!(restored.tds.topology_generation(), generation_before);
+        assert_eq!(restored.vertex_keys, keys_before);
+        assert_eq!(format!("{:?}", restored.insertion_state), insertion_before);
+        assert_eq!(
+            restored.spatial_index.as_ref().unwrap().debug_snapshot(),
+            grid_before
+        );
+        assert_eq!(restored.tds.number_of_vertices(), 2);
+        assert_eq!(restored.tds.number_of_simplices(), 0);
+        assert!(
+            keys_before
+                .iter()
+                .all(|&key| restored.tds.vertex(key).is_some())
+        );
+
+        builder.insert_vertex(vertex![0.0, 1.0].unwrap()).unwrap();
+        let owner = builder.finish().unwrap();
+        assert!(owner.spatial_index.as_ref().unwrap().is_usable());
+        assert!(owner.validate().is_ok());
     }
 }

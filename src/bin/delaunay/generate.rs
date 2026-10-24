@@ -110,7 +110,8 @@ pub struct GenerateConfig<const D: usize> {
 impl<const D: usize> GenerateConfig<D> {
     /// Validate dimension-dependent generation limits.
     fn try_new(args: GenerateArgs) -> Result<Self, CliError> {
-        let minimum = RandomPointCount::<D>::minimum();
+        let minimum = RandomPointCount::<D>::minimum()
+            .ok_or(CliError::UnsupportedGenerateDimension { dimension: D })?;
         let vertices = NonZeroUsize::new(args.vertices)
             .and_then(|vertices| RandomPointCount::try_new(vertices).ok())
             .ok_or(CliError::TooFewVertices {

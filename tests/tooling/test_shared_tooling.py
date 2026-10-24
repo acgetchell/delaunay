@@ -33,7 +33,7 @@ def write_stub(directory: Path, name: str, source: str) -> None:
     program.write_text(source, encoding="utf-8")
     executable = directory / name
     content = f'#!/bin/sh\nexec {shlex.quote(Path(sys.executable).as_posix())} {shlex.quote(program.as_posix())} "$@"\n'
-    executable.write_text(content, encoding="utf-8")
+    executable.write_text(content, encoding="utf-8", newline="\n")
     executable.chmod(0o755)
     if os.name == "nt":
         (directory / f"{name}.cmd").write_text(f'@echo off\n"{sys.executable}" "{program}" %*\n', encoding="utf-8")

@@ -21,7 +21,8 @@ use uuid::Uuid;
 
 use crate::core::algorithms::insertion::{
     CavityFillingError, CavityRepairStage, HullExtensionReason, InitialSimplexConstructionError,
-    InsertionError, extend_hull, external_facets_for_boundary, fill_cavity_replacing_simplices,
+    InsertionError, extend_hull, exterior_cavity_boundary, external_facets_for_boundary,
+    fill_cavity_replacing_simplices, find_exterior_conflict_region,
     split_2d_boundary_edge_in_simplex_if_needed, wire_cavity_neighbors,
 };
 #[cfg(debug_assertions)]
@@ -29,8 +30,9 @@ use crate::core::algorithms::locate::locate;
 #[cfg(feature = "diagnostics")]
 use crate::core::algorithms::locate::verify_conflict_region_completeness;
 use crate::core::algorithms::locate::{
-    ConflictError, LocateError, LocateResult, LocateStats, extract_cavity_boundary,
-    find_conflict_region, locate_by_scan, locate_with_stats, locate_with_trace,
+    ConflictError, LocateError, LocateFallbackReason, LocateResult, LocateStats,
+    extract_cavity_boundary, find_conflict_region, locate_by_scan, locate_with_stats,
+    locate_with_trace,
 };
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{
@@ -1154,6 +1156,7 @@ where
 
         if let Some(index) = index
             && index.cell_size() >= tolerance
+            && index.covers_rounded_distance(coords, tolerance)
         {
             let mut candidate_count = 0usize;
             let used_index = index.for_each_candidate_vertex_key(coords, |vkey| {
@@ -1771,11 +1774,23 @@ where
         let mut repair_seed_simplices = SimplexKeyBuffer::new();
         let mut delaunay_repair_required = suspicion.fallback_star_split;
 
-        let mut boundary_facets = match self.reduce_conflict_region_to_cavity_boundary(
-            &mut conflict_simplices,
-            &mut repair_seed_simplices,
-            &mut delaunay_repair_required,
-        ) {
+        let boundary_result = if fallback_simplex.is_none() {
+            // Exterior cavities include visible infinite cells. Their finite
+            // subset need not have a closed boundary, and shrinking that subset
+            // can discard real Delaunay conflicts that degenerate flips cannot fix.
+            Ok(exterior_cavity_boundary(
+                &self.tds,
+                point,
+                &conflict_simplices,
+            )?)
+        } else {
+            self.reduce_conflict_region_to_cavity_boundary(
+                &mut conflict_simplices,
+                &mut repair_seed_simplices,
+                &mut delaunay_repair_required,
+            )
+        };
+        let mut boundary_facets = match boundary_result {
             Ok(boundary) => boundary,
             Err(err) => {
                 // For D=3 and D>=4: do NOT fall back to star-split once cavity reduction
@@ -1911,8 +1926,17 @@ where
         }
 
         // Wire neighbors (while both old and new simplices exist)
-        let external_facets =
+        let mut external_facets =
             external_facets_for_boundary(&self.tds, &conflict_simplices, &boundary_facets)?;
+        // An exterior cone can also attach to a visible hull facet whose owner
+        // survives outside the finite conflict set and its immediate neighbors.
+        for &facet in &boundary_facets {
+            if !conflict_simplices.contains(&facet.simplex_key())
+                && !external_facets.contains(&facet)
+            {
+                external_facets.push(facet);
+            }
+        }
         wire_cavity_neighbors(
             &mut self.tds,
             &new_simplices,
@@ -2238,6 +2262,10 @@ where
         telemetry_mode.records_timings().then(Instant::now)
     }
 
+    /// Collects local exterior repair seeds when the terminal simplex is reliable.
+    ///
+    /// A boundary-triggered scan preserves the crossed boundary simplex. A cycle
+    /// or exhausted walk budget does not establish a local exterior seed.
     fn collect_exterior_repair_seed_simplices(
         &self,
         point: &Point<D>,
@@ -2246,7 +2274,11 @@ where
         telemetry_mode: InsertionTelemetryMode,
         telemetry: &mut InsertionTelemetry,
     ) -> Result<SimplexKeyBuffer, ConflictError> {
-        if locate_stats.fell_back_to_scan() || !self.tds.contains_simplex(terminal_simplex) {
+        if locate_stats
+            .fallback
+            .is_some_and(|fallback| fallback.reason != LocateFallbackReason::BoundaryReached)
+            || !self.tds.contains_simplex(terminal_simplex)
+        {
             return Ok(SimplexKeyBuffer::new());
         }
 
@@ -2531,27 +2563,44 @@ where
                 }
             }
             (LocateResult::Outside, None) => {
-                // Exterior insertion is the hull-extension case.  Avoid the old
-                // full-TDS conflict scan here; it was O(number_of_simplices) per
-                // exterior point, often only to rediscover that the hull path
-                // was required anyway.  Cadenced and final Delaunay repair own
-                // any local empty-circumsphere cleanup after the hull mutation.
-                #[cfg(debug_assertions)]
-                if env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
-                    tracing::debug!(
-                        "Outside insertion: skipping global conflict-region scan; using hull extension"
-                    );
-                }
-                let repair_seed_simplices = self.collect_exterior_repair_seed_simplices(
-                    &point,
-                    locate_trace.terminal_simplex,
-                    &locate_stats,
-                    telemetry_mode,
-                    telemetry,
-                )?;
-                InsertionSite::Exterior {
-                    conflict_simplices: None,
-                    repair_seed_simplices,
+                // Automatic Euclidean insertion starts from Delaunay geometry.
+                // Replace the complete exterior conflict cavity directly: hull
+                // extension alone can leave violations behind nonflippable flat
+                // circuits. Generic Levels 1–4 editing supplies an explicit empty
+                // conflict set and retains its ordinary hull-extension contract.
+                if self.global_topology.is_euclidean() {
+                    let conflict_started = Self::start_insertion_timing(telemetry_mode);
+                    let computed = find_exterior_conflict_region(&self.tds, &point)?;
+                    Self::record_conflict_region_telemetry(telemetry, computed.len());
+                    if let Some(started) = conflict_started {
+                        Self::record_conflict_region_timing(
+                            telemetry,
+                            Self::duration_nanos_saturating(started.elapsed()),
+                        );
+                    }
+                    if computed.is_empty() {
+                        InsertionSite::Exterior {
+                            conflict_simplices: None,
+                            repair_seed_simplices: SimplexKeyBuffer::new(),
+                        }
+                    } else {
+                        InsertionSite::Exterior {
+                            repair_seed_simplices: SimplexKeyBuffer::new(),
+                            conflict_simplices: Some(Cow::Owned(computed)),
+                        }
+                    }
+                } else {
+                    let repair_seed_simplices = self.collect_exterior_repair_seed_simplices(
+                        &point,
+                        locate_trace.terminal_simplex,
+                        &locate_stats,
+                        telemetry_mode,
+                        telemetry,
+                    )?;
+                    InsertionSite::Exterior {
+                        conflict_simplices: None,
+                        repair_seed_simplices,
+                    }
                 }
             }
             (LocateResult::Outside, Some(simplices)) => {
@@ -3076,6 +3125,51 @@ mod tests {
     use slotmap::KeyData;
     use std::{assert_matches, sync::Barrier, thread};
 
+    /// Four collinear stored points cannot span a 4-simplex with one new point.
+    /// Perturbing only the candidate raises the affine rank to at most two, so
+    /// retry exhaustion is required independently of the insertion algorithm.
+    fn assert_rank_deficient_bootstrap_exhausts_retries(perturbation_seed: u64) {
+        let mut tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
+            Triangulation::new_empty(AdaptiveKernel::new());
+        for coordinate in [0.0, 1.0, 2.0, 3.0] {
+            insert_with_statistics(
+                &mut tri,
+                vertex!([coordinate, 0.0, 0.0, 0.0]).unwrap(),
+                None,
+                None,
+            )
+            .unwrap();
+        }
+        tri.tds.validate().unwrap();
+        let before = serde_json::to_value(&tri.tds).unwrap();
+        let keys_before = tri.tds.vertex_keys().collect::<Vec<_>>();
+        let generation_before = tri.tds.generation();
+        let owner_before = tri.tds.topology_owner_id();
+        let provenance_before = tri.topology_construction_provenance;
+        let (outcome, stats) = insert_transactional(
+            &mut tri,
+            vertex!([4.0, 0.0, 0.0, 0.0]).unwrap(),
+            None,
+            None,
+            DEFAULT_PERTURBATION_RETRIES,
+            perturbation_seed,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_matches!(outcome, InsertionOutcome::Skipped { error } if error.is_retryable());
+        assert_eq!(stats.attempts, DEFAULT_PERTURBATION_RETRIES + 1);
+        assert_eq!(stats.result, InsertionResult::SkippedDegeneracy);
+        assert!(stats.used_perturbation());
+        assert_eq!(serde_json::to_value(&tri.tds).unwrap(), before);
+        assert_eq!(tri.tds.vertex_keys().collect::<Vec<_>>(), keys_before);
+        assert_eq!(tri.tds.generation(), generation_before);
+        assert_eq!(tri.tds.topology_owner_id(), owner_before);
+        assert_eq!(tri.topology_construction_provenance, provenance_before);
+        tri.tds.validate().unwrap();
+    }
+
     fn insert<K, U, V, const D: usize>(
         tri: &mut Triangulation<K, U, V, D>,
         vertex: Vertex<U, D>,
@@ -3417,6 +3511,69 @@ mod tests {
         coords
     }
 
+    /// Compares the indexed result with the full metric scan across rounded cell boundaries.
+    fn duplicate_index_matches_scan_at_rounded_boundaries<const D: usize>() {
+        for tolerance in [1.0e-200_f64, 1.0e-10, 0.125, 1.0e200] {
+            for axis in 0..D {
+                for sign in [-1.0, 1.0] {
+                    let mut existing = [0.25 * tolerance; D];
+                    existing[axis] = sign * tolerance;
+                    let mut tri: Triangulation<FastKernel<f64>, (), (), D> =
+                        Triangulation::new_empty(FastKernel::new());
+                    let key = tri
+                        .tds
+                        .insert_vertex_with_mapping(vertex!(existing).unwrap())
+                        .unwrap();
+                    for cell_size in [tolerance, 2.0 * tolerance] {
+                        let mut index = HashGridIndex::try_new(cell_size).unwrap();
+                        index.insert_vertex(key, &existing);
+                        for offset in [
+                            -f64::from_bits(1),
+                            0.0,
+                            tolerance.next_down(),
+                            tolerance,
+                            tolerance.next_up(),
+                            (2.0 * tolerance).next_down(),
+                            2.0 * tolerance,
+                            (2.0 * tolerance).next_up(),
+                            3.0 * tolerance,
+                        ] {
+                            let mut query = existing;
+                            query[axis] = sign * offset;
+                            let scanned = tri.duplicate_coordinates_error(&query, tolerance, None);
+                            let indexed =
+                                tri.duplicate_coordinates_error(&query, tolerance, Some(&index));
+                            assert_eq!(
+                                indexed, scanned,
+                                "D={D}, axis={axis}, tolerance={tolerance}, cell={cell_size}, query={query:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Subtraction rounds this separation to exactly the inclusive tolerance,
+        // although the endpoints occupy cells 1 and -1, two cells apart.
+        let tolerance = 1.0e-10;
+        let existing = coords_with_first::<D>(tolerance);
+        let query = coords_with_first::<D>(-f64::from_bits(1));
+        let mut tri: Triangulation<FastKernel<f64>, (), (), D> =
+            Triangulation::new_empty(FastKernel::new());
+        let key = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!(existing).unwrap())
+            .unwrap();
+        let mut index = HashGridIndex::try_new(tolerance).unwrap();
+        index.insert_vertex(key, &existing);
+        assert!(!index.covers_rounded_distance(&query, tolerance));
+        assert_matches!(
+            tri.duplicate_coordinates_error(&query, tolerance, Some(&index)),
+            Some(InsertionError::DuplicateCoordinates { .. })
+        );
+        assert!(index.covers_rounded_distance(&[0.25 * tolerance; D], tolerance));
+    }
+
     #[test]
     fn test_select_locate_hint_from_hash_grid_returns_incident_simplex() {
         let vertices = vec![
@@ -3645,6 +3802,11 @@ mod tests {
                     fn [<test_duplicate_index_rebuild_adds_headroom_for_small_growth_ $dim d>]() {
                         duplicate_index_rebuild_adds_headroom_for_small_growth::<$dim>();
                     }
+
+                    #[test]
+                    fn [<test_duplicate_index_matches_scan_at_rounded_boundaries_ $dim d>]() {
+                        duplicate_index_matches_scan_at_rounded_boundaries::<$dim>();
+                    }
                 )+
             }
         };
@@ -3822,6 +3984,8 @@ mod tests {
         assert_eq!(detail.telemetry.global_conflict_simplices_scanned, 0);
         assert_eq!(detail.telemetry.global_conflict_simplices_found_total, 0);
         assert_eq!(detail.telemetry.global_conflict_scan_nanos, 0);
+        assert_eq!(detail.telemetry.locate_scan_fallbacks, 1);
+        assert_eq!(detail.telemetry.located_outside, 1);
         assert_eq!(detail.telemetry.conflict_region_calls, 1);
         assert_eq!(detail.telemetry.conflict_region_simplices_total, 0);
         assert_eq!(detail.telemetry.cavity_insertion_calls, 0);
@@ -3871,6 +4035,8 @@ mod tests {
 
         assert_matches!(detail.outcome, InsertionOutcome::Inserted { .. });
         assert_eq!(detail.telemetry.global_conflict_scans, 0);
+        assert_eq!(detail.telemetry.locate_scan_fallbacks, 1);
+        assert_eq!(detail.telemetry.located_outside, 1);
         assert_eq!(detail.telemetry.conflict_region_calls, 1);
         assert_eq!(detail.telemetry.conflict_region_simplices_total, 0);
         assert_eq!(detail.telemetry.cavity_insertion_calls, 0);
@@ -4799,10 +4965,10 @@ mod tests {
         reason = "Literal 4D repro point set keeps retry-path coverage deterministic"
     )]
     fn perturbation_retry_repro_points_4d() -> [Point<4>; 20] {
-        // Fixed adversarial insertion sequence captured from the former
-        // randomized sweep (seed 4, index 19). The final insertion exhausts
-        // perturbation retries in the current 4D path, so this keeps retry
-        // coverage deterministic without looping over random seeds.
+        // Fixed insertion sequence captured from the former randomized sweep
+        // (seed 4, index 19). It once exhausted retries because hull extension
+        // left finite Delaunay conflicts for an incomplete flip-repair path.
+        // Preserve it as exact successful geometry after exterior cavity repair.
         [
             Point::try_new([
                 0.660_063_804_566_304_3,
@@ -4947,66 +5113,43 @@ mod tests {
         ]
     }
 
-    /// Exercise perturbation retry exhaustion (`SkippedDegeneracy`) with a
-    /// deterministic 4D fixture.
-    ///
-    /// Covers: progressive scale factor, perturbation coordinate generation
-    /// with `perturbation_seed == 0`, retry decisions, and retry exhaustion.
     #[test]
-    fn test_perturbation_retry_exhaustion_4d() {
-        let mut exhaustion_tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
-            Triangulation::new_empty(AdaptiveKernel::new());
-        let mut saw_exhausted_skip = false;
-
-        for point in perturbation_retry_repro_points_4d() {
-            let v = Vertex::from_validated_point(point, None);
-            let (outcome, stats) =
-                insert_with_statistics(&mut exhaustion_tri, v, None, None).unwrap();
-
-            saw_exhausted_skip |= stats.skipped()
-                && stats.attempts == DEFAULT_PERTURBATION_RETRIES + 1
-                && matches!(stats.result, InsertionResult::SkippedDegeneracy)
-                && matches!(outcome, InsertionOutcome::Skipped { error } if error.is_retryable());
-        }
-
-        assert!(
-            saw_exhausted_skip,
-            "deterministic 4D adversarial repro did not trigger retry exhaustion"
-        );
-    }
-
-    /// Exercise the seeded perturbation branch (`perturbation_seed != 0`)
-    /// by calling `insert_transactional` directly.
-    ///
-    /// Covers: the `mix` computation and sign selection in the seeded path
-    /// (lines using `perturbation_seed ^ ...`).
-    ///
-    /// Uses the same deterministic 4D repro as
-    /// [`test_perturbation_retry_exhaustion_4d`].
-    #[test]
-    fn test_perturbation_retry_seeded_branch_4d() {
+    fn test_former_perturbation_retry_sequence_succeeds_exactly_4d() {
         let mut tri: Triangulation<AdaptiveKernel<f64>, (), (), 4> =
             Triangulation::new_empty(AdaptiveKernel::new());
-
-        for point in perturbation_retry_repro_points_4d() {
+        for (index, point) in perturbation_retry_repro_points_4d().into_iter().enumerate() {
             let v = Vertex::from_validated_point(point, None);
-            let (_outcome, stats) = insert_transactional(
-                &mut tri,
-                v,
-                None,
-                None,
-                DEFAULT_PERTURBATION_RETRIES,
-                0xDEAD_BEEF,
-                None,
-                None,
-            )
-            .unwrap();
-
-            if stats.used_perturbation() && (stats.success() || stats.skipped()) {
-                return;
+            let (outcome, stats) = insert_with_statistics(&mut tri, v, None, None).unwrap();
+            let InsertionOutcome::Inserted { vertex_key, .. } = outcome else {
+                panic!("supported 4D vertex {index} must insert: {outcome:?}");
+            };
+            assert_eq!(stats.attempts, 1);
+            assert!(!stats.used_perturbation());
+            assert_eq!(
+                tri.vertex(vertex_key)
+                    .unwrap()
+                    .point()
+                    .coords()
+                    .map(f64::to_bits),
+                point.coords().map(f64::to_bits)
+            );
+            assert_eq!(tri.number_of_vertices(), index + 1);
+            if index >= 4 {
+                tri.validate_realization().unwrap();
+                assert!(tri.delaunay_violation_report(None).unwrap().is_valid());
             }
         }
+    }
 
-        panic!("deterministic 4D adversarial repro did not trigger the seeded perturbation branch");
+    /// Exercise the unseeded retry branch with provably rank-deficient input.
+    #[test]
+    fn test_perturbation_retry_exhaustion_4d() {
+        assert_rank_deficient_bootstrap_exhausts_retries(0);
+    }
+
+    /// Exercise seeded perturbation and rollback on the same impossible input.
+    #[test]
+    fn test_perturbation_retry_seeded_branch_4d() {
+        assert_rank_deficient_bootstrap_exhausts_retries(0xDEAD_BEEF);
     }
 }

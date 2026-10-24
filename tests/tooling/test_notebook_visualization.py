@@ -235,6 +235,44 @@ def test_readme_geometry_selection_is_deterministic_across_input_order() -> None
     assert forward.total_edges == 5
 
 
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+def test_centroids_and_midpoints_remain_finite_at_float_limit(sign: float) -> None:
+    """Convex averages stay finite, including cancellation and zero axes."""
+    largest = sign * float.fromhex("0x1.fffffffffffffp+1023")
+    points = ((largest, largest, 0.0), (largest, -largest, 0.0), (largest, 0.0, 0.0))
+    coordinates = dict(zip(("a", "b", "c"), points, strict=True))
+    expected = (largest, 0.0, 0.0)
+
+    assert visualization_module.polygon_centroid(points) == expected
+    assert visualization_module.face_centroid(("a", "b", "c"), coordinates) == expected
+    assert visualization_module._edge_midpoint(("a", "b"), coordinates) == expected
+
+
+def test_readme_cutaway_preserves_geometry_at_large_finite_coordinates() -> None:
+    """An affine translation must not drop faces/edges or scramble hull order."""
+    original = readme_visualization()
+
+    def large_point(point: tuple[float, float, float]) -> tuple[float, float, float]:
+        return (1.0e308 + point[0] * 1.0e307, 1.0e308 + point[1] * 1.0e307, 1.0e308 + point[2] * 1.0e307)
+
+    coordinates = {name: large_point(point) for name, point in original.coordinates.items()}
+    limits = ((1.0e308, 1.1e308), (1.0e308, 1.1e308), (1.0e308, 1.1e308))
+    artifact = replace(original, coordinates=coordinates, axis_limits=limits)
+    facets = [(large_point(facet[0]), large_point(facet[1]), large_point(facet[2])) for facet in hull_facets()]
+
+    selected = select_readme_figure_geometry(artifact, facets, readme_config())
+
+    # The shared b/c/d face has normalized centroid (0.45, 0.40, 0.40).
+    assert selected.cutaway_polygons == ((coordinates["b"], coordinates["c"], coordinates["d"]),)
+    # a/b has midpoint x=0.225 outside the cutaway; these four are inside.
+    expected_edges = (("b", "c"), ("c", "d"), ("b", "d"), ("d", "e"))
+    assert set(selected.cutaway_edges) == {(coordinates[left], coordinates[right]) for left, right in expected_edges}
+    # The second hull facet's x centroid is 1/6, versus 1/2 for the first.
+    assert selected.hull_polygons == (facets[1], facets[0])
+    assert visualization_module.face_centroid(("b", "c", "d"), coordinates) == pytest.approx((1.045e308, 1.04e308, 1.04e308))
+    assert visualization_module._edge_midpoint(("b", "c"), coordinates) == pytest.approx((1.045e308, 1.03e308, 1.035e308))
+
+
 @pytest.mark.parametrize(
     ("field", "value", "error"),
     [

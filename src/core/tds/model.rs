@@ -650,8 +650,9 @@ where
 // on topology independently of geometry.
 //
 impl<U, V, const D: usize> Tds<U, V, D> {
+    /// Allows self-identification only when every local vertex has a periodic lift.
     #[inline]
-    pub(super) fn allows_periodic_self_neighbor(simplex: &Simplex<V, D>) -> bool {
+    pub(crate) fn allows_periodic_self_neighbor(simplex: &Simplex<V, D>) -> bool {
         let Some(offsets) = simplex.periodic_vertex_offsets() else {
             return false;
         };

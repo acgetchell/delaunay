@@ -194,12 +194,17 @@ jobs:
             summary_mode="Production"
             summary_mode_detail="Production (large-scale counts plus auxiliary profiling)"
           fi
-          if [[ "$BENCH_FILTER_VALUE" == *memory* ]]; then
+          if [[ "${MEMORY_BENCHMARKS_RUN:-}" == "true" ]]; then
             summary_memory_tracking="Enabled for memory benchmarks (count-allocations feature)"
           else
             summary_memory_tracking="Enabled only for memory-specific runs"
           fi
           summary_benchmark_filter="${BENCH_FILTER_VALUE:-All benchmarks}"
+          if [[ -f profiling-results/memory_profiling_detailed.log ]]; then
+            summary_memory_log="- \`memory_profiling_detailed.log\`: Output from the dedicated allocation run"
+          else
+            summary_memory_log="- Dedicated allocation run skipped; memory output is in \`profiling_output.log\`"
+          fi
 
           # Create a summary of the profiling run
           cat > profiling-results/profiling_summary.md << EOF
@@ -218,14 +223,17 @@ jobs:
           - **Memory Tracking**: ${summary_memory_tracking}
           - **Benchmark Filter**: ${summary_benchmark_filter}
 
-          ## Benchmark Categories Run
+          ## Available Benchmark Categories
+
+          The filter above selects from these categories. See the logs and Criterion
+          results for the cases actually measured.
 
           - **Large-scale Profiling**: Construction, RSS memory, validation, and traversal (2D-5D)
           - **Allocation Profiling**: Memory allocation tracking and analysis
           - **Query Latency**: Circumsphere containment and traversal query performance
           - **Algorithmic Bottlenecks**: Boundary facets and convex hull operations
 
-          ## Point Distributions Tested
+          ## Available Point Distributions
 
           - **Random**: Uniform random distribution for large-scale and query workloads
           - **Adversarial**: Large-coordinate clustered validation diagnostics
@@ -233,7 +241,7 @@ jobs:
           ## Files Generated
 
           - \`profiling_output.log\`: Complete benchmark output
-          - \`memory_profiling_detailed.log\`: Detailed memory allocation analysis
+          ${summary_memory_log}
           - \`environment.json\`: Shared host/source provenance, native tool declarations, profile, and filter metadata
           - \`target/criterion/\`: HTML reports and detailed timing data in the artifact
 

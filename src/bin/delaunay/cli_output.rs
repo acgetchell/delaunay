@@ -9,6 +9,11 @@ pub use shared::{ArtifactOutputError, ArtifactPath, write_json_output};
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::{
+        fs::{PermissionsExt, symlink},
+        net::UnixListener,
+    };
     use std::{fs, path::Path};
 
     use serde::{Serialize, Serializer, ser::SerializeSeq};
@@ -136,8 +141,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn json_publication_preserves_existing_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-
         let directory = tempfile::tempdir().unwrap();
         let path = ArtifactPath::try_new(directory.path().join("output.json")).unwrap();
         fs::write(path.as_path(), b"original artifact").unwrap();
@@ -154,8 +157,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn json_rejects_destination_symlinks_but_allows_symlinked_parents() {
-        use std::os::unix::fs::symlink;
-
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("target.json");
         fs::write(&file, b"original artifact").unwrap();
@@ -186,8 +187,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn json_rejects_other_nonregular_files_before_serializing() {
-        use std::os::unix::net::UnixListener;
-
         let directory = tempfile::tempdir().unwrap();
         let path = ArtifactPath::try_new(directory.path().join("socket")).unwrap();
         let _listener = UnixListener::bind(path.as_path()).unwrap();

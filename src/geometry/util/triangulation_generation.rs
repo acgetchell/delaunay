@@ -54,6 +54,13 @@ const RANDOM_TRIANGULATION_POINTSET_SEED_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum RandomPointCountError {
+    /// The dimension's required `D + 1` points cannot be represented by `usize`.
+    #[error("dimension {dimension} requires an unrepresentable simplex point count")]
+    UnrepresentableDimension {
+        /// Spatial dimension whose minimum point count overflows.
+        dimension: usize,
+    },
+
     /// The requested count is positive but cannot form one full `D`-simplex.
     #[error(
         "random triangulation in dimension {dimension} requires at least {expected} points, got {actual}"
@@ -71,6 +78,9 @@ pub enum RandomPointCountError {
 impl From<RandomPointCountError> for DelaunayTriangulationConstructionError {
     fn from(error: RandomPointCountError) -> Self {
         match error {
+            RandomPointCountError::UnrepresentableDimension { dimension } => Self::Triangulation {
+                source: DelaunayConstructionFailure::UnrepresentableDimension { dimension },
+            },
             RandomPointCountError::InsufficientPoints {
                 actual,
                 expected,
@@ -107,7 +117,7 @@ impl From<RandomPointCountError> for DelaunayTriangulationConstructionError {
 /// let count = RandomPointCount::<3>::try_new(four)?;
 ///
 /// assert_eq!(count.get(), 4);
-/// assert_eq!(RandomPointCount::<3>::minimum(), 4);
+/// assert_eq!(RandomPointCount::<3>::minimum(), Some(4));
 /// # Ok(())
 /// # }
 /// ```
@@ -117,9 +127,20 @@ pub struct RandomPointCount<const D: usize>(NonZeroUsize);
 
 impl<const D: usize> RandomPointCount<D> {
     /// Returns the minimum point count needed to construct one `D`-simplex.
+    ///
+    /// Returns `None` when `D + 1` is not representable as a `usize`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::generators::RandomPointCount;
+    ///
+    /// assert_eq!(RandomPointCount::<3>::minimum(), Some(4));
+    /// assert_eq!(RandomPointCount::<{ usize::MAX }>::minimum(), None);
+    /// ```
     #[must_use]
-    pub const fn minimum() -> usize {
-        D + 1
+    pub const fn minimum() -> Option<usize> {
+        D.checked_add(1)
     }
 
     /// Parses a positive count into a dimension-sufficient random point count.
@@ -127,6 +148,8 @@ impl<const D: usize> RandomPointCount<D> {
     /// # Errors
     ///
     /// Returns [`RandomPointCountError::InsufficientPoints`] when `count < D + 1`.
+    /// Returns [`RandomPointCountError::UnrepresentableDimension`] when `D + 1`
+    /// cannot be represented as a `usize`.
     ///
     /// # Examples
     ///
@@ -145,7 +168,9 @@ impl<const D: usize> RandomPointCount<D> {
     /// ```
     pub const fn try_new(count: NonZeroUsize) -> Result<Self, RandomPointCountError> {
         let actual = count.get();
-        let expected = Self::minimum();
+        let Some(expected) = Self::minimum() else {
+            return Err(RandomPointCountError::UnrepresentableDimension { dimension: D });
+        };
         if actual < expected {
             return Err(RandomPointCountError::InsufficientPoints {
                 actual,
@@ -1398,6 +1423,75 @@ mod tests {
     /// Builds non-zero point-count literals for random triangulation tests.
     const fn nonzero(value: usize) -> NonZeroUsize {
         NonZeroUsize::new(value).expect("test point count must be non-zero")
+    }
+
+    /// Exercise the point-count boundary without allocating geometric inputs.
+    fn check_random_point_count_arity<const D: usize>() {
+        let expected = D + 1;
+        assert_eq!(RandomPointCount::<D>::minimum(), Some(expected));
+        assert_eq!(
+            RandomPointCount::<D>::try_new(nonzero(expected))
+                .unwrap()
+                .get(),
+            expected
+        );
+        assert_eq!(
+            RandomPointCount::<D>::try_new(nonzero(D)),
+            Err(RandomPointCountError::InsufficientPoints {
+                actual: D,
+                expected,
+                dimension: D,
+            })
+        );
+    }
+
+    macro_rules! random_point_count_arity_tests {
+        ($($dimension:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<random_point_count_arity_ $dimension d>]() {
+                        check_random_point_count_arity::<$dimension>();
+                    }
+                )+
+            }
+        };
+    }
+
+    random_point_count_arity_tests!(2, 3, 4, 5);
+
+    #[test]
+    fn random_point_count_rejects_unrepresentable_dimension() {
+        assert_eq!(RandomPointCount::<{ usize::MAX }>::minimum(), None);
+        for count in [NonZeroUsize::MIN, NonZeroUsize::MAX] {
+            let error = RandomPointCount::<{ usize::MAX }>::try_new(count).unwrap_err();
+            assert_eq!(
+                error,
+                RandomPointCountError::UnrepresentableDimension {
+                    dimension: usize::MAX
+                }
+            );
+            assert_eq!(
+                DelaunayTriangulationConstructionError::from(
+                    RandomTriangulationBuilderError::PointCount { source: error }
+                ),
+                DelaunayTriangulationConstructionError::Triangulation {
+                    source: DelaunayConstructionFailure::UnrepresentableDimension {
+                        dimension: usize::MAX,
+                    },
+                }
+            );
+        }
+        assert_eq!(
+            RandomPointCount::<{ usize::MAX - 1 }>::minimum(),
+            Some(usize::MAX)
+        );
+        assert_eq!(
+            RandomPointCount::<{ usize::MAX - 1 }>::try_new(NonZeroUsize::MAX)
+                .unwrap()
+                .get(),
+            usize::MAX
+        );
     }
 
     #[test]

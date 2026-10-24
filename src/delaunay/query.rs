@@ -1211,7 +1211,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// triangulation.
     ///
     /// This affects subsequent incremental insertions. (Construction-time behavior is determined
-    /// by the policy active during `new()` / `with_kernel()`.)
+    /// by the policy active during the builder's `build()` / `build_with_kernel()`.)
     ///
     /// # Errors
     ///
@@ -2209,11 +2209,13 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///
     /// This is a convenience wrapper around
     /// [`Triangulation::locate`](crate::Triangulation::locate).
+    /// Only Euclidean coordinate models are supported; periodic location needs
+    /// aligned covering-space charts and returns a typed error.
     ///
     /// # Errors
     ///
-    /// Returns [`LocateError`] if structural data or predicates fail during the
-    /// facet-walking query.
+    /// Returns [`LocateError::UnsupportedTopology`] for non-Euclidean owners,
+    /// or another [`LocateError`] if structural data or predicates fail.
     ///
     /// # Examples
     ///
@@ -2253,11 +2255,12 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///
     /// This is a convenience wrapper around
     /// [`Triangulation::locate_with_stats`](crate::Triangulation::locate_with_stats).
+    /// Only Euclidean coordinate models are supported.
     ///
     /// # Errors
     ///
-    /// Returns [`LocateError`] if structural data or predicates fail during the
-    /// facet-walking query.
+    /// Returns [`LocateError::UnsupportedTopology`] for non-Euclidean owners,
+    /// or another [`LocateError`] if structural data or predicates fail.
     ///
     /// # Examples
     ///
@@ -2523,7 +2526,7 @@ impl<K, U, V> DelaunayTriangulation<K, U, V, 2> {
 mod tests {
     use super::*;
     use crate::builder::DelaunayTriangulationBuilder;
-    use crate::construction::{DelaunayError, DelaunayResult};
+    use crate::construction::{ConstructionOptions, DelaunayError, DelaunayResult, RetryPolicy};
     use crate::core::operations::DelaunayInsertionState;
     use crate::core::tds::Tds;
     use crate::draft::DelaunayTriangulationDraft;
@@ -2585,6 +2588,99 @@ mod tests {
             vertices.push(vertex!(coords).expect("unit-vector coordinates are finite"));
         }
         vertices
+    }
+
+    /// Exercises both public owners against certified periodic seam queries.
+    fn assert_periodic_locate_rejected<const D: usize>(vertices: &[Vertex<(), D>])
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
+        assert!(vertices.iter().all(|vertex| {
+            vertex
+                .point()
+                .coords()
+                .iter()
+                .all(|&coordinate| coordinate > 0.0 && coordinate < 1.0)
+        }));
+        let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
+            attempts: NonZeroUsize::new(24).unwrap(),
+            base_seed: Some(0x210_0557),
+        });
+        let dt: DelaunayTriangulation<_, (), (), D> = DelaunayTriangulationBuilder::new(vertices)
+            .try_toroidal([1.0; D])
+            .unwrap()
+            .construction_options(options)
+            .build()
+            .unwrap();
+        // The builder certifies the quotient through Levels 1–4 and then performs
+        // strict Level 5 refinement. Querying this unchanged owner retains that
+        // evidence; repeating cumulative validation would redo periodic pair checks.
+        assert!(dt.global_topology().is_periodic());
+        assert!(dt.number_of_simplices() > 0);
+        assert!(dt.vertices().all(|(_, vertex)| {
+            vertex
+                .point()
+                .coords()
+                .iter()
+                .all(|&coordinate| coordinate > 0.0 && coordinate < 1.0)
+        }));
+        let tri = dt.as_triangulation();
+        // These three representatives denote the same point of the unit torus.
+        // Zero also lies outside the convex hull of the stored positive coordinates.
+        for coords in [[0.0; D], [1.0; D], [-1.0; D]] {
+            let point = Point::try_new(coords).unwrap();
+            let hints = std::iter::once(None).chain(dt.simplices().map(|(key, _)| Some(key)));
+            for hint in hints {
+                for result in [dt.locate(&point, hint), tri.locate(&point, hint)] {
+                    assert_matches!(
+                        result,
+                        Err(LocateError::UnsupportedTopology {
+                            topology: TopologyKind::Toroidal
+                        })
+                    );
+                }
+                for result in [
+                    dt.locate_with_stats(&point, hint),
+                    tri.locate_with_stats(&point, hint),
+                ] {
+                    assert_matches!(
+                        result,
+                        Err(LocateError::UnsupportedTopology {
+                            topology: TopologyKind::Toroidal
+                        })
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn locate_rejects_certified_periodic_t2_seams() {
+        let vertices = [
+            vertex!([0.20, 0.30]).unwrap(),
+            vertex!([0.80, 0.10]).unwrap(),
+            vertex!([0.50, 0.70]).unwrap(),
+            vertex!([0.10, 0.90]).unwrap(),
+            vertex!([0.60, 0.40]).unwrap(),
+            vertex!([0.30, 0.50]).unwrap(),
+            vertex!([0.90, 0.20]).unwrap(),
+        ];
+        assert_periodic_locate_rejected(&vertices);
+    }
+
+    #[cfg(feature = "slow-tests")]
+    #[test]
+    fn locate_rejects_certified_periodic_t3_seams() {
+        let vertices = [
+            vertex!([0.20, 0.30, 0.40]).unwrap(),
+            vertex!([0.80, 0.10, 0.20]).unwrap(),
+            vertex!([0.50, 0.70, 0.60]).unwrap(),
+            vertex!([0.10, 0.90, 0.30]).unwrap(),
+            vertex!([0.60, 0.40, 0.80]).unwrap(),
+            vertex!([0.30, 0.50, 0.90]).unwrap(),
+            vertex!([0.90, 0.20, 0.60]).unwrap(),
+        ];
+        assert_periodic_locate_rejected(&vertices);
     }
 
     /// Asserts that the simplex barycenter of the standard fixture is `1 / (D + 1)`.
