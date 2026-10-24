@@ -742,7 +742,7 @@ changed or ambiguous simplices receive no payload.
 ### Related Topology Repair
 
 Boundary-ridge multiplicity, ridge-link manifoldness, and vertex-link
-manifoldness repairs are available through `Tds::repair_pl_manifold_topology`.
+manifoldness repairs are available through `delaunay::repair_pl_manifold_tds`.
 That topology repair workflow is separate from the Delaunay builder's
 flip-based geometric repair.
 

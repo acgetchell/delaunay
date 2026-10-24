@@ -479,6 +479,9 @@ doctest filters when adding feature-only examples. The native CI matrix reaches
 both lanes through `just ci` → `just test` → `just test-rust`.
 
 The LLVM-instrumented coverage profile retains its 300-second default watchdog.
+The exact 20-point 4D exterior-insertion regression has a 900-second override
+after reaching that watchdog in the parallel Linux coverage suite; its complete
+input and per-prefix realization and empty-sphere assertions remain enabled.
 The compact `T^3` builder case that validates topology and Delaunay has a
 1,800-second override; the reversed-input and orientation-reversing-map cases
 retain their 1,200-second overrides for periodic-image construction.

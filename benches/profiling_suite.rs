@@ -493,11 +493,14 @@ where
         group.measurement_time(bench_time(120));
     }
 
+    let fixture = OnceLock::new();
     group.bench_function("validate_topology", |b| {
-        let seed = seed_for_case::<D>(n_points);
-        let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
-        let vertices = benchmark_vertices_from_generated_points(&points);
-        let dt = construct_triangulation::<D>(&vertices, seed);
+        let dt = fixture.get_or_init(|| {
+            let seed = seed_for_case::<D>(n_points);
+            let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
+            let vertices = benchmark_vertices_from_generated_points(&points);
+            construct_triangulation::<D>(&vertices, seed)
+        });
         let tri = dt.as_triangulation();
         b.iter(|| {
             if let Err(error) = tri.is_valid_topology() {
@@ -525,14 +528,18 @@ where
         group.measurement_time(bench_time(120));
     }
 
+    let fixture = OnceLock::new();
     group.bench_function("find_neighbors_all_simplices", |b| {
-        let seed = seed_for_case::<D>(n_points);
-        let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
-        let vertices = benchmark_vertices_from_generated_points(&points);
-        let dt = construct_triangulation::<D>(&vertices, seed);
-        let simplex_keys: Vec<_> = dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
+        let (dt, simplex_keys) = fixture.get_or_init(|| {
+            let seed = seed_for_case::<D>(n_points);
+            let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
+            let vertices = benchmark_vertices_from_generated_points(&points);
+            let dt = construct_triangulation::<D>(&vertices, seed);
+            let simplex_keys: Vec<_> = dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
+            (dt, simplex_keys)
+        });
         b.iter(|| {
-            for &simplex_key in &simplex_keys {
+            for &simplex_key in simplex_keys {
                 for neighbor in dt.simplex_neighbors(simplex_key) {
                     black_box(neighbor);
                 }
@@ -558,11 +565,14 @@ where
         group.measurement_time(bench_time(120));
     }
 
+    let fixture = OnceLock::new();
     group.bench_function("iterate_all_vertices", |b| {
-        let seed = seed_for_case::<D>(n_points);
-        let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
-        let vertices = benchmark_vertices_from_generated_points(&points);
-        let dt = construct_triangulation::<D>(&vertices, seed);
+        let dt = fixture.get_or_init(|| {
+            let seed = seed_for_case::<D>(n_points);
+            let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
+            let vertices = benchmark_vertices_from_generated_points(&points);
+            construct_triangulation::<D>(&vertices, seed)
+        });
         b.iter(|| {
             let mut count = 0;
             for (_, vertex) in dt.vertices() {
@@ -590,11 +600,14 @@ where
         group.measurement_time(bench_time(120));
     }
 
+    let fixture = OnceLock::new();
     group.bench_function("iterate_all_simplices", |b| {
-        let seed = seed_for_case::<D>(n_points);
-        let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
-        let vertices = benchmark_vertices_from_generated_points(&points);
-        let dt = construct_triangulation::<D>(&vertices, seed);
+        let dt = fixture.get_or_init(|| {
+            let seed = seed_for_case::<D>(n_points);
+            let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
+            let vertices = benchmark_vertices_from_generated_points(&points);
+            construct_triangulation::<D>(&vertices, seed)
+        });
         b.iter(|| {
             let mut count = 0;
             for (simplex_key, _) in dt.simplices() {

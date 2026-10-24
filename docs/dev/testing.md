@@ -464,7 +464,10 @@ release budgets are unchanged.
 The exact 20-point 4D exterior-insertion regression retains its complete input
 and per-prefix realization and empty-sphere assertions in normal CI. Measured
 native runtimes are 133 seconds in debug and 7.6 seconds in release, so its
-named overrides allow 300 seconds in debug/coverage and 60 seconds in release.
+named overrides allow 300 seconds in debug and 60 seconds in release.
+Its LLVM-instrumented run passed in 135.5 seconds on macOS but reached the
+300-second watchdog in the parallel Linux coverage suite. A coverage-only
+override allows 900 seconds while retaining every input and assertion.
 The insertion-without-repair owner/rollback regression retains its assertions
 with a 60-second debug override after a measured 20-second run. These overrides
 do not change unrelated test budgets or move either contract out of normal CI.

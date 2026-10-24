@@ -239,10 +239,18 @@ filter = '''
 | (binary(=proptest_sos)
 & (test(=prop_sos_insphere_deterministic_5d)
    | test(=prop_sos_insphere_nonzero_5d)))
-| (binary(=delaunay)
-& test(=triangulation::insertion::tests::test_former_perturbation_retry_sequence_succeeds_exactly_4d))
 '''
 slow-timeout = { period = "300s", terminate-after = 1 }
+
+[[profile.coverage.overrides]]
+# The complete 20-point sequence passed instrumented on macOS in 135.5 seconds
+# but reached 300 seconds in the parallel Linux coverage suite. Preserve every
+# prefix's exact realization and empty-sphere checks with a bounded exception.
+filter = '''
+binary(=delaunay)
+& test(=triangulation::insertion::tests::test_former_perturbation_retry_sequence_succeeds_exactly_4d)
+'''
+slow-timeout = { period = "900s", terminate-after = 1 }
 
 [[profile.coverage.overrides]]
 # This compact T^3 regression passed in 1164 seconds under LLVM coverage,

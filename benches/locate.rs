@@ -13,7 +13,7 @@
 //!   measuring the hint fast path used by locality-aware callers such as
 //!   incremental insertion.
 //!
-//! Intended for **manual** runs (not part of the CI performance suite).
+//! Included in the curated performance workflow and available for manual runs.
 //!
 //! Run with:
 //! ```bash
@@ -145,6 +145,9 @@ fn bench_locate_dimension<const D: usize>(
         .collect();
     let queries_per_iteration = u64::try_from(QUERY_COUNT).or_abort();
 
+    // The group already identifies locate and its hint mode. Omit a redundant
+    // function component so full IDs fit Criterion's 100-character discovery
+    // titles while retaining all fixture and query-batch identity fields.
     {
         let mut group = c.benchmark_group(format!("locate/no_hint/{dim_label}"));
         group.sample_size(SAMPLE_SIZE);
@@ -153,13 +156,10 @@ fn bench_locate_dimension<const D: usize>(
         for source in &sources {
             group.throughput(Throughput::Elements(queries_per_iteration));
             group.bench_with_input(
-                BenchmarkId::new(
-                    "locate",
-                    format!(
-                        "vertices_{}_simplices_{}_seed_{:016x}_input_hull_queries_v1_{QUERY_COUNT}",
-                        source.vertex_count, source.simplex_count, source.seed
-                    ),
-                ),
+                BenchmarkId::from_parameter(format!(
+                    "vertices_{}_simplices_{}_seed_{:016x}_input_hull_queries_v1_{QUERY_COUNT}",
+                    source.vertex_count, source.simplex_count, source.seed
+                )),
                 source,
                 |b, source| {
                     b.iter(|| {
@@ -181,13 +181,10 @@ fn bench_locate_dimension<const D: usize>(
         for source in &sources {
             group.throughput(Throughput::Elements(queries_per_iteration));
             group.bench_with_input(
-                BenchmarkId::new(
-                    "locate",
-                    format!(
-                        "vertices_{}_simplices_{}_seed_{:016x}_input_hull_queries_v1_{QUERY_COUNT}",
-                        source.vertex_count, source.simplex_count, source.seed
-                    ),
-                ),
+                BenchmarkId::from_parameter(format!(
+                    "vertices_{}_simplices_{}_seed_{:016x}_input_hull_queries_v1_{QUERY_COUNT}",
+                    source.vertex_count, source.simplex_count, source.seed
+                )),
                 source,
                 |b, source| {
                     b.iter(|| {
