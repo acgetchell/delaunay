@@ -143,7 +143,7 @@ schedule. Scientific correctness and supporting evidence determine readiness.
   construction API for v1.0.0
   ([#497](https://github.com/acgetchell/delaunay/issues/497)).
 - **Shared tooling adoption:** retire remaining generic orchestration only
-  after the needed supported upstream capabilities are published
+  after the required upstream capabilities are published
   ([#648](https://github.com/acgetchell/delaunay/issues/648),
   [#653](https://github.com/acgetchell/delaunay/issues/653)).
 - **Spherical integration:** extend the bounded `S^2`/`S^3` prototype to the
