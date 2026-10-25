@@ -82,9 +82,6 @@ workflow references do not need to be loaded preemptively.
   When authorized, assess its findings and fix valid issues before final
   validation. Command scope and follow-up guidance live in
   `docs/dev/commands.md#local-coderabbit-review`.
-- **Find local MacTeX tools before declaring them missing.** On macOS, prepend
-  `/Library/TeX/texbin` to `PATH` when commands such as `chktex` are not visible
-  to a non-interactive shell; see `docs/dev/commands.md`.
 - **Do not edit generated changelogs manually.** Changelog and documentation
   maintenance rules live in `docs/dev/docs.md`.
 - **Keep documentation owners distinct.** README owns evaluation and quickstart;
@@ -97,9 +94,9 @@ workflow references do not need to be loaded preemptively.
   archives intact; details live in [documentation policy](docs/dev/docs.md).
   README Quickstart owns usage and bare `just` discovery; CONTRIBUTING owns
   contributor checks, fixes, tests, security, and PR preparation.
-- **Treat paper prose as author-owned.** Agents must not add substantive
-  publication prose to `papers/`; local paper maintenance rules live in
-  `docs/dev/docs.md`.
+- **Keep manuscript ownership separate.** Active manuscript sources and builds
+  live in `acgetchell/Papers`. Preserve Delaunay-owned scientific inputs and
+  historical release evidence; see `docs/dev/docs.md`.
 - **Keep notebook execution deliberate.** `just notebook-check` is lint-only.
   The canonical macOS leg of `just ci` may execute the validation notebook only
   to compare regenerated figures with tracked artifacts; it must not publish

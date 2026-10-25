@@ -51,7 +51,7 @@ the published event, producer-tool equality and byte-identical repackaging.
 
 The release recipes follow la-stack's command contract. A small citation-date
 adapter supplies an explicit date to the shared changelog generator for
-`changelog-release` / `changelog-unreleased` and tagged previews. It validates the
+`changelog-release` and tagged previews. It validates the
 prepared version/date without reading the clock or changing metadata; generation
 and publication remain shared-package operations. This is temporary generic
 code pending [research-repo-tools #130](https://github.com/acgetchell/research-repo-tools/issues/130),
@@ -80,7 +80,9 @@ notebook infrastructure, paper checks and native Tectonic discovery.
 
 Delaunay retains scientific geometry, topology, workloads, benchmark eligibility,
 construction metrics, complete confidence intervals, provenance-based
-comparability, report interpretation, and geometric-mean README summaries. Publication prose under `papers/` remains author-owned.
+comparability, report interpretation, and geometric-mean README summaries.
+Active manuscript prose and production tooling live in
+[Papers/delaunay-validation](https://github.com/acgetchell/Papers/tree/main/delaunay-validation).
 No scientific report, CSV/JSON baseline, tracked notebook, PDF, or figure was
 regenerated in this adoption patch.
 
@@ -94,7 +96,7 @@ scientific eligibility policy; shared code owns the underlying mechanisms.
 
 | Adoption | Published integration | Remaining ownership |
 |-----|-----|-----|
-| [#625][d625] | Paper/PDF policy, dates, normalization, Tectonic discovery/export | Native libraries and explicit paper recipes |
+| [#625][d625] | Paper/PDF policy, dates, normalization, Tectonic discovery/export | Active manuscript tooling now lives in acgetchell/Papers |
 | [#626][d626] | Live Cargo discovery, feature groups, locked builds and output | Nine example assertions and diagnostics feature |
 | [#627][d627] | SARIF split/GitHub outputs and complete-directory publication | Codacy legacy indices, Opengrep policy and six scientific images |
 | [#628][d628] | Declared lowercase kebab-case notebook ID pattern | Stable descriptive cell names |

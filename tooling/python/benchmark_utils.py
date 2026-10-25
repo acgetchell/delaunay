@@ -72,6 +72,8 @@ from performance_artifacts import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from research_repo_tools.criterion_inventory import CriterionInventory
+
 logger = logging.getLogger(__name__)
 
 TIME_UNIT_TO_MICROSECONDS = {"ns": 1e-3, "µs": 1.0, "μs": 1.0, "us": 1.0, "ms": 1e3, "s": 1e6}
@@ -3429,6 +3431,8 @@ def _measurement_plan_digest(
     checkout: Path,
     suite: str,
     comparison_targets: tuple[str, ...] | None = None,
+    *,
+    inventory: CriterionInventory | None = None,
 ) -> str:
     """Hash the normalized benchmark method independently of measured source."""
     targets = _comparison_targets_for_suite(suite, comparison_targets)
@@ -3460,9 +3464,12 @@ def _measurement_plan_digest(
     )
     payload["environment"] = relevant_environment
     policy_path = checkout / "target" / "criterion" / MEASUREMENT_POLICY_FILE
-    if policy_path.is_file():
-        policy = parse_policy(policy_path.read_bytes())
-        inventory = parse_inventory((policy_path.parent / MEASUREMENT_INVENTORY_FILE).read_bytes())
+    if inventory is not None or policy_path.is_file():
+        if inventory is None:
+            policy = parse_policy(policy_path.read_bytes())
+            inventory = parse_inventory((policy_path.parent / MEASUREMENT_INVENTORY_FILE).read_bytes())
+        else:
+            policy = _sampling_policy(inventory.expected)
         selected_ids = tuple(name for target, names in inventory.suites if target in targets for name in names)
         policy = replace(policy, expected=selected_ids, sample_count=None, sample_counts=tuple((name, policy.count_for(name)) for name in selected_ids))
         payload["sampling_policy"] = json.loads(serialize_policy(policy))
@@ -3590,13 +3597,47 @@ def _shared_bench_targets(current_worktree: Path, baseline_worktree: Path, suite
     return shared
 
 
-def _generate_local_baseline_into_worktree(
+def _require_compatible_benchmark_plans(
+    current_worktree: Path,
+    baseline_worktree: Path,
+    suite: str,
+    comparison_targets: tuple[str, ...],
+) -> None:
+    """Reject incompatible workloads before scientific preflight or timing runs."""
+    blockers = []
+    for label, fingerprint in (("benchmark harness", _benchmark_harness_digest), ("measurement plan", _measurement_plan_digest)):
+        if fingerprint(current_worktree, suite, comparison_targets) != fingerprint(baseline_worktree, suite, comparison_targets):
+            blockers.append(f"{label} differs")
+    if not blockers:
+        # Case IDs can depend on the measured library, even with identical harness
+        # bytes. Untimed discovery binds their inventories and sampling counts.
+        discovery = DiscoveryPlan(
+            tuple(
+                DiscoveryCommand(
+                    target, ("cargo", "bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", target, "--", "--list"), timeout=RELEASE_BENCH_TIMEOUT_SECONDS
+                )
+                for target in comparison_targets
+            )
+        )
+        plans = []
+        for checkout in (current_worktree, baseline_worktree):
+            inventory = discover_inventory(checkout, discovery, env=_benchmark_env(checkout))
+            plans.append(_measurement_plan_digest(checkout, suite, comparison_targets, inventory=inventory))
+        if plans[0] != plans[1]:
+            blockers.append("measurement plan differs")
+    if blockers:
+        msg = "performance comparison is incompatible before benchmarking: " + "; ".join(blockers) + "; use just bench-perf-summary for absolute results"
+        raise ValueError(msg)
+
+
+def _measure_local_performance_pair(
     *,
     config: ReleaseReportConfig,
     target_worktree: Path,
     tmp_dir: Path,
-) -> RevisionEvidence:
-    """Generate a local baseline and return its complete revision evidence."""
+    require_compatible: bool,
+) -> tuple[RevisionEvidence, RevisionEvidence]:
+    """Prepare both revisions before measuring and return their complete evidence."""
     baseline_worktree = tmp_dir / "baseline-worktree"
     _progress(f"preparing baseline worktree for {config.baseline_tag}")
     revision = _resolve_worktree_revision(config.repo_root, config.baseline_tag)
@@ -3606,6 +3647,12 @@ def _generate_local_baseline_into_worktree(
             msg = f"prepared baseline checkout version {observed_baseline_tag} does not match requested release {config.baseline_tag}"
             raise ValueError(msg)
         comparison_targets = _shared_bench_targets(target_worktree, baseline_worktree, config.suite)
+        if require_compatible:
+            _progress("checking benchmark harness and measurement-plan compatibility before sampling")
+            _require_compatible_benchmark_plans(target_worktree, baseline_worktree, config.suite, comparison_targets)
+        current_targets = _bench_targets_for_suite(target_worktree, config.suite)
+        _measure_suite(target_worktree, current_targets)
+        current_commands = tuple(("cargo", "bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", target) for target in current_targets)
         targets = _bench_targets_for_suite(baseline_worktree, config.suite)
         _measure_suite(baseline_worktree, targets, save_baseline=config.baseline_tag)
         commands = tuple(
@@ -3626,7 +3673,17 @@ def _generate_local_baseline_into_worktree(
         if copied == 0:
             msg = f"generated baseline contains no saved sample named {config.baseline_tag!r}"
             raise FileNotFoundError(msg)
-        return _revision_evidence(
+        current_evidence = _revision_evidence(
+            target_worktree,
+            version=config.current_tag,
+            ref=config.worktree_ref,
+            measurement=RevisionMeasurement(
+                suite=config.suite,
+                commands=current_commands,
+                comparison_targets=comparison_targets,
+            ),
+        )
+        baseline_evidence = _revision_evidence(
             baseline_worktree,
             version=config.baseline_tag,
             ref=config.baseline_tag,
@@ -3636,6 +3693,7 @@ def _generate_local_baseline_into_worktree(
                 comparison_targets=comparison_targets,
             ),
         )
+        return current_evidence, baseline_evidence
 
 
 def _source_state_payload(source: SourceState) -> dict[str, object]:
@@ -4224,7 +4282,7 @@ def _performance_workspace() -> Iterator[Path]:
             shutil.rmtree(directory)
 
 
-def _build_performance_bundle_in_temp_worktree(*, config: ReleaseReportConfig) -> PerformanceBundle:
+def _build_performance_bundle_in_temp_worktree(*, config: ReleaseReportConfig, require_compatible: bool = False) -> PerformanceBundle:
     """Measure or load a comparison in temporary worktrees and return trusted data."""
     with _performance_workspace() as tmp_dir:
         worktree = tmp_dir / "worktree"
@@ -4254,21 +4312,11 @@ def _build_performance_bundle_in_temp_worktree(*, config: ReleaseReportConfig) -
                 current_acquisition_commands = current_asset_evidence.acquisition_commands
                 baseline_acquisition_commands = baseline_asset_evidence.acquisition_commands
             else:
-                current_targets = _bench_targets_for_suite(worktree, config.suite)
-                _measure_suite(worktree, current_targets)
-                current_commands = tuple(("cargo", "bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", target) for target in current_targets)
-                baseline_evidence = _generate_local_baseline_into_worktree(config=config, target_worktree=worktree, tmp_dir=tmp_dir)
-                baseline_targets = set(baseline_evidence.completed_targets)
-                comparison_targets = tuple(target for target in current_targets if target in baseline_targets)
-                current_evidence = _revision_evidence(
-                    worktree,
-                    version=config.current_tag,
-                    ref=config.worktree_ref,
-                    measurement=RevisionMeasurement(
-                        suite=config.suite,
-                        commands=current_commands,
-                        comparison_targets=comparison_targets,
-                    ),
+                current_evidence, baseline_evidence = _measure_local_performance_pair(
+                    config=config,
+                    target_worktree=worktree,
+                    tmp_dir=tmp_dir,
+                    require_compatible=require_compatible,
                 )
                 if current_evidence.measurement is None or baseline_evidence.measurement is None:
                     msg = "fresh comparisons require shared measurement evidence for both revisions"
@@ -4461,6 +4509,7 @@ def generate_and_promote_performance_report(
         project_root=config.repo_root,
     )
     bundle = _build_performance_bundle_in_temp_worktree(
+        require_compatible=True,
         config=ReleaseReportConfig(
             repo_root=config.repo_root,
             current_tag=current_tag,
@@ -4471,7 +4520,7 @@ def generate_and_promote_performance_report(
             stat=config.stat,
             apply_current_diff=config.apply_current_diff,
             baseline_source=config.baseline_source,
-        )
+        ),
     )
     return _publish_performance_bundle(
         bundle=bundle,

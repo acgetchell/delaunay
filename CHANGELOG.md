@@ -5,18 +5,348 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-10-25
+
+### ⚠️ Breaking Changes
+
+- Replace direct notebook-check invocations with
+  just notebook-check or research-repo-tools notebooks lint. Configure
+  example deadlines in tooling/examples.toml instead of EXAMPLE_TIMEOUT.
+- The minimum supported Rust version is now 1.99.0.
+- Retired benchmark baseline and threshold commands and
+  legacy comparison readers are removed. New retained reports use shared
+  .comparison.json and .evidence.json files; historical files remain records.
+- Python tooling now requires Python 3.15. The release benchmark workflow uses the Python publication adapter in place of scripts/release_benchmarks.sh.
+- Rust 1.99.1 or newer is now required.
+- Publish benchmark-equipped drafts with
+  `just release-publish TAG`. Use bare `just` instead of `help-workflows` or
+  `perf-help`, `changelog-release` instead of `changelog-unreleased`, and
+  `update-python-dependencies` instead of `update-python-deps`.
+- Replace the directional `safe_scalar_*_f64` and
+  `safe_coords_*_f64` helpers with try_finite_scalar and try_finite_coords.
+- Remove the public determinant helper and its geometry prelude export. Use Matrix::det() for a floating-point estimate with typed errors, or
+  Matrix::det_sign_exact() for an exact sign.
+
+### Merged Pull Requests
+
+- Make paper tooling opt-in and refresh project guides [#663](https://github.com/acgetchell/delaunay/pull/663)
+- Preserve scientific correctness across triangulation workflows [#660](https://github.com/acgetchell/delaunay/pull/660)
+- Delegate remaining numerical kernels to la-stack [#658](https://github.com/acgetchell/delaunay/pull/658)
+- Promote validated Cargo artifacts and align release commands [#652](https://github.com/acgetchell/delaunay/pull/652)
+- Adopt research-repo-tools v0.2.3 [#651](https://github.com/acgetchell/delaunay/pull/651)
+- Bump the github-actions group across 1 directory with 4 updates [#646](https://github.com/acgetchell/delaunay/pull/646)
+- Enforce geometry and recovery invariants [#645](https://github.com/acgetchell/delaunay/pull/645)
+- Automate reviewed releases and command discovery [#644](https://github.com/acgetchell/delaunay/pull/644)
+- Adopt la-stack filters on Rust 1.99.1 [#643](https://github.com/acgetchell/delaunay/pull/643)
+- Delegate spherical angles to la-stack [#642](https://github.com/acgetchell/delaunay/pull/642)
+- Retire local performance orchestration [#641](https://github.com/acgetchell/delaunay/pull/641)
+- Bump the github-actions group with 2 updates [#640](https://github.com/acgetchell/delaunay/pull/640)
+- Adopt research-repo-tools v0.1.8 [#639](https://github.com/acgetchell/delaunay/pull/639)
+- Bump acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml [#638](https://github.com/acgetchell/delaunay/pull/638)
+- Raise the minimum supported Rust version to 1.99 [#637](https://github.com/acgetchell/delaunay/pull/637)
+- Replace local helpers with research-repo-tools [#635](https://github.com/acgetchell/delaunay/pull/635)
+- Bump the github-actions group across 1 directory with 5 updates [#624](https://github.com/acgetchell/delaunay/pull/624)
+- Adopt shared maintenance and review workflows [#623](https://github.com/acgetchell/delaunay/pull/623)
+
+### Changed
+
+- Adopt shared maintenance and review workflows [#623](https://github.com/acgetchell/delaunay/pull/623)
+  [`894c0b8`](https://github.com/acgetchell/delaunay/commit/894c0b843e2f16bf06d62004636b1ee9ecb57376)
+
+#### refactor(tooling): adopt shared maintenance and review workflows
+
+  - Pin research-repo-tools 0.1.7 and use its managed toolchain for setup and CI.
+  - Delegate dependency updates, release metadata, changelog rotation, and
+    Semgrep fixture checks to the shared CLI.
+  - Move completed changelog series while preserving release dates and links.
+  - Verify live origin/main for branch reviews and preserve local-base
+    overrides and uncommitted review.
+  - Refresh Rust and Python dependency locks and retain updated tool pins.
+- [**breaking**] Replace local helpers with research-repo-tools [#635](https://github.com/acgetchell/delaunay/pull/635)
+  [`af2f82d`](https://github.com/acgetchell/delaunay/commit/af2f82d3127c8ab4e782724bfaf532467c8e2866)
+
+  - Delegate file selection, subprocesses, archives, worktrees, Criterion
+    parsing, and atomic publication to the pinned shared package.
+  - Replace notebook and example runners with shared commands and
+    declarative tooling configuration while preserving notebook policies.
+  - Preserve exact Git patch bytes, publication recovery artifacts, and
+    subprocess failure diagnostics.
+  - Add just security with managed OSV and Gitleaks scans locally and in CI.
+  - Document remaining v0.1.8 capabilities and dependent adoption issues.
+- [**breaking**] Adopt research-repo-tools v0.1.8 [#639](https://github.com/acgetchell/delaunay/pull/639)
+  [`bde38f4`](https://github.com/acgetchell/delaunay/commit/bde38f4826cc248b425c4300cadd233417f7646c)
+
+#### refactor!: adopt research-repo-tools v0.1.8
+
+  - Replace reusable paper, example, notebook, scanning, metadata, and
+    publication helpers with supported shared commands and APIs.
+  - Keep consumer configuration and scientific Python modules under tooling,
+    with only the release benchmark shell script remaining under scripts.
+  - Adopt shared comparison JSON and evidence envelopes; retire legacy
+    baseline caches, text/CSV readers, threshold commands, and their workflow.
+  - Preserve scientific coverage, provenance, and publication checks while
+    the remaining upstream performance capabilities are developed.
+  - Refresh consumer dependency locks and declared tool versions.
+- [**breaking**] Retire local performance orchestration [#641](https://github.com/acgetchell/delaunay/pull/641)
+  [`06284cf`](https://github.com/acgetchell/delaunay/commit/06284cfe4a699cc81bc1aa334524e5dcac438707)
+
+  - Adopt research-repo-tools 0.1.9 for measurement execution, canonical Criterion inventory, saved-baseline verification, and release publication.
+  - Preserve heterogeneous sampling and scientific provenance while rejecting incompatible retained measurements and colliding baseline names.
+  - Keep the trusted publication runtime independent of release checkouts and revalidate the bound release before publishing.
+  - Update the Python tooling environment to Python 3.15 and uv 0.13.1, and adopt la-stack 0.5.0.
+- Delegate spherical angles to la-stack [#642](https://github.com/acgetchell/delaunay/pull/642)
+  [`ca5d337`](https://github.com/acgetchell/delaunay/commit/ca5d337ceda407bbf23829d787ccbbafe94a8f37)
+
+#### refactor: delegate spherical angles to la-stack
+
+  - Use la-stack's allocation-free slice angle API while retaining radius validation and arc-length scaling.
+  - Preserve typed upstream numerical errors and document the quadratic ambient-dimension cost.
+  - Add spherical distance benchmarks with independent correctness and allocation checks.
+- [**breaking**] Adopt la-stack filters on Rust 1.99.1 [#643](https://github.com/acgetchell/delaunay/pull/643)
+  [`5c6bbaa`](https://github.com/acgetchell/delaunay/commit/5c6bbaa2fdd9024bcf7742333d698a9816a5b879)
+
+#### refactor!: adopt la-stack filters on Rust 1.99.1
+
+  - Delegate relative in-sphere interval signs and circumsphere interval
+    arithmetic to la-stack, removing the private interval kernel.
+  - Reuse certified shared-vertex projections for Level 4 separation while
+    preserving strict unit margins and exact geometric fallbacks.
+  - Align the repository toolchain, minimum Rust version, and documentation
+    with Rust 1.99.1.
+
+- [**breaking**] Delegate remaining numerical kernels to la-stack [#658](https://github.com/acgetchell/delaunay/pull/658)
+  [`2c93eb2`](https://github.com/acgetchell/delaunay/commit/2c93eb2fe91b505a947086fae503c25a7604ad35)
+
+  - Adopt la-stack v0.5.1 in the root crate and checkpoint fixture.
+  - Use backend LU, Gram construction, checked dot products, and rational rounding while retaining exact geometric certification and fallback.
+  - Refresh the locked protobuf and wrapt dependencies used by development tooling.
+
+### Fixed
+
+- [**breaking**] Enforce geometry and recovery invariants [#645](https://github.com/acgetchell/delaunay/pull/645)
+  [`460ef68`](https://github.com/acgetchell/delaunay/commit/460ef68c1fb235134d3567e012e32b7906d7c3ff)
+
+  - Make cospherical flip decisions consistent and periodic simplex identity
+    translation-invariant across equality, ordering, hashing, and deduplication.
+  - Evaluate periodic quality in lifted charts, preserve vertex-only TDS
+    serialization, and return typed errors for oversized point requests.
+  - Preserve unfinished builders, rollback configuration, predicate and lift
+    causes, checkpoint payload failures, and strict-insphere witnesses.
+  - Separate layer-local validation reports, consolidate finite-coordinate
+    helpers and permutation parity, and remove unnecessary payload bounds.
+  - Publish JSON files atomically and restore allocation-profiler state before
+    propagating a measured panic.
+  - Correct release packaging, profiling and Clippy failure reporting, artifact
+    retention, Semgrep enforcement, and optional-feature test coverage.
+  - Preserve benchmark confidence levels, derive conclusions from retained
+    measurements, improve CLI and notebook diagnostics, and refresh tooling pins.
+  - Align documentation, citations, immutable release evidence, and generated
+    validation figures with the implementation.
+- Preserve scientific correctness across triangulation workflows [#660](https://github.com/acgetchell/delaunay/pull/660)
+  [`e365c53`](https://github.com/acgetchell/delaunay/commit/e365c531ea157469c0f8767153e75d0ac6db920e)
+
+  - Complete exterior insertion conflict cavities and certify hull-corner
+    deletion while preserving valid geometry and failure-atomic recovery.
+  - Select periodic k=1 insertion images by exact containment, preserve caller
+    coordinates and identities, and report ambiguity, range, and search limits.
+  - Correct nonconvex point location, conservative spatial duplicate detection,
+    and spatial-index restoration after failed bootstrap insertion.
+  - Detect genuine nonflippable Delaunay violations, reject unsupported periodic
+    location and exact intersection dimensions, and improve typed diagnostics
+    for arity, incidence, orientation, and construction failures.
+  - Relax snapshot and checkpoint payload bounds to the required Clone and
+    serialization traits.
+  - Use explicit benchmark fixtures and repair workloads, exclude owner
+    destruction from operation timing, and correct profiling scope and quoting.
+  - Require scientific report provenance, preserve artifacts on publication
+    failure, and improve missing-tool diagnostics and cross-platform fixtures.
+  - Prevent overflow in extreme-coordinate visualizations and keep notebook
+    Semgrep checks within individual cell boundaries.
+  - Remove vacuous and duplicate checks, strengthen invariant and API-contract
+    coverage, and retain expensive exact checks with focused timeout allowances.
+  - Align kernel documentation, scientific references, and development guidance;
+    require production fixes for legitimate regressions and independent evidence
+    before changing a test's contract.
+
+### Maintenance
+
+- Bump the github-actions group across 1 directory with 5 updates [#624](https://github.com/acgetchell/delaunay/pull/624)
+  [`6700176`](https://github.com/acgetchell/delaunay/commit/670017610bd90f9120a6b15d250d4bfad9f65a19)
+
+  Bumps the github-actions group with 5 updates in the / directory:
+
+  | Package | From | To |
+  | --- | --- | --- |
+  | [github/codeql-action/upload-sarif](https://github.com/github/codeql-action) | `4.37.9` | `4.38.2` |
+  | [codecov/codecov-action](https://github.com/codecov/codecov-action) | `7.0.0` | `7.1.1` |
+  | [github/codeql-action/init](https://github.com/github/codeql-action) | `4.37.9` | `4.38.2` |
+  | [github/codeql-action/analyze](https://github.com/github/codeql-action) | `4.37.9` | `4.38.2` |
+  | [acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml](https://github.com/acgetchell/research-repo-tools) | `cbb2ea6dee8866b3f0547bca935aef48fdd71707` | `b972cbfd717319abaa68d9b1373711ad6f163294` |
+
+  Updates `github/codeql-action/upload-sarif` from 4.37.9 to 4.38.2
+
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/cdf488f595d80d6e07e03d4674febd5ab45fa938...2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2)
+
+  Updates `codecov/codecov-action` from 7.0.0 to 7.1.1
+  - [Release notes](https://github.com/codecov/codecov-action/releases)
+  - [Changelog](https://github.com/codecov/codecov-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/codecov/codecov-action/compare/fb8b3582c8e4def4969c97caa2f19720cb33a72f...303a32d7a59b442fa8d48b6a1cc6825c09c847a5)
+
+  Updates `github/codeql-action/init` from 4.37.9 to 4.38.2
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/cdf488f595d80d6e07e03d4674febd5ab45fa938...2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2)
+
+  Updates `github/codeql-action/analyze` from 4.37.9 to 4.38.2
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/cdf488f595d80d6e07e03d4674febd5ab45fa938...2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2)
+
+  Updates `acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml` from cbb2ea6dee8866b3f0547bca935aef48fdd71707 to
+  b972cbfd717319abaa68d9b1373711ad6f163294
+  - [Release notes](https://github.com/acgetchell/research-repo-tools/releases)
+  - [Changelog](https://github.com/acgetchell/research-repo-tools/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/acgetchell/research-repo-tools/compare/cbb2ea6dee8866b3f0547bca935aef48fdd71707...b972cbfd717319abaa68d9b1373711ad6f163294)
+- [**breaking**] Raise the minimum supported Rust version to 1.99 [#637](https://github.com/acgetchell/delaunay/pull/637)
+  [`2f2f014`](https://github.com/acgetchell/delaunay/commit/2f2f01451815f0b3fdd6bce02c9f25e5af146d98)
+
+  - Require Rust 1.99.0 across the repository and downstream fixture.
+  - Adopt deliberate fused multiply-add where numerical contracts permit it
+    and clarify when separate rounding requires a justified lint suppression.
+  - Align assertions, must-use annotations, rustdoc links, and lint
+    suppressions with compiler diagnostics.
+  - Replace redundant Semgrep checks with Clippy coverage and close policy
+    gaps in split modules and lint attributes.
+  - Update zerocopy and zerocopy-derive to 0.8.60 in both Cargo lockfiles.
+  - Allow cold managed-tool setup in bounded scanner and performance CI jobs
+    while retaining the 30-minute benchmark execution limit.
+- Bump acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml [#638](https://github.com/acgetchell/delaunay/pull/638)
+  [`55e2e26`](https://github.com/acgetchell/delaunay/commit/55e2e260e62598cf41ff5ae75bc57d798ee592a9)
+
+  Bumps the github-actions group with 1 update:
+  [acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml](https://github.com/acgetchell/research-repo-tools).
+
+  Updates `acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml` from b972cbfd717319abaa68d9b1373711ad6f163294 to
+  7282cbd90cf5cd0ca8a1c8a01d3fed520f04eb2f
+
+  - [Release notes](https://github.com/acgetchell/research-repo-tools/releases)
+  - [Changelog](https://github.com/acgetchell/research-repo-tools/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/acgetchell/research-repo-tools/compare/b972cbfd717319abaa68d9b1373711ad6f163294...7282cbd90cf5cd0ca8a1c8a01d3fed520f04eb2f)
+- Bump the github-actions group with 2 updates [#640](https://github.com/acgetchell/delaunay/pull/640)
+  [`f05a536`](https://github.com/acgetchell/delaunay/commit/f05a536c7610887c50509d0a3e132df3cc4a4a1f)
+
+  Bumps the github-actions group with 2 updates: [actions/upload-artifact](https://github.com/actions/upload-artifact) and
+  [astral-sh/setup-uv](https://github.com/astral-sh/setup-uv).
+
+  Updates `actions/upload-artifact` from 7.0.1 to 7.0.2
+
+  - [Release notes](https://github.com/actions/upload-artifact/releases)
+  - [Commits](https://github.com/actions/upload-artifact/compare/043fb46d1a93c77aae656e7c1c64a875d1fc6a0a...cf430e030ddbb5b0abf93d22962f4752f3646cd9)
+
+  Updates `astral-sh/setup-uv` from 10.0.1 to 10.2.0
+  - [Release notes](https://github.com/astral-sh/setup-uv/releases)
+  - [Commits](https://github.com/astral-sh/setup-uv/compare/20cfd1bf945f4377ade1205e4dbc17946fc9a30d...c18668ad3cf93ea998bef934396af7bb5c839dc7)
+- [**breaking**] Automate reviewed releases and command discovery [#644](https://github.com/acgetchell/delaunay/pull/644)
+  [`11f43ff`](https://github.com/acgetchell/delaunay/commit/11f43ff2f7e64de2162499264b472f5385baf31e)
+
+#### ci!: automate reviewed releases and command discovery
+
+  - Publish stable, immutable GitHub Releases through shared release gates,
+    clean Cargo verification, deployment approval, and crates.io OIDC.
+  - Leave verified benchmark assets on the draft for maintainer publication.
+  - Generate complete Just help and align documentation ownership and release
+    instructions with la-stack, including declared release dates.
+  - Refresh Cargo dependencies, Python resolution, and managed tooling pins.
+- Bump the github-actions group across 1 directory with 4 updates [#646](https://github.com/acgetchell/delaunay/pull/646)
+  [`bdde9d3`](https://github.com/acgetchell/delaunay/commit/bdde9d37aba07d0f99e0f7979757a112b39a3458)
+
+#### build(deps): bump the github-actions group across 1 directory with 4 updates
+
+  Bumps the github-actions group with 4 updates in the / directory: [github/codeql-action/upload-sarif](https://github.com/github/codeql-action),
+  [astral-sh/setup-uv](https://github.com/astral-sh/setup-uv), [github/codeql-action/init](https://github.com/github/codeql-action) and
+  [github/codeql-action/analyze](https://github.com/github/codeql-action).
+
+  Updates `github/codeql-action/upload-sarif` from 4.38.2 to 4.38.3
+
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2...24c54180a607b1449ed407dd24f251e4e9147c8d)
+
+  Updates `astral-sh/setup-uv` from 10.0.1 to 10.3.0
+  - [Release notes](https://github.com/astral-sh/setup-uv/releases)
+  - [Commits](https://github.com/astral-sh/setup-uv/compare/v10.0.1...1c37ad07a6a961277cf70c0d37d6f313000f5884)
+
+  Updates `github/codeql-action/init` from 4.38.2 to 4.38.3
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2...24c54180a607b1449ed407dd24f251e4e9147c8d)
+
+  Updates `github/codeql-action/analyze` from 4.38.2 to 4.38.3
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2...24c54180a607b1449ed407dd24f251e4e9147c8d)
+- Adopt research-repo-tools v0.2.3 [#651](https://github.com/acgetchell/delaunay/pull/651)
+  [`d98d835`](https://github.com/acgetchell/delaunay/commit/d98d83530f01ee49876c6c57a6a384c2efd17b62)
+
+  - Pin shared tooling to v0.2.3 and refresh locked Python dependencies and managed tool versions.
+  - Delegate Python dependency updates to the shared all-projects workflow and expose optional maintenance commands.
+  - Use prebuilt formatters, prohibit notebook install cells, and report per-file coverage in CI.
+  - Add an opt-in Actions updater policy while retaining the publishing restrictions and scientific validation contracts.
+- Promote validated Cargo artifacts and align release commands [#652](https://github.com/acgetchell/delaunay/pull/652)
+  [`dba358a`](https://github.com/acgetchell/delaunay/commit/dba358a94b0df7c945cf6d998daacd48e26c7530)
+
+#### ci: promote validated main Cargo artifacts for releases
+
+  - Retain exact-commit Cargo packages after native and default/all-feature validation.
+  - Revalidate immutable artifacts and frozen approval evidence before OIDC publication.
+  - Use shared Actions output transport and bound archive inspection and diagnostics.
+  - Document promotion recovery and refresh uv and locked Python tooling.
+- Make paper tooling opt-in and refresh project guides [#663](https://github.com/acgetchell/delaunay/pull/663)
+  [`5fd85e0`](https://github.com/acgetchell/delaunay/commit/5fd85e07d7c027789f5e7230dddabf2fa51d30f5)
+
+#### build: make paper tooling opt-in and refresh project guides
+
+  - Keep paper dependencies, tool pins, recipes, and checks opt-in while sharing the root Python environment and lockfile.
+  - Move paper CI helpers under papers and run the paper workflow only by manual dispatch.
+  - Refresh README scope, limitations, roadmap, security badges, contributor guidance, and project provenance for the v0.8.3 preparation.
+  - Update the locked sse-starlette and starlette dependencies while retaining compatibility overrides and historical release evidence.
+
+  Refs acgetchell/Papers#1
+
+#### ci: align Codacy checks with test and badge conventions
+
+  - Apply the existing Codacy test exclusion to the optional paper tests while retaining local Python validation.
+  - Scope the inline-HTML exception to the compact README badge rows.
+  - Link contributor command discovery to the canonical README Quickstart.
+
+#### docs: clarify the upstream tooling adoption condition
+
+  - Describe the published upstream capabilities required before retiring local orchestration.
+
 ## [0.8.2] - 2026-09-15
 
 ### ⚠️ Breaking Changes
 
-- Delegate exact rational algebra to la-stack [#601](https://github.com/acgetchell/delaunay/pull/601)
-- Delegate stable norms to la-stack [#608](https://github.com/acgetchell/delaunay/pull/608)
-- Correct proof fixtures and release publication [#605](https://github.com/acgetchell/delaunay/pull/605)
-- Use scale-aware simplex measure checks [#607](https://github.com/acgetchell/delaunay/pull/607)
-- Harden geometry, rollback, and public API contracts [#611](https://github.com/acgetchell/delaunay/pull/611)
+- Raise the minimum supported Rust version from 1.98.0 to 1.98.1 and update the pinned repository toolchain accordingly.
+- Benchmark IDs and fixture sizes require fresh baselines from v0.8.2 onward; earlier results are not comparable. Release publication now requires a draft and
+  explicit dispatch of release-benchmarks.yml.
+- Gram-based measures now use a relative LDLT pivot cutoff. Large, ill-conditioned inputs previously accepted under the
+  absolute cutoff may now return LaError::Singular.
+- Remove the hypot and squared_norm utilities and their prelude exports; use Vector::norm and Vector::norm_squared through a direct la-stack dependency. Rename
+  CircumcenterError::MatrixInversionFailed
+  to InvalidMeasure and preserve vector failures through typed LaError sources. Replace try_periodic_simplex_span with periodic_simplex_span, which returns
+  Option; it and try_translated now accept ToroidalDomain
+  references. Remove redundant periodic-domain error types and variants, and RandomPointGenerationError::InvalidBallRadiusSquared.
+- measure_with_result requires count-allocations and is no longer exported by the broad prelude; import it through query or tds.
+  Use owning modules or focused preludes for removed utility, collection, and refinement-state re-exports. Update TdsError and TdsValidationFailure
+  construction and patterns for structured duplicate and orientation fields.
 
 ### Merged Pull Requests
 
+- Bump actions-rust-lang/setup-rust-toolchain [#613](https://github.com/acgetchell/delaunay/pull/613)
+- Release/v0.8.2 [#612](https://github.com/acgetchell/delaunay/pull/612)
 - Harden geometry, rollback, and public API contracts [#611](https://github.com/acgetchell/delaunay/pull/611)
 - Extend the periodic T3 coverage timeout [#611](https://github.com/acgetchell/delaunay/pull/611)
 - Improve API navigation and organize scientific documentation [#609](https://github.com/acgetchell/delaunay/pull/609)
@@ -70,6 +400,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Reject spherical normalization that cannot preserve direction at the requested radius, leaving in-place inputs unchanged on failure.
   - Remove redundant coordinate conversions and quality-metric kernel bounds, and use fixed-size workspaces for facets and separator rays.
   - Require explicit authorization for CodeRabbit reviews, fix README links in rustdoc, and refresh dependency locks and tool pins.
+- Release/v0.8.2 [#612](https://github.com/acgetchell/delaunay/pull/612)
+  [`c7f3def`](https://github.com/acgetchell/delaunay/commit/c7f3def6f17f652ad4e5623e8fd30443345a55bc)
 
 ### Documentation
 
@@ -123,13 +455,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Require explicit allocation instrumentation and narrow prelude exports.
   - Reject dangling artifact symlinks, validate release asset sizes and digests, and safely quote stress-runner arguments.
   - Align CI with native Rust hosts, trim unused dependency features, and strengthen independent scientific fixtures and transition coverage.
-- Treat v0.8.2 as the first corrected benchmark baseline [`943933b`](https://github.com/acgetchell/delaunay/commit/943933bf6873609a692594790d0df39afe3ef4b3)
-
-  - Generate absolute measurements for v0.8.2 with performance-release and reject comparisons across the benchmark contract boundary.
-  - Refresh the performance report and exclude historical comparisons from the initial baseline.
-  - Compact generated table input counts to respect the 160-character line limit while preserving benchmark IDs and timings.
-  - Synchronize v0.8.2 package versions, citation metadata, documentation, and generated release notes.
-  - Refresh Rust and Python dependencies, including clap and ty.
 
 ### Maintenance
 
@@ -197,16 +522,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Apply the existing 60-second timeout to the randomized 6D intersection agreement test on all platforms.
   - Update debug timeout guidance and correct the documented T^3 coverage timeouts.
+- Bump actions-rust-lang/setup-rust-toolchain [#613](https://github.com/acgetchell/delaunay/pull/613)
+  [`1892b82`](https://github.com/acgetchell/delaunay/commit/1892b823c4600b56f9720517ed34dad4b155fb0f)
+
+  Bumps the github-actions group with 1 update: [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain).
+
+  Updates `actions-rust-lang/setup-rust-toolchain` from 1.17.0 to 2.0.0
+
+  - [Release notes](https://github.com/actions-rust-lang/setup-rust-toolchain/releases)
+  - [Changelog](https://github.com/actions-rust-lang/setup-rust-toolchain/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/actions-rust-lang/setup-rust-toolchain/compare/166cdcfd11aee3cb47222f9ddb555ce30ddb9659...ecabd13d1c56bd1345c230e542e9144811ad706f)
 
 ## [0.8.1] - 2026-08-28
 
 ### ⚠️ Breaking Changes
 
-- Automate transactional release preparation [#584](https://github.com/acgetchell/delaunay/pull/584)
-- Add verified scientific checkpoint manifests [#587](https://github.com/acgetchell/delaunay/pull/587)
-- Name public error variant fields [#567](https://github.com/acgetchell/delaunay/pull/567)
-- Separate Level 4 and Delaunay owners [#557](https://github.com/acgetchell/delaunay/pull/557) [#569](https://github.com/acgetchell/delaunay/pull/569)
-- Unify proof-bearing builder transitions [#574](https://github.com/acgetchell/delaunay/pull/574)
+- Public tuple-style error variants now use struct-style named fields; downstream construction and matching must use `source` or `reason` fields.
+- Levels 1–4 construction and TDS restoration now use `build_triangulation*` and `Triangulation::try_from_tds*`; DelaunayTriangulation terminals and
+  `try_from_tds*` are strict through Level 5. `delaunayize*` now consumes Triangulation and returns DelaunayizeResult, while PL-manifold repair and its
+  configuration are handled separately by repair_pl_manifold_tds. Bistellar and Pachner mutation traits and public in-place Delaunay repair
+  methods no longer apply to DelaunayTriangulation; call into_triangulation() before topology edits.
+- Replace legacy empty-owner constructors, direct promotion methods, and public delaunayize functions with TdsBuilder/TdsDraft, TriangulationBuilder,
+  DelaunayTriangulationDraft, and DelaunayRefinementBuilder. Delaunay refinement now requires selecting strict() or repair_by_flips() before build().
+- remove the perf-local, perf-release, and perf-github-assets compatibility recipes; use performance-local, performance-release, and performance-github-assets
+  instead.
+- DelaunayTriangulation serialization now emits schema-v2 checkpoints with an embedded CBOR TDS image. Ordinary loading rejects schema-v1 owners and legacy
+  TDS-only payloads; migrate schema-v1 data through DelaunayCheckpointV1. Present ambiguous unit/null payload states and payload sequences without declared
+  lengths are no longer serializable.
 
 ### Merged Pull Requests
 
@@ -247,6 +589,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [**breaking**] Add verified scientific checkpoint manifests [#587](https://github.com/acgetchell/delaunay/pull/587)
   [`3ef8e4d`](https://github.com/acgetchell/delaunay/commit/3ef8e4d22439829fea4e6ea028501cc05a4b0387)
 
+#### feat(checkpoint)!: add verified scientific checkpoint manifests
+
   - Add schema-v2 owner checkpoints with versioned SHA-256 digests, complete f-vectors, and derived Euler characteristics.
   - Canonicalize exact coordinate bits, UUID topology, proof context, periodic offsets, and supported user payloads independently of codec ordering.
   - Reject malformed or tampered evidence with typed errors, then rebuild storage and re-establish validation Levels 1–5.
@@ -282,32 +626,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Align module ownership with proof layers [#572](https://github.com/acgetchell/delaunay/pull/572)
   [`8b10278`](https://github.com/acgetchell/delaunay/commit/8b10278ce7edbaae762a9bf035d89dfa6341c588)
 
+#### refactor(architecture): align module ownership with proof layers
+
   - Keep Levels 1–2 TDS ownership and validation under core.
   - Move Levels 3–4 triangulation workflows into a dedicated module tree.
   - Isolate the Level 5 Delaunay model and enforce one-way proof-layer dependencies.
   - Codify owner-local unit-test placement and retire duplicate integration coverage.
 
-#### Fixed: Restore validated EdgeIndex construction
+#### fix(architecture): restore validated EdgeIndex construction
 
-- Restrict raw edge-index state to the core layer.
-- Route triangulation queries through controlled construction and read-only accessors.
-- Align Level 2 evidence and custom-kernel coverage with the intended APIs.
+  - Restrict raw edge-index state to the core layer.
+  - Route triangulation queries through controlled construction and read-only accessors.
+  - Align Level 2 evidence and custom-kernel coverage with the intended APIs.
 
-#### Fixed: Make benchmark and notebook evidence trustworthy
+#### fix(validation): make benchmark and notebook evidence trustworthy
 
-- Fail benchmark preflights on predicate errors, disagreements, or invalid topology.
-- Keep certification outside timed loops and restrict topology comparisons to valid PL-manifold policies.
-- Extract and test notebook rendering with independent validation of visual witnesses.
-- Lock workflow tool execution and track all benchmark and paper-producing inputs.
-- Preserve core ownership of adjacency internals through validated constructors and read-only accessors.
-- Archive the completed production review remediation checklist.
+  - Fail benchmark preflights on predicate errors, disagreements, or invalid topology.
+  - Keep certification outside timed loops and restrict topology comparisons to valid PL-manifold policies.
+  - Extract and test notebook rendering with independent validation of visual witnesses.
+  - Lock workflow tool execution and track all benchmark and paper-producing inputs.
+  - Preserve core ownership of adjacency internals through validated constructors and read-only accessors.
+  - Archive the completed production review remediation checklist.
 
-#### Fixed: Harden benchmark and notebook evidence [#568](https://github.com/acgetchell/delaunay/pull/568)
+#### fix(validation): harden benchmark and notebook evidence [#568](https://github.com/acgetchell/delaunay/pull/568)
 
-- Publish benchmark results and metadata as a rollback-safe pair so failures preserve the previous baseline.
-- Validate notebook witnesses before rendering and report invalid simplex references with contextual diagnostics.
-- Parse workflow trigger paths structurally and align their Python dependencies.
-- Correct validation documentation and colocate test-only Rust support with its owning module tests.
+  - Publish benchmark results and metadata as a rollback-safe pair so failures preserve the previous baseline.
+  - Validate notebook witnesses before rendering and report invalid simplex references with contextual diagnostics.
+  - Parse workflow trigger paths structurally and align their Python dependencies.
+  - Correct validation documentation and colocate test-only Rust support with its owning module tests.
 - [**breaking**] Unify proof-bearing builder transitions [#574](https://github.com/acgetchell/delaunay/pull/574)
   [`d0d5abd`](https://github.com/acgetchell/delaunay/commit/d0d5abdd9a67411a677cdd3c3f8abd5bc83ffdff)
 
@@ -452,60 +798,153 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Accelerate full Delaunay reports [#560](https://github.com/acgetchell/delaunay/pull/560)
   [`e7fd9b8`](https://github.com/acgetchell/delaunay/commit/e7fd9b8b0050b98abfe3e6c949a406a90d84dde9)
 
+#### perf(validation): accelerate full Delaunay reports
+
   - Certify complete Euclidean point-set triangulations with robust local flip predicates in O(simplices).
   - Preserve exhaustive empty-sphere diagnostics for unproven connectivity, subset reports, and inconclusive certificates.
   - Add Level 5 performance canaries for well-conditioned and adversarial inputs from 2D through 5D.
 
-#### Fixed: Preserve sound Delaunay report certificates
+#### fix(validation): preserve sound Delaunay report certificates
 
-- Invalidate complete-point-set provenance after deletion, repair access, topology edits, and actual topology changes.
-- Preserve certified fast paths across rejected or idempotent topology updates.
-- Keep certificate provenance internal and retain exhaustive reporting for unproven connectivity.
-- Cover cumulative 2D validation benchmarks and document fast-path and fallback complexity.
+  - Invalidate complete-point-set provenance after deletion, repair access, topology edits, and actual topology changes.
+  - Preserve certified fast paths across rejected or idempotent topology updates.
+  - Keep certificate provenance internal and retain exhaustive reporting for unproven connectivity.
+  - Cover cumulative 2D validation benchmarks and document fast-path and fallback complexity.
 
-#### Changed: Cover report certificate invalidation paths
+#### test(validation): cover report certificate invalidation paths
 
-- Exercise certificate invalidation across topology-scope Pachner moves.
-- Verify global topology changes revoke Euclidean report provenance.
-- Clarify the complexity difference between Level 5 and cumulative reports.
+  - Exercise certificate invalidation across topology-scope Pachner moves.
+  - Verify global topology changes revoke Euclidean report provenance.
+  - Clarify the complexity difference between Level 5 and cumulative reports.
 
-#### Maintenance: Update uv and build dependency pins
+#### chore(tooling): update uv and build dependency pins
 
-- Pin uv 0.12.4 for local and CI tooling.
-- Update cc to 1.4.3 and find-msvc-tools to 0.1.11.
+  - Pin uv 0.12.4 for local and CI tooling.
+  - Update cc to 1.4.3 and find-msvc-tools to 0.1.11.
 
 ## [0.8.0] - 2026-07-28
 
 ### ⚠️ Breaking Changes
 
-- Validate toroidal domains at parse boundaries [#437](https://github.com/acgetchell/delaunay/pull/437) [#450](https://github.com/acgetchell/delaunay/pull/450)
-- Add vertex construction macro [#469](https://github.com/acgetchell/delaunay/pull/469)
-- Add embedded triangulation validation layer [#449](https://github.com/acgetchell/delaunay/pull/449) [#481](https://github.com/acgetchell/delaunay/pull/481)
-- Add Pachner feasibility checks [#489](https://github.com/acgetchell/delaunay/pull/489)
-- Add notebook-backed artifact workflows [#508](https://github.com/acgetchell/delaunay/pull/508)
-- Add spherical backend and paper workflow [#509](https://github.com/acgetchell/delaunay/pull/509)
-- Validate periodic quotient orientation [#521](https://github.com/acgetchell/delaunay/pull/521) [#527](https://github.com/acgetchell/delaunay/pull/527)
-- Add certified realization intersection fast paths [#531](https://github.com/acgetchell/delaunay/pull/531)
-- Box nested FlipError payloads [#406](https://github.com/acgetchell/delaunay/pull/406) [#435](https://github.com/acgetchell/delaunay/pull/435)
-- Adopt la-stack 0.4.3 API [#424](https://github.com/acgetchell/delaunay/pull/424) [#438](https://github.com/acgetchell/delaunay/pull/438)
-- Require refined generator and ordering parameters [#439](https://github.com/acgetchell/delaunay/pull/439)
-- Parse coordinate inputs into validated types [#440](https://github.com/acgetchell/delaunay/pull/440) [#444](https://github.com/acgetchell/delaunay/pull/444)
-- Require validated generator and Hilbert inputs [#452](https://github.com/acgetchell/delaunay/pull/452)
-- Require validated coordinate topology API [#442](https://github.com/acgetchell/delaunay/pull/442) [#455](https://github.com/acgetchell/delaunay/pull/455)
-- Return fallible facet iterators [#458](https://github.com/acgetchell/delaunay/pull/458)
-- Hydrate TDS through validated UUID snapshots [#454](https://github.com/acgetchell/delaunay/pull/454) [#460](https://github.com/acgetchell/delaunay/pull/460)
-- Normalize fallible constructors [#459](https://github.com/acgetchell/delaunay/pull/459) [#464](https://github.com/acgetchell/delaunay/pull/464)
-- Borrow topology views from canonical storage [#472](https://github.com/acgetchell/delaunay/pull/472) [#474](https://github.com/acgetchell/delaunay/pull/474)
-- Make topology views and boundaries owner-aware [#476](https://github.com/acgetchell/delaunay/pull/476)
-- Split Pachner moves from vertex lifecycle edits [#477](https://github.com/acgetchell/delaunay/pull/477)
-- Make fluent Delaunay builders canonical [#499](https://github.com/acgetchell/delaunay/pull/499)
-- Replace raw TDS access with owner topology queries [#502](https://github.com/acgetchell/delaunay/pull/502)
-- Tighten invariant-bearing triangulation APIs [#511](https://github.com/acgetchell/delaunay/pull/511)
-- Simplify public APIs and repository workflows [#529](https://github.com/acgetchell/delaunay/pull/529)
-- Reject stale adjacency indexes [#451](https://github.com/acgetchell/delaunay/pull/451) [#463](https://github.com/acgetchell/delaunay/pull/463)
-- Report explicit topology preflight failures precisely [#512](https://github.com/acgetchell/delaunay/pull/512)
-- Update tooling to Rust 1.96.0 [#430](https://github.com/acgetchell/delaunay/pull/430) [#431](https://github.com/acgetchell/delaunay/pull/431)
-- Require Rust 1.97 for v0.8.0 [#523](https://github.com/acgetchell/delaunay/pull/523)
+- The minimum supported Rust version is now 1.96.0.
+- `FlipError` variants carrying nested typed errors or inserted-simplex witnesses now store those payloads in `Box`, so direct constructors and pattern matches
+  must use boxed payloads and inspect them through `as_ref()`.
+- `.toroidal()` now builds the periodic image-point quotient.
+  Callers that only want coordinate wrapping must use `.canonicalized_toroidal()`.
+- Hilbert ordering APIs now take `HilbertBitDepth` instead of raw `u32` bit depths. `generate_grid_points`, `generate_random_triangulation`,
+  `generate_random_triangulation_with_topology_guarantee`, and `RandomTriangulationBuilder::new` now take `NonZeroUsize`; random triangulation generation no
+  longer accepts `0` to create an empty triangulation.
+
+#### fix(api): preserve typed validation failures
+
+  - Reject out-of-range pre-quantized Hilbert coordinates instead of letting high bits alias into another cell.
+  - Surface random point generation failures through `DelaunayConstructionFailure::RandomPointGeneration` instead of string-wrapping them as geometric
+    degeneracy.
+  - Re-export `RandomPointGenerationError` from the construction prelude so callers can match the construction failure path.
+- generator, coordinate, geometry diagnostic, and prelude APIs now expose CoordinateRange and typed error payloads instead of several raw tuple, f32, and
+  stringly diagnostic surfaces.
+- GlobalTopology::Toroidal now stores ToroidalDomain&lt;D&gt; instead
+  of [f64; D], ToroidalSpace::domain is private behind domain(), and
+- Raw-bound generator and Hilbert helpers now use `try_*` names, and focused preludes no longer export the old non-`try` raw-bound APIs. Callers should migrate
+  to the `try_*` functions for raw tuple inputs or to the `*_in_range` / prevalidated batch APIs when they already have validated inputs.
+- core geometry and topology types now use the validated f64-coordinate API, such as Point&lt;D&gt;, Vertex&lt;U, D&gt;, Simplex&lt;V, D&gt;, Tds&lt;U, V,
+  D&gt;, and ConvexHull&lt;U, V, D&gt;, instead of exposing a coordinate scalar type parameter.
+- facet iteration APIs now yield `Result<FacetView, FacetError>` items, `AllFacetsIter::try_new` is crate-private in favor of `Tds::facets()`, and
+  `validate_ridge_links_for_simplices` now accepts `IntoIterator<Item = SimplexKey>`; slice callers should pass `.iter().copied()`.
+
+#### fix(facets): surface boundary iteration failures
+
+  - Propagate boundary-facet iterator errors from hull-extension diagnostics instead of treating failed iteration as an empty boundary.
+  - Report stale simplex keys from `AllFacetsIter` as `FacetError::SimplexNotFoundInTriangulation`.
+  - Extend the local-frontier Semgrep guard to inferred `Vec::new` and `Vec::with_capacity` allocations.
+
+#### test: keep 5D incremental insertion proptest within CI budget
+
+  - Allow dimension-generated incremental insertion properties to override their proptest case count.
+  - Reduce the 5D incremental insertion validity property to a smaller default-suite sample while preserving active 5D coverage.
+- TDS JSON now uses the validated snapshot format, including serialized simplex neighbor UUID relationships, and no longer supports older
+  storage-local/key-based hydration shapes.
+- Indexed topology helpers that accept AdjacencyIndex now return Result&lt;_, QueryError&gt;, and AdjacencyIndex no longer exposes its backing maps publicly.
+  Use the accessor methods and rebuild indexes after mutating a triangulation.
+- Fallible public constructors now use explicit `try_*` names. Use `DelaunayTriangulation::try_new*`, `DelaunayTriangulation::try_with_*`,
+  `ConvexHull::try_from_triangulation`, and `Point::try_new` or validated `Point` values instead of the previous fallible `DelaunayTriangulation::new*/with_*`
+  constructors, `ConvexHull::from_triangulation`, and `Point::from_validated_coords` raw-array path.
+- `Vertex::try_new_with_data` now takes `data: U` instead of `impl Into<U>`. Callers must pass the exact vertex data type or convert explicitly before
+  construction.
+- `Tds::simplex_vertices`, `Triangulation::simplex_vertices`, and `DelaunayTriangulation::simplex_vertices` now return `Result<&[VertexKey], TdsError>`-style
+  borrowed views instead of the previous owned/optional forms. `ConvexHull::facets()` has been split into `facet_handles()` for detached handles and
+  `facets(triangulation)` for borrowed `FacetView` access. `set_vertex_data` and `set_simplex_data` now return checked `Result<Option<_>, TdsMutationError>`
+  values instead of conflating missing keys with empty payloads.
+- BoundaryAnalysis and TDS boundary helpers are replaced by FacetIncidenceAnalysis and one-sided facet-incidence APIs. Use Triangulation::boundary_facets or
+  DelaunayTriangulation::boundary_facets for semantic boundary queries.
+- DelaunayTriangulation::insert and remove_vertex are replaced by insert_vertex and delete_vertex, and focused Pachner workflows now import from
+  prelude::pachner instead of prelude::flips. Primitive flip APIs remain available from delaunay::flips for tests, benchmarks, and low-level expert use.
+
+#### fix(deletion): make delete_vertex fail atomically without repair
+
+  - Validate the Level 4 Delaunay invariant when automatic post-deletion repair is disabled, rolling back instead of returning success on violations.
+  - Bound vertex-deletion flip repair with the shared local repair budget so non-convergence is surfaced consistently.
+  - Document that successful deletion prunes only the removed spatial-index entry while live TDS validation protects later lookups.
+  - Refine maintainer guidance for choosing focused Rust validators for test-, example-, and benchmark-only changes.
+- The validation stack is renumbered from four to five
+  levels. Level 4 is now faithful embedding validation
+  (Triangulation::is_valid_embedding / validate_embedding / embedding_report),
+  and the Delaunay empty-circumsphere property moves to Level 5
+  (DelaunayTriangulation::is_valid_delaunay); migrate callers of the former
+  Level-4 Delaunay entry points (e.g. is_valid -&gt; is_valid_delaunay). The
+  Delaunay property-validation items DelaunayValidationError,
+  find_delaunay_violations, DelaunayViolationDetail, DelaunayViolationReport,
+  delaunay_violation_report, and debug_print_first_delaunay_violation now live
+  in delaunay::property_validation (renamed from core::util::delaunay_validation);
+  import them from the crate root or prelude.
+- External BistellarFlips implementors must add the new `can_flip_*` feasibility methods.
+- `DelaunayTriangulation::try_new*` and `try_with_*` batch constructors have been removed. Use DelaunayTriangulation::builder(...).build() or
+  DelaunayTriangulationBuilder::new(...).build(), and select simplex payload storage with simplex_data_type::&lt;V&gt;() before construction.
+- Public callers should use owner-level query and validation methods instead of `tds()` or `as_triangulation().tds()` to inspect topology storage.
+
+#### test(pachner): harden flip benchmark fixtures
+
+- Split 3D flip fixture coverage by move kind so failures identify the affected Pachner workflow.
+- Use localized ridge-star views for k=3 support inspection and surface typed traversal failures.
+- Align topology proptest assertions and exact-predicate regression diagnostics with the validators they exercise.
+- Document owner-level structure validators and make the cfg(test) shim Semgrep rule line-local.
+- `GlobalTopology::model` is now crate-private, and
+- Replace the legacy public SphericalSpace topology helper with SphericalPoint/SphericalMetric and the new spherical Delaunay types. Spherical Delaunay now
+  treats D as the intrinsic dimension of S^D and stores the extra coordinate only in the spherical backend.
+
+#### feat(validation)!: standardize spherical validation and paper workflows
+
+  - Make spherical topology own `S^d` point canonicalization, ambient `R^(d+1)` helpers, geodesic distances, and layered topology/embedding/Delaunay validation
+    wrappers.
+  - Simplify Pachner stress tooling around direct round-trip and random-walk workloads with stable benchmark fixtures.
+  - Keep the validation manuscript as author-owned outline scaffolding and wire paper figure, PDF sanity, source-date, and CI freshness checks into the paper
+    workflow.
+  - Strengthen paper helper scripts and notebook generation with typed parsing for page counts, source dates, PDF normalization, and generated validation
+    figures.
+
+- BistellarFlipKind::d and PeriodicSimplexSpan::{axis, span, period} are private; use d(), axis(), span(), and period() instead.
+- `DelaunayRepairHeuristicConfig::with_max_flips` and `without_max_flips` were renamed to `with_delaunay_max_flips` and `without_delaunay_max_flips`.
+- The minimum supported Rust version is now 1.97.0.
+
+#### build: address Rust 1.97 migration follow-ups
+
+- Clarify that Cargo.toml declares the MSRV while rust-toolchain.toml pins the repository toolchain.
+- Cover typed PL-manifold repair errors, boundary candidate filtering, and invalid facet handles.
+- Refresh the validation paper artifact used by the Papers workflow.
+
+#### chore: address whole-repository review findings
+
+- enforce cargo-audit failures and refresh CodeQL action pins
+- require valid mixed-scale geometry quality metrics
+- align tooling documentation and scientific citation metadata
+- regenerate the validation paper artifact
+- Remove the obsolete DelaunayConstructionFailure::PeriodicImageExpandedConstructionFailure variant; callers should handle the remaining typed periodic
+  construction failures.
+- Removes DelaunayTriangulationBuilder::try_canonicalized_toroidal and canonicalized_toroidal, Triangulation::topology_safety_net_star_split_fallback_successes,
+  Simplex::vertices_enumerated, Tds::find_neighbors_by_key, Tds::simplices_values, Tds::contains_simplex_key, and ConvexHull::invalidate_cache. Use try_toroidal
+  for periodic quotients, canonicalize coordinates explicitly for Euclidean construction, and use the existing keyed iterators and owner-level queries for
+  traversal.
+- Rust 1.97.1 is now the minimum supported Rust version.
 
 ### Merged Pull Requests
 
@@ -644,29 +1083,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add topology-aware simplex barycenters [#501](https://github.com/acgetchell/delaunay/pull/501)
   [`a096ece`](https://github.com/acgetchell/delaunay/commit/a096ececd9bd6bc2fa9046a260ed833fab5e6e7a)
 
+#### feat(query): add topology-aware simplex barycenters
+
   - Add `DelaunayTriangulation::simplex_barycenter` for Euclidean and periodic triangulations.
   - Surface typed barycenter failures through `SimplexBarycenterError` and `DelaunayError`.
   - Export the barycenter error through root, query, and prelude facades.
   - Add benchmark coverage for the public barycenter query.
   - Refresh dependency locks and align the pinned Markdown linter on `rumdl` 0.2.28.
 
-#### Maintenance: Run Codecov through one llvm-cov nextest pass
+#### ci(coverage): run Codecov through one llvm-cov nextest pass
 
-- Generate Cobertura coverage and Codecov JUnit results from the same
-  instrumented nextest run.
-- Keep property tests in the coverage job with a dedicated coverage profile and
-  bounded timeout for LLVM instrumentation overhead.
-- Remove the stale multiple-crate-versions lint expectation and make the
-  barycenter allocation benchmark tolerate exact-float roundoff.
+  - Generate Cobertura coverage and Codecov JUnit results from the same
+    instrumented nextest run.
+  - Keep property tests in the coverage job with a dedicated coverage profile and
+    bounded timeout for LLVM instrumentation overhead.
+  - Remove the stale multiple-crate-versions lint expectation and make the
+    barycenter allocation benchmark tolerate exact-float roundoff.
 
-#### Documentation: Document topology-aware barycenter workflows
+#### docs(query): document topology-aware barycenter workflows
 
-- Document `simplex_barycenter` as the topology-aware local-editing point for
-  k=1 Pachner insert proposals.
-- Update query-prelude, benchmark, and coverage docs to match the current
-  barycenter and Codecov/nextest surfaces.
-- Cover barycenter overflow, periodic lift, canonicalization, and
-  point-validation error paths while inheriting CI JUnit settings for coverage.
+  - Document `simplex_barycenter` as the topology-aware local-editing point for
+    k=1 Pachner insert proposals.
+  - Update query-prelude, benchmark, and coverage docs to match the current
+    barycenter and Codecov/nextest surfaces.
+  - Cover barycenter overflow, periodic lift, canonicalization, and
+    point-validation error paths while inheriting CI JUnit settings for coverage.
+
 - [**breaking**] Add notebook-backed artifact workflows [#508](https://github.com/acgetchell/delaunay/pull/508)
   [`69f08d5`](https://github.com/acgetchell/delaunay/commit/69f08d5ca59a1611a3674660c604ea9905b93ddb)
 
@@ -679,6 +1121,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Implement spherical unit-sphere canonicalization for finite nonzero coordinates.
 - [**breaking**] Add spherical backend and paper workflow [#509](https://github.com/acgetchell/delaunay/pull/509)
   [`3033088`](https://github.com/acgetchell/delaunay/commit/3033088480b3fcfc634265f29d13c8aa2b3bd461)
+
+#### feat(validation)!: add spherical backend and paper workflow
 
   - Add SphericalPoint and SphericalMetric as the spherical coordinate/metric backend for intrinsic S^D points embedded in R^(D+1).
   - Add the bounded S^2/S^3 SphericalDelaunayBuilder, SphericalDelaunayTriangulation, SphericalSimplex, geodesic distances, and typed spherical
@@ -715,18 +1159,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [**breaking**] Validate periodic quotient orientation [#521](https://github.com/acgetchell/delaunay/pull/521)
   [#527](https://github.com/acgetchell/delaunay/pull/527) [`b4a2ef3`](https://github.com/acgetchell/delaunay/commit/b4a2ef3cefb31ca0c0b2534c2b593c533c4d1745)
 
+#### feat(validation): validate periodic quotient orientation [#521](https://github.com/acgetchell/delaunay/pull/521)
+
   - Enforce lifted facet parity across periodic neighbors and self-identifications.
   - Include quotient constraints in Level 2 coherence and Level 3 orientability.
   - Propagate contradictory quotient orientation as typed construction failures.
   - Document translation-normalized parity and the distinction from Level 4 realization.
 
-#### Added: Support compact 3D periodic quotients
+#### feat(toroidal)!: support compact 3D periodic quotients
 
-- construct connected, closed 2D and compact 3D quotients with opposite facet orientations and complete canonical vertex coverage
-- preserve distinct lifted vertex identities through simplex storage, incidence maps, snapshots, and realization validation
-- recover deterministically from periodic covering-space degeneracies without changing ordinary Euclidean insertion behavior
-- document the validated Euclidean, toroidal, and spherical construction scopes
-- update the reviewed dprint and rumdl tool pins
+  - construct connected, closed 2D and compact 3D quotients with opposite facet orientations and complete canonical vertex coverage
+  - preserve distinct lifted vertex identities through simplex storage, incidence maps, snapshots, and realization validation
+  - recover deterministically from periodic covering-space degeneracies without changing ordinary Euclidean insertion behavior
+  - document the validated Euclidean, toroidal, and spherical construction scopes
+  - update the reviewed dprint and rumdl tool pins
 - [**breaking**] Add certified realization intersection fast paths [#531](https://github.com/acgetchell/delaunay/pull/531)
   [`36e68ab`](https://github.com/acgetchell/delaunay/commit/36e68ab471371e6801aead28c74be9b3a054ab5b)
 
@@ -750,6 +1196,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [**breaking**] Adopt la-stack 0.4.3 API [#424](https://github.com/acgetchell/delaunay/pull/424) [#438](https://github.com/acgetchell/delaunay/pull/438)
   [`8e58d57`](https://github.com/acgetchell/delaunay/commit/8e58d57fa2439dd1ec04490a527b8c00b20a091b)
 
+#### refactor(geometry)!: adopt la-stack 0.4.3 API [#424](https://github.com/acgetchell/delaunay/pull/424)
+
   - Route stack-matrix dispatch, checked access, determinant filters, and
     singular tolerances through the local geometry matrix shim.
   - Preserve typed la-stack solve and factorization errors in geometry error paths
@@ -763,6 +1211,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Disable la-stack default features explicitly while selecting exact arithmetic.
 - [**breaking**] Require refined generator and ordering parameters [#439](https://github.com/acgetchell/delaunay/pull/439)
   [`ca95380`](https://github.com/acgetchell/delaunay/commit/ca95380b4f6ae1a736f34e3badbc899475feac84)
+
+#### refactor(api)!: require refined generator and ordering parameters
 
   - Add `HilbertBitDepth` for validated Hilbert ordering precision and route public ordering helpers through it.
   - Require `NonZeroUsize` for grid and random triangulation generation counts.
@@ -789,6 +1239,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [**breaking**] Require validated coordinate topology API [#442](https://github.com/acgetchell/delaunay/pull/442)
   [#455](https://github.com/acgetchell/delaunay/pull/455) [`da82604`](https://github.com/acgetchell/delaunay/commit/da82604480cbf04f6cb7e609a151e0c757d9174d)
 
+#### refactor(api)!: require validated coordinate topology API [#442](https://github.com/acgetchell/delaunay/pull/442)
+
   - Store coordinates through validated finite-coordinate types and remove the public coordinate-scalar parameter from core geometry, TDS, hull, and
     triangulation APIs.
   - Replace macro and infallible raw constructors with explicit fallible smart constructors for points, vertices, simplices, edges, facets, and flip handles.
@@ -797,10 +1249,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [**breaking**] Return fallible facet iterators [#458](https://github.com/acgetchell/delaunay/pull/458)
   [`739aba0`](https://github.com/acgetchell/delaunay/commit/739aba043f135f58f3346ec58ee8b20812b234db)
 
-  - Make all-facet and boundary-facet traversal yield `Result&lt;FacetView, FacetError&gt;` so corrupted facet views and invalid boundary incidence are surfaced
+#### refactor(api)!: return fallible facet iterators
+
+  - Make all-facet and boundary-facet traversal yield `Result<FacetView, FacetError>` so corrupted facet views and invalid boundary incidence are surfaced
     instead of skipped.
   - Route boundary-facet consumers, hull extraction, Euler counting, examples, benches, and prelude coverage through explicit item-error handling.
-  - Use `SimplexKeyBuffer` for local repair and topology frontiers, and add a Semgrep guard for future raw `Vec&lt;SimplexKey&gt;` regressions.
+  - Use `SimplexKeyBuffer` for local repair and topology frontiers, and add a Semgrep guard for future raw `Vec<SimplexKey>` regressions.
   - Add a compact 2D-5D timing summary to `just perf-large-scale-smoke`.
 - [**breaking**] Hydrate TDS through validated UUID snapshots [#454](https://github.com/acgetchell/delaunay/pull/454)
   [#460](https://github.com/acgetchell/delaunay/pull/460) [`87eb8b1`](https://github.com/acgetchell/delaunay/commit/87eb8b197fe5f7a826f196f3adde4919d0f60ff9)
@@ -837,12 +1291,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [**breaking**] Make topology views and boundaries owner-aware [#476](https://github.com/acgetchell/delaunay/pull/476)
   [`db3fcb3`](https://github.com/acgetchell/delaunay/commit/db3fcb3a899db625f3e969c8d2fa098520826479)
 
+#### refactor(api)!: make topology views and boundaries owner-aware
+
   - Replace raw TDS boundary queries with one-sided facet-incidence APIs and keep true boundary classification topology-aware.
   - Add borrowed EdgeView, RidgeQuery, RidgeView, and RidgeLinkView surfaces around detached EdgeKey and RidgeCandidate values.
   - Interpret boundary facets through GlobalTopology so periodic quotient self-identifications remain closed topology.
   - Align Euler validation, focused preludes, docs, examples, benchmarks, and Semgrep rules with the new view/candidate/incidence model.
 - [**breaking**] Split Pachner moves from vertex lifecycle edits [#477](https://github.com/acgetchell/delaunay/pull/477)
   [`f6efe10`](https://github.com/acgetchell/delaunay/commit/f6efe10c776e08a52efe1d2a4b4e65cf56271cf2)
+
+#### refactor(api)!: split Pachner moves from vertex lifecycle edits
 
   - Add a unified PachnerMove request/result API with attempt_pachner dispatch and a focused prelude::pachner import surface.
   - Move vertex deletion into its own Delaunay module with typed DeleteVertexError and keep insertion/deletion terminology explicit through public docs and
@@ -867,6 +1325,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     current proposal and builder APIs.
 - [**breaking**] Replace raw TDS access with owner topology queries [#502](https://github.com/acgetchell/delaunay/pull/502)
   [`bc53e32`](https://github.com/acgetchell/delaunay/commit/bc53e32eae7a2f5e234cb851cbb17b1833888839)
+
+#### refactor(api)!: replace raw TDS access with owner topology queries
 
   - Expose owner-bound topology, identity, ridge, facet, locate, and validation queries on Triangulation and DelaunayTriangulation so callers no longer need raw
     TDS access.
@@ -942,42 +1402,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Make topology mutations failure-atomic [#480](https://github.com/acgetchell/delaunay/pull/480)
   [`8ef6a95`](https://github.com/acgetchell/delaunay/commit/8ef6a95c8dd6adfaa351f81dd54e16fb8746e64f)
 
+#### fix(rollback): make topology mutations failure-atomic
+
   - Add scoped rollback guards for TDS, generic triangulation, and Delaunay mutation windows.
   - Use the guards across insertion, deletion, local facet repair, and flip-repair retry paths.
   - Restore insertion state and spatial-index caches according to the Delaunay rollback policy.
   - Document rollback ownership rules for future mutation paths.
 
-#### Fixed: Make Delaunay mutation rollback state-aware
+#### fix(rollback): make Delaunay mutation rollback state-aware
 
-- Share owner-bound TDS rollback guards across TDS, Triangulation, and Delaunay wrappers.
-- Restore insertion bookkeeping with rollback and restore or invalidate spatial indexes according to the mutation policy.
-- Avoid rollback snapshots when local facet repair has no issues or post-insertion repair/check cadence cannot run.
+  - Share owner-bound TDS rollback guards across TDS, Triangulation, and Delaunay wrappers.
+  - Restore insertion bookkeeping with rollback and restore or invalidate spatial indexes according to the mutation policy.
+  - Avoid rollback snapshots when local facet repair has no issues or post-insertion repair/check cadence cannot run.
 - Preserve exact 2D layered strip vertices [#486](https://github.com/acgetchell/delaunay/pull/486)
   [`2b45995`](https://github.com/acgetchell/delaunay/commit/2b45995fc7470ca326ee6c20a47ea6641a29c63c)
+
+#### fix(construction): preserve exact 2D layered strip vertices
 
   - Add a non-enforcing construction option that returns valid Levels 1-4 triangulations without automatic Level 5 Delaunay repair.
   - Split exact 2D hull-edge insertions before symbolic perturbation can route them through interior insertion.
   - Allow explicit simplex imports to opt out of Level 5 validation while keeping strict Delaunay validation as the default.
 
-#### Fixed: Preserve exact layered CDT strip vertices
+#### fix(construction): preserve exact layered CDT strip vertices
 
-- Preserve collinear 2D boundary vertices by splitting localized boundary-edge facets while keeping exact coordinates and labels intact.
-- Allow exact degenerate batch construction to return after Levels 1-4 validation when final Level 5 Delaunay enforcement is disabled.
-- Carry explicit simplex validation evidence into construction and reject point-insertion-only options before assembling explicit meshes.
-- Enforce short vertex fixture construction across non-constructor tests, examples, and benchmarks.
+  - Preserve collinear 2D boundary vertices by splitting localized boundary-edge facets while keeping exact coordinates and labels intact.
+  - Allow exact degenerate batch construction to return after Levels 1-4 validation when final Level 5 Delaunay enforcement is disabled.
+  - Carry explicit simplex validation evidence into construction and reject point-insertion-only options before assembling explicit meshes.
+  - Enforce short vertex fixture construction across non-constructor tests, examples, and benchmarks.
 
-#### Fixed: Preserve batch finalization policies
+#### fix(construction): preserve batch finalization policies
 
-- Restore seeded construction finalization from the final Delaunay policy so
-  returned triangulations keep the intended repair and global-fallback behavior.
-- Keep the workflow vertex-macro guardrail Rust-AST aware so it only flags real
-  Vertex constructor calls.
+  - Restore seeded construction finalization from the final Delaunay policy so
+    returned triangulations keep the intended repair and global-fallback behavior.
+  - Keep the workflow vertex-macro guardrail Rust-AST aware so it only flags real
+    Vertex constructor calls.
 
-#### Changed: Cover qualified Vertex constructor guard
+#### test(semgrep): cover qualified Vertex constructor guard
 
-- Add a workflow vertex-macro fixture for the qualified
-  delaunay::prelude::Vertex constructor path.
-- Keep the Semgrep rule YAML formatted for the repository config checks.
+  - Add a workflow vertex-macro fixture for the qualified
+    delaunay::prelude::Vertex constructor path.
+  - Keep the Semgrep rule YAML formatted for the repository config checks.
 - Preserve positive orientation after vertex removal [#487](https://github.com/acgetchell/delaunay/pull/487)
   [`d6e9eea`](https://github.com/acgetchell/delaunay/commit/d6e9eea778361aebace37dd451d6189bece9020d)
 
@@ -1153,6 +1617,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [**breaking**] Require Rust 1.97 for v0.8.0 [#523](https://github.com/acgetchell/delaunay/pull/523)
   [`9592849`](https://github.com/acgetchell/delaunay/commit/95928496a58a4c61a941de80d891ff760f7a073a)
 
+#### build!: require Rust 1.97 for v0.8.0
+
   - align MSRV metadata, tooling, and documentation with Rust 1.97
   - adopt the stabilized Hilbert highest-bit helper
   - apply new Clippy and rustdoc diagnostics and finish assertion cleanup
@@ -1237,27 +1703,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expand public flip benchmark coverage [#432](https://github.com/acgetchell/delaunay/pull/432)
   [`ea2f580`](https://github.com/acgetchell/delaunay/commit/ea2f5806dfa9fb2b8cb2bc072a7992c71f5fba32)
 
+#### perf(bench): expand public flip benchmark coverage
+
   - Add stable 2D, 3D, and 5D PL-manifold fixtures for public bistellar flip benchmarks.
   - Extend the benchmark manifest to cover k=1, k=2, and k=3 flip workflows across 2D-5D.
   - Document the all-platform `just ci` timing baseline for future CI-shape evaluation.
 
-#### Performance: Add release baselines and adversarial flips
+#### perf(bench): add release baselines and adversarial flips
 
-- Archive perf-profile Criterion baselines as GitHub Release assets and compare CI runs against the latest released Ubuntu baseline.
-- Add local ref comparison support with `just perf-vs-ref` and baseline packaging from existing Criterion results.
-- Expand public bistellar flip benchmarks with stable and adversarial fixtures that enforce exact n=1 roundtrip recovery.
-- Document release benchmark storage, local same-machine comparisons, and the flip ergodicity invariant.
+  - Archive perf-profile Criterion baselines as GitHub Release assets and compare CI runs against the latest released Ubuntu baseline.
+  - Add local ref comparison support with `just perf-vs-ref` and baseline packaging from existing Criterion results.
+  - Expand public bistellar flip benchmarks with stable and adversarial fixtures that enforce exact n=1 roundtrip recovery.
+  - Document release benchmark storage, local same-machine comparisons, and the flip ergodicity invariant.
 
-#### Maintenance: Isolate Semgrep test settings
+#### ci: isolate Semgrep test settings
 
-- Route `semgrep-test` through a temporary Semgrep settings file to avoid runner home-directory permission failures.
+  - Route `semgrep-test` through a temporary Semgrep settings file to avoid runner home-directory permission failures.
 
-#### Performance: Harden release benchmarks and ridge flip coverage
+#### perf(bench): harden release benchmarks and ridge flip coverage
 
-- Compare CI performance against the latest release benchmark asset and keep manual baseline artifacts for ad-hoc parity checks.
-- Fail release benchmark summaries when fresh runs fall back to reference data, and require ci_performance_suite results before writing baselines.
-- Add validated ridge-star support so k=3 flip benchmarks inspect the full incident support with typed ridge errors.
-- Align Codacy Markdownlint exclusions with the repository release checklist policy.
+  - Compare CI performance against the latest release benchmark asset and keep manual baseline artifacts for ad-hoc parity checks.
+  - Fail release benchmark summaries when fresh runs fall back to reference data, and require ci_performance_suite results before writing baselines.
+  - Add validated ridge-star support so k=3 flip benchmarks inspect the full incident support with typed ridge errors.
+  - Align Codacy Markdownlint exclusions with the repository release checklist policy.
 
 ## Archives
 
@@ -1270,6 +1738,7 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archives/changelog/0.3.md)
 - [0.2.x](docs/archives/changelog/0.2.md)
 
+[0.8.3]: https://github.com/acgetchell/delaunay/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/acgetchell/delaunay/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/acgetchell/delaunay/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/acgetchell/delaunay/compare/v0.7.8...v0.8.0

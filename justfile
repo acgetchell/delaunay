@@ -37,7 +37,6 @@ _feature_unit_filter := '''test(core::util::measurement::)
   | test(decoded_checkpoint_manifest_inspection_is_zero_allocation)'''
 
 import 'just/helpers.just'
-import 'papers/recipes.just'
 
 # List every public command and its arguments directly from Just.
 [default]
@@ -156,8 +155,6 @@ changelog-preview *args:
 [group('release')]
 changelog-release tag date="":
     {{ managed }} uv run --locked --no-sync python tooling/python/release_changelog.py --tag {{ quote(tag) }} --date {{ quote(date) }}
-
-alias changelog-unreleased := changelog-release
 
 # Run every non-mutating validator outside the test suites.
 [group('workflows')]
@@ -300,14 +297,12 @@ json-check: _ensure-jq
 justfile-fmt:
     just --fmt
     just --fmt --justfile just/helpers.just
-    just --fmt --justfile papers/recipes.just
 
 # Check root and helper justfile formatting without modifying them.
 [group('validation')]
 justfile-fmt-check:
     just --fmt --check
     just --fmt --check --justfile just/helpers.just
-    just --fmt --check --justfile papers/recipes.just
 
 # Check Markdown formatting and raw line length.
 [group('validation')]
@@ -771,7 +766,7 @@ semgrep-scan output="target/semgrep": _ensure-uv
     {{ semgrep_stack_limit }} {{ rrt }} semgrep scan --include '*.rs' --include 'tooling/python/*.py' --include 'tests/tooling/*.py' \
         --include '.github/workflows/*.yml' --include '.github/workflows/*.yaml' \
         --include '*.md' --include CITATION.cff --include justfile \
-        --include 'notebooks/*.ipynb' --include 'papers/*.tex' --include 'doctests/*.txt' \
+        --include 'notebooks/*.ipynb' --include 'doctests/*.txt' \
         --exclude 'tests/semgrep/**' --output {{ quote(output) }}
 
 # Test the repository-owned Semgrep rules against their fixtures.
@@ -1037,7 +1032,6 @@ update-uv *args:
 update-version tag *args: _ensure-gh
     {{ rrt }} release update "$@"
     {{ managed }} cargo metadata --locked --format-version 1 --no-deps > /dev/null
-    {{ rrt }} release check
 
 # Run explicitly configured validation commands through the managed toolchain.
 [group('validation')]

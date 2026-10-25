@@ -78,7 +78,7 @@ def test_invalid_metadata_stops_before_generation(tmp_path: Path, monkeypatch: p
 
 
 def test_shared_recipe_names_and_optional_arguments() -> None:
-    implicit = dry_run(ROOT, "changelog-unreleased", ["v0.9.0"]).stderr
+    implicit = dry_run(ROOT, "changelog-release", ["v0.9.0"]).stderr
     explicit = dry_run(ROOT, "changelog-release", ["v0.9.0", "2000-02-29"]).stderr
     assert "release_changelog.py --tag 'v0.9.0' --date ''" in implicit
     assert "release_changelog.py --tag 'v0.9.0' --date '2000-02-29'" in explicit

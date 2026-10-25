@@ -13,8 +13,9 @@ retained Cobertura data. Notebook inspection and reset previews, managed-store
 cleanup previews, binary-only repair, Python pin checks, and selected Actions
 update previews have focused recipes listed by bare `just`.
 
-Optional paper commands and configuration live under [`papers/`](../papers/README.md),
-with their tests under `tests/papers/`. They use the same root environment and lockfile.
+Active manuscript tooling lives in
+[acgetchell/Papers](https://github.com/acgetchell/Papers/tree/main/delaunay-validation).
+Delaunay retains its root Python environment and lockfile for software tooling and notebooks.
 
 The retained Python ownership is explicit:
 
@@ -56,7 +57,7 @@ Notebook configuration remains in `pyproject.toml` under
 lint/advice directly and enforces the declared lowercase kebab-case ID pattern.
 There is no local notebook-check CLI or orchestration module.
 
-Paper identity/text checks, raw Markdown line limits, SARIF driver/namespace
+Raw Markdown line limits, SARIF driver/namespace
 selection, Semgrep scan budgets, Python pin inheritance, and notebook launch/reset
 policy also live in `pyproject.toml`. `profiling-inputs.toml` declares the source,
 harness and version probes captured with profiling metadata; it executes no benchmarks.

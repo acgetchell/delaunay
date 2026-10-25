@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path, PureWindowsPath
@@ -73,7 +74,7 @@ from benchmark_utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from contextlib import AbstractContextManager
     from unittest.mock import MagicMock
 
@@ -638,6 +639,9 @@ def test_release_transition_digests_only_the_targets_shared_by_both_revisions(tm
         criterion.mkdir(parents=True)
         (criterion / benchmark_utils.MEASUREMENT_INVENTORY_FILE).write_bytes(serialize_inventory(inventory))
         (criterion / benchmark_utils.MEASUREMENT_POLICY_FILE).write_bytes(serialize_policy(benchmark_utils._sampling_policy(inventory.expected)))
+        assert benchmark_utils._measurement_plan_digest(
+            checkout, "release-signal", shared_targets, inventory=inventory
+        ) == benchmark_utils._measurement_plan_digest(checkout, "release-signal", shared_targets)
 
     assert benchmark_utils._benchmark_harness_digest(
         current,
@@ -1147,6 +1151,78 @@ def test_release_generation_preflights_output_aliases_before_measurement(tmp_pat
                 worktree_ref="HEAD",
             ),
         )
+
+
+@pytest.mark.parametrize("mismatch", ["harness", "plan", None])
+def test_release_generation_checks_both_workloads_before_measurement(  # noqa: PLR0915
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mismatch: str | None,
+) -> None:
+    """Reject incompatible snapshots without measuring either revision or publishing."""
+    output = tmp_path / "target/bench-reports/performance.md"
+    current = tmp_path / "docs/performance.md"
+    archive_dir = tmp_path / "docs/archive/performance"
+    retained = {output: b"retained scratch report\n", current: delaunay_report("0.8.2", "v0.8.1").encode(UTF8)}
+    for path, contents in retained.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(contents)
+    checkouts: list[Path] = []
+
+    @contextmanager
+    def checkout(_repo: Path, destination: Path, revision: str, *, allow_git_mutations: bool) -> Iterator[None]:
+        assert allow_git_mutations
+        checkouts.append(destination)
+        (destination / "benches").mkdir(parents=True)
+        version = "0.8.2" if revision == "b" * 40 else "0.8.3"
+        (destination / "Cargo.toml").write_text(f'[package]\nversion = "{version}"\n\n[[bench]]\nname = "ci_performance_suite"\n', encoding=UTF8)
+        (destination / "benches/ci_performance_suite.rs").write_bytes(b"fn workload() {}\n")
+        try:
+            yield
+        finally:
+            shutil.rmtree(destination)
+
+    def snapshot(worktree: Path, _snapshot: TreeSnapshot) -> None:
+        if mismatch == "harness":
+            (worktree / "benches/ci_performance_suite.rs").write_bytes(b"fn changed_workload() {}\n")
+
+    def inventory(checkout: Path, *_args: object, **_kwargs: object) -> CriterionInventory:
+        case = "validation/changed/20" if mismatch == "plan" and checkout.name == "baseline-worktree" else "validation/fixture/10"
+        return CriterionInventory((("ci_performance_suite", (case,)),))
+
+    discovery = Mock(side_effect=inventory)
+    measurement = Mock(side_effect=RuntimeError("measurement boundary reached"))
+    publication = Mock()
+    monkeypatch.setattr(benchmark_utils, "temporary_worktree", checkout)
+    monkeypatch.setattr(benchmark_utils, "run_git_command", lambda args, **_kwargs: completed_process(("b" if args[-1] == "v0.8.2^{commit}" else "a") * 40))
+    monkeypatch.setattr(benchmark_utils, "capture_snapshot", lambda _root: TreeSnapshot("a" * 40, b"local patch", ()))
+    monkeypatch.setattr(benchmark_utils, "apply_snapshot", snapshot)
+    monkeypatch.setattr(benchmark_utils, "discover_inventory", discovery)
+    monkeypatch.setattr(benchmark_utils, "_measure_suite", measurement)
+    monkeypatch.setattr(benchmark_utils, "_publish_performance_bundle", publication)
+
+    expected = {"harness": "benchmark harness differs", "plan": "measurement plan differs", None: "measurement boundary reached"}[mismatch]
+    with pytest.raises(ValueError if mismatch else RuntimeError, match=expected) as failure:
+        benchmark_utils.generate_and_promote_performance_report(
+            output=output,
+            current=current,
+            archive_dir=archive_dir,
+            config=ReleaseReportConfig(repo_root=tmp_path, current_tag="v0.8.3", baseline_tag="v0.8.2", worktree_ref="HEAD"),
+        )
+
+    if mismatch:
+        assert "before benchmarking" in str(failure.value)
+        assert "just bench-perf-summary" in str(failure.value)
+        measurement.assert_not_called()
+    else:
+        measurement.assert_called_once()
+        assert measurement.call_args.args[0].name == "worktree"
+    assert discovery.call_count == (0 if mismatch == "harness" else 2)
+    assert {path: path.read_bytes() for path in retained} == retained
+    assert len(checkouts) == 2
+    assert all(not path.exists() for path in checkouts)
+    assert not archive_dir.exists()
+    publication.assert_not_called()
 
 
 def test_release_generation_rejects_external_scratch_before_measurement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

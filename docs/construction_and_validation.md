@@ -130,7 +130,7 @@ The deterministic [validation notebook](../notebooks/01_validation.ipynb)
 renders the same five-layer hierarchy described below. Refresh the tracked
 reviewer diagrams with `just validation-doc-figures`; routine notebook checks
 write only under `target/`.
-The [reviewer artifact guide](../papers/ARTIFACT.md) indexes this notebook
+The [reviewer artifact guide](archive/ARTIFACT.md) indexes this notebook
 workflow and its paper-claim mapping.
 
 <img src="assets/validation/validation_hierarchy.png"
@@ -177,8 +177,8 @@ For the theoretical background, rationale, and implementation pointers behind th
 [`invariants.md`](invariants.md).
 
 For publication-facing exposition, see
-[`../papers/validation.tex`](../papers/validation.tex) and the compiled reviewer
-copy at [`../papers/validation.pdf`](../papers/validation.pdf). For
+[the manuscript source](https://github.com/acgetchell/Papers/blob/main/delaunay-validation/validation.tex) and
+[reviewer PDF](https://github.com/acgetchell/Papers/blob/main/delaunay-validation/validation.pdf) in acgetchell/Papers. For
 reproducible figures used by the paper, see
 [`../notebooks/01_validation.ipynb`](../notebooks/01_validation.ipynb).
 

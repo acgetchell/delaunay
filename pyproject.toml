@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "delaunay-scripts"
-version = "0.8.2"
+version = "0.8.3"
 description = "Scientific Python tooling for the delaunay Rust library"
 readme = "tooling/python/README.md"
 requires-python = ">=3.15"
@@ -65,7 +65,7 @@ py-modules = [
 
 [tool.ruff]
 line-length = 160
-src = [ "tooling/python", "tests/tooling", "tests/papers" ]
+src = [ "tooling/python", "tests/tooling" ]
 # Notebooks use the shared native Ruff/ty notebook validator.
 include = [ "*.py", "*.pyi" ]
 
@@ -176,7 +176,6 @@ ignore = [
 # Test names and class groupings already document behavior; avoid requiring
 # docstrings for each pytest case while still checking production scripts.
 "tests/tooling/test_*.py" = [ "S101", "SLF001", "D101", "D102", "D103" ]
-"tests/papers/test_*.py" = [ "S101", "SLF001", "D101", "D102", "D103" ]
 # Standalone static-analysis fixtures are not packages or public APIs. Keep
 # exception/process/write violations intact, without disabling typing or imports.
 "tests/semgrep/tests/tooling/python_exceptions.py" = [
@@ -266,7 +265,6 @@ dev = [
     "shfmt-py>=4.2.0",
     "yamllint>=1.38.0",
 ]
-papers = [ "research-repo-tools[papers,python-tools]==0.2.3" ]
 notebooks = [
     "research-repo-tools[notebooks,python-tools]==0.2.3",
     "ipykernel>=7.4.0",
@@ -299,7 +297,6 @@ override-dependencies = [
 [tool.uv.dependency-groups]
 tooling = { requires-python = ">=3.15" }
 notebooks = { requires-python = ">=3.15" }
-papers = { requires-python = ">=3.15" }
 
 [tool.research-repo-tools]
 schema = 1
@@ -388,6 +385,11 @@ date-policy = "declared"
 tag-policy = "canonical-stable"
 required-files = [ "Cargo.lock", "pyproject.toml", "uv.lock", "CITATION.cff", "README.md", "REFERENCES.md", "CHANGELOG.md" ]
 exclude = [ "docs/archive/**", "docs/performance.md", "benches/PERFORMANCE_RESULTS.md" ]
+
+[[tool.research-repo-tools.release.rules]]
+path = "tests/fixtures/checkpoint_no_float_roundtrip/Cargo.lock"
+pattern = '^name = "delaunay"\r?\nversion = "(?P<value>[^"]+)"'
+source = "version"
 
 [[tool.research-repo-tools.release.rules]]
 path = "CITATION.cff"

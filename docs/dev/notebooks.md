@@ -65,7 +65,7 @@ The canonical macOS leg of `just ci` additionally runs
 validation notebook, writes regenerated PNG files under `target/`, and compares
 their exact bytes with the tracked figure set without publishing changes.
 Linux and Windows retain the lint-only notebook check because canonical raster
-bytes are platform-owned by the macOS paper workflow.
+bytes are platform-owned by the macOS validation-figure workflow.
 
 Execute one notebook deliberately when the task requires runtime validation:
 
@@ -98,9 +98,9 @@ artifact and through a named recipe. Current named workflows include:
 - `just validation-doc-figures-check` for a non-mutating currentness check of
   those figures on the canonical macOS platform
 
-Canonical tracked figures belong under `docs/assets/`. Documentation and papers
-should reference the same canonical asset instead of maintaining duplicate
-copies. Artifact ownership and paper authorship boundaries live in
+Canonical tracked figures belong under `docs/assets/`. Documentation references
+these assets; manuscripts in acgetchell/Papers consume pinned snapshots with
+recorded provenance. Artifact ownership and paper authorship boundaries live in
 [`docs.md`](docs.md).
 
 Do not direct an interactive validation-notebook run at the tracked asset

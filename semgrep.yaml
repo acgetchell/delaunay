@@ -2860,30 +2860,6 @@ rules:
       - pattern-regex: >-
           (?i)\b(?:[a-z0-9]+_)*[23]d(?:_[a-z0-9]+)*_(?:toroidal|spherical)(?:_[a-z0-9]+)*\b
 
-  - id: delaunay.paper.validation-figures-use-canonical-assets
-    languages:
-      - regex
-    severity: WARNING
-    message: "Reuse validation figures from ../docs/assets/validation/ instead of maintaining paper-local copies."
-    metadata:
-      category: maintainability
-      rationale: >-
-        Documentation and papers should share the canonical notebook-generated
-        validation figures so paper-local copies cannot drift from the public
-        documentation.
-    paths:
-      include:
-        - "/papers/*.tex"
-        - "/tests/semgrep/papers/*.tex"
-    pattern-regex: |-
-      (?sx)
-      \\includegraphics
-      (?:\s*\[[^\]]*\])?
-      \s*\{\s*
-      (?!\.\./docs/assets/validation/)
-      [^}\n]*validation_(?:hierarchy|level_[1-5]_[^}/]+)\.png
-      \s*\}
-
   - id: delaunay.github-actions.external-action-sha-pinned
     languages:
       - regex

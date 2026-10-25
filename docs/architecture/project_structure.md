@@ -70,16 +70,6 @@ delaunay/
 │   ├── 00_quickstart.ipynb
 │   ├── 01_validation.ipynb
 │   └── 02_spherical_hero.ipynb
-├── papers/
-│   ├── ARTIFACT.md
-│   ├── README.md
-│   ├── ci-setup.sh
-│   ├── ci-warmup.sh
-│   ├── recipes.just
-│   ├── tooling.toml
-│   ├── validation.bib
-│   ├── validation.pdf
-│   └── validation.tex
 ├── src/
 │   ├── bin/
 │   │   ├── delaunay/
@@ -101,7 +91,6 @@ delaunay/
 │   ├── triangulation/
 │   └── lib.rs
 ├── tests/
-│   ├── papers/
 │   ├── semgrep/
 │   ├── tooling/
 │   ├── proptest_*.rs
@@ -169,11 +158,10 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
 - `notebooks/` contains reproducible visualization and analysis workflows that
   orchestrate the Rust CLI. The combined public-workflow coverage map lives in
   `examples/README.md`.
-- `papers/` contains the reviewer artifact index, publication-facing
-  TeX/BibTeX sources, and tracked reviewer PDFs. The artifact index is software
-  release packaging rather than author-owned manuscript prose. Paper figures
-  reuse canonical assets under `docs/assets/`. Optional paper recipes, tool pins,
-  PDF policies, and CI helpers live here; their Python tests live in `tests/papers/`.
+- `docs/archive/ARTIFACT.md` retains the historical v0.8.0 reviewer artifact guide.
+  Active manuscript sources, reviewer PDFs, pinned figure inputs, and build
+  tooling live in [acgetchell/Papers](https://github.com/acgetchell/Papers/tree/main/delaunay-validation).
+  Scientific notebooks, renderers, and canonical assets remain in Delaunay.
 - `docs/` contains user documentation, contributor guidance, architecture
   references, archived design notes, and templates.
 - `docs/dev/` contains operational rules for agents and contributors, indexed
@@ -191,16 +179,15 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
 - `Cargo.toml` uses an explicit package allowlist so crates.io artifacts carry
   the public library surface, examples, benchmarks, integration tests, and
   active documentation without bundling CI-only tooling or archived notes.
-- `papers/ARTIFACT.md` is included in the crates.io allowlist as a reviewer
-  signpost, but its canonical commands require the repository-only `justfile`,
-  scripts, and release-workflow surfaces. The executable reviewer bundle is the
-  GitHub/Zenodo release snapshot.
+- `docs/archive/ARTIFACT.md` is a repository-only historical reviewer signpost.
+  Its commands and evidence refer to the original v0.8.0 GitHub/Zenodo release
+  snapshot, which retains the paper sources and build tooling for that release.
 - `rust-toolchain.toml` pins the MSRV toolchain and uses a lean profile with
   only repository-required components.
 - `pyproject.toml` owns Python dependencies, the exact shared tooling pin,
   uv/Cargo tool declarations, and consumer validation/release configuration.
-  The optional `papers` group shares the root environment and lockfile;
-  `papers/tooling.toml` declares only the opt-in TeX tools and PDF policies.
+  The root environment and lockfile support software tooling and notebooks;
+  manuscript dependencies and TeX tools are declared in acgetchell/Papers.
   The pinned PyPI package owns common maintenance implementations and regression
   tests; local recipes retain the consumer command surface.
 - `justfile` is the command entry point. Architecture docs should link to
