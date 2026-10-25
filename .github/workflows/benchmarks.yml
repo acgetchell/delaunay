@@ -28,26 +28,8 @@ on:
       - "Cargo.lock"
       - "uv.lock"
 
-  # On pushes to main branch
-  push:
-    branches:
-      - main
-    # Only run on changes that could affect performance
-    paths:
-      - ".github/workflows/benchmarks.yml"
-      - ".github/actions/setup-just/**"
-      - ".python-version"
-      - "justfile"
-      - "pyproject.toml"
-      - "rust-toolchain.toml"
-      - "tooling/python/benchmark_models.py"
-      - "tooling/python/benchmark_utils.py"
-      - "tooling/python/performance_artifacts.py"
-      - "src/**"
-      - "benches/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "uv.lock"
+  # Do not repeat the PR comparison on merge. Exact tagged release evidence
+  # is measured separately by the explicitly dispatched Release Benchmarks job.
 
 # Security: Define minimal required permissions
 permissions:

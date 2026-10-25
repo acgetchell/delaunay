@@ -357,8 +357,10 @@ See [CONTRIBUTING.md][contributing-guide] for local validation and CI checks.
 Performance-sensitive work uses Criterion suites and same-machine baselines:
 
 ```bash
-just performance-local
-just bench-ci
+just performance-local  # Fresh current/baseline comparison
+
+# Or measure absolute performance, then render without measuring again:
+just bench-latest
 just bench-perf-summary
 ```
 

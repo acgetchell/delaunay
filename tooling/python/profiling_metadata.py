@@ -31,6 +31,7 @@ def _write_metadata(root: Path) -> None:
         "cargo-profile": "perf",
         "filter": os.environ.get("BENCH_FILTER_VALUE") or os.environ.get("PROFILE_METADATA_FILTER", "All benchmarks"),
         "mode": mode,
+        "suite": os.environ.get("PROFILE_METADATA_SUITE", "local selection"),
     }
     scratch = root / "target"
     scratch.mkdir(exist_ok=True)

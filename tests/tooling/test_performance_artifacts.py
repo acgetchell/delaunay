@@ -41,9 +41,7 @@ SHA_C = "c" * 64
 RELEASE_TARGETS = (
     "ci_performance_suite",
     "circumsphere_containment",
-    "cold_path_predicates",
     "locate",
-    "realization_validation",
 )
 
 
@@ -133,7 +131,7 @@ def bundle(*, current: str = "v0.8.0", baseline: str = "v0.7.8") -> PerformanceB
 def retained_bundle() -> PerformanceBundle:
     """Retain a promotable comparison with independent shared measurement records."""
     original = bundle()
-    groups = ("validation", "circumcenter", "predicates", "locate", "realization_validation")
+    groups = ("validation", "circumcenter", "locate")
     original = replace(
         original,
         rows=tuple(replace(original.rows[0], group=group, benchmark_id=f"{group}/{original.rows[0].benchmark}") for group in groups),
@@ -504,7 +502,11 @@ def test_retained_policy_comparison_projects_onto_shared_targets(missing_side: s
 
     loaded = load_bundle_bytes(*serialize_changed_measurement(transitioning, full_side, changed), source="supported target transition")
 
-    loaded.require_promotable()
+    if missing_side == "baseline":
+        loaded.require_promotable()
+    else:
+        with pytest.raises(ValueError, match="active public API benchmark plan"):
+            loaded.require_promotable()
     assert loaded.rows == transitioning.sorted_rows
 
 
@@ -674,7 +676,7 @@ def test_promotion_allows_supported_release_target_transition_with_one_sided_row
             original.context,
             baseline_completed_targets=RELEASE_TARGETS[:-1],
         ),
-        rows=(original.rows[0], replace(original.rows[1], group="realization_validation", benchmark_id="realization_validation/new_case/750")),
+        rows=(original.rows[0], replace(original.rows[1], group="locate", benchmark_id="locate/new_case/750")),
     )
 
     assert transitioning.context.shared_completed_targets == RELEASE_TARGETS[:-1]
@@ -703,20 +705,34 @@ def test_unrelated_target_transition_cannot_hide_missing_cases(side: str, group:
         transitioning.require_promotable()
 
 
-def test_promotion_allows_rows_owned_by_a_removed_target() -> None:
+def test_promotion_rejects_removing_a_target_still_in_the_active_plan() -> None:
+    """One-sided rows cannot excuse omitting a required current public API workload."""
     original = bundle()
     removed = replace(
         original.rows[1],
-        group="realization_validation",
-        benchmark_id="realization_validation/new_case/750",
+        group="locate",
+        benchmark_id="locate/new_case/750",
         coverage_status="baseline-only",
         baseline=estimate(500_000.0),
         current=None,
     )
-    PerformanceBundle(
+    incomplete = PerformanceBundle(
         context=replace(original.context, current_completed_targets=RELEASE_TARGETS[:-1]),
         rows=(original.rows[0], removed),
-    ).require_promotable()
+    )
+    with pytest.raises(ValueError, match="active public API benchmark plan"):
+        incomplete.require_promotable()
+
+
+def test_promotion_rejects_a_complete_superseded_plan() -> None:
+    """Historical diagnostics remain readable but cannot be promoted as the new contract."""
+    original = bundle()
+    old_targets = ("ci_performance_suite", "circumsphere_containment", "cold_path_predicates", "locate", "realization_validation")
+    historical = replace(original, context=replace(original.context, current_completed_targets=old_targets, baseline_completed_targets=old_targets))
+    payload, manifest = serialize_bundle(historical)
+    loaded = load_bundle_bytes(payload, manifest, source="historical benchmark plan")
+    with pytest.raises(ValueError, match="active public API benchmark plan"):
+        loaded.require_promotable()
 
 
 @pytest.mark.parametrize("record", ["source", "toolchain"])

@@ -16,10 +16,7 @@ PROFILING = ROOT / ".github/workflows/profiling-benchmarks.yml"
     [
         *(
             (("profiling-benchmarks.yml", "comprehensive-profiling", name, log), tool)
-            for name, log in (
-                ("Run comprehensive profiling benchmarks", "profiling-results/profiling_output.log"),
-                ("Run profiling with memory allocation tracking (if not already done)", "profiling-results/memory_profiling_detailed.log"),
-            )
+            for name, log in (("Measure selected diagnostic suite once", "profiling-results/profiling_output.log"),)
             for tool in ("", "cargo")
         ),
         *(
@@ -55,7 +52,7 @@ def test_analysis_pipeline_status(
         "bash",
         [*shell_args, "-c", step["run"]],
         cwd=tmp_path,
-        env=os.environ | {"PATH": f"{executables}{os.pathsep}{os.environ['PATH']}", "BENCH_FILTER_VALUE": ""},
+        env=os.environ | {"PATH": f"{executables}{os.pathsep}{os.environ['PATH']}", "BENCH_FILTER_VALUE": "", "INPUT_SUITE": "timing"},
         check=False,
         timeout=30,
     )
@@ -69,78 +66,100 @@ def test_analysis_pipeline_status(
         assert upload["with"]["sarif_file"] == log_name
 
 
-@pytest.mark.parametrize(
-    ("event", "day", "expected"),
-    [
-        ("schedule", "01", "true"),
-        ("schedule", "07", "true"),
-        ("schedule", "08", "false"),
-        ("schedule", "31", "false"),
-        ("push", "31", "true"),
-        ("workflow_dispatch", "31", "true"),
-    ],
-)
-def test_monthly_profiling_gate(tmp_path: Path, event: str, day: str, expected: str) -> None:
-    """Only first Sundays launch both expensive jobs; explicit triggers bypass the gate."""
+def test_diagnostic_profiling_is_manual_with_one_measurement_owner() -> None:
+    """Diagnostic timings must never start on a PR, push, schedule, or release tag."""
     workflow = yaml.safe_load(PROFILING.read_text(encoding="utf-8"))
-    # PyYAML's YAML 1.1 loader interprets the workflow's `on` key as True.
-    assert workflow[True]["schedule"] == [{"cron": "0 2 * * 0"}]
-    gate = workflow["jobs"]["schedule-gate"]
-    step = gate["steps"][0]
-    assert gate["outputs"]["run"] == "${{ steps." + step["id"] + ".outputs.run }}"
-    for job_id in ("comprehensive-profiling", "memory-stress-test"):
-        job = workflow["jobs"][job_id]
-        assert job["needs"] == "schedule-gate"
-        assert job["if"] == "needs.schedule-gate.outputs.run == 'true'"
-    date = tmp_path / "date"
-    date.write_text('#!/usr/bin/env bash\n[[ "$*" == "-u +%d" ]] || exit 2\nprintf "%s\\n" "$TEST_DAY"\n', encoding="utf-8", newline="\n")
-    date.chmod(0o755)
-    output = tmp_path / "output"
-    run_command(
-        "bash",
-        ["--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
-        cwd=tmp_path,
-        env=os.environ | {"PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}", "TEST_DAY": day, "GITHUB_EVENT_NAME": event, "GITHUB_OUTPUT": str(output)},
-        timeout=30,
-    )
-    assert output.read_text(encoding="utf-8") == f"run={expected}\n"
+    assert set(workflow[True]) == {"workflow_dispatch"}
+    assert set(workflow["jobs"]) == {"comprehensive-profiling"}
+    steps = workflow["jobs"]["comprehensive-profiling"]["steps"]
+    measurements = [step for step in steps if "cargo_args=(bench" in step.get("run", "")]
+    assert len(measurements) == 1
+    uploads = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")]
+    assert len(uploads) == 1
+    assert set(uploads[0]["with"]["path"].splitlines()) == {"profiling-results/", "target/criterion/"}
 
 
+def test_public_api_comparisons_are_not_repeated_on_main_push() -> None:
+    """PR comparisons and exact-tag release measurements have distinct owners."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/benchmarks.yml").read_text(encoding="utf-8"))
+    assert set(workflow[True]) == {"pull_request", "workflow_dispatch"}
+    steps = workflow["jobs"]["performance-regression"]["steps"]
+    assert sum(step.get("run") == "just performance-local" for step in steps) == 1
+
+
+@pytest.mark.parametrize("mode", ["development", "production"])
 @pytest.mark.parametrize(
-    ("event", "mode", "production"),
+    ("suite", "requested_filter", "selected_filter"),
     [
-        ("schedule", "development", True),
-        ("workflow_dispatch", "development", False),
-        ("workflow_dispatch", "production", True),
-        ("push", "development", False),
-        ("push", "production", False),
+        ("timing", "", ""),
+        ("timing", "construction/3D/1000v/construct", "construction/3D/1000v/construct"),
+        ("allocations", "", "memory_profiling"),
+        ("allocations", "memory_profiling/memory_usage_2d/1000", "memory_profiling/memory_usage_2d/1000"),
     ],
 )
-def test_profiling_mode(tmp_path: Path, event: str, mode: str, *, production: bool) -> None:
-    """Schedules select full workloads despite the manual input's development default."""
+def test_profiling_executes_selected_suite_once(
+    tmp_path: Path,
+    mode: str,
+    suite: str,
+    requested_filter: str,
+    selected_filter: str,
+) -> None:
+    """Execute real workflow shell with a fake Cargo, preserving argv and sample ownership."""
     workflow = yaml.safe_load(PROFILING.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["comprehensive-profiling"]["steps"]
-    step = next(step for step in steps if step.get("name") == "Set profiling mode")
+    select = next(step for step in steps if step.get("name") == "Select diagnostic workload")
+    measure = next(step for step in steps if step.get("name") == "Measure selected diagnostic suite once")
     output = tmp_path / "environment"
-    run_command(
-        "bash",
-        ["--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
-        cwd=tmp_path,
-        env=os.environ | {"INPUT_MODE": mode, "GITHUB_EVENT_NAME": event, "GITHUB_ENV": str(output)},
-        timeout=30,
-    )
+    environment = os.environ | {"INPUT_MODE": mode, "INPUT_SUITE": suite, "INPUT_FILTER": requested_filter, "GITHUB_ENV": str(output)}
+    run_command("bash", ["-euo", "pipefail", "-c", select["run"]], cwd=tmp_path, env=environment, timeout=30)
     settings = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
-    assert settings == (
-        {"BENCH_SAMPLE_SIZE": "100", "BENCH_WARMUP_SECS": "5", "BENCH_MEASUREMENT_TIME": "10", "BENCH_LARGE_SCALE": "1"}
-        if production
-        else {"PROFILING_DEV_MODE": "1", "BENCH_SAMPLE_SIZE": "30", "BENCH_WARMUP_SECS": "2", "BENCH_MEASUREMENT_TIME": "3"}
-    )
+    assert settings["BENCH_FILTER_VALUE"] == selected_filter
+    assert ("BENCH_LARGE_SCALE" in settings) is (mode == "production")
+    assert ("PROFILING_DEV_MODE" in settings) is (mode == "development")
+    arguments = tmp_path / "arguments"
+    cargo = tmp_path / "cargo"
+    cargo.write_text('#!/usr/bin/env bash\nprintf "%s\\n" CALL "$@" >> "$ARGUMENTS"\n', encoding="utf-8", newline="\n")
+    cargo.chmod(0o755)
+    environment.update(settings)
+    environment.update({"PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}", "ARGUMENTS": str(arguments)})
+    run_command("bash", ["-euo", "pipefail", "-c", measure["run"]], cwd=tmp_path, env=environment, timeout=30)
+    argv = arguments.read_text(encoding="utf-8").splitlines()
+    assert argv.count("CALL") == 1
+    assert argv[:6] == ["CALL", "bench", "--locked", "--profile", "perf", "--bench"]
+    assert argv[6] == "profiling_suite"
+    assert ("--features" in argv) is (suite == "allocations")
+    assert ("count-allocations" in argv) is (suite == "allocations")
+    assert "--skip" not in argv
+    if selected_filter == "memory_profiling":
+        assert argv[-1] == "^memory_profiling/"
+    elif selected_filter:
+        assert argv[-1] == selected_filter
+        assert ("--exact" in argv) is (suite == "allocations")
 
 
-def test_profiling_artifact_contains_raw_criterion_for_every_trigger() -> None:
-    """Manual and monthly results retain the samples alongside logs and provenance."""
+@pytest.mark.parametrize(
+    ("suite", "requested_filter"),
+    [
+        ("allocations", "construction"),
+        ("timing", "memory_profiling"),
+        ("timing", "--test"),
+        ("timing", "construction\nINJECTED=value"),
+        ("allocations", "memory_profiling/1000\rINJECTED=value"),
+    ],
+)
+def test_profiling_rejects_incompatible_or_multiline_filters(tmp_path: Path, suite: str, requested_filter: str) -> None:
+    """Reject ambiguous selections and env-file injection before publishing settings."""
     workflow = yaml.safe_load(PROFILING.read_text(encoding="utf-8"))
-    for job_id in ("comprehensive-profiling", "memory-stress-test"):
-        uploads = [step for step in workflow["jobs"][job_id]["steps"] if step.get("uses", "").startswith("actions/upload-artifact@") and "if" not in step]
-        assert len(uploads) == 1
-        assert set(uploads[0]["with"]["path"].splitlines()) == {"profiling-results/", "target/criterion/"}
+    steps = workflow["jobs"]["comprehensive-profiling"]["steps"]
+    select = next(step for step in steps if step.get("name") == "Select diagnostic workload")
+    output = tmp_path / "environment"
+    result = run_command(
+        "bash",
+        ["-euo", "pipefail", "-c", select["run"]],
+        cwd=tmp_path,
+        check=False,
+        timeout=30,
+        env=os.environ | {"INPUT_MODE": "development", "INPUT_SUITE": suite, "INPUT_FILTER": requested_filter, "GITHUB_ENV": str(output)},
+    )
+    assert result.returncode == 2
+    assert not output.exists()

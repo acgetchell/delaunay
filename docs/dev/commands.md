@@ -121,8 +121,10 @@ recipe before a recipe that already compiles and runs the same target class.
 
 For benchmark-only changes, run the changed benchmark with
 `cargo bench --profile perf --bench <name>` when the change affects measured
-behavior. Use `just bench-smoke` for harness-only edits, and `just bench` for
-broad benchmark-suite changes.
+behavior. Use `just bench-smoke` for public API harness-only edits, and
+`just bench all` for broad diagnostic benchmark-suite changes. Explicit user
+restrictions on benchmark execution take precedence; report compile-only or
+mocked validation separately from measured evidence.
 
 ## Local CodeRabbit Review
 
@@ -514,11 +516,11 @@ cargo bench --profile perf --bench ci_performance_suite
 The `perf` profile inherits from release and restores ThinLTO with one codegen
 unit. Use it for measured benchmark output; `just ci` does not need it to catch
 compile, lint, test, documentation, example, or benchmark-harness build errors.
-Use `just bench-smoke` only for quick harness validation with minimal samples;
-do not treat smoke output as performance data.
+Use `just bench-smoke` for the public API fixture preflight without statistical
+sampling; it produces no performance data.
 
-Workspace-wide benchmark recipes (`just bench`, `just bench-smoke`,
-`just bench-compile`, and the benchmark compile step inside `just ci`) enable
+The explicit slow suite (`just bench all`), `just bench-compile`, and the
+benchmark compile step inside `just ci` enable
 `--features bench` so feature-gated benchmark fixtures and benchmark-only
 dependencies are compiled.
 
@@ -562,10 +564,20 @@ default, and reports all failing dimensions before exiting. It does not compare
 against a baseline and should not be treated as benchmark data. Run it before
 pushing Rust or benchmark changes to catch obvious local performance drift early.
 
-Use `just bench-perf-summary` from the release PR branch after version and
-documentation updates. It runs fresh perf-profile summary benchmarks, records
-the current Criterion construction metadata and generated simplex counts, and
-regenerates `benches/PERFORMANCE_RESULTS.md`.
+Use `just bench-latest` from the release PR branch after measured inputs change,
+then `just bench-perf-summary` to regenerate `benches/PERFORMANCE_RESULTS.md`.
+The summary recipe only renders retained, validated measurements, including
+their source, host, completion time, construction metadata and simplex counts.
+It fails on missing or incompatible evidence without starting benchmarks.
+Repeated rendering of the same evidence produces the same report.
+
+`just bench`, `just bench-ci`, and `just bench-latest` select the same public API
+plan: `ci_performance_suite`, `circumsphere_containment`, and `locate`. Routine
+and release CI use that plan. Internal predicate-path, realization-component,
+repair, allocation, and large-scale diagnostics are opt-in through a selected
+benchmark target or `just bench all`. The profiling workflow is manual-only,
+with one timing or allocation run per dispatch. Normal correctness tests remain
+independent of this benchmark selection.
 
 Use `just bench-latest` when you need the curated release-signal Criterion
 suite for local saved-baseline comparisons. The recipe executes the immutable
@@ -649,7 +661,8 @@ previous report and exact promoted comparison JSON/evidence bytes under
 Fresh comparisons use the recorded harness and measurement plan to establish workload
 identity, including comparisons across older release labels. Failed scientific fixtures
 invalidate a run; incompatible harnesses suppress ratios. When no comparable baseline
-exists, use `just bench-perf-summary` for absolute results and skip comparison publication.
+exists, use `just bench-latest` followed by `just bench-perf-summary` for absolute
+results and skip comparison publication.
 Historical reports retain their original release labels.
 
 Use `just performance-doc` to retry rendering or promotion from an existing

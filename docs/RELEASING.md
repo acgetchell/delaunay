@@ -188,7 +188,8 @@ measurement-plan evidence. Benchmark fixtures must pass their scientific
 checks before timings are used. `performance-release` checks both harnesses
 before native benchmark commands, then compares untimed case inventories and
 sampling policies before either revision starts timing. If the baseline fails
-those checks or its harness differs, generate absolute results with `just bench-perf-summary` and
+those checks or its harness differs, generate absolute results with
+`just bench-latest` followed by `just bench-perf-summary` and
 skip comparison/README publication. Historical reports keep their original
 labels and measurements.
 
@@ -205,9 +206,16 @@ the comparison JSON/evidence pair after reloading it, promotes `docs/performance
 archives the prior report plus the exact promoted evidence under
 `docs/archive/performance/`.
 
-For each measured revision, the local comparison workflow gives each of the five
+Routine CI and release evidence use the same public API targets:
+`ci_performance_suite`, `circumsphere_containment`, and `locate`. Internal
+diagnostic benchmarks are manual-only. A benchmark-plan change invalidates
+previous evidence for the new plan: measure again rather than reusing or
+relabeling an old report. Correctness tests and untimed fixture validation
+remain required independently of benchmark scope.
+
+For each measured revision, the local comparison workflow gives each of the three
 curated benchmark targets separate two-hour discovery and sampling ceilings,
-plus a ten-minute preflight ceiling. The sampling child has a ten-hour ceiling;
+plus a ten-minute preflight ceiling. The sampling child has a six-hour ceiling;
 discovery and preflight run before it, with no combined local workflow deadline.
 These ceilings accommodate slow higher-dimensional
 measurements; they are not expected runtimes. A timeout in any target means the
@@ -302,7 +310,9 @@ configuration:
 
 Rerun `just performance-release "$TAG" "vA.B.C"` with the same baseline,
 then rerun `just performance-readme`. When the release has only absolute
-measurements, rerun `just bench-perf-summary` instead.
+measurements, rerun `just bench-latest`, then `just bench-perf-summary` instead.
+To regenerate only a report from unchanged retained evidence, run
+`just bench-perf-summary`; it does not measure again.
 
 Rerun `just changelog-release "$TAG"`, review and stage only the regenerated
 release outputs, commit that update separately, and rerun the final release and
@@ -313,6 +323,30 @@ generated changelog to add a known-issue note.
 
 Retries preserve the declared release date unless the maintainer deliberately
 advances it with `update-version` and regenerates the matching changelog.
+
+### Resuming an unpublished release after another PR
+
+A corrective PR can include the affected preparation steps: regenerate changed
+performance evidence and README output, regenerate the changelog, and validate.
+Do not repeat the version bump or dependency updates solely because another PR
+is needed. Once the corrected artifacts merge, resume Step 2 from the new clean
+`main` commit and require its successful `release-evidence` result.
+
+If the tag already exists but the release is still unpublished, stop or wait for
+any release-benchmark run using the old tag. Delete any existing unpublished
+draft and its obsolete assets, leaving the tag. Replace the annotated tag from
+the corrected clean `main` checkout, protecting against concurrent remote changes:
+
+```bash
+previous_tag_oid="$(git ls-remote --refs origin "refs/tags/$TAG" | cut -f1)"
+test -n "$previous_tag_oid"
+just tag-force "$TAG"
+git push --force-with-lease="refs/tags/$TAG:$previous_tag_oid" origin "refs/tags/$TAG"
+```
+
+Continue at Step 2's draft creation and benchmark steps. The new draft must use
+fresh notes and benchmark evidence for the updated tag. Never use this recovery
+path for a published release; publish a new version instead.
 
 ## Step 2: Publish after the PR is merged
 
