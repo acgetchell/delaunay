@@ -55,6 +55,9 @@ engines:
     include_paths:
       - "**/*.md"
     exclude_paths:
+      # Generated commit history uses docs/templates/changelog_format.toml;
+      # preserve historical list structure instead of applying prose rules.
+      - "CHANGELOG.md"
       # Release checklists use stable absolute step numbers across fenced
       # command blocks; local rumdl intentionally disables MD029 for this.
       - "docs/RELEASING.md"
