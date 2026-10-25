@@ -8,12 +8,12 @@ Historical design notes, investigations, and completed optimization roadmaps liv
 ## Start here
 
 - [`scientific_basis.md`](scientific_basis.md): API selection, scientific scope, assumptions, and method/source map.
-- [`../papers/ARTIFACT.md`](../papers/ARTIFACT.md): v0.8.0 reviewer reproduction paths, claim map, evidence, and limits.
+- [`archive/ARTIFACT.md`](archive/ARTIFACT.md): v0.8.0 reviewer reproduction paths, claim map, evidence, and limits.
 - [`../examples/README.md`](../examples/README.md): public-workflow coverage across runnable Rust examples and notebooks.
 - [`api_design.md`](api_design.md): construction, vertex lifecycle, and Pachner move APIs.
 - [`topology.md`](topology.md): Level 3 Intrinsic PL Topology invariants (manifold checks, orientability, Euler characteristic).
 - [`construction_and_validation.md`](construction_and_validation.md): proof-bearing construction, the five validation levels, and their configuration.
-- [`../papers/validation.pdf`](../papers/validation.pdf): reviewer-facing construction and validation architecture paper.
+- [Validation manuscript](https://github.com/acgetchell/Papers/tree/main/delaunay-validation): source and reviewer PDF for the validation architecture paper.
 - [`diagnostics.md`](diagnostics.md): opt-in diagnostic helpers, structured reports, and debug switches.
 - [`mesh_export.md`](mesh_export.md): stable simplicial-complex export schema for notebooks and downstream tools.
 - [`USING_TRIANGULATIONS.md`](USING_TRIANGULATIONS.md): practical recipes for construction, deletion, and local Pachner moves.

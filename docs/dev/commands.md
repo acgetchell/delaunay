@@ -82,7 +82,6 @@ changed surface.
 | Markdown documentation (`*.md`) | `just markdown-check` | `just check-docs` |
 | Python sources and fixtures | Targeted pytest and `just python-check` | `just python-check`, `just python-fixture-lint`, and `just test-python` |
 | Jupyter notebooks (`notebooks/**/*.ipynb`) | `just notebook-check` | `just notebook-check` |
-| Paper sources and figures (`papers/**/*`, paper notebooks) | `just paper-check` | `just papers` |
 | Configuration only (JSON, TOML, YAML, CFF, workflows) | Matching config validator | `just check-config` |
 | Rust unit tests only (`#[cfg(test)]` in `src/**`) | Targeted `cargo test --lib <filter>` or `just test-unit` | `just test-unit` |
 | Rust doctests only (`///` examples or crate docs) | Targeted `cargo test --doc --release <filter>` or `just test-doc` | `just test-doc` |
@@ -208,9 +207,9 @@ changed. `just setup-tools` repeats that setup. GitHub CLI, jq, and CodeRabbit r
 the recipes that need them. No sibling checkout, local wheel override, generated
 launcher, or editable shared-package install is used.
 
-The uv setup command works in Bash and PowerShell. Optional paper production has
-additional native prerequisites and an explicit setup command documented in
-[`papers/README.md`](../../papers/README.md); ordinary setup and CI require no TeX tools.
+The uv setup command works in Bash and PowerShell. Delaunay setup and CI require
+no TeX tools; manuscript production belongs to
+[acgetchell/Papers](https://github.com/acgetchell/Papers/tree/main/delaunay-validation).
 
 Managed Rust, Cargo tools, and release binaries live in the shared package's versioned cache.
 Recipes select them with `toolchain run`, which verifies versions and fails when
@@ -850,23 +849,9 @@ routine notebook checks do not regenerate the tracked hero.
 
 ## Paper Build
 
-Paper production is an opt-in maintainer workflow. Its setup, recipes, tool pins,
-PDF policies, and CI helpers live under [`papers/`](../../papers/README.md), with
-tests under `tests/papers/`. It shares the root Python environment and `uv.lock`.
-The root Just entry point imports `papers/recipes.just`:
-
-```bash
-just paper-setup
-just paper-check
-just paper-artifact-check
-```
-
-`just paper-check` tests the paper tooling, checks TeX formatting and lint,
-compiles under `target/papers/`, and checks the resulting PDF.
-`just paper-artifact-check` also compares that build with the tracked reviewer
-PDF. Both preserve tracked sources and artifacts. `just paper-refresh` explicitly
-publishes the checked PDF; `just papers` also refreshes the shared figures.
-The Papers CI workflow runs only by manual dispatch.
+The active validation manuscript and its build instructions live in
+[Papers/delaunay-validation](https://github.com/acgetchell/Papers/tree/main/delaunay-validation).
+Paper dependencies, TeX tools, and paper CI are maintained there.
 
 Shared validation notebooks and canonical figures remain documentation-owned.
 `just notebook-cli` builds their Rust CLI; `just validation-doc-figures-check`
@@ -1157,7 +1142,7 @@ Prepare metadata separately, then generate using its declared citation date:
 
 ```bash
 just update-version vX.Y.Z --date YYYY-MM-DD --previous-release vA.B.C
-just changelog-unreleased vX.Y.Z
+just changelog-release vX.Y.Z
 just release-version-check
 just publish-check
 ```
@@ -1166,8 +1151,8 @@ Metadata updates default to the current UTC date and discover published stable
 GitHub history when the predecessor is omitted. The `declared` date policy
 permits tagging on a later day without rewriting the preparation date. If that
 declared date is deliberately advanced, repeat metadata preparation and
-generation. `changelog-release TAG [DATE]` and `changelog-unreleased TAG [DATE]`
-name the same operation; the optional ISO date overrides the citation default.
+generation. The optional ISO date in `changelog-release TAG [DATE]` overrides
+the citation default.
 `changelog-preview --tag TAG` uses that default without writing files and also
 accepts `--date YYYY-MM-DD`. Final validation requires matching target
 heading and citation dates. Create an annotated local tag only after the release

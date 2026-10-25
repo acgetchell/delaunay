@@ -57,7 +57,7 @@ def workflow_trigger_paths(path: Path) -> tuple[set[str], set[str]]:
 
 def test_recipe_declarations_are_lexicographically_sorted() -> None:
     """Recipe source order should support direct lookup by name."""
-    for path in (JUSTFILE, HELPER_JUSTFILE, REPO_ROOT / "papers/recipes.just"):
+    for path in (JUSTFILE, HELPER_JUSTFILE):
         names = RECIPE_DECLARATION.findall(path.read_text(encoding="utf-8"))
 
         assert names == sorted(names), path
@@ -87,7 +87,6 @@ def test_bare_just_lists_every_public_command() -> None:
 def test_default_discovers_new_recipes_without_a_help_edit(tmp_path: Path) -> None:
     """Adding a command automatically changes bare Just's generated reference."""
     shutil.copytree(REPO_ROOT / "just", tmp_path / "just")
-    shutil.copytree(REPO_ROOT / "papers", tmp_path / "papers")
     (tmp_path / "justfile").write_text(
         JUSTFILE.read_text(encoding="utf-8") + '\n# A newly added command.\n[group("test")]\nzz-new-command argument="example":\n    @exit 99\n',
         encoding="utf-8",
@@ -398,7 +397,8 @@ def test_release_recipes_forward_shared_policy_arguments() -> None:
     command = dry_run(REPO_ROOT, "update-version", ("v0.9.0", "--date", "2026-10-04", "--dry-run"))
     rendered = command.stdout + command.stderr
     assert 'research-repo-tools release update "$@"' in rendered
-    assert "research-repo-tools release check" in rendered
+    assert "cargo metadata --locked --format-version 1 --no-deps" in rendered
+    assert "research-repo-tools release check" not in rendered
     strict_check = dry_run(REPO_ROOT, "release-version-check")
     assert "research-repo-tools release check --final-release" in strict_check.stdout + strict_check.stderr
     for name in ("tag", "tag-force"):
@@ -541,6 +541,8 @@ def test_uv_backed_recipes_reuse_locked_guard() -> None:
         assert "_ensure-uv" in dependencies, name
     setup = json.dumps(recipes["setup-tools"]["body"])
     assert "tectonic" not in setup
+    assert not {"papers", "tectonic"} & recipes.keys()
+    assert not any(name.startswith("paper-") for name in recipes)
     assert "uv run --locked --managed-python --only-group tooling research-repo-tools setup" in setup
 
 

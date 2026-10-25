@@ -1,6 +1,6 @@
 [package]
 name = "delaunay"
-version = "0.8.2"
+version = "0.8.3"
 edition = "2024"
 rust-version = "1.99.1"
 autobins = false
@@ -37,10 +37,6 @@ include = [
     "/examples/**/*.rs",
     "/examples/README.md",
     "/notebooks/*.ipynb",
-    "/papers/*.md",
-    "/papers/*.bib",
-    "/papers/*.pdf",
-    "/papers/*.tex",
     "/proptest.toml",
     "/src/**/*.rs",
     "/tests/*.proptest-regressions",

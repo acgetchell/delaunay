@@ -31,7 +31,7 @@ Consumer-owned commands are exposed by `pyproject.toml`; all support `--help`.
 ```bash
 just changelog
 just changelog-preview
-just changelog-unreleased vX.Y.Z
+just changelog-release vX.Y.Z
 just changelog-preview --tag vX.Y.Z
 just changelog-archive
 just release-notes vX.Y.Z
@@ -52,8 +52,8 @@ Cargo or a release event. `release-publish` requires that inspection, while
 workflow verification retains its stricter event and reproduction gates.
 
 `release_changelog.py` is a temporary generic adapter for the citation-date
-default used by `changelog-release` / `changelog-unreleased` and tagged previews.
-v0.2.3 already owns generation and the recipe alias, but requires an explicit
+default used by `changelog-release` and tagged previews.
+v0.2.3 already owns generation, but requires an explicit
 prospective date. [research-repo-tools #130](https://github.com/acgetchell/research-repo-tools/issues/130)
 tracks the shared replacement for this adapter and la-stack's equivalent.
 After adopting that published capability, recipes should call it directly and

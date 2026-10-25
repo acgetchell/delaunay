@@ -53,7 +53,8 @@ def test_published_pin_configuration_and_inventory() -> None:
     assert all(re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", pin) for pin in tools.values())
     assert {"cargo-edit", "cargo-audit", "cargo-nextest", "samply", "clippy-sarif", "sarif-fmt"} <= tools.keys()
     assert {"tectonic", "tex-fmt"}.isdisjoint(tools)
-    assert groups["papers"] == ["research-repo-tools[papers,python-tools]==0.2.3"]
+    assert "papers" not in groups
+    assert "pypdf" not in {package["name"] for package in lock["package"]}
     assert "just" not in tools
     assert "cargo-update" not in tools
 
@@ -63,7 +64,6 @@ def recording_recipes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Execute the merged Justfile with local recording processes only."""
     (tmp_path / "justfile").write_bytes((ROOT / "justfile").read_bytes())
     shutil.copytree(ROOT / "just", tmp_path / "just")
-    shutil.copytree(ROOT / "papers", tmp_path / "papers")
     for name in ("pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".python-version"):
         (tmp_path / name).write_bytes((ROOT / name).read_bytes())
     fixture = tmp_path / FIXTURE_MANIFEST

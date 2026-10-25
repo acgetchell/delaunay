@@ -70,7 +70,7 @@ Key takeaways from v0.7.8:
 
 v0.8.0 delivered the paper-facing API and topology work deferred from v0.7.8.
 That release required Rust 1.97.1 and included the completed audit of that
-toolchain surface. Its [reviewer artifact guide](../papers/ARTIFACT.md) retains
+toolchain surface. Its [reviewer artifact guide](archive/ARTIFACT.md) retains
 the original release identity, commands, and benchmark exception.
 
 - **Pachner/Edit API shape (#252/#253/#350/#337):** unified the Pachner move API,

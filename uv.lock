@@ -449,7 +449,7 @@ wheels = [
 
 [[package]]
 name = "delaunay-scripts"
-version = "0.8.2"
+version = "0.8.3"
 source = { editable = "." }
 dependencies = [
     { name = "packaging" },
@@ -483,9 +483,6 @@ notebooks = [
     { name = "polars" },
     { name = "research-repo-tools", extra = ["notebooks", "python-tools"] },
 ]
-papers = [
-    { name = "research-repo-tools", extra = ["papers", "python-tools"] },
-]
 tooling = [
     { name = "research-repo-tools", extra = ["python-tools"] },
 ]
@@ -493,7 +490,6 @@ tooling = [
 [package.group-requires-python]
 dev = ">=3.15"
 notebooks = ">=3.15"
-papers = ">=3.15"
 tooling = ">=3.15"
 
 [package.metadata]
@@ -526,7 +522,6 @@ notebooks = [
     { name = "polars", marker = "python_full_version >= '3.15'", specifier = ">=2.0.0" },
     { name = "research-repo-tools", extras = ["notebooks", "python-tools"], marker = "python_full_version >= '3.15'", specifier = "==0.2.3" },
 ]
-papers = [{ name = "research-repo-tools", extras = ["papers", "python-tools"], marker = "python_full_version >= '3.15'", specifier = "==0.2.3" }]
 tooling = [{ name = "research-repo-tools", extras = ["python-tools"], marker = "python_full_version >= '3.15'", specifier = "==0.2.3" }]
 
 [[package]]
@@ -1810,15 +1805,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pypdf"
-version = "6.21.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/06/28/081f1cbcca7042441dafc8de00f48ba60853f89e5bff92c5f26477346d81/pypdf-6.21.2.tar.gz", hash = "sha256:0a3e1c5c886a1be03646c16a04827cc166c2a0575c971b26a4bf89686551c2d4", size = 7144571, upload-time = "2026-10-21T16:44:55.272Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/4d/c9d2d67f204eff463237a1a8f5e25a6923b7b1043982b91fcaf104c8ef60/pypdf-6.21.2-py3-none-any.whl", hash = "sha256:1d44d1a3a200f25062adff0085b02040e4646431ac2ccac22e42679e91466084", size = 407766, upload-time = "2026-10-21T16:44:53.626Z" },
-]
-
-[[package]]
 name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1983,9 +1969,6 @@ notebooks = [
     { name = "ipykernel" },
     { name = "nbclient" },
     { name = "nbformat" },
-]
-papers = [
-    { name = "pypdf" },
 ]
 python-tools = [
     { name = "pytest" },

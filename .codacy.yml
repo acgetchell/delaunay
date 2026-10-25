@@ -55,6 +55,9 @@ engines:
     include_paths:
       - "**/*.md"
     exclude_paths:
+      # Generated commit history uses docs/templates/changelog_format.toml;
+      # preserve historical list structure instead of applying prose rules.
+      - "CHANGELOG.md"
       # Release checklists use stable absolute step numbers across fenced
       # command blocks; local rumdl intentionally disables MD029 for this.
       - "docs/RELEASING.md"
@@ -83,6 +86,5 @@ exclude_paths:
   - "docs/archive/**"
   - "docs/archives/changelog/**"
   - "tests/tooling/**"
-  - "tests/papers/**"
   # Semgrep fixtures intentionally contain bad examples for rule tests.
   - "tests/semgrep/**"

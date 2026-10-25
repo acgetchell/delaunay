@@ -20,7 +20,7 @@ later UTC date intentionally advances the declared release date. Crossing
 midnight alone requires no update: the `declared` date policy allows preparation
 and tagging on different UTC days when citation and changelog dates agree.
 Repeated `performance-release` runs can produce different measurements.
-With unchanged history and configuration, repeating `changelog-unreleased`
+With unchanged history and configuration, repeating `changelog-release`
 reuses the declared citation date even after UTC midnight.
 
 ## Contents
@@ -60,7 +60,7 @@ The release commands share la-stack's operator-facing roles:
 
 | Recipe | Purpose |
 | --- | --- |
-| `changelog-unreleased TAG [DATE]` | Generate prospective notes using the prepared citation date by default |
+| `changelog-release TAG [DATE]` | Generate prospective notes using the prepared citation date by default |
 | `changelog-preview [--tag TAG] [--date DATE]` | Preview the same generation without publishing files |
 | `performance-release [CURRENT BASELINE]` | Measure, retain and promote release performance evidence |
 | `performance-readme` | Publish the README snapshot from validated, promoted measurements |
@@ -161,7 +161,7 @@ Review the resulting metadata diff before continuing.
 ### 3. Generate the release changelog
 
 ```bash
-just changelog-unreleased "$TAG"
+just changelog-release "$TAG"
 ```
 
 This generates `CHANGELOG.md` as though the target tag already existed,
@@ -169,12 +169,11 @@ archives completed minor series under `docs/archives/changelog/`, and
 uses `date-released` already recorded in `CITATION.cff`. No `RELEASE_DATE`
 shell variable is needed. With this default-date path, the citation version must
 match the target tag and the date must be valid `YYYY-MM-DD`; invalid metadata
-stops generation before files change. `changelog-release` is the same recipe
-name supported by la-stack.
+stops generation before files change.
 
 Use `just changelog-preview --tag "$TAG"` for a read-only preview with the same
 date default. An explicit date is still available as the second argument to
-`changelog-unreleased`, or as `--date YYYY-MM-DD` for the preview. An explicit
+`changelog-release`, or as `--date YYYY-MM-DD` for the preview. An explicit
 date bypasses the adapter's citation lookup and version check; the shared
 generator still validates the supplied date. To advance the declared date
 deliberately, run `just update-version "$TAG" --date YYYY-MM-DD`
@@ -186,8 +185,10 @@ changes; do not edit them manually.
 
 Fresh comparisons establish workload identity from recorded harness and
 measurement-plan evidence. Benchmark fixtures must pass their scientific
-checks before timings are used. If the baseline fails those checks or its
-harness differs, generate absolute results with `just bench-perf-summary` and
+checks before timings are used. `performance-release` checks both harnesses
+before native benchmark commands, then compares untimed case inventories and
+sampling policies before either revision starts timing. If the baseline fails
+those checks or its harness differs, generate absolute results with `just bench-perf-summary` and
 skip comparison/README publication. Historical reports keep their original
 labels and measurements.
 
@@ -303,7 +304,7 @@ Rerun `just performance-release "$TAG" "vA.B.C"` with the same baseline,
 then rerun `just performance-readme`. When the release has only absolute
 measurements, rerun `just bench-perf-summary` instead.
 
-Rerun `just changelog-unreleased "$TAG"`, review and stage only the regenerated
+Rerun `just changelog-release "$TAG"`, review and stage only the regenerated
 release outputs, commit that update separately, and rerun the final release and
 publish gates.
 

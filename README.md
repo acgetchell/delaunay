@@ -299,8 +299,8 @@ APIs use `validate()` / `validation_report()`.
 
 For generated failure pictures, public test anchors, and diagnostics for each layer, run
 [`notebooks/01_validation.ipynb`][validation-notebook]. For the paper-facing mathematical
-exposition, see [`papers/validation.tex`][validation-paper-source] and the compiled reviewer copy at
-[`papers/validation.pdf`][validation-paper].
+exposition, see the [manuscript source][validation-paper-source] and
+[reviewer PDF][validation-paper] in acgetchell/Papers.
 
 <!-- Keep this explicit anchor stable across GitHub and rustdoc rendering. -->
 <!-- markdownlint-disable-next-line MD033 -->
@@ -507,7 +507,7 @@ This project is licensed under the [BSD 3-Clause License](https://github.com/acg
 [agent-guide]: https://github.com/acgetchell/delaunay/blob/main/AGENTS.md
 [ai-development-guide]: https://github.com/acgetchell/delaunay/blob/main/CONTRIBUTING.md#ai-assisted-development
 [api-design-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/api_design.md
-[artifact-guide]: https://github.com/acgetchell/delaunay/blob/main/papers/ARTIFACT.md
+[artifact-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/archive/ARTIFACT.md
 [benchmarks-guide]: https://github.com/acgetchell/delaunay/blob/main/benches/README.md
 [changelog]: https://github.com/acgetchell/delaunay/blob/main/CHANGELOG.md
 [checkpoint-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/construction_and_validation.md#owner-checkpoint-manifests
@@ -542,6 +542,6 @@ This project is licensed under the [BSD 3-Clause License](https://github.com/acg
 [topology-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/topology.md
 [toroidal-example]: https://github.com/acgetchell/delaunay/blob/main/examples/toroidal_construction.rs
 [validation-notebook]: https://github.com/acgetchell/delaunay/blob/main/notebooks/01_validation.ipynb
-[validation-paper]: https://github.com/acgetchell/delaunay/blob/main/papers/validation.pdf
-[validation-paper-source]: https://github.com/acgetchell/delaunay/blob/main/papers/validation.tex
+[validation-paper]: https://github.com/acgetchell/Papers/blob/main/delaunay-validation/validation.pdf
+[validation-paper-source]: https://github.com/acgetchell/Papers/blob/main/delaunay-validation/validation.tex
 [workflows-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/USING_TRIANGULATIONS.md
