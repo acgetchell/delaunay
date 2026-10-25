@@ -37,10 +37,10 @@ MEASUREMENT_MODES = ("local-worktrees", "github-assets")
 RELEASE_SIGNAL_TARGETS = (
     "ci_performance_suite",
     "circumsphere_containment",
-    "cold_path_predicates",
     "locate",
-    "realization_validation",
 )
+# Keep diagnostic ownership for explicitly selected suites and historical rows.
+# Only RELEASE_SIGNAL_TARGETS defines routine CI and release measurements.
 RELEASE_SIGNAL_GROUPS_BY_TARGET = {
     "ci_performance_suite": (
         "tds_new_",
@@ -643,6 +643,8 @@ class PerformanceBundle:
             blockers.append("release-signal coverage is incomplete or non-comparable: " + ", ".join(sorted(incomplete)))
         if self.context.suite != "release-signal" or self.context.scope != "release-signal":
             blockers.append("curated promotion requires the release-signal suite and scope")
+        if self.context.current_completed_targets != RELEASE_SIGNAL_TARGETS:
+            blockers.append("current measurement does not match the active public API benchmark plan; regenerate release evidence")
         if not target_transition:
             missing_current = sorted(set(RELEASE_SIGNAL_TARGETS) - set(self.context.current_completed_targets))
             missing_baseline = sorted(set(RELEASE_SIGNAL_TARGETS) - set(self.context.baseline_completed_targets))

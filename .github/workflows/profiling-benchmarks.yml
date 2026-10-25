@@ -1,38 +1,31 @@
 name: Comprehensive Profiling Benchmarks
 
+# Diagnostic profiling is opt-in. Public API performance is owned by
+# benchmarks.yml and release-benchmarks.yml through the same measurement plan.
 on:
-  # Manual trigger for on-demand profiling runs
-  # Allows developers to run full production mode or quick development mode with optional filters
   workflow_dispatch:
     inputs:
       mode:
-        description: "Profiling mode"
-        required: false
+        description: "Profiling scale (production can take hours)"
+        required: true
         default: "development"
         type: choice
         options:
           - "development"
           - "production"
+      suite:
+        description: "Measure timings or instrumented allocations, once"
+        required: true
+        default: "timing"
+        type: choice
+        options:
+          - "timing"
+          - "allocations"
       benchmark_filter:
-        description: 'Benchmark filter (optional - e.g., "construction" or "memory_profiling")'
+        description: "Timing regex or exact allocation case ID; blank selects the suite"
         required: false
         default: ""
         type: string
-
-  # Monthly scheduled run for trend monitoring
-  # Uses production mode for comprehensive long-term performance tracking
-
-  schedule:
-    # Sundays at 2 AM UTC; the schedule gate admits only the first Sunday.
-    - cron: "0 2 * * 0"
-
-  # Trigger on release tags for baseline profiling data
-  # Uses development mode to keep runtime reasonable (~1-2 hours) while still capturing performance snapshots
-  # Full production profiling can be triggered manually if needed for specific releases
-
-  push:
-    tags:
-      - "v*.*.*"
 
 permissions:
   contents: read
@@ -46,221 +39,97 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  schedule-gate:
-    name: Select profiling runs
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      run: ${{ steps.select.outputs.run }}
-    steps:
-      - name: Allow manual, tag, and first-Sunday runs
-        id: select
-        run: |
-          if [[ "$GITHUB_EVENT_NAME" != "schedule" ]] || (( 10#$(date -u +%d) <= 7 )); then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
-
   comprehensive-profiling:
     name: Comprehensive Performance Profiling
-    needs: schedule-gate
-    if: needs.schedule-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # 6 hours timeout for comprehensive profiling
-
+    timeout-minutes: 360
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
-        with:
-          cache: false
-          rustflags: ""
+      - name: Set up shared tooling
+        uses: $/.github/actions/setup-just
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential
-
-      - name: Set up declared uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version-file: pyproject.toml
-          enable-cache: false
-
-      - name: Install locked profiling dependencies
-        run: uv sync --locked --managed-python --no-default-groups
-
-      - name: Set profiling mode
+      - name: Select diagnostic workload
         env:
-          INPUT_MODE: ${{ github.event.inputs.mode || 'development' }}
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_SUITE: ${{ inputs.suite }}
+          INPUT_FILTER: ${{ inputs.benchmark_filter }}
         run: |
-          # Profiling mode determination:
-          # 1. Tag pushes (github.event_name == "push"): Always use development mode
-          #    - Avoids CI timeout issues on release tag creation
-          #    - Provides quick performance snapshot (~1-2 hours runtime)
-          #    - Full profiling can be triggered manually if needed
-          # 2. Manual dispatch with mode="development": Use development mode
-          # 3. Scheduled runs and manual dispatch with mode="production": Use production mode
-          #    - Full large-scale profiling counts, including opt-in 4D 5K/10K
-          #    - May take 4-6 hours
-          if [[ "$GITHUB_EVENT_NAME" == "push" ]] || [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$INPUT_MODE" == "development" ]]; then
-            echo "PROFILING_DEV_MODE=1" >> "$GITHUB_ENV"
-            echo "Running in development mode (reduced scale)"
-            # Smaller, faster dev runs
-            {
-              echo "BENCH_SAMPLE_SIZE=30"
-              echo "BENCH_WARMUP_SECS=2"
-              echo "BENCH_MEASUREMENT_TIME=3"
-              # Keep 4D reduced set (no BENCH_LARGE_SCALE)
-            } >> "$GITHUB_ENV"
+          set -euo pipefail
+          if [[ "$INPUT_SUITE" == "allocations" ]]; then
+            selected_filter="${INPUT_FILTER:-memory_profiling}"
+            if [[ "$selected_filter" != "memory_profiling" && "$selected_filter" != memory_profiling/* ]]; then
+              echo "Allocation filters must select memory_profiling or a case within it." >&2
+              exit 2
+            fi
           else
-            echo "Running in production mode (full scale)"
-            # Heavier production runs
-            {
-              echo "BENCH_SAMPLE_SIZE=100"
-              echo "BENCH_WARMUP_SECS=5"
-              echo "BENCH_MEASUREMENT_TIME=10"
-              echo "BENCH_LARGE_SCALE=1"  # enable 4D 5K/10K
-            } >> "$GITHUB_ENV"
+            selected_filter="$INPUT_FILTER"
+            if [[ "$selected_filter" == memory_profiling* ]]; then
+              echo "Select the allocations suite to measure memory_profiling." >&2
+              exit 2
+            fi
+          fi
+          # Filters are single-line argv values, never shell source or env-file records.
+          if [[ "$selected_filter" == *$'\n'* || "$selected_filter" == *$'\r'* || "$selected_filter" == -* ]]; then
+            echo "Invalid benchmark filter." >&2
+            exit 2
+          fi
+          {
+            echo "BENCH_FILTER_VALUE=$selected_filter"
+            echo "PROFILE_METADATA_MODE=$INPUT_MODE"
+            echo "PROFILE_METADATA_SUITE=$INPUT_SUITE"
+            echo "BENCH_SAMPLE_SIZE=10"
+            echo "BENCH_WARMUP_SECS=2"
+            echo "BENCH_MEASUREMENT_TIME=3"
+          } >> "$GITHUB_ENV"
+          if [[ "$INPUT_MODE" == "development" ]]; then
+            echo "PROFILING_DEV_MODE=1" >> "$GITHUB_ENV"
+          else
+            echo "BENCH_LARGE_SCALE=1" >> "$GITHUB_ENV"
           fi
 
       - name: Capture profiling environment metadata
-        env:
-          BENCH_FILTER_VALUE: ${{ github.event.inputs.benchmark_filter || '' }}
-        run: uv run --locked --no-sync --no-default-groups delaunay-profile-metadata
+        run: uv run --locked --no-sync delaunay-profile-metadata
 
-      - name: Build profiling suite
-        run: |
-          # Build with the same perf profile used by `cargo bench --profile perf`
-          # below so the bench step reuses these artifacts instead of rebuilding.
-          cargo build --profile perf --bench profiling_suite
+      - name: Run allocation API tests
+        if: inputs.suite == 'allocations'
+        run: cargo test --locked --test allocation_api --features count-allocations
 
-      - name: Run comprehensive profiling benchmarks
+      - name: Measure selected diagnostic suite once
         env:
-          BENCH_FILTER_VALUE: ${{ github.event.inputs.benchmark_filter || '' }}
+          INPUT_SUITE: ${{ inputs.suite }}
         run: |
-          # Create results directory
+          set -euo pipefail
           mkdir -p profiling-results
-
-          # Set benchmark filter if provided. Keep the Criterion separator and
-          # filter as separate argv tokens for cargo bench.
-          BENCH_FILTER_ARGS=()
-          if [[ -n "$BENCH_FILTER_VALUE" ]]; then
-            BENCH_FILTER_ARGS=("--" "$BENCH_FILTER_VALUE")
+          cargo_args=(bench --locked --profile perf --bench profiling_suite)
+          criterion_args=(--noplot)
+          if [[ "$INPUT_SUITE" == "allocations" ]]; then
+            cargo_args+=(--features count-allocations)
+            if [[ "$BENCH_FILTER_VALUE" == "memory_profiling" ]]; then
+              criterion_args+=('^memory_profiling/')
+            else
+              criterion_args+=(--exact "$BENCH_FILTER_VALUE")
+            fi
+          elif [[ -n "$BENCH_FILTER_VALUE" ]]; then
+            criterion_args+=("$BENCH_FILTER_VALUE")
           fi
+          cargo "${cargo_args[@]}" -- "${criterion_args[@]}" 2>&1 | tee profiling-results/profiling_output.log
 
-          # Run profiling (timing-focused)
-          echo "Starting comprehensive profiling benchmarks..."
-
-          # Determine if memory profiling is requested via filter
-          # Match memory_profiling group specifically (not just any "memory" substring)
-          MEMORY_FEATURES=""
-          if [[ "$BENCH_FILTER_VALUE" =~ (^|[[:space:]])memory_profiling($|[[:space:]]) ]]; then
-            MEMORY_FEATURES="--features count-allocations"
-            echo "MEMORY_BENCHMARKS_RUN=true" >> "$GITHUB_ENV"
-          fi
-
-          # shellcheck disable=SC2086
-          cargo bench --profile perf --bench profiling_suite $MEMORY_FEATURES "${BENCH_FILTER_ARGS[@]}" \
-            2>&1 | tee profiling-results/profiling_output.log
-
-      # Run dedicated memory profiling if not already executed above
-      # Skip if: MEMORY_BENCHMARKS_RUN=true (memory benchmarks already ran with filter)
-      # This prevents redundant memory profiling runs
-      - name: Run profiling with memory allocation tracking (if not already done)
-        if: env.MEMORY_BENCHMARKS_RUN != 'true'
+      - name: Summarize diagnostic run
         run: |
-          echo "Running memory-specific profiling with allocation tracking..."
-          cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling \
-            2>&1 | tee profiling-results/memory_profiling_detailed.log
-
-      - name: Generate profiling summary
-        env:
-          BENCH_FILTER_VALUE: ${{ github.event.inputs.benchmark_filter || '' }}
-          SUMMARY_BRANCH: ${{ github.ref_name }}
-          SUMMARY_COMMIT: ${{ github.sha }}
-          SUMMARY_RUNNER_OS: ${{ runner.os }}
-          SUMMARY_TRIGGER: ${{ github.event_name }}
-        run: |
-          if [[ "${PROFILING_DEV_MODE:-}" == "1" ]]; then
-            summary_mode="Development"
-            summary_mode_detail="Development (reduced auxiliary profiling for faster iteration)"
-          else
-            summary_mode="Production"
-            summary_mode_detail="Production (large-scale counts plus auxiliary profiling)"
-          fi
-          if [[ "${MEMORY_BENCHMARKS_RUN:-}" == "true" ]]; then
-            summary_memory_tracking="Enabled for memory benchmarks (count-allocations feature)"
-          else
-            summary_memory_tracking="Enabled only for memory-specific runs"
-          fi
-          summary_benchmark_filter="${BENCH_FILTER_VALUE:-All benchmarks}"
-          if [[ -f profiling-results/memory_profiling_detailed.log ]]; then
-            summary_memory_log="- \`memory_profiling_detailed.log\`: Output from the dedicated allocation run"
-          else
-            summary_memory_log="- Dedicated allocation run skipped; memory output is in \`profiling_output.log\`"
-          fi
-
-          # Create a summary of the profiling run
-          cat > profiling-results/profiling_summary.md << EOF
-          # Comprehensive Profiling Results
-
-          **Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          **Commit**: ${SUMMARY_COMMIT}
-          **Branch**: ${SUMMARY_BRANCH}
-          **Trigger**: ${SUMMARY_TRIGGER}
-          **Mode**: ${summary_mode}
-          **Runner**: ${SUMMARY_RUNNER_OS}
-
-          ## Configuration
-
-          - **Profiling Mode**: ${summary_mode_detail}
-          - **Memory Tracking**: ${summary_memory_tracking}
-          - **Benchmark Filter**: ${summary_benchmark_filter}
-
-          ## Available Benchmark Categories
-
-          The filter above selects from these categories. See the logs and Criterion
-          results for the cases actually measured.
-
-          - **Large-scale Profiling**: Construction, RSS memory, validation, and traversal (2D-5D)
-          - **Allocation Profiling**: Memory allocation tracking and analysis
-          - **Query Latency**: Circumsphere containment and traversal query performance
-          - **Algorithmic Bottlenecks**: Boundary facets and convex hull operations
-
-          ## Available Point Distributions
-
-          - **Random**: Uniform random distribution for large-scale and query workloads
-          - **Adversarial**: Large-coordinate clustered validation diagnostics
-
-          ## Files Generated
-
-          - \`profiling_output.log\`: Complete benchmark output
-          ${summary_memory_log}
-          - \`environment.json\`: Shared host/source provenance, native tool declarations, profile, and filter metadata
-          - \`target/criterion/\`: HTML reports and detailed timing data in the artifact
-
-          EOF
-
-          # Publish summary to job summary UI for quick visibility
-          cat profiling-results/profiling_summary.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Save profiling baseline for tagged release
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          SAFE_REF_NAME: ${{ github.ref_name }}
-        run: |
-          # For tagged releases, save as new baseline
-          echo "Tagged release detected - this will serve as new profiling baseline"
-          safe_ref_name="$(printf '%s' "$SAFE_REF_NAME" | tr -c 'A-Za-z0-9._-' '_')"
-          cp -r target/criterion "profiling-results/criterion-baseline-${safe_ref_name}"
+          {
+            echo "### Diagnostic profiling"
+            echo ""
+            echo "One selected suite was measured; no release baseline was published."
+            echo "See environment.json and profiling_output.log for the configuration and results."
+            echo "Instrumented allocation timings are not comparable to uninstrumented API timings."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload profiling results
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: profiling-results-${{ github.run_number }}
@@ -268,91 +137,3 @@ jobs:
             profiling-results/
             target/criterion/
           retention-days: 30
-
-      - name: Upload profiling baseline (for tagged releases)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: profiling-baseline-${{ github.ref_name }}
-          path: |
-            profiling-results/
-            target/criterion/
-          retention-days: 90 # Keep baselines longer
-
-      - name: Log completion (if triggered manually)
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          SUMMARY_COMMIT: ${{ github.sha }}
-        run: |
-          echo "Manual profiling run completed for commit $SUMMARY_COMMIT"
-          echo "Check the Actions tab for detailed results and artifacts"
-
-  memory-stress-test:
-    name: Memory Stress Testing
-    needs: schedule-gate
-    if: needs.schedule-gate.outputs.run == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      # CI-friendly configuration to ensure completion within time limits
-      PROFILING_DEV_MODE: "1"
-      BENCH_SAMPLE_SIZE: "10"
-      BENCH_WARMUP_SECS: "1"
-      BENCH_MEASUREMENT_TIME: "5"
-      BENCH_PERCENTILE: "95"
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
-        with:
-          cache: false
-          rustflags: ""
-
-      - name: Run allocation API tests
-        run: |
-          echo "Running allocation API tests..."
-          cargo test --test allocation_api --features count-allocations --verbose
-
-      - name: Set up declared uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version-file: pyproject.toml
-          enable-cache: false
-
-      - name: Install locked profiling dependencies
-        run: uv sync --locked --managed-python --no-default-groups
-
-      - name: Capture memory profiling environment metadata
-        env:
-          PROFILE_METADATA_TITLE: Memory Profiling Environment
-          PROFILE_METADATA_FILTER: memory_profiling
-          PROFILE_METADATA_MODE: development
-        run: uv run --locked --no-sync --no-default-groups delaunay-profile-metadata
-
-      - name: Run memory scaling benchmarks
-        env:
-          PROFILING_DEV_MODE: "1"
-          BENCH_SAMPLE_SIZE: "10"
-          BENCH_WARMUP_SECS: "1"
-          BENCH_MEASUREMENT_TIME: "5"
-          BENCH_PERCENTILE: "95"
-        run: |
-          echo "Running memory profiling analysis with CI-friendly configuration..."
-          echo "PROFILING_DEV_MODE=$PROFILING_DEV_MODE"
-          echo "BENCH_SAMPLE_SIZE=$BENCH_SAMPLE_SIZE"
-          echo "BENCH_WARMUP_SECS=$BENCH_WARMUP_SECS"
-          echo "BENCH_MEASUREMENT_TIME=$BENCH_MEASUREMENT_TIME"
-          cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
-      - name: Upload memory test results
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: memory-stress-results-${{ github.run_number }}
-          path: |
-            profiling-results/
-            target/criterion/
-          retention-days: 14

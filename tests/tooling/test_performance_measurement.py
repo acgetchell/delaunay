@@ -108,6 +108,13 @@ def test_mixed_sampling_retains_canonical_ids_policy_and_provenance(tmp_path: Pa
     assert benchmark_utils._load_fresh_measurement(criterion) == evidence
 
 
+def test_duplicate_targets_fail_before_any_native_work(tmp_path: Path, native_boundary: list[str]) -> None:
+    """Repeated target selection must not trigger duplicate discovery, preflight or sampling."""
+    with pytest.raises(ValueError, match="targets must be unique"):
+        benchmark_utils._measure_suite(tmp_path, (TARGETS[0], TARGETS[0]))
+    assert native_boundary == []
+
+
 @pytest.mark.parametrize("mutation", ["raw", "policy", "gate"])
 def test_retained_evidence_cannot_certify_changed_release_inputs(
     tmp_path: Path,

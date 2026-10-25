@@ -305,11 +305,7 @@ def write_complete_summary_measurement(project_root: Path, *, cargo_profile: str
         for method in ("insphere", "distance", "lifted")
     )
     cases.extend(
-        (
-            ("cold_path_predicates", "predicates/hot/case", "predicates/hot/case", 100),
-            ("locate", "locate/no_hint/3d/case", "locate/no_hint/3d/case", 10),
-            ("realization_validation", "realization_validation/case", "realization_validation/case", 100),
-        ),
+        (("locate", "locate/no_hint/3d/case", "locate/no_hint/3d/case", 10),),
     )
     criterion = project_root / "target" / "criterion"
     for _target, directory, full_id, count in cases:
@@ -340,6 +336,9 @@ def write_complete_summary_measurement(project_root: Path, *, cargo_profile: str
             ("delaunay.inventory", json.dumps(json.loads(inventory_payload))),
             ("delaunay.sampling-policy", policy_payload.decode()),
             ("delaunay.scientific-preflight", "passed"),
+            ("delaunay.completed-at", "2026-10-25T10:00:00+00:00"),
+            ("release", "v0.8.3"),
+            ("host", json.dumps(json.loads(serialize_host(HostMetadata("Measured OS", "test", "Measured CPU", 4, 8, 4096, (("rustc", "rustc 1.99.1"),)))))),
             ("delaunay.sample", "new"),
             ("delaunay.raw-sample-sha256", benchmark_utils._criterion_sample_digest(criterion, "new")),
         ),
@@ -499,10 +498,12 @@ def test_release_signal_excludes_manual_topology_benchmark() -> None:
     assert benchmark_utils.BENCH_COMPARE_GROUP_PREFIXES_BY_SUITE["topology"] == ("topology_guarantee_construction",)
 
 
-def test_release_signal_includes_realization_validation_benchmark() -> None:
-    """Release comparisons should retain the focused Level 4 regression signal."""
-    assert "realization_validation" in benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
-    assert "realization_" in benchmark_utils.RELEASE_SIGNAL_GROUP_PREFIXES
+def test_release_signal_owns_public_api_workloads_without_internal_diagnostics() -> None:
+    """CI and release sampling must share one public API measurement plan."""
+    assert benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS == ("ci_performance_suite", "circumsphere_containment", "locate")
+    assert tuple(measurement.target for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN) == benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
+    assert "predicates" not in benchmark_utils.RELEASE_SIGNAL_GROUP_PREFIXES
+    assert "realization_" not in benchmark_utils.RELEASE_SIGNAL_GROUP_PREFIXES
 
 
 def test_release_measurement_plan_matches_workflow_and_just_recipe() -> None:
@@ -534,6 +535,10 @@ def test_release_measurement_plan_matches_workflow_and_just_recipe() -> None:
     assert all(measurement.sampling_mode == "full" for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN)
     assert all(not measurement.criterion_arguments for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN)
     assert "--run-benchmarks" not in workflow_step
+    summary_recipe = re.search(r"^bench-perf-summary\b.*?(?=^# )", justfile, flags=re.MULTILINE | re.DOTALL)
+    assert summary_recipe is not None
+    assert "generate-summary --strict" in summary_recipe.group()
+    assert "--run-benchmarks" not in summary_recipe.group()
 
     expected_group_contracts = {
         "ci_performance_suite": (
@@ -548,9 +553,7 @@ def test_release_measurement_plan_matches_workflow_and_just_recipe() -> None:
             "bistellar_flips_",
         ),
         "circumsphere_containment": ("random", "2d", "3d", "4d", "5d", "edge_cases_", "circumcenter"),
-        "cold_path_predicates": ("predicates",),
         "locate": ("locate",),
-        "realization_validation": ("realization_",),
     }
     assert {measurement.target: measurement.required_group_prefixes for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN} == (
         expected_group_contracts
@@ -758,7 +761,7 @@ def test_realization_validation_stable_ids_survive_saved_baseline_comparison(tmp
         write_named_estimate(tmp_path, benchmark_id, "new", 1_000_000.0)
         write_named_estimate(tmp_path, benchmark_id, "last", 2_000_000.0)
 
-    comparisons = collect_criterion_comparisons(tmp_path / "criterion", "last")
+    comparisons = collect_criterion_comparisons(tmp_path / "criterion", "last", scope="all-benches")
 
     assert {comparison.benchmark for comparison in comparisons} == {"/".join(benchmark_id) for benchmark_id in benchmark_ids}
 
@@ -1741,13 +1744,13 @@ def test_versioned_release_asset_rejects_placeholder_recorded_host(tmp_path: Pat
 
 def write_complete_release_samples(tmp_path: Path) -> tuple[Path, CriterionInventory]:
     """Write raw cases with independent counts for every release-signal target."""
-    ids = ("validation/validate_3d/750", "random/insphere", "predicates/hot/case", "locate/no_hint/3d/case", "realization_validation/case")
+    ids = ("validation/validate_3d/750", "random/insphere", "locate/no_hint/3d/case")
     for name in ids:
         write_named_estimate(tmp_path, tuple(name.split("/")), "new", 1_000_000.0)
     criterion = tmp_path / "criterion"
     inventory = CriterionInventory(tuple((target, (name,)) for target, name in zip(benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS, ids, strict=True)))
     policy = benchmark_utils._sampling_policy(inventory.expected)
-    for name, count in zip(ids, (15, 100, 100, 10, 100), strict=True):
+    for name, count in zip(ids, (15, 100, 10), strict=True):
         directory = criterion / name / "new"
         (directory / "sample.json").write_text(json.dumps({"iters": [1] * count, "times": [100] * count}), encoding=UTF8)
         estimates = json.loads((directory / "estimates.json").read_bytes())
@@ -3079,6 +3082,58 @@ class TestPerformanceSummaryGenerator:
             assert "Generated performance summary" in captured.out
         assert list(tmp_path.glob(".summary.md.*.tmp")) == []
 
+    def test_strict_summary_is_repeatable_without_sampling_or_relabeling(self, tmp_path: Path) -> None:
+        """Re-rendering uses the measured date, version, source and host, not today's environment."""
+        write_complete_summary_measurement(tmp_path)
+        (tmp_path / "Cargo.toml").write_text('[package]\nversion = "9.9.9"\n', encoding=UTF8)
+        generator = PerformanceSummaryGenerator(tmp_path)
+        output = tmp_path / "summary.md"
+        with (
+            patch("benchmark_utils.run_release_signal_measurement_plan") as run_plan,
+            patch("benchmark_utils.capture_host") as capture_render_host,
+            patch("benchmark_utils.get_git_commit_hash") as render_commit,
+            patch("benchmark_utils.datetime", wraps=datetime) as clock,
+        ):
+            clock.now.side_effect = AssertionError("strict rendering must not use wall-clock time")
+            assert generator.generate_summary(output_path=output, strict=True)
+            first = output.read_bytes()
+            assert generator.generate_summary(output_path=output, strict=True)
+            assert output.read_bytes() == first
+            run_plan.assert_not_called()
+            capture_render_host.assert_not_called()
+            render_commit.assert_not_called()
+        content = first.decode()
+        assert "2026-10-25 10:00:00 UTC" in content
+        assert "Package Version**: 0.8.3" in content
+        assert "Measured CPU" in content
+        assert "Measured OS" in content
+        assert "9.9.9" not in content
+
+    def test_strict_summary_rejects_a_superseded_plan_without_resampling(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Valid raw evidence for another plan cannot silently certify this release contract."""
+        criterion = write_complete_summary_measurement(tmp_path)
+        evidence = benchmark_utils._load_fresh_measurement(criterion)
+        measurement = evidence.sources[0][1]
+        context = dict(measurement.context)
+        inventory = benchmark_utils.parse_inventory(context["delaunay.inventory"].encode())
+        inventory = replace(inventory, suites=(*inventory.suites[:-1], ("realization_validation", inventory.suites[-1][1])))
+        inventory_payload = serialize_inventory(inventory)
+        (criterion / benchmark_utils.MEASUREMENT_INVENTORY_FILE).write_bytes(inventory_payload)
+        context["delaunay.inventory"] = json.dumps(json.loads(inventory_payload))
+        measurement = replace(measurement, context=tuple(context.items()))
+        evidence = replace(evidence, sources=(("measurement", measurement),))
+        payload, manifest = serialize_evidence(evidence)
+        (criterion / "delaunay-sample.json").write_bytes(payload)
+        (criterion / "delaunay-evidence.json").write_bytes(manifest)
+        assert benchmark_utils._load_fresh_measurement(criterion) == evidence
+        output = tmp_path / "summary.md"
+        output.write_bytes(b"previous report\n")
+        with patch("benchmark_utils.run_release_signal_measurement_plan") as run_plan:
+            assert not PerformanceSummaryGenerator(tmp_path).generate_summary(output_path=output, strict=True)
+            run_plan.assert_not_called()
+        assert output.read_bytes() == b"previous report\n"
+        assert "different benchmark plan" in capsys.readouterr().err
+
     @patch("benchmark_utils.run_release_signal_measurement_plan")
     def test_generate_summary_with_benchmarks(self, mock_run_plan: MagicMock) -> None:
         """Test generating summary with fresh benchmark run."""
@@ -3247,7 +3302,6 @@ class TestPerformanceSummaryGenerator:
             ("circumsphere_containment", ("random_insphere_1000_queries",), "random/insphere_1000_queries", "random/insphere_1000_queries"),
             ("circumsphere_containment", ("3d_insphere",), "3d/insphere", "3d/insphere"),
             ("circumsphere_containment", ("circumcenter_solve_path", "regular_lu_3d"), "circumcenter/solve_path/regular_lu_3d", "circumcenter/solve_path"),
-            ("cold_path_predicates", ("predicates_hot", "insphere_3d", "10000"), "predicates/hot/insphere_3d/10000", "predicates/hot"),
             (
                 "locate",
                 ("locate_no_hint_2d", "locate", "vertices_500_simplices_983"),
@@ -3343,7 +3397,7 @@ class TestPerformanceSummaryGenerator:
         assert success is False
         assert not (tmp_path / "summary.md").exists()
         captured = capsys.readouterr()
-        assert "realization_validation report section 'Realization validation' is incomplete" in captured.err
+        assert "locate report section 'Point location' is incomplete" in captured.err
 
     def test_generate_summary_strict_rejects_missing_circumsphere_results(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that strict summary generation fails when circumsphere results are absent."""

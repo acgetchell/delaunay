@@ -23,7 +23,7 @@
 //! cargo bench --profile perf --bench profiling_suite -- construction
 //!
 //! # Allocation profiling only
-//! cargo bench --profile perf --bench profiling_suite -- memory_profiling
+//! cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
 //!
 //! # Query and iteration profiling only
 //! cargo bench --profile perf --bench profiling_suite -- queries
@@ -65,16 +65,19 @@ use std::env;
 use std::hint::black_box;
 use std::num::NonZeroUsize;
 use std::sync::{Mutex, Once, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(feature = "count-allocations")]
+use std::time::Instant;
 
-#[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+#[cfg(feature = "count-allocations")]
 use allocation_counter::AllocationInfo;
 #[cfg(feature = "count-allocations")]
 use allocation_counter::measure;
+#[cfg(feature = "count-allocations")]
+use criterion::BenchmarkGroup;
+#[cfg(feature = "count-allocations")]
 use criterion::measurement::WallTime;
-use criterion::{
-    BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
-};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::collections::SmallBuffer;
 use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder, RetryPolicy, Vertex,
@@ -142,7 +145,7 @@ macro_rules! bench_info {
 }
 
 // SmallBuffer size constants for different use cases
-#[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+#[cfg(feature = "count-allocations")]
 const BENCHMARK_ITERATION_BUFFER_SIZE: usize = 8; // For tracking allocation info across benchmark iterations
 const SIMPLEX_VERTICES_BUFFER_SIZE: usize = 4; // 3D simplex = 4 vertices
 const QUERY_RESULTS_BUFFER_SIZE: usize = 1024; // For bounded query result collections (max 1000 in code)
@@ -166,25 +169,6 @@ struct MemoryInfo {
     after: u64,
     delta: i64,
     tds_delta: i64,
-}
-
-#[cfg(not(feature = "count-allocations"))]
-#[derive(Debug, Default)]
-struct AllocationInfo;
-
-#[cfg(not(feature = "count-allocations"))]
-fn measure(f: impl FnOnce()) -> AllocationInfo {
-    f();
-    AllocationInfo
-}
-
-#[cfg(not(feature = "count-allocations"))]
-fn print_alloc_banner_once() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        #[cfg(feature = "bench-logging")]
-        println!("allocation stats unavailable: count-allocations feature disabled");
-    });
 }
 
 /// Parse `PROFILING_DEV_MODE` environment variable as boolean-like value
@@ -676,7 +660,7 @@ fn bench_5d_suite(c: &mut Criterion) {
 // ============================================================================
 
 /// Read the memory summary percentile from `BENCH_PERCENTILE` (default: 95).
-#[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+#[cfg(feature = "count-allocations")]
 fn configured_percentile() -> usize {
     env::var("BENCH_PERCENTILE")
         .ok()
@@ -685,7 +669,7 @@ fn configured_percentile() -> usize {
 }
 
 /// Format a percentile as an ordinal label for the memory summary.
-#[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+#[cfg(feature = "count-allocations")]
 fn percentile_label(percentile: usize) -> String {
     let suffix = match percentile % 100 {
         11..=13 => "th",
@@ -700,7 +684,7 @@ fn percentile_label(percentile: usize) -> String {
 }
 
 /// Return percentile from a slice of values using nearest-rank method.
-#[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+#[cfg(feature = "count-allocations")]
 fn percentile_nearest_rank(values: &mut [u64], percentile: usize) -> u64 {
     if values.is_empty() {
         return 0;
@@ -717,7 +701,7 @@ fn percentile_nearest_rank(values: &mut [u64], percentile: usize) -> u64 {
 }
 
 /// Print memory allocation summary
-#[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+#[cfg(feature = "count-allocations")]
 #[expect(
     clippy::cast_precision_loss,
     reason = "allocation summary reports byte ratios where f64 precision is sufficient"
@@ -757,7 +741,7 @@ fn print_alloc_summary(
     println!("=====================================\n");
 }
 
-#[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+#[cfg(feature = "count-allocations")]
 #[expect(
     clippy::cast_possible_wrap,
     reason = "sample counts fit signed indexing for percentile diagnostics"
@@ -817,6 +801,7 @@ fn print_alloc_summary_from_samples<const D: usize>(
 }
 
 /// Generic helper to benchmark memory usage for a specific dimension D
+#[cfg(feature = "count-allocations")]
 fn bench_memory_usage<const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     bench_id_prefix: &str,
@@ -824,11 +809,9 @@ fn bench_memory_usage<const D: usize>(
 ) where
     AdaptiveKernel<f64>: ExactPredicates<D>,
 {
-    #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
     let mut allocation_infos: SmallBuffer<AllocationInfo, BENCHMARK_ITERATION_BUFFER_SIZE> =
         SmallBuffer::new();
 
-    #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
     let mut actual_point_counts: SmallBuffer<usize, BENCHMARK_ITERATION_BUFFER_SIZE> =
         SmallBuffer::new();
 
@@ -841,7 +824,6 @@ fn bench_memory_usage<const D: usize>(
 
                 for _ in 0..iters {
                     let points = gen_points::<D>(count, PointDistribution::Random, DEFAULT_SEED);
-                    #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
                     let pts_len = points.len();
                     let vertices = benchmark_vertices_from_generated_points(&points);
                     let start_time = Instant::now();
@@ -855,14 +837,8 @@ fn bench_memory_usage<const D: usize>(
 
                     total_time += start_time.elapsed();
 
-                    #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
-                    {
-                        allocation_infos.push(alloc_info);
-                        actual_point_counts.push(pts_len);
-                    }
-
-                    #[cfg(not(all(feature = "count-allocations", feature = "bench-logging")))]
-                    let _ = alloc_info;
+                    allocation_infos.push(alloc_info);
+                    actual_point_counts.push(pts_len);
                 }
 
                 total_time
@@ -870,15 +846,16 @@ fn bench_memory_usage<const D: usize>(
         },
     );
 
-    #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
     print_alloc_summary_from_samples::<D>(&allocation_infos, &actual_point_counts);
 }
 
-/// Memory usage profiling across different scales and dimensions using allocation counter
-fn benchmark_memory_profiling(c: &mut Criterion) {
-    #[cfg(not(feature = "count-allocations"))]
-    print_alloc_banner_once();
+/// Register no allocation workloads without the instrumented allocator.
+#[cfg(not(feature = "count-allocations"))]
+const fn benchmark_memory_profiling(_c: &mut Criterion) {}
 
+/// Memory usage profiling across different scales and dimensions using allocation counter
+#[cfg(feature = "count-allocations")]
+fn benchmark_memory_profiling(c: &mut Criterion) {
     let counts = if is_dev_mode() {
         &[1_000, 10_000][..]
     } else {

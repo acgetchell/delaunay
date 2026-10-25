@@ -54,20 +54,26 @@ action-lint: _ensure-actionlint
 audit:
     {{ rrt }} security osv uv.lock Cargo.lock tests/fixtures/checkpoint_no_float_roundtrip/Cargo.lock
 
-# Benchmark recipes that produce performance numbers use Cargo's perf profile.
+# Measure public API performance; select all explicitly for the slow diagnostic suite.
 [group('benchmarks and performance')]
-bench:
-    {{ managed }} cargo bench --workspace --profile perf --features bench
+[positional-arguments]
+bench suite="release-signal": _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "$1" == "all" ]]; then
+        {{ managed }} cargo bench --workspace --profile perf --features bench
+    else
+        {{ managed }} uv run --locked benchmark-utils run-release-signal --suite "$1"
+    fi
 
 # Allocation-contract microbenchmarks for public hot paths.
 [group('benchmarks and performance')]
 bench-allocations:
     {{ managed }} cargo bench --profile perf --bench allocation_hot_paths --features count-allocations -- --noplot
 
-# CI regression benchmarks with the perf profile.
+# Run the same public API measurement plan used by CI and releases.
 [group('benchmarks and performance')]
-bench-ci:
-    {{ managed }} cargo bench --profile perf --bench ci_performance_suite
+bench-ci: bench-latest
 
 # Render a Markdown comparison against a saved Criterion baseline.
 [group('benchmarks and performance')]
@@ -93,10 +99,10 @@ bench-latest-vs-last baseline="last" bench_timeout="1800": (bench-latest bench_t
 [group('benchmarks and performance')]
 bench-pachner-stress samples="10": (_bench-pachner-stress samples)
 
-# Generate a release performance summary from fresh perf-profile benchmark runs.
+# Render a release performance summary from retained, validated measurements.
 [group('benchmarks and performance')]
 bench-perf-summary: _ensure-uv
-    {{ managed }} uv run --locked benchmark-utils generate-summary --run-benchmarks --profile perf --strict
+    {{ managed }} uv run --locked benchmark-utils generate-summary --strict
 
 # Execute every curated release fixture once without producing timing evidence.
 [group('benchmarks and performance')]
@@ -108,12 +114,9 @@ bench-preflight bench_timeout="600": _ensure-uv
 bench-save-baseline tag suite="release-signal": _ensure-uv
     {{ managed }} uv run --locked benchmark-utils run-release-signal --suite {{ quote(suite) }} --save-baseline {{ quote(tag) }}
 
-# Smoke-test benchmark harnesses with minimal samples; not for performance data.
-# Criterion requires sample_size >= 10; use the minimum with short measurement/warm-up windows.
-[doc('Smoke-test benchmark harnesses with minimal samples; do not use as performance data.')]
+# Smoke-test public API fixtures once without statistical sampling.
 [group('benchmarks and performance')]
-bench-smoke:
-    CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 {{ managed }} cargo bench --workspace --profile perf --features bench
+bench-smoke: bench-preflight
 
 # Build the crate in the development profile.
 [group('build and setup')]

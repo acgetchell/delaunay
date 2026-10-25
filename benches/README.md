@@ -6,6 +6,29 @@ predicates fast across 2D-5D.
 
 ## Benchmarking Model
 
+Routine CI and release measurements share one public API plan:
+`ci_performance_suite`, `circumsphere_containment`, and `locate`. These cover
+representative construction, mutation, import, validation, hull, predicate, and
+point-location workflows across 2D–5D. Each target is sampled once per measured
+revision. Criterion repetitions estimate timing variability; untimed discovery
+and fixture preflight do not constitute additional timing runs.
+
+Internal microbenchmarks and large-scale profiling are opt-in debugging tools.
+Use a specific `cargo bench --profile perf --bench <target>` invocation, or
+`just bench all` for the complete slow suite. Diagnostic profiling Actions are
+manual-only and select either timing or allocation instrumentation in one job.
+Unit, integration, property, and regression tests independently preserve
+correctness; they are not removed from CI merely because they exercise internals.
+Benchmarks still reject invalid fixtures and failed operations before accepting
+timing evidence.
+
+Measurement and reporting are separate operations. `just bench-latest` produces
+validated raw samples; `just bench-perf-summary` renders those samples without
+running benchmarks. Repeated strict rendering preserves the measured source,
+host, and completion time. Changed plans require fresh measurements; old results
+are never relabeled as evidence for a new plan. Historical artifacts remain
+historical evidence, not a prerequisite for retaining an obsolete methodology.
+
 The benchmark system answers three different questions:
 
 1. **Are the scientific invariants maintained?** Use the normal validation
@@ -38,6 +61,10 @@ Use `just performance-local` for branch and PR work. It measures both revisions
 freshly in isolated worktrees on this machine and retains shared JSON evidence
 under `target/`. The CI performance job uses the same command. Ratios require
 compatible harness, measurement-plan, toolchain, confidence-level and host evidence.
+The comparison workflow runs for relevant PRs or explicit dispatch, without
+repeating the same comparison on every merge to `main`. Release Benchmarks owns
+the measurements for the exact release tag; main correctness/package CI remains
+required separately.
 
 Use release-signal benchmarks for release evidence. They are slower, more
 formal, and tied to release artifacts and report metadata. Create a draft GitHub
@@ -90,7 +117,8 @@ Historical reports retain their original release labels and measurements.
 Fresh comparisons establish workload identity from harness and measurement-plan
 evidence rather than a hard-coded version boundary. Failed scientific fixtures
 invalidate measurements. If no scientifically comparable baseline exists, use
-`just bench-perf-summary` for absolute results and skip comparison publication.
+`just bench-latest` followed by `just bench-perf-summary` for absolute results
+and skip comparison publication.
 
 The canonical `performance-*` release recipes consume local worktrees,
 published release assets, or retained inputs:
@@ -174,10 +202,11 @@ harnesses, normalized measurement plans, completed-target manifests, and
 confidence levels. Broad configuration digests remain provenance but do not
 block ordinary cross-release comparisons. When a release adds or removes a
 benchmark target, the harness and measurement-plan comparison is restricted to
-the canonical targets completed by both revisions; the union must still cover
-the current release-signal plan. Promotion requires complete coverage for an
-unchanged target plan, or an explicitly valid target transition with one-sided
-rows retained, plus at least one comparable row. Scratch reports identify their
+the canonical targets completed by both revisions. The current revision must
+complete exactly the active release-signal plan; an older baseline may have a
+different target set. Promotion requires complete coverage for an unchanged
+target plan, or an explicitly valid target transition with one-sided rows
+retained, plus at least one comparable row. Scratch reports identify their
 adjacent retained pair; promoted reports identify the exact durable pair under
 `docs/archive/performance/data/`. The Markdown report is always rendered from a
 successfully reloaded pair, so it does not become an independent source of
@@ -191,18 +220,18 @@ release membership and the role of targeted diagnostics.
 
 ## Math-Kernel Coverage Audit (#513)
 
-The release plan in `tooling/python/benchmark_utils.py` selects exactly five targets:
-`ci_performance_suite`, `circumsphere_containment`, `cold_path_predicates`,
-`locate`, and `realization_validation`. Every other target in the overview below
-is excluded from `bench-latest`. This audit keeps that plan unchanged: the new
-`math_kernels` target isolates costs already represented by public workflows,
-without multiplying the release matrix with small synthetic cases.
+The release plan in `tooling/python/benchmark_utils.py` selects three public API
+targets: `ci_performance_suite`, `circumsphere_containment`, and `locate`.
+`cold_path_predicates`, `realization_validation`, and `math_kernels` isolate
+implementation costs for manual debugging. They are excluded from `bench-latest`
+and automated performance workflows. The coverage below distinguishes the
+public workflow signal from diagnostic microbenchmarks.
 
-| Kernel family | Existing release target(s) | Targeted addition |
+| Kernel family | Existing coverage | Targeted diagnostic |
 |---------------|----------------------------|-------------------|
-| Orientation / exact fallback | `cold_path_predicates` | `math/orientation` |
-| Barycentric intersection | `realization_validation` | Retain existing cases |
-| Circumsphere / insphere | `circumsphere_containment`, `cold_path_predicates` | `math/geometry` radii |
+| Orientation / exact fallback | Public predicate workflows; manual `cold_path_predicates` | `math/orientation` |
+| Barycentric intersection | Public validation workflows; manual `realization_validation` | Retain existing cases |
+| Circumsphere / insphere | `circumsphere_containment`; manual `cold_path_predicates` | `math/geometry` radii |
 | Quality / volume | Indirect public-workflow coverage | `math/geometry` quality, volume, facet measure, and surface measure |
 | Ridge / Euler / manifold | `ci_performance_suite` validation and proof boundaries | `math/topology` |
 | Spherical distance | None | `math/spherical_distance` adapter and upstream angle |
@@ -215,7 +244,7 @@ through `predicates/sos_degenerate` (2D-6D). Direct ordinary orientation now has
 separate well-conditioned, nonzero cancellation, and zero-determinant cases.
 Circumsphere coverage already compares three predicate families,
 boundary/far/near-boundary queries, 3D circumcenter solve paths, certified
-cospherical exact cases, and SoS; the audit retains those release cases.
+cospherical exact cases, and SoS; the focused path diagnostics remain manual.
 
 `math/spherical_distance` compares `SphericalMetric::try_distance` with the
 released la-stack slice angle on identical canonical coordinates in intrinsic
@@ -302,7 +331,7 @@ tracking.
 
 All reviewed repair, deletion, Pachner, clone, checkpoint, topology-policy,
 allocation, and large-scale profiling targets remain manual diagnostics. Their
-absence from the five-target release plan is intentional, not missing release
+absence from the public API release plan is intentional, not missing release
 execution. Promote a kernel only after representative same-machine runs establish
 a useful, repeatable signal and its added release runtime is justified. A future
 promotion must update the shared measurement plan and its coverage tests together.
@@ -329,7 +358,7 @@ measurement per case; Criterion CLI overrides remain available. Its 170 cases
 are investigations, not new performance claims. Use the same filter, profile,
 hardware, and sampling settings before and after an implementation change.
 `just bench-compile` includes this target in the ordinary benchmark compile
-gate; `just bench` runs it with the broader suite. No new release command or
+gate; `just bench all` runs it with the broader suite. No new release command or
 saved-baseline suite alias is needed.
 
 The orientation setup checks the actual `la-stack` determinant/error-bound
@@ -387,7 +416,7 @@ operations abort on error so a failed path cannot silently publish a fast result
 | `delaunay_repair.rs` | Flip-based Delaunay repair plus transaction-pressure cases | 2D-5D repair-convergent fixtures | ~2-5 min | Repair tuning |
 | `pachner_stress.rs` | Unified Pachner move API stress | Accepted 4D microcases plus forward/inverse round trips | Manual | Pachner move workflow tuning |
 | `pl_manifold_repair.rs` | Over-shared facet and targeted topology repair | 2D/3D synthetic repair fixtures | <1 min | PL-manifold repair tuning |
-| `profiling_suite.rs` | Large-scale construction, memory, query, validation profiling | 2D/3D 10k, 4D 3k, 5D 1k | ~2-3 hr | Manual/monthly |
+| `profiling_suite.rs` | Large-scale construction, memory, query, validation profiling | 2D/3D 10k, 4D 3k, 5D 1k | Hours; workload-dependent | Manual only |
 | `realization_validation.rs` | Level 4 narrow phase and whole validation | Realistic/near-degenerate 2D-5D | ~1-5 min | Level 4 tuning |
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D/3D seeded cases; 4D/5D inverse-k1; 2D-5D rollback | ~1-5 min | Vertex deletion |
 | `locate.rs` | Point-location facet-walk latency (no-hint vs exact-hint) | 2D-5D fixed cases | ~1-3 min | Locate/walk tuning |
@@ -512,8 +541,9 @@ baselines, warm caches, GitHub Actions baseline-artifact polling and numeric
 warning thresholds are retired. A saved Criterion baseline remains available
 for targeted diagnostics through `bench-save-baseline` and `bench-compare`.
 
-Use `just bench-smoke` only to check that benchmark harnesses still compile and
-run with minimal samples. Smoke output is not performance data.
+Use `just bench-smoke` to compile and execute each public API fixture once,
+without statistical sampling. It produces no performance data. Use
+`just bench-compile` to compile every diagnostic harness without executing it.
 
 Use the `bench-latest` family when you want a Criterion saved-baseline report
 that mirrors the sibling `la-stack` workflow:
@@ -528,12 +558,11 @@ just bench-compare last
 ```
 
 `just bench-latest` runs Delaunay's curated release-signal set:
-`ci_performance_suite`, `circumsphere_containment`, `cold_path_predicates`,
-`locate`, and `realization_validation`. This set covers public construction and
-validation workflows, circumsphere/insphere query families, hot and cold
-predicate paths, point location, and Level 4 exact intersection validation
-without pulling in broad profiling, allocation-only runs, or the manual
-topology policy suite. Use `just bench-compare <baseline>` to render
+`ci_performance_suite`, `circumsphere_containment`, and `locate`. This set covers
+public construction, mutation, import, validation, hull, predicate, and
+point-location workflows. Internal path/component timing, broad profiling,
+allocation instrumentation, and topology-policy experiments remain manual.
+Use `just bench-compare <baseline>` to render
 `target/bench-reports/performance.md` from existing Criterion `new` output and a
 saved baseline such as `last` or `v0.7.8`. If the baseline and current
 checkouts are easy to confuse, prefer `just performance-local`. Use
@@ -621,8 +650,9 @@ DELAUNAY_BENCH_EXPORT_METRICS=1 \
   "tds_new_3d/tds_new/100"
 ```
 
-Use `just bench-perf-summary` for release summaries; it runs the full perf
-profile summary workflow and captures the construction metrics automatically.
+Use `just bench-latest` to measure the public API plan and capture construction
+metrics, then `just bench-perf-summary` to render a release summary. Re-rendering
+the summary does not repeat measurements.
 
 ## Pachner Stress
 
@@ -760,7 +790,7 @@ filter can still succeed.
 cargo bench --profile perf --bench profiling_suite -- --noplot
 BENCH_LARGE_SCALE=1 cargo bench --profile perf --bench profiling_suite -- --noplot
 cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
-PROFILING_DEV_MODE=1 cargo bench --profile perf --bench profiling_suite --features count-allocations
+PROFILING_DEV_MODE=1 cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
 ```
 
 `profiling_suite.rs` is the manual optimization harness. It now owns the former
@@ -773,6 +803,14 @@ large-scale scaling workload and the deeper profiling diagnostics:
 - circumsphere query latency
 - algorithmic bottlenecks
 - validation component costs
+
+Allocation workloads are registered only with `count-allocations`, and always
+emit their allocation statistics without requiring verbose benchmark logging.
+Keep instrumented allocation timings separate from uninstrumented API latency.
+These fixed-fixture allocation summaries do not establish general memory
+scaling, and Criterion measurement-time settings are targets rather than hard
+execution limits. The 5D/1,000-point diagnostic can take hours even in development
+mode; choose an explicit case when investigating it.
 
 Current point-count families:
 

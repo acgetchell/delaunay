@@ -49,7 +49,7 @@ def workflow_trigger_paths(path: Path) -> tuple[set[str], set[str]]:
     """Return pull-request and push path filters from one GitHub workflow."""
     workflow: Any = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)  # noqa: S506 - BaseLoader constructs data only.
     pull_request_paths = workflow["on"]["pull_request"]["paths"]
-    push_paths = workflow["on"]["push"]["paths"]
+    push_paths = workflow["on"].get("push", {}).get("paths", [])
     assert all(isinstance(item, str) for item in pull_request_paths)
     assert all(isinstance(item, str) for item in push_paths)
     return set(pull_request_paths), set(push_paths)
@@ -108,7 +108,10 @@ def test_local_and_ci_setup_use_the_locked_package() -> None:
     for workflow_name in ("audit.yml", "benchmarks.yml"):
         pull_request_paths, push_paths = workflow_trigger_paths(REPO_ROOT / ".github" / "workflows" / workflow_name)
         assert ".github/actions/setup-just/**" in pull_request_paths
-        assert ".github/actions/setup-just/**" in push_paths
+        if workflow_name == "audit.yml":
+            assert ".github/actions/setup-just/**" in push_paths
+        else:
+            assert push_paths == set()
 
 
 def test_run_recipe_uses_the_repository_lockfile() -> None:
@@ -415,14 +418,14 @@ def test_release_recipes_forward_shared_policy_arguments() -> None:
     assert "--tag 'v0.9.0' --date '2026-10-04'" in command.stdout + command.stderr
 
 
-def test_release_benchmark_summary_recipe_requires_strict_fresh_evidence() -> None:
-    """The release summary recipe must propagate both freshness and strictness."""
+def test_release_benchmark_summary_recipe_renders_strict_evidence_without_resampling() -> None:
+    """Report retries must validate retained evidence without repeating measurements."""
     command = dry_run(REPO_ROOT, "bench-perf-summary")
     rendered = command.stdout + command.stderr
 
     assert "benchmark-utils generate-summary" in rendered
-    assert "--run-benchmarks" in rendered
-    assert "--profile perf" in rendered
+    assert "--run-benchmarks" not in rendered
+    assert "cargo bench" not in rendered
     assert "--strict" in rendered
 
 
@@ -574,7 +577,7 @@ def test_performance_workflow_tracks_every_harness_input() -> None:
 
     for path in required_paths:
         assert path in pull_request_paths
-        assert path in push_paths
+    assert push_paths == set(), "post-merge comparisons would duplicate the PR benchmark run"
 
 
 def test_ci_composes_non_mutating_canonical_validation_figure_check() -> None:
