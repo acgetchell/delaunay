@@ -39,6 +39,14 @@ RELEASE_SIGNAL_TARGETS = (
     "circumsphere_containment",
     "locate",
 )
+# Supported historical baseline only; current promotion still requires the active plan.
+HISTORICAL_RELEASE_SIGNAL_TARGETS = (
+    "ci_performance_suite",
+    "circumsphere_containment",
+    "cold_path_predicates",
+    "locate",
+    "realization_validation",
+)
 # Keep diagnostic ownership for explicitly selected suites and historical rows.
 # Only RELEASE_SIGNAL_TARGETS defines routine CI and release measurements.
 RELEASE_SIGNAL_GROUPS_BY_TARGET = {
@@ -523,17 +531,18 @@ class ArtifactContext:
             return ("completed benchmark targets differ",)
 
         canonical = set(RELEASE_SIGNAL_TARGETS)
+        baseline_plan = HISTORICAL_RELEASE_SIGNAL_TARGETS if baseline == HISTORICAL_RELEASE_SIGNAL_TARGETS else RELEASE_SIGNAL_TARGETS
         blockers: list[str] = []
-        unknown = sorted((set(current) | set(baseline)) - canonical)
+        unknown = sorted((set(current) - canonical) | (set(baseline) - set(baseline_plan)))
         if unknown:
             blockers.append("completed benchmark targets contain unsupported targets: " + ", ".join(unknown))
-        for label, targets in (("current", current), ("baseline", baseline)):
-            ordered = tuple(target for target in RELEASE_SIGNAL_TARGETS if target in set(targets))
+        for label, targets, plan in (("current", current, RELEASE_SIGNAL_TARGETS), ("baseline", baseline, baseline_plan)):
+            ordered = tuple(target for target in plan if target in set(targets))
             if targets != ordered:
                 blockers.append(f"{label} completed benchmark targets are not in canonical release-plan order")
         if not self.shared_completed_targets:
             blockers.append("release target transition has no shared completed targets")
-        if set(current) | set(baseline) != canonical:
+        if not canonical <= set(current) | set(baseline):
             blockers.append("release target transition does not cover the canonical release-signal plan")
         return tuple(blockers)
 

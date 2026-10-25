@@ -43,6 +43,13 @@ RELEASE_TARGETS = (
     "circumsphere_containment",
     "locate",
 )
+HISTORICAL_RELEASE_TARGETS = (
+    "ci_performance_suite",
+    "circumsphere_containment",
+    "cold_path_predicates",
+    "locate",
+    "realization_validation",
+)
 
 
 def source_state(version: str, *, current: bool) -> SourceState:
@@ -684,6 +691,60 @@ def test_promotion_allows_supported_release_target_transition_with_one_sided_row
     transitioning.require_promotable()
 
 
+@pytest.mark.parametrize("shared_sample_count", [100, 50])
+def test_five_to_three_target_transition_preserves_shared_sampling_checks(shared_sample_count: int) -> None:
+    """Retired baseline rows survive a round trip without weakening shared-row evidence."""
+    original = retained_bundle()
+    retired = tuple(
+        replace(
+            original.rows[0],
+            group=group,
+            benchmark_id=f"{group}/{original.rows[0].benchmark}",
+            coverage_status="baseline-only",
+            coverage_note="Retired benchmark target.",
+            current=None,
+        )
+        for group in ("predicates", "realization_validation")
+    )
+    rows = (original.rows[0], original.rows[1], retired[0], original.rows[2], retired[1])
+    inventory = CriterionInventory(tuple((target, (row.benchmark_id,)) for target, row in zip(HISTORICAL_RELEASE_TARGETS, rows, strict=True)))
+    transitioning = retain_measurements(
+        replace(original, context=replace(original.context, baseline_completed_targets=HISTORICAL_RELEASE_TARGETS), rows=rows, measurements=()),
+        inventory,
+    )
+    baseline = dict(transitioning.measurements)["baseline"]
+    policy = parse_policy(dict(baseline.sources[0][1].context)["delaunay.sampling-policy"].encode())
+    shared_ids = {row.benchmark_id for row in original.rows}
+    changed = measurement_with_policy(
+        baseline,
+        replace(policy, sample_count=None, sample_counts=tuple((name, shared_sample_count if name in shared_ids else 2) for name in policy.expected)),
+    )
+    payload, manifest = serialize_changed_measurement(transitioning, "baseline", changed)
+
+    if shared_sample_count != 100:
+        with pytest.raises(ValueError, match="retained sampling policies contradict matching measurement plans"):
+            load_bundle_bytes(payload, manifest, source="five-to-three target transition")
+        return
+
+    loaded = load_bundle_bytes(payload, manifest, source="five-to-three target transition")
+    assert loaded.context.current_completed_targets == RELEASE_TARGETS
+    assert loaded.context.baseline_completed_targets == HISTORICAL_RELEASE_TARGETS
+    assert loaded.context.shared_completed_targets == RELEASE_TARGETS
+    assert loaded.rows == transitioning.sorted_rows
+    assert {row.benchmark_id for row in loaded.rows if row.coverage_status == "comparable"} == shared_ids
+    assert {row.benchmark_id for row in loaded.rows if row.coverage_status == "baseline-only"} == {row.benchmark_id for row in retired}
+    loaded.require_promotable()
+
+
+@pytest.mark.parametrize("baseline", [HISTORICAL_RELEASE_TARGETS[:-1], HISTORICAL_RELEASE_TARGETS[::-1], (*RELEASE_TARGETS, "unknown")])
+def test_retired_targets_require_a_supported_historical_plan(baseline: tuple[str, ...]) -> None:
+    """Historical support does not admit incomplete, reordered, or unknown plans."""
+    invalid = replace(context(), baseline_completed_targets=baseline)
+    assert invalid.target_transition_blockers
+    with pytest.raises(ValueError, match="compatible measurement provenance"):
+        PerformanceBundle(context=invalid, rows=(bundle().rows[0],))
+
+
 @pytest.mark.parametrize("side", ["current-only", "baseline-only"])
 @pytest.mark.parametrize("group", ["validation", "unknown"])
 def test_unrelated_target_transition_cannot_hide_missing_cases(side: str, group: str) -> None:
@@ -727,7 +788,7 @@ def test_promotion_rejects_removing_a_target_still_in_the_active_plan() -> None:
 def test_promotion_rejects_a_complete_superseded_plan() -> None:
     """Historical diagnostics remain readable but cannot be promoted as the new contract."""
     original = bundle()
-    old_targets = ("ci_performance_suite", "circumsphere_containment", "cold_path_predicates", "locate", "realization_validation")
+    old_targets = HISTORICAL_RELEASE_TARGETS
     historical = replace(original, context=replace(original.context, current_completed_targets=old_targets, baseline_completed_targets=old_targets))
     payload, manifest = serialize_bundle(historical)
     loaded = load_bundle_bytes(payload, manifest, source="historical benchmark plan")
