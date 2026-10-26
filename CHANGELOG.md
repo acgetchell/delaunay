@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Separate public API benchmarks from diagnostics [#665](https://github.com/acgetchell/delaunay/pull/665)
 - Make paper tooling opt-in and refresh project guides [#663](https://github.com/acgetchell/delaunay/pull/663)
 - Preserve scientific correctness across triangulation workflows [#660](https://github.com/acgetchell/delaunay/pull/660)
 - Delegate remaining numerical kernels to la-stack [#658](https://github.com/acgetchell/delaunay/pull/658)
@@ -120,6 +121,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Adopt la-stack v0.5.1 in the root crate and checkpoint fixture.
   - Use backend LU, Gram construction, checked dot products, and rational rounding while retaining exact geometric certification and fallback.
   - Refresh the locked protobuf and wrapt dependencies used by development tooling.
+- Separate public API benchmarks from diagnostics [#665](https://github.com/acgetchell/delaunay/pull/665)
+  [`5d4bded`](https://github.com/acgetchell/delaunay/commit/5d4bded34ee6cbbfbad1091b1dedd0230d19ace2)
+
+  - Use one curated public API measurement plan for routine CI and release evidence, with internal profiling selected explicitly.
+  - Remove duplicate memory profiling jobs and post-merge comparisons while retaining instrumented allocation summaries.
+  - Render summaries from retained measurement metadata and reject superseded benchmark plans during release promotion.
+  - Document benchmark ownership and unpublished-release recovery, with regression coverage for measurement and reporting contracts.
 
 ### Fixed
 
@@ -167,6 +175,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Align kernel documentation, scientific references, and development guidance;
     require production fixes for legitimate regressions and independent evidence
     before changing a test's contract.
+- Allow five-to-three benchmark plan transitions [`5d85097`](https://github.com/acgetchell/delaunay/commit/5d85097dfecdf169eeabe3e7d60030cea814174c)
+
+  - Accept the supported historical five-target baseline alongside the
+    active three-target public API plan.
+  - Preserve retired workloads as baseline-only evidence while retaining
+    strict current-plan and shared-workload comparability requirements.
+  - Reject incomplete, reordered, or unknown historical target plans.
 
 ### Maintenance
 
