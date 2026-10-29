@@ -575,9 +575,10 @@ pub enum CoordinateConversionError {
     /// A linear algebra backend operation failed.
     #[error("Linear algebra failure: {source}")]
     LinearAlgebraFailure {
-        /// Typed source error from the linear algebra backend.
+        /// Typed source error from the linear algebra backend. Boxing keeps the
+        /// backend's polynomial exponent alignment out of nested geometry errors.
         #[source]
-        source: LaError,
+        source: Box<LaError>,
     },
     /// Matrix operation failed while building or inspecting a predicate matrix.
     #[error("Matrix error: {source}")]
@@ -600,7 +601,9 @@ impl From<StackMatrixDispatchError> for CoordinateConversionError {
                     matrix_dimension: dim,
                 }
             }
-            StackMatrixDispatchError::La { source } => Self::LinearAlgebraFailure { source },
+            StackMatrixDispatchError::La { source } => Self::LinearAlgebraFailure {
+                source: Box::new(source),
+            },
             StackMatrixDispatchError::Matrix { source } => Self::MatrixError { source },
         }
     }
@@ -1267,10 +1270,18 @@ mod tests {
     #[test]
     fn coordinate_conversion_error_clones_linear_algebra_source() {
         let source = LaError::non_finite_input_matrix(1, 2);
-        let converted = CoordinateConversionError::LinearAlgebraFailure { source };
+        let converted = CoordinateConversionError::LinearAlgebraFailure {
+            source: Box::new(source),
+        };
 
         assert_eq!(converted.clone(), converted);
-        assert!(converted.source().is_some());
+        assert_eq!(
+            converted
+                .source()
+                .and_then(|error| error.downcast_ref::<Box<LaError>>())
+                .map(Box::as_ref),
+            Some(&source)
+        );
     }
 
     #[test]

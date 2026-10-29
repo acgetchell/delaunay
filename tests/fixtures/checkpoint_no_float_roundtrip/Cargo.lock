@@ -203,9 +203,9 @@ dependencies = [
 
 [[package]]
 name = "la-stack"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71e981f48c626c4273cf74a6008d4638b0e68caaa2d4291c876b2372119cf428"
+checksum = "7d40eeedfbecba074565984936399673de3c8daa4fc5fcd586c479998d41e89a"
 dependencies = [
  "num-bigint",
  "num-rational",
@@ -271,9 +271,9 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "ordered-float"
-version = "5.5.0"
+version = "5.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c7c9e0d9b23589f26070720bac724174bfec1083e82f7854cdd0267518343c0"
+checksum = "7f59006ce1e204c30956638535b74d317bca99477b9356dfaec54c37f6f600ab"
 dependencies = [
  "num-traits",
 ]

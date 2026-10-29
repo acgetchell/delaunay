@@ -206,9 +206,12 @@ fn memory_usage_kib() -> u64 {
 
     let pid = get_current_pid().or_abort();
     let sys = SYS.get_or_init(|| {
-        Mutex::new(System::new_with_specifics(
-            RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_memory()),
-        ))
+        Mutex::new(
+            System::new_with_specifics(
+                RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_memory()),
+            )
+            .or_abort(),
+        )
     });
     let mut system = sys.lock().or_abort();
     system.refresh_processes_specifics(

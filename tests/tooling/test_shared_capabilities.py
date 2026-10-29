@@ -222,6 +222,7 @@ def test_managed_release_credentials_are_scoped_to_supported_binary_sync() -> No
     assert "uv sync --locked --managed-python --only-group tooling" in json.dumps(steps)
 
 
+@pytest.mark.filterwarnings("error:Proactor event loop does not implement add_reader family of methods required for zmq:RuntimeWarning")
 def test_shared_notebook_fixture_borrows_locked_environment_and_preserves_source(tmp_path: Path) -> None:
     paths = (Path("notebooks/00_quickstart.ipynb"),)
     original = (ROOT / paths[0]).read_bytes()
@@ -247,8 +248,10 @@ def test_shared_notebook_fixture_borrows_locked_environment_and_preserves_source
             ),
             encoding="utf-8",
         )
+        fixture_source = notebook.read_bytes()
         result = project.execute(paths[0], timeout=30)
         assert result.returncode == 0
         assert result.report["status"] == "passed"
+        assert notebook.read_bytes() == fixture_source
         assert json.loads(notebook.read_bytes())["cells"][0]["outputs"] == []
     assert (ROOT / paths[0]).read_bytes() == original

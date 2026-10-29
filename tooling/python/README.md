@@ -11,16 +11,22 @@ Install the declared uv version, Git, and platform compiler/linker prerequisites
 Initialize the pinned PyPI toolchain with:
 
 ```bash
-uv run --locked --managed-python --only-group tooling research-repo-tools setup
+uv run --locked --managed-python --only-group tooling python tooling/python/shared_tooling.py setup
 ```
 
 The installed package and tooling/notebook groups pin
-`research-repo-tools==0.2.3`. Shared CLI commands and documented Python APIs own
+`research-repo-tools==0.2.4`. Shared CLI commands and documented Python APIs own
 setup, maintenance, source inventory, subprocesses, archive extraction, worktree
 lifecycle, Criterion parsing, file transactions and notebook infrastructure.
 Retained adapters own Delaunay science and policy. The
 [adoption inventory](../../docs/dev/tooling_adoption.md#remaining-shared-tool-gaps)
 records the v0.1.8 integrations and v0.1.9 performance adoption.
+
+The temporary `shared_tooling.py` adapter changes only scanner selection for
+setup and Semgrep commands, preserving the locked Python 3.15 environment and
+all shared validation gates. It rejects other shared-package versions and restores
+its process-local overrides. Remove it after the published shared-baseline fix
+is adopted under [#673](https://github.com/acgetchell/delaunay/issues/673).
 
 ## CLI entrypoints
 
@@ -222,7 +228,9 @@ just update-tools
 just tools-check
 ```
 
-The aggregate upgrades tools before dependencies and stops on failure. Cargo
+The aggregate upgrades tools before dependencies, audits all maintained final
+lockfiles, and stops on failure. Routine tool updates do not rerun bootstrap or
+shell setup. Cargo
 dependency updates retain both resolution roots. Python updates advance direct
 exact dev pins, refresh the full lock, and explicitly sync dev with managed Rust
 available. Included tooling pins stay fixed. Dependency-only recipes preserve

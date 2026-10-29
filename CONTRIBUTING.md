@@ -41,10 +41,13 @@ Rust, Cargo tools, and its own Just dependency directly from PyPI.
 From the repository root, initialize the declared toolchain:
 
 ```bash
-uv run --locked --managed-python --only-group tooling research-repo-tools setup
+uv run --locked --managed-python --only-group tooling python tooling/python/shared_tooling.py setup
 ```
 
-Open a new terminal if setup changed PATH. No shared-package checkout or generated
+The temporary scanner-selection adapter keeps setup on the locked Python baseline
+until [research-repo-tools #165](https://github.com/acgetchell/research-repo-tools/issues/165)
+is published and adopted; [#673](https://github.com/acgetchell/delaunay/issues/673)
+tracks its removal. Open a new terminal if setup changed PATH. No shared-package checkout or generated
 bootstrap launcher is needed. Repository Python tooling is described in
 [docs/dev/python.md][dev-python] and [tooling/python/README.md][python-readme].
 

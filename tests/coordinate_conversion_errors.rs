@@ -4,6 +4,56 @@
 //! when dealing with extreme values, NaN, infinity, etc.
 
 use delaunay::prelude::geometry::*;
+use delaunay::{
+    DelaunayTriangulationConstructionError,
+    prelude::{generators::RandomPointGenerationError, insertion::InsertionError, tds::TdsError},
+};
+use std::{
+    error::Error,
+    mem::{align_of, size_of},
+};
+
+#[test]
+fn backend_errors_preserve_sources_without_inflating_nested_errors() {
+    let backend = LaError::non_finite_input_vector(2);
+    let coordinate = CoordinateConversionError::from(backend);
+    let random = RandomPointGenerationError::<f64>::from(backend);
+    assert_eq!(
+        coordinate
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<LaError>>()
+            .map(Box::as_ref),
+        Some(&backend)
+    );
+    assert_eq!(
+        random
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<LaError>>()
+            .map(Box::as_ref),
+        Some(&backend)
+    );
+    assert!(matches!(
+        coordinate,
+        CoordinateConversionError::LinearAlgebraFailure { source } if *source == backend
+    ));
+    assert!(matches!(
+        random,
+        RandomPointGenerationError::VectorComputation { source } if *source == backend
+    ));
+
+    // Backend polynomial exponents must not propagate 16-byte alignment into
+    // these nested errors. The outer enums include their own discriminants;
+    // Clippy's result-large-err lint checks the variant payload instead.
+    let scalar_alignment = align_of::<f64>().max(align_of::<usize>());
+    assert!(align_of::<CoordinateConversionError>() <= scalar_alignment);
+    assert!(align_of::<QualityError>() <= scalar_alignment);
+    assert!(align_of::<RandomPointGenerationError>() <= scalar_alignment);
+    assert!(size_of::<TdsError>() < 128);
+    assert!(size_of::<InsertionError>() <= 128);
+    assert!(size_of::<DelaunayTriangulationConstructionError>() <= 128);
+}
 
 fn assert_invalid_coordinate<const D: usize>(
     coords: [f64; D],

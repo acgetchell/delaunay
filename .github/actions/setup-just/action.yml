@@ -49,6 +49,7 @@ runs:
         set -euo pipefail
         uv run --locked --managed-python --only-group tooling research-repo-tools toolchain sync
         uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain run -- uv sync --locked --managed-python --group dev --group notebooks
+        uv run --locked --no-sync --no-python-downloads python tooling/python/shared_tooling.py semgrep setup
         uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain export
         uv run --locked --no-sync --no-python-downloads research-repo-tools --version
 

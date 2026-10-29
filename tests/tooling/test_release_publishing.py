@@ -165,8 +165,9 @@ def test_publish_recipe_reaches_installed_explicit_approval_parser(monkeypatch: 
     """Replace only irreversible publication while exercising the real parser."""
     requested: list[str] = []
 
-    def publish(settings: config.Config, tag: str) -> None:
+    def publish(settings: config.Config, tag: str, *, reuse_evidence: bytes | None) -> None:
         assert settings.root == ROOT
+        assert reuse_evidence is None
         requested.append(tag)
 
     monkeypatch.setattr(release_publishing, "publish_reviewed_release", publish)
@@ -255,7 +256,7 @@ def test_oidc_job_installs_only_minimal_locked_publication_tools() -> None:
     bootstrap = next(step for step in steps if step.get("name") == "Install locked publication tooling")
     assert "uv sync --locked --managed-python --only-group tooling --no-install-project" in bootstrap["run"]
     manifest = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert manifest["dependency-groups"]["tooling"] == ["research-repo-tools[python-tools]==0.2.3"]
+    assert manifest["dependency-groups"]["tooling"] == ["research-repo-tools[python-tools]==0.2.4"]
 
 
 def test_oidc_rust_setup_exports_the_declared_minimal_toolchain(tmp_path: Path) -> None:

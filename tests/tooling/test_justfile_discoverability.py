@@ -103,7 +103,10 @@ def test_local_and_ci_setup_use_the_locked_package() -> None:
     assert "research-repo-tools toolchain sync" in action
     assert "research-repo-tools toolchain export" in action
     assert "cargo install" not in action
-    assert "uv run --locked --managed-python --only-group tooling research-repo-tools setup" in (REPO_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert "python tooling/python/shared_tooling.py semgrep setup" in action
+    assert "uv run --locked --managed-python --only-group tooling python tooling/python/shared_tooling.py setup" in (REPO_ROOT / "CONTRIBUTING.md").read_text(
+        encoding="utf-8"
+    )
     assert "CONTRIBUTING.md#getting-started" in (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     for workflow_name in ("audit.yml", "benchmarks.yml"):
         pull_request_paths, push_paths = workflow_trigger_paths(REPO_ROOT / ".github" / "workflows" / workflow_name)
@@ -546,7 +549,7 @@ def test_uv_backed_recipes_reuse_locked_guard() -> None:
     assert "tectonic" not in setup
     assert not {"papers", "tectonic"} & recipes.keys()
     assert not any(name.startswith("paper-") for name in recipes)
-    assert "uv run --locked --managed-python --only-group tooling research-repo-tools setup" in setup
+    assert "uv run --locked --managed-python --only-group tooling python tooling/python/shared_tooling.py setup" in setup
 
 
 def test_validation_and_benchmark_uv_runs_are_locked() -> None:

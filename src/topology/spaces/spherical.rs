@@ -477,10 +477,11 @@ impl<const D: usize> SphericalMetric<D> {
                 });
             }
         }
-        let angle = a
-            .coords()
-            .angle(b.coords())
-            .map_err(|source| SphericalPointError::AngleComputationFailed { source })?;
+        let angle = a.coords().angle(b.coords()).map_err(|source| {
+            SphericalPointError::AngleComputationFailed {
+                source: Box::new(source),
+            }
+        })?;
         let distance = self.radius * angle;
         if distance.is_finite() {
             Ok(distance)
@@ -567,8 +568,9 @@ pub enum SphericalPointError {
     #[error("spherical vector-angle calculation failed: {source}")]
     AngleComputationFailed {
         /// Typed numerical failure, including upstream location and provenance.
+        /// Boxing contains backend polynomial alignment in nested workflow errors.
         #[source]
-        source: LaError,
+        source: Box<LaError>,
     },
 
     /// The requested geodesic distance is not representable as a finite `f64`.
@@ -929,8 +931,8 @@ mod tests {
         };
         assert_matches!(
             metric.try_distance(&valid, &corrupted),
-            Err(SphericalPointError::AngleComputationFailed {
-                source: LaError::NonFinite {
+            Err(SphericalPointError::AngleComputationFailed { source })
+                if matches!(*source, LaError::NonFinite {
                     location: NonFiniteLocation::VectorOperandEntry {
                         operand: VectorOperand::Right,
                         index: 1,
@@ -938,8 +940,7 @@ mod tests {
                     },
                     origin: NonFiniteOrigin::Input,
                     ..
-                },
-            })
+                })
         );
     }
 

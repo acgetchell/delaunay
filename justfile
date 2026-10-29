@@ -766,7 +766,7 @@ semgrep: semgrep-scan
 # Run the shared repository Semgrep target set, optionally emitting SARIF.
 [private]
 semgrep-scan output="target/semgrep": _ensure-uv
-    {{ semgrep_stack_limit }} {{ rrt }} semgrep scan --include '*.rs' --include 'tooling/python/*.py' --include 'tests/tooling/*.py' \
+    {{ semgrep_stack_limit }} uv run --locked --group dev python tooling/python/shared_tooling.py semgrep scan --include '*.rs' --include 'tooling/python/*.py' --include 'tests/tooling/*.py' \
         --include '.github/workflows/*.yml' --include '.github/workflows/*.yaml' \
         --include '*.md' --include CITATION.cff --include justfile \
         --include 'notebooks/*.ipynb' --include 'doctests/*.txt' \
@@ -775,7 +775,7 @@ semgrep-scan output="target/semgrep": _ensure-uv
 # Test the repository-owned Semgrep rules against their fixtures.
 [group('validation')]
 semgrep-test: _ensure-uv
-    {{ semgrep_stack_limit }} {{ rrt }} semgrep check-fixtures
+    {{ semgrep_stack_limit }} uv run --locked --group dev python tooling/python/shared_tooling.py semgrep check-fixtures
 
 # Install required tools and build the development profile.
 [group('build and setup')]
@@ -786,7 +786,7 @@ setup: setup-tools build
 [doc('Install and verify repository development tools.')]
 [group('build and setup')]
 setup-tools:
-    uv run --locked --managed-python --only-group tooling research-repo-tools setup
+    uv run --locked --managed-python --only-group tooling python tooling/python/shared_tooling.py setup
 
 # Run ShellCheck and verify shfmt formatting.
 [group('validation')]
@@ -1000,17 +1000,17 @@ update-cargo-dependencies:
     uv run --locked --only-group tooling --inexact research-repo-tools toolchain run -- cargo update
     uv run --locked --only-group tooling --inexact research-repo-tools toolchain run -- cargo update --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml
 
-# Upgrade declared Cargo tools and publish verified exact TOML pins.
-[doc('Upgrade only declared managed Cargo tools.')]
+# Upgrade declared Cargo tools and release binaries; publish verified TOML pins.
+[doc('Upgrade only declared managed Cargo tools and release binaries.')]
 [group('build and setup')]
 [positional-arguments]
 update-cargo-tools *args:
     uv run --locked --only-group tooling --inexact research-repo-tools toolchain upgrade "$@"
 
-# Advance Cargo and exact Python development requirements plus their lockfiles.
-[doc('Update Cargo and Python development requirements plus all Cargo/uv locked dependencies.')]
+# Advance dependency requirements and lockfiles, then audit every maintained lock.
+[doc('Update Cargo/Python dependencies and audit all maintained lockfiles.')]
 [group('build and setup')]
-update-dependencies: update-cargo-dependencies update-python-dependencies
+update-dependencies: update-cargo-dependencies update-python-dependencies audit
 
 # Resolve latest exact Python development tools, retain ranged requirements, and sync.
 [doc('Update exact dependency-groups.dev pins and uv.lock through uv.')]
@@ -1018,9 +1018,9 @@ update-dependencies: update-cargo-dependencies update-python-dependencies
 update-python-dependencies:
     uv run --locked --only-group tooling --inexact research-repo-tools deps update-python --all-projects
 
-# Upgrade uv and managed Cargo tools, then synchronize the declared environment.
+# Upgrade uv and declared managed tools without rerunning shell/bootstrap setup.
 [group('build and setup')]
-update-tools: update-uv update-cargo-tools setup-tools
+update-tools: update-uv update-cargo-tools
 
 # Upgrade uv through its installation owner and reconcile the project declaration.
 [group('build and setup')]
