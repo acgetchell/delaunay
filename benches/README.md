@@ -703,7 +703,8 @@ cargo bench --profile perf --bench memory_footprint --features count-allocations
 ```
 
 Default scale counts remain 1k/5k/10k in 2D and 3D, 1k/3k in 4D, and
-500/1k in 5D. `BENCH_LARGE_SCALE=1` adds 4D 5k/10k cases.
+500/1k in 5D. `BENCH_LARGE_SCALE=1` replaces the 4D 1k/3k counts with
+1k/5k/10k.
 `PROFILING_DEV_MODE=1` reduces auxiliary memory, circumsphere and hull inputs.
 The 5D 1,000-point allocation case can take hours even in development mode.
 `BENCH_SAMPLE_SIZE`, `BENCH_WARMUP_SECS` and `BENCH_MEASUREMENT_TIME` configure

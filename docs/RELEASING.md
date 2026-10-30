@@ -70,8 +70,8 @@ The release commands share la-stack's operator-facing roles:
 | `release-verify TAG` | Verify GitHub assets and the exact crates.io version |
 
 Delaunay retains its scientific measurement adapter and default/all-feature
-coverage. Its performance evidence format and explicit-pair repair behavior
-remain documented below; la-stack has a separate measurement harness.
+coverage. Declarative performance preparation, acquisition, and promotion are
+documented below; la-stack has a separate measurement harness.
 
 ## Prepare the environment
 
