@@ -42,6 +42,12 @@ def test_remote_subsets_preserve_every_local_validator() -> None:
     assert {"semgrep-test", "fmt-check", "yaml-fmt-check", "markdown-check"} <= portable
 
 
+def test_native_tooling_failures_surface_before_scientific_test_buckets() -> None:
+    """Exercise the aggregate expansion so harness failures do not wait for Rust."""
+    commands = dry_run(ROOT, "test").stderr
+    assert commands.index("uv run --locked pytest") < commands.index("cargo nextest run")
+
+
 @pytest.mark.parametrize("failure", [False, True])
 def test_release_benchmark_dispatch_forwards_one_literal_tag(tmp_path: Path, *, failure: bool) -> None:
     """Exercise actual recipe expansion with a fake gh; dispatch failure survives."""

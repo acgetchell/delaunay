@@ -4,14 +4,13 @@ import hashlib
 import io
 import json
 import os
-import shlex
 import subprocess
 import sys
 import tarfile
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
@@ -20,6 +19,9 @@ from research_repo_tools.process import run_command
 from research_repo_tools.release_interfaces import load_evidence_policy
 
 import cargo_release as promotion
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = load_evidence_policy(ROOT / "tooling/release-evidence.toml")
@@ -192,7 +194,13 @@ def test_pre_tag_evidence_and_frozen_cargo_reproduction(cargo: CargoFixture) -> 
 
 
 @pytest.mark.parametrize("quiet", [False, True])
-def test_actual_pre_tag_recipe_uses_installed_verifier(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, *, quiet: bool) -> None:
+def test_actual_pre_tag_recipe_uses_installed_verifier(
+    cargo: CargoFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    native_console_scripts: Callable[[Path, str, dict[str, str]], Path],
+    *,
+    quiet: bool,
+) -> None:
     """Run Just and its isolated script with fake provider/Git executables, without any tag."""
     monkeypatch.setattr(subprocess, "run", NATIVE_RUN)
     root = cargo.root
@@ -202,32 +210,29 @@ def test_actual_pre_tag_recipe_uses_installed_verifier(cargo: CargoFixture, monk
     provider = root / "provider.json"
     provider.write_text(json.dumps({"run": cargo.run, "jobs": cargo.jobs, "artifact": cargo.artifact}), encoding="utf-8")
     (root / "archive.zip").write_bytes(cargo.payload())
-    executables = root / "bin"
-    executables.mkdir()
-    interpreter = shlex.quote(Path(sys.executable).as_posix())
-    (executables / "uvx").write_text(f'#!/bin/sh\nshift 5\nexec {interpreter} "$@"\n', encoding="utf-8", newline="\n")
-    (executables / "git").write_text(
-        f'#!/bin/sh\nprintf "%s\\n" "$*" >> "$GIT_CALLS"\ncase "$*" in *refs/tags*) exit 98;; *rev-parse*) printf "%s\\n" {COMMIT};; esac\n',
-        encoding="utf-8",
-        newline="\n",
+    executables = native_console_scripts(
+        root,
+        "import json, os, subprocess, sys\nfrom pathlib import Path\n"
+        "def uvx_main():\n"
+        '    assert sys.argv[1:7] == ["--python", "3.15", "--from", "research-repo-tools==0.2.4", "python", "-I"]\n'
+        '    return subprocess.run([os.environ["FIXTURE_PYTHON"], *sys.argv[6:]], check=False).returncode\n'
+        "def git_main():\n"
+        '    with Path(os.environ["GIT_CALLS"]).open("a", encoding="utf-8") as calls:\n'
+        '        calls.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+        '    assert not any("refs/tags" in arg for arg in sys.argv)\n'
+        f'    if "rev-parse" in sys.argv:\n        print("{COMMIT}")\n'
+        "def gh_main():\n"
+        '    data = json.loads(Path(os.environ["PROVIDER"]).read_bytes())\n    endpoint = sys.argv[-1]\n'
+        '    if endpoint.endswith("/zip"):\n        sys.stdout.buffer.write(Path(os.environ["ARCHIVE"]).read_bytes())\n        return 0\n'
+        '    if endpoint.endswith("workflows/ci.yml"):\n        result = {"id":7,"path":".github/workflows/ci.yml","name":"CI","state":"active"}\n'
+        '    elif "/runs?" in endpoint:\n        result = {"workflow_runs":[data["run"]]}\n'
+        '    elif "/jobs?" in endpoint:\n        result = {"jobs":data["jobs"]}\n'
+        '    elif "/artifacts?" in endpoint:\n        result = {"artifacts":[data["artifact"]]}\n'
+        '    elif endpoint.endswith("/artifacts/456"):\n        result = data["artifact"]\n'
+        '    elif endpoint.endswith("/runs/123"):\n        result = data["run"]\n'
+        "    else:\n        raise AssertionError(endpoint)\n    print(json.dumps(result))\n",
+        {"uvx": "uvx_main", "git": "git_main", "gh": "gh_main"},
     )
-    (executables / "gh").write_text(
-        f"#!{sys.executable}\n"
-        "import json, os, sys\nfrom pathlib import Path\n"
-        'data = json.loads(Path(os.environ["PROVIDER"]).read_bytes())\nendpoint = sys.argv[-1]\n'
-        'if endpoint.endswith("/zip"):\n    sys.stdout.buffer.write(Path(os.environ["ARCHIVE"]).read_bytes())\n    sys.exit(0)\n'
-        'if endpoint.endswith("workflows/ci.yml"):\n    result = {"id":7,"path":".github/workflows/ci.yml","name":"CI","state":"active"}\n'
-        'elif "/runs?" in endpoint:\n    result = {"workflow_runs":[data["run"]]}\n'
-        'elif "/jobs?" in endpoint:\n    result = {"jobs":data["jobs"]}\n'
-        'elif "/artifacts?" in endpoint:\n    result = {"artifacts":[data["artifact"]]}\n'
-        'elif endpoint.endswith("/artifacts/456"):\n    result = data["artifact"]\n'
-        'elif endpoint.endswith("/runs/123"):\n    result = data["run"]\n'
-        "else:\n    raise AssertionError(endpoint)\nprint(json.dumps(result))\n",
-        encoding="utf-8",
-        newline="\n",
-    )
-    for executable in executables.iterdir():
-        executable.chmod(0o755)
     output = root / "actions-output"
     output.write_bytes(b"prior=kept\n")
     selected = root / "selected.json"
@@ -238,6 +243,7 @@ def test_actual_pre_tag_recipe_uses_installed_verifier(cargo: CargoFixture, monk
             "PROVIDER": str(provider),
             "ARCHIVE": str(root / "archive.zip"),
             "GIT_CALLS": str(root / "git-calls"),
+            "FIXTURE_PYTHON": sys.executable,
         }
     )
     result = run_command(

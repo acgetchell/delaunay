@@ -879,9 +879,9 @@ tag-force version: release-version-check
 templates +args: _ensure-uv
     {{ rrt }} templates "$@"
 
-# Run maintained Rust and Python correctness buckets once.
+# Run Python tooling tests before the maintained Rust correctness buckets.
 [group('workflows')]
-test: test-rust test-python
+test: test-python test-rust
     @echo "✅ Test workflow passed!"
 
 # Run public allocation-contract integration tests.

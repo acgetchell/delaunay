@@ -292,7 +292,9 @@ tracked notebook artifact, release or live repository setting was changed.
 
 [semgrep-api]: https://github.com/acgetchell/research-repo-tools/blob/v0.2.4/docs/security-api.md
 
-<a id="v023-cargo-artifact-promotion"></a>
+## v0.2.3 Cargo artifact promotion
+
+The v0.2.3 Cargo promotion adapter is superseded by the v0.2.4 adoption below.
 
 ## v0.2.4 release tooling adoption
 

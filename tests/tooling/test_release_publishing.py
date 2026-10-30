@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
@@ -15,6 +15,9 @@ from research_repo_tools import changelog, config, release_publishing
 from research_repo_tools.cli import main
 from research_repo_tools.just_inspect import dry_run, inspect_justfile
 from research_repo_tools.process import run_command
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/publish-crates.yml"
@@ -178,14 +181,22 @@ def test_publish_recipe_reaches_installed_explicit_approval_parser(monkeypatch: 
 
 
 @pytest.mark.parametrize("failure", [False, True])
-def test_real_publish_recipe_requires_retained_evidence_before_publication(tmp_path: Path, *, failure: bool) -> None:
+def test_real_publish_recipe_requires_retained_evidence_before_publication(
+    tmp_path: Path, native_console_scripts: Callable[[Path, str, dict[str, str]], Path], *, failure: bool
+) -> None:
     """A missing main artifact must leave the GitHub draft unpublished."""
     (tmp_path / "justfile").write_text(f"import '{(ROOT / 'justfile').as_posix()}'\n", encoding="utf-8")
     calls = tmp_path / "calls"
     provider = json.dumps({"tagName": TAG, "name": TAG, "body": "generated notes"})
-    uvx = tmp_path / "uvx"
-    uvx.write_text(f"#!/bin/sh\nprintf '%s\\n' evidence >> {shlex.quote(calls.as_posix())}\nexit {17 if failure else 0}\n", encoding="utf-8", newline="\n")
-    uvx.chmod(0o755)
+    executables = native_console_scripts(
+        tmp_path,
+        "import os\nfrom pathlib import Path\n"
+        "def uvx_main():\n"
+        '    with Path(os.environ["EVIDENCE_CALLS"]).open("a", encoding="utf-8") as calls:\n'
+        '        calls.write("evidence\\n")\n'
+        f"    return {17 if failure else 0}\n",
+        {"uvx": "uvx_main"},
+    )
     runner = (
         "uv() {\n"
         '  case "$*" in\n'
@@ -202,7 +213,7 @@ def test_real_publish_recipe_requires_retained_evidence_before_publication(tmp_p
         "bash",
         ["--noprofile", "--norc", "-euc", runner + f"just release-publish {shlex.quote(TAG)}"],
         cwd=tmp_path,
-        env=os.environ | {"PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"},
+        env=os.environ | {"PATH": f"{executables}{os.pathsep}{os.environ['PATH']}", "EVIDENCE_CALLS": str(calls)},
         check=False,
     )
     assert (result.returncode == 0) is not failure, result.stderr

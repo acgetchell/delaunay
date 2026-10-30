@@ -59,6 +59,11 @@ The native owner includes Python formatting/lint/types/fixture checks, notebook
 lint/advice, default/all-feature all-targets Clippy, and every default Rust/Python
 test bucket, including debug/release units, integrations, doctests, CLI and
 feature-only lanes. No platform-sensitive selection is moved to portable CI.
+Within the test workflow, Python consumer tests run before the Rust buckets so
+native tooling failures surface earlier. Release recipe fixtures install
+isolated console entry points, including Windows `.exe`
+launchers; extensionless shell scripts do not intercept Windows executable
+lookup. Local macOS success cannot establish Windows portability.
 
 Consumer tests compare the complete recipe graph: the remote union, including
 the production SARIF scan, equals local `ci`, and portable/native subsets are
