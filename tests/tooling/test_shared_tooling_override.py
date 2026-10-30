@@ -8,7 +8,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 import pytest
-from research_repo_tools import semgrep_tool
+from research_repo_tools import semgrep, semgrep_scan, semgrep_tool
 
 import shared_tooling as adapter
 
@@ -81,6 +81,8 @@ def test_override_restores_process_state_after_failure(monkeypatch: pytest.Monke
     if not with_path:
         monkeypatch.delenv("PATH", raising=False)
     previous_setup, previous_version, previous_path = semgrep_tool.setup, semgrep_tool.VERSION, os.environ.get("PATH")
+    hooks = [(semgrep_scan, "_scan_groups"), (semgrep_scan, "scan"), (semgrep_scan, "publish_directory"), (semgrep, "_documentation_cases")]
+    previous_hooks = [getattr(module, name) for module, name in hooks]
 
     def fail(argv: list[str] | None = None) -> int:
         semgrep_tool.setup(ROOT)
@@ -93,3 +95,4 @@ def test_override_restores_process_state_after_failure(monkeypatch: pytest.Monke
     assert semgrep_tool.setup is previous_setup
     assert previous_version == semgrep_tool.VERSION
     assert os.environ.get("PATH") == previous_path
+    assert [getattr(module, name) for module, name in hooks] == previous_hooks

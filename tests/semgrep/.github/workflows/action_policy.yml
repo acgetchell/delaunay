@@ -7,12 +7,12 @@ on:
 jobs:
   approved-shared-workflow:
     # ok: delaunay.github-actions.external-action-sha-pinned
-    # ok: delaunay.github-actions.external-action-approved-allowlist
+    # allowlist: approved
     # ok: delaunay.github-actions.external-action-version-comment
     uses: acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml@cbb2ea6dee8866b3f0547bca935aef48fdd71707 # reviewed 2026-10-04
 
   unapproved-shared-workflow:
-    # ruleid: delaunay.github-actions.external-action-approved-allowlist
+    # allowlist: rejected
     uses: acgetchell/research-repo-tools/.github/workflows/unreviewed.yml@cbb2ea6dee8866b3f0547bca935aef48fdd71707 # reviewed 2026-10-04
 
   moving-shared-workflow:
@@ -28,7 +28,7 @@ jobs:
     steps:
       - name: Allowed pinned action
         # ok: delaunay.github-actions.external-action-sha-pinned
-        # ok: delaunay.github-actions.external-action-approved-allowlist
+        # allowlist: approved
         # ok: delaunay.github-actions.external-action-version-comment
         # ok: delaunay.github-actions.checkout-persist-credentials-false
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -44,19 +44,19 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Unapproved external action
-        # ruleid: delaunay.github-actions.external-action-approved-allowlist
+        # allowlist: rejected
         uses: unapproved/example-action@1111111111111111111111111111111111111111 # v1.0.0
 
       - name: Reviewed crates.io authentication action
-        # ok: delaunay.github-actions.external-action-approved-allowlist
+        # allowlist: approved
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
       - name: Unreviewed crates.io authentication revision
-        # ruleid: delaunay.github-actions.external-action-approved-allowlist
+        # allowlist: rejected
         uses: rust-lang/crates-io-auth-action@1111111111111111111111111111111111111111 # unreviewed
 
       - name: Unreviewed crates.io authentication fork
-        # ruleid: delaunay.github-actions.external-action-approved-allowlist
+        # allowlist: rejected
         uses: unreviewed/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # unreviewed
 
       - name: Missing readable version comment
@@ -64,14 +64,14 @@ jobs:
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
 
       - name: Allowed setup-python action
-        # ok: delaunay.github-actions.external-action-approved-allowlist
+        # allowlist: approved
         # ok: delaunay.github-actions.external-action-sha-pinned
         # ok: delaunay.github-actions.external-action-version-comment
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
 
       - name: Local action
         # ok: delaunay.github-actions.external-action-sha-pinned
-        # ok: delaunay.github-actions.external-action-approved-allowlist
+        # allowlist: approved
         # ok: delaunay.github-actions.external-action-version-comment
         uses: ./.github/actions/local-action
 
@@ -129,10 +129,10 @@ jobs:
         # ruleid: delaunay.github-actions.external-action-sha-pinned
         uses: 'actions/cache@v5'
       - name: Quoted unapproved action
-        # ruleid: delaunay.github-actions.external-action-approved-allowlist
+        # allowlist: rejected
         uses: "unapproved/example-action@1111111111111111111111111111111111111111" # v1
       - name: Single-quoted unapproved action
-        # ruleid: delaunay.github-actions.external-action-approved-allowlist
+        # allowlist: rejected
         uses: 'unapproved/example-action@1111111111111111111111111111111111111111' # v1
       - name: Quoted missing version
         # ruleid: delaunay.github-actions.external-action-version-comment
@@ -142,12 +142,12 @@ jobs:
         uses: 'actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae'
       - name: Quoted reviewed action
         # ok: delaunay.github-actions.external-action-sha-pinned
-        # ok: delaunay.github-actions.external-action-approved-allowlist
+        # allowlist: approved
         # ok: delaunay.github-actions.external-action-version-comment
         uses: "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" # v1.0.5
       - name: Single-quoted reviewed action
         # ok: delaunay.github-actions.external-action-sha-pinned
-        # ok: delaunay.github-actions.external-action-approved-allowlist
+        # allowlist: approved
         # ok: delaunay.github-actions.external-action-version-comment
         uses: 'rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18' # v1.0.5
 
@@ -157,11 +157,11 @@ jobs:
       - uses: "actions/cache@v5"
       # ruleid: delaunay.github-actions.external-action-sha-pinned
       - uses: 'actions/cache@v5'
-      # ruleid: delaunay.github-actions.external-action-approved-allowlist
+      # allowlist: rejected
       - uses: unapproved/example-action@1111111111111111111111111111111111111111 # v1
-      # ruleid: delaunay.github-actions.external-action-approved-allowlist
+      # allowlist: rejected
       - uses: "unapproved/example-action@1111111111111111111111111111111111111111" # v1
-      # ruleid: delaunay.github-actions.external-action-approved-allowlist
+      # allowlist: rejected
       - uses: 'unapproved/example-action@1111111111111111111111111111111111111111' # v1
       # ruleid: delaunay.github-actions.external-action-version-comment
       - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
@@ -170,24 +170,24 @@ jobs:
       # ruleid: delaunay.github-actions.external-action-version-comment
       - uses: 'actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae'
       # ok: delaunay.github-actions.external-action-sha-pinned
-      # ok: delaunay.github-actions.external-action-approved-allowlist
+      # allowlist: approved
       # ok: delaunay.github-actions.external-action-version-comment
       - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
       # ok: delaunay.github-actions.external-action-sha-pinned
-      # ok: delaunay.github-actions.external-action-approved-allowlist
+      # allowlist: approved
       # ok: delaunay.github-actions.external-action-version-comment
       - uses: "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" # v1.0.5
       # ok: delaunay.github-actions.external-action-sha-pinned
-      # ok: delaunay.github-actions.external-action-approved-allowlist
+      # allowlist: approved
       # ok: delaunay.github-actions.external-action-version-comment
       - uses: 'rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18' # v1.0.5
-      # ruleid: delaunay.github-actions.external-action-approved-allowlist
+      # allowlist: rejected
       - uses: "rust-lang/crates-io-auth-action@1111111111111111111111111111111111111111" # unreviewed
       # ok: delaunay.github-actions.external-action-sha-pinned
-      # ok: delaunay.github-actions.external-action-approved-allowlist
+      # allowlist: approved
       # ok: delaunay.github-actions.external-action-version-comment
       - uses: './.github/actions/local-action'
       # ok: delaunay.github-actions.external-action-sha-pinned
-      # ok: delaunay.github-actions.external-action-approved-allowlist
+      # allowlist: approved
       # ok: delaunay.github-actions.external-action-version-comment
       - uses: "docker://example:latest"

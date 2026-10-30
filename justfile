@@ -44,6 +44,11 @@ import 'just/helpers.just'
 _default:
     @just --list
 
+# Check exact external action identities and restricted refs in workflows and composites.
+[group('validation')]
+action-allowlist:
+    {{ rrt }} actions allowlist --policy .github/settings/actions-selected.json .github/workflows .github/actions
+
 # GitHub Actions workflow validation
 [group('validation')]
 action-lint: _ensure-actionlint
@@ -285,9 +290,9 @@ fmt:
 fmt-check:
     {{ managed }} cargo fmt --all -- --check
 
-# Run actionlint and zizmor over GitHub Actions workflows.
+# Check the external Actions allowlist, workflow syntax, and security audits.
 [group('validation')]
-github-actions-check: action-lint zizmor
+github-actions-check: action-allowlist action-lint zizmor
     @echo "✅ GitHub Actions checks complete!"
 
 # Check JSON files parse cleanly.
@@ -763,19 +768,20 @@ security-secrets:
 [group('validation')]
 semgrep: semgrep-scan
 
-# Run the shared repository Semgrep target set, optionally emitting SARIF.
+# Scan native inputs and Rustdoc blocks into a validated JSON/SARIF pair.
 [private]
 semgrep-scan output="target/semgrep": _ensure-uv
     {{ semgrep_stack_limit }} uv run --locked --group dev python tooling/python/shared_tooling.py semgrep scan --include '*.rs' --include 'tooling/python/*.py' --include 'tests/tooling/*.py' \
         --include '.github/workflows/*.yml' --include '.github/workflows/*.yaml' \
+        --include '.github/actions/**/*.yml' --include '.github/actions/**/*.yaml' \
         --include '*.md' --include CITATION.cff --include justfile \
         --include 'notebooks/*.ipynb' --include 'doctests/*.txt' \
-        --exclude 'tests/semgrep/**' --output {{ quote(output) }}
+        --exclude 'tests/semgrep/**' --rust-docs --output {{ quote(output) }}
 
 # Test the repository-owned Semgrep rules against their fixtures.
 [group('validation')]
 semgrep-test: _ensure-uv
-    {{ semgrep_stack_limit }} uv run --locked --group dev python tooling/python/shared_tooling.py semgrep check-fixtures
+    {{ semgrep_stack_limit }} uv run --locked --group dev python tooling/python/shared_tooling.py semgrep check-fixtures --rust-docs
 
 # Install required tools and build the development profile.
 [group('build and setup')]

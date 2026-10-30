@@ -2113,6 +2113,8 @@ fn doctest_assert_matches_fixture() {}
 /// # use delaunay::prelude::DelaunayTriangulation as HiddenPreludeImport;
 // ruleid: delaunay.rust.prefer-prelude-imports-in-delaunay-doctests
 /// # use delaunay::flips::BistellarFlips as HiddenDeepImport;
+/// // ok: delaunay.rust.no-nonfinite-unwrap-defaults
+/// let finite = 1.0_f64;
 /// ```
 fn triangulation_doctest_deep_import_fixture() {}
 
