@@ -57,13 +57,20 @@ see [release gates and recovery](../../docs/RELEASING.md).
 Cargo or a release event. `release-publish` requires that inspection, while
 workflow verification retains its stricter event and reproduction gates.
 
-`release_changelog.py` is a temporary generic adapter for the citation-date
-default used by `changelog-release` and tagged previews.
-v0.2.3 already owns generation, but requires an explicit
-prospective date. [research-repo-tools #130](https://github.com/acgetchell/research-repo-tools/issues/130)
-tracks the shared replacement for this adapter and la-stack's equivalent.
-After adopting that published capability, recipes should call it directly and
-this adapter should be removed.
+`cargo_release.py` retains only Cargo dry-run locations, source observation,
+the published-event boundary and credential-free reproduction. Installed
+v0.2.4 evidence APIs own archive/source metadata inspection, exact run/attempt
+selection and frozen handoffs, using `tooling/release-evidence.toml`.
+`release-evidence` and `release-assets` use isolated published runtimes and the
+same arguments as la-stack. Evidence can be saved with `--output PATH` and
+revalidated with `--expected PATH`; `--github-output PATH` writes directly to
+an existing Actions command file. No evidence travels through Just stdout.
+
+The citation-date adapter is deleted: `changelog-release` and tagged previews
+call the installed generator with `changelog.date-source = "citation"`.
+`prepare_release.py` creates or validates a stable draft after exact-main
+evidence and required checks. Tag pushes invoke it automatically; benchmark
+dispatch remains explicit through `just release-benchmarks TAG`.
 
 Changelog generation normalizes history and retains Unreleased and the latest
 minor series in the root, with older series under `docs/archives/changelog/`.

@@ -103,7 +103,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PROMOTION_SELECTION: ${{ needs.verify.outputs.selection }}
-        run: uv run --locked --no-sync python tooling/python/release_artifacts.py verify
+        run: uv run --locked --no-sync python tooling/python/cargo_release.py verify
 
       - name: Obtain a short-lived crates.io token
         id: auth

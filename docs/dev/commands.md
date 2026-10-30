@@ -987,7 +987,7 @@ independent Semgrep rules require full SHAs and readable comments in workflows
 and composites. The shared checker treats `./`, `$/`, and `docker://` references
 as outside its external-action policy.
 
-`action-allowlist` is reached by `check-config`, `check`, and each native CI leg
+`action-allowlist` is reached by `check-config`, `check`, and the single portable CI job
 through `github-actions-check`. The duplicate Semgrep allowlist is retired, with
 its syntax cases retained in the installed-checker regression suite. Updating
 this versioned policy does not apply live GitHub repository settings; that is a
@@ -1104,10 +1104,18 @@ CI enforces:
 - benchmark harness compilation
 - examples
 
-The default portability contract runs the same `just ci` recipe on Linux,
-macOS, and Windows. Optimize bootstrap and caching without silently reducing
-that platform coverage; a narrower matrix requires an explicit replacement for
-each lost portability check.
+Local `just ci` remains the comprehensive contract. Hosted CI runs
+`just ci-portable` once on Linux, then `just ci-native` on Linux, macOS and
+Windows. Native Rust and Python checks, notebook lint, all correctness/feature
+test buckets, examples and benchmark compilation retain all three hosts;
+canonical figure comparison remains on macOS. Portable configuration, Markdown,
+spelling, shell/Rust formatting and Semgrep fixtures run once. The separately
+required repository-rule SARIF workflow owns the production Semgrep scan.
+Clippy remains native on all hosts; its Linux SARIF job retains report production.
+The exact ownership and timing inventory is in
+[`ci_validation.md`](ci_validation.md). Consumer tests require the remote union
+to equal the complete local validator set. Build check names remain stable and
+depend on portable success, so existing protected-PR requirements still block.
 
 The native targets are `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, and
 `x86_64-pc-windows-msvc`, respectively. CI checks the compiler host against the
@@ -1181,9 +1189,9 @@ just tag vX.Y.Z
 Trusted main-push CI uses `just release-package` to verify clean default and
 all-feature Cargo packages without upload credentials, then `just release-artifact
 create OUTPUT` retains the archive and source/run/tool manifest for 30 days.
-`just release-evidence [IDENTITY]` validates the retained archive for the clean
-checkout without Cargo or a published release event; an optional identity must
-match the previous selection. `release-publish` requires this evidence before
+`just release-evidence [ARGS...]` validates the retained archive for the clean
+checkout without Cargo, a tag or a published release event. `--output PATH`
+retains a selection; `--expected PATH` requires it unchanged. `release-publish` requires this evidence before
 making the GitHub release immutable.
 The release workflow uses `just release-artifact verify` to retrieve the exact
 main artifact and require byte-identical repackaging without rebuilding. After
@@ -1195,3 +1203,13 @@ native CI checks and benchmark asset; `just release-publish TAG` approves a
 reviewed draft through a human GitHub CLI session, and `just release-verify TAG`
 checks the release and exact registry version with bounded visibility polling.
 Follow [Releasing](../RELEASING.md) for account setup, sequence, and recovery.
+
+After evidence inspection, tag creation and push, `Prepare GitHub release`
+creates a stable draft or validates an identical retry without changing assets.
+`just release-benchmarks TAG` then dispatches `release-benchmarks.yml` with
+both `--ref TAG` and `-f tag=TAG`, returning immediately. The workflow rejects
+another dispatch ref/source SHA and captures the mutable draft identity before
+measurement. It preserves the main runtime and refuses existing baseline assets.
+`just release-assets OPERATION TAG [ARGS...]` exposes the shared declarative
+preflight/verify/upload contract; upload requires its explicit approval flag and
+uses identical-byte retries. It is separate from the stricter benchmark adapter.

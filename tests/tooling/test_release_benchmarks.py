@@ -28,8 +28,11 @@ def target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ReleaseTarget:
     """Provide the shared typed identity; remote lifecycle tests belong upstream."""
     selected = ReleaseTarget(repository=REPOSITORY, release_id=42, tag=TAG, commit=COMMIT)
     monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "output"))
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    monkeypatch.setenv("GITHUB_REF", f"refs/tags/{TAG}")
+    monkeypatch.setenv("GITHUB_SHA", COMMIT)
     monkeypatch.setattr(release_benchmarks, "resolve_revision", lambda *_args: COMMIT)
-    monkeypatch.setattr(release_benchmarks, "preflight_release_target", lambda *_args: selected)
+    monkeypatch.setattr(release_benchmarks, "preflight_release_target", lambda *_args, **_kwargs: selected)
     monkeypatch.setattr(
         release_benchmarks,
         "revalidate_release_target",
@@ -51,10 +54,25 @@ def test_trusted_handoff_reaches_publication_unchanged(tmp_path: Path, monkeypat
     publish.assert_called_once_with(tmp_path, REPOSITORY, TAG, tmp_path / ASSET, target=target, publish=False)
 
 
+@pytest.mark.parametrize("variable", ["GITHUB_EVENT_NAME", "GITHUB_REF", "GITHUB_SHA"])
+def test_benchmark_preflight_rejects_another_dispatch_ref_or_sha(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: ReleaseTarget, variable: str) -> None:
+    """No handoff or measurement target is emitted for a main or mismatched dispatch."""
+    monkeypatch.setenv(variable, "wrong")
+    preflight = Mock(return_value=target)
+    monkeypatch.setattr(release_benchmarks, "preflight_release_target", preflight)
+    handoff = tmp_path / "target.json"
+    with pytest.raises(ValueError, match="dispatch ref/source SHA"):
+        release_benchmarks.release_benchmarks("preflight", tmp_path, handoff, REPOSITORY, TAG)
+    preflight.assert_not_called()
+    assert not handoff.exists()
+
+
 def test_annotated_tag_handoff_uses_peeled_commit_and_requires_matching_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Real Git resolution distinguishes the tag object, its commit, and a later HEAD."""
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    monkeypatch.setenv("GITHUB_REF", f"refs/tags/{TAG}")
     root = tmp_path / "release checkout"
     root.mkdir()
     for args in (
@@ -68,6 +86,7 @@ def test_annotated_tag_handoff_uses_peeled_commit_and_requires_matching_head(tmp
     commit = run_command("git", ["--no-pager", "rev-parse", "HEAD"], cwd=root, timeout=30).stdout.strip()
     tag_object = run_command("git", ["--no-pager", "rev-parse", f"refs/tags/{TAG}"], cwd=root, timeout=30).stdout.strip()
     assert tag_object != commit
+    monkeypatch.setenv("GITHUB_SHA", commit)
     run_command("git", ["commit", "--quiet", "--allow-empty", "-m", "later checkout"], cwd=root, timeout=30)
     selected = ReleaseTarget(repository=REPOSITORY, release_id=42, tag=TAG, commit=commit)
     preflight = Mock(return_value=selected)
@@ -82,7 +101,7 @@ def test_annotated_tag_handoff_uses_peeled_commit_and_requires_matching_head(tmp
 
     release_benchmarks.release_benchmarks("preflight", root, handoff, REPOSITORY, TAG)
 
-    preflight.assert_called_once_with(root, REPOSITORY, TAG, commit)
+    preflight.assert_called_once_with(root, REPOSITORY, TAG, commit, expected_title=TAG)
     assert parse_release_target(handoff.read_bytes()) == selected
     assert output.read_bytes() == f"commit={commit}\n".encode()
     with pytest.raises(ValueError, match="HEAD differs"):
@@ -138,6 +157,12 @@ def test_release_workflow_preserves_trusted_code_runtime_and_target() -> None:
     assert workflow.count('"$RUNNER_TEMP/release-tools/.venv/bin/python"') == 2
     assert 'preflight "$RUNNER_TEMP/release-target.json"' in workflow
     assert 'publish "$RUNNER_TEMP/release-target.json"' in workflow
+    configured = yaml.safe_load(workflow)
+    steps = configured["jobs"]["release-baseline"]["steps"]
+    assert steps[0]["with"]["ref"] == "main"
+    assert steps[1]["name"] == "Validate tag dispatch context"
+    assert 'test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"' in steps[1]["run"]
+    assert "merge-base --is-ancestor" in steps[1]["run"]
 
 
 def test_release_workflow_staging_preserves_clean_source_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

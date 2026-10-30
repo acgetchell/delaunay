@@ -428,7 +428,10 @@ def test_release_recipes_forward_shared_policy_arguments() -> None:
             expected.append("--force")
         assert shlex.split(tag_command) == expected
     command = dry_run(REPO_ROOT, "changelog-release", ("v0.9.0", "2026-10-04"))
-    assert "--tag 'v0.9.0' --date '2026-10-04'" in command.stdout + command.stderr
+    rendered = command.stdout + command.stderr
+    assert "args=(--tag 'v0.9.0')" in rendered
+    assert "date='2026-10-04'" in rendered
+    assert 'research-repo-tools changelog generate "${args[@]}"' in rendered
 
 
 def test_release_benchmark_summary_recipe_renders_strict_evidence_without_resampling() -> None:

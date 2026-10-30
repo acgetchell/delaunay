@@ -42,9 +42,9 @@ are unchanged.
 The v0.2.4 pin also supplies the shared Windows notebook event-loop fix for
 [#661](https://github.com/acgetchell/delaunay/issues/661); native Windows consumer
 verification remains required. The performance and Rustdoc integrations are
-documented below. The separate release-tooling migration remains tracked by
-[#653](https://github.com/acgetchell/delaunay/issues/653); pinning the published
-package does not complete that consumer integration.
+documented below. The [release-tooling adoption](#v024-release-tooling-adoption)
+implements [#653](https://github.com/acgetchell/delaunay/issues/653) using the
+same published package.
 
 `tooling/python/shared_tooling.py` temporarily selects Semgrep from the locked
 Python 3.15 environment for setup, production scans, and fixture checks. The
@@ -292,20 +292,24 @@ tracked notebook artifact, release or live repository setting was changed.
 
 [semgrep-api]: https://github.com/acgetchell/research-repo-tools/blob/v0.2.4/docs/security-api.md
 
-## v0.2.3 Cargo artifact promotion
+<a id="v023-cargo-artifact-promotion"></a>
 
-Delaunay consumes the published `release_validation.ValidationPolicy`,
-`select_main_run`, `validate_jobs` and `download_artifact` interfaces. The shared
-package owns trusted exact-commit main-run selection, complete-attempt job
-verification and immutable ZIP integrity/inventory checks. Its Python
-wheel/sdist verifier and producer-specific promotion CLI are not Cargo adapters.
-The published `ci.export_environment` helper writes verified selection JSON
-directly to `GITHUB_OUTPUT`, preserving existing records and failing on export
-errors. Evidence transport does not depend on Just's stdout.
+## v0.2.4 release tooling adoption
 
-`tooling/python/release_artifacts.py` owns Cargo archive/source/version inspection,
-the Delaunay native/package step policy, retained package/tool manifest and the
-release-event handoff. Main CI runs the complete native matrix and default plus
+Delaunay consumes the published v0.2.4 `release evidence` and `release assets`
+commands and their public APIs. The exact runtime/tooling pins and registry
+artifacts already supply upstream #129/#130/#140. No dependency upgrade,
+editable install, sibling checkout or private API is used.
+
+`tooling/release-evidence.toml` owns exact workflow/job/step/runner requirements
+and the Cargo archive guarantee. Shared code now owns nested archive/source
+inspection, manifests, immutable artifact retrieval, run/attempt selection and
+frozen handoff comparison. `release_artifacts.py` is deleted;
+`cargo_release.py` retains only Cargo's paired dry-run locations, clean source
+observation, published-event boundary and credential-free byte reproduction.
+`write_release_outputs` transports frozen evidence directly to `GITHUB_OUTPUT`,
+preserving previous records and failing on export errors. Just stdout remains
+a display channel. Main CI runs the complete native matrix and default plus
 all-feature Cargo package builds before retaining an archive. Release jobs require
 the exact archive to reproduce without builds, rechecking the frozen selection
 after deployment approval. Cargo remains the native uploader and repackages the
@@ -315,19 +319,25 @@ Cargo or a release event on any host. `release-publish` requires this check
 before making the reviewed draft immutable; the workflow separately enforces
 the published event, producer-tool equality and byte-identical repackaging.
 
-The release recipes follow la-stack's command contract. A small citation-date
-adapter supplies an explicit date to the shared changelog generator for
-`changelog-release` and tagged previews. It validates the
-prepared version/date without reading the clock or changing metadata; generation
-and publication remain shared-package operations. This is temporary generic
-code pending [research-repo-tools #130](https://github.com/acgetchell/research-repo-tools/issues/130),
-which also replaces la-stack's adapter. Remove it when that capability is
-published and adopted; v0.2.3 still requires an explicit prospective date.
+The release recipes follow la-stack's operator contract. `release-evidence`
+uses the isolated published runtime and accepts `--output`, `--expected` and
+`--github-output` paths; it requires neither a tag nor Cargo. `release-assets`
+uses the shared CLI and declarative tag-as-title policy. `release_benchmarks`
+remains explicitly local because Delaunay rejects an existing baseline asset
+even when its bytes match, while the shared asset command supports identical-byte
+retries. Captured ID/title/tag/commit and the preserved main runtime remain
+required across the tagged checkout.
+
+`release_changelog.py` is deleted. The shared citation-date declaration now
+supplies the recorded date for prospective generation and preview. Performance
+preparation, release acquisition and separately retriable README publication
+remain the already adopted independent native-harness commands; this patch
+collects no new timings and rewrites no historical evidence.
 
 Tag-specific scientific benchmark production and provenance, protected-branch
 and generated-notes checks, immutable GitHub Releases, crates.io OIDC approval,
 registry absence and visibility checks retain their existing owners. No package
-version beyond 0.2.3 is required. Missing/expired/partial-rerun evidence fails
+version beyond the pinned 0.2.4 is required. Missing/expired/partial-rerun evidence fails
 without rebuilding; [release recovery](../RELEASING.md#recovering-a-failed-run)
 defines the 30-day retention and complete-main-attempt recovery policy.
 
@@ -335,6 +345,24 @@ Consumer regressions use real Cargo/ZIP fixtures and the installed shared public
 interfaces, modeling GitHub transport and native Cargo execution. Native hosted
 producer/promotion and the next approved publication remain rollout evidence;
 local tests do not establish that those workflows have executed.
+
+The tag-triggered preparation workflow verifies protected-main source, retained
+Cargo evidence, metadata/notes and exact-commit native/SARIF checks before draft
+creation. Retries validate the same mutable draft and body without touching
+assets. It does not publish. The guide verifies evidence before annotated tag
+creation/push, then uses explicit `release-benchmarks TAG` dispatch. The
+[CI ownership inventory](ci_validation.md) records measured before-change costs,
+the portable/native split and deliberately disabled cross-commit reuse.
+
+The published [consumer regression suite][shared-release-tests] covers generic
+archive safety/source metadata, run/job/artifact tampering, frozen approval
+identity, output rollback, and normal/quiet Just handoffs. Local tests retain
+the consumer policy and real Cargo/ZIP fixtures, native dry-run/reproduction
+commands, actual isolated pre-tag recipe, draft orchestration, benchmark asset
+refusal and dispatch forwarding. Generic parser/transaction cases are owned
+upstream; the retired local implementations are not imported.
+
+[shared-release-tests]: https://github.com/acgetchell/research-repo-tools/blob/v0.2.4/tests/releases/public_evidence_consumer.py
 
 ## Ownership
 

@@ -35,7 +35,21 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.sha }}
+          ref: main
+
+      - name: Validate tag dispatch context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
+          test "$(git --no-pager rev-parse "$GITHUB_REF^{commit}")" = "$GITHUB_SHA"
+          git --no-pager merge-base --is-ancestor "$GITHUB_SHA" HEAD
+          test "$(gh api repos/acgetchell/delaunay --jq .default_branch)" = main
+          test "$(gh api repos/acgetchell/delaunay/branches/main --jq .protected)" = true
 
       - name: Set up trusted publication tooling
         uses: $/.github/actions/setup-just

@@ -1,0 +1,55 @@
+name: Prepare GitHub release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+
+concurrency:
+  group: prepare-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'acgetchell/delaunay'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # Create only a mutable draft; no publication or OIDC.
+      actions: read
+      checks: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require protected main before running repository code
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/acgetchell/delaunay --jq .default_branch)" = main
+          test "$(gh api repos/acgetchell/delaunay/branches/main --jq .protected)" = true
+          git --no-pager merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          test "$(git --no-pager rev-parse "$GITHUB_REF^{commit}")" = "$GITHUB_SHA"
+
+      - name: Install declared uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version-file: pyproject.toml
+          enable-cache: false
+
+      - name: Install locked draft tooling
+        run: uv sync --locked --managed-python --only-group tooling --no-install-project
+
+      - name: Verify retained evidence and prepare stable draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: uv run --locked --no-sync python tooling/python/prepare_release.py "$RELEASE_TAG"

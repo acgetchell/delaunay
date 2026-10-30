@@ -1,7 +1,8 @@
 # Releasing delaunay
 
 Prepare each `vX.Y.Z` release in a dedicated PR. After that PR is merged,
-create the annotated tag and a draft GitHub release. Start `Release Benchmarks`
+verify the merged commit's retained CI evidence, create the annotated tag, and
+push it to start automatic draft preparation. Start `Release Benchmarks`
 to attach the durable baseline, then review and publish the draft with
 `just release-publish`. The published release starts `Publish to crates.io`;
 approve its `crates-io` deployment to permit the Cargo upload.
@@ -29,21 +30,24 @@ reuses the declared citation date even after UTC midnight.
 - [Prepare the environment](#prepare-the-environment)
 - [Step 1: Prepare the release PR](#step-1-prepare-the-release-pr)
 - [Step 2: Publish after the PR is merged](#step-2-publish-after-the-pr-is-merged)
+  - [Verify the release commit before tagging](#2-verify-the-release-commit)
+  - [Inspect automatic draft preparation](#5-inspect-the-prepared-draft-github-release)
 - [Configure or verify Trusted Publishing](#configure-trusted-publishing-before-the-next-release)
 
 ## Reusable CI evidence
 
 The publishing process uses the installed `research-repo-tools==0.2.4`
-validation helpers. `tooling/python/release_artifacts.py` supplies Delaunay's
-Cargo policy. After all three native `just ci` jobs succeed on a protected
+validation helpers and the declarative `tooling/release-evidence.toml` policy.
+`tooling/python/cargo_release.py` retains only Cargo dry-run/reproduction glue.
+After portable checks and all three native `just ci-native` jobs succeed on a protected
 `main` push, `just release-package` builds and verifies clean default and
 all-feature packages without upload credentials. CI retains the verified
-`.crate` and `validation.json` as `cargo-package-ATTEMPT` for 30 days.
+`.crate` and `validation.json` as `cargo-package-RUN_ID-ATTEMPT` for 30 days.
 
 `just release-evidence` verifies this retained evidence for the clean current
 checkout. It requires the exact successful main-push run, all required jobs and
 steps from the same attempt, and one nonexpired artifact retrieved by immutable
-ID. It validates the ZIP digest and inventory, manifest, crate digest, source
+ID. The installed verifier validates the ZIP digest and inventory, manifest, crate digest, source
 commit and version without running Cargo. It works from macOS, Linux or Windows;
 the producer's recorded tool identities need not match the inspecting host.
 PR, manual-dispatch and partial-rerun results cannot replace main-push evidence.
@@ -65,11 +69,14 @@ The release commands share la-stack's operator-facing roles:
 | `performance-prepare`, `performance-release` | Measure, retain and promote release performance evidence |
 | `performance-readme` | Publish the README snapshot from validated, promoted measurements |
 | `release-package` | Build and verify clean Cargo packages without uploading |
-| `release-evidence [IDENTITY]` | Verify retained main CI evidence, optionally requiring a previous selection |
+| `release-assets OPERATION TAG [ARGS...]` | Capture/revalidate a draft target and verify exact-byte asset uploads |
+| `release-benchmarks TAG` | Dispatch the benchmark workflow at that exact tag and return |
+| `release-evidence [ARGS...]` | Verify retained main CI evidence; `--expected PATH` requires a saved selection |
 | `release-publish TAG` | Check notes and CI evidence, then approve the reviewed GitHub draft |
 | `release-verify TAG` | Verify GitHub assets and the exact crates.io version |
 
-Delaunay retains its scientific measurement adapter and default/all-feature
+Delaunay retains its scientific measurement adapter, refusal to reuse an existing
+baseline asset, and default/all-feature
 coverage. Declarative performance preparation, acquisition, and promotion are
 documented below; la-stack has a separate measurement harness.
 
@@ -174,7 +181,7 @@ stops generation before files change.
 Use `just changelog-preview --tag "$TAG"` for a read-only preview with the same
 date default. An explicit date is still available as the second argument to
 `changelog-release`, or as `--date YYYY-MM-DD` for the preview. An explicit
-date bypasses the adapter's citation lookup and version check; the shared
+date bypasses the shared citation lookup and version check; the shared
 generator still validates the supplied date. To advance the declared date
 deliberately, run `just update-version "$TAG" --date YYYY-MM-DD`
 before regenerating. Run the final version check to verify the heading matches
@@ -329,16 +336,18 @@ is needed. Once the corrected artifacts merge, resume Step 2 from the new clean
 If the tag already exists but the release is still unpublished, stop or wait for
 any release-benchmark run using the old tag. Delete any existing unpublished
 draft and its obsolete assets, leaving the tag. Replace the annotated tag from
-the corrected clean `main` checkout, protecting against concurrent remote changes:
+the corrected clean `main` checkout after its complete CI and SARIF checks pass,
+protecting against concurrent remote changes:
 
 ```bash
 previous_tag_oid="$(git ls-remote --refs origin "refs/tags/$TAG" | cut -f1)"
 test -n "$previous_tag_oid"
+just release-evidence
 just tag-force "$TAG"
 git push --force-with-lease="refs/tags/$TAG:$previous_tag_oid" origin "refs/tags/$TAG"
 ```
 
-Continue at Step 2's draft creation and benchmark steps. The new draft must use
+Continue at Step 2's automatic draft inspection and benchmark steps. The new draft must use
 fresh notes and benchmark evidence for the updated tag. Never use this recovery
 path for a published release; publish a new version instead.
 
@@ -349,36 +358,27 @@ path for a published release; publish a new version instead.
 ```bash
 git switch main
 git pull --ff-only
+test -z "$(git status --porcelain --untracked-files=all)"
+RELEASE_COMMIT="$(git rev-parse HEAD)"
+git --no-pager show --no-patch "$RELEASE_COMMIT"
 ```
 
-### 2. Create and verify the annotated tag
+Confirm that `RELEASE_COMMIT` is the exact reviewed, merged release SHA. Keep the
+checkout at that commit through verification and tagging.
 
-```bash
-just tag "$TAG"
-git --no-pager tag -l --format='%(contents)' "$TAG"
-```
+<a id="4-verify-the-release-commit"></a>
 
-`just tag` first runs `release-version-check`, then builds the annotation from
-the matching active or archived changelog section. For a changelog larger than
-125 kB, the annotation points to that section instead of embedding it.
-
-### 3. Push the tag
-
-```bash
-git push origin "$TAG"
-```
-
-### 4. Verify the release commit
+### 2. Verify the release commit
 
 ```bash
 just release-evidence
 ```
 
-Require successful native `CI` builds on Linux, macOS and Windows, plus Clippy
+Wait for successful portable checks and native `CI` builds on Linux, macOS and Windows, plus Clippy
 and repository-rule SARIF checks, for this exact commit before proceeding.
 These retain the declared Rust 1.99.1 baseline, Delaunay's numerical and
 topological regressions, feature coverage, examples and benchmark compilation.
-The publishing policy in `pyproject.toml` binds all five check names to GitHub
+The publishing policy in `pyproject.toml` binds all six check names to GitHub
 Actions app ID `15368`. CodeRabbit and human review remain protected-PR
 requirements; CodeRabbit does not run on the merged `main` commit. Missing,
 pending, cancelled or failed native checks block publication. Also require the
@@ -394,16 +394,58 @@ inspection downloads and checks its retained artifact without rebuilding. The lo
 `publish-check` permits dirty release-PR artifacts; `release-package` and the
 upload workflow never use `--allow-dirty`.
 
-### 5. Create the draft GitHub release
+Evidence inspection works before a tag exists. Git push does not check CI.
+Missing evidence fails immediately; inspect the original run before retrying.
+If HEAD or the selected run/attempt/artifact changes, repeat verification before
+continuing. Earlier inspection does not replace publication-time and
+approval-time frozen evidence checks or byte-identical Cargo reproduction.
 
-Create an unpublished release where the workflow can attach its benchmark archive:
+<a id="2-create-and-verify-the-annotated-tag"></a>
+
+### 3. Create and verify the annotated tag
 
 ```bash
-NOTES="$(mktemp)"
-just release-notes "$TAG" > "$NOTES"
-gh release create "$TAG" --verify-tag --draft --title "$TAG" --notes-file "$NOTES"
-rm "$NOTES"
+test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+just tag "$TAG"
+test "$(git rev-parse "$TAG^{commit}")" = "$RELEASE_COMMIT"
+git --no-pager tag -l --format='%(contents)' "$TAG"
 ```
+
+`just tag` first runs `release-version-check`, then builds the annotation from
+the matching active or archived changelog section. For a changelog larger than
+125 kB, the annotation points to that section instead of embedding it.
+
+<a id="3-push-the-tag"></a>
+
+### 4. Push the tag
+
+```bash
+git push origin "$TAG"
+```
+
+<a id="5-create-the-draft-github-release"></a>
+
+### 5. Inspect the prepared draft GitHub release
+
+The tag push starts `Prepare GitHub release`. Wait for its successful completion:
+
+```bash
+gh run list --workflow prepare-release.yml --limit 5
+gh release view "$TAG" --repo acgetchell/delaunay --json tagName,name,body,isDraft,isPrerelease
+```
+
+Inspect the [preparation run](https://github.com/acgetchell/delaunay/actions/workflows/prepare-release.yml)
+and compare the draft body with `just release-notes "$TAG"`. Preparation checks
+the exact tag/ref/SHA, protected main ancestry, final package/citation metadata,
+generated notes, complete retained main evidence and separately required SARIF
+checks. Its 30-minute job bound is not an evidence wait: unavailable evidence
+fails closed. After fixing the cause, rerun that preparation run.
+
+The workflow creates only a stable mutable draft with the title equal to the tag.
+Retries reuse a draft only when its captured ID, tag, title and generated body
+agree, preserving attached benchmark assets. Conflicting, prerelease, immutable
+or published releases are rejected without edits. Preparation never publishes a
+release or crate and has no OIDC permission.
 
 Keep the release title identical to the tag, including its leading `v`.
 Leave it as a stable draft: publishing now would make the release immutable
@@ -412,20 +454,23 @@ before the benchmark archive can be attached. GitHub recommends this
 
 ### 6. Run benchmarks and review the draft
 
-Start the workflow from `main`, passing the release tag as its input:
+Dispatch the workflow at the tag, passing that same required tag as its input:
 
 ```bash
-gh workflow run release-benchmarks.yml --ref main -f tag="$TAG"
+just release-benchmarks "$TAG"
 ```
 
 Once GitHub accepts the command, you can close the terminal and leave the
 workflow running. Check its status later on the
 [Release Benchmarks Actions page](https://github.com/acgetchell/delaunay/actions/workflows/release-benchmarks.yml).
 
-Delaunay's adapter preserves the trusted runtime from `main`, captures the draft
-release ID and peeled tag commit, then checks out that exact release commit.
-This differs from la-stack's tag-dispatched, split-job benchmark workflow.
-The workflow must already be merged to `main`.
+Delaunay's adapter preserves the trusted runtime from protected `main`, requires
+the dispatch ref to be `refs/tags/$TAG` and the workflow source SHA to match its
+peeled commit, captures the draft release ID/title/tag/commit, then checks out
+that exact release commit. The workflow must already be merged to `main` and
+present in the tagged source. For troubleshooting, the recipe forwards exactly
+`gh workflow run release-benchmarks.yml --repo acgetchell/delaunay --ref "$TAG" -f tag="$TAG"`.
+It returns after dispatch and does not measure locally or wait for the run.
 
 The workflow automatically:
 

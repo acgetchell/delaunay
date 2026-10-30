@@ -22,7 +22,7 @@ POLICY = config.load(root=ROOT)
 VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
 TAG = f"v{VERSION}"
 SHA = "a" * 40
-CHECKS = ("build (ubuntu-latest)", "build (macos-latest)", "build (windows-latest)", "Clippy SARIF Analysis", "Repository Rule SARIF Analysis")
+CHECKS = ("portable", "build (ubuntu-latest)", "build (macos-latest)", "build (windows-latest)", "Clippy SARIF Analysis", "Repository Rule SARIF Analysis")
 
 
 def test_policy_binds_native_checks_assets_and_declared_dates() -> None:
@@ -183,13 +183,13 @@ def test_real_publish_recipe_requires_retained_evidence_before_publication(tmp_p
     (tmp_path / "justfile").write_text(f"import '{(ROOT / 'justfile').as_posix()}'\n", encoding="utf-8")
     calls = tmp_path / "calls"
     provider = json.dumps({"tagName": TAG, "name": TAG, "body": "generated notes"})
+    uvx = tmp_path / "uvx"
+    uvx.write_text(f"#!/bin/sh\nprintf '%s\\n' evidence >> {shlex.quote(calls.as_posix())}\nexit {17 if failure else 0}\n", encoding="utf-8", newline="\n")
+    uvx.chmod(0o755)
     runner = (
         "uv() {\n"
         '  case "$*" in\n'
         '    *"changelog notes "*) printf "%s\\n" "generated notes" ;;\n'
-        '    *"release_artifacts.py evidence "*)\n'
-        f'      printf "%s\\n" evidence >> {shlex.quote(calls.as_posix())}\n'
-        f"      return {17 if failure else 0} ;;\n"
         '    *"release publish "*)\n'
         f'      printf "%s\\n" publish >> {shlex.quote(calls.as_posix())} ;;\n'
         "    *) return 0 ;;\n"
@@ -198,7 +198,13 @@ def test_real_publish_recipe_requires_retained_evidence_before_publication(tmp_p
         f"gh() {{ printf '%s\\n' {shlex.quote(provider)}; }}\n"
         "export -f uv gh\n"
     )
-    result = run_command("bash", ["--noprofile", "--norc", "-euc", runner + f"just release-publish {shlex.quote(TAG)}"], cwd=tmp_path, check=False)
+    result = run_command(
+        "bash",
+        ["--noprofile", "--norc", "-euc", runner + f"just release-publish {shlex.quote(TAG)}"],
+        cwd=tmp_path,
+        env=os.environ | {"PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"},
+        check=False,
+    )
     assert (result.returncode == 0) is not failure, result.stderr
     assert calls.read_text(encoding="utf-8").splitlines() == (["evidence"] if failure else ["evidence", "publish"])
 
@@ -329,7 +335,7 @@ def test_promotion_output_survives_real_just_and_reaches_approval(tmp_path: Path
     # exercise validation and file emission using the installed shared helpers.
     producer = (
         "uv() {\n"
-        '  [[ "$*" == "run --locked --no-sync python tooling/python/release_artifacts.py verify" ]] || return 90\n'
+        '  [[ "$*" == "run --locked --no-sync python tooling/python/cargo_release.py verify" ]] || return 90\n'
         '  if [[ "$FIXTURE_EXIT" != 0 ]]; then return "$FIXTURE_EXIT"; fi\n'
         '  printf "selection=%s\\n" "$FIXTURE_SELECTION" >> "$GITHUB_OUTPUT"\n'
         '  printf "%s\\n" "human-readable confirmation"\n'
@@ -358,7 +364,7 @@ def test_promotion_output_survives_real_just_and_reaches_approval(tmp_path: Path
     environment["PROMOTION_SELECTION"] = output.read_text(encoding="utf-8").split("=", 1)[1].rstrip("\n")
     consumer = (
         "uv() {\n"
-        '  [[ "$*" == "run --locked --no-sync python tooling/python/release_artifacts.py verify" ]] || return 90\n'
+        '  [[ "$*" == "run --locked --no-sync python tooling/python/cargo_release.py verify" ]] || return 90\n'
         '  [[ "$PROMOTION_SELECTION" == "$FIXTURE_SELECTION" ]]\n'
         "}\n"
     )

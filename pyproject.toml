@@ -312,6 +312,7 @@ schema = 1
 owner = "acgetchell"
 repository = "delaunay"
 formatter = "docs/templates/changelog_format.toml"
+date-source = "citation"
 
 [tool.research-repo-tools.toolchain]
 inherit-python = true
@@ -422,6 +423,7 @@ package = "delaunay"
 repository = "acgetchell/delaunay"
 # Protected PR review is enforced before merge; these checks run on the release commit.
 required-checks = [
+    { name = "portable", app-id = 15368 },
     { name = "build (ubuntu-latest)", app-id = 15368 },
     { name = "build (macos-latest)", app-id = 15368 },
     { name = "build (windows-latest)", app-id = 15368 },
