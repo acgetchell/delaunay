@@ -194,14 +194,18 @@ parameterized implementation helpers live in `just/helpers.just`.
 
 Tool declarations live in their authoritative consumer files: exact uv and Cargo
 tool pins in `pyproject.toml`, Python in `.python-version`, and Rust plus components
-in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.2.3` from PyPI
+in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.2.4` from PyPI
 and is included by `dev`. Before the first Just invocation, run:
 
 ```bash
-uv run --locked --managed-python --only-group tooling research-repo-tools setup
+uv run --locked --managed-python --only-group tooling python tooling/python/shared_tooling.py setup
 ```
 
 Provision Git, a POSIX shell, and platform compiler/linker prerequisites first.
+The temporary v0.2.4 adapter selects Semgrep from the same locked Python baseline
+for setup and scans; it preserves the shared validation logic. Remove it through
+[#673](https://github.com/acgetchell/delaunay/issues/673) after the upstream fix is
+published and adopted.
 Shared setup installs and verifies declared versions,
 installs Just through its pinned `rust-just` dependency, configures shell PATH,
 and synchronizes dev with managed Rust available. Open a new terminal if PATH
@@ -229,7 +233,9 @@ Retention roots must pass the installed shared release's Python-baseline checks.
 
 `just update` runs `update-tools` before `update-dependencies`, stopping on the
 first failure. Completed package-manager steps remain applied. uv upgrades through
-its installation owner; managed Cargo upgrades publish verified exact TOML pins.
+its installation owner; managed Cargo and release-binary upgrades publish verified
+exact TOML pins without rerunning bootstrap or shell setup. Dependency updates
+finish by auditing every maintained lockfile; audit findings fail the update.
 Just follows the shared package pin and is not upgraded independently through
 Cargo. These policies replace cargo-update and the legacy Just-variable reconciler.
 An unsupported uv installation owner produces a diagnostic; update through that
@@ -244,7 +250,9 @@ preserve included tooling constraints and intentional ranges, refresh the entire
 `default-groups = []`. Additional independent uv projects must be declared under
 `tool.research-repo-tools.deps.python-projects`; none are currently needed here.
 `update-tools` preserves dependency requirements and
-locks. Change the shared package version explicitly through uv, refresh the lock,
+locks. Python updates preserve configured source/constraint policy, reject retained
+package downgrades, and restore selected Python projects on failure. Change the
+shared package version explicitly through uv, refresh the lock,
 review its release notes, and rerun setup. `deps update-tools` is the separate
 legacy interface for user-installed tools; this repository uses managed TOML pins.
 
@@ -986,10 +994,12 @@ Dependabot path so its workflow and setup-composite references stay coupled.
 CodeQL uses an explicit action-release target because its latest GitHub release
 is a bundle tag that the shared updater rejects as a semantic version.
 
-The shared strict Actions allowlist checker requires identity entries ending
-in `@*`. The existing selected-actions policy restricts the publishing action
-to an exact commit, so the repository retains that policy and its local Semgrep
-allowlist rather than loosening the publishing restriction.
+The published v0.2.4 strict Actions allowlist checker supports exact commit
+restrictions as well as identity entries ending in `@*`. Consumer adoption in
+[#649](https://github.com/acgetchell/delaunay/issues/649) still needs explicit
+action/subpath inventory and recipe wiring. Until that migration is verified,
+the existing selected-actions policy and local Semgrep allowlist retain the
+publishing action's exact-commit restriction.
 
 `just zizmor` uses the repository's pinned scanner with the `regular` persona.
 It takes a token from `ZIZMOR_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`, in

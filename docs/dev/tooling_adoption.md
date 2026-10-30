@@ -1,7 +1,7 @@
 # Shared tooling adoption
 
 The repository now pins the published
-[research-repo-tools v0.2.3](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.2.3)
+[research-repo-tools v0.2.4](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.2.4)
 PyPI distribution in runtime dependencies, the tooling/dev groups, and the
 notebook extra/group. `uv.lock` records exact registry artifacts and hashes.
 Python follows the shared package's 3.15 floor. Ruff, ty and pytest inherit exact
@@ -19,12 +19,46 @@ Native Linux and Windows execution must be verified by their CI jobs.
 
 [otel-advisory]: https://github.com/advisories/GHSA-xcq7-p3pf-p88h
 
-The Rust dependency is now the published la-stack 0.5.0, retaining disabled
+The Rust dependency is now the published la-stack 0.5.2, retaining disabled
 default features and the `exact` feature. This dependency refresh makes the
-upstream APIs available; numerical delegation remains tracked by
-[#577](https://github.com/acgetchell/delaunay/issues/577),
-[#579](https://github.com/acgetchell/delaunay/issues/579), and
-[#610](https://github.com/acgetchell/delaunay/issues/610).
+upstream APIs available; the new numerical delegation is tracked by
+[#654](https://github.com/acgetchell/delaunay/issues/654),
+[#655](https://github.com/acgetchell/delaunay/issues/655),
+[#656](https://github.com/acgetchell/delaunay/issues/656), and
+[#657](https://github.com/acgetchell/delaunay/issues/657).
+
+The dependency's polynomial errors introduce 16-byte alignment. To contain that
+growth in nested triangulation errors, `CoordinateConversionError::LinearAlgebraFailure`,
+`QualityError::EdgeLength`, `RandomPointGenerationError::VectorComputation`, and
+`SphericalPointError::AngleComputationFailed`
+now store their `source` as `Box<LaError>`. This is an intentional public field
+type change: construct these fields with `Box::new(source)` and inspect the
+backend variant through `source.as_ref()` or `*source`. Existing `From<LaError>`
+conversions remain available. The derived `Error::source()` now exposes the
+typed `Box<LaError>`, so downcast to that type before inspecting its inner error.
+Allocation occurs only when constructing those errors; the scientific kernels
+are unchanged.
+
+The v0.2.4 pin also supplies the shared Windows notebook event-loop fix for
+[#661](https://github.com/acgetchell/delaunay/issues/661); native Windows consumer
+verification remains required. The separate performance, Actions allowlist,
+Rustdoc scanning, and release-tooling migrations remain tracked by
+[#648](https://github.com/acgetchell/delaunay/issues/648),
+[#649](https://github.com/acgetchell/delaunay/issues/649),
+[#650](https://github.com/acgetchell/delaunay/issues/650), and
+[#653](https://github.com/acgetchell/delaunay/issues/653).
+Pinning the published package does not complete those consumer integrations.
+
+`tooling/python/shared_tooling.py` temporarily selects Semgrep from the locked
+Python 3.15 environment for setup, production scans, and fixture checks. The
+published v0.2.4 otherwise provisions Python 3.14/Semgrep 1.182.0 and can resolve
+the wrong `pysemgrep` on PATH. The adapter retains the installed shared validation
+logic, is restricted to v0.2.4, and restores its process-local overrides.
+[#673](https://github.com/acgetchell/delaunay/issues/673) owns deletion after the
+shared-baseline fix in
+[research-repo-tools #165](https://github.com/acgetchell/research-repo-tools/issues/165)
+is published in v0.2.5 and verified here. Existing Semgrep dependency/security
+overrides stay in place. This follow-up does not hold v0.8.4 open.
 
 ## v0.2.3 Cargo artifact promotion
 
@@ -83,8 +117,9 @@ construction metrics, complete confidence intervals, provenance-based
 comparability, report interpretation, and geometric-mean README summaries.
 Active manuscript prose and production tooling live in
 [Papers/delaunay-validation](https://github.com/acgetchell/Papers/tree/main/delaunay-validation).
-No scientific report, CSV/JSON baseline, tracked notebook, PDF, or figure was
-regenerated in this adoption patch.
+No tracked scientific report, CSV/JSON baseline, notebook, PDF, or figure is
+refreshed by this adoption patch. The canonical macOS `just ci` leg regenerates
+temporary validation figures only to compare them with the tracked artifacts.
 
 ## Remaining shared-tool gaps
 

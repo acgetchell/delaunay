@@ -33,7 +33,7 @@ reuses the declared citation date even after UTC midnight.
 
 ## Reusable CI evidence
 
-The publishing process uses the installed `research-repo-tools==0.2.3`
+The publishing process uses the installed `research-repo-tools==0.2.4`
 validation helpers. `tooling/python/release_artifacts.py` supplies Delaunay's
 Cargo policy. After all three native `just ci` jobs succeed on a protected
 `main` push, `just release-package` builds and verifies clean default and

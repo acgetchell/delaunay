@@ -189,9 +189,10 @@ pub enum QualityError {
     EdgeLength {
         /// Zero-based indices of the edge endpoints in the simplex vertex order.
         vertex_indices: [usize; 2],
-        /// Underlying vector construction or norm failure.
+        /// Underlying vector construction or norm failure. Boxing prevents the
+        /// backend's polynomial exponent alignment from enlarging insertion errors.
         #[source]
-        source: LaError,
+        source: Box<LaError>,
     },
     /// Failed to fetch a simplex's vertex keys from the TDS.
     #[error("Failed to fetch vertices for simplex {simplex_key:?}: {source}")]
@@ -399,7 +400,7 @@ fn scale_aware_epsilon<const D: usize>(points: &[Point<D>]) -> Result<(f64, f64)
         for (j, point_j) in points.iter().enumerate().skip(i + 1) {
             total += edge_length(point_i, point_j).map_err(|source| QualityError::EdgeLength {
                 vertex_indices: [i, j],
-                source,
+                source: Box::new(source),
             })?;
             edge_count += 1;
         }
@@ -450,7 +451,7 @@ fn mean_edge_length_after_sum_overflow<const D: usize>(
             .map(move |(j, second)| {
                 edge_length(first, second).map_err(|source| QualityError::EdgeLength {
                     vertex_indices: [i, j],
-                    source,
+                    source: Box::new(source),
                 })
             })
     });
@@ -1138,7 +1139,7 @@ mod tests {
             scale_aware_epsilon(&points),
             Err(QualityError::EdgeLength {
                 vertex_indices: [1, 2],
-                source: LaError::non_finite_input_vector(0)
+                source: Box::new(LaError::non_finite_input_vector(0))
             })
         );
     }

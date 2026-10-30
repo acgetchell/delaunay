@@ -217,7 +217,7 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
     repository = Path(__file__).parents[2]
     wheel_path, configuration = _build_support_wheel(repository, tmp_path)
     assert set(configuration["project"]["optional-dependencies"]["notebooks"]) == {
-        "research-repo-tools[notebooks,python-tools]==0.2.3",
+        "research-repo-tools[notebooks,python-tools]==0.2.4",
     }
     with zipfile.ZipFile(wheel_path) as wheel:
         metadata_path = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))

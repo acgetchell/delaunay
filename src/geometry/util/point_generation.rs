@@ -141,9 +141,10 @@ pub enum RandomPointGenerationError<T = f64> {
     /// A derived displacement or norm could not be represented.
     #[error("Point generation vector computation failed: {source}")]
     VectorComputation {
-        /// Underlying finite-vector construction or norm failure.
-        #[from]
-        source: LaError,
+        /// Underlying finite-vector construction or norm failure. Boxing keeps
+        /// backend polynomial alignment out of nested construction errors.
+        #[source]
+        source: Box<LaError>,
     },
 
     /// Ball rejection sampling could not produce the requested point count.
@@ -243,6 +244,14 @@ pub enum RandomPointGenerationError<T = f64> {
         /// Number of candidate samples attempted.
         attempts: usize,
     },
+}
+
+impl<T> From<LaError> for RandomPointGenerationError<T> {
+    fn from(source: LaError) -> Self {
+        Self::VectorComputation {
+            source: Box::new(source),
+        }
+    }
 }
 
 /// Default maximum bytes allowed for grid allocation to prevent OOM in CI.
@@ -1440,9 +1449,8 @@ mod tests {
         let candidate = Point::try_new([f64::MAX; D]).unwrap();
         assert_matches!(
             is_poisson_candidate_spaced(&candidate, &[origin], 1.0),
-            Err(RandomPointGenerationError::VectorComputation {
-                source: LaError::NonFinite { .. }
-            })
+            Err(RandomPointGenerationError::VectorComputation { source })
+                if matches!(*source, LaError::NonFinite { .. })
         );
     }
 

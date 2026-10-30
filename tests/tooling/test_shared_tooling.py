@@ -41,12 +41,12 @@ def write_stub(directory: Path, name: str, source: str) -> None:
 
 def test_published_pin_configuration_and_inventory() -> None:
     groups = MANIFEST["dependency-groups"]
-    assert groups["tooling"] == ["research-repo-tools[python-tools]==0.2.3"]
+    assert groups["tooling"] == ["research-repo-tools[python-tools]==0.2.4"]
     assert {"include-group": "tooling"} in groups["dev"]
-    assert version("research-repo-tools") == "0.2.3"
+    assert version("research-repo-tools") == "0.2.4"
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     package = next(item for item in lock["package"] if item["name"] == "research-repo-tools")
-    assert package["version"] == "0.2.3"
+    assert package["version"] == "0.2.4"
     assert package["source"] == {"registry": "https://pypi.org/simple"}
     assert MANIFEST["tool"]["uv"]["required-version"].startswith("==")
     tools = MANIFEST["tool"]["research-repo-tools"]["toolchain"]["cargo"]
@@ -137,7 +137,6 @@ def update_commands(recipe: str) -> list[list[str]]:
     tools = [
         ["run", "--no-config", "--no-sync", "--no-python-downloads", "research-repo-tools", "deps", "update-uv"],
         [*UPDATE_PREFIX, "toolchain", "upgrade"],
-        ["run", "--locked", "--managed-python", "--only-group", "tooling", "research-repo-tools", "setup"],
     ]
     cargo = [
         [*UPDATE_PREFIX, "toolchain", "run", "--", "cargo", *args]
@@ -149,11 +148,14 @@ def update_commands(recipe: str) -> list[list[str]]:
         )
     ]
     python = [[*UPDATE_PREFIX, "deps", "update-python", "--all-projects"]]
+    audit = [
+        ["run", "--locked", "--group", "dev", "research-repo-tools", "security", "osv", "uv.lock", "Cargo.lock", FIXTURE_MANIFEST.replace(".toml", ".lock")]
+    ]
     return {
-        "update": tools + cargo + python,
+        "update": tools + cargo + python + audit,
         "update-tools": tools,
         "update-cargo-tools": tools[1:2],
-        "update-dependencies": cargo + python,
+        "update-dependencies": cargo + python + audit,
         "update-cargo-dependencies": cargo,
         "update-python-dependencies": python,
     }[recipe]
