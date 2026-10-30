@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from functools import partial
 from itertools import product
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, NoReturn, TypeIs, cast
+from typing import TYPE_CHECKING, Literal, TypeIs, cast
 
 from research_repo_tools.archives import extract_archive as _safe_extract_tar
 from research_repo_tools.complete_runs import CompleteCase, CompletePolicy, collect_complete_sample, parse_policy, serialize_policy
@@ -41,11 +41,10 @@ from research_repo_tools.files import publish_directory, replace_many
 from research_repo_tools.host_metadata import capture_host, parse_host
 from research_repo_tools.measurement import MeasurementConfig, capture_provenance, measure_checkout
 from research_repo_tools.process import ExecutableNotFoundError, format_exception_diagnostics, run_command as run_safe_command, run_command_live
-from research_repo_tools.publication import plan_outputs, publish_publication
 from research_repo_tools.release_assets import download_release_asset
 from research_repo_tools.release_pairs import PairMode, resolve_pair
 from research_repo_tools.releases import published_releases
-from research_repo_tools.worktrees import apply_snapshot, capture_snapshot, temporary_worktree
+from research_repo_tools.worktrees import capture_snapshot
 
 from benchmark_models import (
     CircumspherePerformanceData,
@@ -65,7 +64,6 @@ from performance_artifacts import (
     TimingEstimate,
     ToolchainState,
     ensure_distinct_paths,
-    load_bundle,
     load_bundle_bytes,
     serialize_bundle,
 )
@@ -288,31 +286,6 @@ class PerformanceReportId:
         return f"{self.current_tag}-vs-{self.baseline_tag}.md"
 
 
-@dataclass(frozen=True)
-class PerformancePromotionDestinations:
-    """Explicit repository boundary and tracked performance destinations."""
-
-    project_root: Path
-    current: Path
-    archive_dir: Path
-
-
-@dataclass(frozen=True)
-class PerformancePromotionPlan:
-    """Validated file payloads and destinations for one report promotion."""
-
-    report_id: PerformanceReportId
-    bundle: PerformanceBundle
-    source_payload: bytes
-    source_text: str
-    current_text: str | None
-    archive_path: Path | None
-    durable_artifacts: ArtifactPaths
-    source_evidence: bytes
-    source_provenance: bytes
-    mutation_paths: tuple[Path, ...]
-
-
 type BaselineSource = Literal["local", "github-assets"]
 
 
@@ -364,15 +337,6 @@ class SamplingOptions:
     cargo_profile: str
     bench_timeout: int
     save_baseline: str | None
-
-
-@dataclass(frozen=True)
-class RevisionMeasurement:
-    """The suite, commands, and shared target plan measured for one revision."""
-
-    suite: str
-    commands: tuple[tuple[str, ...], ...]
-    comparison_targets: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -438,6 +402,16 @@ class PerformanceRequestOptions:
 
 
 @dataclass(frozen=True)
+class CriterionEstimate:
+    """Validated Criterion timing estimate in nanoseconds."""
+
+    mean_ns: float
+    low_ns: float
+    high_ns: float
+    confidence_level: float | None
+
+
+@dataclass(frozen=True)
 class CiPerformanceMetric:
     """Validated construction metric emitted by ci_performance_suite."""
 
@@ -450,14 +424,76 @@ class CiPerformanceMetric:
         _require_positive_int_field("simplices", self.simplices)
 
 
-@dataclass(frozen=True)
-class CriterionEstimate:
-    """Validated Criterion timing estimate in nanoseconds."""
+def _parse_ci_performance_metric(benchmark_id: str, values: Mapping[object, object], metrics_path: Path) -> CiPerformanceMetric | None:
+    """Parse one metrics sidecar entry into a validated metric object."""
+    vertices = values.get("vertices")
+    simplices = values.get("simplices")
+    if not isinstance(vertices, int) or isinstance(vertices, bool) or vertices <= 0:
+        logger.debug("Skipping malformed ci_performance_suite metric entry %r from %s", benchmark_id, metrics_path)
+        return None
+    if not isinstance(simplices, int) or isinstance(simplices, bool) or simplices <= 0:
+        logger.debug("Skipping malformed ci_performance_suite metric entry %r from %s", benchmark_id, metrics_path)
+        return None
+    return CiPerformanceMetric(vertices=vertices, simplices=simplices)
 
-    mean_ns: float
-    low_ns: float
-    high_ns: float
-    confidence_level: float | None
+
+def _load_ci_performance_metrics(criterion_dir: Path) -> dict[str, CiPerformanceMetric]:
+    """Load ci_performance_suite construction metrics when present."""
+    metrics_path = _ci_performance_metrics_path(criterion_dir)
+    if not metrics_path.exists():
+        return {}
+    try:
+        data = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except OSError as error:
+        msg = f"failed to read ci_performance_suite metrics sidecar {metrics_path}: {error}"
+        raise OSError(msg) from error
+    except json.JSONDecodeError as error:
+        msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: {error}"
+        raise ValueError(msg) from error
+    if not isinstance(data, dict):
+        msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: expected JSON object"
+        raise TypeError(msg)
+
+    metrics: dict[str, CiPerformanceMetric] = {}
+    for benchmark_id, values in data.items():
+        if not isinstance(benchmark_id, str) or not isinstance(values, dict):
+            logger.debug("Skipping malformed ci_performance_suite metric entry %r from %s", benchmark_id, metrics_path)
+            continue
+        metric = _parse_ci_performance_metric(benchmark_id, values, metrics_path)
+        if metric is not None:
+            metrics[benchmark_id] = metric
+    return metrics
+
+
+def _load_ci_performance_run_metadata(criterion_dir: Path) -> dict[str, str]:
+    """Load metadata for the latest ci_performance_suite run when present."""
+    metadata_path = _ci_performance_run_metadata_path(criterion_dir)
+    if not metadata_path.exists():
+        return {}
+    try:
+        data = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except _CI_PERFORMANCE_SIDECAR_LOAD_ERRORS:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {key: value for key, value in data.items() if isinstance(key, str) and isinstance(value, str)}
+
+
+def _ci_performance_sidecar_timestamp(criterion_dir: Path) -> str | None:
+    """Return a best-effort timestamp from ci_performance_suite sidecar mtimes."""
+    sidecars = [
+        _ci_performance_manifest_ids_path(criterion_dir),
+        _ci_performance_metrics_path(criterion_dir),
+    ]
+    timestamps = [path.stat().st_mtime for path in sidecars if path.exists()]
+    if not timestamps:
+        return None
+    return datetime.fromtimestamp(max(timestamps), UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _is_object_mapping(value: object) -> TypeIs[Mapping[object, object]]:
+    """Return whether a raw value can be treated as an object-keyed mapping."""
+    return isinstance(value, Mapping)
 
 
 def ci_suite_group_key(first_path_part: str) -> str | None:
@@ -623,78 +659,6 @@ def _load_ci_performance_manifest_ids(criterion_dir: Path) -> set[str] | None:
     except OSError:
         return None
     return manifest_ids or None
-
-
-def _parse_ci_performance_metric(benchmark_id: str, values: Mapping[object, object], metrics_path: Path) -> CiPerformanceMetric | None:
-    """Parse one metrics sidecar entry into a validated metric object."""
-    vertices = values.get("vertices")
-    simplices = values.get("simplices")
-    if not isinstance(vertices, int) or isinstance(vertices, bool) or vertices <= 0:
-        logger.debug("Skipping malformed ci_performance_suite metric entry %r from %s", benchmark_id, metrics_path)
-        return None
-    if not isinstance(simplices, int) or isinstance(simplices, bool) or simplices <= 0:
-        logger.debug("Skipping malformed ci_performance_suite metric entry %r from %s", benchmark_id, metrics_path)
-        return None
-    return CiPerformanceMetric(vertices=vertices, simplices=simplices)
-
-
-def _load_ci_performance_metrics(criterion_dir: Path) -> dict[str, CiPerformanceMetric]:
-    """Load ci_performance_suite construction metrics when present."""
-    metrics_path = _ci_performance_metrics_path(criterion_dir)
-    if not metrics_path.exists():
-        return {}
-    try:
-        data = json.loads(metrics_path.read_text(encoding="utf-8"))
-    except OSError as error:
-        msg = f"failed to read ci_performance_suite metrics sidecar {metrics_path}: {error}"
-        raise OSError(msg) from error
-    except json.JSONDecodeError as error:
-        msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: {error}"
-        raise ValueError(msg) from error
-    if not isinstance(data, dict):
-        msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: expected JSON object"
-        raise TypeError(msg)
-
-    metrics: dict[str, CiPerformanceMetric] = {}
-    for benchmark_id, values in data.items():
-        if not isinstance(benchmark_id, str) or not isinstance(values, dict):
-            logger.debug("Skipping malformed ci_performance_suite metric entry %r from %s", benchmark_id, metrics_path)
-            continue
-        metric = _parse_ci_performance_metric(benchmark_id, values, metrics_path)
-        if metric is not None:
-            metrics[benchmark_id] = metric
-    return metrics
-
-
-def _load_ci_performance_run_metadata(criterion_dir: Path) -> dict[str, str]:
-    """Load metadata for the latest ci_performance_suite run when present."""
-    metadata_path = _ci_performance_run_metadata_path(criterion_dir)
-    if not metadata_path.exists():
-        return {}
-    try:
-        data = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except _CI_PERFORMANCE_SIDECAR_LOAD_ERRORS:
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return {key: value for key, value in data.items() if isinstance(key, str) and isinstance(value, str)}
-
-
-def _ci_performance_sidecar_timestamp(criterion_dir: Path) -> str | None:
-    """Return a best-effort timestamp from ci_performance_suite sidecar mtimes."""
-    sidecars = [
-        _ci_performance_manifest_ids_path(criterion_dir),
-        _ci_performance_metrics_path(criterion_dir),
-    ]
-    timestamps = [path.stat().st_mtime for path in sidecars if path.exists()]
-    if not timestamps:
-        return None
-    return datetime.fromtimestamp(max(timestamps), UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
-
-
-def _is_object_mapping(value: object) -> TypeIs[Mapping[object, object]]:
-    """Return whether a raw value can be treated as an object-keyed mapping."""
-    return isinstance(value, Mapping)
 
 
 def _require_positive_int_field(name: str, value: object) -> None:
@@ -873,41 +837,6 @@ class PerformanceSummaryEvidence:
             missing = ", ".join(section.missing_group_prefixes) or "all results"
             errors.append(f"{section.target} report section {section.report_section!r} is incomplete (missing groups: {missing})")
         return tuple(errors)
-
-
-def _criterion_arg_value(args: list[str], flag: str) -> str:
-    """Return the Criterion value that follows flag in args."""
-    try:
-        index = args.index(flag)
-    except ValueError:
-        return "unknown"
-
-    value_index = index + 1
-    if value_index >= len(args):
-        return "unknown"
-    return args[value_index]
-
-
-def _sampling_metadata(dev_mode: bool) -> dict[str, str]:
-    """Return benchmark sampling metadata for baseline/compare validation."""
-    if not dev_mode:
-        return {
-            "sampling_mode": "full",
-            "cargo_profile": BENCHMARK_BUILD_FLAVOR,
-            "criterion_args": "default",
-            "criterion_sample_size": "criterion-default",
-            "criterion_measurement_time": "criterion-default",
-            "criterion_warm_up_time": "criterion-default",
-        }
-
-    return {
-        "sampling_mode": "dev",
-        "cargo_profile": BENCHMARK_BUILD_FLAVOR,
-        "criterion_args": " ".join(DEV_MODE_BENCH_ARGS),
-        "criterion_sample_size": _criterion_arg_value(DEV_MODE_BENCH_ARGS, "--sample-size"),
-        "criterion_measurement_time": _criterion_arg_value(DEV_MODE_BENCH_ARGS, "--measurement-time"),
-        "criterion_warm_up_time": _criterion_arg_value(DEV_MODE_BENCH_ARGS, "--warm-up-time"),
-    }
 
 
 def preflight_release_signal(project_root: Path, *, cargo_profile: str, bench_timeout: int) -> None:
@@ -2233,11 +2162,6 @@ def _write_text_atomic(path: Path, text: str) -> None:
     replace_many({path: text.encode("utf-8")})
 
 
-def _write_bytes_atomic(path: Path, payload: bytes) -> None:
-    """Publish retained bytes through the shared transaction."""
-    replace_many({path: payload})
-
-
 def _read_cargo_package_version(repo_root: Path) -> str:
     """Return the package version from Cargo.toml."""
     cargo_toml = repo_root / "Cargo.toml"
@@ -2327,11 +2251,6 @@ def _read_criterion_timing_estimate(estimates_json: Path, stat: str) -> TimingEs
     if estimate.lower is None or estimate.upper is None or estimate.confidence_level is None:
         raise ValueError(f"Criterion estimate requires confidence bounds and confidence_level: {estimates_json}")
     return TimingEstimate(estimate.point, estimate.lower, estimate.upper, estimate.confidence_level)
-
-
-def _read_criterion_point_estimate(estimates_json: Path, stat: str) -> float:
-    """Read a Criterion point estimate in nanoseconds."""
-    return _read_criterion_timing_estimate(estimates_json, stat).median_ns
 
 
 def _criterion_sample(estimates_json: Path, criterion_dir: Path) -> CriterionSample | None:
@@ -2518,61 +2437,41 @@ def _criterion_comparison_table(comparisons: list[Comparison], baseline_name: st
 
 
 def _how_to_update_section() -> str:
-    """Return the standard release-performance workflow footer."""
+    """Describe current commands beside the historical asset interpretation."""
     return """## How to Update
 
-Local performance reports are generated in isolated temporary worktrees:
+Fresh local comparisons use independent read-only source exports:
 
 ```bash
-# Local development: compare the current tree with the latest release
 just performance-local
-
-# Release PR: measure, retain, validate, and promote documentation
+just performance-prepare
 just performance-release
-
-# Rebuild and promote documentation from retained shared JSON only
+just performance-readme --preview
+just performance-readme
+# Rerender the retained current report offline:
 just performance-doc
-
-# GitHub Release benchmark assets
+# Inspect historical GitHub Release assets without new Cargo measurements:
 just performance-github-assets
-
-# Explicit repair
-just performance-release <current-tag> <previous-tag>
 ```
 
-`just performance-local` writes `performance.md` plus retained `performance.comparison.json` and
-`performance.evidence.json` under `target/bench-reports/` without promoting documentation.
-`just performance-github-assets` writes a `github-assets-performance.*` bundle without local
-Cargo benchmark runs. New release archives must contain the supported versioned measurement
-metadata. Existing legacy archives remain loadable as provenance-limited absolute timing
-evidence, but they cannot be promoted. GitHub-asset ratios are always suppressed because the
-archives were measured in separate sessions. Local-worktree ratios require compatible hosts,
-toolchains, harnesses, normalized measurement plans, completed targets, and confidence levels.
-`just performance-doc` consumes the retained canonical shared JSON pair without Cargo or
-measurement worktrees and rejects incomplete, invalid, stale, same-version, or scientifically
-non-comparable inputs. `just performance-release` retains and reload-validates the same bundle,
-copies the exact comparison JSON/evidence bytes to `docs/archive/performance/data/`, and promotes the
-documentation with per-file atomic replacement plus rollback for caught failures. After a hard
-interruption, inspect the destinations and rerun the command.
+Local paired evidence is retained in `target/bench-reports/performance.run.json`
+and `performance.evidence.json`, containing both complete phases and original
+raw files. Incompatible identities retain absolute values and suppress ratios.
+Release promotion is strict and uses `docs/performance-runs/` plus
+`docs/performance_current.md`. Preparation, acquisition/promotion and README
+publication are separate retry boundaries. Failed publication preserves the
+previous generation; inspect reported recovery paths before retrying.
 
-The shared Criterion comparison JSON and digest-bound evidence envelope are canonical.
-The envelope retains Delaunay's workload and comparability policy. Timing changes are descriptive;
-the marginal timing confidence intervals are not confidence intervals for ratios or significance tests.
+Historical asset reports retain their Delaunay comparison schema and captured
+host/session metadata. Existing legacy archives remain loadable as provenance-limited absolute timing.
+New release archives must contain the supported versioned measurement
+metadata. GitHub-asset ratios are always suppressed because separate hosted
+release sessions cannot establish ratios. Historical evidence cannot be promoted
+as a complete run. Older reports and original evidence remain unchanged.
+Marginal timing intervals do not establish ratio intervals or statistical significance.
 
-Release-comparison commands are release evidence, not routine pre-`just ci` checks.
-Older curated reports and the exact evidence for new promotions are archived in
-`docs/archive/performance/`.
-
-See `benches/README.md` for the full Delaunay benchmark workflow.
+Release measurements are separate from routine `just ci` validation.
 """
-
-
-def _normalize_how_to_update(text: str) -> str:
-    """Replace or append the standard release-performance workflow footer."""
-    section = _how_to_update_section()
-    if HOW_TO_UPDATE_RE.search(text):
-        return HOW_TO_UPDATE_RE.sub(section, text)
-    return f"{text.rstrip()}\n\n{section}"
 
 
 def render_criterion_comparison_report(
@@ -2867,328 +2766,9 @@ def render_performance_bundle(
     return "\n".join(lines)
 
 
-def render_performance_artifacts(paths: ArtifactPaths) -> str:
-    """Reload, validate, and render a retained artifact pair."""
-    return render_performance_bundle(load_bundle(paths), evidence_paths=paths, evidence_state="scratch")
-
-
-def parse_performance_report_id(text: str) -> PerformanceReportId:
-    """Parse current and baseline release tags from a benchmark report."""
-    version_match = DELAUNAY_REPORT_VERSION_RE.search(text)
-    if version_match is None:
-        msg = "could not find delaunay version line in benchmark report"
-        raise ValueError(msg)
-    baseline_match = DELAUNAY_REPORT_BASELINE_RE.search(text)
-    if baseline_match is None:
-        msg = "could not find comparison baseline line in benchmark report"
-        raise ValueError(msg)
-    return PerformanceReportId(
-        current_tag=normalize_release_tag(version_match.group("version")),
-        baseline_tag=normalize_release_tag(baseline_match.group("baseline")),
-    )
-
-
-def _archive_index_text(archive_dir: Path, additional: tuple[str, ...] = ()) -> str:
-    """Render Delaunay's existing archive navigation before publication."""
-    reports = sorted({path.name for path in archive_dir.glob("*.md") if path.name != "README.md"} | set(additional))
-    lines = [
-        "# Archived Performance Reports",
-        "",
-        "Older release-to-release benchmark comparisons are archived here.",
-        "`docs/performance.md` contains the latest curated comparison.",
-        "",
-    ]
-    if reports:
-        lines.extend(f"- [{name.removesuffix('.md')}]({name})" for name in reports)
-    else:
-        lines.append("- No archived performance reports yet.")
-    return "\n".join(lines) + "\n"
-
-
-def _durable_performance_artifact_paths(archive_dir: Path, report_id: PerformanceReportId) -> ArtifactPaths:
-    """Return tracked evidence paths for one promoted release pair."""
-    stem = f"{report_id.current_tag}-vs-{report_id.baseline_tag}"
-    data_dir = archive_dir / "data"
-    return ArtifactPaths(payload=data_dir / f"{stem}.comparison.json", provenance=data_dir / f"{stem}.evidence.json")
-
-
-def _repository_relative_path(project_root: Path, path: Path, *, label: str) -> Path:
-    """Resolve *path* and return its location relative to the repository root."""
-    resolved_root = project_root.resolve(strict=False)
-    resolved_path = path.resolve(strict=False)
-    try:
-        return resolved_path.relative_to(resolved_root)
-    except ValueError as error:
-        msg = f"{label} must be contained by repository root {resolved_root}, got {resolved_path}"
-        raise ValueError(msg) from error
-
-
-def _promoted_evidence_paths(durable: ArtifactPaths, *, project_root: Path) -> ArtifactPaths:
-    """Return validated repository-relative evidence paths for tracked reports."""
-    return ArtifactPaths(
-        payload=_repository_relative_path(project_root, durable.payload, label="promoted performance payload"),
-        provenance=_repository_relative_path(
-            project_root,
-            durable.provenance,
-            label="promoted performance provenance",
-        ),
-    )
-
-
-def _validated_promotion_source(
-    source: bytes,
-    bundle: PerformanceBundle,
-    expected: PerformanceReportId,
-    durable_artifacts: ArtifactPaths,
-    project_root: Path,
-) -> tuple[PerformanceBundle, str, PerformanceReportId]:
-    """Validate one canonical report and its independently expected identity."""
-    bundle.require_promotable()
-    source_text = _normalize_how_to_update(source.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n"))
-    rendered_text = _normalize_how_to_update(
-        render_performance_bundle(
-            bundle,
-            evidence_paths=_promoted_evidence_paths(durable_artifacts, project_root=project_root),
-            evidence_state="promoted",
-        )
-    )
-    if source_text != rendered_text:
-        msg = "benchmark report is not the canonical rendering of its retained artifact pair"
-        raise ValueError(msg)
-    source_id = parse_performance_report_id(source_text)
-    normalized_expected = PerformanceReportId(
-        current_tag=normalize_release_tag(expected.current_tag),
-        baseline_tag=normalize_release_tag(expected.baseline_tag),
-    )
-    if source_id != normalized_expected:
-        msg = (
-            "benchmark report does not match requested release pair: "
-            f"found {source_id.current_tag} vs {source_id.baseline_tag}, "
-            f"expected {normalized_expected.current_tag} vs {normalized_expected.baseline_tag}"
-        )
-        raise ValueError(msg)
-    if source_id.current_tag == source_id.baseline_tag:
-        msg = "cannot promote a same-version local performance comparison"
-        raise ValueError(msg)
-    bundle_id = PerformanceReportId(
-        current_tag=bundle.context.release.current,
-        baseline_tag=bundle.context.release.baseline,
-    )
-    if bundle_id != source_id:
-        msg = f"benchmark report identity {source_id} does not match retained artifact identity {bundle_id}"
-        raise ValueError(msg)
-    return bundle, source_text, source_id
-
-
-def _promotion_archive_destination(
-    current: Path,
-    archive_dir: Path,
-    source_id: PerformanceReportId,
-) -> tuple[str | None, Path | None]:
-    """Return the current report payload and any required archive destination."""
-    if not current.exists():
-        return None, None
-    current_text = _normalize_how_to_update(_read_text(current))
-    current_id = parse_performance_report_id(current_text)
-    archive_path = archive_dir / current_id.archive_name if current_id != source_id else None
-    return current_text, archive_path
-
-
-def _reject_conflicting_payload(path: Path, payload: bytes, *, description: str) -> None:
-    """Reject a pre-existing destination whose exact bytes differ."""
-    if path.exists() and path.read_bytes() != payload:
-        msg = f"existing {description} conflicts with retained evidence: {path}"
-        raise ValueError(msg)
-
-
-def _plan_performance_promotion(
-    *,
-    source: Path,
-    artifacts: ArtifactPaths,
-    destinations: PerformancePromotionDestinations,
-    expected: PerformanceReportId,
-) -> PerformancePromotionPlan:
-    """Validate all promotion inputs and conflicts before the first mutation."""
-    current = destinations.current
-    archive_dir = destinations.archive_dir
-    project_root = destinations.project_root
-    for label, path in (("source report", source), ("source payload", artifacts.payload), ("source provenance", artifacts.provenance)):
-        _repository_relative_path(project_root, path, label=label)
-    normalized_expected = PerformanceReportId(
-        current_tag=normalize_release_tag(expected.current_tag),
-        baseline_tag=normalize_release_tag(expected.baseline_tag),
-    )
-    durable_artifacts = _durable_performance_artifact_paths(archive_dir, normalized_expected)
-    source_payload = source.read_bytes()
-    source_evidence = artifacts.payload.read_bytes()
-    source_provenance = artifacts.provenance.read_bytes()
-    bundle = load_bundle_bytes(source_evidence, source_provenance, source=str(artifacts.payload.parent))
-    _, source_text, source_id = _validated_promotion_source(
-        source_payload,
-        bundle,
-        expected,
-        durable_artifacts,
-        project_root,
-    )
-    current_text, archive_path = _promotion_archive_destination(current, archive_dir, source_id)
-
-    index_path = archive_dir / "README.md"
-    if source_id != normalized_expected:
-        msg = "validated report identity changed while planning promotion"
-        raise ValueError(msg)
-    paths = {
-        "source report": source,
-        "source payload": artifacts.payload,
-        "source provenance": artifacts.provenance,
-        "current report": current,
-        "archive index": index_path,
-        "durable payload": durable_artifacts.payload,
-        "durable provenance": durable_artifacts.provenance,
-    }
-    if archive_path is not None:
-        paths["archive report"] = archive_path
-    ensure_distinct_paths(paths)
-
-    if archive_path is not None and archive_path.exists() and current_text is not None:
-        existing_archive = _normalize_how_to_update(_read_text(archive_path))
-        if existing_archive != current_text:
-            msg = f"existing performance archive conflicts with the current report: {archive_path}"
-            raise ValueError(msg)
-    _reject_conflicting_payload(durable_artifacts.payload, source_evidence, description="durable performance payload")
-    _reject_conflicting_payload(
-        durable_artifacts.provenance,
-        source_provenance,
-        description="durable performance provenance",
-    )
-
-    mutation_paths = (
-        current,
-        index_path,
-        durable_artifacts.payload,
-        durable_artifacts.provenance,
-        *(() if archive_path is None else (archive_path,)),
-    )
-    for label, path in (
-        ("current performance report", current),
-        ("performance archive index", index_path),
-        ("durable performance payload", durable_artifacts.payload),
-        ("durable performance provenance", durable_artifacts.provenance),
-        *(() if archive_path is None else (("archived performance report", archive_path),)),
-    ):
-        _repository_relative_path(project_root, path, label=label)
-    return PerformancePromotionPlan(
-        report_id=source_id,
-        bundle=bundle,
-        source_payload=source_payload,
-        source_text=source_text,
-        current_text=current_text,
-        archive_path=archive_path,
-        durable_artifacts=durable_artifacts,
-        source_evidence=source_evidence,
-        source_provenance=source_provenance,
-        mutation_paths=mutation_paths,
-    )
-
-
-def _promotion_outputs(  # noqa: PLR0913 - evidence and publication destinations are independent inputs
-    *,
-    bundle: PerformanceBundle,
-    rendered: str,
-    current: Path,
-    archive_dir: Path,
-    project_root: Path,
-    payload: bytes,
-    provenance_payload: bytes,
-) -> tuple[dict[Path, bytes], tuple[Path, ...]]:
-    """Select scientific report candidates and preserve the original shared evidence."""
-    bundle.require_promotable()
-    report_id = PerformanceReportId(current_tag=bundle.context.release.current, baseline_tag=bundle.context.release.baseline)
-    durable = _durable_performance_artifact_paths(archive_dir, report_id)
-    prior_text, archive_path = _promotion_archive_destination(current, archive_dir, report_id)
-    _reject_conflicting_payload(durable.payload, payload, description="durable performance payload")
-    _reject_conflicting_payload(durable.provenance, provenance_payload, description="durable performance provenance")
-    outputs = {current: rendered.encode("utf-8"), durable.payload: payload, durable.provenance: provenance_payload}
-    immutable = [durable.payload, durable.provenance]
-    if archive_path is not None:
-        if archive_path.exists():
-            if _normalize_how_to_update(_read_text(archive_path)) != prior_text:
-                msg = f"existing performance archive conflicts with the current report: {archive_path}"
-                raise ValueError(msg)
-            archived = archive_path.read_bytes()
-        else:
-            archived = current.read_bytes()
-        outputs[archive_path] = archived
-        immutable.append(archive_path)
-    outputs[archive_dir / "README.md"] = _archive_index_text(
-        archive_dir,
-        () if archive_path is None else (archive_path.name,),
-    ).encode("utf-8")
-    for path in outputs:
-        _repository_relative_path(project_root, path, label="performance publication")
-    return outputs, tuple(immutable)
-
-
-def _publish_performance_outputs(
-    root: Path,
-    outputs: dict[Path, bytes],
-    inputs: dict[Path, bytes],
-    immutable: tuple[Path, ...] = (),
-) -> None:
-    """Compose validated Delaunay candidates into the supported shared transaction."""
-    root = root.absolute()
-    publish_publication(
-        plan_outputs(
-            root,
-            {path.absolute().relative_to(root).as_posix(): data for path, data in outputs.items()},
-            inputs={path.absolute().relative_to(root).as_posix(): data for path, data in inputs.items()},
-            immutable=tuple(path.absolute().relative_to(root).as_posix() for path in immutable),
-        )
-    )
-
-
-def promote_performance_report(
-    *,
-    source: Path,
-    artifacts: ArtifactPaths,
-    destinations: PerformancePromotionDestinations,
-    expected: PerformanceReportId,
-) -> PerformanceReportId:
-    """Validate the shared report and publish its archive, evidence and index together."""
-    plan = _plan_performance_promotion(source=source, artifacts=artifacts, destinations=destinations, expected=expected)
-    outputs, immutable = _promotion_outputs(
-        bundle=plan.bundle,
-        rendered=plan.source_text,
-        current=destinations.current,
-        archive_dir=destinations.archive_dir,
-        project_root=destinations.project_root,
-        payload=plan.source_evidence,
-        provenance_payload=plan.source_provenance,
-    )
-    _publish_performance_outputs(
-        destinations.project_root,
-        outputs,
-        {source: plan.source_payload, artifacts.payload: plan.source_evidence, artifacts.provenance: plan.source_provenance},
-        immutable,
-    )
-    return plan.report_id
-
-
-def published_stable_release_tags(repo_root: Path) -> list[str]:
-    """Return shared-discovered stable releases for Delaunay artifact selection."""
-    return [release.tag for release in published_releases(repo_root)]
-
-
 def _progress(message: str) -> None:
     """Write one immediately visible performance-workflow phase marker."""
     print(f"[performance] {message}", file=sys.stderr, flush=True)
-
-
-def _run_git(args: list[str], *, cwd: Path, timeout: int = RELEASE_COMMAND_TIMEOUT_SECONDS) -> None:
-    """Run the explicitly invoked performance recipe's Git operations."""
-    try:
-        run_git_command(args, cwd=cwd, timeout=timeout)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError(format_exception_diagnostics(exc)) from exc
 
 
 def _normalize_worktree_ref_for_tag(worktree_ref: str, current_tag: str) -> str:
@@ -3230,17 +2810,6 @@ def resolve_performance_request(options: PerformanceRequestOptions) -> ResolvedP
         worktree_ref=_normalize_worktree_ref_for_tag(worktree_ref, pair.current),
         tags_to_fetch=(pair.current, pair.baseline) if options.published_latest else (pair.baseline,),
     )
-
-
-def _fetch_release_tags(*, repo_root: Path, tags: tuple[str, ...], include_current: str | None = None) -> None:
-    """Fetch the release tags required before adding detached worktrees."""
-    tags_to_fetch = tags
-    if include_current is not None and include_current not in tags_to_fetch:
-        tags_to_fetch = (*tags_to_fetch, include_current)
-    if not tags_to_fetch:
-        return
-    refspecs = [f"refs/tags/{tag}:refs/tags/{tag}" for tag in dict.fromkeys(tags_to_fetch)]
-    _run_git(["fetch", "origin", *refspecs], cwd=repo_root)
 
 
 def _current_rust_toolchain(checkout: Path) -> str | None:
@@ -3536,28 +3105,6 @@ def _toolchain_state(
     )
 
 
-def _revision_evidence(
-    checkout: Path,
-    *,
-    version: str,
-    ref: str,
-    measurement: RevisionMeasurement,
-) -> RevisionEvidence:
-    """Capture complete evidence for one measured revision."""
-    expected_version = normalize_release_tag(version)
-    observed_version = _current_package_tag(checkout)
-    if observed_version != expected_version:
-        msg = f"measured checkout package version {observed_version} does not match requested release {expected_version}: {checkout}"
-        raise ValueError(msg)
-    return RevisionEvidence(
-        source=_source_state(checkout, version=observed_version, ref=ref),
-        toolchain=_toolchain_state(checkout, measurement.suite, measurement.comparison_targets),
-        commands=measurement.commands,
-        completed_targets=_bench_targets_for_suite(checkout, measurement.suite),
-        measurement=_load_fresh_measurement(checkout / "target/criterion"),
-    )
-
-
 def _recorded_host_identity(repo_root: Path) -> HostIdentity:
     """Capture the current host for local measurement or publication."""
     host = capture_host(repo_root)
@@ -3604,120 +3151,6 @@ def _bench_targets_for_suite(worktree: Path, suite: str) -> tuple[str, ...]:
     if not present:
         return requested
     return tuple(target for target in requested if target in present)
-
-
-def _shared_bench_targets(current_worktree: Path, baseline_worktree: Path, suite: str) -> tuple[str, ...]:
-    """Return the canonical target plan supported by both measured revisions."""
-    current = set(_bench_targets_for_suite(current_worktree, suite))
-    baseline = set(_bench_targets_for_suite(baseline_worktree, suite))
-    shared = tuple(target for target in BENCH_TARGET_SUITES[suite] if target in current and target in baseline)
-    if not shared:
-        msg = f"current and baseline revisions share no benchmark targets for suite {suite!r}"
-        raise RuntimeError(msg)
-    return shared
-
-
-def _require_compatible_benchmark_plans(
-    current_worktree: Path,
-    baseline_worktree: Path,
-    suite: str,
-    comparison_targets: tuple[str, ...],
-) -> None:
-    """Reject incompatible workloads before scientific preflight or timing runs."""
-    blockers = []
-    for label, fingerprint in (("benchmark harness", _benchmark_harness_digest), ("measurement plan", _measurement_plan_digest)):
-        if fingerprint(current_worktree, suite, comparison_targets) != fingerprint(baseline_worktree, suite, comparison_targets):
-            blockers.append(f"{label} differs")
-    if not blockers:
-        # Case IDs can depend on the measured library, even with identical harness
-        # bytes. Untimed discovery binds their inventories and sampling counts.
-        discovery = DiscoveryPlan(
-            tuple(
-                DiscoveryCommand(
-                    target, ("cargo", "bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", target, "--", "--list"), timeout=RELEASE_BENCH_TIMEOUT_SECONDS
-                )
-                for target in comparison_targets
-            )
-        )
-        plans = []
-        for checkout in (current_worktree, baseline_worktree):
-            inventory = discover_inventory(checkout, discovery, env=_benchmark_env(checkout))
-            plans.append(_measurement_plan_digest(checkout, suite, comparison_targets, inventory=inventory))
-        if plans[0] != plans[1]:
-            blockers.append("measurement plan differs")
-    if blockers:
-        msg = (
-            "performance comparison is incompatible before benchmarking: "
-            + "; ".join(blockers)
-            + "; use just bench-latest then just bench-perf-summary for absolute results"
-        )
-        raise ValueError(msg)
-
-
-def _measure_local_performance_pair(
-    *,
-    config: ReleaseReportConfig,
-    target_worktree: Path,
-    tmp_dir: Path,
-    require_compatible: bool,
-) -> tuple[RevisionEvidence, RevisionEvidence]:
-    """Prepare both revisions before measuring and return their complete evidence."""
-    baseline_worktree = tmp_dir / "baseline-worktree"
-    _progress(f"preparing baseline worktree for {config.baseline_tag}")
-    revision = _resolve_worktree_revision(config.repo_root, config.baseline_tag)
-    with temporary_worktree(config.repo_root, baseline_worktree, revision, allow_git_mutations=True):
-        observed_baseline_tag = _current_package_tag(baseline_worktree)
-        if observed_baseline_tag != config.baseline_tag:
-            msg = f"prepared baseline checkout version {observed_baseline_tag} does not match requested release {config.baseline_tag}"
-            raise ValueError(msg)
-        comparison_targets = _shared_bench_targets(target_worktree, baseline_worktree, config.suite)
-        if require_compatible:
-            _progress("checking benchmark harness and measurement-plan compatibility before sampling")
-            _require_compatible_benchmark_plans(target_worktree, baseline_worktree, config.suite, comparison_targets)
-        current_targets = _bench_targets_for_suite(target_worktree, config.suite)
-        _measure_suite(target_worktree, current_targets)
-        current_commands = tuple(("cargo", "bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", target) for target in current_targets)
-        targets = _bench_targets_for_suite(baseline_worktree, config.suite)
-        _measure_suite(baseline_worktree, targets, save_baseline=config.baseline_tag)
-        commands = tuple(
-            ("cargo", "bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", target, "--", f"--save-baseline={config.baseline_tag}") for target in targets
-        )
-        baseline_criterion = baseline_worktree / "target" / "criterion"
-        if not baseline_criterion.is_dir():
-            msg = f"generated baseline Criterion results were not found: {baseline_criterion}"
-            raise FileNotFoundError(msg)
-        target_criterion = target_worktree / "target" / "criterion"
-        target_criterion.parent.mkdir(parents=True, exist_ok=True)
-        copied = _copy_criterion_sample(
-            source_criterion=baseline_criterion,
-            target_criterion=target_criterion,
-            source_sample=config.baseline_tag,
-            target_sample=config.baseline_tag,
-        )
-        if copied == 0:
-            msg = f"generated baseline contains no saved sample named {config.baseline_tag!r}"
-            raise FileNotFoundError(msg)
-        current_evidence = _revision_evidence(
-            target_worktree,
-            version=config.current_tag,
-            ref=config.worktree_ref,
-            measurement=RevisionMeasurement(
-                suite=config.suite,
-                commands=current_commands,
-                comparison_targets=comparison_targets,
-            ),
-        )
-        baseline_evidence = _revision_evidence(
-            baseline_worktree,
-            version=config.baseline_tag,
-            ref=config.baseline_tag,
-            measurement=RevisionMeasurement(
-                suite=config.suite,
-                commands=commands,
-                comparison_targets=comparison_targets,
-            ),
-        )
-        return current_evidence, baseline_evidence
 
 
 def _source_state_payload(source: SourceState) -> dict[str, object]:
@@ -4306,93 +3739,60 @@ def _performance_workspace() -> Iterator[Path]:
             shutil.rmtree(directory)
 
 
-def _build_performance_bundle_in_temp_worktree(*, config: ReleaseReportConfig, require_compatible: bool = False) -> PerformanceBundle:
-    """Measure or load a comparison in temporary worktrees and return trusted data."""
-    with _performance_workspace() as tmp_dir:
-        worktree = tmp_dir / "worktree"
+def _build_historical_asset_bundle(*, config: ReleaseReportConfig) -> PerformanceBundle:
+    """Inspect historical Delaunay scientific count, coverage and host metadata.
 
-        _progress(f"preparing current worktree for {config.current_tag}")
-        revision = _resolve_worktree_revision(config.repo_root, config.worktree_ref)
-        with temporary_worktree(config.repo_root, worktree, revision, allow_git_mutations=True):
-            if config.apply_current_diff:
-                apply_snapshot(worktree, capture_snapshot(config.repo_root))
-            observed_current_tag = _current_package_tag(worktree)
-            if observed_current_tag != config.current_tag:
-                msg = f"prepared current checkout version {observed_current_tag} does not match requested release {config.current_tag}"
-                raise ValueError(msg)
-            if config.baseline_source == "github-assets":
-                measurements: tuple[tuple[str, Evidence], ...] = ()
-                current_asset_evidence, baseline_asset_evidence = _prepare_github_release_assets(
-                    config=config,
-                    target_worktree=worktree,
-                    tmp_dir=tmp_dir,
-                )
-                current_evidence = current_asset_evidence.revision
-                baseline_evidence = baseline_asset_evidence.revision
-                current_host = current_asset_evidence.measurement_host
-                baseline_host = baseline_asset_evidence.measurement_host
-                current_artifact = current_asset_evidence.artifact
-                baseline_artifact = baseline_asset_evidence.artifact
-                current_acquisition_commands = current_asset_evidence.acquisition_commands
-                baseline_acquisition_commands = baseline_asset_evidence.acquisition_commands
-            else:
-                current_evidence, baseline_evidence = _measure_local_performance_pair(
-                    config=config,
-                    target_worktree=worktree,
-                    tmp_dir=tmp_dir,
-                    require_compatible=require_compatible,
-                )
-                if current_evidence.measurement is None or baseline_evidence.measurement is None:
-                    msg = "fresh comparisons require shared measurement evidence for both revisions"
-                    raise ValueError(msg)
-                measurements = (("baseline", baseline_evidence.measurement), ("current", current_evidence.measurement))
-                current_host = _measurement_host(current_evidence.measurement)
-                baseline_host = _measurement_host(baseline_evidence.measurement)
-                criterion_dir = worktree / "target" / "criterion"
-                current_artifact = MeasurementArtifact(
-                    origin="local-run",
-                    content_sha256=_criterion_sample_digest(criterion_dir, "new"),
-                    sample_name="new",
-                )
-                baseline_artifact = MeasurementArtifact(
-                    origin="local-run",
-                    content_sha256=_criterion_sample_digest(criterion_dir, config.baseline_tag),
-                    sample_name=config.baseline_tag,
-                )
-                current_acquisition_commands = ()
-                baseline_acquisition_commands = ()
-            _progress("collecting and validating performance artifacts")
-            context = ArtifactContext(
-                release=ReleasePair(current=config.current_tag, baseline=config.baseline_tag),
-                statistic="median",
-                suite=config.suite,
-                scope=config.scope,
-                measurement_mode="github-assets" if config.baseline_source == "github-assets" else "local-worktrees",
-                current_source=current_evidence.source,
-                baseline_source=baseline_evidence.source,
-                current_commands=current_evidence.commands,
-                baseline_commands=baseline_evidence.commands,
-                current_completed_targets=current_evidence.completed_targets,
-                baseline_completed_targets=baseline_evidence.completed_targets,
-                current_acquisition_commands=current_acquisition_commands,
-                baseline_acquisition_commands=baseline_acquisition_commands,
-                current_toolchain=current_evidence.toolchain,
-                baseline_toolchain=baseline_evidence.toolchain,
-                current_measurement_host=current_host,
-                baseline_measurement_host=baseline_host,
-                current_artifact=current_artifact,
-                baseline_artifact=baseline_artifact,
-                publication_host=_recorded_host_identity(config.repo_root),
-            )
-            comparison_note = "; ".join(context.comparison_blockers)
-            rows = collect_performance_rows(
-                worktree / "target" / "criterion",
-                config.baseline_tag,
-                suite=config.suite,
-                scope=config.scope,
-                comparison_note=comparison_note,
-            )
-            return PerformanceBundle(context=context, rows=rows, measurements=measurements)
+    These legacy assets predate complete acquisition declarations. Keep their
+    interpretation separate; they cannot pass complete-run release promotion.
+    """
+    with _performance_workspace() as tmp_dir:
+        worktree = tmp_dir / "asset-view"
+        worktree.mkdir()
+        current_asset_evidence, baseline_asset_evidence = _prepare_github_release_assets(
+            config=config,
+            target_worktree=worktree,
+            tmp_dir=tmp_dir,
+        )
+        current_evidence = current_asset_evidence.revision
+        baseline_evidence = baseline_asset_evidence.revision
+        current_host = current_asset_evidence.measurement_host
+        baseline_host = baseline_asset_evidence.measurement_host
+        current_artifact = current_asset_evidence.artifact
+        baseline_artifact = baseline_asset_evidence.artifact
+        current_acquisition_commands = current_asset_evidence.acquisition_commands
+        baseline_acquisition_commands = baseline_asset_evidence.acquisition_commands
+        _progress("collecting and validating performance artifacts")
+        context = ArtifactContext(
+            release=ReleasePair(current=config.current_tag, baseline=config.baseline_tag),
+            statistic="median",
+            suite=config.suite,
+            scope=config.scope,
+            measurement_mode="github-assets",
+            current_source=current_evidence.source,
+            baseline_source=baseline_evidence.source,
+            current_commands=current_evidence.commands,
+            baseline_commands=baseline_evidence.commands,
+            current_completed_targets=current_evidence.completed_targets,
+            baseline_completed_targets=baseline_evidence.completed_targets,
+            current_acquisition_commands=current_acquisition_commands,
+            baseline_acquisition_commands=baseline_acquisition_commands,
+            current_toolchain=current_evidence.toolchain,
+            baseline_toolchain=baseline_evidence.toolchain,
+            current_measurement_host=current_host,
+            baseline_measurement_host=baseline_host,
+            current_artifact=current_artifact,
+            baseline_artifact=baseline_artifact,
+            publication_host=_recorded_host_identity(config.repo_root),
+        )
+        comparison_note = "; ".join(context.comparison_blockers)
+        rows = collect_performance_rows(
+            worktree / "target" / "criterion",
+            config.baseline_tag,
+            suite=config.suite,
+            scope=config.scope,
+            comparison_note=comparison_note,
+        )
+        return PerformanceBundle(context=context, rows=rows, measurements=())
 
 
 def _artifact_paths_for_output(output: Path) -> ArtifactPaths:
@@ -4400,96 +3800,24 @@ def _artifact_paths_for_output(output: Path) -> ArtifactPaths:
     return ArtifactPaths(payload=output.with_suffix(".comparison.json"), provenance=output.with_suffix(".evidence.json"))
 
 
-def _preflight_performance_destinations(
-    *,
-    output: Path,
-    report_id: PerformanceReportId,
-    current: Path | None = None,
-    archive_dir: Path | None = None,
-    project_root: Path | None = None,
-) -> None:
-    """Reject deterministic output aliases before fetches or measurements."""
+def _preflight_performance_destinations(*, output: Path, report_id: PerformanceReportId) -> None:
+    """Reject aliases among the three historical-asset scratch outputs."""
     artifacts = _artifact_paths_for_output(output)
-    paths = {"Markdown output": output, "artifact payload": artifacts.payload, "artifact provenance": artifacts.provenance}
-    if current is not None:
-        if archive_dir is None:
-            msg = "archive_dir is required when preflighting a promotion"
-            raise ValueError(msg)
-        if project_root is None:
-            msg = "project_root is required when preflighting a promotion"
-            raise ValueError(msg)
-        paths.update(
-            {
-                "current documentation": current,
-                "archive index": archive_dir / "README.md",
-                "promoted report archive": archive_dir / report_id.archive_name,
-            }
-        )
-        durable = _durable_performance_artifact_paths(archive_dir, report_id)
-        paths["durable payload"] = durable.payload
-        paths["durable provenance"] = durable.provenance
-        for label, path in paths.items():
-            _repository_relative_path(project_root, path, label=label)
-        if current.exists():
-            current_id = parse_performance_report_id(_normalize_how_to_update(_read_text(current)))
-            if current_id != report_id:
-                prior_archive = archive_dir / current_id.archive_name
-                _repository_relative_path(project_root, prior_archive, label="prior report archive")
-                paths["prior report archive"] = prior_archive
-    ensure_distinct_paths(paths)
+    ensure_distinct_paths({"Markdown output": output, "artifact payload": artifacts.payload, "artifact provenance": artifacts.provenance})
 
 
-def _publish_performance_bundle(
-    *,
-    bundle: PerformanceBundle,
-    output: Path,
-    current: Path | None = None,
-    archive_dir: Path | None = None,
-    project_root: Path | None = None,
-) -> PerformanceReportId:
-    """Validate serialized evidence and publish every candidate in one shared transaction."""
+def _publish_performance_bundle(*, bundle: PerformanceBundle, output: Path) -> PerformanceReportId:
+    """Retain the Delaunay legacy asset interpretation without document promotion."""
     artifacts = _artifact_paths_for_output(output)
     payload, provenance_payload = serialize_bundle(bundle)
-    validated = load_bundle_bytes(payload, provenance_payload, source="new measurement")
-    report_id = PerformanceReportId(current_tag=bundle.context.release.current, baseline_tag=bundle.context.release.baseline)
-    root = project_root if project_root is not None else output.parent
-    root.mkdir(parents=True, exist_ok=True)
-    immutable: tuple[Path, ...] = ()
-    if current is None:
-        rendered = render_performance_bundle(validated, evidence_paths=artifacts, evidence_state="scratch")
-        outputs: dict[Path, bytes] = {}
-    else:
-        if archive_dir is None or project_root is None:
-            msg = "archive_dir and project_root are required when promoting performance documentation"
-            raise ValueError(msg)
-        durable = _durable_performance_artifact_paths(archive_dir, report_id)
-        rendered = render_performance_bundle(
-            validated,
-            evidence_paths=_promoted_evidence_paths(durable, project_root=project_root),
-            evidence_state="promoted",
-        )
-        outputs, immutable = _promotion_outputs(
-            bundle=validated,
-            rendered=rendered,
-            current=current,
-            archive_dir=archive_dir,
-            project_root=project_root,
-            payload=payload,
-            provenance_payload=provenance_payload,
-        )
-    outputs.update({output: rendered.encode("utf-8"), artifacts.payload: payload, artifacts.provenance: provenance_payload})
-    ensure_distinct_paths({"report": output, "payload": artifacts.payload, "provenance": artifacts.provenance, **({"current": current} if current else {})})
-    # The legacy adapter validates original bytes before the planner snapshots them.
-    # These temporary inputs are never promoted or mistaken for a shared complete run.
-    with tempfile.TemporaryDirectory(prefix=".performance-inputs-", dir=root) as directory:
-        retained = ArtifactPaths(payload=Path(directory) / "input.comparison.json", provenance=Path(directory) / "input.json")
-        retained.payload.write_bytes(payload)
-        retained.provenance.write_bytes(provenance_payload)
-        _publish_performance_outputs(root, outputs, {retained.payload: payload, retained.provenance: provenance_payload}, immutable)
-    return report_id
+    validated = load_bundle_bytes(payload, provenance_payload, source="historical release assets")
+    rendered = render_performance_bundle(validated, evidence_paths=artifacts, evidence_state="scratch")
+    ensure_distinct_paths({"report": output, "payload": artifacts.payload, "provenance": artifacts.provenance})
+    replace_many({output: rendered.encode("utf-8"), artifacts.payload: payload, artifacts.provenance: provenance_payload})
+    return PerformanceReportId(current_tag=bundle.context.release.current, baseline_tag=bundle.context.release.baseline)
 
 
-def generate_performance_worktree_report(*, output: Path, config: ReleaseReportConfig) -> PerformanceReportId:
+def generate_historical_asset_report(*, output: Path, config: ReleaseReportConfig) -> PerformanceReportId:
     """Generate and retain a validated non-promoting comparison bundle."""
     current_tag = normalize_release_tag(config.current_tag)
     baseline_tag = normalize_release_tag(config.baseline_tag)
@@ -4508,104 +3836,8 @@ def generate_performance_worktree_report(*, output: Path, config: ReleaseReportC
         output=output,
         report_id=PerformanceReportId(current_tag=current_tag, baseline_tag=baseline_tag),
     )
-    bundle = _build_performance_bundle_in_temp_worktree(config=normalized)
+    bundle = _build_historical_asset_bundle(config=normalized)
     return _publish_performance_bundle(bundle=bundle, output=output)
-
-
-def generate_and_promote_performance_report(
-    *,
-    output: Path,
-    current: Path,
-    archive_dir: Path,
-    config: ReleaseReportConfig,
-) -> PerformanceReportId:
-    """Generate, retain, reload-render, and promote one comparison bundle."""
-    current_tag = normalize_release_tag(config.current_tag)
-    baseline_tag = normalize_release_tag(config.baseline_tag)
-    if current_tag == baseline_tag:
-        msg = "performance-release requires distinct current and baseline tags"
-        raise ValueError(msg)
-    _preflight_performance_destinations(
-        output=output,
-        report_id=PerformanceReportId(current_tag=current_tag, baseline_tag=baseline_tag),
-        current=current,
-        archive_dir=archive_dir,
-        project_root=config.repo_root,
-    )
-    bundle = _build_performance_bundle_in_temp_worktree(
-        require_compatible=True,
-        config=ReleaseReportConfig(
-            repo_root=config.repo_root,
-            current_tag=current_tag,
-            baseline_tag=baseline_tag,
-            worktree_ref=config.worktree_ref,
-            suite=config.suite,
-            scope=config.scope,
-            stat=config.stat,
-            apply_current_diff=config.apply_current_diff,
-            baseline_source=config.baseline_source,
-        ),
-    )
-    return _publish_performance_bundle(
-        bundle=bundle,
-        output=output,
-        current=current,
-        archive_dir=archive_dir,
-        project_root=config.repo_root,
-    )
-
-
-def render_and_promote_performance_artifacts(
-    *,
-    output: Path,
-    artifacts: ArtifactPaths,
-    destinations: PerformancePromotionDestinations,
-    expected_current_tag: str,
-) -> PerformanceReportId:
-    """Render retained shared data and promote all candidates without measurement."""
-    for label, path in (("artifact payload input", artifacts.payload), ("artifact provenance input", artifacts.provenance)):
-        _repository_relative_path(destinations.project_root, path, label=label)
-    payload, provenance_payload = artifacts.payload.read_bytes(), artifacts.provenance.read_bytes()
-    bundle = load_bundle_bytes(payload, provenance_payload, source=str(artifacts.payload.parent))
-    normalized_expected_current = normalize_release_tag(expected_current_tag)
-    if bundle.context.release.current != normalized_expected_current:
-        msg = f"retained current release {bundle.context.release.current} does not match independently expected release {normalized_expected_current}"
-        raise ValueError(msg)
-    if bundle.context.release.current == bundle.context.release.baseline:
-        msg = "performance-doc cannot promote a same-version local performance comparison"
-        raise ValueError(msg)
-    bundle.require_promotable()
-    report_id = PerformanceReportId(current_tag=bundle.context.release.current, baseline_tag=bundle.context.release.baseline)
-    _preflight_performance_destinations(
-        output=output,
-        report_id=report_id,
-        current=destinations.current,
-        archive_dir=destinations.archive_dir,
-        project_root=destinations.project_root,
-    )
-    durable = _durable_performance_artifact_paths(destinations.archive_dir, report_id)
-    rendered = render_performance_bundle(
-        bundle,
-        evidence_paths=_promoted_evidence_paths(durable, project_root=destinations.project_root),
-        evidence_state="promoted",
-    )
-    outputs, immutable = _promotion_outputs(
-        bundle=bundle,
-        rendered=rendered,
-        current=destinations.current,
-        archive_dir=destinations.archive_dir,
-        project_root=destinations.project_root,
-        payload=payload,
-        provenance_payload=provenance_payload,
-    )
-    outputs[output] = rendered.encode("utf-8")
-    _publish_performance_outputs(
-        destinations.project_root,
-        outputs,
-        {artifacts.payload: payload, artifacts.provenance: provenance_payload},
-        immutable,
-    )
-    return report_id
 
 
 def get_default_bench_timeout() -> int:
@@ -4730,59 +3962,18 @@ def _add_performance_summary_subcommands(subparsers: argparse._SubParsersAction[
 
 
 def _add_release_performance_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Add release performance report subcommands."""
-    metadata_parser = subparsers.add_parser(
-        "create-release-benchmark-metadata",
-        help="Write versioned measurement provenance for a release Criterion archive",
-    )
-    metadata_parser.add_argument("--tag", required=True, help="Release tag measured by the archive")
-    metadata_parser.add_argument("--criterion-dir", type=Path, required=True, help="Criterion directory copied into the archive")
-    metadata_parser.add_argument("--output", type=Path, required=True, help="Metadata JSON path inside the archive staging directory")
+    """Add the scientific single-run and historical-asset adapter commands."""
+    metadata_parser = subparsers.add_parser("create-release-benchmark-metadata", help="Write Delaunay release archive metadata")
+    metadata_parser.add_argument("--tag", required=True)
+    metadata_parser.add_argument("--criterion-dir", type=Path, required=True)
+    metadata_parser.add_argument("--output", type=Path, required=True)
     _add_project_root_arg(metadata_parser)
-
-    local_parser = subparsers.add_parser("performance-local", help="Compare the current tree against the latest stable release locally")
-    local_parser.add_argument("--output", type=Path, default=PERFORMANCE_REPORT_SOURCE, help="Output Markdown report path")
-    local_parser.add_argument("--worktree-ref", default="HEAD", help="Git ref for the current temp worktree (default: HEAD)")
-    local_parser.add_argument("--no-apply-current-diff", action="store_true", help="Do not apply the current checkout diff to the temp worktree")
-    _add_project_root_arg(local_parser)
-
-    assets_parser = subparsers.add_parser("performance-github-assets", help="Compare stored GitHub Release benchmark assets")
-    assets_parser.add_argument("current_tag", nargs="?", help="Current release tag")
-    assets_parser.add_argument("baseline_tag", nargs="?", help="Baseline release tag")
-    assets_parser.add_argument("--output", type=Path, default=GITHUB_ASSETS_PERFORMANCE_REPORT, help="Output Markdown report path")
-    assets_parser.add_argument("--worktree-ref", default="HEAD", help="Git ref used to render the report (default: current tag)")
+    assets_parser = subparsers.add_parser("performance-github-assets", help="Inspect historical Delaunay release assets without acquiring new measurements")
+    assets_parser.add_argument("current_tag", nargs="?")
+    assets_parser.add_argument("baseline_tag", nargs="?")
+    assets_parser.add_argument("--output", type=Path, default=GITHUB_ASSETS_PERFORMANCE_REPORT)
+    assets_parser.add_argument("--worktree-ref", default="HEAD")
     _add_project_root_arg(assets_parser)
-
-    release_parser = subparsers.add_parser(
-        "performance-release",
-        help="Measure a release comparison with verified workload provenance",
-    )
-    release_parser.add_argument("current_tag", nargs="?", help="Current release tag")
-    release_parser.add_argument("baseline_tag", nargs="?", help="Baseline release tag")
-    release_parser.add_argument("--output", type=Path, default=PERFORMANCE_REPORT_SOURCE, help="Retained scratch Markdown report path inside the project root")
-    release_parser.add_argument("--current", type=Path, default=DOCS_PERFORMANCE_REPORT, help="Committed performance report path")
-    release_parser.add_argument("--archive-dir", type=Path, default=PERFORMANCE_ARCHIVE_DIR, help="Archive directory for older reports")
-    release_parser.add_argument("--worktree-ref", default="HEAD", help="Git ref for the current temp worktree (default: HEAD)")
-    release_parser.add_argument("--no-apply-current-diff", action="store_true", help="Do not apply the current checkout diff to the temp worktree")
-    _add_project_root_arg(release_parser)
-
-    doc_parser = subparsers.add_parser("performance-doc", help="Promote performance docs from retained shared JSON evidence")
-    doc_parser.add_argument("--output", type=Path, default=PERFORMANCE_REPORT_SOURCE, help="Scratch Markdown report path inside the project root")
-    doc_parser.add_argument(
-        "--artifact-payload",
-        type=Path,
-        default=PERFORMANCE_REPORT_SOURCE.with_suffix(".comparison.json"),
-        help="Retained performance payload path inside the project root",
-    )
-    doc_parser.add_argument(
-        "--artifact-provenance",
-        type=Path,
-        default=PERFORMANCE_REPORT_SOURCE.with_suffix(".evidence.json"),
-        help="Retained performance provenance JSON path inside the project root",
-    )
-    doc_parser.add_argument("--current", type=Path, default=DOCS_PERFORMANCE_REPORT, help="Committed performance report path")
-    doc_parser.add_argument("--archive-dir", type=Path, default=PERFORMANCE_ARCHIVE_DIR, help="Archive directory for older reports")
-    _add_project_root_arg(doc_parser)
 
 
 def create_argument_parser() -> argparse.ArgumentParser:
@@ -4814,12 +4005,6 @@ def configure_logging(*, verbose: bool) -> None:
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(levelname)s: %(message)s",
     )
-
-
-def _exit_called_process_error(error: subprocess.CalledProcessError) -> NoReturn:
-    print(f"❌ Git command failed with exit code {error.returncode}: {error.cmd}", file=sys.stderr)
-    print(format_exception_diagnostics(error), file=sys.stderr)
-    sys.exit(1)
 
 
 def _cmd_bench_compare(args: argparse.Namespace, project_root: Path) -> None:
@@ -4932,14 +4117,6 @@ def _performance_request_options(
     )
 
 
-def _fetch_for_performance_request(*, project_root: Path, request: ResolvedPerformanceRequest, include_current: bool) -> None:
-    """Fetch tags required before release performance worktree generation."""
-    current = request.current_tag if include_current else None
-    if not include_current and request.worktree_ref == request.current_tag:
-        current = request.current_tag
-    _fetch_release_tags(repo_root=project_root, tags=request.tags_to_fetch, include_current=current)
-
-
 def _cmd_create_release_benchmark_metadata(args: argparse.Namespace, project_root: Path) -> None:
     """Write the measurement sidecar consumed by GitHub-asset comparisons."""
     try:
@@ -4955,33 +4132,6 @@ def _cmd_create_release_benchmark_metadata(args: argparse.Namespace, project_roo
     sys.exit(0)
 
 
-def _cmd_performance_local(args: argparse.Namespace, project_root: Path) -> None:
-    try:
-        request = resolve_performance_request(_performance_request_options(args=args, project_root=project_root, current_vs_latest=True))
-        output = _path_from_root(project_root, args.output)
-        _preflight_performance_destinations(
-            output=output,
-            report_id=PerformanceReportId(current_tag=request.current_tag, baseline_tag=request.baseline_tag),
-        )
-        _fetch_for_performance_request(project_root=project_root, request=request, include_current=False)
-        config = _release_config_from_args(
-            args,
-            project_root,
-            request,
-            baseline_source="local",
-            apply_current_diff=not args.no_apply_current_diff,
-        )
-        report_id = generate_performance_worktree_report(output=output, config=config)
-    except _RECOVERABLE_CLI_ERRORS as exc:
-        print(f"performance-local: {format_exception_diagnostics(exc)}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Generated benchmark report in a temporary worktree and wrote it to {output}")
-    print(f"Retained artifact bundle: {_artifact_paths_for_output(output).payload} and {_artifact_paths_for_output(output).provenance}")
-    print(f"Current performance report: {report_id.current_tag} vs {report_id.baseline_tag}")
-    sys.exit(0)
-
-
 def _cmd_performance_github_assets(args: argparse.Namespace, project_root: Path) -> None:
     explicit_pair = args.current_tag is not None or args.baseline_tag is not None
     try:
@@ -4994,7 +4144,6 @@ def _cmd_performance_github_assets(args: argparse.Namespace, project_root: Path)
             output=output,
             report_id=PerformanceReportId(current_tag=request.current_tag, baseline_tag=request.baseline_tag),
         )
-        _fetch_for_performance_request(project_root=project_root, request=request, include_current=True)
         config = _release_config_from_args(
             args,
             project_root,
@@ -5002,7 +4151,7 @@ def _cmd_performance_github_assets(args: argparse.Namespace, project_root: Path)
             baseline_source="github-assets",
             apply_current_diff=False,
         )
-        report_id = generate_performance_worktree_report(output=output, config=config)
+        report_id = generate_historical_asset_report(output=output, config=config)
     except _RECOVERABLE_CLI_ERRORS as exc:
         print(f"performance-github-assets: {format_exception_diagnostics(exc)}", file=sys.stderr)
         sys.exit(1)
@@ -5013,84 +4162,11 @@ def _cmd_performance_github_assets(args: argparse.Namespace, project_root: Path)
     sys.exit(0)
 
 
-def _cmd_performance_release(args: argparse.Namespace, project_root: Path) -> None:
-    explicit_pair = args.current_tag is not None or args.baseline_tag is not None
-    try:
-        request = resolve_performance_request(_performance_request_options(args=args, project_root=project_root, infer_release=not explicit_pair))
-        if request.current_tag == request.baseline_tag:
-            msg = "performance-release requires distinct current and baseline tags"
-            raise ValueError(msg)
-        if explicit_pair and request.worktree_ref == "HEAD" and request.current_tag != _current_package_tag(project_root):
-            msg = f"explicit current tag {request.current_tag} does not match the HEAD package version {_current_package_tag(project_root)}"
-            raise ValueError(msg)
-        current = _path_from_root(project_root, args.current)
-        archive_dir = _path_from_root(project_root, args.archive_dir)
-        output = _path_from_root(project_root, args.output)
-        _preflight_performance_destinations(
-            output=output,
-            report_id=PerformanceReportId(current_tag=request.current_tag, baseline_tag=request.baseline_tag),
-            current=current,
-            archive_dir=archive_dir,
-            project_root=project_root,
-        )
-        _fetch_for_performance_request(project_root=project_root, request=request, include_current=False)
-        config = _release_config_from_args(
-            args,
-            project_root,
-            request,
-            baseline_source="local",
-            apply_current_diff=not args.no_apply_current_diff,
-        )
-        report_id = generate_and_promote_performance_report(output=output, current=current, archive_dir=archive_dir, config=config)
-    except _RECOVERABLE_CLI_ERRORS as exc:
-        print(f"performance-release: {format_exception_diagnostics(exc)}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Generated benchmark report in a temporary worktree and promoted it to {current}")
-    print(f"Retained artifact bundle: {_artifact_paths_for_output(output).payload} and {_artifact_paths_for_output(output).provenance}")
-    print(f"Current performance report: {report_id.current_tag} vs {report_id.baseline_tag}")
-    print(f"Archive directory: {archive_dir}")
-    sys.exit(0)
-
-
-def _cmd_performance_doc(args: argparse.Namespace, project_root: Path) -> None:
-    """Render and promote docs from retained artifacts only."""
-    try:
-        output = _path_from_root(project_root, args.output)
-        artifacts = ArtifactPaths(
-            payload=_path_from_root(project_root, args.artifact_payload),
-            provenance=_path_from_root(project_root, args.artifact_provenance),
-        )
-        current = _path_from_root(project_root, args.current)
-        archive_dir = _path_from_root(project_root, args.archive_dir)
-        report_id = render_and_promote_performance_artifacts(
-            output=output,
-            artifacts=artifacts,
-            destinations=PerformancePromotionDestinations(
-                project_root=project_root,
-                current=current,
-                archive_dir=archive_dir,
-            ),
-            expected_current_tag=_current_package_tag(project_root),
-        )
-    except _RECOVERABLE_CLI_ERRORS as exc:
-        print(f"performance-doc: {format_exception_diagnostics(exc)}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Rendered retained artifacts and promoted the report to {current}")
-    print(f"Current performance report: {report_id.current_tag} vs {report_id.baseline_tag}")
-    print(f"Archive directory: {archive_dir}")
-    sys.exit(0)
-
-
 def execute_release_performance_commands(args: argparse.Namespace, project_root: Path) -> None:
     """Execute release performance report commands."""
     handlers = {
         "create-release-benchmark-metadata": _cmd_create_release_benchmark_metadata,
-        "performance-local": _cmd_performance_local,
         "performance-github-assets": _cmd_performance_github_assets,
-        "performance-release": _cmd_performance_release,
-        "performance-doc": _cmd_performance_doc,
     }
     handler = handlers.get(args.command)
     if handler is None:
@@ -5127,10 +4203,7 @@ def execute_command(args: argparse.Namespace, project_root: Path) -> None:
         "generate-summary": execute_performance_summary_commands,
         "run-release-signal": execute_performance_summary_commands,
         "create-release-benchmark-metadata": execute_release_performance_commands,
-        "performance-local": execute_release_performance_commands,
         "performance-github-assets": execute_release_performance_commands,
-        "performance-release": execute_release_performance_commands,
-        "performance-doc": execute_release_performance_commands,
     }
     handler = handlers.get(args.command)
     if handler is None:

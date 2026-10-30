@@ -14,13 +14,18 @@ on:
           - "development"
           - "production"
       suite:
-        description: "Measure timings or instrumented allocations, once"
+        description: "Measure one focused diagnostic family"
         required: true
         default: "timing"
         type: choice
         options:
           - "timing"
           - "allocations"
+          - "circumsphere_queries"
+          - "hull_queries"
+          - "memory_footprint"
+          - "traversal"
+          - "validation_components"
       benchmark_filter:
         description: "Timing regex or exact allocation case ID; blank selects the suite"
         required: false
@@ -104,10 +109,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p profiling-results
-          cargo_args=(bench --locked --profile perf --bench profiling_suite)
+          cargo_args=(bench --locked --profile perf --bench construction_scaling)
+          if [[ "$INPUT_SUITE" != "timing" && "$INPUT_SUITE" != "allocations" ]]; then
+            cargo_args=(bench --locked --profile perf --bench "$INPUT_SUITE")
+          fi
           criterion_args=(--noplot)
           if [[ "$INPUT_SUITE" == "allocations" ]]; then
-            cargo_args+=(--features count-allocations)
+            cargo_args=(bench --locked --profile perf --bench memory_footprint --features count-allocations)
             if [[ "$BENCH_FILTER_VALUE" == "memory_profiling" ]]; then
               criterion_args+=('^memory_profiling/')
             else

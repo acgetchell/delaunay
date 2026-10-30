@@ -541,7 +541,7 @@ sampling; it produces no performance data.
 
 The explicit slow suite (`just bench all`), `just bench-compile`, and the
 benchmark compile step inside `just ci` enable
-`--features bench` so feature-gated benchmark fixtures and benchmark-only
+`--features bench`; `just bench all` additionally enables `count-allocations` so feature-gated benchmark fixtures and benchmark-only
 dependencies are compiled.
 
 Use `just pachner-stress [attempts] [validate_every] [mode]` for the manual 3D+4D
@@ -610,7 +610,7 @@ available through `just bench-save-baseline <tag> topology` and
 signal as `last` with `just bench-save-baseline last` from the baseline
 checkout, or save an explicit baseline name with the same recipe. Use
 `just performance-local` when you want the tool to manage isolated
-baseline/current worktrees.
+baseline/current source exports.
 
 Saved baseline names must start with an ASCII letter or digit and contain only
 ASCII letters, digits, dots, underscores, or hyphens. Names must be distinct
@@ -637,11 +637,9 @@ Manual `just bench-latest` runs use a 30-minute timeout for each target unless
 an override is supplied. Fresh runs use a private output tree and publish to
 `target/criterion` after validation, preserving named baselines. Discovery and scientific
 preflight precede sampling, and saved baselines are checked against the fresh
-raw files before evidence is retained. The local `performance-release` workflow uses
-separate two-hour discovery and sampling ceilings per target, plus a ten-minute
-preflight ceiling per target. The sampling child also has an aggregate limit of
-two hours times the selected target count for each revision; discovery and preflight
-run before that child. There is no combined local workflow deadline.
+raw files before evidence is retained. Paired `performance-release` discovery
+has a 30-minute ceiling per target; each phase gate and native timing command
+has a six-hour ceiling. Both gates complete before either phase is timed.
 The hosted draft workflow has a 150-minute job ceiling and a
 one-hour sampling ceiling per target. A target timeout invalidates the measurement; rerun
 the complete release workflow rather than treating partial Criterion output as
@@ -663,67 +661,38 @@ Use lower-level `uv run --locked benchmark-utils bench-compare --scope all-bench
 when you explicitly want an exploratory report over every Criterion result
 already present under `target/criterion/`.
 
-Use `just performance-local` for an isolated temp-worktree comparison of the
-current package version against the latest stable published release. It runs
-local benchmarks and retains adjacent Markdown, shared comparison JSON, and evidence under `target/bench-reports/` without changing tracked docs. Use
-`just performance-github-assets` to retain a provenance-validated bundle from
-stored GitHub Release benchmark assets without local Cargo runs. Supported
-archives carry versioned source, command, toolchain, completed-target,
-measurement-plan, per-run host, sample, and content-digest metadata bound to
-the requested clean tag. Existing legacy archives remain loadable as
-provenance-limited absolute timing evidence. GitHub-asset ratios are always
-suppressed because the archives came from separate measurement sessions. Use
-`just performance-release` in release PRs to measure, retain, reload-validate, and
-promote one curated comparison into `docs/performance.md`, archiving the
-previous report and exact promoted comparison JSON/evidence bytes under
-`docs/archive/performance/`.
+Use `just performance-local [release-signal|topology]` for paired acquisition
+with read-only source exports. The installed schema-4 engine preserves native
+harnesses, independent discovery/gates/counts and exact raw samples. It retains
+complete-run/v3 evidence at `target/bench-reports/performance.run.json`, its
+`.evidence.json` envelope and a Markdown report. Incompatible identities retain
+absolute/one-sided results and suppress ratios.
 
-Fresh comparisons use the recorded harness and measurement plan to establish workload
-identity, including comparisons across older release labels. Failed scientific fixtures
-invalidate a run; incompatible harnesses suppress ratios. When no comparable baseline
-exists, use `just bench-latest` followed by `just bench-perf-summary` for absolute
-results and skip comparison publication.
-Historical reports retain their original release labels.
+For release documentation, run `just performance-prepare` before
+`just performance-release`. Preparation captures independent release/ref
+assertions; release acquisition and strict report promotion consume them.
+`just performance-readme --preview` previews the separately published README
+selection; `just performance-readme` commits it. `just performance-doc`
+rerenders the retained current complete run without timing. Explicit new scratch
+pairs can be promoted with `--payload PATH --manifest PATH`. Commands use the
+six consumer declarations under `tooling/`; the paired workflows do not fetch
+tags or change Git state by default.
 
-Use `just performance-doc` to retry rendering or promotion from an existing
-retained comparison JSON/evidence pair. It runs no Cargo benchmarks or measurement
-worktrees and rejects incomplete, invalid, stale, same-version, or
-scientifically non-comparable pairs. Promotion uses per-file atomic replacement
-with rollback for caught failures; after a hard interruption, inspect the
-destinations and rerun the idempotent command. The GitHub
-asset and release-promotion recipes accept explicit `<current-tag>
-<baseline-tag>` pairs for repair paths, but both tags must be supplied together
-before any fetch or benchmark side effect. Temp-worktree release commands apply
-the shared exact snapshot by default, including nonignored new files and their
-permissions. Snapshot application requires the captured checkout revision.
+The default declaration matches the v0.8.3+ native inventory. Explicit comparisons
+against v0.8.2 use `tooling/measurement-release-signal-v082.toml`, preserving its
+different locate IDs as absolute union rows. Strict release promotion rejects
+that incompatible comparison. Prepare regular releases after advancing the
+package version beyond the latest published release.
 
-Promotion commands require every input and output, including retained scratch
-reports, to be inside the project root. External promotion paths fail before
-measurements or publication. Standalone `performance-local` and
-`performance-github-assets` reports may use external output paths.
-
-Use `just performance-readme` after `performance-release` to validate that the
-retained bundle exactly matches the promoted durable evidence, then publish a
-compact group-level README table and the canonical comparison JSON/evidence pair under
-`docs/assets/bench/`. It runs no benchmarks, updates tag-pinned evidence links,
-and rolls back every README-owned destination on caught failures.
-
-Scratch Markdown identifies the adjacent comparison JSON/evidence pair under
-`target/bench-reports/`. A promoted report instead identifies the exact durable
-pair copied under `docs/archive/performance/data/`. Broad configuration digests
-remain recorded provenance; cross-release comparability uses the normalized
-measurement plan, harness identity, toolchain, completed targets, host, and
-confidence level.
-
-The canonical timing payload is the shared `research-repo-tools/criterion-comparison/v1`
-JSON, paired with its digest-bound evidence envelope. Delaunay's context records
-coverage and scientific eligibility. Ratios require matching measured harnesses,
-plans, toolchains, confidence levels, and hosts. Timing changes are descriptive;
-marginal timing intervals are not ratio intervals or significance tests.
-
-Historical CSV/text files stay unchanged as records. Their readers and writers
-are retired. New reports use `.comparison.json` and `.evidence.json`; old files
-cannot be passed to the new promotion commands.
+New report history lives under `docs/performance-runs/` with current report
+`docs/performance_current.md`. Existing `docs/performance.md`, prior archives
+and old evidence remain byte-identical. Historical Delaunay asset inspection
+still uses `just performance-github-assets [CURRENT BASELINE]`, retaining
+original host/session metadata and suppressing ratios for separate hosted runs.
+The exact-tag single-run release workflow keeps its captured release ID/tag
+commit checks and explicit upload/publication boundary. Scientific single-run
+summaries, construction diagnostics and saved-baseline checks retain their
+adapter because shared complete acquisition requires two phases.
 
 Before pushing core Rust/Cargo or public-behavior changes, complete final
 comprehensive validation:

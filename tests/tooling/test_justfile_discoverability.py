@@ -349,7 +349,7 @@ def test_canonical_performance_recipes_share_the_cross_repository_contract() -> 
     bench_command = next(line for line in rendered.splitlines() if "benchmark-utils bench-compare " in line)
     assert shlex.split(bench_command)[-6:] == ["bench-compare", "v0.7.8", "--suite", "query", "--scope", "all-benches"]
 
-    for name in ("performance-github-assets", "performance-release"):
+    for name in ("performance-github-assets",):
         parameters = recipes[name]["parameters"]
         assert [parameter["name"] for parameter in parameters] == ["current_tag", "baseline_tag"]
         assert [parameter["default"] for parameter in parameters] == ["", ""]
@@ -361,7 +361,17 @@ def test_canonical_performance_recipes_share_the_cross_repository_contract() -> 
         assert "baseline_tag='v0.7.8'" in rendered
 
     readme_command = dry_run(REPO_ROOT, "performance-readme")
-    assert "uv run --locked publish-readme-performance" in readme_command.stdout + readme_command.stderr
+    assert 'research-repo-tools performance readme tooling/performance-release.toml "$@"' in readme_command.stdout + readme_command.stderr
+    for name, operation, configuration in (
+        ("performance-prepare", "prepare", "performance-release"),
+        ("performance-release", "release", "performance-release"),
+        ("performance-doc", "promote", "performance-report"),
+    ):
+        command = dry_run(REPO_ROOT, name)
+        assert f'research-repo-tools performance {operation} tooling/{configuration}.toml "$@"' in command.stdout + command.stderr
+    local = dry_run(REPO_ROOT, "performance-local")
+    assert "performance measure 'tooling/measurement-release-signal.toml'" in local.stdout + local.stderr
+    assert "--allow-git-mutations" not in local.stdout + local.stderr
 
 
 @pytest.mark.parametrize("argument", ["two words", "quote'and\"quote", "$(printf injected); #"])
@@ -386,7 +396,7 @@ def test_canonical_performance_recipes_shell_quote_tag_arguments() -> None:
     """Tag arguments must remain data in public recipes and their shared helper."""
     injected = 'v0.8.1"; printf injected; # '
 
-    for recipe in ("performance-github-assets", "performance-release", "_performance-tag-pair-state"):
+    for recipe in ("performance-github-assets", "_performance-tag-pair-state"):
         command = dry_run(REPO_ROOT, recipe, (injected, "v0.8.0"))
         rendered = command.stdout + command.stderr
         current_assignment = next(line for line in rendered.splitlines() if line.startswith("current_tag="))
@@ -476,7 +486,7 @@ def test_canonical_performance_recipes_reject_partial_tag_pairs_before_dispatch(
     executable = shutil.which("just")
     assert executable is not None
 
-    for recipe in ("performance-github-assets", "performance-release"):
+    for recipe in ("performance-github-assets",):
         result = subprocess.run(  # noqa: S603 - executable is resolved and arguments are repository constants.
             [executable, recipe, "v0.8.0"],
             cwd=REPO_ROOT,

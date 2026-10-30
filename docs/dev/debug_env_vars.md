@@ -185,7 +185,8 @@ release builds only.
 
 ### Profiling Suite
 
-These variables configure `benches/profiling_suite.rs`.
+These variables configure the focused diagnostic targets through
+`benches/common/profiling_fixtures.rs`. See the [profiling parity inventory](../../benches/README.md#profiling-suite).
 
 | Variable | Activation | Description |
 |---|---|---|

@@ -1,0 +1,36 @@
+schema = 2
+document = "README.md"
+archive = "docs/performance-runs"
+measurement = "tooling/measurement-release-signal.toml"
+release = true
+begin = "<!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->"
+end = "<!-- PERFORMANCE_RELEASE_TABLE:END -->"
+statistic = "median"
+unit = "ns"
+missing = "error"
+csv = "docs/assets/bench/release-performance.csv"
+rows = [
+    { key = "2d", label = "2D construction (500 vertices)" },
+    { key = "3d", label = "3D construction (100 vertices)" },
+    { key = "4d", label = "4D construction (30 vertices)" },
+    { key = "5d", label = "5D construction (12 vertices)" },
+]
+series = [
+    { name = "baseline", label = "Baseline", label-version = "release", rows = { "2d" = "tds_new_2d/tds_new/500", "3d" = "tds_new_3d/tds_new/100", "4d" = "tds_new_4d/tds_new/30", "5d" = "tds_new_5d/tds_new/12" } },
+    { name = "current", label = "Current", label-version = "release", rows = { "2d" = "tds_new_2d/tds_new/500", "3d" = "tds_new_3d/tds_new/100", "4d" = "tds_new_4d/tds_new/30", "5d" = "tds_new_5d/tds_new/12" } },
+]
+comparisons = [ { numerator = "baseline", denominator = "current" } ]
+references = [
+    { path = "Cargo.toml", pattern = '^version = "(?P<value>[^"]+)"\r?$', source = "version" },
+    { path = "docs/performance_current.md", pattern = '^- current: measured in \*\*current\*\* phase \((?P<value>[^)]+)\), revision', source = "tag" },
+    { path = "docs/performance_current.md", pattern = '^- baseline: measured in \*\*baseline\*\* phase \((?P<value>[^)]+)\), revision', source = "previous-tag" },
+]
+
+[table]
+comparison-columns = [ "ratio" ]
+ratio-headings = [ "Baseline / current" ]
+intervals = "below"
+timing-legend = true
+
+[provenance.baseline]
+[provenance.current]

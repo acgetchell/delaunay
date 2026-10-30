@@ -32,10 +32,15 @@ def normalize_codacy_fixture(tmp_path: Path, document: dict[str, object]) -> Pat
     return output
 
 
-def test_profile_capture_retains_consumer_labels_and_native_declarations(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("suite", tuple(profiling_metadata.DIAGNOSTIC_TARGETS))
+def test_profile_capture_retains_consumer_labels_and_native_declarations(monkeypatch: pytest.MonkeyPatch, suite: str) -> None:
     monkeypatch.chdir(ROOT)
     monkeypatch.setenv("PROFILE_METADATA_MODE", "development")
-    monkeypatch.setenv("PROFILE_METADATA_FILTER", "construction")
+    selected_filter = "memory_profiling/memory_usage_2d/1000" if suite == "allocations" else "construction"
+    if suite == "traversal":
+        selected_filter = "queries/vertices/Δ 🚀"
+    monkeypatch.setenv("PROFILE_METADATA_FILTER", selected_filter)
+    monkeypatch.setenv("PROFILE_METADATA_SUITE", suite)
     monkeypatch.setenv("PROFILE_METADATA_TITLE", "Profiling 🚀")
     monkeypatch.delenv("BENCH_FILTER_VALUE", raising=False)
     captured: dict[Path, bytes] = {}
@@ -44,11 +49,18 @@ def test_profile_capture_retains_consumer_labels_and_native_declarations(monkeyp
     payload = json.loads(captured[ROOT / "profiling-results/environment.json"])
     assert payload["context"]["mode"] == "development"
     assert payload["context"]["title"] == "Profiling 🚀"
-    assert payload["context"]["filter"] == "construction"
+    assert payload["context"]["filter"] == selected_filter
     assert payload["declarations"]["cargo-manifest"]["text"] == (ROOT / "Cargo.toml").read_text(encoding="utf-8")
     assert payload["declarations"]["rust-toolchain"]["text"] == (ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
     version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
     assert payload["source"]["context"]["release"] == f"v{version}"
+    command = json.loads(payload["source"]["context"]["command"])
+    assert command[6] == profiling_metadata.DIAGNOSTIC_TARGETS[suite]
+    assert command[-1] == selected_filter
+    assert ("count-allocations" in command) is (suite == "allocations")
+    assert ("--exact" in command) is (suite == "allocations")
+    harness = json.loads(payload["source"]["context"]["harness-inventory"])
+    assert [name for name in harness if name.startswith("benches/") and not name.startswith("benches/common/")] == [f"benches/{command[6]}.rs"]
 
 
 @pytest.mark.parametrize(
@@ -89,6 +101,8 @@ def test_profile_metadata_cli_reports_failure_and_cleans_temporary_configuration
 ) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.3"\n', encoding="utf-8")
+    (tmp_path / "tooling").mkdir()
+    (tmp_path / "tooling/profiling-inputs.toml").write_bytes((ROOT / "tooling/profiling-inputs.toml").read_bytes())
     output = tmp_path / "profiling-results/environment.json"
     output.parent.mkdir()
     output.write_bytes(b"previous metadata\n")

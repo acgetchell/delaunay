@@ -6,217 +6,111 @@ predicates fast across 2D-5D.
 
 ## Benchmarking Model
 
-Routine CI and release measurements share one public API plan:
-`ci_performance_suite`, `circumsphere_containment`, and `locate`. These cover
-representative construction, mutation, import, validation, hull, predicate, and
-point-location workflows across 2D–5D. Each target is sampled once per measured
-revision. Criterion repetitions estimate timing variability; untimed discovery
-and fixture preflight do not constitute additional timing runs.
-
-Internal microbenchmarks and large-scale profiling are opt-in debugging tools.
-Use a specific `cargo bench --profile perf --bench <target>` invocation, or
-`just bench all` for the complete slow suite. Diagnostic profiling Actions are
-manual-only and select either timing or allocation instrumentation in one job.
-Unit, integration, property, and regression tests independently preserve
-correctness; they are not removed from CI merely because they exercise internals.
-Benchmarks still reject invalid fixtures and failed operations before accepting
-timing evidence.
-
-Measurement and reporting are separate operations. `just bench-latest` produces
-validated raw samples; `just bench-perf-summary` renders those samples without
-running benchmarks. Repeated strict rendering preserves the measured source,
-host, and completion time. Changed plans require fresh measurements; old results
-are never relabeled as evidence for a new plan. Historical artifacts remain
-historical evidence, not a prerequisite for retaining an obsolete methodology.
-
-The benchmark system answers three different questions:
-
-1. **Are the scientific invariants maintained?** Use the normal validation
-   gate, invariant tests, and known-answer checks. Benchmark harnesses should
-   fail before publishing timings when the measured workflow violates
-   triangulation, predicate, topology, or diagnostic invariants.
-2. **Did this change move performance?** Use `just performance-local` for branch
-   and PR work. It measures both the current checkout and the latest published
-   stable release freshly in isolated worktrees on this machine, and retains
-   shared JSON evidence under `target/`. The CI performance job runs the same
-   command; ratios require compatible harness, measurement-plan, compiler,
-   confidence-level and host evidence.
-3. **Are we publishing release evidence?** Use release-signal benchmarks, durable
-   release artifacts, environment metadata, and one curated committed report.
-
-This split is the reusable pattern for Delaunay and sibling scientific crates:
-invariants first, local evidence second, release evidence third. The exact
-benchmark targets can differ by domain, but the command roles should stay
-boring and consistent.
+Routine CI and release measurements share the curated public API plan:
+`ci_performance_suite`, `circumsphere_containment`, and `locate`. Each target
+is sampled once per revision. Untimed discovery and scientific preflight precede
+timing. Internal diagnostics remain opt-in; `just bench all` composes every
+registered target, including instrumented allocation diagnostics.
 
 ## How The Workflow Fits Together
 
-Follow the [validation command selection matrix](../docs/dev/commands.md#validation-command-selection):
-use `just check` and targeted tests during iteration, focused validators for
-non-core changes, and `just ci` for final core Rust/public-behavior validation.
-These checks do not publish benchmark data or replace measured before/after
-evidence for performance-sensitive code.
-
-Use `just performance-local` for branch and PR work. It measures both revisions
-freshly in isolated worktrees on this machine and retains shared JSON evidence
-under `target/`. The CI performance job uses the same command. Ratios require
-compatible harness, measurement-plan, toolchain, confidence-level and host evidence.
-The comparison workflow runs for relevant PRs or explicit dispatch, without
-repeating the same comparison on every merge to `main`. Release Benchmarks owns
-the measurements for the exact release tag; main correctness/package CI remains
-required separately.
-
-Use release-signal benchmarks for release evidence. They are slower, more
-formal, and tied to release artifacts and report metadata. Create a draft GitHub
-Release for an existing stable tag, then dispatch
-`.github/workflows/release-benchmarks.yml` with that `tag`. It validates the
-mutable draft, benchmarks the exact tag commit, attaches and digest-verifies
-`delaunay-vX.Y.Z-criterion-baseline.tar.gz`, and leaves the release as a draft. That archive
-contains `PERFORMANCE_RESULTS.md`, raw Criterion data
-under `criterion/`, and `metadata.json`.
-
-Common maintainer flows:
-
-- Before committing or handing off code: run the scope-appropriate checks from
-  the command-selection matrix above.
-- Before pushing performance-sensitive Rust or benchmark changes: run
-  `just perf-large-scale-smoke`, then `just performance-local` when the work
-  is PR-ready.
-- During release PR preparation: run `just performance-release`, then
-  `just performance-readme`, to update the curated report, archive its
-  predecessor, and publish the matching README snapshot.
-- After the draft benchmark workflow succeeds: review the attached
-  `delaunay-vX.Y.Z-criterion-baseline.tar.gz`, then follow the maintainer's
-  explicit [`just release-publish` step](../docs/RELEASING.md#7-publish-the-reviewed-draft-and-approve-cargo-publication).
-  Once the release is published, use
-  `just performance-github-assets 'current-tag' 'baseline-tag'` when you need a
-  report from stored release assets.
-
-Criterion saved-baseline reports use Cargo's Criterion output under
-`target/criterion/`. Save a baseline with `just bench-save-baseline <tag>` from
-the baseline checkout, then run fresh
-release-signal measurements from the current checkout with `just bench-latest`
-and render a Markdown comparison with `just bench-compare <baseline>`.
-`just bench-latest-vs-last` combines the fresh measurement and report rendering
-for the common local saved-baseline case. Use `just performance-local` when you
-want the tool to manage isolated baseline/current worktrees for you.
-
-`just bench-preflight` executes every curated target with Criterion `--test`:
-fixture setup and one operation per case, with a ten-minute ceiling per target
-including compilation. It writes no timing evidence or measurement sidecars.
-`just bench-latest` runs that entire preflight before any full sampling. Fatal
-setup and operation errors always print to stderr, including with
-`bench-logging` disabled or `RUST_LOG=off`.
-
-Draft workflow reruns never overwrite existing evidence. Failures before upload
-can be retried with the same tag. If an archive is already attached, inspect it
-and remove it from the mutable draft before rerunning; published releases are
-always rejected. Follow the full [draft-run-publish sequence](../docs/RELEASING.md).
-
-Historical reports retain their original release labels and measurements.
-Fresh comparisons establish workload identity from harness and measurement-plan
-evidence rather than a hard-coded version boundary. Failed scientific fixtures
-invalidate measurements. If no scientifically comparable baseline exists, use
-`just bench-latest` followed by `just bench-perf-summary` for absolute results
-and skip comparison publication.
-
-The canonical `performance-*` release recipes consume local worktrees,
-published release assets, or retained inputs:
-
-- `just performance-local` runs local release-signal benchmarks in isolated
-  temporary worktrees and retains a Markdown/comparison JSON/evidence bundle under
-  `target/bench-reports/performance.*` without promoting documentation.
-- `just performance-github-assets` compares stored GitHub Release assets
-  without local Cargo benchmark runs and retains
-  `target/bench-reports/github-assets-performance.*`. New archives must carry
-  complete versioned measurement metadata bound to the requested clean tag.
-  Existing legacy archives remain loadable as provenance-limited absolute
-  timing evidence. Ratios are always suppressed because two independently
-  hosted release runs are separate measurement sessions.
-- `just performance-release` performs the local measurement and retention
-  workflow, reload-validates the pair, promotes `docs/performance.md`, and
-  archives both the prior report and the exact promoted comparison JSON/evidence pair.
-- `just performance-doc` reloads a retained comparison JSON/evidence pair and performs
-  only the documentation promotion. It runs no Cargo benchmarks or measurement
-  worktrees and rejects incomplete, invalid, stale, same-version, or
-  scientifically non-comparable inputs.
-- `just performance-readme` validates the retained promoted bundle, then
-  atomically publishes a compact README table and the canonical README-owned
-  comparison JSON/evidence pair. It runs no benchmarks.
-
-Promotion uses per-file atomic replacement and rolls back caught failures. A
-hard process or machine interruption can stop between replacements. Inspect
-`docs/performance.md`, `docs/archive/performance/` and its `data/` directory,
-`README.md`, and `docs/assets/bench/`, then rerun the owning idempotent command:
-`just performance-doc` or `just performance-readme` for an already-retained
-bundle.
-
-Exact-renaming `perf-*` compatibility aliases are intentionally absent. The
-remaining `perf-*` recipes are Delaunay-specific regression, stress, and
-profiling workflows with distinct semantics.
-
-Use explicit tag pairs only for release repair or regeneration. Both tags are
-required together; a partial pair fails before fetching or benchmarking:
+Use `just check` and focused tests during development, following the
+[validation matrix](../docs/dev/commands.md#validation-command-selection).
+For a fresh working-tree comparison, run:
 
 ```bash
-TAG=vX.Y.Z
-PREVIOUS_TAG=vX.Y.W
-just performance-release "$TAG" "$PREVIOUS_TAG"
+just performance-local
+# Optional topology-policy experiment, outside the release-signal suite:
+just performance-local topology
 ```
 
-Do not use release-comparison commands as a routine pre-`just ci` step.
-Temp-worktree commands use the shared snapshot API for tracked changes and
-nonignored new files, including binary bytes and file permissions. The snapshot
-must match the isolated checkout's commit; concurrent source edits are rejected.
+These commands call the installed shared schema-4 acquisition engine. Read-only
+source exports preserve each revision's native harness, including baseline-only
+files; no Git worktrees or automatic tag fetching are needed. The current tree
+includes tracked and nonignored new files. Tags must already exist locally.
+Concurrent input changes reject publication. Both phases retain independent
+canonical discovery inventories, gates, count policies, exact raw JSON, source,
+harness, workload, compiler, host and declared environment identities.
+
+`tooling/measurement-release-signal.toml` owns the 173-case release selection and
+unchanged 10/15/20/25/100 sample counts. The separate topology declaration retains
+its 12-sample 4D group. Discovery and exhaustive count maps reject missing or
+unexpected IDs. Each phase executes its own correctness gate before either
+phase is timed. The native command also saves `retained`; its benchmark,
+estimate, sample and Tukey bytes must equal the fresh files.
 
 ## Release Comparison Artifacts
 
-Artifact ownership is deliberately narrow:
+| Path | Owner / role |
+|------|--------------|
+| `target/bench-reports/performance.run.json` | Fresh complete-run/v3, containing both complete phases and raw files |
+| `target/bench-reports/performance.evidence.json` | Digest-bound original provenance and acquisition declarations |
+| `target/bench-reports/performance.md` | Local comparison, with union rows and valid absolute values |
+| `target/bench-reports/preparation.json` | Independent release/ref assertions captured before release measurement |
+| `docs/performance_current.md` | Future current complete-run report, written only by explicit promotion |
+| `docs/performance-runs/` | Future immutable complete-run history and latest selection |
+| `docs/performance.md`, `docs/archive/performance/` | Unchanged historical reports and evidence |
+| `target/bench-reports/github-assets-performance.*` | Historical Delaunay archive interpretation; separate hosted sessions suppress ratios |
+| `delaunay-vX.Y.Z-criterion-baseline.tar.gz` | Exact tagged single-run archive and Delaunay construction diagnostics |
 
-| Path | Tracked | Producer | Role |
-|------|---------|----------|------|
-| `target/bench-reports/performance.md` | No | `performance-local`, `performance-release`, `performance-doc` | Rendered local or release comparison |
-| `target/bench-reports/performance.comparison.json` | No | Local/release measurement | Shared median timing payload |
-| `target/bench-reports/performance.evidence.json` | No | `performance-local`, `performance-release` | Shared provenance envelope binding the timing payload |
-| `target/bench-reports/github-assets-performance.*` | No | `performance-github-assets` | Provenance-validated bundle sourced from release archives |
-| `docs/performance.md` | Yes | `performance-release`, `performance-doc` | Latest curated distinct-release report |
-| `docs/archive/performance/` | Yes | `performance-release`, `performance-doc` | Older curated distinct-release reports |
-| `docs/archive/performance/data/` | Yes | `performance-release`, `performance-doc` | Exact shared JSON pair for each new promoted report |
-| `README.md` | Yes | `performance-readme` | Compact snapshot of the latest retained and promoted comparison |
-| `docs/assets/bench/release-performance.*` | Yes | `performance-readme` | Exact README-owned comparison JSON/evidence snapshot |
-| `delaunay-vX.Y.Z-criterion-baseline.tar.gz` | Release asset | release benchmark workflow | Raw Criterion data and versioned measurement metadata |
+Incompatible harnesses, workloads, sampling policies, tools or captured hosts
+suppress ratios while preserving complete absolute results and one-sided rows.
+A later host probe cannot make earlier measurements comparable. Marginal timing
+intervals are not paired ratio intervals or significance tests.
 
-The canonical timing payload is the shared `research-repo-tools/criterion-comparison/v1`
-JSON, paired with its digest-bound evidence envelope. Delaunay's context records
-coverage and scientific eligibility. Ratios require matching measured harnesses,
-plans, toolchains, confidence levels, and hosts. Timing changes are descriptive;
-marginal timing intervals are not ratio intervals or significance tests.
+Release preparation, acquisition/promotion and README publication are separate
+retry boundaries, using the installed commands and consumer TOML:
 
-Historical CSV/text files stay unchanged as records. Their readers and writers
-are retired. New reports use `.comparison.json` and `.evidence.json`; old files
-cannot be passed to the new promotion commands.
+```bash
+just performance-prepare
+just performance-release
+just performance-readme --preview
+just performance-readme
+# Rerender the retained current report, without native benchmark commands:
+just performance-doc
+```
 
-One-sided and environmentally non-comparable coverage is retained explicitly
-rather than silently dropped. Ratios require compatible hosts, toolchains,
-harnesses, normalized measurement plans, completed-target manifests, and
-confidence levels. Broad configuration digests remain provenance but do not
-block ordinary cross-release comparisons. When a release adds or removes a
-benchmark target, the harness and measurement-plan comparison is restricted to
-the canonical targets completed by both revisions. The current revision must
-complete exactly the active release-signal plan; an older baseline may have a
-different target set. Promotion requires complete coverage for an unchanged
-target plan, or an explicitly valid target transition with one-sided rows
-retained, plus at least one comparable row. Scratch reports identify their
-adjacent retained pair; promoted reports identify the exact durable pair under
-`docs/archive/performance/data/`. The Markdown report is always rendered from a
-successfully reloaded pair, so it does not become an independent source of
-timing data.
+Release promotion is strict: different release labels, complete scientific
+coverage and ratio eligibility are required. Equal-label working-tree runs need
+distinct source identities and remain local evidence. The README configuration
+selects four construction rows; the full report retains every measured case.
+The report publisher and README publisher verify their captured inputs before
+transactional replacement. Failed publication retains the previous generation;
+inspect any reported recovery paths before retrying after interruption.
 
-The default release-signal suite is deliberately curated. It favors stable,
-release-relevant public behavior over every exploratory benchmark in this
-directory. Broader math-kernel benchmark coverage is tracked separately in
-the [math-kernel coverage audit](#math-kernel-coverage-audit-513), which records
-release membership and the role of targeted diagnostics.
+For explicit tag pairs, use the composable acquisition and promotion commands:
+
+```bash
+just performance measure tooling/measurement-release-signal.toml vX.Y.Z vX.Y.W \
+  --payload target/bench-reports/performance.run.json \
+  --manifest target/bench-reports/performance.evidence.json
+just performance-doc --payload target/bench-reports/performance.run.json \
+  --manifest target/bench-reports/performance.evidence.json
+```
+
+The default paired declaration uses the v0.8.3+ native case contract, including
+the current location query IDs. To acquire an original v0.8.2 baseline, select
+`tooling/measurement-release-signal-v082.toml` in the explicit `performance measure`
+command. It preserves that baseline's 20 different locate IDs and all original
+counts, retaining union coverage and suppressing incompatible ratios. Its
+absolute evidence cannot pass strict release/README promotion. The regular
+prepared release workflow assumes the package version has been advanced beyond
+the latest published release, as described in the release guide.
+
+Single-checkout `bench-latest`, saved-baseline, summary and tagged-archive paths
+retain the Delaunay adapter: the published complete-run acquisition command
+requires two phases. These paths preserve construction counters, the native
+sampling policy, private staging and exact saved-copy verification without
+sampling either revision twice. Historical-asset interpretation retains its
+nested Delaunay schema and hosted-session policy; it cannot promote old evidence
+as a complete run. See the [adoption boundary](../docs/dev/tooling_adoption.md#declarative-independent-performance-adoption).
+
+`just bench-preflight` exercises the curated fixtures once without statistical
+sampling. `just bench-latest` collects one fresh raw run; `just bench-perf-summary`
+only renders it. Save named baselines using `just bench-save-baseline last`,
+then use `just bench-latest-vs-last` in the current checkout. The explicit release
+benchmark workflow preserves its captured release ID/tag commit, refuses an
+existing baseline asset and leaves the release as a draft for maintainer review.
 
 ## Math-Kernel Coverage Audit (#513)
 
@@ -302,7 +196,7 @@ isolated LP primitives and exhaustive invalid intersection families to focused
 correctness tests; the public narrow phase is the useful timed unit.
 
 Topology previously had aggregate release coverage, with manual component work
-in `profiling_suite/validation_components_*`, `topology_guarantee_construction`,
+in `validation_components/validation_components_*`, `topology_guarantee_construction`,
 `pl_manifold_repair`, and `tds_clone/topology_view_construction`. The new target
 isolates Euler enumeration, unique ridges, boundary and link checks, and Level 3
 validation. Large random-mesh scaling remains in profiling.
@@ -315,7 +209,7 @@ also deferred until a representative stable query workload is selected.
 
 `allocation_hot_paths` checks bootstrap, insertion, iterators, incidence,
 simplex vertices, barycenters, UUID iteration, facet keys, hinted locate,
-inradius, and surface measure in 2D-5D; `profiling_suite` supplies allocation/RSS
+inradius, and surface measure in 2D-5D; `memory_footprint` supplies allocation/RSS
 diagnostics. Measure allocation checks borrow prebuilt geometry and exclude
 fixture and facet-view construction. Keep
 allocation assertions and process RSS out of release timings. Allocation counts
@@ -399,7 +293,7 @@ proof boundary or benchmark its rejection as successful validation.
 
 These symmetric fixtures isolate kernels and supply independent answers; they
 do not model large random meshes, all supported topology spaces, or every
-conditioning regime. Use `profiling_suite` for scale and mixed workloads,
+conditioning regime. Use the focused profiling targets for scale and mixed workloads,
 `realization_validation` for barycentric narrow-phase work, and the existing
 predicate suites for in-sphere and SoS investigations. All measured fallible
 operations abort on error so a failed path cannot silently publish a fast result.
@@ -416,7 +310,12 @@ operations abort on error so a failed path cannot silently publish a fast result
 | `delaunay_repair.rs` | Flip-based Delaunay repair plus transaction-pressure cases | 2D-5D repair-convergent fixtures | ~2-5 min | Repair tuning |
 | `pachner_stress.rs` | Unified Pachner move API stress | Accepted 4D microcases plus forward/inverse round trips | Manual | Pachner move workflow tuning |
 | `pl_manifold_repair.rs` | Over-shared facet and targeted topology repair | 2D/3D synthetic repair fixtures | <1 min | PL-manifold repair tuning |
-| `profiling_suite.rs` | Large-scale construction, memory, query, validation profiling | 2D/3D 10k, 4D 3k, 5D 1k | Hours; workload-dependent | Manual only |
+| `construction_scaling.rs` | Construction scaling | Original profiling scales | Hours; filter explicitly | Manual only |
+| `memory_footprint.rs` | RSS and allocations | Original profiling scales | Hours; filter explicitly | Manual only |
+| `traversal.rs` | Neighbor and element traversal | Original profiling scales | Filter explicitly | Manual only |
+| `validation_components.rs` | Validation layer costs | Ordinary/adversarial 2D–5D | Filter explicitly | Manual only |
+| `circumsphere_queries.rs` | Batched circumsphere queries | 3D 1k/10k/30k | Filter explicitly | Manual only |
+| `hull_queries.rs` | Boundary and hull extraction | 3D 10k | Filter explicitly | Manual only |
 | `realization_validation.rs` | Level 4 narrow phase and whole validation | Realistic/near-degenerate 2D-5D | ~1-5 min | Level 4 tuning |
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D/3D seeded cases; 4D/5D inverse-k1; 2D-5D rollback | ~1-5 min | Vertex deletion |
 | `locate.rs` | Point-location facet-walk latency (no-hint vs exact-hint) | 2D-5D fixed cases | ~1-3 min | Locate/walk tuning |
@@ -467,7 +366,7 @@ timing; the measured public deletion retains its own invariant checks.
 | Save the previous-release Criterion baseline as `last` | `just bench-save-baseline last` |
 | Compare current tree against latest published release locally | `just performance-local` |
 | Compare stored GitHub Release benchmark assets | `just performance-github-assets [current-tag baseline-tag]` |
-| Measure, retain, validate, and promote release docs | `just performance-release [current-tag baseline-tag]` |
+| Measure, retain, validate, and promote release docs | `just performance-prepare`, then `just performance-release` |
 | Publish the retained comparison snapshot to the README | `just performance-readme` |
 | Promote docs from a retained comparison JSON/evidence pair | `just performance-doc` |
 | Allocation-contract microbenchmarks | `just bench-allocations` |
@@ -483,13 +382,13 @@ timing; the measured public deletion retains its own invariant checks.
 | Flip-repair transaction pressure | `cargo bench --profile perf --bench delaunay_repair -- repair_transaction_pressure --noplot` |
 | Unified Pachner move stress | `just pachner-stress` |
 | PL-manifold repair path | `cargo bench --profile perf --features bench --bench pl_manifold_repair -- --noplot` |
-| Large-scale scaling suite | `cargo bench --profile perf --bench profiling_suite -- --noplot` |
+| Large-scale scaling suite | `cargo bench --profile perf --bench construction_scaling -- --noplot` |
 | Level 4 realization validation | `cargo bench --profile perf --bench realization_validation -- --noplot` |
 | Vertex deletion mutation baseline | `cargo bench --profile perf --bench delete_vertex -- --noplot` |
 | Point-location facet walk | `cargo bench --profile perf --bench locate -- --noplot` |
 | One-dimension acceptance/profiling run | `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` |
 | Isolated 32k-vertex 2D Level 4 acceptance run | `DELAUNAY_LARGE_DEBUG_VALIDATION=realization just debug-large-scale-2d 32000` |
-| Deep profiling | `cargo bench --profile perf --bench profiling_suite --features count-allocations` |
+| Deep profiling | `cargo bench --profile perf --bench memory_footprint --features count-allocations` |
 
 The checkpoint benchmark uses one deterministic 2D owner because its purpose is
 to isolate digest construction and codec overhead, whose dimension-generic
@@ -570,26 +469,8 @@ checkouts are easy to confuse, prefer `just performance-local`. Use
 explicitly want an exploratory report over every Criterion result already
 present under `target/criterion/`.
 
-Use the `performance-*` family for retained release-to-release reports:
-
-```bash
-just performance-local
-just performance-github-assets
-just performance-release
-just performance-readme
-just performance-doc
-just performance-release "$TAG" "$PREVIOUS_TAG"
-```
-
-`performance-local` and `performance-github-assets` retain Markdown, shared comparison JSON, and
-evidence bundles without changing tracked documentation.
-`performance-release` measures locally, retains and reload-validates the bundle,
-then promotes tracked docs. The canonical release flow immediately follows it
-with `performance-readme` to publish the matching README table and durable
-assets. `performance-doc` performs only the reload, rendering, and promotion
-from retained inputs. Explicit `<current-tag>
-<baseline-tag>` arguments repair or regenerate a specific distinct release
-pair; neither tag may be supplied alone.
+The paired acquisition and publication commands are documented in
+[How The Workflow Fits Together](#how-the-workflow-fits-together).
 
 ## CI Performance Suite
 
@@ -786,54 +667,54 @@ filter can still succeed.
 
 ## Profiling Suite
 
-```bash
-cargo bench --profile perf --bench profiling_suite -- --noplot
-BENCH_LARGE_SCALE=1 cargo bench --profile perf --bench profiling_suite -- --noplot
-cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
-PROFILING_DEV_MODE=1 cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
-```
+The former monolith is retired after the parity inventory below. Each retained
+family has an independently runnable target. Filtering and `--list` initialize
+only selected callbacks; fixture construction and independent validation happen
+before the measured closure. Read-only operations share immutable fixtures.
 
-`profiling_suite.rs` is the manual optimization harness. It now owns the former
-large-scale scaling workload and the deeper profiling diagnostics:
+| Former group | Classification | Focused destination / retained cases |
+|--------------|----------------|-------------------------------------|
+| `construction/{D}D/{n}v/construct` | Partial overlap with CI construction; larger inputs | `construction_scaling`, all 10 default dimension/count pairs |
+| `memory/{D}D/{n}v/construction_memory_delta` | Unique process RSS | `memory_footprint`, all 10 pairs |
+| `validation/{D}D/{n}v/validate_topology` | Partial overlap with validation canaries; larger inputs | `validation_components`, all 10 pairs |
+| `queries/neighbors/{D}D/{n}v/*` | Unique full-owner neighbor sweep | `traversal`, all 10 pairs |
+| `queries/vertices/{D}D/{n}v/*` | Unique vertex iteration | `traversal`, all 10 pairs |
+| `queries/simplices/{D}D/{n}v/*` | Unique simplex-key iteration | `traversal`, all 10 pairs |
+| `memory_profiling/*` | Unique batch allocation footprint | `memory_footprint`, all 7 production cases with `count-allocations` |
+| `query_latency/*` | Partial overlap; actual triangulation simplices | `circumsphere_queries`, 1k/10k/30k fixtures, 1,000 queries |
+| `validation_components_*/*` | Unique layer/conditioning experiment | `validation_components`, all 40 ordinary/adversarial cases |
+| `algorithmic_bottlenecks/boundary_facets_3d/{n}` | Partial overlap with CI public API; larger input | `hull_queries`, 10k (3k in development mode) |
+| `algorithmic_bottlenecks/convex_hull_3d/{n}` | Partial overlap; larger input | `hull_queries`, shares the boundary fixture |
 
-- construction through the default batch construction path
-- process RSS deltas during construction
-- memory allocation profiling with the optional `count-allocations` feature
-- neighbor queries, vertex iteration, and simplex iteration
-- circumsphere query latency
-- algorithmic bottlenecks
-- validation component costs
-
-Allocation workloads are registered only with `count-allocations`, and always
-emit their allocation statistics without requiring verbose benchmark logging.
-Keep instrumented allocation timings separate from uninstrumented API latency.
-These fixed-fixture allocation summaries do not establish general memory
-scaling, and Criterion measurement-time settings are targets rather than hard
-execution limits. The 5D/1,000-point diagnostic can take hours even in development
-mode; choose an explicit case when investigating it.
-
-Current point-count families:
-
-| Dimension | Default counts | Large-scale override |
-|-----------|----------------|----------------------|
-| 2D | 1,000 / 5,000 / 10,000 | same |
-| 3D | 1,000 / 5,000 / 10,000 | same |
-| 4D | 1,000 / 3,000 | 1,000 / 5,000 / 10,000 with `BENCH_LARGE_SCALE=1` |
-| 5D | 500 / 1,000 | same |
-
-Use filters to scope a run:
+No identical measurement is retained in two targets. None of these diagnostics
+is added to `bench-latest`, release assets or routine performance CI. The 3D
+circumsphere/hull experiments keep their original dimension-specific scope;
+construction, RSS, traversal and validation cover 2D–5D. Existing
+`realization_validation`, `allocation_hot_paths`, `locate` and
+`ci_performance_suite` keep their distinct smaller inputs and API contracts.
 
 ```bash
-cargo bench --profile perf --bench profiling_suite -- "construction/3D"
-cargo bench --profile perf --bench profiling_suite -- "queries/neighbors"
-cargo bench --profile perf --bench profiling_suite -- "queries/vertices"
-cargo bench --profile perf --bench profiling_suite -- "memory_profiling"
+cargo bench --profile perf --bench construction_scaling -- "construction/3D"
+cargo bench --profile perf --bench traversal -- "queries/neighbors/2D/1000v"
+cargo bench --profile perf --bench validation_components -- "validation_components_2d"
+cargo bench --profile perf --bench circumsphere_queries -- "query_latency"
+cargo bench --profile perf --bench hull_queries -- "boundary_facets"
+cargo bench --profile perf --bench memory_footprint --features count-allocations -- "memory_profiling/memory_usage_2d/1000"
 ```
 
-`PROFILING_DEV_MODE=1` reduces the auxiliary diagnostics while iterating with
-profilers such as samply. `BENCH_LARGE_SCALE=1` enables the 4D 5,000 and 10,000
-vertex construction, memory, validation, and traversal cases; reserve that for
-dedicated profiling hardware.
+Default scale counts remain 1k/5k/10k in 2D and 3D, 1k/3k in 4D, and
+500/1k in 5D. `BENCH_LARGE_SCALE=1` replaces the 4D 1k/3k counts with
+1k/5k/10k.
+`PROFILING_DEV_MODE=1` reduces auxiliary memory, circumsphere and hull inputs.
+The 5D 1,000-point allocation case can take hours even in development mode.
+`BENCH_SAMPLE_SIZE`, `BENCH_WARMUP_SECS` and `BENCH_MEASUREMENT_TIME` configure
+manual timing. `BENCH_PERCENTILE` selects the allocation summary percentile.
+
+RSS uses the current process, `sysinfo` and KiB units. Process startup, allocator
+retention and host activity affect its deltas; they are not allocation counts.
+The optional allocator reports operation counts and bytes separately from
+instrumented timing. Keep these observations distinct from API latency and
+from general memory-scaling guarantees.
 
 ### Release-mode Debug Defaults
 
@@ -924,10 +805,10 @@ release comparison when retained evidence satisfies publication policy.
 uv run --locked benchmark-utils generate-summary
 uv run --locked benchmark-utils generate-summary --run-benchmarks --profile perf
 uv run --locked benchmark-utils bench-compare last
-uv run --locked benchmark-utils performance-local
+just performance-local
 uv run --locked benchmark-utils performance-github-assets
-uv run --locked benchmark-utils performance-release
-uv run --locked benchmark-utils performance-doc
+just performance-release
+just performance-doc
 ```
 
 Generated summaries must come from fresh perf-profile runs when used as release

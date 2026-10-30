@@ -59,6 +59,11 @@ def _build_support_wheel(repository: Path, tmp_path: Path) -> tuple[Path, dict[s
     shutil.copy2(repository / configuration["project"]["readme"], source / configuration["project"]["readme"])
     for module in configuration["tool"]["setuptools"]["py-modules"]:
         shutil.copy2(repository / module_path / f"{module}.py", modules / f"{module}.py")
+    for resources in configuration["tool"]["setuptools"].get("data-files", {}).values():
+        for resource in resources:
+            destination = source / resource
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(repository / resource, destination)
 
     uv = shutil.which("uv")
     assert uv is not None
@@ -108,6 +113,10 @@ def _assert_installed_modules_and_commands(
             (
                 "import importlib, pathlib, sys; "
                 "root = pathlib.Path(sys.prefix).resolve(); "
+                "import tomllib; "
+                "declarations = root / 'share/delaunay/tooling'; "
+                "assert len(list(declarations.glob('*.toml'))) == 6; "
+                "assert tomllib.loads((declarations / 'measurement-release-signal.toml').read_text())['harness-mode'] == 'independent'; "
                 "assert all(pathlib.Path(importlib.import_module(name).__file__).resolve().is_relative_to(root) for name in sys.argv[1:])"
             ),
             *configuration["tool"]["setuptools"]["py-modules"],

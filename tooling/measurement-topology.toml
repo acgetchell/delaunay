@@ -1,0 +1,102 @@
+# Independent native harnesses; counts are scientific policy, never inferred from raw lengths.
+schema = 4
+harness-mode = "independent"
+backend = "export"
+minimum-release = "v0.8.2"
+sources = [ "src/**/*.rs", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml" ]
+harness = [ "benches/topology_guarantee_construction.rs", "benches/common/bench_utils.rs", ".cargo/config.toml" ]
+workloads = [ "benches/topology_guarantee_construction.rs" ]
+raw-files = [ "tukey.json" ]
+saved-sample = "retained"
+statistics = [ "mean", "median" ]
+confidence-level = 0.95
+unit = "ns"
+timeout = 21600
+compatible = [ "context.os", "context.architecture", "context.cpu" ]
+
+[context]
+suite = "topology"
+profile = "perf"
+
+[probes]
+cargo = [ "cargo", "--version" ]
+rustc = [ "rustc", "--version", "--verbose" ]
+build-policy = [ "python", "-c", "import json,os,tomllib; from pathlib import Path; d=tomllib.loads(Path('Cargo.toml').read_text()); print(json.dumps({'cargo':{k:d.get(k) for k in ('profile','features')},'environment':{k:v for k,v in os.environ.items() if k in ('RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS','RUSTDOCFLAGS','CARGO_ENCODED_RUSTDOCFLAGS','RUSTC','RUSTC_WRAPPER','RUSTC_WORKSPACE_WRAPPER','RUSTUP_TOOLCHAIN','CARGO_INCREMENTAL','CARGO_BUILD_TARGET','CARGO_BUILD_RUSTFLAGS') or k.startswith('CARGO_PROFILE_') or (k.startswith('CARGO_TARGET_') and k.endswith(('_RUSTFLAGS','_LINKER','_RUNNER')))}},sort_keys=True))" ]
+
+criterion = [ "python", "-c", "import json,tomllib; from pathlib import Path; d=tomllib.loads(Path('Cargo.lock').read_text(encoding='utf-8')); print(json.dumps([p for p in d['package'] if p['name']=='criterion'],sort_keys=True))" ]
+
+[phases.baseline]
+command = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "topology_guarantee_construction", "--", "--save-baseline=retained", "--noplot" ]
+gate = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "topology_guarantee_construction", "--", "--test" ]
+environment = { CRITERION_HOME = "target/criterion", CARGO_TARGET_DIR = "target", CARGO_INCREMENTAL = "0" }
+
+[phases.baseline.sample-counts]
+"topology_guarantee_construction/2d/pl_manifold_always/250" = 10
+"topology_guarantee_construction/2d/pl_manifold_explicit_only/250" = 10
+"topology_guarantee_construction/2d/pl_manifold_always/1000" = 10
+"topology_guarantee_construction/2d/pl_manifold_explicit_only/1000" = 10
+"topology_guarantee_construction/3d/pl_manifold_always/50" = 15
+"topology_guarantee_construction/3d/pl_manifold_explicit_only/50" = 15
+"topology_guarantee_construction/3d/pl_manifold_always/100" = 15
+"topology_guarantee_construction/3d/pl_manifold_explicit_only/100" = 15
+"topology_guarantee_construction/3d/pl_manifold_always/250" = 15
+"topology_guarantee_construction/3d/pl_manifold_explicit_only/250" = 15
+"topology_guarantee_construction/4d/pl_manifold_always/25" = 12
+"topology_guarantee_construction/4d/pl_manifold_explicit_only/25" = 12
+"topology_guarantee_construction/4d/pl_manifold_always/50" = 12
+"topology_guarantee_construction/4d/pl_manifold_explicit_only/50" = 12
+"topology_guarantee_construction/5d/pl_manifold_always/15" = 10
+"topology_guarantee_construction/5d/pl_manifold_explicit_only/15" = 10
+"topology_guarantee_construction/5d/pl_manifold_always/25" = 10
+"topology_guarantee_construction/5d/pl_manifold_explicit_only/25" = 10
+
+[phases.baseline.discovery]
+required = [ "topology_guarantee_construction/2d/pl_manifold_always/250", "topology_guarantee_construction/2d/pl_manifold_explicit_only/250", "topology_guarantee_construction/2d/pl_manifold_always/1000", "topology_guarantee_construction/2d/pl_manifold_explicit_only/1000", "topology_guarantee_construction/3d/pl_manifold_always/50", "topology_guarantee_construction/3d/pl_manifold_explicit_only/50", "topology_guarantee_construction/3d/pl_manifold_always/100", "topology_guarantee_construction/3d/pl_manifold_explicit_only/100", "topology_guarantee_construction/3d/pl_manifold_always/250", "topology_guarantee_construction/3d/pl_manifold_explicit_only/250", "topology_guarantee_construction/4d/pl_manifold_always/25", "topology_guarantee_construction/4d/pl_manifold_explicit_only/25", "topology_guarantee_construction/4d/pl_manifold_always/50", "topology_guarantee_construction/4d/pl_manifold_explicit_only/50", "topology_guarantee_construction/5d/pl_manifold_always/15", "topology_guarantee_construction/5d/pl_manifold_explicit_only/15", "topology_guarantee_construction/5d/pl_manifold_always/25", "topology_guarantee_construction/5d/pl_manifold_explicit_only/25" ]
+
+[[phases.baseline.discovery.suites]]
+name = "topology_guarantee_construction"
+command = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "topology_guarantee_construction", "--", "--list" ]
+timeout = 1800
+
+[phases.current]
+command = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "topology_guarantee_construction", "--", "--save-baseline=retained", "--noplot" ]
+gate = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "topology_guarantee_construction", "--", "--test" ]
+environment = { CRITERION_HOME = "target/criterion", CARGO_TARGET_DIR = "target", CARGO_INCREMENTAL = "0" }
+
+[phases.current.sample-counts]
+"topology_guarantee_construction/2d/pl_manifold_always/250" = 10
+"topology_guarantee_construction/2d/pl_manifold_explicit_only/250" = 10
+"topology_guarantee_construction/2d/pl_manifold_always/1000" = 10
+"topology_guarantee_construction/2d/pl_manifold_explicit_only/1000" = 10
+"topology_guarantee_construction/3d/pl_manifold_always/50" = 15
+"topology_guarantee_construction/3d/pl_manifold_explicit_only/50" = 15
+"topology_guarantee_construction/3d/pl_manifold_always/100" = 15
+"topology_guarantee_construction/3d/pl_manifold_explicit_only/100" = 15
+"topology_guarantee_construction/3d/pl_manifold_always/250" = 15
+"topology_guarantee_construction/3d/pl_manifold_explicit_only/250" = 15
+"topology_guarantee_construction/4d/pl_manifold_always/25" = 12
+"topology_guarantee_construction/4d/pl_manifold_explicit_only/25" = 12
+"topology_guarantee_construction/4d/pl_manifold_always/50" = 12
+"topology_guarantee_construction/4d/pl_manifold_explicit_only/50" = 12
+"topology_guarantee_construction/5d/pl_manifold_always/15" = 10
+"topology_guarantee_construction/5d/pl_manifold_explicit_only/15" = 10
+"topology_guarantee_construction/5d/pl_manifold_always/25" = 10
+"topology_guarantee_construction/5d/pl_manifold_explicit_only/25" = 10
+
+[phases.current.discovery]
+required = [ "topology_guarantee_construction/2d/pl_manifold_always/250", "topology_guarantee_construction/2d/pl_manifold_explicit_only/250", "topology_guarantee_construction/2d/pl_manifold_always/1000", "topology_guarantee_construction/2d/pl_manifold_explicit_only/1000", "topology_guarantee_construction/3d/pl_manifold_always/50", "topology_guarantee_construction/3d/pl_manifold_explicit_only/50", "topology_guarantee_construction/3d/pl_manifold_always/100", "topology_guarantee_construction/3d/pl_manifold_explicit_only/100", "topology_guarantee_construction/3d/pl_manifold_always/250", "topology_guarantee_construction/3d/pl_manifold_explicit_only/250", "topology_guarantee_construction/4d/pl_manifold_always/25", "topology_guarantee_construction/4d/pl_manifold_explicit_only/25", "topology_guarantee_construction/4d/pl_manifold_always/50", "topology_guarantee_construction/4d/pl_manifold_explicit_only/50", "topology_guarantee_construction/5d/pl_manifold_always/15", "topology_guarantee_construction/5d/pl_manifold_explicit_only/15", "topology_guarantee_construction/5d/pl_manifold_always/25", "topology_guarantee_construction/5d/pl_manifold_explicit_only/25" ]
+
+[[phases.current.discovery.suites]]
+name = "topology_guarantee_construction"
+command = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "topology_guarantee_construction", "--", "--list" ]
+timeout = 1800
+
+[[series]]
+name = "baseline"
+phase = "baseline"
+select = { include = [ "*" ] }
+
+[[series]]
+name = "current"
+phase = "current"
+select = { include = [ "*" ] }

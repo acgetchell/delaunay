@@ -31,7 +31,12 @@ delaunay/
 │   ├── locate.rs
 │   ├── pachner_stress.rs
 │   ├── pl_manifold_repair.rs
-│   ├── profiling_suite.rs
+│   ├── construction_scaling.rs
+│   ├── circumsphere_queries.rs
+│   ├── hull_queries.rs
+│   ├── memory_footprint.rs
+│   ├── traversal.rs
+│   ├── validation_components.rs
 │   ├── realization_validation.rs
 │   ├── tds_clone.rs
 │   └── topology_guarantee_construction.rs
@@ -112,7 +117,6 @@ delaunay/
 │       ├── notebook_visualization.py
 │       ├── performance_artifacts.py
 │       ├── profiling_metadata.py
-│       ├── publish_readme_performance.py
 │       ├── release_artifacts.py
 │       └── release_benchmarks.py
 ├── AGENTS.md
