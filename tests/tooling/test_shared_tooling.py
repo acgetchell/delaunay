@@ -301,6 +301,7 @@ def test_active_document_rules_exclude_migrated_history(tmp_path: Path, monkeypa
         "src/core/tds/hash_collections.rs",
         "src/core/tds/snapshot.rs",
         ".github/workflows/action_policy.yml",
+        ".github/actions/policy/action.yml",
     ],
 )
 def test_policy_rules_cover_production_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_path: str) -> None:

@@ -1,7 +1,7 @@
 """Keep v0.2.4 Semgrep commands on the locked Python baseline until #673.
 
-Only scanner selection is overridden; the installed shared CLI retains all
-validation. Remove this adapter after research-repo-tools#165 is published.
+Scanner selection and the scoped #676 bridge preserve installed shared
+validation. Remove the respective adapters after upstream #165/#171 ship.
 """
 
 import os
@@ -14,11 +14,13 @@ from research_repo_tools import semgrep_tool
 from research_repo_tools.cli import main as tooling_main
 from research_repo_tools.process import resolve_executable
 
+from semgrep_compat import scoped_semgrep
+
 
 def main(argv: list[str] | None = None) -> int:
     """Run the installed shared CLI with this interpreter's locked scanner."""
     if version("research-repo-tools") != "0.2.4":
-        msg = "Review/remove the v0.2.4 Semgrep override before upgrading (delaunay#673)."
+        msg = "Review/remove the v0.2.4 Semgrep overrides before upgrading (delaunay#673, #676)."
         raise RuntimeError(msg)
     scripts = Path(sysconfig.get_path("scripts"))
     previous_setup = semgrep_tool.setup
@@ -34,7 +36,8 @@ def main(argv: list[str] | None = None) -> int:
         # Semgrep's native launcher also resolves pysemgrep through PATH.
         os.environ["PATH"] = os.pathsep.join([str(scripts), *([previous_path] if previous_path else [])])
         vars(semgrep_tool)["setup"] = scanner
-        return tooling_main(argv)
+        with scoped_semgrep():
+            return tooling_main(argv)
     finally:
         vars(semgrep_tool)["setup"] = previous_setup
         vars(semgrep_tool)["VERSION"] = previous_version

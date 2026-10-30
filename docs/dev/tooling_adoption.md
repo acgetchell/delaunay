@@ -41,10 +41,9 @@ are unchanged.
 
 The v0.2.4 pin also supplies the shared Windows notebook event-loop fix for
 [#661](https://github.com/acgetchell/delaunay/issues/661); native Windows consumer
-verification remains required. The separate performance, Actions allowlist,
-Rustdoc scanning, and release-tooling migrations remain tracked by
+verification remains required. The separate performance, Rustdoc scanning,
+and release-tooling migrations remain tracked by
 [#648](https://github.com/acgetchell/delaunay/issues/648),
-[#649](https://github.com/acgetchell/delaunay/issues/649),
 [#650](https://github.com/acgetchell/delaunay/issues/650), and
 [#653](https://github.com/acgetchell/delaunay/issues/653).
 Pinning the published package does not complete those consumer integrations.
@@ -59,6 +58,119 @@ shared-baseline fix in
 [research-repo-tools #165](https://github.com/acgetchell/research-repo-tools/issues/165)
 is published in v0.2.5 and verified here. Existing Semgrep dependency/security
 overrides stay in place. This follow-up does not hold v0.8.4 open.
+
+## Strict Actions allowlist adoption
+
+[#649](https://github.com/acgetchell/delaunay/issues/649) consumes the published
+v0.2.4 `actions allowlist` CLI. The existing manifest pins and registry lock
+already select that containing release; `uv lock --check` confirms consistency.
+The versioned selected-actions JSON is the single allowlist owner, with explicit
+GitHub-owned identities, each CodeQL subpath, and the reviewed Dependabot workflow
+path. Both broad exemption flags are false, and the authentication action retains
+`c6f97d42243bad5fab37ca0427f495c86d5b1a18` as its only permitted ref.
+
+`just action-allowlist` checks `.github/workflows` and `.github/actions`
+recursively. `github-actions-check` composes it into local configuration checks
+and every existing `just ci` platform job. The duplicate Semgrep allowlist is
+removed after its accepted/rejected syntax cases pass the installed parser;
+`test_actions_allowlist.py` owns those annotations in the existing workflow
+fixture. Independent SHA/comment rules now also cover composite definitions.
+The Actions updater exclusions and release/authentication checks remain active.
+Live repository settings are outside this versioned-policy migration.
+
+Consumer tests exercise authentication drift (full/short SHA, branch, tag),
+step/job/composite references, exact nested identities, rejected owner exemptions,
+local/same-repository/container handling, source-line diagnostics, and the actual
+Just recipe rejecting a newly added nested composite. Native execution here is
+aarch64 macOS with Python 3.15.1, research-repo-tools 0.2.4 and Semgrep 1.182.1.
+The configured Linux/macOS/Windows CI jobs must validate the eventual commit;
+local results do not establish hosted-platform success.
+
+The first allowlist-only validation passed 923 Python/tooling tests, including
+36 focused allowlist cases, and all affected focused validators. The combined
+adoption evidence below includes the subsequent Rustdoc integration.
+
+## Aggregate Rustdoc adoption boundary
+
+[#650](https://github.com/acgetchell/delaunay/issues/650) enables `--rust-docs`
+in the actual `semgrep-scan` and `semgrep-test` recipes. The installed v0.2.4
+extractor preserves original logical paths, native/prose inputs, block identity,
+line/column mapping, paired-report completeness and one aggregate SARIF category.
+The original `src/lib.rs` reproduction now covers its source and all 34 blocks.
+
+`tooling/python/semgrep_compat.py`, called by the version-guarded
+`shared_tooling.py` entry point, bridges three remaining shared capabilities:
+
+- `metadata.delaunay-rustdoc-paths` opts numerical-safety rules into extracted
+  Rust with explicit `.rs`/`.md` logical paths. The selected rules reject
+  non-finite conversion defaults, algebraic f64 operations and defaulted
+  partial comparisons. All native rule definitions and path filters remain
+  intact. Production-only diagnostics and import/layering rules do not apply to
+  extracted examples; legitimate `println!` examples remain unchanged.
+- `tool.delaunay.semgrep.rustdoc-exclude` excludes design sketches in
+  `docs/api_design.md`, contributor policy in `docs/dev/**`, and historical
+  `docs/archive/**` from the **added extraction**. These contain incomplete
+  expressions, isolated enum variants, intentionally invalid examples or mixed
+  language sketches. Their complete original files still receive every existing
+  native/prose rule. Source, README and usage-documentation fences receive Rust
+  analysis; no selected block may be silently skipped. The fixture planner
+  assigns raw-comment/prose assertions to native inputs and opted-in Rust
+  assertions to blocks, retaining the shared parser and exact expected counts.
+- The shared [v0.2.4 contract][semgrep-api] intentionally clears output after an
+  invalid scan. The bridge instead rolls back that empty generation using the
+  shared publication transaction. It initializes `<output>.attempt.json` to
+  `published: false` before preconditions or scanning, and sets it true only
+  after a complete generation commits. Valid findings still publish reports
+  and fail the gate. The hosted workflow clears the marker before invocation,
+  uploads only a current generation and propagates scan failure. Previously
+  retained reports are historical evidence, never current scan success.
+
+These process-local hooks restore on exit. They do not replace extraction,
+native execution, report validation, source mapping, deduplication or aggregate
+publication. [research-repo-tools#171](https://github.com/acgetchell/research-repo-tools/issues/171)
+owns the upstream capabilities;
+[#676](https://github.com/acgetchell/delaunay/issues/676) depends on their release
+and owns normal package adoption plus deletion of this bridge. The maintainer
+approved completing #650 with this local workaround; that future release does
+not block it. The separate scanner-environment adapter remains tracked by #673.
+
+Run a bounded example-scope check without replacing the normal report directory:
+
+```sh
+uv run --locked --group dev python tooling/python/shared_tooling.py semgrep scan \
+  --rust-docs --include src/core/collections/key_maps.rs \
+  --output target/semgrep-rustdoc-scope-probe
+```
+
+`tests/tooling/test_semgrep_rustdoc.py` runs the installed native scanner with
+unchanged rooted rule definitions, multiple blocks and one-input batches. It
+checks original paths with spaces/Unicode, hidden-line columns, late findings,
+suppression parity, prose-only inputs, extraction exclusions and cleanup.
+Equivalent optional SARIF indices are added to actual native reports at the
+process boundary to exercise aggregate reindexing; they are modeled metadata,
+not a claim about fields emitted by this Semgrep version. Temporary-consumer Git
+inventory is modeled; the real Just gates exercise repository enumeration.
+
+Failure regressions corrupt real later-block reports or introduce invalid Rust,
+then require failure and byte-for-byte retention of the preceding valid pair.
+They cover missing block coverage, native errors, malformed/missing reports,
+JSON/SARIF disagreement, timeouts and precondition failure. Mixed fixture tests
+also reject missing and extra findings; the checked-in gate retains existing
+prose and raw Rustdoc import assertions alongside new numerical fence cases.
+
+Local validation passed all 938 Python/tooling tests, `just python-check`,
+`just python-fixture-lint`, `just check-config`, `just check-docs`,
+`just semgrep-test`, `just semgrep`, and `uv lock --check`. The aggregate scan
+accounted for 337 original inputs and 830 Rust blocks in 65 batches, with zero
+findings/errors and one `semgrep-repository-rules/` SARIF run. The original
+`src/lib.rs` case contributes its source plus all 34 blocks.
+
+Native execution is aarch64 macOS, Python 3.15.1 and Semgrep 1.182.1. Hosted
+Linux/Windows results require CI on the eventual commit; local tests and workflow
+validation do not establish those results. No scientific source example,
+tracked notebook artifact, release or live repository setting was changed.
+
+[semgrep-api]: https://github.com/acgetchell/research-repo-tools/blob/v0.2.4/docs/security-api.md
 
 ## v0.2.3 Cargo artifact promotion
 

@@ -452,6 +452,11 @@ def test_local_and_sarif_semgrep_scans_share_target_enumeration() -> None:
     command = "semgrep scan --include '*.rs' --include 'tooling/python/*.py' --include 'tests/tooling/*.py'"
     assert command in local_rendered
     assert command in sarif_rendered
+    for rendered in (local_rendered, sarif_rendered):
+        assert "--include '.github/actions/**/*.yml' --include '.github/actions/**/*.yaml'" in rendered
+        assert "--rust-docs" in rendered
+    fixtures = dry_run(REPO_ROOT, "semgrep-test")
+    assert "semgrep check-fixtures --rust-docs" in fixtures.stdout + fixtures.stderr
     assert "just semgrep-scan target/semgrep" in workflow
     assert "target/semgrep/semgrep.sarif" in workflow
     assert "git ls-files" not in workflow

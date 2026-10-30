@@ -42,15 +42,30 @@ jobs:
         id: semgrep
         run: |
           set -euo pipefail
+          # A previous valid report is retained on failure. Only this attempt's
+          # newly published reports may be uploaded.
+          rm -f target/semgrep.attempt.json
           set +e
           just semgrep-scan target/semgrep
           status=$?
+          set -e
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          uv run --locked --no-sync python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          marker = Path("target/semgrep.attempt.json")
+          current = marker.is_file() and json.loads(marker.read_bytes()).get("published") is True
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as stream:
+              stream.write(f"report_current={str(current).lower()}\n")
+          PY
           exit 0
 
       - name: Upload SARIF results
         if: >-
           always() &&
+          steps.semgrep.outputs.report_current == 'true' &&
           hashFiles('target/semgrep/semgrep.sarif') != '' &&
           (
             github.event_name != 'pull_request' ||

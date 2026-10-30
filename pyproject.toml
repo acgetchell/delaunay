@@ -377,6 +377,13 @@ timeout = 600
 report-category = "semgrep-repository-rules"
 report-layout = "aggregate"
 
+[tool.delaunay.semgrep]
+# These documents contain design sketches, deliberately invalid policy examples,
+# or historical pseudocode. Keep their complete native/prose scans; add Rust
+# extraction to source and usage documentation, where snippets express code.
+# Temporary consumer policy until research-repo-tools#171 / delaunay#676.
+rustdoc-exclude = [ "docs/archive/**", "docs/api_design.md", "docs/dev/**" ]
+
 [tool.research-repo-tools.zizmor]
 persona = "regular"
 

@@ -437,10 +437,22 @@ keeps tracked Python and Rust tests visible to both local validation and the
 hosted SARIF workflow. The paired reports require complete selected-input
 coverage and matching active findings. Deliberate violations
 under `tests/semgrep/` remain excluded from repository scans and are exercised
-only by `just semgrep-test`. Focused Rustdoc import tests use the shared,
-line-preserving `rust_blocks` extractor. The optional aggregate `--rust-docs`
-scan failed paired-report completeness with this repository's rule scopes on
-v0.2.3, so the scan and prose-fixture gates retain their validated native mode.
+only by `just semgrep-test`. Workflow and composite-action references retain
+independent full-SHA and readable-comment checks. Both Semgrep recipes enable
+`--rust-docs`, using the installed shared extractor and aggregate report checks.
+Rust source and usage-documentation fences add numerical-safety checks;
+production-only policies retain their native scopes. Design/policy fragments
+and archives retain native/prose coverage, with the added extraction exclusions
+declared in `tool.delaunay.semgrep.rustdoc-exclude`. Fixtures retain mixed native,
+prose and extracted-code assertions. See the
+[scope and consumer evidence](tooling_adoption.md#aggregate-rustdoc-adoption-boundary).
+
+A failed scan retains the previous valid report pair and writes
+`<output>.attempt.json` with `published: false`; those retained reports describe
+the previous attempt. The hosted SARIF workflow uploads only a pair newly
+published by its current attempt, then fails on any nonzero scan status. A valid
+scan with findings publishes current reports and remains a failure. The temporary
+v0.2.4 adapter is removed through #676 after the shared replacement is released.
 
 `just test` is tests-only. `test-integration-compile` is an explicit no-run
 smoke recipe for cases where a compile-only check is the desired validator; do
@@ -976,11 +988,14 @@ just citation-check
 
 ## GitHub Actions Validation
 
-Workflows must pass `actionlint`.
+`just github-actions-check` composes the strict selected-actions allowlist,
+`actionlint`, and Zizmor. The allowlist checks every workflow and nested local
+composite definition, including new files, through the installed shared parser.
 
 Run with:
 
 ```bash
+just action-allowlist
 just action-lint
 ```
 
@@ -994,12 +1009,21 @@ Dependabot path so its workflow and setup-composite references stay coupled.
 CodeQL uses an explicit action-release target because its latest GitHub release
 is a bundle tag that the shared updater rejects as a semantic version.
 
-The published v0.2.4 strict Actions allowlist checker supports exact commit
-restrictions as well as identity entries ending in `@*`. Consumer adoption in
-[#649](https://github.com/acgetchell/delaunay/issues/649) still needs explicit
-action/subpath inventory and recipe wiring. Until that migration is verified,
-the existing selected-actions policy and local Semgrep allowlist retain the
-publishing action's exact-commit restriction.
+`.github/settings/actions-selected.json` owns the explicit action identities and
+ref constraints. Both owner-exemption flags are false. Each approved CodeQL
+subpath and the Dependabot reusable-workflow path is listed separately; repository
+approval does not approve other subpaths. The publishing authentication action
+retains its exact reviewed SHA. Entries ending in `@*` permit an identity's refs;
+independent Semgrep rules require full SHAs and readable comments in workflows
+and composites. The shared checker treats `./`, `$/`, and `docker://` references
+as outside its external-action policy.
+
+`action-allowlist` is reached by `check-config`, `check`, and each native CI leg
+through `github-actions-check`. The duplicate Semgrep allowlist is retired, with
+its syntax cases retained in the installed-checker regression suite. Updating
+this versioned policy does not apply live GitHub repository settings; that is a
+separate authorized operation. The updater policy remains a distinct opt-in
+selection, preserving its privileged-action exclusions.
 
 `just zizmor` uses the repository's pinned scanner with the `regular` persona.
 It takes a token from `ZIZMOR_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`, in

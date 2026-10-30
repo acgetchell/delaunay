@@ -70,6 +70,8 @@ rules:
     severity: WARNING
     message: "Do not hide failed floating-point conversion with NaN or infinity defaults."
     metadata:
+      delaunay-rustdoc-paths:
+        include: ["/**/*.rs", "/**/*.md"]
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/338"
       rationale: >-
@@ -98,6 +100,8 @@ rules:
     severity: ERROR
     message: "Use ordinary IEEE-754 operations or deliberate f64::mul_add; f64 algebraic operations are forbidden."
     metadata:
+      delaunay-rustdoc-paths:
+        include: ["/**/*.rs", "/**/*.md"]
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/583"
       rationale: >-
@@ -327,6 +331,8 @@ rules:
     severity: WARNING
     message: "Handle incomparable partial_cmp results explicitly instead of defaulting to an Ordering."
     metadata:
+      delaunay-rustdoc-paths:
+        include: ["/**/*.rs", "/**/*.md"]
       category: correctness
       rationale: >-
         Geometry ordering code should document the impossible/incomparable
@@ -2873,28 +2879,14 @@ rules:
       include:
         - "/.github/workflows/**/*.yml"
         - "/.github/workflows/**/*.yaml"
+        - "/.github/actions/**/*.yml"
+        - "/.github/actions/**/*.yaml"
         - "/tests/semgrep/.github/workflows/**/*.yml"
         - "/tests/semgrep/.github/workflows/**/*.yaml"
+        - "/tests/semgrep/.github/actions/**/*.yml"
+        - "/tests/semgrep/.github/actions/**/*.yaml"
     patterns:
       - pattern-regex: '(?m)^[ \t]*(?:-[ \t]+)?uses:[ \t]*["'']?(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@(?![a-fA-F0-9]{40}["'']?(?:[ \t]+#|[ \t]*$))[^\s#"'']+' # yamllint disable-line rule:line-length
-
-  - id: delaunay.github-actions.external-action-approved-allowlist
-    languages:
-      - regex
-    severity: WARNING
-    message: "Use only approved external GitHub Actions, or update the repository allowlist deliberately."
-    metadata:
-      category: security
-      tracking_issue: "https://github.com/acgetchell/delaunay/issues/379"
-      rationale: "A small allowlist keeps workflow supply-chain review explicit."
-    paths:
-      include:
-        - "/.github/workflows/**/*.yml"
-        - "/.github/workflows/**/*.yaml"
-        - "/tests/semgrep/.github/workflows/**/*.yml"
-        - "/tests/semgrep/.github/workflows/**/*.yaml"
-    patterns:
-      - pattern-regex: '(?m)^[ \t]*(?:-[ \t]+)?uses:[ \t]*["'']?(?!\./)(?!docker://)(?!rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18["'']?(?:[ \t]+#|[ \t]*$))(?!(?:actions/checkout|actions/cache|actions/upload-artifact|actions/download-artifact|actions/github-script|actions/setup-python|actions-rust-lang/setup-rust-toolchain|astral-sh/setup-uv|taiki-e/cache-cargo-install-action|github/codeql-action/(?:upload-sarif|init|analyze)|codecov/codecov-action|codacy/codacy-coverage-reporter-action|codacy/codacy-analysis-cli-action|zizmorcore/zizmor-action|acgetchell/research-repo-tools/\.github/workflows/dependabot-approve\.yml)@)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@' # yamllint disable-line rule:line-length
 
   - id: delaunay.github-actions.external-action-version-comment
     languages:
@@ -2909,8 +2901,12 @@ rules:
       include:
         - "/.github/workflows/**/*.yml"
         - "/.github/workflows/**/*.yaml"
+        - "/.github/actions/**/*.yml"
+        - "/.github/actions/**/*.yaml"
         - "/tests/semgrep/.github/workflows/**/*.yml"
         - "/tests/semgrep/.github/workflows/**/*.yaml"
+        - "/tests/semgrep/.github/actions/**/*.yml"
+        - "/tests/semgrep/.github/actions/**/*.yaml"
     patterns:
       - pattern-regex: '(?m)^[ \t]*(?:-[ \t]+)?uses:[ \t]*["'']?(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@[a-fA-F0-9]{40}["'']?[ \t]*$' # yamllint disable-line rule:line-length
 

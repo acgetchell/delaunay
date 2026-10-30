@@ -1,0 +1,21 @@
+name: Composite action pinning fixtures
+description: Preserve independent commit and version-comment checks.
+runs:
+  using: composite
+  steps:
+    # ruleid: delaunay.github-actions.external-action-sha-pinned
+    - uses: actions/cache@v6
+    # ruleid: delaunay.github-actions.external-action-version-comment
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+    # ok: delaunay.github-actions.external-action-sha-pinned
+    # ok: delaunay.github-actions.external-action-version-comment
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    # ok: delaunay.github-actions.external-action-sha-pinned
+    # ok: delaunay.github-actions.external-action-version-comment
+    - uses: ./.github/actions/local
+    # ok: delaunay.github-actions.external-action-sha-pinned
+    # ok: delaunay.github-actions.external-action-version-comment
+    - uses: $/.github/actions/local
+    # ok: delaunay.github-actions.external-action-sha-pinned
+    # ok: delaunay.github-actions.external-action-version-comment
+    - uses: docker://alpine:3
