@@ -135,6 +135,16 @@ def test_actual_declarations_preserve_scientific_counts_and_release_membership()
     assert "fixture-credential" not in observed
 
 
+@pytest.mark.parametrize("suite", ["release-signal", "release-signal-v082", "topology"])
+def test_complete_measurement_commands_do_not_add_positional_filters(suite: str) -> None:
+    """Original native harnesses interpret bare option values as case filters."""
+    plan = load_measurement(ROOT, f"tooling/measurement-{suite}.toml")
+    assert isinstance(plan, CompleteMeasurementPlan)
+    for phase in (plan.baseline, plan.current):
+        criterion_arguments = phase.command[phase.command.index("--") + 1 :]
+        assert all(argument.startswith("-") for argument in criterion_arguments)
+
+
 @pytest.mark.parametrize("same_release", [False, True])
 def test_installed_independent_pair_preserves_native_harnesses_and_union_after_cleanup(
     tmp_path: Path,
@@ -285,7 +295,8 @@ def publication_fixture(tmp_path: Path) -> CompleteMeasurementPlan:
     return plan
 
 
-def test_consumer_preparation_strict_promotion_and_readme_publication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_consumer_preparation_strict_promotion_and_readme_publication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, newline: str) -> None:
     """Execute the real report/README declarations over synthetic native observations."""
     plan = publication_fixture(tmp_path)
     pair = ReleasePair("v0.8.3", "v0.8.2")
@@ -303,7 +314,7 @@ def test_consumer_preparation_strict_promotion_and_readme_publication(tmp_path: 
     # Publication checks the original measured current inputs, never a later host.
     for name in ("src", "benches"):
         shutil.copytree(tmp_path / "current" / name, tmp_path / name)
-    (tmp_path / "Cargo.toml").write_text('[package]\nname = "consumer"\nversion = "0.8.3"\n', encoding="utf-8")
+    (tmp_path / "Cargo.toml").write_bytes('[package]\nname = "consumer"\nversion = "0.8.3"\n'.replace("\n", newline).encode("utf-8"))
     (tmp_path / "README.md").write_text(
         "prefix\n<!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->\nold snapshot\n<!-- PERFORMANCE_RELEASE_TABLE:END -->\nsuffix\n",
         encoding="utf-8",

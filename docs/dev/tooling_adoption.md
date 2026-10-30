@@ -120,7 +120,7 @@ excluded. Consumer TOML and the Rust diagnostic extraction are separate surfaces
 | Surface | Before files / lines | After files / lines | Net lines removed |
 |---------|----------------------|---------------------|-------------------|
 | `tooling/python/` production | 14 / 9,608 | 13 / 8,437 | 1,171 |
-| `tests/tooling/` consumer tests | 28 / 10,725 | 28 / 9,654 | 1,071 |
+| `tests/tooling/` consumer tests | 28 / 10,725 | 28 / 9,665 | 1,060 |
 
 Remaining adapters have distinct ownership reasons:
 
@@ -162,6 +162,17 @@ examples. The 112 default diagnostic IDs match the original profiling inventory;
 all 40 small validation-component preflights passed. Selected normal diagnostic
 measurements and final circumsphere/large-validation preflights also passed.
 These checks do not constitute a timing campaign over every large fixture.
+
+Hosted CI exposed two declaration defects. Separate
+`--save-baseline retained` arguments made the original harness treat `retained`
+as a filter, omitting 16 import/proof cases. Joined `--save-baseline=retained`
+arguments preserve the complete inventory without changing either native
+harness. The publication version assertion now accepts LF and CRLF records;
+both encodings run through the complete consumer publication regression.
+Follow-up focused validation passed all 899 Python/tooling tests and the
+configuration/documentation gates. Native discovery restored the 100-case API
+inventory from the broken command's 84; bounded sampling verified ten samples
+and identical fresh/saved raw JSON for every restored import/proof case.
 
 Local execution is native aarch64 macOS with Python 3.15.1 and shared tooling
 0.2.4. Linux and Windows execution require the configured hosted CI jobs on the

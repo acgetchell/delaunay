@@ -21,7 +21,7 @@ series = [
 ]
 comparisons = [ { numerator = "baseline", denominator = "current" } ]
 references = [
-    { path = "Cargo.toml", pattern = '^version = "(?P<value>[^"]+)"$', source = "version" },
+    { path = "Cargo.toml", pattern = '^version = "(?P<value>[^"]+)"\r?$', source = "version" },
     { path = "docs/performance_current.md", pattern = '^- current: measured in \*\*current\*\* phase \((?P<value>[^)]+)\), revision', source = "tag" },
     { path = "docs/performance_current.md", pattern = '^- baseline: measured in \*\*baseline\*\* phase \((?P<value>[^)]+)\), revision', source = "previous-tag" },
 ]

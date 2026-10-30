@@ -26,7 +26,7 @@ build-policy = [ "python", "-c", "import json,os,tomllib; from pathlib import Pa
 criterion = [ "python", "-c", "import json,tomllib; from pathlib import Path; d=tomllib.loads(Path('Cargo.lock').read_text(encoding='utf-8')); print(json.dumps([p for p in d['package'] if p['name']=='criterion'],sort_keys=True))" ]
 
 [phases.baseline]
-command = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "topology_guarantee_construction", "--", "--save-baseline", "retained", "--noplot" ]
+command = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "topology_guarantee_construction", "--", "--save-baseline=retained", "--noplot" ]
 gate = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "topology_guarantee_construction", "--", "--test" ]
 environment = { CRITERION_HOME = "target/criterion", CARGO_TARGET_DIR = "target", CARGO_INCREMENTAL = "0" }
 
@@ -59,7 +59,7 @@ command = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "topol
 timeout = 1800
 
 [phases.current]
-command = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "topology_guarantee_construction", "--", "--save-baseline", "retained", "--noplot" ]
+command = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "topology_guarantee_construction", "--", "--save-baseline=retained", "--noplot" ]
 gate = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "topology_guarantee_construction", "--", "--test" ]
 environment = { CRITERION_HOME = "target/criterion", CARGO_TARGET_DIR = "target", CARGO_INCREMENTAL = "0" }
 
