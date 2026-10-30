@@ -25,7 +25,7 @@ def host_check_script() -> str:
     assert {entry["os"]: entry["target"] for entry in matrix["include"]} == NATIVE_TARGETS
     steps = job["steps"]
     guard_index = next(index for index, step in enumerate(steps) if step.get("id") == "rust-host")
-    ci_index = next(index for index, step in enumerate(steps) if step.get("run") == "just ci")
+    ci_index = next(index for index, step in enumerate(steps) if step.get("run") == "just ci-native")
     assert guard_index < ci_index
     guard = steps[guard_index]
     assert guard["shell"] == "bash"

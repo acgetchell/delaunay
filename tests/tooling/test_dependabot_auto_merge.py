@@ -57,7 +57,7 @@ def test_actions_policy_covers_consumer_workflows_and_composite_actions() -> Non
         for path in directory.rglob("*")
         if path.suffix in {".yml", ".yaml"} and (directory.name == "workflows" or path.stem == "action")
     }
-    manual_review = {".github/workflows/publish-crates.yml"}
+    manual_review = {".github/workflows/publish-crates.yml", ".github/workflows/prepare-release.yml"}
     assert manual_review <= paths
     assert set(POLICY["github_actions"]["files"]) == paths - manual_review
     for ecosystem in POLICY.values():

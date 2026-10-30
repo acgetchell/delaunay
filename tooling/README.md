@@ -27,10 +27,8 @@ The retained Python ownership is explicit:
 | `notebook_validation_rendering`, `notebook_visualization` | Scientific figure construction and geometry checks |
 | `profiling_metadata` | Dynamic CI mode/filter labels over shared capture and publication |
 | `release_benchmarks` | Trusted workflow handoff, tagged checkout and refusal to replace an existing release baseline |
-| `release_artifacts` | Cargo archive/source checks, native/package job policy and frozen approval identity over shared validation helpers |
-| `release_changelog` | Temporary citation-date default pending [research-repo-tools #130][citation-date] |
-
-[citation-date]: https://github.com/acgetchell/research-repo-tools/issues/130
+| `cargo_release` | Cargo dry-run locations, credential-free reproduction and published-event boundary over shared evidence verification |
+| `prepare_release` | Tag-push draft orchestration after Cargo evidence, metadata and required checks |
 
 Generic setup, subprocesses, file discovery, Criterion parsing/pairing, host
 probes, notebook infrastructure, paper/PDF maintenance, SARIF and publication
@@ -70,3 +68,11 @@ Paired acquisition and publication declarations are `measurement-release-signal.
 and `performance-publication.toml`. The Just recipes call installed commands
 using these declarations. See the [performance ownership boundary](../docs/dev/tooling_adoption.md#declarative-independent-performance-adoption)
 for the single-checkout and historical-asset adapters that remain.
+
+`release-evidence.toml` declares the exact trusted-main jobs, steps, native
+runner labels and Cargo archive guarantee. `release-assets.toml` requires the
+stable draft title to equal its tag. The installed verifier owns archive bounds,
+identity, immutable retrieval and frozen revalidation. The local benchmark
+adapter additionally rejects an existing baseline asset even when its bytes
+match; the shared asset CLI's identical-byte retry contract remains available
+through `just release-assets`.

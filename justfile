@@ -157,12 +157,17 @@ changelog-check:
 [group('release')]
 [positional-arguments]
 changelog-preview *args:
-    {{ managed }} uv run --locked --no-sync python tooling/python/release_changelog.py --dry-run "$@"
+    {{ managed }} research-repo-tools changelog generate --dry-run "$@"
 
 # Generate a prospective release using the citation date, or an explicit ISO date.
 [group('release')]
 changelog-release tag date="":
-    {{ managed }} uv run --locked --no-sync python tooling/python/release_changelog.py --tag {{ quote(tag) }} --date {{ quote(date) }}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    date={{ quote(date) }}
+    args=(--tag {{ quote(tag) }})
+    if [[ -n "$date" ]]; then args+=(--date "$date"); fi
+    {{ managed }} research-repo-tools changelog generate "${args[@]}"
 
 # Run every non-mutating validator outside the test suites.
 [group('workflows')]
@@ -190,6 +195,14 @@ check-fast:
 [group('workflows')]
 ci: check python-fixture-lint _validation-doc-figures-check-if-canonical test bench-compile examples
     @echo "🎯 CI checks complete!"
+
+# Run platform-sensitive checks on each native hosted runner.
+[group('workflows')]
+ci-native: cargo-lock-check python-check notebook-check python-fixture-lint unused-deps clippy doc-check _validation-doc-figures-check-if-canonical test bench-compile examples
+
+# Run portable repository checks once; the SARIF workflow owns the production scan.
+[group('workflows')]
+ci-portable: justfile-fmt-check json-check toml-check yaml-check citation-check github-actions-check check-docs shell-check fmt-check semgrep-test
 
 # CI plus the explicit slow correctness bucket.
 [group('workflows')]
@@ -688,12 +701,39 @@ python-typecheck: _ensure-uv
 [group('release')]
 [positional-arguments]
 release-artifact +args:
-    uv run --locked --no-sync python tooling/python/release_artifacts.py "$@"
+    uv run --locked --no-sync python tooling/python/cargo_release.py "$@"
 
-# Verify retained main CI evidence for the clean checkout without rebuilding.
+# Capture or verify a draft target through an isolated published runtime.
 [group('release')]
-release-evidence identity="":
-    uv run --locked --no-sync python tooling/python/release_artifacts.py evidence --identity {{ quote(identity) }}
+[positional-arguments]
+[script("uvx", "--python", "3.15", "--from", "research-repo-tools==0.2.4", "python", "-I")]
+release-assets operation tag *args:
+    import sys
+    from pathlib import Path
+    from research_repo_tools.cli import main
+    from research_repo_tools.measurement import resolve_revision
+    root = Path.cwd()
+    sys.exit(main(["release", "assets", sys.argv[1], "tooling/release-assets.toml", "--checkout", str(root), "--commit", resolve_revision(root, "HEAD"), "--tag", sys.argv[2], *sys.argv[3:]]))
+
+# Dispatch exact-tag release benchmarks and return without waiting or measuring.
+[group('release')]
+release-benchmarks tag: _ensure-gh
+    gh workflow run release-benchmarks.yml --repo acgetchell/delaunay --ref {{ quote(tag) }} -f {{ quote("tag=" + tag) }}
+
+# Verify retained main evidence; accept --expected PATH and --github-output PATH.
+[group('release')]
+[positional-arguments]
+[script("uvx", "--python", "3.15", "--from", "research-repo-tools==0.2.4", "python", "-I")]
+release-evidence *args:
+    import sys
+    import tempfile
+    from pathlib import Path
+    from research_repo_tools.cli import main
+    from research_repo_tools.measurement import resolve_revision
+    from research_repo_tools.release_metadata import read_package_info
+    root = Path.cwd()
+    with tempfile.TemporaryDirectory(prefix="delaunay-release-evidence-") as temporary:
+        sys.exit(main(["release", "evidence", "verify", "tooling/release-evidence.toml", "--checkout", str(root), "--commit", resolve_revision(root, "HEAD"), "--version", read_package_info(root).version, "--output", str(Path(temporary).resolve() / "selection.json"), *sys.argv[1:]]))
 
 # Require the immutable release event and successful checks on its exact commit.
 [group('release')]
@@ -839,9 +879,9 @@ tag-force version: release-version-check
 templates +args: _ensure-uv
     {{ rrt }} templates "$@"
 
-# Run maintained Rust and Python correctness buckets once.
+# Run Python tooling tests before the maintained Rust correctness buckets.
 [group('workflows')]
-test: test-rust test-python
+test: test-python test-rust
     @echo "✅ Test workflow passed!"
 
 # Run public allocation-contract integration tests.

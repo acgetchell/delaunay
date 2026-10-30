@@ -1,52 +1,39 @@
-"""Exercise Cargo promotion with installed shared verification and real archives."""
+"""Consumer Cargo evidence, real archives and direct approval handoff checks."""
 
-import gzip
 import hashlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tarfile
-import time
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
-from research_repo_tools import release_validation
+from research_repo_tools import release_evidence, release_validation
+from research_repo_tools.process import run_command
+from research_repo_tools.release_interfaces import load_evidence_policy
 
-import release_artifacts as promotion
+import cargo_release as promotion
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 ROOT = Path(__file__).resolve().parents[2]
+POLICY = load_evidence_policy(ROOT / "tooling/release-evidence.toml")
 COMMIT = "a" * 40
 VERSION = "0.8.2"
 NAME = f"delaunay-{VERSION}.crate"
 TOOLS = {"cargo": "cargo 1.99.1", "rustc": "rustc 1.99.1\nhost: x86_64-unknown-linux-gnu"}
-
-
-def test_main_reports_missing_executable_without_publication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """Executable discovery failures use the ordinary CLI recovery diagnostic."""
-    prior_output = tmp_path / "retained-selection.json"
-    prior_output.write_bytes(b"previous retained selection\r\n")
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("PATH", str(tmp_path / "missing-bin"))
-    monkeypatch.setattr(sys, "argv", ["release_artifacts.py", "evidence"])
-
-    assert promotion.main() == 1
-
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "Cargo promotion failed:" in captured.err
-    assert "git" in captured.err
-    assert "not found" in captured.err.lower()
-    assert promotion.RECOVERY in captured.err
-    assert "Traceback" not in captured.err
-    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == {prior_output.name: b"previous retained selection\r\n"}
+NATIVE_RUN = subprocess.run
 
 
 def crate_bytes(*, dirty: bool = False, commit: str = COMMIT, version: str = VERSION) -> bytes:
+    """Build independent Cargo source/version metadata and a binary source member."""
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w:gz") as archive:
         records = {
@@ -67,9 +54,8 @@ class CargoFixture:
     run: dict[str, Any]
     jobs: list[dict[str, Any]]
     artifact: dict[str, Any]
-    manifest: dict[str, Any]
     archive: bytes
-    event: dict[str, Any]
+    manifest: dict[str, Any] = field(default_factory=dict)
     calls: list[list[str]] = field(default_factory=list)
     changed_package: bool = False
     rerun_during_packaging: bool = False
@@ -77,39 +63,48 @@ class CargoFixture:
     damaged_zip: bool = False
 
     def payload(self) -> bytes:
+        """Keep transport identity independent of the clock."""
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
-            # Fixed ZIP timestamps keep immutable identity independent of the clock.
             archive.writestr(zipfile.ZipInfo(NAME), self.archive)
             archive.writestr(zipfile.ZipInfo(promotion.MANIFEST), json.dumps(self.manifest))
         return buffer.getvalue()
 
-    def read(self, endpoint: str) -> dict[str, Any]:
+    def read(self, endpoint: str, **_kwargs: object) -> dict[str, Any]:
+        """Model provider observations, leaving all trust decisions installed."""
         if endpoint == "actions/workflows/ci.yml":
             return {"id": 7, "path": ".github/workflows/ci.yml", "name": "CI", "state": "active"}
+        if endpoint == "actions/runs/123":
+            return self.run
         if endpoint.startswith("actions/workflows/7/runs?"):
             return {"workflow_runs": [self.run]}
         if "/jobs?" in endpoint:
             return {"jobs": self.jobs}
-        if "/artifacts?" in endpoint:
+        if "/artifacts?" in endpoint or endpoint == "actions/artifacts/456":
             payload = self.payload()
             self.artifact.update(digest=f"sha256:{hashlib.sha256(payload).hexdigest()}", size_in_bytes=len(payload))
-            return {"artifacts": [] if self.missing_artifact else [self.artifact]}
-        raise AssertionError(endpoint)
+            return self.artifact if endpoint == "actions/artifacts/456" else {"artifacts": [] if self.missing_artifact else [self.artifact]}
+        msg = f"unexpected provider endpoint: {endpoint}"
+        raise ValueError(msg)
+
+    def evidence(self, *, expected: bytes | None = None) -> bytes:
+        """Run the actual installed pre-tag verifier against the consumer policy."""
+        return release_evidence.verify_release_evidence(POLICY, VERSION, COMMIT, self.read, expected=expected)
 
     def command(self, executable: str, args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Model Cargo's native files; no crate upload is permitted."""
         self.calls.append([executable, *args])
         if executable == "cargo" and args[0] == "package":
             assert args[1:8] == ["--locked", "--package", "delaunay", "--registry", "crates-io", "--no-verify", "--target-dir"]
             destination = Path(args[8]) / "package" / NAME
             destination.parent.mkdir(parents=True)
-            destination.write_bytes(b"changed archive" if self.changed_package else self.archive)
+            destination.write_bytes(crate_bytes(commit="b" * 40) if self.changed_package else self.archive)
             if self.rerun_during_packaging:
                 self.run["run_attempt"] = 2
             result = ""
         elif executable == "cargo" and args[0] == "metadata":
             result = json.dumps({"target_directory": str(self.root / "target")})
-        elif args == ["--version"]:
+        elif (executable, args) == ("cargo", ["--version"]):
             result = TOOLS["cargo"]
         else:
             assert (executable, args) == ("rustc", ["--version", "--verbose"])
@@ -119,6 +114,9 @@ class CargoFixture:
 
 @pytest.fixture
 def cargo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CargoFixture:
+    """Use the shipped consumer policy and real shared manifest/ZIP verification."""
+    (tmp_path / "tooling").mkdir()
+    (tmp_path / "tooling/release-evidence.toml").write_bytes((ROOT / "tooling/release-evidence.toml").read_bytes())
     (tmp_path / "Cargo.toml").write_text(f'[package]\nname = "delaunay"\nversion = "{VERSION}"\n', encoding="utf-8")
     repository = {"id": 99, "full_name": promotion.REPOSITORY}
     run = {
@@ -146,35 +144,27 @@ def cargo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CargoFixture:
             "head_branch": "main",
             "status": "completed",
             "conclusion": "success",
+            "labels": list(dict(POLICY.validation.runner_labels).get(name, ())),
             "steps": [{"name": step, "status": "completed", "conclusion": "success"} for step in steps],
         }
-        for identifier, (name, steps) in enumerate(promotion.POLICY.required_steps, 1)
+        for identifier, (name, steps) in enumerate(POLICY.validation.required_steps, 1)
     ]
     artifact = {
         "id": 456,
-        "name": "cargo-package-1",
+        "name": "cargo-package-123-1",
         "expired": False,
         "workflow_run": {"id": 123, "head_sha": COMMIT, "head_branch": "main", "repository_id": 99, "head_repository_id": 99},
     }
-    archive = crate_bytes()
-    manifest = {
-        "schema": 1,
-        "repository": promotion.REPOSITORY,
-        "commit": COMMIT,
-        "version": VERSION,
-        "run_id": 123,
-        "run_attempt": 1,
-        "file": NAME,
-        "sha256": hashlib.sha256(archive).hexdigest(),
-        "tools": TOOLS.copy(),
-    }
-    event = {"action": "published", "release": {"id": 789, "tag_name": f"v{VERSION}", "draft": False, "prerelease": False}}
+    fixture = CargoFixture(tmp_path, run, jobs, artifact, crate_bytes())
+    archive = tmp_path / NAME
+    archive.write_bytes(fixture.archive)
+    fixture.manifest = json.loads(release_evidence.create_evidence_manifest(POLICY, VERSION, COMMIT, 123, 1, fixture.read, archive=archive, tools=TOOLS))
+    monkeypatch.setattr(promotion, "identity", lambda _root: (COMMIT, VERSION))
+    monkeypatch.setattr(promotion, "api", fixture.read)
+    monkeypatch.setattr(promotion, "run_command", fixture.command)
+    event = {"action": "published", "repository": repository, "release": {"id": 789, "tag_name": f"v{VERSION}", "draft": False, "prerelease": False}}
     event_path = tmp_path / "event.json"
     event_path.write_text(json.dumps(event), encoding="utf-8")
-    fixture = CargoFixture(tmp_path, run, jobs, artifact, manifest, archive, event)
-    monkeypatch.setattr(promotion, "_git", lambda _root, *args: COMMIT if args == ("rev-parse", "HEAD") else "")
-    monkeypatch.setattr(promotion, "_read", fixture.read)
-    monkeypatch.setattr(promotion, "run_command", fixture.command)
     for key, value in {
         "GITHUB_REPOSITORY": promotion.REPOSITORY,
         "GITHUB_EVENT_NAME": "release",
@@ -185,8 +175,6 @@ def cargo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CargoFixture:
         monkeypatch.setenv(key, value)
 
     def download(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
-        # Only the transport is modeled: the installed v0.2.3 helper verifies
-        # the actual ZIP digest, exact inventory and byte-preserving extraction.
         assert args == ["gh", "api", f"repos/{promotion.REPOSITORY}/actions/artifacts/456/zip"]
         kwargs["stdout"].write(b"corrupt ZIP" if fixture.damaged_zip else fixture.payload())
         return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
@@ -195,128 +183,97 @@ def cargo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CargoFixture:
     return fixture
 
 
-def test_promotion_and_frozen_revalidation_use_installed_helpers(cargo: CargoFixture) -> None:
-    selected = promotion.verify(cargo.root)
-    assert selected["artifact"]["id"] == 456
-    assert selected["jobs"] == {job["name"]: job["id"] for job in cargo.jobs}
-    assert promotion.verify(cargo.root, expected=json.loads(json.dumps(selected))) == selected
-    assert [call[1] for call in cargo.calls if call[0] == "cargo"] == ["--version", "package", "--version", "package"]
-
-
-def test_local_evidence_precedes_release_and_never_runs_cargo(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """An inspecting host needs neither the producer toolchain nor an Actions event."""
-    for key in ("GITHUB_EVENT_PATH", "GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF", "GITHUB_SHA", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY"):
-        monkeypatch.delenv(key, raising=False)
-    monkeypatch.chdir(cargo.root)
-    monkeypatch.setattr(sys, "argv", ["release_artifacts.py", "evidence"])
-    monkeypatch.setattr(promotion, "run_command", lambda *_args, **_kwargs: pytest.fail("local evidence must not run Cargo or rustc"))
-    assert promotion.main() == 0
-    frozen = capsys.readouterr().out.strip()
-    selected = json.loads(frozen)
-    assert (selected["tag"], selected["commit"], selected["artifact"]["id"]) == (f"v{VERSION}", COMMIT, 456)
-    assert "release_id" not in selected
-    monkeypatch.setattr(sys, "argv", ["release_artifacts.py", "evidence", "--identity", frozen])
-    assert promotion.main() == 0
-    assert capsys.readouterr().out.strip() == frozen
-    cargo.artifact["id"] = 999
-    assert promotion.main() == 1
-    assert capsys.readouterr().out == ""
-
-
-def test_local_evidence_cannot_replace_workflow_promotion(cargo: CargoFixture) -> None:
-    selected = promotion.evidence(cargo.root)
-    with pytest.raises(ValueError, match="selection changed"):
-        promotion.verify(cargo.root, expected=selected)
+def test_pre_tag_evidence_and_frozen_cargo_reproduction(cargo: CargoFixture) -> None:
+    """No tag/event/Cargo is needed to inspect the shared evidence."""
+    selected = cargo.evidence()
+    assert json.loads(selected)["artifact"]["id"] == 456
     assert not cargo.calls
+    assert promotion.verify(cargo.root, expected=selected) == selected
+    assert [call[1] for call in cargo.calls if call[0] == "cargo"] == ["package", "--version"]
+    assert promotion.verify(cargo.root, expected=selected) == selected
 
 
-@pytest.mark.parametrize("failure", ["none", "empty", "malformed", "changed", "unavailable"])
-def test_cli_hands_frozen_evidence_to_approval_or_fails_without_output(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
-    """Round-trip the actual Actions output, including lost or invalid handoffs."""
-    monkeypatch.chdir(cargo.root)
-    monkeypatch.setattr(sys, "argv", ["release_artifacts.py", "verify"])
-    monkeypatch.delenv("PROMOTION_SELECTION", raising=False)
-    output = cargo.root / "verify output"
-    output.write_bytes(b"existing=kept\r\n")
-    summary = cargo.root / "verify summary"
-    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
-    assert promotion.main() == 0
-    records = output.read_text(encoding="utf-8").splitlines()
-    assert len(records) == 2
-    assert output.read_bytes().startswith(b"existing=kept\r\nselection=")
-    key, frozen = records[1].split("=", 1)
-    assert key == "selection"
-    selected = json.loads(frozen)
-    assert (selected["commit"], selected["run_id"], selected["run_attempt"], selected["artifact"]["id"]) == (COMMIT, 123, 1, 456)
-    assert frozen in summary.read_text(encoding="utf-8")
-
-    if failure == "empty":
-        frozen = ""
-    elif failure == "malformed":
-        frozen = "null"
-    elif failure == "changed":
-        selected["run_id"] += 1
-        frozen = json.dumps(selected)
-    elif failure == "unavailable":
-        cargo.missing_artifact = True
-    cargo.calls.clear()
-    approved_output = cargo.root / "approved output"
-    approved_summary = cargo.root / "approved summary"
-    monkeypatch.setenv("GITHUB_OUTPUT", str(approved_output))
-    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(approved_summary))
-    monkeypatch.setenv("PROMOTION_SELECTION", frozen)
-    assert promotion.main() == (0 if failure == "none" else 1)
-    if failure == "none":
-        assert approved_output.read_bytes() == output.read_bytes().removeprefix(b"existing=kept\r\n")
-    else:
-        assert not approved_output.exists()
-        assert not approved_summary.exists()
-        assert not any(call[1] == "package" for call in cargo.calls)
-
-
-@pytest.mark.parametrize("destination", ["missing", "directory"])
-def test_cli_output_export_failure_cannot_report_success(
-    cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], destination: str
+@pytest.mark.parametrize("quiet", [False, True])
+def test_actual_pre_tag_recipe_uses_installed_verifier(
+    cargo: CargoFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    native_console_scripts: Callable[[Path, str, dict[str, str]], Path],
+    *,
+    quiet: bool,
 ) -> None:
-    monkeypatch.chdir(cargo.root)
-    monkeypatch.setattr(sys, "argv", ["release_artifacts.py", "verify"])
-    monkeypatch.delenv("PROMOTION_SELECTION", raising=False)
-    output = cargo.root / "github output"
-    summary = cargo.root / "github summary"
-    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
-    if destination == "missing":
-        monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
-    else:
-        output.mkdir()
-        monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    assert promotion.main() == 1
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "Cargo promotion failed:" in captured.err
-    assert not output.is_file()
-    assert not summary.exists()
-
-
-def test_artifact_fixture_identity_does_not_change_with_the_clock(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch) -> None:
-    payload = cargo.payload()
-    monkeypatch.setattr(time, "time", lambda: 946684800.0)
-    assert cargo.payload() == payload
+    """Run Just and its isolated script with fake provider/Git executables, without any tag."""
+    monkeypatch.setattr(subprocess, "run", NATIVE_RUN)
+    root = cargo.root
+    (root / "pyproject.toml").write_bytes((ROOT / "pyproject.toml").read_bytes())
+    (root / "justfile").write_text(f"import '{(ROOT / 'justfile').as_posix()}'\n", encoding="utf-8")
+    cargo.read("actions/artifacts/456")
+    provider = root / "provider.json"
+    provider.write_text(json.dumps({"run": cargo.run, "jobs": cargo.jobs, "artifact": cargo.artifact}), encoding="utf-8")
+    (root / "archive.zip").write_bytes(cargo.payload())
+    executables = native_console_scripts(
+        root,
+        "import json, os, subprocess, sys\nfrom pathlib import Path\n"
+        "def uvx_main():\n"
+        '    assert sys.argv[1:7] == ["--python", "3.15", "--from", "research-repo-tools==0.2.4", "python", "-I"]\n'
+        '    return subprocess.run([os.environ["FIXTURE_PYTHON"], *sys.argv[6:]], check=False).returncode\n'
+        "def git_main():\n"
+        '    with Path(os.environ["GIT_CALLS"]).open("a", encoding="utf-8") as calls:\n'
+        '        calls.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+        '    assert not any("refs/tags" in arg for arg in sys.argv)\n'
+        f'    if "rev-parse" in sys.argv:\n        print("{COMMIT}")\n'
+        "def gh_main():\n"
+        '    data = json.loads(Path(os.environ["PROVIDER"]).read_bytes())\n    endpoint = sys.argv[-1]\n'
+        '    if endpoint.endswith("/zip"):\n        sys.stdout.buffer.write(Path(os.environ["ARCHIVE"]).read_bytes())\n        return 0\n'
+        '    if endpoint.endswith("workflows/ci.yml"):\n        result = {"id":7,"path":".github/workflows/ci.yml","name":"CI","state":"active"}\n'
+        '    elif "/runs?" in endpoint:\n        result = {"workflow_runs":[data["run"]]}\n'
+        '    elif "/jobs?" in endpoint:\n        result = {"jobs":data["jobs"]}\n'
+        '    elif "/artifacts?" in endpoint:\n        result = {"artifacts":[data["artifact"]]}\n'
+        '    elif endpoint.endswith("/artifacts/456"):\n        result = data["artifact"]\n'
+        '    elif endpoint.endswith("/runs/123"):\n        result = data["run"]\n'
+        "    else:\n        raise AssertionError(endpoint)\n    print(json.dumps(result))\n",
+        {"uvx": "uvx_main", "git": "git_main", "gh": "gh_main"},
+    )
+    output = root / "actions-output"
+    output.write_bytes(b"prior=kept\n")
+    selected = root / "selected.json"
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")}
+    environment.update(
+        {
+            "PATH": f"{executables}{os.pathsep}{os.environ['PATH']}",
+            "PROVIDER": str(provider),
+            "ARCHIVE": str(root / "archive.zip"),
+            "GIT_CALLS": str(root / "git-calls"),
+            "FIXTURE_PYTHON": sys.executable,
+        }
+    )
+    result = run_command(
+        "just",
+        [*(["--quiet"] if quiet else []), "release-evidence", "--output", str(selected), "--github-output", str(output)],
+        cwd=root,
+        env=environment,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(selected.read_bytes())["run"]["id"] == 123
+    records = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+    assert records["prior"] == "kept"
+    assert json.loads(records["identity"]) == json.loads(selected.read_bytes())
+    assert records["commit"] == COMMIT
+    assert "refs/tags" not in (root / "git-calls").read_text(encoding="utf-8")
+    assert not cargo.calls
 
 
 @pytest.mark.parametrize("field", ["event", "head_sha", "head_branch", "workflow_id", "path", "name", "repository", "head_repository", "conclusion"])
-@pytest.mark.parametrize("operation", [promotion.evidence, promotion.verify])
-def test_untrusted_or_failed_main_run_never_repackages(cargo: CargoFixture, field: str, operation: Any) -> None:
+def test_untrusted_main_never_repackages(cargo: CargoFixture, field: str) -> None:
     cargo.run[field] = {"full_name": "other/repo", "id": 8} if "repository" in field else "wrong"
-    with pytest.raises(ValueError, match=r"repository|identity|main-push|successful|positive integer"):
-        operation(cargo.root)
+    with pytest.raises(ValueError, match=r"repository|identity|main-push|successful|positive|workflow"):
+        promotion.verify(cargo.root)
     assert not cargo.calls
 
 
-@pytest.mark.parametrize("job_index", range(4))
-@pytest.mark.parametrize("failure", ["missing", "failed", "partial-rerun", "skipped-step"])
-@pytest.mark.parametrize("operation", [promotion.evidence, promotion.verify])
-def test_every_native_and_package_gate_is_required(cargo: CargoFixture, job_index: int, failure: str, operation: Any) -> None:
+@pytest.mark.parametrize("job_index", range(len(POLICY.validation.required_steps)))
+@pytest.mark.parametrize("failure", ["missing", "failed", "partial-rerun", "skipped-step", "wrong-platform"])
+def test_all_declared_jobs_are_required(cargo: CargoFixture, job_index: int, failure: str) -> None:
     job = cargo.jobs[job_index]
     if failure == "missing":
         cargo.jobs.remove(job)
@@ -324,16 +281,17 @@ def test_every_native_and_package_gate_is_required(cargo: CargoFixture, job_inde
         job["conclusion"] = "failure"
     elif failure == "partial-rerun":
         job["run_attempt"] = 2
+    elif failure == "wrong-platform":
+        job["labels"] = ["unrelated"]
     else:
         job["steps"][0]["conclusion"] = "skipped"
-    with pytest.raises(ValueError, match=r"attempt|succeed|step"):
-        operation(cargo.root)
+    with pytest.raises(ValueError, match=r"attempt|succeed|step|platform"):
+        promotion.verify(cargo.root)
     assert not cargo.calls
 
 
 @pytest.mark.parametrize("failure", ["missing", "expired", "wrong-run", "wrong-commit", "wrong-repository", "damaged-zip"])
-@pytest.mark.parametrize("operation", [promotion.evidence, promotion.verify])
-def test_immutable_artifact_failures_block_repackaging(cargo: CargoFixture, failure: str, operation: Any) -> None:
+def test_bad_artifacts_block_reproduction(cargo: CargoFixture, failure: str) -> None:
     if failure == "missing":
         cargo.missing_artifact = True
     elif failure == "expired":
@@ -344,165 +302,116 @@ def test_immutable_artifact_failures_block_repackaging(cargo: CargoFixture, fail
         field_name = {"wrong-run": "id", "wrong-commit": "head_sha", "wrong-repository": "repository_id"}[failure]
         cargo.artifact["workflow_run"][field_name] = "wrong"
     with pytest.raises(ValueError, match=r"artifact|ZIP"):
-        operation(cargo.root)
+        promotion.verify(cargo.root)
     assert not cargo.calls
 
 
-@pytest.mark.parametrize("field", ["commit", "version", "run_id", "run_attempt", "repository", "sha256", "tools", "file"])
-@pytest.mark.parametrize("operation", [promotion.evidence, promotion.verify])
-def test_producer_manifest_must_match_actual_source_bytes_and_tools(cargo: CargoFixture, field: str, operation: Any) -> None:
-    cargo.manifest[field] = "wrong"
-    with pytest.raises(ValueError, match="manifest differs"):
-        operation(cargo.root)
-    assert not any(call[1] == "package" for call in cargo.calls)
-
-
-@pytest.mark.parametrize("failure", ["package", "rerun", "frozen-selection"])
-def test_changes_during_promotion_or_approval_cannot_switch_sources(cargo: CargoFixture, failure: str) -> None:
-    selected = promotion.verify(cargo.root)
-    cargo.calls.clear()
+@pytest.mark.parametrize("failure", ["package", "rerun", "frozen-selection", "tools"])
+def test_reproduction_and_approval_cannot_switch_sources(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
+    selected = cargo.evidence()
     cargo.changed_package = failure == "package"
     cargo.rerun_during_packaging = failure == "rerun"
     if failure == "frozen-selection":
-        cargo.artifact["id"] = 987
-    with pytest.raises(ValueError, match=r"differs|attempt|selection changed"):
+        cargo.artifact["digest"] = "sha256:" + "b" * 64
+        selected = selected.replace(b'"run_attempt": 1', b'"run_attempt": 2')
+    if failure == "tools":
+        monkeypatch.setattr(promotion, "tool_identity", lambda _root: TOOLS | {"cargo": "wrong"})
+    with pytest.raises(ValueError, match=r"differ|attempt|identity"):
         promotion.verify(cargo.root, expected=selected)
-    assert all("publish" not in call for call in cargo.calls)
-
-
-@pytest.mark.parametrize("kwargs", [{"dirty": True}, {"commit": "b" * 40}, {"version": "99.0.0"}])
-def test_package_metadata_cannot_claim_another_source(cargo: CargoFixture, kwargs: dict[str, Any]) -> None:
-    package = cargo.root / NAME
-    package.write_bytes(crate_bytes(**kwargs))
-    with pytest.raises((ValueError, KeyError)):
-        promotion._check_crate(package, COMMIT, VERSION)
-
-
-def test_nested_crate_expansion_is_bounded_before_tar_parsing(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch) -> None:
-    # A small, valid ZIP can contain a gzip member with enormous expanded data.
-    # Lower the bound for this real compressed fixture rather than allocating a bomb.
-    payload = gzip.decompress(cargo.archive)
-    monkeypatch.setattr(promotion, "MAX_CRATE_BYTES", len(payload))
-    cargo.archive = gzip.compress(payload + b"\0", mtime=0)
-    cargo.manifest["sha256"] = hashlib.sha256(cargo.archive).hexdigest()
-    with pytest.raises(ValueError, match="expanded size"):
-        promotion.verify(cargo.root)
-    assert not any(call[1] == "package" for call in cargo.calls)
-
-
-@pytest.mark.parametrize("limit", ["MAX_CRATE_MEMBERS", "MAX_METADATA_BYTES"])
-def test_nested_crate_inventory_and_metadata_are_bounded(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, limit: str) -> None:
-    monkeypatch.setattr(promotion, limit, 1)
-    with pytest.raises(ValueError, match=r"inventory|metadata size"):
-        promotion.verify(cargo.root)
-    assert not any(call[1] == "package" for call in cargo.calls)
-
-
-def test_nested_crate_at_the_expansion_and_inventory_limits_is_accepted(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(promotion, "MAX_CRATE_BYTES", len(gzip.decompress(cargo.archive)))
-    monkeypatch.setattr(promotion, "MAX_CRATE_MEMBERS", 3)
-    assert promotion.verify(cargo.root)["artifact"]["id"] == 456
-
-
-@pytest.mark.parametrize("name", ["src/./lib.rs", "src//lib.rs", "src/../lib.rs", "src\\lib.rs", ".cargo_vcs_info.json"])
-def test_nested_crate_rejects_aliased_and_duplicate_paths(cargo: CargoFixture, name: str) -> None:
-    payload = io.BytesIO(gzip.decompress(cargo.archive))
-    with tarfile.open(fileobj=payload, mode="a") as archive:
-        archive.addfile(tarfile.TarInfo(f"delaunay-{VERSION}/{name}"))
-    cargo.archive = gzip.compress(payload.getvalue(), mtime=0)
-    cargo.manifest["sha256"] = hashlib.sha256(cargo.archive).hexdigest()
-    with pytest.raises(ValueError, match="unique regular package files"):
-        promotion.verify(cargo.root)
-    assert not any(call[1] == "package" for call in cargo.calls)
-
-
-@pytest.mark.parametrize("failure", ["command", "timeout"])
-def test_cli_redacts_signed_download_urls_on_failure(
-    cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], failure: str
-) -> None:
-    def download_failure(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        detail = b'Get "https://example.invalid/archive.zip?sig=private-signature&se=expiry": connection reset'
-        if failure == "command":
-            raise subprocess.CalledProcessError(1, ["gh", "api"], stderr=detail)
-        raise subprocess.TimeoutExpired(["gh", "api"], 120, stderr=detail)
-
-    monkeypatch.chdir(cargo.root)
-    monkeypatch.setattr(sys, "argv", ["release_artifacts.py", "verify"])
-    monkeypatch.setattr(release_validation.subprocess, "run", download_failure)
-    assert promotion.main() == 1
-    output = capsys.readouterr()
-    assert output.out == ""
-    assert "connection reset" in output.err
-    assert "https://example.invalid/archive.zip?<redacted>" in output.err
-    assert "private-signature" not in output.err
-    assert "se=expiry" not in output.err
-    assert not any(call[1] == "package" for call in cargo.calls)
 
 
 @pytest.mark.parametrize("variable", ["GITHUB_EVENT_NAME", "GITHUB_REF", "GITHUB_SHA", "GITHUB_REPOSITORY"])
-def test_release_event_mismatches_are_rejected(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, variable: str) -> None:
+def test_published_event_boundary_is_required(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, variable: str) -> None:
     monkeypatch.setenv(variable, "wrong")
-    with pytest.raises(ValueError, match="release event"):
+    with pytest.raises(ValueError, match=r"release event|tag ref"):
         promotion.verify(cargo.root)
     assert not cargo.calls
 
 
-def test_producer_retains_archive_and_roundtrips_manifest(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch) -> None:
-    for key, value in {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}.items():
-        monkeypatch.setenv(key, value)
-    packaged = cargo.root / "target" / "package" / "tmp-crate" / NAME
-    packaged.parent.mkdir(parents=True)
-    packaged.write_bytes(cargo.archive)
-    registry = cargo.root / "target" / "package" / "tmp-registry" / NAME
-    registry.parent.mkdir(parents=True)
-    registry.write_bytes(cargo.archive)
-    output = cargo.root / "retained"
-    promotion.create(cargo.root, output)
-    assert (output / NAME).read_bytes() == cargo.archive
-    assert json.loads((output / promotion.MANIFEST).read_bytes()) == cargo.manifest
-    with pytest.raises(FileExistsError):
-        promotion.create(cargo.root, output)
+@pytest.mark.parametrize("failure", ["none", "empty", "malformed", "changed", "unavailable", "output"])
+def test_real_cli_freezes_and_exports_approval_evidence(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
+    monkeypatch.chdir(cargo.root)
+    monkeypatch.setattr(sys, "argv", ["cargo_release.py", "verify"])
+    output, summary = cargo.root / "output", cargo.root / "summary"
+    output.write_bytes(b"existing=kept\r\n")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.delenv("PROMOTION_SELECTION", raising=False)
+    assert promotion.main() == 0
+    assert output.read_bytes().startswith(b"existing=kept\r\nselection=")
+    frozen = output.read_text(encoding="utf-8").splitlines()[1].split("=", 1)[1]
+    assert json.loads(frozen)["run"]["id"] == 123
+    if failure in {"empty", "malformed"}:
+        frozen = "" if failure == "empty" else "null"
+    elif failure == "changed":
+        frozen = frozen.replace('"run_attempt": 1', '"run_attempt": 2')
+    elif failure == "unavailable":
+        cargo.missing_artifact = True
+    elif failure == "output":
+        output.unlink()
+        output.mkdir()
+    monkeypatch.setenv("PROMOTION_SELECTION", frozen)
+    before = output.read_bytes() if output.is_file() else None
+    assert promotion.main() == (0 if failure == "none" else 1)
+    if failure != "none" and before is not None:
+        assert output.read_bytes() == before
 
 
-def test_producer_rejects_mismatched_dry_run_archives(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("mismatch", [False, True])
+def test_producer_retains_both_dry_run_archive_identity(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, *, mismatch: bool) -> None:
     for key, value in {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}.items():
         monkeypatch.setenv(key, value)
-    packages = cargo.root / "target" / "package"
-    for directory, content in (("tmp-crate", cargo.archive), ("tmp-registry", b"stale")):
+    packages = cargo.root / "target/package"
+    for directory, data in (("tmp-crate", cargo.archive), ("tmp-registry", b"wrong" if mismatch else cargo.archive)):
         destination = packages / directory / NAME
         destination.parent.mkdir(parents=True)
-        destination.write_bytes(content)
-    with pytest.raises(ValueError, match="archives differ"):
-        promotion.create(cargo.root, cargo.root / "retained")
-    assert not (cargo.root / "retained").exists()
+        destination.write_bytes(data)
+    output = cargo.root / "retained"
+    if mismatch:
+        with pytest.raises(ValueError, match="archives differ"):
+            promotion.create(cargo.root, output)
+        assert not output.exists()
+    else:
+        promotion.create(cargo.root, output)
+        assert (output / NAME).read_bytes() == cargo.archive
+        assert json.loads((output / promotion.MANIFEST).read_bytes()) == cargo.manifest
+        with pytest.raises(FileExistsError):
+            promotion.create(cargo.root, output)
 
 
-def test_producer_rejects_local_release_or_pr_events(cargo: CargoFixture) -> None:
-    with pytest.raises(ValueError, match="trusted main push"):
-        promotion.create(cargo.root, cargo.root / "retained")
-    assert not (cargo.root / "retained").exists()
-
-
-def test_workflows_bind_full_native_matrix_and_frozen_approval_selection() -> None:
+def test_workflow_policy_covers_portable_native_and_package_gates() -> None:
     ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_bytes())
+    assert ci["jobs"]["build"]["needs"] == "portable"
+    for name, required_steps in POLICY.validation.required_steps:
+        job = ci["jobs"]["build" if name.startswith("build (") else name]
+        assert set(required_steps) <= {step.get("name") for step in job["steps"]}
     package = ci["jobs"]["package"]
     assert package["needs"] == "build"
-    assert "github.event_name == 'push'" in package["if"]
-    assert "github.ref == 'refs/heads/main'" in package["if"]
-    steps = {step.get("name"): step for step in package["steps"]}
-    assert steps["Verify clean default and all-feature Cargo packages"]["run"] == "just release-package"
-    assert steps["Upload verified Cargo package"]["with"]["retention-days"] == 30
-    assert steps["Upload verified Cargo package"]["with"]["name"] == "cargo-package-${{ github.run_attempt }}"
-    for job_name, required_steps in promotion.POLICY.required_steps:
-        job = ci["jobs"]["build" if job_name.startswith("build (") else job_name]
-        assert set(required_steps) <= {step.get("name") for step in job["steps"]}
-    workflow = yaml.safe_load((ROOT / ".github/workflows/publish-crates.yml").read_bytes())
-    verify = workflow["jobs"]["verify"]
-    assert verify["outputs"]["selection"] == "${{ steps.promotion.outputs.selection }}"
-    assert verify["steps"][-1]["run"] == "just release-artifact verify"
-    publish = workflow["jobs"]["publish"]
-    assert publish["environment"] == "crates-io"
-    approval = next(step for step in publish["steps"] if "PROMOTION_SELECTION" in step.get("env", {}))
-    assert approval["env"]["PROMOTION_SELECTION"] == "${{ needs.verify.outputs.selection }}"
-    assert publish["steps"].index(approval) < next(index for index, step in enumerate(publish["steps"]) if step.get("id") == "auth")
-    assert "release-package" not in yaml.safe_dump(workflow)
+    assert package["permissions"] == {"contents": "read", "actions": "read"}
+    retain = next(step for step in package["steps"] if step.get("name") == "Retain verified Cargo package")
+    assert retain["env"]["GH_TOKEN"] == "${{ github.token }}"  # noqa: S105 - Actions expression, never a credential.
+    upload = next(step for step in package["steps"] if step.get("name") == "Upload verified Cargo package")
+    assert upload["with"]["name"] == "cargo-package-${{ github.run_id }}-${{ github.run_attempt }}"
+    assert upload["with"]["retention-days"] == 30
+
+
+@pytest.mark.parametrize("limit", ["MAX_CRATE_BYTES", "MAX_CRATE_MEMBERS", "MAX_METADATA_BYTES"])
+def test_installed_archive_bounds_preserve_consumer_contract(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, limit: str) -> None:
+    monkeypatch.setattr(release_evidence, limit, 1)
+    with pytest.raises(ValueError, match=r"bound|inventory"):
+        promotion.verify(cargo.root)
+    assert not cargo.calls
+
+
+def test_signed_download_diagnostics_are_redacted(cargo: CargoFixture, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    def failure(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        raise subprocess.CalledProcessError(1, ["gh", "api"], stderr=b"https://example.invalid/a.zip?sig=private-signature: reset")
+
+    monkeypatch.chdir(cargo.root)
+    monkeypatch.setattr(sys, "argv", ["cargo_release.py", "verify"])
+    monkeypatch.setattr(release_validation.subprocess, "run", failure)
+    assert promotion.main() == 1
+    captured = capsys.readouterr()
+    assert "private-signature" not in captured.err
+    assert "Cargo promotion failed" in captured.err
+    assert not cargo.calls

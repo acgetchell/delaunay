@@ -24,7 +24,15 @@ def release_benchmarks(mode: str, root: Path, target_path: Path, repository: str
     """
     asset = root / f"delaunay-{tag}-criterion-baseline.tar.gz"
     if mode == "preflight":
-        target = preflight_release_target(root, repository, tag, resolve_revision(root, tag))
+        commit = resolve_revision(root, tag)
+        if (os.environ.get("GITHUB_EVENT_NAME"), os.environ.get("GITHUB_REF"), os.environ.get("GITHUB_SHA")) != (
+            "workflow_dispatch",
+            f"refs/tags/{tag}",
+            commit,
+        ):
+            msg = "benchmark dispatch ref/source SHA differs from the release tag"
+            raise ValueError(msg)
+        target = preflight_release_target(root, repository, tag, commit, expected_title=tag)
     elif mode == "publish":
         target = parse_release_target(target_path.read_bytes())
         if (target.repository, target.tag) != (repository, tag):
