@@ -109,82 +109,50 @@ the notebook being executed remain the notebook author's responsibility.
 ### Benchmark utilities
 
 ```bash
-uv run --locked benchmark-utils bench-compare last
-uv run --locked benchmark-utils run-release-signal
-uv run --locked benchmark-utils generate-summary --run-benchmarks --profile perf
-uv run --locked benchmark-utils performance-local
-uv run --locked benchmark-utils performance-github-assets
-uv run --locked benchmark-utils performance-release
-uv run --locked benchmark-utils performance-doc
-uv run --locked publish-readme-performance
+just bench-latest
+just bench-save-baseline last
+just bench-compare last
+just bench-perf-summary
+just performance-local
+just performance-prepare
+just performance-release
+just performance-readme --preview
+just performance-readme
+just performance-doc
+just performance-github-assets
 ```
 
-`benchmark-utils` selects Delaunay workloads, validates scientific coverage,
-renders saved Criterion diagnostics and retains shared-format comparison evidence.
-`run-release-signal` executes the frozen target/section/group plan used by local
-Just recipes, release CI, retained metadata, and strict summary coverage.
-It formats and compares benchmark evidence; the harnesses being run are
-responsible for failing before timings are published when scientific invariants
-are violated.
-Fresh measurements use a private output directory. Shared directory publication
-replaces the latest results after validation while preserving named baselines.
-Run only one publisher per output tree. Caught failures restore the prior
-`target/criterion` tree; publication is not crash-atomic. If rollback itself
-fails, the recovery error identifies the retained backup to restore before retrying.
-The shared runner captures source, harness and tool identity before and after
-sampling. Native discovery supplies canonical IDs, and a per-case policy checks
-the unchanged 10/15/20/25/100 sampling plan. Saved baselines must match fresh raw
-files byte-for-byte, including `tukey.json`. Discovery and scientific preflight
-cannot create timing output. The raw archive retains discovery, sampling and
-shared measurement evidence beside its Criterion files.
-Published releases retain raw Criterion data and versioned metadata as GitHub
-Release assets. `bench-compare` renders `target/bench-reports/performance.md` from
-existing Criterion `new` data and a saved baseline such as `last`.
-`performance-local` and `performance-github-assets` generate isolated
-release-to-release Markdown reports plus adjacent shared comparison JSON and evidence under
-`target/bench-reports/`. New GitHub-asset reports require versioned measurement
-metadata bound to the requested clean tag; existing legacy assets remain
-loadable as provenance-limited absolute timing evidence. Acquisition is retained
-separately from measurement provenance, and ratios are suppressed for these
-separate hosted measurement sessions.
-`performance-release` retains and reload-validates the local bundle before
-promoting the curated report into `docs/performance.md`, archiving the previous
-report, and copying the exact comparison JSON/evidence bytes into
-`docs/archive/performance/data/`. `performance-doc` consumes an existing
-validated shared JSON evidence pair and performs the same promotion without Cargo or
-measurement worktrees; incomplete, invalid, stale, same-version, and
-scientifically non-comparable pairs are rejected before documentation changes.
-Promotion uses per-file atomic replacement with caught-failure rollback, so a
-hard interruption requires inspection and an idempotent rerun. These release reports are evidence, not
-routine pre-`just ci` checks; temp-worktree generation uses the shared snapshot
-API for tracked changes and nonignored new files, with exact bytes and permissions.
+Fresh paired workflows call the installed `research-repo-tools` schema-4 engine
+through `tooling/measurement-release-signal.toml`. Read-only exports preserve
+each revision's own native harness. Discovery, gates, exact per-case counts,
+saved-copy verification and full raw retention precede publication of
+`target/bench-reports/performance.run.json` and its evidence envelope.
+The separate topology declaration preserves the 12-sample 4D group.
 
-The canonical timing payload is the shared `research-repo-tools/criterion-comparison/v1`
-JSON, paired with its digest-bound evidence envelope. Delaunay's context records
-coverage and scientific eligibility. Ratios require matching measured harnesses,
-plans, toolchains, confidence levels, and hosts. Timing changes are descriptive;
-marginal timing intervals are not ratio intervals or significance tests.
+Both complete phases survive scratch cleanup. Incompatible identities preserve
+absolute timings and union coverage while suppressing ratios. Release promotion
+is stricter and requires distinct labels and compatible evidence. Preparation
+captures independent release/ref assertions; acquisition/promotion and README
+publication remain separate retry boundaries. The report and README selections
+live in consumer TOML, with immutable history under `docs/performance-runs/`.
+Existing reports, timing payloads and archives remain unchanged.
 
-Historical CSV/text files stay unchanged as records. Their readers and writers
-are retired. New reports use `.comparison.json` and `.evidence.json`; old files
-cannot be passed to the new promotion commands.
+The scientific single-checkout adapter still owns construction counters,
+summary interpretation, named Criterion baselines and tagged archive metadata.
+The published complete acquisition command requires a pair; running it for
+`bench-latest` would repeat measurements. The historical asset adapter retains
+Delaunay's nested count/coverage and hosted-session checks. It now reads into
+private scratch without creating Git worktrees, and cannot promote old evidence
+as a complete run. The old paired execution, promotion and README Python paths
+are retired. See the [ownership record](../../docs/dev/tooling_adoption.md#declarative-independent-performance-adoption).
 
-`release_benchmarks.py` is the release workflow's policy adapter. The workflow
-preserves this file and a separate locked tooling environment before checking
-out the measured tag. The shared `ReleaseTarget` handoff binds repository, release
-ID and tag commit through upload and explicit publication. Delaunay additionally
-requires the benchmarked HEAD and refuses an existing baseline asset.
+`release_benchmarks.py` retains the workflow's captured release ID and tag commit,
+checks the exact benchmarked checkout and refuses to overwrite existing baseline
+assets. Upload and explicit publication use the shared `ReleaseTarget` API.
 
-All inputs and outputs for `performance-release`, `performance-doc`, and
-`publish-readme-performance` must be inside the project root so the shared
-publication transaction can bind them. Promotion rejects external scratch paths
-before measurements start. `performance-local` and `performance-github-assets`
-can still write standalone reports outside the project.
-
-`publish-readme-performance` consumes the retained bundle after promotion and
-atomically publishes the compact README table plus the canonical
-`docs/assets/bench/release-performance.{comparison.json,evidence.json}` pair. It never
-runs Cargo or Criterion.
+The six declarations ship in the Python wheel/sdist and install under
+`share/delaunay/tooling/`. They remain consumer-owned resources; commands run
+from a source checkout with its native harnesses and reviewed local tags.
 
 ### Profiling metadata
 

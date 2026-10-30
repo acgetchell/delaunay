@@ -95,6 +95,11 @@ def test_public_api_comparisons_are_not_repeated_on_main_push() -> None:
         ("timing", "construction/3D/1000v/construct", "construction/3D/1000v/construct"),
         ("allocations", "", "memory_profiling"),
         ("allocations", "memory_profiling/memory_usage_2d/1000", "memory_profiling/memory_usage_2d/1000"),
+        ("traversal", "queries/neighbors/2D", "queries/neighbors/2D"),
+        ("validation_components", "validation_components_2d", "validation_components_2d"),
+        ("circumsphere_queries", "", ""),
+        ("hull_queries", "boundary_facets", "boundary_facets"),
+        ("memory_footprint", "memory/2D", "memory/2D"),
     ],
 )
 def test_profiling_executes_selected_suite_once(
@@ -126,7 +131,7 @@ def test_profiling_executes_selected_suite_once(
     argv = arguments.read_text(encoding="utf-8").splitlines()
     assert argv.count("CALL") == 1
     assert argv[:6] == ["CALL", "bench", "--locked", "--profile", "perf", "--bench"]
-    assert argv[6] == "profiling_suite"
+    assert argv[6] == ("memory_footprint" if suite == "allocations" else "construction_scaling" if suite == "timing" else suite)
     assert ("--features" in argv) is (suite == "allocations")
     assert ("count-allocations" in argv) is (suite == "allocations")
     assert "--skip" not in argv

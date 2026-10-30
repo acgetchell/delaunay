@@ -1,7 +1,7 @@
 schema = 1
-command = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "profiling_suite" ]
+command = [ "cargo", "bench", "--locked", "--profile", "perf", "--bench", "construction_scaling" ]
 sources = [ "src/**/*.rs" ]
-harness = [ "benches/profiling_suite.rs", "benches/common/**/*.rs", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml" ]
+harness = [ "benches/construction_scaling.rs", "benches/circumsphere_queries.rs", "benches/hull_queries.rs", "benches/memory_footprint.rs", "benches/traversal.rs", "benches/validation_components.rs", "benches/common/**/*.rs", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml" ]
 
 [probes]
 cargo = [ "cargo", "--version" ]

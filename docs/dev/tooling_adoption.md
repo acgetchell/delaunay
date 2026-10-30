@@ -41,12 +41,10 @@ are unchanged.
 
 The v0.2.4 pin also supplies the shared Windows notebook event-loop fix for
 [#661](https://github.com/acgetchell/delaunay/issues/661); native Windows consumer
-verification remains required. The separate performance, Rustdoc scanning,
-and release-tooling migrations remain tracked by
-[#648](https://github.com/acgetchell/delaunay/issues/648),
-[#650](https://github.com/acgetchell/delaunay/issues/650), and
-[#653](https://github.com/acgetchell/delaunay/issues/653).
-Pinning the published package does not complete those consumer integrations.
+verification remains required. The performance and Rustdoc integrations are
+documented below. The separate release-tooling migration remains tracked by
+[#653](https://github.com/acgetchell/delaunay/issues/653); pinning the published
+package does not complete that consumer integration.
 
 `tooling/python/shared_tooling.py` temporarily selects Semgrep from the locked
 Python 3.15 environment for setup, production scans, and fixture checks. The
@@ -58,6 +56,117 @@ shared-baseline fix in
 [research-repo-tools #165](https://github.com/acgetchell/research-repo-tools/issues/165)
 is published in v0.2.5 and verified here. Existing Semgrep dependency/security
 overrides stay in place. This follow-up does not hold v0.8.4 open.
+
+## Declarative independent performance adoption
+
+[#648](https://github.com/acgetchell/delaunay/issues/648) consumes the published
+v0.2.4 schema-4 acquisition and complete-run/v3 contract from upstream #127.
+The existing exact runtime/tooling/notebook pins already select the supplying
+release; `uv lock --offline` regenerated the resolution without changing it.
+The unyanked PyPI wheel and sdist hashes match `uv.lock`:
+
+- Wheel: `00aaab2b7efd680d79324c6debb64db4d8d1ff076a460ff46e24e0ef1c24bd7d`.
+- Source: `30b6d4d2f8d0cb98d5311656928dd65800088b651dd6c0c29f9a02526e9e902a`.
+
+The [v0.2.4 release](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.2.4)
+contains independent acquisition/source exports (#154), prepared performance
+interfaces (#157), Criterion suite transport (#159), and evidence protection
+(#160). Its installed parser and execution APIs are used directly, without a
+sibling checkout, local wheel override or editable shared-package installation.
+
+`performance-local`, performance CI, prepared release comparisons, report
+promotion and README publication now call installed commands with the six
+consumer TOML declarations under `tooling/`. The Python wheel/sdist also carries
+these declarations under `share/delaunay/tooling/`. Independent read-only source
+exports preserve both native harnesses and baseline-only files. Each phase
+discovers canonical IDs, completes its scientific gate, executes its declared
+counts, and verifies its saved copy against fresh benchmark/estimate/sample/Tukey
+bytes. The retained payload contains both complete phases and original raw JSON.
+Source/controller mutations reject publication. Absolute union rows survive
+incompatible identities; ratios depend only on recorded measurement evidence.
+
+The scientific release plan remains 173 cases at 10/15/20/25/100 observations.
+Native read-only discovery found that v0.8.2 has 20 older locate IDs. The named
+`measurement-release-signal-v082.toml` declaration keeps its exact baseline
+inventory and the current phase's 20 newer locate IDs independently. No original
+fixture or harness is substituted; union rows remain absolute evidence. The
+default declaration uses the v0.8.3+ contract for current-vs-latest and subsequent
+release preparation. Both declared baseline inventories are checked against
+original tagged source exports, without collecting new release timings.
+The separate topology declaration retains its 12-observation 4D group. New
+profiling targets from [#558](https://github.com/acgetchell/delaunay/issues/558)
+remain manual and are not promoted into release measurements. The benchmark
+[parity inventory](../../benches/README.md#profiling-suite) accounts for every
+former monolithic group and its original scales.
+
+Preparation captures independent release/ref assertions before measurement;
+acquisition/promotion and README publication are separately retriable. New
+complete-run history uses `docs/performance-runs/` and
+`docs/performance_current.md`. Strict release promotion rejects same-label or
+incompatible comparisons. Existing reports, archives and measured assets are
+unchanged; old comparison evidence cannot acquire complete-run proofs by being
+relabelled. README publication selects four construction rows while the full
+report retains every case.
+
+Retired production paths include paired worktree orchestration, early pair
+comparison, local report promotion and the separate README publisher. Their
+generic tests are replaced by installed-contract consumer checks.
+
+Counts compare the initial clean `HEAD` with this working tree and include
+physical lines (including blanks) in `.py` files directly under the owning
+directories. Static-analysis fixtures, generated files and cached bytecode are
+excluded. Consumer TOML and the Rust diagnostic extraction are separate surfaces.
+
+| Surface | Before files / lines | After files / lines | Net lines removed |
+|---------|----------------------|---------------------|-------------------|
+| `tooling/python/` production | 14 / 9,608 | 13 / 8,437 | 1,171 |
+| `tests/tooling/` consumer tests | 28 / 10,725 | 28 / 9,654 | 1,071 |
+
+Remaining adapters have distinct ownership reasons:
+
+| Adapter | Remaining responsibility |
+|---------|--------------------------|
+| Single-checkout paths in `benchmark_utils` | Shared acquisition requires a pair; preserve one run, construction counters and raw verification |
+| Historical assets / `performance_artifacts` | Delaunay's nested count/coverage and separate-session policy exceeds the shared legacy-layout reader |
+| `release_benchmarks` | Preserve captured release ID/tag commit, exact tagged checkout and refusal to replace an existing baseline asset |
+| Summary/ranking code | Delaunay construction diagnostics, circumsphere interpretation and public API coverage |
+
+Historical asset inspection now uses private scratch directly and creates no
+Git worktree. It cannot promote its older schema through the new declarations.
+The single-checkout adapter remains a composition of installed public APIs; it
+must not be replaced by measuring both phases merely to use the paired CLI.
+
+Consumer regressions execute tiny original phase harnesses with a baseline-only
+file, native discovery/gates, all six count values, sanitized storage paths,
+byte-identical saved copies and offline rendering after scratch cleanup. They
+reject failed gates, wrong counts, unexpected observations, changed source,
+corrupt saved Tukey data and incompatible acquisition policy. Native process
+execution is real; Git revision resolution is modeled, and synthetic observations
+make no performance claim. Wheel/sdist consumption, declaration installation,
+actual Just/workflow wiring and the existing scientific single-run/asset tests
+remain in the Python validation suite.
+
+A compatible synthetic pair also executes the actual preparation, strict report
+and README declarations, including immutable offline history and source freshness
+checks. Its hardware identity is modeled before acquisition. Native observations
+remain nanoseconds throughout the report and README; no samples are rescaled.
+Cargo manifests and locks remain captured source inputs. Normalized build policy
+and the complete Criterion lock entry are version probes, avoiding artificial
+harness changes solely from a package-version edit. The build probe selects
+compiler, profile and target flags; registry credentials are excluded and the
+consumer regression verifies that boundary.
+
+`just ci` passed locally, including all 895 Python/tooling tests, Rust correctness
+buckets, the canonical tracked-figure comparison, benchmark compilation and
+examples. The 112 default diagnostic IDs match the original profiling inventory;
+all 40 small validation-component preflights passed. Selected normal diagnostic
+measurements and final circumsphere/large-validation preflights also passed.
+These checks do not constitute a timing campaign over every large fixture.
+
+Local execution is native aarch64 macOS with Python 3.15.1 and shared tooling
+0.2.4. Linux and Windows execution require the configured hosted CI jobs on the
+eventual commit; local checks do not establish those results. No historical
+timings, tracked scientific figures, release or remote settings were refreshed.
 
 ## Strict Actions allowlist adoption
 

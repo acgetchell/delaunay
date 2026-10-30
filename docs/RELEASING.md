@@ -62,7 +62,7 @@ The release commands share la-stack's operator-facing roles:
 | --- | --- |
 | `changelog-release TAG [DATE]` | Generate prospective notes using the prepared citation date by default |
 | `changelog-preview [--tag TAG] [--date DATE]` | Preview the same generation without publishing files |
-| `performance-release [CURRENT BASELINE]` | Measure, retain and promote release performance evidence |
+| `performance-prepare`, `performance-release` | Measure, retain and promote release performance evidence |
 | `performance-readme` | Publish the README snapshot from validated, promoted measurements |
 | `release-package` | Build and verify clean Cargo packages without uploading |
 | `release-evidence [IDENTITY]` | Verify retained main CI evidence, optionally requiring a previous selection |
@@ -183,72 +183,66 @@ changes; do not edit them manually.
 
 ### 4. Generate release performance measurements
 
-Fresh comparisons establish workload identity from recorded harness and
-measurement-plan evidence. Benchmark fixtures must pass their scientific
-checks before timings are used. `performance-release` checks both harnesses
-before native benchmark commands, then compares untimed case inventories and
-sampling policies before either revision starts timing. If the baseline fails
-those checks or its harness differs, generate absolute results with
-`just bench-latest` followed by `just bench-perf-summary` and
-skip comparison/README publication. Historical reports keep their original
-labels and measurements.
-
-Run this after the package version has been updated:
+After updating the package version, capture independent release/ref assertions,
+then measure and promote through the declared shared workflow:
 
 ```bash
+just performance-prepare
 just performance-release
 ```
 
-The no-argument form compares the current package version with the
-previous stable published release. It runs the release-signal Criterion measurements,
-retains `target/bench-reports/performance.{md,comparison.json,evidence.json}`, validates
-the comparison JSON/evidence pair after reloading it, promotes `docs/performance.md`, and
-archives the prior report plus the exact promoted evidence under
-`docs/archive/performance/`.
+Preparation selects the current package and previous stable published release
+without timing. It requires reviewed tags already present locally. Shared
+schema-4 acquisition uses read-only exports, preserving each revision's original
+native harness. Both independent discoveries and scientific gates must pass
+before either phase starts timing. Source, harness, workload, controller,
+compiler and host changes during acquisition invalidate the run.
 
-Routine CI and release evidence use the same public API targets:
-`ci_performance_suite`, `circumsphere_containment`, and `locate`. Internal
-diagnostic benchmarks are manual-only. A benchmark-plan change invalidates
-previous evidence for the new plan: measure again rather than reusing or
-relabeling an old report. Correctness tests and untimed fixture validation
-remain required independently of benchmark scope.
+The declaration retains the unchanged curated 173-case public API plan and
+10/15/20/25/100 counts. Each native phase also saves `retained`; fresh and saved
+benchmark, estimates, samples and Tukey bytes must agree. Full observations and
+original provenance survive scratch cleanup in
+`target/bench-reports/performance.run.json` and `performance.evidence.json`.
+Each discovery has a 30-minute ceiling; each phase gate and timing command has a
+six-hour ceiling. These are limits, not expected runtimes. Failed or incomplete
+runs cannot be promoted.
 
-For each measured revision, the local comparison workflow gives each of the three
-curated benchmark targets separate two-hour discovery and sampling ceilings,
-plus a ten-minute preflight ceiling. The sampling child has a six-hour ceiling;
-discovery and preflight run before it, with no combined local workflow deadline.
-These ceilings accommodate slow higher-dimensional
-measurements; they are not expected runtimes. A timeout in any target means the
-measurement failed: rerun the complete `just performance-release` command
-instead of promoting a partial run.
+Acquisition preserves absolute values and union coverage when identities differ;
+ratios are suppressed. Strict release promotion additionally requires distinct
+release labels, complete coverage and compatible evidence. If no comparable
+baseline exists, publish no comparison/README update; use `just bench-latest`
+and `just bench-perf-summary` for absolute scientific diagnostics instead.
+Never invent proofs for older evidence or reuse a defective methodology.
 
-The temporary current worktree includes staged and unstaged tracked changes
-and nonignored new files through the shared snapshot API. Keep source inputs
-stable during capture and measurement. Do not run `just clean` or `cargo clean` until
-the retained inputs have been reviewed and the README publication succeeds.
+Successful promotion creates immutable complete-run history under
+`docs/performance-runs/` and the current report `docs/performance_current.md`.
+Existing `docs/performance.md`, prior archives and their original bytes remain
+historical evidence. If only promotion needs retrying, supply the retained pair
+explicitly:
 
-If measurement succeeded, the retained comparison JSON/evidence pair reload-validates,
-and only report promotion must be retried, use `just performance-doc`. It reads
-that pair and runs no Cargo benchmarks or measurement worktrees. Explicit
-current/baseline tag pairs are reserved for repair paths and must always be
-supplied together.
+```bash
+just performance-doc --payload target/bench-reports/performance.run.json \
+  --manifest target/bench-reports/performance.evidence.json
+```
 
-Treat performance output as release evidence only when the measured workflow
-preserves Delaunay's numerical and topological invariants. A faster
-invariant-violating run is a failed release check.
+A bare `just performance-doc` rerenders the retained current selection offline.
+Keep source inputs stable until publication completes. Scientific correctness
+is required independently of timing results.
 
 ### 5. Publish the README performance snapshot
 
 ```bash
+just performance-readme --preview
 just performance-readme
 ```
 
-This command consumes the validated bundle retained and promoted by
-`performance-release`; it never invokes Cargo or Criterion. It atomically
-updates the compact group-level table in `README.md` and the exact canonical
-comparison JSON/evidence pair under `docs/assets/bench/`. README links are pinned to
-`TAG`, so they resolve to the reviewed release artifacts after the tag is
-published. Caught publication failures restore every prior README-owned file.
+The installed publisher consumes the retained complete run and independently
+captured preparation assertions. Consumer TOML selects four construction rows;
+the complete report retains every case. Publication updates the marked README
+section and its selected CSV without invoking Cargo or Criterion. It checks
+source, harness, configuration and retained selection freshness before replacing
+outputs, and restores the prior generation on caught failures. Preserve any
+reported recovery paths after interruption.
 
 ### 6. Validate the release branch
 
@@ -308,7 +302,7 @@ For a critical fix that must be included, make and commit the fix. If it changes
 measured code, benchmark harnesses, toolchain or dependency inputs, or benchmark
 configuration:
 
-Rerun `just performance-release "$TAG" "vA.B.C"` with the same baseline,
+Rerun `just performance-prepare` and `just performance-release` with the same baseline,
 then rerun `just performance-readme`. When the release has only absolute
 measurements, rerun `just bench-latest`, then `just bench-perf-summary` instead.
 To regenerate only a report from unchanged retained evidence, run

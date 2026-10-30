@@ -66,7 +66,7 @@ bench suite="release-signal": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ "$1" == "all" ]]; then
-        {{ managed }} cargo bench --workspace --profile perf --features bench
+        {{ managed }} cargo bench --workspace --profile perf --features bench,count-allocations
     else
         {{ managed }} uv run --locked benchmark-utils run-release-signal --suite "$1"
     fi
@@ -494,10 +494,11 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
 performance +args: _ensure-uv
     {{ managed }} research-repo-tools performance "$@"
 
-# Promote performance documentation solely from the retained canonical artifacts.
+# Promote an explicit new complete run, or rerender the retained selection offline.
 [group('benchmarks and performance')]
-performance-doc: _ensure-uv
-    {{ managed }} uv run --locked benchmark-utils performance-doc
+[positional-arguments]
+performance-doc *args: _ensure-uv
+    {{ managed }} research-repo-tools performance promote tooling/performance-report.toml "$@"
 
 # Compare stored GitHub Release benchmark assets without local Cargo runs.
 [group('benchmarks and performance')]
@@ -518,30 +519,26 @@ performance-github-assets current_tag="" baseline_tag="": _ensure-uv
 
 # Compare the current tree against the latest stable release and retain a bundle.
 [group('benchmarks and performance')]
-performance-local: _ensure-uv
-    {{ managed }} uv run --locked benchmark-utils performance-local
+performance-local suite="release-signal": _ensure-uv
+    {{ managed }} research-repo-tools performance measure {{ quote("tooling/measurement-" + suite + ".toml") }} --repository acgetchell/delaunay --mode current-vs-latest --payload target/bench-reports/performance.run.json --manifest target/bench-reports/performance.evidence.json --report target/bench-reports/performance.md
+
+# Capture independent release/ref assertions without timing or publication.
+[group('benchmarks and performance')]
+[positional-arguments]
+performance-prepare *args: _ensure-uv
+    {{ managed }} research-repo-tools performance prepare tooling/performance-release.toml "$@"
 
 # Validate retained release measurements and atomically publish README assets/table.
 [group('benchmarks and performance')]
-performance-readme: _ensure-uv
-    uv run --locked publish-readme-performance
+[positional-arguments]
+performance-readme *args: _ensure-uv
+    {{ managed }} research-repo-tools performance readme tooling/performance-release.toml "$@"
 
 # Measure, retain, reload-validate, and promote release performance documentation.
 [group('benchmarks and performance')]
-performance-release current_tag="" baseline_tag="": _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    current_tag={{ quote(current_tag) }}
-    baseline_tag={{ quote(baseline_tag) }}
-    tag_pair_state="$(just --quiet _performance-tag-pair-state "$current_tag" "$baseline_tag")"
-    if [[ "$tag_pair_state" == "invalid" ]]; then
-        exit 2
-    fi
-    if [[ "$tag_pair_state" == "explicit" ]]; then
-        {{ managed }} uv run --locked benchmark-utils performance-release "$current_tag" "$baseline_tag"
-    else
-        {{ managed }} uv run --locked benchmark-utils performance-release
-    fi
+[positional-arguments]
+performance-release *args: _ensure-uv
+    {{ managed }} research-repo-tools performance release tooling/performance-release.toml "$@"
 
 # Run the selected CI benchmark suite for one compiler/code pair.
 [group('benchmarks and performance')]
@@ -637,12 +634,12 @@ profile toolchain="" code_ref="current": _ensure-jq _ensure-toolchain
 # Profile 3D construction with Samply in the development configuration.
 [group('benchmarks and performance')]
 profile-dev: _ensure-samply
-    PROFILING_DEV_MODE=1 {{ managed }} samply record {{ managed }} cargo bench --profile perf --bench profiling_suite -- "construction/3D/5000v/construct"
+    PROFILING_DEV_MODE=1 {{ managed }} samply record cargo bench --profile perf --bench construction_scaling -- "construction/3D/5000v/construct"
 
 # Profile allocation-heavy construction with Samply.
 [group('benchmarks and performance')]
 profile-mem: _ensure-samply
-    {{ managed }} samply record cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
+    {{ managed }} samply record cargo bench --profile perf --bench memory_footprint --features count-allocations -- memory_profiling
 
 # Pre-publish validation: checks crates.io metadata rules that cargo publish --dry-run does NOT catch
 # Validate crates.io metadata and run cargo publish --dry-run.

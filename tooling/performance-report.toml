@@ -1,0 +1,11 @@
+schema = 2
+current = "docs/performance_current.md"
+archive = "docs/performance-runs"
+title = "Delaunay public API performance"
+measurement = "tooling/measurement-release-signal.toml"
+release = true
+
+[initialization]
+allow-empty = true
+directories = [ "target/bench-reports" ]
+guards = [ "docs/assets/bench/release-performance.csv" ]

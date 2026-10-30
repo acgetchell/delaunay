@@ -16,12 +16,14 @@ on:
       - ".github/workflows/benchmarks.yml"
       - ".github/actions/setup-just/**"
       - ".python-version"
+      - ".cargo/config.toml"
       - "justfile"
       - "pyproject.toml"
       - "rust-toolchain.toml"
       - "tooling/python/benchmark_models.py"
       - "tooling/python/benchmark_utils.py"
       - "tooling/python/performance_artifacts.py"
+      - "tooling/measurement-*.toml"
       - "src/**"
       - "benches/**"
       - "Cargo.toml"
@@ -52,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # Resolve the published baseline and disposable measurement checkouts.
+          fetch-depth: 0 # Resolve existing release tags for read-only source exports.
           persist-credentials: false
 
       - name: Set up shared tooling
@@ -82,6 +84,6 @@ jobs:
             echo ""
             echo "Both revisions were measured freshly in this job."
             echo "Ratios require matching harness, measurement plan, toolchain, and host evidence."
-            echo "The artifact contains medians, marginal confidence intervals, coverage, and provenance."
+            echo "The artifact retains both complete phases, exact raw samples, union coverage, and original provenance."
             echo "Timing changes are descriptive estimates; this workflow does not apply a regression threshold."
           } >> "$GITHUB_STEP_SUMMARY"

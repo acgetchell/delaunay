@@ -134,8 +134,33 @@ path = "benches/delaunay_repair.rs"
 harness = false
 
 [[bench]]
-name = "profiling_suite"
-path = "benches/profiling_suite.rs"
+name = "construction_scaling"
+path = "benches/construction_scaling.rs"
+harness = false
+
+[[bench]]
+name = "circumsphere_queries"
+path = "benches/circumsphere_queries.rs"
+harness = false
+
+[[bench]]
+name = "hull_queries"
+path = "benches/hull_queries.rs"
+harness = false
+
+[[bench]]
+name = "memory_footprint"
+path = "benches/memory_footprint.rs"
+harness = false
+
+[[bench]]
+name = "traversal"
+path = "benches/traversal.rs"
+harness = false
+
+[[bench]]
+name = "validation_components"
+path = "benches/validation_components.rs"
 harness = false
 
 [[bench]]

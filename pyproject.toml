@@ -45,7 +45,6 @@ notebooks = [
 [project.scripts]
 benchmark-utils = "benchmark_utils:main"
 delaunay-profile-metadata = "profiling_metadata:main"
-publish-readme-performance = "publish_readme_performance:main"
 
 # Package the retained scientific modules from tooling/python/.
 [tool.setuptools]
@@ -59,8 +58,17 @@ py-modules = [
     "notebook_visualization",
     "performance_artifacts",
     "profiling_metadata",
-    "publish_readme_performance",
     "release_benchmarks",
+]
+
+[tool.setuptools.data-files]
+"share/delaunay/tooling" = [
+    "tooling/measurement-release-signal.toml",
+    "tooling/measurement-release-signal-v082.toml",
+    "tooling/measurement-topology.toml",
+    "tooling/performance-publication.toml",
+    "tooling/performance-release.toml",
+    "tooling/performance-report.toml",
 ]
 
 [tool.ruff]
@@ -206,7 +214,6 @@ known-first-party = [
     "benchmark_utils",
     "performance_artifacts",
     "profiling_metadata",
-    "publish_readme_performance",
 ]
 force-single-line = false
 split-on-trailing-comma = true

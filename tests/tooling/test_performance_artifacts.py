@@ -12,7 +12,6 @@ from research_repo_tools.evidence import Evidence, Provenance, parse_evidence, s
 from research_repo_tools.host_metadata import HostMetadata, serialize_host
 
 import benchmark_utils
-import publish_readme_performance
 from performance_artifacts import (
     MEASUREMENTS_CONTEXT,
     POLICY_CONTEXT,
@@ -351,13 +350,12 @@ def test_loader_binds_retained_measurement_identity(side: str, field: str, value
 
 @pytest.mark.parametrize("side", ["baseline", "current"])
 @pytest.mark.parametrize("field", ["host", "delaunay.sampling-policy", "delaunay.inventory"])
-def test_missing_retained_metadata_has_actionable_reader_and_cli_errors(
+def test_missing_retained_metadata_has_actionable_reader_errors(
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
     side: str,
     field: str,
 ) -> None:
-    """Missing consumer fields reject publication without a traceback or file changes."""
+    """Historical Delaunay metadata remains strict without acquiring new proofs."""
     original = retained_bundle()
     evidence = dict(original.measurements)[side]
     source = evidence.sources[0][1]
@@ -369,21 +367,6 @@ def test_missing_retained_metadata_has_actionable_reader_and_cli_errors(
     with pytest.raises(ValueError, match=f"retained {side} measurement") as raised:
         load_bundle_bytes(payload, manifest, source="missing measurement metadata")
     assert str(raised.value) == message
-
-    (tmp_path / "comparison.json").write_bytes(payload)
-    (tmp_path / "evidence.json").write_bytes(manifest)
-    (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.0"\n', encoding="utf-8")
-    (tmp_path / "README.md").write_bytes(b"previous README\n")
-    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
-
-    result = publish_readme_performance.main(["--root", str(tmp_path), "--artifact-payload", "comparison.json", "--artifact-provenance", "evidence.json"])
-
-    assert result == 1
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert message in captured.err
-    assert "Traceback" not in captured.err
-    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
 
 
 @pytest.mark.parametrize("side", ["baseline", "current"])

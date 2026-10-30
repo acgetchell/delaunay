@@ -1,0 +1,10 @@
+schema = 1
+repository = "acgetchell/delaunay"
+measurement = "tooling/measurement-release-signal.toml"
+report = "tooling/performance-report.toml"
+publication = "tooling/performance-publication.toml"
+preparation = "target/bench-reports/preparation.json"
+payload = "target/bench-reports/performance.run.json"
+manifest = "target/bench-reports/performance.evidence.json"
+mode = "infer-release"
+order = "published"

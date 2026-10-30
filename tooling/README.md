@@ -1,6 +1,6 @@
 # Tooling configuration
 
-Declare reusable workflows here using the published `research-repo-tools==0.2.3`
+Declare reusable workflows here using the published `research-repo-tools==0.2.4`
 contracts. `python/` holds the retained Delaunay-specific scientific modules and
 measurement and publication policy; consumer policy checks live in `tests/tooling/`.
 Shared infrastructure is called directly through the package's CLI or public
@@ -22,10 +22,9 @@ The retained Python ownership is explicit:
 | Modules | Local responsibility |
 |-----|-----|
 | `benchmark_models`, `benchmark_utils` | Workload eligibility, construction metrics, circumsphere rankings and per-case sampling policy |
-| `performance_artifacts` | Complete timing intervals, coverage and comparability policy over shared JSON evidence |
+| `performance_artifacts` | Historical Delaunay asset schema, complete timing intervals and hosted-session policy |
 | `notebook_utils`, `notebook_validation` | Delaunay CLI inputs, environment bounds and mesh/validation witness models |
 | `notebook_validation_rendering`, `notebook_visualization` | Scientific figure construction and geometry checks |
-| `publish_readme_performance` | Geometric-mean group summaries and retained-report consistency |
 | `profiling_metadata` | Dynamic CI mode/filter labels over shared capture and publication |
 | `release_benchmarks` | Trusted workflow handoff, tagged checkout and refusal to replace an existing release baseline |
 | `release_artifacts` | Cargo archive/source checks, native/package job policy and frozen approval identity over shared validation helpers |
@@ -64,3 +63,10 @@ harness and version probes captured with profiling metadata; it executes no benc
 
 The [adoption inventory](../docs/dev/tooling_adoption.md) records retired helpers,
 consumer validation and platform evidence.
+
+Paired acquisition and publication declarations are `measurement-release-signal.toml`,
+`measurement-release-signal-v082.toml`, `measurement-topology.toml`,
+`performance-release.toml`, `performance-report.toml`
+and `performance-publication.toml`. The Just recipes call installed commands
+using these declarations. See the [performance ownership boundary](../docs/dev/tooling_adoption.md#declarative-independent-performance-adoption)
+for the single-checkout and historical-asset adapters that remain.
