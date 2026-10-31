@@ -793,6 +793,29 @@ mod tests {
     struct CloneOnlyLabel;
 
     #[test]
+    fn intersection_result_preserves_solver_failure_and_budget() {
+        use crate::geometry::matrix::{LaError, StackMatrixDispatchError};
+
+        let source = LaError::non_finite_input_matrix(2, 5);
+        assert_eq!(
+            intersection_result::<u8>(IntersectionLinearProgramResult::SolverFailed {
+                source: Box::new(StackMatrixDispatchError::La { source }),
+            }),
+            Err(SimplexIntersectionFailure::SolverFailed {
+                source: CoordinateConversionError::LinearAlgebraFailure {
+                    source: Box::new(source),
+                },
+            })
+        );
+        assert_eq!(
+            intersection_result::<u8>(IntersectionLinearProgramResult::ActiveSetBudgetExceeded {
+                limit: 17,
+            }),
+            Err(SimplexIntersectionFailure::ActiveSetBudgetExceeded { limit: 17 })
+        );
+    }
+
+    #[test]
     fn labeled_simplex_realization_rejects_label_coordinate_length_mismatch() {
         let err =
             LabeledSimplexRealization::<_, 2>::try_new(vec![0, 1, 2], vec![[0.0, 0.0], [1.0, 0.0]])

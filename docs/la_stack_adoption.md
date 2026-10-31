@@ -180,10 +180,36 @@ computed with `git diff HEAD --binary -- src benches | shasum -a 256` against th
 baseline commit above. The root Cargo lock SHA-256 is
 `4e7e1c7dff267618e82cfa50322e95731258d9fbd77504ddf870d1327f6c8fa2`.
 
-Run each command sequentially on the same host. The baseline uses
-`--save-baseline group4-before` instead of `--baseline group4-before`; it must
-include the five coincident-LP fixtures but use the baseline production source.
-The high-dimensional cases are measured only against the completed implementation.
+Run each command sequentially on the same host. First prepare a separate checkout
+of baseline commit `f6ebaed0033ca7d46f273eb460ce41f30b310134`. Add only
+`register_overlap`, `bench_realization_lp`, the `SimplexIntersectionFailure`
+import, and `bench_realization_lp`'s `criterion_group!` entry from the current
+`benches/realization_validation.rs` to that checkout.
+This supplies the same five coincident-LP fixtures (2D through 6D) while retaining
+the baseline production source. Do not register `bench_realization_high_dimension`
+there: its fixture admission runs even when Criterion filters out its timings,
+and the baseline cannot admit the 8D cases.
+
+In that prepared baseline checkout, save all three comparison groups explicitly:
+
+```bash
+cargo bench --locked --profile perf --bench realization_validation -- \
+  '^(realization_narrow_phase|realization_validation|realization_lp)/' \
+  --noplot --sample-size 10 --warm-up-time 1 --measurement-time 2 \
+  --save-baseline group4-before
+cargo bench --locked --profile perf --bench cold_path_predicates -- \
+  predicates/sos_degenerate --noplot --warm-up-time 1 --measurement-time 2 \
+  --save-baseline group4-before
+cargo bench --locked --profile perf --bench validation_components -- \
+  'validation_components_[2-5]d_seed_.*/is_valid_delaunay' \
+  --noplot --sample-size 10 --warm-up-time 1 --measurement-time 2 \
+  --save-baseline group4-before
+```
+
+Copy the resulting `target/criterion/` tree into the completed implementation's
+`target/criterion/`, preserving its `group4-before` directories. Then run these
+commands from the completed implementation's checkout. The high-dimensional
+cases are measured only here and saved separately:
 
 ```bash
 cargo bench --locked --profile perf --bench realization_validation -- \

@@ -2652,6 +2652,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn barycentric_failure_distinguishes_singularity_from_backend_failure() {
+        assert_matches!(
+            barycentric_failure::<u8>(LaError::singular_exact(1).into()),
+            IntersectionLinearProgramResult::SingularBarycentricBasis
+        );
+        let expected = StackMatrixDispatchError::UnsupportedDim { k: 11, max: 10 };
+        let IntersectionLinearProgramResult::SolverFailed { source } =
+            barycentric_failure::<u8>(expected.clone())
+        else {
+            panic!("an unavailable solve must not be classified as singular");
+        };
+        assert_eq!(*source, expected);
+    }
+
+    #[test]
+    fn active_set_budget_requires_completion_unless_a_witness_stops_the_search() {
+        let coordinates = vec![
+            vec![rational_one(), rational_zero()],
+            vec![rational_zero(), rational_one()],
+        ];
+        let mut visited = 0;
+        let result = visit_intersection_vertices(&coordinates, 1, |beta| {
+            assert_eq!(beta, &[rational_zero(), rational_one()]);
+            visited += 1;
+            ControlFlow::Continue(())
+        });
+        assert_eq!(visited, 1);
+        assert_matches!(result, Err(ActiveSetFailure::Budget { limit: 1 }));
+
+        let mut witnesses = 0;
+        visit_intersection_vertices(&coordinates, 1, |beta| {
+            assert_eq!(beta, &[rational_zero(), rational_one()]);
+            witnesses += 1;
+            ControlFlow::Break(())
+        })
+        .expect("a decisive witness needs no further active sets");
+        assert_eq!(witnesses, 1);
+    }
+
     generate_intersection_agreement_tests!(
         2,
         optimized_intersection_agrees_with_legacy_random_2d,

@@ -2905,6 +2905,19 @@ mod tests {
     #[test]
     fn realization_error_kind_covers_wrapped_and_topology_variants() {
         assert_realization_error_kind(
+            &TriangulationRealizationValidationError::IntersectionSolverFailed {
+                source: CoordinateConversionError::UnsupportedMatrixDimension {
+                    requested: 11,
+                    max: 10,
+                },
+            },
+            TriangulationRealizationValidationErrorKind::IntersectionSolverFailed,
+        );
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::IntersectionBudgetExceeded { limit: 50_000 },
+            TriangulationRealizationValidationErrorKind::IntersectionBudgetExceeded,
+        );
+        assert_realization_error_kind(
             &TriangulationRealizationValidationError::Tds {
                 source: Box::new(TdsError::InconsistentDataStructure {
                     message: "synthetic TDS failure".to_string(),
