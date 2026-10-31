@@ -230,8 +230,10 @@ for topology guarantee and validation policy details.
 
 ### Simplex Barycenters For Local Editing
 
-`Triangulation::simplex_barycenter(simplex_key)` computes a topology-aware interior point for
-a live `D`-simplex. In Euclidean triangulations it returns the arithmetic average of the simplex
+`Triangulation::simplex_barycenter(simplex_key)` computes a topology-aware barycenter for
+a live `D`-simplex. Mathematically, the barycenter of a nondegenerate simplex lies in its
+relative interior (in its affine hull); floating-point averaging is still subject to the
+insertion operation's geometric checks. In Euclidean triangulations it returns the arithmetic average of the simplex
 vertices. In periodic image-point triangulations it lifts vertices through their stored periodic
 offsets before averaging, then canonicalizes the result back into the topology domain.
 
@@ -250,13 +252,15 @@ The canonical public workflow is fluent and staged: parse a raw
 proposal through the proposal object. This keeps mutation explicit while
 preserving owner/generation evidence between stages.
 
+The k=2 and k=3 steps below are schematic: supply admissible interior facet
+and ridge handles from a larger triangulation. The single-simplex setup only
+demonstrates the k=1 round trip.
+
 ```rust
 use delaunay::prelude::construction::{
     DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::pachner::{
-    EdgeKey, FacetHandle, PachnerMove, PachnerMoves, TriangleHandle,
-};
+use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
 
 fn main() -> DelaunayResult<()> {
     // Start with a valid triangulation
@@ -293,7 +297,7 @@ fn main() -> DelaunayResult<()> {
         .attempt_on(&mut dt)?;
 
     // k=2 inverse: Flip from an edge star (D simplices ↔ 2 simplices)
-    let edge = EdgeKey::try_new(info.inserted_face_vertices[0], info.inserted_face_vertices[1])?;
+    let edge = dt.edge_key(info.inserted_face_vertices[0], info.inserted_face_vertices[1])?;
     dt.propose_pachner(PachnerMove::K2Inverse { edge })?
         .attempt_on(&mut dt)?;
 
@@ -303,19 +307,21 @@ fn main() -> DelaunayResult<()> {
         .propose_pachner(PachnerMove::K3 { ridge })?
         .attempt_on(&mut dt)?;
 
-    // k=3 inverse: Flip from a triangle star (D-1 simplices ↔ 3 simplices)
-    let triangle = TriangleHandle::try_new(
-        info.inserted_face_vertices[0],
-        info.inserted_face_vertices[1],
-        info.inserted_face_vertices[2],
-    )?;
-    dt.propose_pachner(PachnerMove::K3Inverse { triangle })?
+    // In 3D, K3 is a 3→2 move. Reverse it with K2 on the inserted triangle,
+    // which is a facet shared by the two new tetrahedra.
+    let facet = /* FacetHandle for info.inserted_face_vertices */;
+    dt.propose_pachner(PachnerMove::K2 { facet })?
         .attempt_on(&mut dt)?;
     Ok(())
 }
 ```
 
 ### Available Flip Operations
+
+Here **star** means the closed star, with faces implicit when only incident
+D-simplices are listed. The admissible replacement is `A ⋆ ∂B` ↔ `∂A ⋆ B`
+([Lickorish §2, Definition 2.3](../REFERENCES.md#lickorish1999)); see the
+[terminology and closed/open-star example](topology.md#simplicial-terminology-and-notation).
 
 #### k=1 Moves (Simplex Split/Merge)
 
@@ -326,7 +332,7 @@ fn main() -> DelaunayResult<()> {
   - Inserted face: the new vertex (0-simplex)
 
 - **Inverse (`PachnerMove::K1Remove`)**: Remove a vertex, collapsing its star
-  - Requires the vertex star to be collapsible (star of D+1 simplices forming a ball)
+  - Requires the closed star to be a stellar subdivision of a D-simplex: the vertex link is its boundary, with D+1 incident D-simplices
   - Replaces D+1 simplices with 1 simplex
 
 #### k=2 Moves (Facet Flip)
@@ -338,7 +344,8 @@ fn main() -> DelaunayResult<()> {
   - Inserted face: an edge (1-simplex)
 
 - **Inverse (`PachnerMove::K2Inverse`)**: Flip from an edge star
-  - Requires an edge with star of D simplices
+  - Valid for D ≥ 3; D < 3 returns `FlipError::UnsupportedDimension`
+  - Requires an edge with D incident D-simplices and the admissible link pattern
   - Replaces D simplices with 2 simplices
 
 #### k=3 Moves (Ridge Flip)
@@ -350,8 +357,12 @@ fn main() -> DelaunayResult<()> {
   - Inserted face: a triangle (2-simplex)
 
 - **Inverse (`PachnerMove::K3Inverse`)**: Flip from a triangle star
-  - Requires a triangle with star of D-1 simplices
+  - Valid for D ≥ 4; D < 4 returns `FlipError::UnsupportedDimension`
+  - Requires a triangle with D-1 incident D-simplices and the admissible link pattern
   - Replaces D-1 simplices with 3 simplices
+
+In 3D, a triangle is a facet: reverse a `K3` move with `K2` on the inserted
+triangular facet. `K3Inverse` is the dedicated triangle-star operation for D ≥ 4.
 
 ### Key Characteristics
 
@@ -554,7 +565,7 @@ Topology APIs use names to make ownership visible:
   `RidgeQuery<'tds>` before asking live-TDS questions that may have an empty
   answer, or to `RidgeView<'tds>` when the API requires an existing ridge.
   `RidgeView` construction proves the candidate vertices are live and have a
-  non-empty incident simplex star.
+  nonempty incident D-simplex support.
 - Toroidal covering-space identities such as `LiftedVertexId` and
   `LiftedLinkEdge` live under `topology::spaces::toroidal`. They are runtime
   graph identities, not TDS storage entries or durable IDs. They preserve

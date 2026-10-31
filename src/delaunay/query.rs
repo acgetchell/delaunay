@@ -1803,7 +1803,8 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// Revalidates a ridge candidate and returns a borrowed ridge query.
     ///
     /// Unlike [`DelaunayTriangulation::ridge_view`], the query permits an empty
-    /// incident star.
+    /// incident D-simplex support. For an existing ridge, taking all faces of
+    /// this support recovers the closed star; see [`RidgeQuery`].
     ///
     /// # Errors
     ///
@@ -1848,7 +1849,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # Errors
     ///
     /// Returns [`ManifoldError`] if any ridge vertex is stale, incidence
-    /// bookkeeping cannot be traversed, or the ridge has an empty star.
+    /// bookkeeping cannot be traversed, or no D-simplex contains the candidate.
     ///
     /// # Examples
     ///

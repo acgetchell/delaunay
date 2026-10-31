@@ -8,10 +8,35 @@
 //! [`LiftedVertexId`](crate::topology::spaces::toroidal::LiftedVertexId) and
 //! [`LiftedLinkEdge`](crate::topology::spaces::toroidal::LiftedLinkEdge).
 //!
-//! Ridge-star and ridge-link validation is combinatorial PL topology: it
-//! follows standard links-of-simplices criteria for PL manifolds (see
-//! `REFERENCES.md`, "Topological Manifolds and PL Topology") and does not add
-//! any new `f64` floating-point conditioning behavior.
+//! ## Closed stars and links
+//!
+//! Following [Lickorish, §2], unqualified **star** means **closed star**:
+//! `st(A, K) = A ⋆ lk(A, K)`, with all faces of `A` included. The link is
+//! `lk(A, K) = {B ∈ K : A ∩ B = ∅ and A ⋆ B ∈ K}`. Incident D-simplex keys
+//! are only the maximal support of the closed star; all their faces are implicit.
+//! Removing the ridge vertices gives the maximal link edges, whose endpoints
+//! and empty face are likewise implicit in [`RidgeLinkView::edges`].
+//!
+//! For vertex `a` in a single triangle `abc` (a ridge in 2D), the closed star
+//! contains the triangle and every edge and vertex, including opposite edge
+//! `bc` and its endpoints. The **open star** in the realization contains `a`,
+//! the relative interiors of `ab` and `ac`, and the triangle's relative interior,
+//! but excludes `bc`, `b`, and `c`. It is not the interior of the closed star
+//! relative to the whole triangle, which is the whole triangle. These queries
+//! return maximal support, not an open-star point set.
+//!
+//! [`RidgeQuery`] also permits empty D-simplex support. This is not a claim
+//! that the mathematical closed star of an isolated stored vertex is empty:
+//! that star contains the vertex itself. [`RidgeView`] requires nonempty support.
+//! The [terminology mapping] explains empty-simplex conventions and the
+//! distinction between topology and realization. Periodic formulas apply to
+//! lifted complexes, retaining distinct vertex images before quotienting.
+//!
+//! Ridge-star and ridge-link validation is combinatorial PL topology and does
+//! not add any new `f64` floating-point conditioning behavior.
+//!
+//! [Lickorish, §2]: https://arxiv.org/html/math/9911256v1
+//! [terminology mapping]: https://github.com/acgetchell/delaunay/blob/main/docs/topology.md#simplicial-terminology-and-notation
 
 #![forbid(unsafe_code)]
 
@@ -70,7 +95,7 @@ pub enum RidgeCandidateError {
 /// regardless of input order. It does not prove that the vertices exist in a
 /// particular [`Tds`] or that the ridge occurs in any D-simplex; use
 /// [`Self::query`] for a borrowed possibly-empty query and [`Self::view`] for a
-/// borrowed view that proves a non-empty star.
+/// borrowed view that proves nonempty incident D-simplex support.
 ///
 /// # Examples
 ///
@@ -264,7 +289,8 @@ impl<const D: usize> RidgeCandidate<D> {
     /// Revalidates this candidate against a live TDS and returns a borrowed query.
     ///
     /// A [`RidgeQuery`] proves only that the candidate's vertices are live in
-    /// `tds`. Its incident star may be empty.
+    /// `tds`. Its incident D-simplex support may be empty, even when an isolated
+    /// vertex has a nonempty mathematical closed star.
     ///
     /// # Errors
     ///
@@ -318,8 +344,8 @@ impl<const D: usize> RidgeCandidate<D> {
     /// # Errors
     ///
     /// Returns [`ManifoldError::Tds`] if any ridge vertex is stale or the TDS is
-    /// internally inconsistent while resolving the star. Returns
-    /// [`ManifoldError::RidgeNotFound`] if the live candidate has an empty star.
+    /// internally inconsistent while resolving the incidence. Returns
+    /// [`ManifoldError::RidgeNotFound`] if no D-simplex contains the live candidate.
     ///
     /// # Examples
     ///
@@ -366,8 +392,8 @@ impl<const D: usize> RidgeCandidate<D> {
 ///
 /// `RidgeQuery` is a non-durable topology query. Construction proves the
 /// candidate's vertices are live in one borrowed [`Tds`], but it deliberately
-/// permits an empty incident star. Use [`RidgeView`] when the API requires a
-/// ridge that is known to exist in the triangulation.
+/// permits empty incident D-simplex support. Use [`RidgeView`] when the API
+/// requires a ridge that is known to exist in the triangulation.
 #[must_use]
 pub struct RidgeQuery<'tds, U, V, const D: usize> {
     tds: &'tds Tds<U, V, D>,
@@ -458,6 +484,11 @@ impl<'tds, U, V, const D: usize> RidgeQuery<'tds, U, V, D> {
     }
 
     /// Returns all D-simplices incident to this candidate.
+    ///
+    /// For a candidate contained in a D-simplex, these generate its **closed
+    /// star** by taking faces ([Lickorish, §2](https://arxiv.org/html/math/9911256v1)).
+    /// Faces are implicit; this may be empty even for an isolated live vertex.
+    /// See the [closed/open-star example](crate::topology::ridge#closed-stars-and-links).
     #[inline]
     #[must_use]
     pub fn incident_simplices(&self) -> &[SimplexKey] {
@@ -546,8 +577,9 @@ impl<U, V, const D: usize> Eq for RidgeQuery<'_, U, V, D> {}
 ///
 /// `RidgeView` is a non-durable topology view. It borrows one in-memory [`Tds`],
 /// owns the validated [`RidgeCandidate`] identity, and caches the non-empty
-/// incident D-simplex star proven during construction. Persist stable vertex
-/// UUIDs or a full TDS snapshot instead of serializing ridge views.
+/// maximal D-simplex support of its closed star proven during construction.
+/// See the [closed/open-star convention](crate::topology::ridge#closed-stars-and-links).
+/// Persist stable vertex UUIDs or a full TDS snapshot instead of serializing ridge views.
 #[must_use]
 pub struct RidgeView<'tds, U, V, const D: usize> {
     tds: &'tds Tds<U, V, D>,
@@ -565,8 +597,8 @@ impl<'tds, U, V, const D: usize> RidgeView<'tds, U, V, D> {
     /// # Errors
     ///
     /// Returns [`ManifoldError::Tds`] if any ridge vertex is stale or if the TDS
-    /// is internally inconsistent while resolving the star. Returns
-    /// [`ManifoldError::RidgeNotFound`] if the live candidate has an empty star.
+    /// is internally inconsistent while resolving the incidence. Returns
+    /// [`ManifoldError::RidgeNotFound`] if no D-simplex contains the live candidate.
     ///
     /// # Examples
     ///
@@ -642,6 +674,10 @@ impl<'tds, U, V, const D: usize> RidgeView<'tds, U, V, D> {
     }
 
     /// Returns all D-simplices incident to this ridge.
+    ///
+    /// These generate the **closed star** by taking all faces, following
+    /// [Lickorish, §2](https://arxiv.org/html/math/9911256v1). Faces are implicit;
+    /// see the [closed/open-star example](crate::topology::ridge#closed-stars-and-links).
     #[inline]
     #[must_use]
     pub fn incident_simplices(&self) -> &[SimplexKey] {
@@ -732,8 +768,8 @@ impl<U, V, const D: usize> Eq for RidgeView<'_, U, V, D> {}
 /// Borrowed view of one lifted ridge link.
 ///
 /// This view is lifetime-bound to the [`Tds`] that produced it, while owning the
-/// small derived star for one lifted ridge image. Holding the borrow prevents
-/// topology mutation while callers inspect lifted link edges.
+/// small derived maximal support of the closed star of one lifted ridge image.
+/// Holding the borrow prevents topology mutation while callers inspect lifted link edges.
 ///
 /// Callers obtain this view from [`RidgeQuery::links`] or [`RidgeView::links`].
 /// Its lifted vertices and
@@ -804,6 +840,10 @@ impl<U, V, const D: usize> RidgeLinkView<'_, U, V, D> {
     }
 
     /// Returns the D-simplices incident to this lifted ridge image.
+    ///
+    /// This is maximal support of its **closed star**, with faces implicit,
+    /// following [Lickorish, §2](https://arxiv.org/html/math/9911256v1).
+    /// See the [closed/open-star example](crate::topology::ridge#closed-stars-and-links).
     #[inline]
     #[must_use]
     pub fn incident_simplices(&self) -> &[SimplexKey] {
@@ -811,6 +851,10 @@ impl<U, V, const D: usize> RidgeLinkView<'_, U, V, D> {
     }
 
     /// Returns lifted edges in this ridge's 1-dimensional link.
+    ///
+    /// These are the maximal simplices of `lk(A, K)` in the lifted complex.
+    /// Each edge's endpoints and the empty simplex are implicit. Preserve the
+    /// lifted identities when interpreting periodic links.
     #[inline]
     #[must_use]
     pub fn edges(&self) -> &[LiftedLinkEdge] {
@@ -952,7 +996,12 @@ fn lifted_link_edges_from_star<U, V, const D: usize>(
     })
 }
 
-/// Computes the star of a simplex (a set of vertices) as the set of incident D-simplices.
+/// Computes the incident D-simplex support generating a simplex's closed star.
+///
+/// All faces of the returned simplices are implicit. An isolated vertex gives
+/// empty support even though its mathematical closed star contains itself.
+/// An empty input vertex list is rejected; this helper does not implement the
+/// mathematical identity `st(∅, K) = K`.
 ///
 /// This helper does **not** call `tds.is_valid()`; it performs lightweight checks and
 /// returns [`ManifoldError::Tds`] if the underlying TDS is internally inconsistent.
@@ -1541,10 +1590,14 @@ mod tests {
         collections::{FastHashSet, SimplexKeySet},
         facet::facet_key_from_vertices,
         simplex::Simplex,
+        tds::TdsBuilder,
     };
     use crate::vertex;
     use slotmap::{Key, KeyData};
-    use std::iter;
+    use std::{collections::BTreeSet, iter};
+
+    type Face = BTreeSet<VertexKey>;
+    type Complex = BTreeSet<Face>;
 
     type DuplicateLiftedAnchorFixture3d =
         (Tds<(), (), 3>, SimplexKey, VertexKey, VertexKey, VertexKey);
@@ -1557,6 +1610,117 @@ mod tests {
         let mut simplex: LiftedVertexBuffer = LiftedVertexBuffer::with_capacity(vertices.len());
         simplex.extend(vertices.iter().copied().map(LiftedVertexId::base));
         simplex
+    }
+
+    /// Expands test fixture faces, including the empty simplex, independently of TDS queries.
+    fn face_closure(maximal_faces: &[Vec<VertexKey>]) -> Complex {
+        maximal_faces
+            .iter()
+            .flat_map(|vertices| {
+                (0..(1_usize << vertices.len())).map(|mask| {
+                    vertices
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, &vertex)| (mask & (1 << index) != 0).then_some(vertex))
+                        .collect()
+                })
+            })
+            .collect()
+    }
+
+    /// Evaluates the abstract join on disjoint test complexes without production helpers.
+    fn join(left: &Complex, right: &Complex) -> Complex {
+        left.iter()
+            .flat_map(|a| {
+                right.iter().map(move |b| {
+                    assert!(a.is_disjoint(b));
+                    a.union(b).copied().collect()
+                })
+            })
+            .collect()
+    }
+
+    /// Compares public ridge support/link queries with the full abstract face definitions.
+    fn assert_closed_star_join<const D: usize>(
+        tds: &Tds<(), (), D>,
+        ridge_vertices: &[VertexKey],
+        expected_incident_count: usize,
+    ) {
+        tds.validate().unwrap();
+        let maximal_faces: Vec<_> = tds
+            .simplices()
+            .map(|(_, simplex)| simplex.vertices().to_vec())
+            .collect();
+        let complex = face_closure(&maximal_faces);
+        let ridge: Face = ridge_vertices.iter().copied().collect();
+        let expected_link: Complex = complex
+            .iter()
+            .filter(|b| {
+                ridge.is_disjoint(b) && complex.contains(&ridge.union(b).copied().collect::<Face>())
+            })
+            .cloned()
+            .collect();
+        let expected_star: Complex = complex
+            .iter()
+            .filter(|face| {
+                complex
+                    .iter()
+                    .any(|coface| ridge.is_subset(coface) && face.is_subset(coface))
+            })
+            .cloned()
+            .collect();
+
+        let candidate =
+            RidgeCandidate::<D>::try_from_vertices(ridge_vertices.iter().copied()).unwrap();
+        let view = candidate.view(tds).unwrap();
+        assert_eq!(view.incident_simplices().len(), expected_incident_count);
+        let support: Vec<_> = view
+            .incident_simplices()
+            .iter()
+            .map(|&key| tds.simplex_vertices(key).unwrap().to_vec())
+            .collect();
+        let star = face_closure(&support);
+        let links = view.links().unwrap();
+        assert_eq!(links.len(), 1, "ordinary non-periodic ridge has one link");
+        let edges: Vec<_> = links[0]
+            .edges()
+            .iter()
+            .map(|edge| {
+                let (a, b) = edge.endpoints();
+                assert!(a.is_base() && b.is_base());
+                vec![a.vertex_key(), b.vertex_key()]
+            })
+            .collect();
+        assert_eq!(edges.len(), expected_incident_count);
+        let link = face_closure(&edges);
+        assert_eq!(link, expected_link);
+        assert_eq!(star, expected_star);
+        assert_eq!(join(&face_closure(&[ridge_vertices.to_vec()]), &link), star);
+        // Link faces disjoint from the ridge still belong to the closed star.
+        assert!(link.is_subset(&star));
+        assert!(link.contains(&Face::new()));
+        let empty_simplex_complex = Complex::from([Face::new()]);
+        assert_eq!(join(&empty_simplex_complex, &star), star);
+        assert!(join(&Complex::new(), &star).is_empty());
+    }
+
+    fn assert_single_simplex_closed_star<const D: usize>() {
+        let vertices: Vec<_> = iter::once(test_vertex([0.0; D]))
+            .chain((0..D).map(|axis| {
+                let mut coords = [0.0; D];
+                coords[axis] = 1.0;
+                test_vertex(coords)
+            }))
+            .collect();
+        let simplices = [(0..=D).collect::<Vec<_>>()];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+        let keys: Vec<_> = vertices
+            .iter()
+            .map(|vertex| tds.vertex_key_from_uuid(&vertex.uuid()).unwrap())
+            .collect();
+        assert_closed_star_join(&tds, &keys[..D - 1], 1);
+        // In D=2 this is exactly the vertex-in-a-triangle example: the
+        // opposite edge, both its endpoints, and ∅ are in both link and star.
     }
 
     fn build_duplicate_lifted_anchor_fixture_3d() -> DuplicateLiftedAnchorFixture3d {
@@ -1703,6 +1867,40 @@ mod tests {
             .unwrap();
 
         (tds, v0, c012, c123)
+    }
+
+    macro_rules! closed_star_tests {
+        ($($dim:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<closed_star_is_ridge_join_link_ $dim d>]() {
+                        assert_single_simplex_closed_star::<$dim>();
+                    }
+                )+
+            }
+        };
+    }
+
+    closed_star_tests!(2, 3, 4, 5);
+
+    #[test]
+    fn closed_star_join_distinguishes_boundary_and_interior_vertex_support() {
+        let vertices = [
+            test_vertex([0.0, 0.0]),
+            test_vertex([1.0, 0.0]),
+            test_vertex([1.0, 1.0]),
+            test_vertex([0.0, 1.0]),
+            test_vertex([0.5, 0.5]),
+        ];
+        let simplices = [vec![4, 0, 1], vec![4, 1, 2], vec![4, 2, 3], vec![4, 3, 0]];
+        let tds = TdsBuilder::new(&vertices, &simplices).build().unwrap();
+        let boundary = tds.vertex_key_from_uuid(&vertices[0].uuid()).unwrap();
+        let interior = tds.vertex_key_from_uuid(&vertices[4].uuid()).unwrap();
+        // The boundary link is a two-edge path; the interior link a four-edge cycle.
+        // Boundary support must exclude the two triangles not containing that vertex.
+        assert_closed_star_join(&tds, &[boundary], 2);
+        assert_closed_star_join(&tds, &[interior], 4);
     }
 
     #[test]

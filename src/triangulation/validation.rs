@@ -240,7 +240,7 @@ pub enum TriangulationValidationError {
     /// A live ridge candidate did not occur in any D-simplex.
     #[error("Ridge candidate {ridge_vertices:?} is not present in the triangulation")]
     RidgeNotFound {
-        /// Canonical quotient-space ridge vertices that had an empty simplex star.
+        /// Canonical quotient-space ridge vertices with no incident D-simplex.
         ridge_vertices: VertexKeyBuffer,
     },
 

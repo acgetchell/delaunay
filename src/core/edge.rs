@@ -9,6 +9,26 @@
 //! - is `Copy`/`Hash`/`Ord` for fast use in sets and maps
 //! - can be revalidated into an [`EdgeView`] for borrowed access to live topology
 //!
+//! ## Closed-star convention
+//!
+//! Unqualified **star** means the **closed star** of [Lickorish, §2]:
+//! `st(A, K) = A ⋆ lk(A, K)`, where `A` includes all its faces. It consists
+//! of simplices containing `A` and **all their faces**.
+//! [`EdgeView::incident_simplices`] returns only its incident maximal
+//! D-simplices; taking their faces recovers the closed star.
+//!
+//! For a vertex `a` in a single triangle `abc`, the closed star contains the
+//! triangle and all edges and vertices, including the opposite edge `bc` and
+//! its endpoints. Its **open star** in the realization contains `a`, the
+//! relative interiors of `ab` and `ac`, and the triangle's relative interior;
+//! it excludes `bc`, `b`, and `c`. It is not the interior of the closed star
+//! relative to the whole triangle (which is the whole triangle).
+//! No open-star set is returned by these APIs. See the
+//! [terminology mapping] for joins, links, closure, and ambient spaces.
+//!
+//! [Lickorish, §2]: https://arxiv.org/html/math/9911256v1
+//! [terminology mapping]: https://github.com/acgetchell/delaunay/blob/main/docs/topology.md#simplicial-terminology-and-notation
+//!
 //! ## Determinism
 //!
 //! `EdgeKey` ordering is **not** guaranteed to be deterministic across processes or
@@ -197,13 +217,14 @@ impl EdgeKey {
         Ok(key)
     }
 
-    /// Parses the edge star from mutually complete, internally valid endpoint incidence.
+    /// Parses the maximal support of the closed edge star from valid endpoint incidence.
     ///
-    /// The success path inspects endpoint stars instead of scanning every
-    /// simplex. Both endpoint stars are checked for every simplex containing the
+    /// Faces are implicit: the returned keys identify only incident D-simplices.
+    /// The success path inspects endpoint incidence instead of scanning every
+    /// simplex. Both endpoint incidence lists are checked for every simplex containing the
     /// opposite endpoint, so partially stale reverse incidence is rejected before
     /// returning a key. A full simplex-storage scan is reserved for the cold path
-    /// where neither endpoint star reports the edge, so callers still get a
+    /// where neither endpoint incidence list reports the edge, so callers still get a
     /// precise `MissingEdgeIncidence` diagnostic when storage and incidence
     /// diverge.
     fn parse_edge_star<U, V, const D: usize>(
@@ -249,7 +270,7 @@ impl EdgeKey {
         Err(EdgeKeyError::EdgeNotFound { v0, v1 })
     }
 
-    /// Finds all simplices in `source`'s validated star that also contain `target`.
+    /// Finds incident D-simplices at `source` that also contain `target`.
     fn edge_simplices_in_star<U, V, const D: usize>(
         tds: &Tds<U, V, D>,
         source: VertexKey,
@@ -423,7 +444,7 @@ impl EdgeKey {
     ///
     /// `EdgeKey` stores only storage-local endpoint keys. This method checks those
     /// endpoints against `tds` before lending access to endpoint vertices and the
-    /// edge's incident simplex star.
+    /// maximal D-simplex support of the edge's closed star (see [`EdgeView`]).
     ///
     /// # Errors
     ///
@@ -476,6 +497,21 @@ impl EdgeKey {
 /// and revalidates a copyable [`EdgeKey`] before exposing endpoint vertices and
 /// the edge's incident D-simplices. Persist stable vertex UUIDs or a full TDS
 /// snapshot instead of serializing edge views.
+///
+/// # Closed-star convention
+///
+/// Unqualified **star** means the **closed star** of
+/// [Lickorish, §2](https://arxiv.org/html/math/9911256v1):
+/// `st(A, K) = A ⋆ lk(A, K)`, with all faces of `A` included. The incident
+/// D-simplices generate this subcomplex by taking all their faces.
+///
+/// For vertex `a` in triangle `abc`, the closed star contains the triangle,
+/// all edges and all vertices, including opposite edge `bc` and its endpoints.
+/// The **open star** in the realization contains `a`, the relative interiors
+/// of `ab` and `ac`, and the triangle's relative interior, but excludes `bc`,
+/// `b`, and `c`. It is not the interior of the closed star relative to the
+/// whole triangle, which is the whole triangle. See the
+/// [terminology mapping](https://github.com/acgetchell/delaunay/blob/main/docs/topology.md#simplicial-terminology-and-notation).
 #[must_use]
 pub struct EdgeView<'tds, U, V, const D: usize> {
     tds: &'tds Tds<U, V, D>,
@@ -578,7 +614,32 @@ impl<'tds, U, V, const D: usize> EdgeView<'tds, U, V, D> {
 
     /// Returns all D-simplices incident to this edge.
     ///
-    /// The star was parsed and validated during [`Self::try_new`].
+    /// These are the maximal simplices generating the **closed star** under
+    /// taking faces, following [Lickorish, §2](https://arxiv.org/html/math/9911256v1).
+    /// Lower-dimensional faces (even those disjoint from the edge) are implicit.
+    /// The incidence was validated during [`Self::try_new`]; see the
+    /// [closed/open-star example](EdgeView#closed-star-convention).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder, vertex};
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// assert_eq!(dt.number_of_simplices(), 1);
+    /// for (simplex_key, simplex) in dt.simplices() {
+    ///     let edge = dt.edge_key(simplex.vertices()[0], simplex.vertices()[1])?;
+    ///     let view = dt.edge_view(edge)?;
+    ///     assert_eq!(view.incident_simplices(), &[simplex_key]);
+    ///     // Taking all faces of this triangle includes the opposite vertex,
+    ///     // which does not contain the edge. Those faces are implicit here.
+    ///     assert_eq!(simplex.vertices().len(), 3);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn incident_simplices(&self) -> &[SimplexKey] {
         self.incident_simplices.as_slice()
