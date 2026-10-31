@@ -592,6 +592,8 @@ pub trait BistellarFlips<const D: usize> {
 
     /// Apply an inverse k=2 flip from an edge star (D >= 3).
     ///
+    /// If `D < 3`, this returns [`FlipError::UnsupportedDimension`] before topology checks.
+    ///
     /// # Errors
     ///
     /// Returns [`FlipError`] if the edge star is invalid or the inverse flip
@@ -776,6 +778,10 @@ where
     }
 
     fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey) -> Result<FlipInfo<D>, FlipError> {
+        if D < 3 {
+            return Err(FlipError::UnsupportedDimension { dimension: D });
+        }
+
         apply_realized_flip(self, TopologicalOperation::CavityFlip, |tri| {
             let context = build_k2_flip_context_from_edge(&tri.tds, edge)?;
             apply_bistellar_flip_dynamic_raw(&mut tri.tds, D, &context)
@@ -786,6 +792,10 @@ where
         &self,
         edge: EdgeKey,
     ) -> Result<FlipFeasibility<D>, FlipError> {
+        if D < 3 {
+            return Err(FlipError::UnsupportedDimension { dimension: D });
+        }
+
         validate_flip_topology(self, TopologicalOperation::CavityFlip)?;
         let context = build_k2_flip_context_from_edge(&self.tds, edge)?;
         validate_bistellar_flip_dynamic(&self.tds, D, &context)
@@ -1108,6 +1118,48 @@ mod tests {
                 facet_count: 4,
             }
         );
+    }
+
+    #[test]
+    fn inverse_k2_prioritizes_dimension_over_topology() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+            .topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .build()
+            .unwrap();
+        let mut tri = dt.into_triangulation();
+        tri.validate().unwrap();
+        tri.validate_realization().unwrap();
+        let edge = tri.edges().next().unwrap();
+        let before = tri.tds.clone();
+        let owner_before = tri.tds.topology_owner_id();
+        let generation_before = tri.tds.generation();
+        let provenance_before = tri.topology_construction_provenance;
+
+        assert_matches!(
+            validate_flip_topology(&tri, TopologicalOperation::CavityFlip),
+            Err(FlipError::FlipTopologyNotAdmissible {
+                required: TopologyGuarantee::PLManifold,
+                found: TopologyGuarantee::Pseudomanifold,
+            })
+        );
+        let feasibility_error = tri.can_flip_k2_inverse_from_edge(edge).unwrap_err();
+        let mutation_error = tri.flip_k2_inverse_from_edge(edge).unwrap_err();
+        assert_eq!(
+            feasibility_error,
+            FlipError::UnsupportedDimension { dimension: 2 }
+        );
+        assert_eq!(mutation_error, feasibility_error);
+        assert_eq!(tri.tds, before);
+        assert_eq!(tri.tds.topology_owner_id(), owner_before);
+        assert_eq!(tri.tds.generation(), generation_before);
+        assert_eq!(tri.topology_construction_provenance, provenance_before);
+        tri.validate().unwrap();
+        tri.validate_realization().unwrap();
     }
 
     #[test]

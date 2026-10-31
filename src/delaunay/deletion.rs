@@ -141,7 +141,9 @@ where
     /// incident D-simplices are implicit in the star; see
     /// [Lickorish, §§2–3](https://arxiv.org/html/math/9911256v1) and the
     /// [terminology mapping](https://github.com/acgetchell/delaunay/blob/main/docs/topology.md#simplicial-terminology-and-notation).
-    /// Otherwise it falls back to fan triangulation.
+    /// Otherwise it falls back to fan triangulation, except when the inverse k=1 flip
+    /// reports [`FlipError::NeighborWiring`]: the triangulation state is restored and
+    /// [`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Tds`] is returned.
     /// A Euclidean hull corner is removed without replacement simplices when exact
     /// predicates certify that every exposed facet supports all surviving vertices.
     /// This clipping path still validates topology and realization before publication.
