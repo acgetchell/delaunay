@@ -135,9 +135,13 @@ where
     /// 4. Wires neighbors and rebuilds vertex-simplex incidence
     /// 5. Deletes the vertex
     ///
-    /// Fast-path: if the vertex star is a simplex (exactly D+1 incident simplices with
-    /// consistent adjacency), this method collapses it via the **inverse k=1** bistellar
-    /// flip. Otherwise it falls back to fan triangulation.
+    /// Fast-path: if the closed vertex star is a stellar subdivision of a D-simplex
+    /// (the link is its boundary, with D+1 incident D-simplices and valid adjacency),
+    /// this method welds it via the **inverse k=1** bistellar flip. Faces of the
+    /// incident D-simplices are implicit in the star; see
+    /// [Lickorish, §§2–3](https://arxiv.org/html/math/9911256v1) and the
+    /// [terminology mapping](https://github.com/acgetchell/delaunay/blob/main/docs/topology.md#simplicial-terminology-and-notation).
+    /// Otherwise it falls back to fan triangulation.
     /// A Euclidean hull corner is removed without replacement simplices when exact
     /// predicates certify that every exposed facet supports all surviving vertices.
     /// This clipping path still validates topology and realization before publication.

@@ -36,7 +36,7 @@ first use, start with the [README](README.md).
 | Realization overlap | [Baraff and I-COLLIDE][overlap]: sweep-and-prune provenance; Ericson: collision-detection background |
 | Spatial locality | [Skilling and Moon et al.](#spatial-ordering-and-hilbert-curves) [9, 8]: index algorithm and locality analysis |
 | Spherical distances | [Stable vector angles](#stable-vector-angles): la-stack implementation and Kahan background |
-| Topology | [PL and computational topology texts][topology]: simplicial complexes, links, and manifold background |
+| Topology | [PL and computational topology texts][topology]: simplicial complexes, joins, links, closed stars, and manifold background |
 
 [construction]: #triangulation-construction-algorithms
 [location]: #point-location-in-triangulations
@@ -446,9 +446,12 @@ realizations, and the topology-only manifold / PL-manifold validation logic in t
 - Dey, T. K., and Wang, Y. *Computational Topology for Data Analysis*. Cambridge University Press, 2022.
 - Edelsbrunner, H., and Harer, J. *Computational Topology: An Introduction*. AMS, 2010.
 - Hatcher, A. *Algebraic Topology*. Cambridge University Press, 2002.
-- Lickorish, W. B. R. "Simplicial Moves on Complexes and Manifolds."
+- <a id="lickorish1999"></a> Lickorish, W. B. R. "Simplicial Moves on Complexes and Manifolds."
   *Geometry & Topology Monographs* 2 (1999): 299-320.
-  [Definition 2.2](https://arxiv.org/html/math/9911256v1) gives the PL sphere/ball vertex-link criterion.
+  [§2](https://arxiv.org/html/math/9911256v1) defines simplex/complex joins,
+  links, closed stars, and the empty-simplex convention; Definition 2.2 gives
+  the PL sphere/ball vertex-link criterion. §3 develops stellar subdivision
+  and welds. See the library's [terminology mapping](docs/topology.md#simplicial-terminology-and-notation).
 - Munkres, J. R. *Elements of Algebraic Topology*. Addison–Wesley, 1984.
 - Rourke, C. P., and Sanderson, B. J. *Introduction to Piecewise-Linear Topology*. Springer, 1972.
 - Stillwell, J. *Euler's Gem: The Polyhedron Formula and the Birth of Topology*. Princeton University Press, 2010.

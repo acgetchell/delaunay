@@ -13,6 +13,132 @@ with `docs/construction_and_validation.md`.
 For the theoretical background and rationale behind the invariants themselves, see
 [`invariants.md`](invariants.md).
 
+## Simplicial terminology and notation
+
+We follow [Lickorish, §2, pp. 300–301][lickorish-text] for simplices,
+joins, links, and stars; §3 explains stellar subdivision and welds.
+The existing [bibliography entry][lickorish-reference] owns the citation.
+Write `A ≤ B` for a face and `|K|` for the geometric realization of a complex.
+When used as a complex, `A` includes **all** faces of the simplex, including `∅`.
+The empty simplex is a face of every simplex; the complex `{∅}` is different
+from the empty collection of simplices.
+
+| Concept | Mathematical meaning / notation | Library representation or operation |
+|---|---|---|
+| Join | `A ⋆ B`, `K ⋆ L` | Particular admissible joins in Pachner moves; no general join API. |
+| Link | `lk(A, K)` | Vertex-link validation; `RidgeQuery::links()` / `RidgeView::links()`. |
+| Star | Closed star `st(A, K) = A ⋆ lk(A, K)` | Edge/ridge `incident_simplices()` returns maximal support, with faces implicit. |
+| Closure | `cl_Y(X)` in a specified space `Y`; face closure for a complex | Implicit faces; no general closure API. |
+| Interior | `relint(A)` in its affine hull; `int_Y(X)` in `Y` | Realized point-location/insertion; no general interior set API. |
+
+An abstract join combines disjoint vertex sets. A geometric simplex join
+requires their combined vertices to be affinely independent. The complex join
+`K ⋆ L = {A ⋆ B : A ∈ K, B ∈ L}` requires a compatible realization of all
+these joins. The empty simplex satisfies `∅ ⋆ A = A`, so `{∅} ⋆ K = K`.
+An arbitrary union of vertex lists is not a certified geometric join.
+
+The link is `lk(A, K) = {B ∈ K : A ∩ B = ∅ and A ⋆ B ∈ K}`. Vertex-link
+validation extracts complementary vertices from incident D-simplices, with
+their faces implicit. `RidgeLinkView::edges()` returns the maximal edges of a
+ridge's 1-dimensional link, with endpoints and `∅` implicit.
+
+Unqualified **star** means the **closed star**: all simplices containing `A`
+**and all their faces**. `EdgeView::incident_simplices()` and the ridge
+views/queries return only incident D-simplex keys, which generate that closed
+star by taking faces. They do not enumerate the closed star or an open star.
+
+### Closed star and open star: a vertex in a triangle
+
+Let `K` consist of triangle `abc` and its faces. Then `lk(a, K)` is edge `bc`
+and its faces, and `st(a, K) = a ⋆ lk(a, K)` is **the whole triangle complex**:
+`abc`, `ab`, `ac`, `bc`, `a`, `b`, `c`, and `∅`. In particular, the opposite
+edge `bc` and its endpoints belong to the closed star even though they do not
+contain `a`. The stored incident maximal-simplex list is just `[abc]`.
+
+The **open star** is a subset of `|K|`: the union of `relint(B)` over simplices
+`B` containing `a`. It contains `a`, the relative interiors of `ab` and `ac`,
+and the relative interior of `abc`. It excludes `bc`, `b`, and `c`. It is not a
+subcomplex. Here `int_|K|(|st(a, K)|) = |K|`, so it is **not** the open star.
+Neither is the interior of the triangle in its affine plane, which omits `a`
+and the two incident edges. An equality involving an interior must name and
+justify its ambient space.
+
+### Realization, closure, and boundary qualifications
+
+For `X ⊆ Y`, `cl_Y(X)` is the smallest closed subset of `Y` containing `X`,
+and `int_Y(X)` is the largest open subset of `Y` contained in `X`.
+Combinatorial **face closure** adds every face of each selected simplex.
+No general geometric-closure or face-closure
+API is exposed. For a finite valid realization, the realization of face closure
+equals the geometric closure of the union of the selected relative interiors.
+Here closure can be taken in `|K|` or its Euclidean embedding space.
+
+Lickorish's geometric simplices are convex hulls of affinely independent
+vertices. `relint(A)` is the interior of a geometric simplex in its affine hull.
+A nonempty simplex has strictly positive barycentric coordinates on
+its relative interior; a vertex is its own relative interior. A triangle in
+`R^3` has empty interior in `R^3` but a nonempty relative interior in its affine
+plane. Its relative interior has closure equal to the closed triangle, whether
+closure is taken in that plane or in `R^3`.
+
+The face-closure correspondence above assumes finitely many simplices
+with a valid realization; it does not certify arbitrary TDS coordinates.
+Combinatorial subtraction also needs care: removing incident D-simplex records
+leaves faces shared with surviving records. It is not set-theoretic deletion
+of every face of a closed star. In stellar subdivision (§3), the replacement
+`a ⋆ ∂A ⋆ lk(A, K)` retains the attaching faces of the replaced neighborhood;
+the inserted point lies in `relint(A)`.
+
+For a manifold with boundary, an **interior simplex** means a simplex not in
+the boundary subcomplex: its relative interior lies in the manifold interior
+`|K| \ |∂K|`. Its own boundary faces can still meet `|∂K|`. A **closed manifold**
+is compact and has no manifold boundary. The library's **boundary closure**
+checks mean “no boundary of the boundary” via incidence; they are not a
+geometric closure operation. See [Boundary semantics](#boundary-semantics)
+for periodic identifications.
+
+The table describes ordinary simplicial complexes and local lifted periodic
+complexes. In a periodic quotient, a bare vertex key can have multiple lifted
+images. Ridge links use `LiftedVertexId` and translation-normalized offsets;
+discarding these identities can merge distinct faces or link edges. Closed-star
+and link formulas apply in those lifted complexes before quotienting.
+
+### Audit and API scope
+
+The terminology audit covers public edge/ridge traversal, TDS incidence,
+vertex/ridge manifold validation, Pachner moves and deletion, and the active
+invariant, scientific, API, and usage guides and examples:
+
+| Surface | Interpretation |
+|---|---|
+| `EdgeKey::parse_edge_star`, `simplex_star_simplices`, incidence indexes, `star_simplices` | Maximal support; faces implicit. |
+| `RidgeQuery` with no incident D-simplices | Empty support query; see the isolated-vertex qualification below. |
+| `RidgeView`, `EdgeView` | Require nonempty incident maximal support; existing names and signatures remain appropriate. |
+| Vertex/ridge links and manifold checks | Complementary maximal faces generate the link; boundary/interior is the manifold classification. |
+| Pachner, deletion, “star-split” insertion | Local replacements of maximal support; counts of star simplices count D-simplices only. |
+| Rust closures, path/string joins, adjacency/neighbor links | Programming meanings, unrelated to the topological operations. |
+
+`EdgeKey::parse_edge_star` is private. A “star-split” is stellar subdivision
+of the containing simplex, subject to the operation's geometric checks.
+An isolated stored vertex has itself as a mathematical closed star even though
+`RidgeQuery` returns no D-simplex support; Level 3 excludes isolated vertices.
+
+No API rename or migration is needed. The empty-simplex identities
+`lk(∅, K) = K`, `st(∅, K) = K`, and `lk(A, A) = {∅}` are mathematical
+conventions, not additional supported queries: runtime edge/ridge keys have
+nonzero arity, and the internal star helper rejects an empty vertex list.
+No `SimplexKey` represents `∅`. The f-vector counts dimensions `0..=D` and
+uses the ordinary, unreduced Euler characteristic.
+
+Executable evidence lives in the edge/ridge rustdoc examples and the
+`topology::ridge` unit tests, which expand implicit faces on small complexes
+and check `st(A, K) = A ⋆ lk(A, K)`. The manifold tests separately verify
+boundary path links and interior cycle links. These test helpers do not add a
+general topology subsystem to the library.
+
+[lickorish-reference]: ../REFERENCES.md#lickorish1999
+[lickorish-text]: https://arxiv.org/html/math/9911256v1
+
 ## Code layout
 
 Relevant modules (lexicographically sorted):

@@ -230,8 +230,10 @@ for topology guarantee and validation policy details.
 
 ### Simplex Barycenters For Local Editing
 
-`Triangulation::simplex_barycenter(simplex_key)` computes a topology-aware interior point for
-a live `D`-simplex. In Euclidean triangulations it returns the arithmetic average of the simplex
+`Triangulation::simplex_barycenter(simplex_key)` computes a topology-aware barycenter for
+a live `D`-simplex. Mathematically, the barycenter of a nondegenerate simplex lies in its
+relative interior (in its affine hull); floating-point averaging is still subject to the
+insertion operation's geometric checks. In Euclidean triangulations it returns the arithmetic average of the simplex
 vertices. In periodic image-point triangulations it lifts vertices through their stored periodic
 offsets before averaging, then canonicalizes the result back into the topology domain.
 
@@ -317,6 +319,11 @@ fn main() -> DelaunayResult<()> {
 
 ### Available Flip Operations
 
+Here **star** means the closed star, with faces implicit when only incident
+D-simplices are listed. The admissible replacement is `A ⋆ ∂B` ↔ `∂A ⋆ B`
+([Lickorish §2, Definition 2.3](../REFERENCES.md#lickorish1999)); see the
+[terminology and closed/open-star example](topology.md#simplicial-terminology-and-notation).
+
 #### k=1 Moves (Simplex Split/Merge)
 
 - **Forward (`PachnerMove::K1Insert`)**: Insert a vertex into a simplex, splitting it into D+1 simplices
@@ -326,7 +333,7 @@ fn main() -> DelaunayResult<()> {
   - Inserted face: the new vertex (0-simplex)
 
 - **Inverse (`PachnerMove::K1Remove`)**: Remove a vertex, collapsing its star
-  - Requires the vertex star to be collapsible (star of D+1 simplices forming a ball)
+  - Requires the closed star to be a stellar subdivision of a D-simplex: the vertex link is its boundary, with D+1 incident D-simplices
   - Replaces D+1 simplices with 1 simplex
 
 #### k=2 Moves (Facet Flip)
@@ -338,7 +345,7 @@ fn main() -> DelaunayResult<()> {
   - Inserted face: an edge (1-simplex)
 
 - **Inverse (`PachnerMove::K2Inverse`)**: Flip from an edge star
-  - Requires an edge with star of D simplices
+  - Requires an edge with D incident D-simplices and the admissible link pattern
   - Replaces D simplices with 2 simplices
 
 #### k=3 Moves (Ridge Flip)
@@ -350,7 +357,7 @@ fn main() -> DelaunayResult<()> {
   - Inserted face: a triangle (2-simplex)
 
 - **Inverse (`PachnerMove::K3Inverse`)**: Flip from a triangle star
-  - Requires a triangle with star of D-1 simplices
+  - Requires a triangle with D-1 incident D-simplices and the admissible link pattern
   - Replaces D-1 simplices with 3 simplices
 
 ### Key Characteristics
@@ -554,7 +561,7 @@ Topology APIs use names to make ownership visible:
   `RidgeQuery<'tds>` before asking live-TDS questions that may have an empty
   answer, or to `RidgeView<'tds>` when the API requires an existing ridge.
   `RidgeView` construction proves the candidate vertices are live and have a
-  non-empty incident simplex star.
+  nonempty incident D-simplex support.
 - Toroidal covering-space identities such as `LiftedVertexId` and
   `LiftedLinkEdge` live under `topology::spaces::toroidal`. They are runtime
   graph identities, not TDS storage entries or durable IDs. They preserve

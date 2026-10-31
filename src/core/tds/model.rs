@@ -60,8 +60,9 @@
 //!   valid simplicial complex in its ambient topological space.
 //! - **Neighbor Consistency**: Adjacent simplices properly reference each other through their
 //!   shared facets, maintaining bidirectional neighbor relationships.
-//! - **Vertex Incidence**: Each vertex is incident to a well-defined set of simplices that
-//!   form a topologically valid star configuration around the vertex.
+//! - **Vertex Incidence**: Each vertex has an exact list of incident D-simplices.
+//!   With all faces included, nonempty support generates its closed star;
+//!   manifold link conditions belong to Level 3, not the TDS.
 //! - **Delaunay Property**: No vertex lies inside the circumsphere of any D-dimensional simplex.
 //!
 //! ## Invariant Enforcement
@@ -550,7 +551,8 @@ pub struct Tds<U, V, const D: usize> {
 
     /// Maintained vertex-to-simplices incidence index.
     ///
-    /// This is the canonical exact vertex-star relation for TDS storage. It is updated
+    /// This records only incident D-simplices, the maximal support of a closed
+    /// vertex star; lower-dimensional faces are implicit. It is updated
     /// together with simplex insertion/removal and rebuilt during deserialization or
     /// bulk incidence repair. Isolated vertices are represented by present-but-empty
     /// entries.

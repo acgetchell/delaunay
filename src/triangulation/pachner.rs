@@ -10,6 +10,14 @@
 //! for immediate observation, and collapse them to
 //! [`PachnerMove`] only when a queued or randomized
 //! workflow needs a storable request.
+//!
+//! A star is the **closed star** `st(A, K) = A ⋆ lk(A, K)`, including faces,
+//! following [Lickorish, §2](https://arxiv.org/html/math/9911256v1).
+//! Move support lists count only maximal D-simplices. An admissible bistellar
+//! move replaces `A ⋆ ∂B` with `∂A ⋆ B`; the attaching faces remain in the
+//! complex. Forward k=1 is stellar subdivision of a D-simplex at a point in
+//! its relative interior (§3), and inverse k=1 is the corresponding weld.
+//! See the [terminology and triangle example](https://github.com/acgetchell/delaunay/blob/main/docs/topology.md#simplicial-terminology-and-notation).
 
 #![forbid(unsafe_code)]
 
@@ -80,7 +88,7 @@ pub enum PachnerMove<U, const D: usize> {
         /// Vertex inserted into the simplex.
         vertex: Vertex<U, D>,
     },
-    /// Collapse a vertex whose star is a simplex.
+    /// Remove a vertex whose closed star is the stellar subdivision of a D-simplex.
     K1Remove {
         /// Vertex to remove.
         vertex_key: VertexKey,
@@ -97,7 +105,7 @@ pub enum PachnerMove<U, const D: usize> {
     },
     /// Apply a forward k=3 move around a ridge.
     K3 {
-        /// Ridge whose three-simplex star forms the move support.
+        /// Ridge whose three incident D-simplices form the move support.
         ridge: RidgeHandle,
     },
     /// Apply the inverse k=3 move from a triangle star.

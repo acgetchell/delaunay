@@ -50,6 +50,11 @@ public input model; exact predicates reason about those stored values, not an
 unrecorded ideal measurement. Unrepresentable derived coordinates must surface
 typed errors rather than silently erase a predicate sign.
 
+The [simplicial terminology table](topology.md#simplicial-terminology-and-notation)
+maps Lickorish's joins, links, closed stars, closure, and relative interior to
+the actual storage and query APIs. Incident maximal simplices generate a closed
+star with implicit faces; an open star is a subset of the realization.
+
 The proof owners separate five obligations:
 
 | Level | Obligation | Owner and scope |
