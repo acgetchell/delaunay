@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 use core::ops::ControlFlow;
+use std::array::from_fn;
 
 use num_traits::ToPrimitive;
 use thiserror::Error;
@@ -570,6 +571,10 @@ struct RealizedSimplex<const D: usize> {
     uuid: Uuid,
     vertex_keys: SimplexVertexKeyBuffer,
     vertex_uuids: SimplexVertexUuidBuffer,
+    /// Unlifted coordinates are retained only for periodic comparisons. Never
+    /// translate an already rounded lift: equal (key, offset) identities must
+    /// receive equal predicate coordinates regardless of the path to the chart.
+    canonical_coordinates: Option<SmallBuffer<[f64; D], MAX_PRACTICAL_DIMENSION_SIZE>>,
     realization: LabeledSimplexRealization<RealizedVertexIdentity<D>, D>,
 }
 
@@ -585,7 +590,7 @@ impl<const D: usize> RealizedVertexIdentity<D> {
     fn translated(self, shift: &[i32; D]) -> Self {
         Self {
             key: self.key,
-            offset: std::array::from_fn(|axis| self.offset[axis] + i64::from(shift[axis])),
+            offset: from_fn(|axis| self.offset[axis] + i64::from(shift[axis])),
         }
     }
 }
@@ -606,6 +611,11 @@ impl<const D: usize> RealizedSimplex<D> {
         let mut coords = SmallBuffer::<[f64; D], MAX_PRACTICAL_DIMENSION_SIZE>::with_capacity(
             simplex.number_of_vertices(),
         );
+        let mut canonical_coordinates = topology_model.periodic_domain().map(|_| {
+            SmallBuffer::<[f64; D], MAX_PRACTICAL_DIMENSION_SIZE>::with_capacity(
+                simplex.number_of_vertices(),
+            )
+        });
 
         let periodic_offsets = simplex.periodic_vertex_offsets();
         if let Some(offsets) = periodic_offsets
@@ -634,6 +644,9 @@ impl<const D: usize> RealizedSimplex<D> {
                 })?;
             vertices.push(vertex_key);
             vertex_uuids.push(vertex.uuid());
+            if let Some(canonical) = &mut canonical_coordinates {
+                canonical.push(*vertex.point().coords());
+            }
             let periodic_offset = periodic_offsets.map(|offsets| offsets[vertex_index]);
             let lifted_coords = topology_model
                 .lift_for_orientation(*vertex.point().coords(), periodic_offset)
@@ -649,9 +662,13 @@ impl<const D: usize> RealizedSimplex<D> {
             coords.push(lifted_coords);
         }
 
+        // Identity offsets must describe the coordinates the active model lifted.
+        // Explicit torus metadata deliberately ignores stored image offsets.
+        let identity_offsets =
+            periodic_offsets.filter(|_| topology_model.supports_periodic_orientation_offsets());
         let identities = vertices.iter().enumerate().map(|(vertex_index, &key)| {
-            let offset = periodic_offsets.map_or([0_i64; D], |offsets| {
-                std::array::from_fn(|axis| i64::from(offsets[vertex_index][axis]))
+            let offset = identity_offsets.map_or([0_i64; D], |offsets| {
+                from_fn(|axis| i64::from(offsets[vertex_index][axis]))
             });
             RealizedVertexIdentity { key, offset }
         });
@@ -671,6 +688,7 @@ impl<const D: usize> RealizedSimplex<D> {
             uuid: simplex.uuid(),
             vertex_keys: vertices,
             vertex_uuids,
+            canonical_coordinates,
             realization,
         })
     }
@@ -1618,28 +1636,42 @@ fn periodic_translate_range_overflow<const D: usize>(
     }
 }
 
-/// Translates one realized simplex into a neighboring periodic chart.
+/// Translates identities first, then realizes each image once from its canonical
+/// coordinate. The stored i8 lift and enumerated i32 translation sum exactly in
+/// i64 (and f64); no rounded lifted coordinate is used as a new origin.
 fn translated_simplex<const D: usize>(
     simplex: &RealizedSimplex<D>,
     domain: &ToroidalDomain<D>,
     shift: &[i32; D],
 ) -> Result<RealizedSimplex<D>, TriangulationRealizationValidationError> {
-    let translated = simplex
+    let canonical = simplex
+        .canonical_coordinates
+        .as_deref()
+        .unwrap_or_else(|| simplex.realization.coordinates());
+    let labels: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> = simplex
         .realization
-        .try_translated(domain, shift)
-        .map_err(|source| labeled_simplex_error_to_realized_simplex_error(source, simplex))?;
-    let labels = translated
         .labels()
         .iter()
-        .map(|identity| identity.translated(shift));
-    let realization =
-        LabeledSimplexRealization::try_new(labels, translated.coordinates().iter().copied())
-            .map_err(|source| labeled_simplex_error_to_realized_simplex_error(source, simplex))?;
+        .map(|identity| identity.translated(shift))
+        .collect();
+    let coordinates = canonical.iter().zip(&labels).map(|(coordinate, identity)| {
+        from_fn(|axis| {
+            // Production translates only stored i8 offsets by one i32 shift,
+            // so this integer is far below f64's exact-integer limit, 2^53.
+            let offset = identity.offset[axis]
+                .to_f64()
+                .expect("bounded periodic image offset must convert exactly to f64");
+            offset.mul_add(domain.periods()[axis], coordinate[axis])
+        })
+    });
+    let realization = LabeledSimplexRealization::try_new(labels.iter().copied(), coordinates)
+        .map_err(|source| labeled_simplex_error_to_realized_simplex_error(source, simplex))?;
     Ok(RealizedSimplex {
         key: simplex.key,
         uuid: simplex.uuid,
         vertex_keys: simplex.vertex_keys.clone(),
         vertex_uuids: simplex.vertex_uuids.clone(),
+        canonical_coordinates: Some(canonical.iter().copied().collect()),
         realization,
     })
 }
@@ -2036,6 +2068,7 @@ mod tests {
     use std::assert_matches;
 
     use approx::assert_abs_diff_eq;
+    use la_stack::{BigRational, FromPrimitive, Signed};
 
     use super::*;
     use crate::builder::DelaunayTriangulationBuilder;
@@ -2049,6 +2082,116 @@ mod tests {
 
     fn test_vertex<const D: usize>(coords: [f64; D]) -> Vertex<(), D> {
         vertex!(coords).unwrap()
+    }
+
+    /// Preserves the five binary64 inputs of the issue's independent separator.
+    fn seed_3291_coordinates() -> [[f64; 2]; 5] {
+        [
+            [3.005_476_804_546_397_3, 1.970_856_741_541_091_8],
+            [1.002_255_155_241_919_7, 0.012_991_573_136_809_986],
+            [3.024_162_370_210_636, 0.017_907_303_726_276_47],
+            [2.983_569_587_895_092_7, 1.025_632_022_322_623_8],
+            [2.013_208_763_062_795_7, 2.984_199_438_683_351_2],
+        ]
+    }
+
+    /// Computes the planar separator independently of the production predicates/LP.
+    fn rational_planar_determinant(
+        p: &[BigRational; 2],
+        q: &[BigRational; 2],
+        x: &[BigRational; 2],
+    ) -> BigRational {
+        (&q[0] - &p[0]) * (&x[1] - &p[1]) - (&q[1] - &p[1]) * (&x[0] - &p[0])
+    }
+
+    /// Exercises stored lifts, composed translations, and inverse paths without
+    /// replacing the small seam coordinate by an exactly representable fixture.
+    fn assert_periodic_identity_paths<const D: usize>() {
+        let mut coordinates = vec![[0.017_907_303_726_276_47; D]; D + 1];
+        for axis in 0..D {
+            coordinates[axis + 1][axis] = 0.25;
+        }
+        let (tds, keys) =
+            tds_from_vertices_and_simplices_with_keys(&coordinates, &[(0..=D).collect()]);
+        let domain = ToroidalDomain::try_new([3.0; D]).unwrap();
+        let topology =
+            GlobalTopology::try_toroidal([3.0; D], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        for lift in [-128_i8, -1, 0, 1, 127] {
+            let mut lifted_tds = tds.clone();
+            lifted_tds
+                .simplex_mut(keys[0])
+                .unwrap()
+                .set_periodic_vertex_offsets(vec![[lift; D]; D + 1])
+                .unwrap();
+            let tri = tri_from_tds_with_topology(lifted_tds, topology);
+            let original = tri.collect_realized_simplices().unwrap().pop().unwrap();
+            let canonical = translated_simplex(&original, &domain, &[-i32::from(lift); D]).unwrap();
+            assert_eq!(
+                canonical
+                    .realization
+                    .coordinates()
+                    .iter()
+                    .map(|p| p.map(f64::to_bits))
+                    .collect::<Vec<_>>(),
+                coordinates
+                    .iter()
+                    .map(|p| p.map(f64::to_bits))
+                    .collect::<Vec<_>>(),
+                "inverse chart shift must recover the canonical bits",
+            );
+            for shift in [i32::MIN, -2, 0, 2, i32::MAX] {
+                let direct = translated_simplex(&original, &domain, &[shift; D]).unwrap();
+                // Splitting off one stored lift follows a distinct rounding path
+                // in the old implementation, but has exactly the same identity.
+                let via_canonical =
+                    translated_simplex(&canonical, &domain, &[i32::from(lift); D]).unwrap();
+                let composed = translated_simplex(&via_canonical, &domain, &[shift; D]).unwrap();
+                assert_eq!(direct.realization.labels(), composed.realization.labels());
+                assert_eq!(
+                    direct
+                        .realization
+                        .coordinates()
+                        .iter()
+                        .map(|p| p.map(f64::to_bits))
+                        .collect::<Vec<_>>(),
+                    composed
+                        .realization
+                        .coordinates()
+                        .iter()
+                        .map(|p| p.map(f64::to_bits))
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+    }
+
+    fn assert_explicit_torus_ignores_image_offsets<const D: usize>() {
+        let mut coordinates = vec![[0.125; D]; D + 1];
+        for axis in 0..D {
+            coordinates[axis + 1][axis] = 0.5;
+        }
+        let (mut tds, keys) =
+            tds_from_vertices_and_simplices_with_keys(&coordinates, &[(0..=D).collect()]);
+        tds.simplex_mut(keys[0])
+            .unwrap()
+            .set_periodic_vertex_offsets(vec![[1; D]; D + 1])
+            .unwrap();
+        let topology =
+            GlobalTopology::try_toroidal([3.0; D], ToroidalConstructionMode::Explicit).unwrap();
+        let tri = tri_from_tds_with_topology(tds, topology);
+        let original = tri.collect_realized_simplices().unwrap().pop().unwrap();
+        assert_eq!(original.realization.coordinates(), coordinates.as_slice());
+        let domain = ToroidalDomain::try_new([3.0; D]).unwrap();
+        let translated = translated_simplex(&original, &domain, &[0; D]).unwrap();
+        assert_eq!(translated.realization.coordinates(), coordinates.as_slice());
+        assert!(
+            translated
+                .realization
+                .labels()
+                .iter()
+                .all(|identity| identity.offset == [0; D])
+        );
     }
 
     #[test]
@@ -2211,6 +2354,7 @@ mod tests {
                 uuid: Uuid::from_u128(u128::from(first_key)),
                 vertex_keys,
                 vertex_uuids,
+                canonical_coordinates: None,
                 realization,
             }
         });
@@ -2569,8 +2713,119 @@ mod tests {
             assert_eq!(before.key, after.key);
             assert_eq!(
                 after.offset,
-                std::array::from_fn(|axis| before.offset[axis] + i64::from(shift[axis])),
+                from_fn(|axis| before.offset[axis] + i64::from(shift[axis])),
             );
+        }
+    }
+
+    #[test]
+    fn seed_3291_scoped_and_global_realization_accept_original_final_state() {
+        let tds: Tds<u32, i32, 2> = ciborium::from_reader(
+            include_bytes!("../../tests/fixtures/periodic_seed_3291/after_final_move.cbor")
+                .as_slice(),
+        )
+        .unwrap();
+        let mut tri = Triangulation::new_with_tds(FastKernel::<f64>::new(), tds);
+        for coordinates in seed_3291_coordinates() {
+            assert!(tri.vertices().any(|(_, vertex)| {
+                vertex.point().coords().map(f64::to_bits) == coordinates.map(f64::to_bits)
+            }));
+        }
+        tri.global_topology =
+            GlobalTopology::try_toroidal([4.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        for (key, _) in tri.simplices() {
+            tri.validate_realization_for_simplices(&[key])
+                .expect("every local scope must accept the valid original contact");
+        }
+        tri.is_valid_realization().unwrap();
+        assert!(tri.realization_report().unwrap().is_valid());
+    }
+
+    #[test]
+    fn seed_3291_exact_separator_proves_contact_and_rounding_sliver() {
+        let coordinates = seed_3291_coordinates();
+        let offsets = [[-1, -1], [0, 0], [-1, 0], [-1, 0], [-1, -1]];
+        let exact: Vec<[BigRational; 2]> = coordinates
+            .iter()
+            .zip(offsets)
+            .map(|(point, offset)| {
+                from_fn(|axis| {
+                    BigRational::from_f64(point[axis]).unwrap()
+                        + BigRational::from_integer((offset[axis] * [4, 3][axis]).into())
+                })
+            })
+            .collect();
+        let [point_a, point_b, point_c, point_d, point_e] = exact.as_slice() else {
+            panic!("five witness vertices")
+        };
+        assert!(rational_planar_determinant(point_c, point_a, point_b).is_positive());
+        assert_eq!(
+            rational_planar_determinant(point_c, point_a, point_c),
+            BigRational::from_integer(0.into())
+        );
+        assert!(rational_planar_determinant(point_c, point_a, point_d).is_negative());
+        assert!(rational_planar_determinant(point_c, point_a, point_e).is_negative());
+        let shared_y = coordinates[2][1];
+        let rounded_y = (shared_y + 3.0) - 3.0;
+        assert_eq!(
+            BigRational::from_f64(rounded_y - shared_y).unwrap(),
+            BigRational::new((-1).into(), (1_u64 << 52).into())
+        );
+        let inconsistent_c = [
+            point_c[0].clone(),
+            BigRational::from_f64(rounded_y).unwrap(),
+        ];
+        assert!(rational_planar_determinant(point_c, point_a, &inconsistent_c).is_positive());
+    }
+
+    #[test]
+    fn seed_3291_pair_orders_and_chart_paths_accept_contact_reject_overlap() {
+        let topology =
+            GlobalTopology::try_toroidal([4.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        for overlap in [false, true] {
+            let mut coordinates = seed_3291_coordinates();
+            if overlap {
+                coordinates[4] = [0.0, 0.0];
+            }
+            for chart in [-2_i8, -1, 0, 1, 2] {
+                let (mut tds, keys) = tds_from_vertices_and_simplices_with_keys(
+                    &coordinates,
+                    &[vec![0, 1, 2], vec![2, 3, 4]],
+                );
+                tds.simplex_mut(keys[0])
+                    .unwrap()
+                    .set_periodic_vertex_offsets(vec![[-1, -1], [0, 0], [-1, 0]])
+                    .unwrap();
+                let mut second_offsets =
+                    vec![[0, 1], [0, 1], if overlap { [1, 1] } else { [0, 0] }];
+                for offset in &mut second_offsets {
+                    for value in offset {
+                        *value += chart;
+                    }
+                }
+                tds.simplex_mut(keys[1])
+                    .unwrap()
+                    .set_periodic_vertex_offsets(second_offsets)
+                    .unwrap();
+                let tri = tri_from_tds_with_topology(tds, topology);
+                let pair = tri.collect_realized_simplices().unwrap();
+                for (first, second) in [(&pair[0], &pair[1]), (&pair[1], &pair[0])] {
+                    let result = validate_topology_aware_simplex_pair(
+                        first,
+                        second,
+                        topology.model().periodic_domain(),
+                    );
+                    if overlap {
+                        assert_matches!(result, Err(TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace { .. }));
+                    } else {
+                        result.expect(
+                            "the original contact must be independent of chart and pair order",
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -2708,6 +2963,16 @@ mod tests {
         ($($dim:literal),+ $(,)?) => {
             pastey::paste! {
                 $(
+                    #[test]
+                    fn [<periodic_identity_paths_ $dim d>]() {
+                        assert_periodic_identity_paths::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<explicit_torus_ignores_image_offsets_ $dim d>]() {
+                        assert_explicit_torus_ignores_image_offsets::<$dim>();
+                    }
+
                     #[test]
                     fn [<periodic_shift_ranges_enforce_i32_limits_ $dim d>]() {
                         assert_periodic_shift_range_limits::<$dim>();

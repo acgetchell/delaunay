@@ -29,7 +29,7 @@ use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
 use delaunay::prelude::query::{ConvexHull, extract_hull_facet_set};
 use delaunay::prelude::repair::DelaunayRepairError;
 use delaunay::prelude::tds::{Tds, TdsBuilder, TdsBuilderError, TdsMutationError};
-use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind};
+use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 use delaunay::prelude::triangulation::{
     Triangulation, TriangulationBuilder, TriangulationBuilderError, TriangulationEditError,
     TriangulationSnapshot,
@@ -1634,6 +1634,81 @@ fn periodic_regression_fixture_t2() -> DelaunayTriangulation<RobustKernel<f64>, 
         .unwrap()
         .build_with_kernel(&kernel)
         .expect("periodic T^2 build should succeed")
+}
+
+/// Replays the final successful `Move22` from the unchanged seed-3291 (4, 3) torus.
+/// The retained consumer outcomes are Success, Success, Success,
+/// `GeometricViolation`, Success; see the fixture's provenance document.
+#[test]
+fn regression_issue_668_seed_3291_periodic_move_and_global_validation_agree() {
+    let tds: Tds<u32, i32, 2> = ciborium::from_reader(
+        include_bytes!("fixtures/periodic_seed_3291/before_final_move.cbor").as_slice(),
+    )
+    .expect("retained pre-move TDS must load");
+    let topology =
+        GlobalTopology::try_toroidal([4.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint)
+            .unwrap();
+    let mut tri = TriangulationBuilder::new(tds, RobustKernel::new())
+        .global_topology(topology)
+        .validation_policy(ValidationPolicy::ExplicitOnly)
+        .build()
+        .expect("the original state after four attempts is valid");
+    tri.validate_realization().unwrap();
+
+    // Flip the edge C--(3.972615978704547, 1.9947331459086999),
+    // opposite A in the stored triangle A, that vertex, C.
+    let a = [3.005_476_804_546_397_3, 1.970_856_741_541_091_8].map(f64::to_bits);
+    let c = [3.024_162_370_210_636, 0.017_907_303_726_276_47].map(f64::to_bits);
+    let other = [3.972_615_978_704_547, 1.994_733_145_908_699_9].map(f64::to_bits);
+    let facet = tri
+        .simplices()
+        .find_map(|(key, simplex)| {
+            let bits: Vec<_> = simplex
+                .vertices()
+                .iter()
+                .map(|&vertex| {
+                    tri.vertex(vertex)
+                        .unwrap()
+                        .point()
+                        .coords()
+                        .map(f64::to_bits)
+                })
+                .collect();
+            if bits.contains(&a) && bits.contains(&c) && bits.contains(&other) {
+                let opposite = bits.iter().position(|coords| *coords == a).unwrap();
+                Some(
+                    tri.facet_handle(key, u8::try_from(opposite).unwrap())
+                        .unwrap(),
+                )
+            } else {
+                None
+            }
+        })
+        .expect("original fifth move facet must exist");
+    let result = tri
+        .propose_pachner(PachnerMove::K2 { facet })
+        .expect("original fifth move must remain feasible")
+        .attempt_on(&mut tri)
+        .expect("original fifth move must succeed, including its local Level 4 check");
+    assert_eq!(result.new_simplices.len(), 2);
+    assert_eq!(
+        (tri.number_of_vertices(), tri.number_of_simplices()),
+        (11, 22)
+    );
+    tri.validate_realization()
+        .expect("global validation must agree with the local edit check");
+    assert!(tri.realization_report().unwrap().is_valid());
+
+    let final_tds: Tds<u32, i32, 2> = ciborium::from_reader(
+        include_bytes!("fixtures/periodic_seed_3291/after_final_move.cbor").as_slice(),
+    )
+    .unwrap();
+    TriangulationBuilder::new(final_tds, RobustKernel::new())
+        .global_topology(topology)
+        .build()
+        .expect("the exact original final connectivity and offsets must also publish")
+        .validate_realization()
+        .unwrap();
 }
 
 /// Finds a periodic simplex by exact coordinate bits and lattice offsets.
