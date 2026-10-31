@@ -39,8 +39,8 @@ use crate::geometry::predicates::{
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, DegenerateSimplexReason, InvalidCoordinateValue,
 };
+use la_stack::{PolynomialDeterminantBudget, SparsePolynomial, polynomial_determinant};
 use num_traits::Zero;
-use std::collections::BTreeMap;
 
 // =============================================================================
 // PUBLIC API
@@ -142,7 +142,7 @@ pub fn sos_orientation_sign<const D: usize>(
         })
         .collect::<Result<_, CoordinateConversionError>>()?;
 
-    polynomial_determinant_leading_sign(&matrix).ok_or(
+    polynomial_determinant_leading_sign(matrix, SOS_BUDGET)?.ok_or(
         CoordinateConversionError::DegenerateSimplex {
             dimension: D,
             reason: DegenerateSimplexReason::VanishingSosPolynomial,
@@ -245,7 +245,6 @@ pub fn sos_insphere_sign<const D: usize>(
 
     let points = simplex.iter().chain(core::iter::once(test));
     let one = constant_polynomial(1.0)?;
-    let zero = constant_polynomial(0.0)?;
     let matrix: Vec<Vec<_>> = points
         .enumerate()
         .map(|(row, point)| {
@@ -256,15 +255,7 @@ pub fn sos_insphere_sign<const D: usize>(
                 .enumerate()
                 .map(|(column, value)| coordinate_polynomial(value, row * D + column))
                 .collect::<Result<_, CoordinateConversionError>>()?;
-            let lift = coordinates
-                .iter()
-                .try_fold(zero.clone(), |sum, coordinate| {
-                    Ok::<_, CoordinateConversionError>(add_polynomials(
-                        sum,
-                        multiply_polynomials(coordinate, coordinate)?,
-                        1,
-                    ))
-                })?;
+            let lift = squared_norm_polynomial(point, row)?;
             let mut values = coordinates;
             values.push(lift);
             values.push(one.clone());
@@ -272,7 +263,7 @@ pub fn sos_insphere_sign<const D: usize>(
         })
         .collect::<Result<_, CoordinateConversionError>>()?;
 
-    let absolute_sign = polynomial_determinant_leading_sign(&matrix).ok_or(
+    let absolute_sign = polynomial_determinant_leading_sign(matrix, SOS_BUDGET)?.ok_or(
         CoordinateConversionError::DegenerateSimplex {
             dimension: D,
             reason: DegenerateSimplexReason::VanishingSosPolynomial,
@@ -291,176 +282,136 @@ pub fn sos_insphere_sign<const D: usize>(
 // INTERNAL HELPERS
 // =============================================================================
 
-/// Base-3 encoding of a symbolic monomial.
-///
-/// Variable `i` contributes `3^i`; squaring contributes `2 * 3^i`. A
-/// determinant selects at most one entry per point row, so no coordinate
-/// variable can have degree above two. Base 3 therefore has no carries and
-/// numeric key order is exactly the reverse-lexicographic perturbation order:
-/// every combination of earlier variables precedes the next variable. D=6
-/// insphere uses 48 variables, well inside `u128`.
-type Monomial = u128;
-type Polynomial = BTreeMap<Monomial, BigRational>;
-
 /// Largest determinant matrix produced by the public D ≤ 6 `SoS` predicates.
 const MAX_SOS_MATRIX_DIMENSION: usize = 8;
-/// Exact subset-DP transition count for an 8×8 determinant: `8 * 2^7`.
-const MAX_SOS_SUBSET_TRANSITIONS: usize = 1_024;
-/// Conservative monomial-pair bound for the generated D=6 in-sphere matrix.
-///
-/// Its column term maxima are `[2, 2, 2, 2, 2, 2, 13, 1]`; the complete
-/// subset expansion therefore performs at most this many coefficient products.
-/// The guard bounds malformed private inputs without truncating any supported
-/// public D ≤ 6 predicate.
-const MAX_SOS_MONOMIAL_PAIR_PRODUCTS: usize = 55_631_284;
+/// Complete order-eight envelope; the lifted column has at most 13 terms.
+/// Column term maxima [2, 2, 2, 2, 2, 2, 13, 1] bound the complete subset
+/// expansion by 55,631,284 coefficient products without any truncation.
+/// These bound combinatorial work, not coefficient bit sizes or allocated bytes.
+const SOS_BUDGET: PolynomialDeterminantBudget = PolynomialDeterminantBudget {
+    max_subset_transitions: 1_024,
+    max_term_products: 55_631_284,
+};
 
-fn constant_polynomial(value: f64) -> Result<Polynomial, CoordinateConversionError> {
-    let coefficient =
-        rational_from_f64(value).ok_or_else(|| CoordinateConversionError::NonFiniteValue {
-            coordinate_index: 0,
-            coordinate_value: InvalidCoordinateValue::from_debug(&value),
-        })?;
-    let mut polynomial = Polynomial::new();
-    if !coefficient.is_zero() {
-        polynomial.insert(0, coefficient);
-    }
-    Ok(polynomial)
+/// Retains exact IEEE-754 coefficients when constructing symbolic entries.
+fn constant_polynomial(value: f64) -> Result<SparsePolynomial, CoordinateConversionError> {
+    SparsePolynomial::try_from_terms([(0, exact_coordinate(value)?)]).map_err(Into::into)
 }
 
+/// Converts a stored coordinate without any rounded intermediate.
+fn exact_coordinate(value: f64) -> Result<BigRational, CoordinateConversionError> {
+    rational_from_f64(value).ok_or_else(|| CoordinateConversionError::NonFiniteValue {
+        coordinate_index: 0,
+        coordinate_value: InvalidCoordinateValue::from_debug(&value),
+    })
+}
+
+/// Base-3 monomials preserve the reverse-lexicographic perturbation order.
+/// Each coordinate occurs in at most one selected row and has degree at most
+/// two, so exponent addition cannot carry between variables. D=6 uses 48.
+fn coordinate_exponent(variable: usize) -> Result<u128, CoordinateConversionError> {
+    u32::try_from(variable)
+        .ok()
+        .and_then(|power| 3_u128.checked_pow(power))
+        .ok_or_else(|| CoordinateConversionError::UnsupportedMatrixDimension {
+            requested: variable.saturating_add(1),
+            max: 48,
+        })
+}
+
+/// Assigns the caller's row/coordinate perturbation priority to one entry.
 fn coordinate_polynomial(
     value: f64,
     variable: usize,
-) -> Result<Polynomial, CoordinateConversionError> {
-    let mut polynomial = constant_polynomial(value)?;
-    let exponent_power = u32::try_from(variable).map_err(|_| {
-        CoordinateConversionError::UnsupportedMatrixDimension {
-            requested: variable + 1,
-            max: 48,
-        }
-    })?;
-    let exponent = 3_u128.checked_pow(exponent_power).ok_or(
-        CoordinateConversionError::UnsupportedMatrixDimension {
-            requested: variable + 1,
-            max: 48,
+) -> Result<SparsePolynomial, CoordinateConversionError> {
+    SparsePolynomial::try_from_terms([
+        (0, exact_coordinate(value)?),
+        (
+            coordinate_exponent(variable)?,
+            BigRational::from_integer(1.into()),
+        ),
+    ])
+    .map_err(Into::into)
+}
+
+/// Lifts perturbed coordinates coherently: Σ(a + ε)² = Σa² + Σ2aε + Σε².
+/// Only this geometric assembly stays local; polynomial reduction and the
+/// complete determinant are owned by la-stack.
+fn squared_norm_polynomial<const D: usize>(
+    point: &Point<D>,
+    row: usize,
+) -> Result<SparsePolynomial, CoordinateConversionError> {
+    let mut terms = Vec::with_capacity(2 * D + 1);
+    let mut constant = BigRational::zero();
+    for (column, &value) in point.coords().iter().enumerate() {
+        let coefficient = exact_coordinate(value)?;
+        let exponent = coordinate_exponent(row * D + column)?;
+        let squared_exponent = exponent.checked_mul(2).ok_or(
+            CoordinateConversionError::UnsupportedMatrixDimension {
+                requested: row * D + column + 1,
+                max: 48,
+            },
+        )?;
+        constant += &coefficient * &coefficient;
+        terms.push((exponent, coefficient * BigRational::from_integer(2.into())));
+        terms.push((squared_exponent, BigRational::from_integer(1.into())));
+    }
+    terms.push((0, constant));
+    SparsePolynomial::try_from_terms(terms).map_err(Into::into)
+}
+
+/// Admits runtime shapes without cloning coefficient storage. Zero polynomials
+/// remain distinct from budget exhaustion, exponent overflow and backend errors.
+fn polynomial_determinant_leading_sign(
+    matrix: Vec<Vec<SparsePolynomial>>,
+    budget: PolynomialDeterminantBudget,
+) -> Result<Option<i32>, CoordinateConversionError> {
+    match matrix.len() {
+        0 => polynomial_sign::<0>(matrix, budget),
+        1 => polynomial_sign::<1>(matrix, budget),
+        2 => polynomial_sign::<2>(matrix, budget),
+        3 => polynomial_sign::<3>(matrix, budget),
+        4 => polynomial_sign::<4>(matrix, budget),
+        5 => polynomial_sign::<5>(matrix, budget),
+        6 => polynomial_sign::<6>(matrix, budget),
+        7 => polynomial_sign::<7>(matrix, budget),
+        8 => polynomial_sign::<8>(matrix, budget),
+        requested => Err(CoordinateConversionError::UnsupportedMatrixDimension {
+            requested,
+            max: MAX_SOS_MATRIX_DIMENSION,
+        }),
+    }
+}
+
+/// Transfers admitted rows into the upstream const-generic determinant.
+fn polynomial_sign<const N: usize>(
+    matrix: Vec<Vec<SparsePolynomial>>,
+    budget: PolynomialDeterminantBudget,
+) -> Result<Option<i32>, CoordinateConversionError> {
+    let rows: Vec<[SparsePolynomial; N]> = matrix
+        .into_iter()
+        .map(|row| {
+            let length = row.len();
+            row.try_into()
+                .map_err(|_| CoordinateConversionError::MatrixDimensionMismatch {
+                    active: length,
+                    matrix_dimension: N,
+                })
+        })
+        .collect::<Result<_, _>>()?;
+    let length = rows.len();
+    let rows: [[SparsePolynomial; N]; N] =
+        rows.try_into()
+            .map_err(|_| CoordinateConversionError::MatrixDimensionMismatch {
+                active: length,
+                matrix_dimension: N,
+            })?;
+    let determinant = polynomial_determinant(&rows, budget)?;
+    Ok(determinant.leading_term().map(
+        |(_, coefficient)| {
+            if coefficient.is_positive() { 1 } else { -1 }
         },
-    )?;
-    polynomial.insert(
-        exponent,
-        rational_from_f64(1.0).expect("one is a finite IEEE-754 value"),
-    );
-    Ok(polynomial)
-}
-
-fn add_polynomials(mut left: Polynomial, right: Polynomial, sign: i32) -> Polynomial {
-    for (monomial, coefficient) in right {
-        let entry = left.entry(monomial).or_insert_with(BigRational::zero);
-        if sign > 0 {
-            *entry += coefficient;
-        } else {
-            *entry -= coefficient;
-        }
-        if entry.is_zero() {
-            left.remove(&monomial);
-        }
-    }
-    left
-}
-
-fn multiply_polynomials(
-    left: &Polynomial,
-    right: &Polynomial,
-) -> Result<Polynomial, CoordinateConversionError> {
-    let mut product = Polynomial::new();
-    for (left_monomial, left_coefficient) in left {
-        for (right_monomial, right_coefficient) in right {
-            let monomial = left_monomial.checked_add(*right_monomial).ok_or(
-                CoordinateConversionError::UnsupportedMatrixDimension {
-                    requested: 49,
-                    max: 48,
-                },
-            )?;
-            let entry = product.entry(monomial).or_insert_with(BigRational::zero);
-            *entry += left_coefficient.clone() * right_coefficient.clone();
-            if entry.is_zero() {
-                product.remove(&monomial);
-            }
-        }
-    }
-    Ok(product)
-}
-
-/// Multiplies one determinant-DP term while enforcing the complete supported
-/// `SoS` expansion's practical monomial-work bound.
-fn multiply_polynomials_with_work_bound(
-    left: &Polynomial,
-    right: &Polynomial,
-    monomial_pair_products: &mut usize,
-) -> Option<Polynomial> {
-    let pair_products = left.len().checked_mul(right.len())?;
-    *monomial_pair_products = monomial_pair_products.checked_add(pair_products)?;
-    if *monomial_pair_products > MAX_SOS_MONOMIAL_PAIR_PRODUCTS {
-        return None;
-    }
-    multiply_polynomials(left, right).ok()
-}
-
-/// Returns the leading determinant sign, or `None` for malformed matrices or
-/// private inputs outside the complete D ≤ 6 subset/monomial work envelope.
-fn polynomial_determinant_leading_sign(matrix: &[Vec<Polynomial>]) -> Option<i32> {
-    let dimension = matrix.len();
-    if matrix.iter().any(|row| row.len() != dimension) {
-        return None;
-    }
-    if dimension == 0 {
-        return Some(1);
-    }
-    if dimension > MAX_SOS_MATRIX_DIMENSION {
-        return None;
-    }
-    let state_count = 1usize.checked_shl(u32::try_from(dimension).ok()?)?;
-    let transition_count = dimension.checked_mul(state_count / 2)?;
-    if transition_count > MAX_SOS_SUBSET_TRANSITIONS {
-        return None;
-    }
-
-    let mut monomial_pair_products = 0;
-    let mut partials = vec![None; state_count];
-    partials[0] = Some(constant_polynomial(1.0).ok()?);
-
-    for mask in 0usize..state_count {
-        let row = mask.count_ones() as usize;
-        if row >= dimension {
-            continue;
-        }
-        // Every predecessor has a smaller numeric mask, so all contributions
-        // are complete before this state is visited and the polynomial can be
-        // consumed instead of deep-cloned.
-        let Some(partial) = partials[mask].take() else {
-            continue;
-        };
-        for (column, entry) in matrix[row].iter().enumerate() {
-            if mask & (1 << column) != 0 {
-                continue;
-            }
-            let term =
-                multiply_polynomials_with_work_bound(&partial, entry, &mut monomial_pair_products)?;
-            let sign = if (mask >> (column + 1)).count_ones() % 2 == 0 {
-                1
-            } else {
-                -1
-            };
-            let next = mask | (1 << column);
-            partials[next] = Some(match partials[next].take() {
-                Some(existing) => add_polynomials(existing, term, sign),
-                None if sign > 0 => term,
-                None => add_polynomials(Polynomial::new(), term, -1),
-            });
-        }
-    }
-
-    let determinant = partials[state_count - 1].as_ref()?;
-    let coefficient = determinant.first_key_value()?.1;
-    Some(if coefficient.is_positive() { 1 } else { -1 })
+    ))
 }
 
 // =============================================================================
@@ -471,10 +422,38 @@ fn polynomial_determinant_leading_sign(matrix: &[Vec<Polynomial>]) -> Option<i32
 mod tests {
     use super::*;
     use crate::geometry::point::Point;
+    use la_stack::{LaError, PolynomialWork};
+    use std::{assert_matches, collections::BTreeMap};
 
     // =========================================================================
     // GENERIC HELPER FUNCTIONS
     // =========================================================================
+
+    /// Independent six-permutation expansion, without the subset-DP kernel.
+    fn permutation_sign_3(matrix: &[Vec<SparsePolynomial>]) -> Option<i32> {
+        let mut terms = BTreeMap::<u128, BigRational>::new();
+        for (columns, sign) in [
+            ([0, 1, 2], 1),
+            ([1, 2, 0], 1),
+            ([2, 0, 1], 1),
+            ([2, 1, 0], -1),
+            ([1, 0, 2], -1),
+            ([0, 2, 1], -1),
+        ] {
+            for (e0, c0) in matrix[0][columns[0]].terms() {
+                for (e1, c1) in matrix[1][columns[1]].terms() {
+                    for (e2, c2) in matrix[2][columns[2]].terms() {
+                        *terms.entry(e0 + e1 + e2).or_default() +=
+                            c0 * c1 * c2 * BigRational::from_integer(sign.into());
+                    }
+                }
+            }
+        }
+        terms
+            .values()
+            .find(|coefficient| !coefficient.is_zero())
+            .map(|coefficient| if coefficient.is_positive() { 1 } else { -1 })
+    }
 
     /// Build D+1 co-hyperplanar points (all with last coordinate = 0).
     ///
@@ -621,6 +600,103 @@ mod tests {
         let points = degenerate_orient_points::<6>();
         let sign = sos_orientation_sign(&points).unwrap();
         assert!(matches!(sign, -1 | 1));
+    }
+
+    #[test]
+    fn polynomial_adapter_preserves_cancellation_and_permutation_sign() {
+        let mut matrix: Vec<Vec<_>> = (0..3)
+            .map(|row| {
+                (0..3)
+                    .map(|col| coordinate_polynomial(1.0, row * 3 + col).unwrap())
+                    .collect()
+            })
+            .collect();
+        let expected = permutation_sign_3(&matrix);
+        assert!(expected.is_some());
+        assert_eq!(
+            polynomial_determinant_leading_sign(matrix.clone(), SOS_BUDGET).unwrap(),
+            expected
+        );
+        matrix.swap(0, 1);
+        assert_eq!(
+            polynomial_determinant_leading_sign(matrix.clone(), SOS_BUDGET).unwrap(),
+            expected.map(|sign| -sign)
+        );
+        assert_eq!(permutation_sign_3(&matrix), expected.map(|sign| -sign));
+        matrix[0] = matrix[1].clone();
+        assert_eq!(
+            polynomial_determinant_leading_sign(matrix, SOS_BUDGET).unwrap(),
+            None
+        );
+        // (1/3 + ε)(1/3 - ε) - (1/3)² = -ε² exactly.
+        let third = BigRational::new(1.into(), 3.into());
+        let plus = SparsePolynomial::try_from_terms([
+            (0, third.clone()),
+            (1, BigRational::from_integer(1.into())),
+        ])
+        .unwrap();
+        let minus = SparsePolynomial::try_from_terms([
+            (0, third.clone()),
+            (1, BigRational::from_integer((-1).into())),
+        ])
+        .unwrap();
+        let constant = SparsePolynomial::try_from_terms([(0, third)]).unwrap();
+        assert_eq!(
+            polynomial_determinant_leading_sign(
+                vec![vec![plus, constant.clone()], vec![constant, minus]],
+                SOS_BUDGET
+            )
+            .unwrap(),
+            Some(-1)
+        );
+    }
+
+    #[test]
+    fn polynomial_adapter_keeps_zero_budget_overflow_and_shape_distinct() {
+        let one = constant_polynomial(1.0).unwrap();
+        assert_eq!(
+            polynomial_determinant_leading_sign(vec![], SOS_BUDGET).unwrap(),
+            Some(1)
+        );
+        for (budget, work) in [
+            (
+                PolynomialDeterminantBudget {
+                    max_subset_transitions: 0,
+                    max_term_products: 1,
+                },
+                PolynomialWork::SubsetTransitions,
+            ),
+            (
+                PolynomialDeterminantBudget {
+                    max_subset_transitions: 1,
+                    max_term_products: 0,
+                },
+                PolynomialWork::TermProducts,
+            ),
+        ] {
+            assert_matches!(polynomial_determinant_leading_sign(vec![vec![one.clone()]], budget),
+                Err(CoordinateConversionError::LinearAlgebraFailure { source })
+                    if matches!(*source, LaError::PolynomialBudgetExceeded { work: actual, .. } if actual == work));
+        }
+        let huge =
+            SparsePolynomial::try_from_terms([(u128::MAX, BigRational::from_integer(1.into()))])
+                .unwrap();
+        let epsilon =
+            SparsePolynomial::try_from_terms([(1, BigRational::from_integer(1.into()))]).unwrap();
+        assert_matches!(polynomial_determinant_leading_sign(vec![vec![huge, SparsePolynomial::zero()], vec![SparsePolynomial::zero(), epsilon]], SOS_BUDGET),
+            Err(CoordinateConversionError::LinearAlgebraFailure { source })
+                if matches!(*source, LaError::PolynomialExponentOverflow { .. }));
+        assert_matches!(
+            polynomial_determinant_leading_sign(vec![vec![]], SOS_BUDGET),
+            Err(CoordinateConversionError::MatrixDimensionMismatch { .. })
+        );
+        assert_matches!(
+            polynomial_determinant_leading_sign(vec![vec![one; 9]; 9], SOS_BUDGET),
+            Err(CoordinateConversionError::UnsupportedMatrixDimension {
+                requested: 9,
+                max: 8
+            })
+        );
     }
 
     #[test]

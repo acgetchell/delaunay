@@ -19,9 +19,9 @@
 //! rounding only at a public coordinate boundary.
 //! Provisional intersection bases use backend LU, Gram construction, and
 //! checked dot products; their tolerance and exact certificate checks remain
-//! geometry policy. Rectangular rank selection, rational scalar expressions,
-//! and symbolic perturbation polynomials remain local because the backend's
-//! square-matrix and binary64 vector APIs do not represent those operations.
+//! geometry policy. The backend also owns rectangular column-basis selection,
+//! rational dot products, and sparse-polynomial determinants; geometry owns
+//! their admission rules and symbolic perturbation order.
 //!
 //! Fixed-size distances use [`la_stack::Vector::norm`], which can return a finite
 //! length even when its square overflows. Rounded squared quantities use
@@ -179,11 +179,9 @@ pub(crate) fn matrix_set<const D: usize>(
     m.set(row, column, value).map_err(Into::into)
 }
 
-/// Solve a runtime-sized finite `f64` system with exact fraction-free elimination.
-///
-/// The backend converts every IEEE 754 input to its exact rational value before
-/// applying Bareiss elimination, so this is an exact solve rather than a
-/// floating-point approximation.
+/// Solves original finite binary64 equations exactly, without first allocating
+/// dynamic rational rows. Shared-face constraints through D=8 need order eight;
+/// derived rational LP coefficients use their separate exact-input adapter.
 pub(crate) fn solve_exact_runtime_system(
     matrix: &[Vec<f64>],
     rhs: &[f64],
@@ -192,19 +190,30 @@ pub(crate) fn solve_exact_runtime_system(
     if matrix.len() != dimension || matrix.iter().any(|row| row.len() != dimension) {
         return None;
     }
-
+    if dimension == 8 {
+        return Some(solve_exact_f64_basis(Matrix::<8>::zero(), matrix, rhs));
+    }
     Some(try_with_la_stack_matrix!(dimension, |stack_matrix| {
-        for (row, values) in matrix.iter().enumerate() {
-            for (column, value) in values.iter().copied().enumerate() {
-                matrix_set(&mut stack_matrix, row, column, value)?;
-            }
-        }
-        let rhs_vector = LaVector::try_new(std::array::from_fn(|index| rhs[index]))?;
-        stack_matrix
-            .solve_exact(rhs_vector)
-            .map(|solution| solution.into_array().into_iter().collect())
-            .map_err(Into::into)
+        solve_exact_f64_basis(stack_matrix, matrix, rhs)
     }))
+}
+
+/// Adapts an admitted original-coordinate system to the exact binary64 solver.
+fn solve_exact_f64_basis<const N: usize>(
+    mut matrix: Matrix<N>,
+    rows: &[Vec<f64>],
+    rhs: &[f64],
+) -> Result<Vec<BigRational>, StackMatrixDispatchError> {
+    for (row, values) in rows.iter().enumerate() {
+        for (column, &value) in values.iter().enumerate() {
+            matrix_set(&mut matrix, row, column, value)?;
+        }
+    }
+    let rhs = LaVector::try_new(std::array::from_fn(|index| rhs[index]))?;
+    matrix
+        .solve_exact(rhs)
+        .map(|solution| solution.into_array().into_iter().collect())
+        .map_err(Into::into)
 }
 
 /// Converts one finite IEEE-754 value to the exact rational it represents.
@@ -290,6 +299,62 @@ mod tests {
         assert_eq!(
             solve_exact_runtime_system(&[vec![1.0], vec![0.0, 1.0]], &[1.0, 0.0]),
             None
+        );
+    }
+
+    #[test]
+    fn solve_exact_runtime_system_order_eight_preserves_rational_solution() {
+        // 3*x[i] + 3*x[i+1] = 2*i+3, with 3*x[7] = 8.
+        // Rotating the equations forces pivoting without changing x[i]=(i+1)/3.
+        let mut matrix = vec![vec![0.0; 8]; 8];
+        for (index, row) in matrix.iter_mut().enumerate() {
+            row[index] = 3.0;
+            if index + 1 < 8 {
+                row[index + 1] = 3.0;
+            }
+        }
+        let mut rhs = vec![3.0, 5.0, 7.0, 9.0, 11.0, 13.0, 15.0, 8.0];
+        matrix.rotate_left(1);
+        rhs.rotate_left(1);
+
+        let solution = solve_exact_runtime_system(&matrix, &rhs)
+            .expect("order eight is supported")
+            .expect("triangular equations remain invertible after row permutation");
+        let expected: Vec<_> = (1..=8)
+            .map(|numerator| BigRational::new(numerator.into(), 3.into()))
+            .collect();
+        assert_eq!(solution, expected);
+    }
+
+    #[test]
+    fn solve_exact_runtime_system_order_eight_retains_singularity_context() {
+        let mut matrix = vec![vec![0.0; 8]; 8];
+        for (index, row) in matrix.iter_mut().enumerate() {
+            row[index] = 1.0;
+        }
+        matrix[7] = matrix[0].clone();
+
+        assert_eq!(
+            solve_exact_runtime_system(&matrix, &[1.0; 8]),
+            Some(Err(StackMatrixDispatchError::La {
+                source: LaError::singular_exact(7),
+            }))
+        );
+    }
+
+    #[test]
+    fn solve_exact_runtime_system_order_eight_rejects_non_finite_coefficients() {
+        let mut matrix = vec![vec![0.0; 8]; 8];
+        for (index, row) in matrix.iter_mut().enumerate() {
+            row[index] = 1.0;
+        }
+        matrix[2][5] = f64::INFINITY;
+
+        assert_eq!(
+            solve_exact_runtime_system(&matrix, &[1.0; 8]),
+            Some(Err(StackMatrixDispatchError::La {
+                source: LaError::non_finite_input_matrix(2, 5),
+            }))
         );
     }
 

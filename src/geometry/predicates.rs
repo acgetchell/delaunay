@@ -106,63 +106,9 @@ pub(crate) fn circumsphere_coordinate_bounds<const D: usize>(
         rhs[row] = squared_norm.try_mul(&half).ok()?;
     }
 
-    let mut inverse_pivots = [Interval::ZERO; D];
-    for column in 0..D {
-        // Prefer the pivot furthest from zero. No tolerance can admit an
-        // interval containing zero: that would lose the enclosure guarantee.
-        let pivot_row = (column..D).max_by(|&left, &right| {
-            let separation = |entry: Interval| {
-                if entry.lower() > 0.0 {
-                    entry.lower()
-                } else if entry.upper() < 0.0 {
-                    -entry.upper()
-                } else {
-                    0.0
-                }
-            };
-            separation(matrix[left][column]).total_cmp(&separation(matrix[right][column]))
-        })?;
-        matrix.swap(column, pivot_row);
-        rhs.swap(column, pivot_row);
-        let pivot = matrix[column][column];
-        // The backend deliberately omits interval division. Enclose the inverse
-        // of this circumsphere pivot once for elimination and back substitution.
-        // Check even the last pivot, which has no elimination rows.
-        if pivot.contains(0.0) {
-            return None;
-        }
-        let inverse = Interval::try_new(
-            (1.0 / pivot.upper()).next_down(),
-            (1.0 / pivot.lower()).next_up(),
-        )
-        .ok()?;
-        inverse_pivots[column] = inverse;
-        let pivot_entries = matrix[column];
-        for row in column + 1..D {
-            let factor = matrix[row][column].try_mul(&inverse).ok()?;
-            for (entry, &pivot_entry) in matrix[row].iter_mut().zip(&pivot_entries).skip(column + 1)
-            {
-                *entry = entry
-                    .try_add(&factor.try_mul(&pivot_entry).ok()?.negate())
-                    .ok()?;
-            }
-            rhs[row] = rhs[row]
-                .try_add(&factor.try_mul(&rhs[column]).ok()?.negate())
-                .ok()?;
-            matrix[row][column] = Interval::ZERO;
-        }
-    }
-
-    let mut center = [Interval::ZERO; D];
-    for row in (0..D).rev() {
-        let mut residual = rhs[row];
-        for (column, &coordinate) in center.iter().enumerate().skip(row + 1) {
-            residual = residual
-                .try_add(&matrix[row][column].try_mul(&coordinate).ok()?.negate())
-                .ok()?;
-        }
-        center[row] = residual.try_mul(&inverse_pivots[row]).ok()?;
-    }
+    // Both an uncertain pivot and exhausted finite range decline the broad
+    // phase. Neither outcome proves geometric singularity or excludes a point.
+    let center = IntervalMatrix::from_rows(matrix).solve(&rhs).ok()?;
     let mut squared_radius = Interval::ZERO;
     for coordinate in center {
         squared_radius = squared_radius
@@ -1159,12 +1105,43 @@ mod tests {
         };
     }
 
+    /// Checks entire sphere boxes against an analytic exact-rational sphere,
+    /// including finite squared norms near underflow and overflow.
+    fn assert_analytic_sphere_enclosure<const D: usize>() {
+        for exponent in [-500, -50, 0, 50, 500] {
+            let scale = 2.0_f64.powi(exponent);
+            let origin = [-0.5 * scale; D];
+            let mut simplex = vec![Point::try_new(origin).unwrap()];
+            for axis in 0..D {
+                let mut point = origin;
+                point[axis] += scale;
+                simplex.push(Point::try_new(point).unwrap());
+            }
+            let bounds = circumsphere_coordinate_bounds(&simplex)
+                .expect("well-conditioned axis simplex has a finite sphere enclosure");
+            let half_scale = rational_from_f64(0.5 * scale).unwrap();
+            let radius_squared =
+                &half_scale * &half_scale * la_stack::BigRational::from_integer(D.into());
+            for [lower, upper] in bounds {
+                assert!(lower < 0.0 && upper > 0.0);
+                let lower = rational_from_f64(lower).unwrap();
+                let upper = rational_from_f64(upper).unwrap();
+                assert!(&lower * &lower >= radius_squared);
+                assert!(&upper * &upper >= radius_squared);
+            }
+        }
+    }
+
     macro_rules! gen_circumsphere_bounds_tests {
         ($dimension:literal) => {
             pastey::paste! {
                 #[test]
                 fn [<circumsphere_bounds_preserve_exact_classification_ $dimension d>]() {
                     assert_circumsphere_bounds_agree_with_predicate::<$dimension>();
+                }
+                #[test]
+                fn [<circumsphere_bounds_enclose_analytic_sphere_ $dimension d>]() {
+                    assert_analytic_sphere_enclosure::<$dimension>();
                 }
             }
         };
@@ -1189,6 +1166,60 @@ mod tests {
         ];
         assert!(circumsphere_coordinate_bounds(&overflowing).is_none());
         assert!(circumsphere_coordinate_bounds(&degenerate[..2]).is_none());
+    }
+
+    #[test]
+    fn circumsphere_bounds_fall_back_on_uncertain_and_exhausted_solves() {
+        // Exact division by one lets the upstream solver resolve this tiny
+        // pivot. Its analytic center is (-epsilon/2, 1+epsilon/2).
+        let cancellation = [
+            Point::try_new([0.0, 0.0]).unwrap(),
+            Point::try_new([1.0, 1.0]).unwrap(),
+            Point::try_new([1.0, 1.0 + f64::EPSILON]).unwrap(),
+        ];
+        let bounds = circumsphere_coordinate_bounds(&cancellation).unwrap();
+        let half_epsilon = rational_from_f64(f64::EPSILON / 2.0).unwrap();
+        let center = [
+            -half_epsilon.clone(),
+            rational_from_f64(1.0).unwrap() + half_epsilon,
+        ];
+        let radius_squared = &center[0] * &center[0] + &center[1] * &center[1];
+        for ([lower, upper], coordinate) in bounds.into_iter().zip(center) {
+            let low_gap = &coordinate - rational_from_f64(lower).unwrap();
+            let high_gap = rational_from_f64(upper).unwrap() - coordinate;
+            assert!(low_gap >= rational_from_f64(0.0).unwrap());
+            assert!(high_gap >= rational_from_f64(0.0).unwrap());
+            assert!(&low_gap * &low_gap >= radius_squared);
+            assert!(&high_gap * &high_gap >= radius_squared);
+        }
+        // Stored 1/3 is not exact: 3 * fl(1/3) - 1 = -2^-54.
+        // Interval division by three cannot certify this nonzero final pivot.
+        let uncertain = [
+            Point::try_new([0.0, 0.0]).unwrap(),
+            Point::try_new([3.0, 1.0]).unwrap(),
+            Point::try_new([1.0, 1.0 / 3.0]).unwrap(),
+        ];
+        assert!(circumsphere_coordinate_bounds(&uncertain).is_none());
+        assert_ne!(
+            simplex_orientation(&uncertain).unwrap(),
+            Orientation::DEGENERATE
+        );
+        // The relative equations have finite coefficients and RHS; the exact
+        // center's second coordinate exceeds binary64's finite range.
+        let exhausted = [
+            Point::try_new([0.0, 0.0]).unwrap(),
+            Point::try_new([1.0, 0.0]).unwrap(),
+            Point::try_new([2.0, 1.0e-310]).unwrap(),
+        ];
+        assert!(circumsphere_coordinate_bounds(&exhausted).is_none());
+        let tiny = [
+            Point::try_new([0.0]).unwrap(),
+            Point::try_new([f64::from_bits(1)]).unwrap(),
+        ];
+        // In one dimension the exact sphere box is the segment itself, even
+        // though its center is half the smallest representable subnormal.
+        let [[lower, upper]] = circumsphere_coordinate_bounds(&tiny).unwrap();
+        assert!(lower <= 0.0 && upper >= f64::from_bits(1));
     }
 
     /// Populate a test matrix while keeping production matrix errors loud.

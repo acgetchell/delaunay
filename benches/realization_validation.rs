@@ -15,7 +15,7 @@ use delaunay::prelude::construction::{DelaunayTriangulation, DelaunayTriangulati
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{
     AdaptiveKernel, CoordinateRange, ExactPredicates, LabeledSimplexRealization,
-    validate_simplex_intersection,
+    SimplexIntersectionFailure, validate_simplex_intersection,
 };
 use delaunay::try_vertices_from_points;
 
@@ -125,6 +125,52 @@ fn bench_realization_narrow_phase(c: &mut Criterion) {
     group.finish();
 }
 
+/// Exercises the exact LP with coincident geometry and disjoint label sets.
+#[expect(
+    clippy::result_large_err,
+    reason = "Criterion consumes the complete diagnostic result, preserving the before/after timing boundary"
+)]
+fn register_overlap<const D: usize>(group: &mut BenchmarkGroup<'_, WallTime>) {
+    let coordinates = standard_simplex_coordinates::<D>();
+    let first = LabeledSimplexRealization::try_new(0..=D, coordinates.clone()).or_abort();
+    let second = LabeledSimplexRealization::try_new(D + 1..2 * D + 2, coordinates).or_abort();
+    if !matches!(
+        validate_simplex_intersection(&first, &second),
+        Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { .. })
+    ) {
+        abort_benchmark(format_args!("coincident {D}D simplices must overlap"));
+    }
+    group.bench_function(format!("coincident/{D}d"), |b| {
+        b.iter(|| {
+            black_box(validate_simplex_intersection(
+                black_box(&first),
+                black_box(&second),
+            ))
+        });
+    });
+}
+
+/// Measures exact LP certificates separately from inexpensive separator cases.
+fn bench_realization_lp(c: &mut Criterion) {
+    let mut group = c.benchmark_group("realization_lp");
+    register_overlap::<2>(&mut group);
+    register_overlap::<3>(&mut group);
+    register_overlap::<4>(&mut group);
+    register_overlap::<5>(&mut group);
+    register_overlap::<6>(&mut group);
+    group.finish();
+}
+
+/// Standalone geometry beyond the construction/kernel support envelope.
+fn bench_realization_high_dimension(c: &mut Criterion) {
+    let mut group = c.benchmark_group("realization_high_dimension");
+    register_overlap::<7>(&mut group);
+    register_overlap::<8>(&mut group);
+    register_valid_narrow_phase::<7>(&mut group, "shared_face_boundary", 6, 1.0);
+    register_valid_narrow_phase::<8>(&mut group, "shared_face_boundary", 7, 1.0);
+    group.finish();
+}
+
 /// Builds one deterministic triangulation that passes Level 4 validation.
 fn realistic_triangulation<const D: usize>(
     vertex_count: usize,
@@ -193,6 +239,8 @@ fn bench_realization_validation(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_realization_narrow_phase,
+    bench_realization_lp,
+    bench_realization_high_dimension,
     bench_realization_validation
 );
 criterion_main!(benches);

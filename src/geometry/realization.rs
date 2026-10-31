@@ -46,7 +46,7 @@ use crate::geometry::periodic::ToroidalDomain;
 use crate::geometry::point::{Point, ValidatedCoordinates};
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
-use crate::geometry::traits::coordinate::InvalidCoordinateValue;
+use crate::geometry::traits::coordinate::{CoordinateConversionError, InvalidCoordinateValue};
 use crate::geometry::util::simplex_lp::{
     IntersectionLinearProgramResult, coordinates_are_identical,
     intersection_via_legacy_active_sets, intersection_via_linear_program,
@@ -335,7 +335,7 @@ pub struct SimplexIntersectionWitness<L> {
 }
 
 /// Failure modes for exact simplex-intersection validation.
-#[derive(Clone, Debug, Error, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum SimplexIntersectionFailure<L> {
     /// Exact intersection certification requires a matrix larger than the backend supports.
@@ -351,6 +351,19 @@ pub enum SimplexIntersectionFailure<L> {
     /// The first simplex basis is singular, so barycentric coordinates are undefined.
     #[error("simplex barycentric basis is singular")]
     SingularBarycentricBasis,
+    /// Exact certification failed for a reason other than a singular candidate.
+    #[error("exact simplex-intersection solver failed: {source}")]
+    SolverFailed {
+        /// Typed backend diagnostic; no geometric classification was made.
+        #[source]
+        source: CoordinateConversionError,
+    },
+    /// Enumerating all candidate vertices exceeded the explicit work limit.
+    #[error("simplex-intersection active-set budget of {limit} candidates exhausted")]
+    ActiveSetBudgetExceeded {
+        /// Maximum number of candidate systems permitted.
+        limit: usize,
+    },
     /// The simplices intersect at a point involving non-shared vertices.
     #[error("simplices intersect outside their shared face")]
     #[non_exhaustive]
@@ -526,12 +539,18 @@ pub fn periodic_simplex_span<L, const D: usize>(
 /// This is the pure geometric core of Level 4 overlap validation. It uses
 /// exact rational barycentric arithmetic after coordinates have been parsed as
 /// finite f64 values. Exact intersection certification currently supports
-/// dimensions through 7; extending the exact solver dispatch is tracked in
-/// [issue #659](https://github.com/acgetchell/delaunay/issues/659).
+/// dimensions through 8, using exact systems through order ten. This standalone
+/// API does not extend point-driven construction, `ExactPredicates`, or complete
+/// `SoS` support beyond their separate D ≤ 6 contracts. Provisional floating-point
+/// bases require exact certification; the fallback visits at most 50,000 active
+/// sets (the complete D=8 envelope has 43,758).
 ///
 /// # Errors
 ///
-/// Returns [`SimplexIntersectionFailure::UnsupportedDimension`] above dimension 7.
+/// Returns [`SimplexIntersectionFailure::UnsupportedDimension`] above dimension 8.
+/// Backend and work-limit failures remain explicit through
+/// [`SimplexIntersectionFailure::SolverFailed`] and
+/// [`SimplexIntersectionFailure::ActiveSetBudgetExceeded`].
 /// Returns [`SimplexIntersectionFailure::SingularBarycentricBasis`] when the
 /// first simplex cannot define barycentric coordinates, or
 /// [`SimplexIntersectionFailure::IntersectionOutsideSharedFace`] when the
@@ -569,18 +588,27 @@ pub fn validate_simplex_intersection<L, const D: usize>(
 where
     L: Clone + Eq,
 {
-    // Active-set certification needs order D + 1. The rational matrix dispatcher
-    // supports orders through 8; an unsupported solve must never look infeasible.
-    if D > 7 {
+    // Barycentric, active-set and LP solves need orders D, D+1 and D+2.
+    if D > 8 {
         return Err(SimplexIntersectionFailure::UnsupportedDimension {
             dimension: D,
-            max: 7,
+            max: 8,
         });
     }
     let shared_labels = shared_labels(first, second);
     let basis_orientation = realization_orientation(first);
     if basis_orientation == Some(Orientation::DEGENERATE) {
         return Err(SimplexIntersectionFailure::SingularBarycentricBasis);
+    }
+    if basis_orientation.is_none() {
+        // Above the orientation predicate's envelope, establish exact basis
+        // admissibility before any geometric separator can accept the pair.
+        return intersection_result(intersection_via_linear_program(
+            first,
+            second,
+            &shared_labels,
+            true,
+        ));
     }
     let second_orientation = realization_orientation(second);
     if second_orientation == Some(Orientation::DEGENERATE) {
@@ -607,7 +635,7 @@ where
         first,
         second,
         &shared_labels,
-        basis_orientation.is_none(),
+        false,
     ))
 }
 
@@ -622,6 +650,14 @@ fn intersection_result<L>(
         }
         IntersectionLinearProgramResult::SingularBarycentricBasis => {
             Err(SimplexIntersectionFailure::SingularBarycentricBasis)
+        }
+        IntersectionLinearProgramResult::SolverFailed { source } => {
+            Err(SimplexIntersectionFailure::SolverFailed {
+                source: (*source).into(),
+            })
+        }
+        IntersectionLinearProgramResult::ActiveSetBudgetExceeded { limit } => {
+            Err(SimplexIntersectionFailure::ActiveSetBudgetExceeded { limit })
         }
     }
 }
@@ -755,6 +791,29 @@ mod tests {
 
     #[derive(Clone)]
     struct CloneOnlyLabel;
+
+    #[test]
+    fn intersection_result_preserves_solver_failure_and_budget() {
+        use crate::geometry::matrix::{LaError, StackMatrixDispatchError};
+
+        let source = LaError::non_finite_input_matrix(2, 5);
+        assert_eq!(
+            intersection_result::<u8>(IntersectionLinearProgramResult::SolverFailed {
+                source: Box::new(StackMatrixDispatchError::La { source }),
+            }),
+            Err(SimplexIntersectionFailure::SolverFailed {
+                source: CoordinateConversionError::LinearAlgebraFailure {
+                    source: Box::new(source),
+                },
+            })
+        );
+        assert_eq!(
+            intersection_result::<u8>(IntersectionLinearProgramResult::ActiveSetBudgetExceeded {
+                limit: 17,
+            }),
+            Err(SimplexIntersectionFailure::ActiveSetBudgetExceeded { limit: 17 })
+        );
+    }
 
     #[test]
     fn labeled_simplex_realization_rejects_label_coordinate_length_mismatch() {
@@ -973,29 +1032,29 @@ mod tests {
     }
 
     #[test]
-    fn eight_dimensional_intersections_fail_closed() {
-        let mut coords = vec![[0.0; 8]];
-        for axis in 0..8 {
-            let mut point = [0.0; 8];
+    fn nine_dimensional_intersections_fail_closed() {
+        let mut coords = vec![[0.0; 9]];
+        for axis in 0..9 {
+            let mut point = [0.0; 9];
             point[axis] = 1.0;
             coords.push(point);
         }
-        let first = LabeledSimplexRealization::try_new(0..9, coords.clone()).unwrap();
-        let second = LabeledSimplexRealization::try_new(9..18, coords).unwrap();
+        let first = LabeledSimplexRealization::try_new(0..10, coords.clone()).unwrap();
+        let second = LabeledSimplexRealization::try_new(10..20, coords).unwrap();
         // The two labeled simplices coincide geometrically, with no shared face.
         assert_matches!(
             validate_simplex_intersection(&first, &second),
             Err(SimplexIntersectionFailure::UnsupportedDimension {
-                dimension: 8,
-                max: 7
+                dimension: 9,
+                max: 8
             })
         );
         // Even a shared-face shortcut must respect the advertised support bound.
         assert_matches!(
             validate_simplex_intersection(&first, &first),
             Err(SimplexIntersectionFailure::UnsupportedDimension {
-                dimension: 8,
-                max: 7
+                dimension: 9,
+                max: 8
             })
         );
     }

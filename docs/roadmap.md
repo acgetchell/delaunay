@@ -133,10 +133,6 @@ schedule. Scientific correctness and supporting evidence determine readiness.
 - **Construction rollback:** replace per-insertion topology snapshots with a
   narrower undo log while preserving failure atomicity
   ([#510](https://github.com/acgetchell/delaunay/issues/510)).
-- **Exact intersection validation:** extend the separate simplex-intersection
-  adapter through 8D, including the larger exact systems that geometry requires
-  ([#659](https://github.com/acgetchell/delaunay/issues/659)). This does not
-  itself extend the Delaunay kernel or construction dimension contract.
 - **High-dimensional hull buffers:** investigate allocation beyond D=7
   ([#106](https://github.com/acgetchell/delaunay/issues/106)).
 - **Public builder polish:** use downstream experience before finalizing the
