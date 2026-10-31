@@ -446,7 +446,7 @@ realizations, and the topology-only manifold / PL-manifold validation logic in t
 - Dey, T. K., and Wang, Y. *Computational Topology for Data Analysis*. Cambridge University Press, 2022.
 - Edelsbrunner, H., and Harer, J. *Computational Topology: An Introduction*. AMS, 2010.
 - Hatcher, A. *Algebraic Topology*. Cambridge University Press, 2002.
-- <a id="lickorish1999"></a> Lickorish, W. B. R. "Simplicial Moves on Complexes and Manifolds."
+- <a id="lickorish1999"></a> Lickorish, W. B. R. "Simplicial Moves on Complexes and Manifolds." <!-- markdownlint-disable-line MD033 -->
   *Geometry & Topology Monographs* 2 (1999): 299-320.
   [§2](https://arxiv.org/html/math/9911256v1) defines simplex/complex joins,
   links, closed stars, and the empty-simplex convention; Definition 2.2 gives

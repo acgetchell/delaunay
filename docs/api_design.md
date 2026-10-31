@@ -252,13 +252,15 @@ The canonical public workflow is fluent and staged: parse a raw
 proposal through the proposal object. This keeps mutation explicit while
 preserving owner/generation evidence between stages.
 
+The k=2 and k=3 steps below are schematic: supply admissible interior facet
+and ridge handles from a larger triangulation. The single-simplex setup only
+demonstrates the k=1 round trip.
+
 ```rust
 use delaunay::prelude::construction::{
     DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::pachner::{
-    EdgeKey, FacetHandle, PachnerMove, PachnerMoves, TriangleHandle,
-};
+use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
 
 fn main() -> DelaunayResult<()> {
     // Start with a valid triangulation
@@ -295,7 +297,7 @@ fn main() -> DelaunayResult<()> {
         .attempt_on(&mut dt)?;
 
     // k=2 inverse: Flip from an edge star (D simplices ↔ 2 simplices)
-    let edge = EdgeKey::try_new(info.inserted_face_vertices[0], info.inserted_face_vertices[1])?;
+    let edge = dt.edge_key(info.inserted_face_vertices[0], info.inserted_face_vertices[1])?;
     dt.propose_pachner(PachnerMove::K2Inverse { edge })?
         .attempt_on(&mut dt)?;
 
@@ -305,13 +307,10 @@ fn main() -> DelaunayResult<()> {
         .propose_pachner(PachnerMove::K3 { ridge })?
         .attempt_on(&mut dt)?;
 
-    // k=3 inverse: Flip from a triangle star (D-1 simplices ↔ 3 simplices)
-    let triangle = TriangleHandle::try_new(
-        info.inserted_face_vertices[0],
-        info.inserted_face_vertices[1],
-        info.inserted_face_vertices[2],
-    )?;
-    dt.propose_pachner(PachnerMove::K3Inverse { triangle })?
+    // In 3D, K3 is a 3→2 move. Reverse it with K2 on the inserted triangle,
+    // which is a facet shared by the two new tetrahedra.
+    let facet = /* FacetHandle for info.inserted_face_vertices */;
+    dt.propose_pachner(PachnerMove::K2 { facet })?
         .attempt_on(&mut dt)?;
     Ok(())
 }
@@ -357,8 +356,12 @@ D-simplices are listed. The admissible replacement is `A ⋆ ∂B` ↔ `∂A ⋆
   - Inserted face: a triangle (2-simplex)
 
 - **Inverse (`PachnerMove::K3Inverse`)**: Flip from a triangle star
+  - Valid for D ≥ 4; D < 4 returns `FlipError::UnsupportedDimension`
   - Requires a triangle with D-1 incident D-simplices and the admissible link pattern
   - Replaces D-1 simplices with 3 simplices
+
+In 3D, a triangle is a facet: reverse a `K3` move with `K2` on the inserted
+triangular facet. `K3Inverse` is the dedicated triangle-star operation for D ≥ 4.
 
 ### Key Characteristics
 
