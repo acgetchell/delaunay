@@ -344,6 +344,7 @@ D-simplices are listed. The admissible replacement is `A ⋆ ∂B` ↔ `∂A ⋆
   - Inserted face: an edge (1-simplex)
 
 - **Inverse (`PachnerMove::K2Inverse`)**: Flip from an edge star
+  - Valid for D ≥ 3; D < 3 returns `FlipError::UnsupportedDimension`
   - Requires an edge with D incident D-simplices and the admissible link pattern
   - Replaces D simplices with 2 simplices
 
