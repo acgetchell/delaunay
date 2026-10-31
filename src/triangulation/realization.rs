@@ -284,6 +284,21 @@ pub enum TriangulationRealizationValidationError {
         max: usize,
     },
 
+    /// The exact intersection backend could not complete certification.
+    #[error("exact intersection solver failed: {source}")]
+    IntersectionSolverFailed {
+        /// Original backend diagnostic, retained without stringification.
+        #[source]
+        source: CoordinateConversionError,
+    },
+
+    /// The intersection fallback exhausted its candidate-system budget.
+    #[error("intersection active-set budget of {limit} candidates exhausted")]
+    IntersectionBudgetExceeded {
+        /// Maximum number of candidate systems permitted.
+        limit: usize,
+    },
+
     /// Exact rational barycentric construction found a singular simplex basis.
     #[error(
         "simplex {simplex_uuid} (key {simplex_key:?}) has a singular barycentric basis in dimension {dimension}"
@@ -415,6 +430,10 @@ pub enum TriangulationRealizationValidationErrorKind {
     PredicateFailed,
     /// The coordinate dimension exceeds exact intersection support.
     UnsupportedIntersectionDimension,
+    /// Exact intersection solving failed without a geometric classification.
+    IntersectionSolverFailed,
+    /// Exact intersection enumeration did not finish within its work limit.
+    IntersectionBudgetExceeded,
     /// Exact barycentric coordinates could not be computed.
     SingularBarycentricBasis,
     /// Two simplices overlap outside their shared face.
@@ -463,6 +482,12 @@ impl From<&TriangulationRealizationValidationError>
             TriangulationRealizationValidationError::UnsupportedIntersectionDimension {
                 ..
             } => Self::UnsupportedIntersectionDimension,
+            TriangulationRealizationValidationError::IntersectionSolverFailed { .. } => {
+                Self::IntersectionSolverFailed
+            }
+            TriangulationRealizationValidationError::IntersectionBudgetExceeded { .. } => {
+                Self::IntersectionBudgetExceeded
+            }
             TriangulationRealizationValidationError::SingularBarycentricBasis { .. } => {
                 Self::SingularBarycentricBasis
             }
@@ -1705,6 +1730,12 @@ fn validate_simplex_pair_intersection<const D: usize>(
                 dimension: D,
             },
         ),
+        Err(SimplexIntersectionFailure::SolverFailed { source }) => {
+            Err(TriangulationRealizationValidationError::IntersectionSolverFailed { source })
+        }
+        Err(SimplexIntersectionFailure::ActiveSetBudgetExceeded { limit }) => {
+            Err(TriangulationRealizationValidationError::IntersectionBudgetExceeded { limit })
+        }
         Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { witness, .. }) => {
             let shared_vertices = realized_vertex_keys(&witness.shared);
             let first_only_witness_vertices = realized_vertex_keys(&witness.first_only_witness);
@@ -2153,25 +2184,25 @@ mod tests {
 
     #[test]
     fn unsupported_intersection_dimension_remains_typed_through_validation_layers() {
-        let mut coords = vec![[0.0; 8]];
-        for axis in 0..8 {
-            let mut point = [0.0; 8];
+        let mut coords = vec![[0.0; 9]];
+        for axis in 0..9 {
+            let mut point = [0.0; 9];
             point[axis] = 1.0;
             coords.push(point);
         }
-        // Test the private geometry adapter directly: an 8D simplex exceeds
+        // Test the private geometry adapter directly: a 9D simplex exceeds
         // the TDS owner's supported arity. Distinct labels with identical
         // geometry intersect in their complete interiors.
-        let realized = [1_u64, 10].map(|first_key| {
-            let vertex_keys: SimplexVertexKeyBuffer = (first_key..first_key + 9)
+        let realized = [1_u64, 11].map(|first_key| {
+            let vertex_keys: SimplexVertexKeyBuffer = (first_key..first_key + 10)
                 .map(|index| VertexKey::from(slotmap::KeyData::from_ffi(index)))
                 .collect();
-            let vertex_uuids = (first_key..first_key + 9)
+            let vertex_uuids = (first_key..first_key + 10)
                 .map(|index| Uuid::from_u128(u128::from(index)))
                 .collect();
             let labels = vertex_keys.iter().map(|&key| RealizedVertexIdentity {
                 key,
-                offset: [0_i64; 8],
+                offset: [0_i64; 9],
             });
             let realization =
                 LabeledSimplexRealization::try_new(labels, coords.iter().copied()).unwrap();
@@ -2187,8 +2218,8 @@ mod tests {
         assert_matches!(
             error,
             TriangulationRealizationValidationError::UnsupportedIntersectionDimension {
-                dimension: 8,
-                max: 7,
+                dimension: 9,
+                max: 8,
             }
         );
         assert_realization_error_kind(
@@ -2207,8 +2238,8 @@ mod tests {
                 if matches!(
                     source.as_ref(),
                     TriangulationRealizationValidationError::UnsupportedIntersectionDimension {
-                        dimension: 8,
-                        max: 7,
+                        dimension: 9,
+                        max: 8,
                     }
                 )
         );

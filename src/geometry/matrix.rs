@@ -179,11 +179,9 @@ pub(crate) fn matrix_set<const D: usize>(
     m.set(row, column, value).map_err(Into::into)
 }
 
-/// Solve a runtime-sized finite `f64` system with exact fraction-free elimination.
-///
-/// The backend converts every IEEE 754 input to its exact rational value before
-/// applying Bareiss elimination, so this is an exact solve rather than a
-/// floating-point approximation.
+/// Solves original finite binary64 equations exactly, without first allocating
+/// dynamic rational rows. Shared-face constraints through D=8 need order eight;
+/// derived rational LP coefficients use their separate exact-input adapter.
 pub(crate) fn solve_exact_runtime_system(
     matrix: &[Vec<f64>],
     rhs: &[f64],
@@ -192,19 +190,30 @@ pub(crate) fn solve_exact_runtime_system(
     if matrix.len() != dimension || matrix.iter().any(|row| row.len() != dimension) {
         return None;
     }
-
+    if dimension == 8 {
+        return Some(solve_exact_f64_basis(Matrix::<8>::zero(), matrix, rhs));
+    }
     Some(try_with_la_stack_matrix!(dimension, |stack_matrix| {
-        for (row, values) in matrix.iter().enumerate() {
-            for (column, value) in values.iter().copied().enumerate() {
-                matrix_set(&mut stack_matrix, row, column, value)?;
-            }
-        }
-        let rhs_vector = LaVector::try_new(std::array::from_fn(|index| rhs[index]))?;
-        stack_matrix
-            .solve_exact(rhs_vector)
-            .map(|solution| solution.into_array().into_iter().collect())
-            .map_err(Into::into)
+        solve_exact_f64_basis(stack_matrix, matrix, rhs)
     }))
+}
+
+/// Adapts an admitted original-coordinate system to the exact binary64 solver.
+fn solve_exact_f64_basis<const N: usize>(
+    mut matrix: Matrix<N>,
+    rows: &[Vec<f64>],
+    rhs: &[f64],
+) -> Result<Vec<BigRational>, StackMatrixDispatchError> {
+    for (row, values) in rows.iter().enumerate() {
+        for (column, &value) in values.iter().enumerate() {
+            matrix_set(&mut matrix, row, column, value)?;
+        }
+    }
+    let rhs = LaVector::try_new(std::array::from_fn(|index| rhs[index]))?;
+    matrix
+        .solve_exact(rhs)
+        .map(|solution| solution.into_array().into_iter().collect())
+        .map_err(Into::into)
 }
 
 /// Converts one finite IEEE-754 value to the exact rational it represents.

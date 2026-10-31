@@ -6,17 +6,22 @@
 
 #![forbid(unsafe_code)]
 
-use core::array::from_fn;
+use core::{array::from_fn, ops::ControlFlow};
 
-use la_stack::{BigInt, BigRational, FromPrimitive, MAX_RATIONAL_MATRIX_DISPATCH_DIM, Signed};
+use la_stack::{BigInt, BigRational, FromPrimitive, Signed, column_basis, rational_dot};
 
 use crate::geometry::matrix::{
-    ExactF64Conversion, Interval, LaError, LaVector, Matrix, RationalVector, Tolerance,
-    gram_matrix, solve_exact_runtime_system,
+    ExactF64Conversion, Interval, LaError, LaVector, Matrix, RationalMatrix, RationalVector,
+    StackMatrixDispatchError, Tolerance, gram_matrix, solve_exact_runtime_system,
 };
 use crate::geometry::realization::{
     LabeledSimplexRealization, SimplexIntersectionWitness, SimplexRealizationBuffer,
 };
+
+/// Complete LP support for standalone simplex intersections through D=8.
+const MAX_LP_BASIS_DIMENSION: usize = 10;
+/// Complete active-set enumeration through D=8, with finite private-input work.
+const MAX_ACTIVE_SETS: usize = 50_000;
 
 /// Tries cheap candidate separators in the normal space of one shared face.
 pub(in crate::geometry) fn shared_face_fast_confinement<L, const D: usize>(
@@ -205,6 +210,24 @@ pub(in crate::geometry) enum IntersectionLinearProgramResult<L> {
     Invalid(SimplexIntersectionWitness<L>),
     /// The first simplex cannot define a barycentric basis.
     SingularBarycentricBasis,
+    /// A backend failure must never certify an empty intersection.
+    SolverFailed {
+        source: Box<StackMatrixDispatchError>,
+    },
+    /// An incomplete active-set search cannot certify validity.
+    ActiveSetBudgetExceeded { limit: usize },
+}
+
+/// Keeps proven singularity distinct from an unavailable exact solve.
+fn barycentric_failure<L>(source: StackMatrixDispatchError) -> IntersectionLinearProgramResult<L> {
+    match source {
+        StackMatrixDispatchError::La {
+            source: LaError::Singular { .. },
+        } => IntersectionLinearProgramResult::SingularBarycentricBasis,
+        source => IntersectionLinearProgramResult::SolverFailed {
+            source: Box::new(source),
+        },
+    }
 }
 
 /// Floating-point form used only to choose provisional revised-simplex bases.
@@ -290,20 +313,53 @@ where
     L: Clone + Eq,
 {
     let precomputed_barycentric = if verify_barycentric_basis {
-        let Some(coordinates) = barycentric_coordinates_of_vertices(second, first) else {
-            return IntersectionLinearProgramResult::SingularBarycentricBasis;
+        let coordinates = match barycentric_coordinates_of_vertices(second, first) {
+            Ok(coordinates) => coordinates,
+            Err(source) => return barycentric_failure(source),
         };
         Some(coordinates)
     } else {
         None
     };
+    if verify_barycentric_basis {
+        match barycentric_coordinates(&second.coordinates()[0], second) {
+            Ok(_) => {}
+            Err(StackMatrixDispatchError::La {
+                source: LaError::Singular { .. },
+            }) => {
+                // Preserve label-level witnesses for collapsed second simplices,
+                // just as the lower-dimensional orientation check does.
+                return intersection_via_active_sets_impl(
+                    first,
+                    second,
+                    shared_labels,
+                    precomputed_barycentric.as_deref(),
+                    false,
+                );
+            }
+            Err(source) => return barycentric_failure(source),
+        }
+    }
+    solve_intersection_program(
+        first,
+        second,
+        shared_labels,
+        precomputed_barycentric.as_deref(),
+    )
+}
+
+/// Tries certified provisional separators before exact Phase I/II optimization.
+fn solve_intersection_program<L, const D: usize>(
+    first: &LabeledSimplexRealization<L, D>,
+    second: &LabeledSimplexRealization<L, D>,
+    shared_labels: &[L],
+    precomputed_barycentric: Option<&[Vec<BigRational>]>,
+) -> IntersectionLinearProgramResult<L>
+where
+    L: Clone + Eq,
+{
     let Some(program) = provisional_intersection_program(first, second, shared_labels) else {
-        return intersection_via_active_sets(
-            first,
-            second,
-            shared_labels,
-            precomputed_barycentric.as_deref(),
-        );
+        return intersection_via_active_sets(first, second, shared_labels, precomputed_barycentric);
     };
     let ProvisionalIntersectionProgram {
         matrix: float_matrix,
@@ -368,7 +424,7 @@ where
                     first,
                     second,
                     shared_labels,
-                    precomputed_barycentric.as_deref(),
+                    precomputed_barycentric,
                 );
             }
             IntersectionLinearProgramResult::Invalid(SimplexIntersectionWitness {
@@ -377,12 +433,9 @@ where
                 second_only_witness,
             })
         }
-        ExactLinearProgramResult::Failed => intersection_via_active_sets(
-            first,
-            second,
-            shared_labels,
-            precomputed_barycentric.as_deref(),
-        ),
+        ExactLinearProgramResult::Failed => {
+            intersection_via_active_sets(first, second, shared_labels, precomputed_barycentric)
+        }
     }
 }
 
@@ -430,8 +483,9 @@ where
     let second_vertices_in_first = if let Some(coordinates) = precomputed_barycentric {
         coordinates
     } else {
-        let Some(coordinates) = barycentric_coordinates_of_vertices(second, first) else {
-            return IntersectionLinearProgramResult::SingularBarycentricBasis;
+        let coordinates = match barycentric_coordinates_of_vertices(second, first) {
+            Ok(coordinates) => coordinates,
+            Err(source) => return barycentric_failure(source),
         };
         computed_barycentric = coordinates;
         &computed_barycentric
@@ -447,21 +501,33 @@ where
         return IntersectionLinearProgramResult::Valid;
     }
 
-    for beta in intersection_polytope_vertices(second_vertices_in_first) {
-        let alpha = alpha_from_beta(&beta, second_vertices_in_first);
+    let mut witness = None;
+    let result = visit_intersection_vertices(second_vertices_in_first, MAX_ACTIVE_SETS, |beta| {
+        let alpha = alpha_from_beta(beta, second_vertices_in_first);
         let first_only_witness = positive_nonshared_labels(&alpha, first.labels(), shared_labels);
-        let second_only_witness = positive_nonshared_labels(&beta, second.labels(), shared_labels);
-
-        if !first_only_witness.is_empty() || !second_only_witness.is_empty() {
-            return IntersectionLinearProgramResult::Invalid(SimplexIntersectionWitness {
-                shared: shared_labels.iter().cloned().collect(),
-                first_only_witness,
-                second_only_witness,
-            });
+        let second_only_witness = positive_nonshared_labels(beta, second.labels(), shared_labels);
+        if first_only_witness.is_empty() && second_only_witness.is_empty() {
+            return ControlFlow::Continue(());
         }
+        witness = Some(SimplexIntersectionWitness {
+            shared: shared_labels.iter().cloned().collect(),
+            first_only_witness,
+            second_only_witness,
+        });
+        ControlFlow::Break(())
+    });
+    match result {
+        Err(ActiveSetFailure::Solver { source }) => IntersectionLinearProgramResult::SolverFailed {
+            source: Box::new(source),
+        },
+        Err(ActiveSetFailure::Budget { limit }) => {
+            IntersectionLinearProgramResult::ActiveSetBudgetExceeded { limit }
+        }
+        Ok(()) => witness.map_or(
+            IntersectionLinearProgramResult::Valid,
+            IntersectionLinearProgramResult::Invalid,
+        ),
     }
-
-    IntersectionLinearProgramResult::Valid
 }
 
 /// Accepts a pair when simplex-facet signs prove any intersection lies in the shared face.
@@ -488,7 +554,7 @@ where
 fn barycentric_coordinates_of_vertices<L, const D: usize>(
     vertices: &LabeledSimplexRealization<L, D>,
     basis: &LabeledSimplexRealization<L, D>,
-) -> Option<Vec<Vec<BigRational>>> {
+) -> Result<Vec<Vec<BigRational>>, StackMatrixDispatchError> {
     vertices
         .coordinates()
         .iter()
@@ -500,9 +566,9 @@ fn barycentric_coordinates_of_vertices<L, const D: usize>(
 fn barycentric_coordinates<L, const D: usize>(
     point: &[f64; D],
     simplex: &LabeledSimplexRealization<L, D>,
-) -> Option<Vec<BigRational>> {
+) -> Result<Vec<BigRational>, StackMatrixDispatchError> {
     if D == 0 {
-        return Some(vec![rational_one()]);
+        return Ok(vec![rational_one()]);
     }
 
     let origin = &simplex.coordinates()[0];
@@ -525,72 +591,95 @@ fn barycentric_coordinates<L, const D: usize>(
     let mut barycentric = Vec::with_capacity(D + 1);
     barycentric.push(rational_one() - lambda_sum);
     barycentric.extend(lambdas);
-    Some(barycentric)
+    Ok(barycentric)
 }
 
-/// Enumerates candidate vertices of the intersection polytope in second-simplex weights.
-fn intersection_polytope_vertices(
+/// Failure to complete the fallback is distinct from an infeasible candidate.
+#[derive(Debug)]
+enum ActiveSetFailure {
+    Solver { source: StackMatrixDispatchError },
+    Budget { limit: usize },
+}
+
+/// Visits feasible intersection vertices, stopping early on a decisive witness.
+/// C(18,8)=43,758 is the complete D=8 envelope. The explicit budget also bounds
+/// malformed/private inputs and never turns incomplete enumeration into validity.
+fn visit_intersection_vertices<F>(
     second_vertices_in_first: &[Vec<BigRational>],
-) -> Vec<Vec<BigRational>> {
+    limit: usize,
+    mut on_vertex: F,
+) -> Result<(), ActiveSetFailure>
+where
+    F: FnMut(&[BigRational]) -> ControlFlow<()>,
+{
     let variable_count = second_vertices_in_first.len();
     let active_count = variable_count.saturating_sub(1);
     let constraint_count = variable_count * 2;
     let mut active_set = Vec::with_capacity(active_count);
-    let mut vertices = Vec::new();
-
-    enumerate_active_sets(
+    let mut completed = 0;
+    let _ = enumerate_active_sets(
         constraint_count,
         active_count,
         0,
         &mut active_set,
         &mut |active_constraints| {
-            if let Some(beta) =
-                intersection_vertex_for_active_set(second_vertices_in_first, active_constraints)
-                && beta_is_feasible(&beta, second_vertices_in_first)
-            {
-                vertices.push(beta);
+            if completed == limit {
+                return Err(ActiveSetFailure::Budget { limit });
+            }
+            completed += 1;
+            match intersection_vertex_for_active_set(second_vertices_in_first, active_constraints) {
+                Ok(beta) if beta_is_feasible(&beta, second_vertices_in_first) => {
+                    Ok(on_vertex(&beta))
+                }
+                Ok(_)
+                | Err(StackMatrixDispatchError::La {
+                    source: LaError::Singular { .. },
+                }) => Ok(ControlFlow::Continue(())),
+                Err(source) => Err(ActiveSetFailure::Solver { source }),
             }
         },
-    );
-
-    vertices
+    )?;
+    Ok(())
 }
 
-/// Recursively enumerates active constraint sets for the simplex-intersection LP.
+/// Enumerates each constraint set once, propagating errors and early witnesses.
 fn enumerate_active_sets<F>(
     constraint_count: usize,
     active_count: usize,
     start: usize,
     active_set: &mut Vec<usize>,
     on_active_set: &mut F,
-) where
-    F: FnMut(&[usize]),
+) -> Result<ControlFlow<()>, ActiveSetFailure>
+where
+    F: FnMut(&[usize]) -> Result<ControlFlow<()>, ActiveSetFailure>,
 {
     if active_set.len() == active_count {
-        on_active_set(active_set);
-        return;
+        return on_active_set(active_set);
     }
-
     let remaining = active_count - active_set.len();
     let last_start = constraint_count.saturating_sub(remaining);
     for constraint in start..=last_start {
         active_set.push(constraint);
-        enumerate_active_sets(
+        let result = enumerate_active_sets(
             constraint_count,
             active_count,
             constraint + 1,
             active_set,
             on_active_set,
-        );
+        )?;
         active_set.pop();
+        if result.is_break() {
+            return Ok(result);
+        }
     }
+    Ok(ControlFlow::Continue(()))
 }
 
 /// Solves one active-constraint system and returns the candidate beta weights.
 fn intersection_vertex_for_active_set(
     second_vertices_in_first: &[Vec<BigRational>],
     active_constraints: &[usize],
-) -> Option<Vec<BigRational>> {
+) -> Result<Vec<BigRational>, StackMatrixDispatchError> {
     let variable_count = second_vertices_in_first.len();
     let mut matrix = Vec::with_capacity(variable_count);
     let mut rhs = Vec::with_capacity(variable_count);
@@ -788,7 +877,7 @@ fn pivot_artificial_variables_out(
         let Some(current_basis_matrix) = basis_matrix(matrix, basis) else {
             return false;
         };
-        let Some(basic_solution) = solve_rational_system(&current_basis_matrix, rhs) else {
+        let Ok(basic_solution) = solve_rational_system(&current_basis_matrix, rhs) else {
             return false;
         };
         if basic_solution[basis_position] != rational_zero() {
@@ -800,7 +889,7 @@ fn pivot_artificial_variables_out(
             if basis.contains(&candidate) {
                 continue;
             }
-            let Some(direction) =
+            let Ok(direction) =
                 solve_rational_system(&current_basis_matrix, &matrix_column(matrix, candidate))
             else {
                 continue;
@@ -866,7 +955,7 @@ fn revised_simplex_maximize_exact(
         let Some(current_basis_matrix) = basis_matrix(matrix, basis) else {
             return RevisedSimplexResult::Failed;
         };
-        let Some(basic_solution) = solve_rational_system(&current_basis_matrix, rhs) else {
+        let Ok(basic_solution) = solve_rational_system(&current_basis_matrix, rhs) else {
             return RevisedSimplexResult::Failed;
         };
         if basic_solution.iter().any(Signed::is_negative) {
@@ -877,32 +966,40 @@ fn revised_simplex_maximize_exact(
             .iter()
             .map(|&index| objective[index].clone())
             .collect();
-        let Some(dual_solution) = solve_rational_system(
+        let Ok(dual_solution) = solve_rational_system(
             &transpose_square_matrix(&current_basis_matrix),
             &basic_objective,
         ) else {
             return RevisedSimplexResult::Failed;
         };
 
-        let entering = (0..entering_variable_count)
-            .filter(|candidate| !basis.contains(candidate))
-            .find(|&candidate| {
-                let reduced_cost = objective[candidate].clone()
-                    - dot_product(&dual_solution, &matrix_column(matrix, candidate));
-                reduced_cost.is_positive()
-            });
+        let mut entering = None;
+        for candidate in (0..entering_variable_count).filter(|candidate| !basis.contains(candidate))
+        {
+            let Ok(contribution) = rational_dot(&dual_solution, &matrix_column(matrix, candidate))
+            else {
+                return RevisedSimplexResult::Failed;
+            };
+            if (objective[candidate].clone() - contribution).is_positive() {
+                entering = Some(candidate);
+                break;
+            }
+        }
         let Some(entering) = entering else {
             let mut solution = vec![rational_zero(); objective.len()];
             for (&variable, value) in basis.iter().zip(&basic_solution) {
                 solution[variable] = value.clone();
             }
+            let Ok(objective_value) = rational_dot(objective, &solution) else {
+                return RevisedSimplexResult::Failed;
+            };
             return RevisedSimplexResult::Optimal {
-                objective_value: dot_product(objective, &solution),
+                objective_value,
                 solution,
             };
         };
 
-        let Some(direction) =
+        let Ok(direction) =
             solve_rational_system(&current_basis_matrix, &matrix_column(matrix, entering))
         else {
             return RevisedSimplexResult::Failed;
@@ -1417,7 +1514,7 @@ where
             row
         })
         .collect();
-    let pivot_columns = independent_columns_f64(&constraint_matrix)?;
+    let pivot_columns = shared_face_pivot_columns(&constraint_matrix)?;
     let free_columns: Vec<_> = (0..=D)
         .filter(|column| !pivot_columns.contains(column))
         .collect();
@@ -1453,47 +1550,44 @@ where
     Some(exact_affine)
 }
 
-/// Selects a full-rank set of matrix columns with provisional elimination.
-fn independent_columns_f64(matrix: &[Vec<f64>]) -> Option<Vec<usize>> {
-    const PIVOT_TOLERANCE: f64 = 1.0e-12;
-
-    let row_count = matrix.len();
-    let column_count = matrix.first()?.len();
-    if row_count == 0 || matrix.iter().any(|row| row.len() != column_count) {
+/// Adapts rectangular affine constraints to la-stack's provisional selector.
+/// Zero padding to the column count preserves the original pivots. Admit the
+/// full shape first; no entry is truncated. The absolute threshold retains the
+/// consumer policy `1e-12 * max(1, max |a_ij|)`, with no row/column equilibration.
+/// Rank loss or non-finite arithmetic only declines this shortcut; every selected
+/// basis is subsequently solved exactly against the original coordinates.
+fn shared_face_pivot_columns(matrix: &[Vec<f64>]) -> Option<Vec<usize>> {
+    let rows = matrix.len();
+    let columns = matrix.first()?.len();
+    if rows > columns || matrix.iter().any(|row| row.len() != columns) {
         return None;
     }
-    let mut work = matrix.to_vec();
-    let scale = work
-        .iter()
-        .flatten()
-        .fold(0.0_f64, |maximum, value| maximum.max(value.abs()));
-    let mut pivot_columns = Vec::with_capacity(row_count);
-    for column in 0..column_count {
-        let pivot_position = (pivot_columns.len()..row_count).max_by(|&left, &right| {
-            work[left][column]
-                .abs()
-                .total_cmp(&work[right][column].abs())
-        })?;
-        if work[pivot_position][column].abs() <= PIVOT_TOLERANCE * scale.max(1.0) {
-            continue;
-        }
-        let pivot_row = pivot_columns.len();
-        work.swap(pivot_row, pivot_position);
-        let pivot = work[pivot_row][column];
-        let pivot_values = work[pivot_row].clone();
-        for row_values in work.iter_mut().skip(pivot_row + 1) {
-            let factor = row_values[column] / pivot;
-            for (value, pivot_value) in row_values[column..].iter_mut().zip(&pivot_values[column..])
-            {
-                *value -= factor * pivot_value;
-            }
-        }
-        pivot_columns.push(column);
-        if pivot_columns.len() == row_count {
-            return Some(pivot_columns);
+    match columns {
+        1 => select_shared_face_columns::<1>(matrix),
+        2 => select_shared_face_columns::<2>(matrix),
+        3 => select_shared_face_columns::<3>(matrix),
+        4 => select_shared_face_columns::<4>(matrix),
+        5 => select_shared_face_columns::<5>(matrix),
+        6 => select_shared_face_columns::<6>(matrix),
+        7 => select_shared_face_columns::<7>(matrix),
+        8 => select_shared_face_columns::<8>(matrix),
+        9 => select_shared_face_columns::<9>(matrix),
+        _ => None,
+    }
+}
+
+/// Keeps padding proportional to the admitted affine shape, including low D.
+fn select_shared_face_columns<const N: usize>(matrix: &[Vec<f64>]) -> Option<Vec<usize>> {
+    let mut padded = [[0.0; N]; N];
+    let mut scale = 1.0_f64;
+    for (target, source) in padded.iter_mut().zip(matrix) {
+        target.copy_from_slice(source);
+        for &value in source {
+            scale = scale.max(value.abs());
         }
     }
-    None
+    let basis = column_basis(&padded, Tolerance::try_new(1.0e-12 * scale).ok()?).ok()?;
+    (basis.rank() == matrix.len()).then(|| basis.columns().to_vec())
 }
 
 /// Certifies the floating-point Phase II basis with one exact dual solve.
@@ -1545,18 +1639,19 @@ fn phase_two_dual_proves_shared_face_confinement(
     if basic_objective.len() != constraint_count {
         return false;
     }
-    let Some(dual_solution) = solve_rational_system(
+    let Ok(dual_solution) = solve_rational_system(
         &transpose_square_matrix(&current_basis_matrix),
         &basic_objective,
     ) else {
         return false;
     };
     let dual_is_feasible = (0..variable_count).all(|candidate| {
-        objective[candidate].clone()
-            - dot_product(&dual_solution, &matrix_column(matrix, candidate))
-            <= rational_zero()
+        rational_dot(&dual_solution, &matrix_column(matrix, candidate)).is_ok_and(|contribution| {
+            objective[candidate].clone() - contribution <= rational_zero()
+        })
     });
-    dual_is_feasible && dot_product(rhs, &dual_solution) <= rational_zero()
+    dual_is_feasible
+        && rational_dot(rhs, &dual_solution).is_ok_and(|value| value <= rational_zero())
 }
 
 /// Computes one exact projection along a finite candidate axis.
@@ -1578,7 +1673,7 @@ fn certify_optimal_basis(
     basis: &[usize],
 ) -> Option<RevisedSimplexResult> {
     let current_basis_matrix = basis_matrix(matrix, basis)?;
-    let basic_solution = solve_rational_system(&current_basis_matrix, rhs)?;
+    let basic_solution = solve_rational_system(&current_basis_matrix, rhs).ok()?;
     if basic_solution.iter().any(Signed::is_negative) {
         return None;
     }
@@ -1590,13 +1685,14 @@ fn certify_optimal_basis(
     let dual_solution = solve_rational_system(
         &transpose_square_matrix(&current_basis_matrix),
         &basic_objective,
-    )?;
+    )
+    .ok()?;
     let dual_is_feasible = (0..entering_variable_count)
         .filter(|candidate| !basis.contains(candidate))
         .all(|candidate| {
-            let reduced_cost = objective[candidate].clone()
-                - dot_product(&dual_solution, &matrix_column(matrix, candidate));
-            !reduced_cost.is_positive()
+            rational_dot(&dual_solution, &matrix_column(matrix, candidate)).is_ok_and(
+                |contribution| !(objective[candidate].clone() - contribution).is_positive(),
+            )
         });
     if !dual_is_feasible {
         return None;
@@ -1607,7 +1703,7 @@ fn certify_optimal_basis(
         solution[variable] = value.clone();
     }
     Some(RevisedSimplexResult::Optimal {
-        objective_value: dot_product(objective, &solution),
+        objective_value: rational_dot(objective, &solution).ok()?,
         solution,
     })
 }
@@ -1657,13 +1753,20 @@ fn transpose_square_matrix_f64(matrix: &[Vec<f64>]) -> Vec<Vec<f64>> {
 /// Rejection abandons provisional navigation and leaves certification to the
 /// exact path.
 fn dot_product_f64(left: &[f64], right: &[f64]) -> Option<f64> {
-    if left.len() != right.len() || left.len() > MAX_RATIONAL_MATRIX_DISPATCH_DIM {
+    if left.len() != right.len() || left.len() > MAX_LP_BASIS_DIMENSION {
         return None;
     }
-    let left = LaVector::<MAX_RATIONAL_MATRIX_DISPATCH_DIM>::try_new(from_fn(|index| {
-        left.get(index).copied().unwrap_or(0.0)
-    }))
-    .ok()?;
+    if left.len() <= 8 {
+        padded_provisional_dot::<8>(left, right)
+    } else {
+        padded_provisional_dot::<MAX_LP_BASIS_DIMENSION>(left, right)
+    }
+}
+
+/// Preserves the established small-system cost while admitting D=7/8 LP rows.
+fn padded_provisional_dot<const N: usize>(left: &[f64], right: &[f64]) -> Option<f64> {
+    let left =
+        LaVector::<N>::try_new(from_fn(|index| left.get(index).copied().unwrap_or(0.0))).ok()?;
     let right =
         LaVector::try_new(from_fn(|index| right.get(index).copied().unwrap_or(0.0))).ok()?;
     left.dot(&right).ok()
@@ -1671,16 +1774,18 @@ fn dot_product_f64(left: &[f64], right: &[f64]) -> Option<f64> {
 
 /// Admits a runtime LP basis for provisional LU solving in `la-stack`.
 ///
-/// Six-dimensional intersection programs have eight constraints, one beyond
-/// the backend's binary64 dispatch macro but within its const-generic LU and
-/// rational basis support. Every candidate still requires exact certification.
+/// D=6..=8 programs need orders 8..=10 beyond binary64 runtime dispatch.
+/// The public const-generic LU supports them; each candidate still needs exact certification.
 fn solve_f64_system(matrix: &[Vec<f64>], rhs: &[f64]) -> Option<Vec<f64>> {
     let dimension = rhs.len();
     if matrix.len() != dimension || matrix.iter().any(|row| row.len() != dimension) {
         return None;
     }
-    if dimension == 8 {
-        return solve_provisional_system(Matrix::<8>::zero(), matrix, rhs).ok();
+    match dimension {
+        8 => return solve_provisional_system(Matrix::<8>::zero(), matrix, rhs).ok(),
+        9 => return solve_provisional_system(Matrix::<9>::zero(), matrix, rhs).ok(),
+        10 => return solve_provisional_system(Matrix::<10>::zero(), matrix, rhs).ok(),
+        _ => {}
     }
     la_stack::try_with_stack_matrix!(dimension, |stack_matrix| -> Result<_, LaError> {
         solve_provisional_system(stack_matrix, matrix, rhs)
@@ -1746,15 +1851,6 @@ fn transpose_square_matrix(matrix: &[Vec<BigRational>]) -> Vec<Vec<BigRational>>
         .collect()
 }
 
-/// Computes an exact dot product without introducing floating-point decisions.
-fn dot_product(left: &[BigRational], right: &[BigRational]) -> BigRational {
-    left.iter()
-        .zip(right)
-        .fold(rational_zero(), |sum, (left, right)| {
-            sum + left.clone() * right.clone()
-        })
-}
-
 /// Returns labels whose barycentric coordinates witness mass outside the shared face.
 fn positive_nonshared_labels<L>(
     barycentric: &[BigRational],
@@ -1773,28 +1869,56 @@ where
 }
 
 /// Solves an exact LP basis without rounding derived coefficients through binary64.
-/// Shape admission belongs here because LP bases are selected at runtime;
-/// canonical rational storage, pivoting, and singularity belong to `la-stack`.
+/// Admission is explicit through order ten (D+2 for D=8). Canonical rational
+/// storage, pivoting, elimination and singularity remain owned by la-stack.
 fn solve_rational_system(
     matrix: &[Vec<BigRational>],
     rhs: &[BigRational],
-) -> Option<Vec<BigRational>> {
+) -> Result<Vec<BigRational>, StackMatrixDispatchError> {
     let dimension = rhs.len();
-    if matrix.len() != dimension || matrix.iter().any(|row| row.len() != dimension) {
-        return None;
+    if dimension > MAX_LP_BASIS_DIMENSION {
+        return Err(StackMatrixDispatchError::UnsupportedDim {
+            k: dimension,
+            max: MAX_LP_BASIS_DIMENSION,
+        });
     }
-    la_stack::try_with_rational_matrix!(dimension, |mut exact_matrix| -> Result<_, LaError> {
-        for (row, values) in matrix.iter().enumerate() {
-            for (column, value) in values.iter().enumerate() {
-                exact_matrix.set(row, column, value.clone())?;
-            }
+    if matrix.len() != dimension {
+        return Err(StackMatrixDispatchError::ActiveBlockDimensionMismatch {
+            k: matrix.len(),
+            dim: dimension,
+        });
+    }
+    if let Some(row) = matrix.iter().find(|row| row.len() != dimension) {
+        return Err(StackMatrixDispatchError::ActiveBlockDimensionMismatch {
+            k: row.len(),
+            dim: dimension,
+        });
+    }
+    match dimension {
+        9 => solve_exact_basis(RationalMatrix::<9>::zero(), matrix, rhs),
+        10 => solve_exact_basis(RationalMatrix::<10>::zero(), matrix, rhs),
+        _ => la_stack::try_with_rational_matrix!(dimension, |exact_matrix| -> Result<_, LaError> {
+            solve_exact_basis(exact_matrix, matrix, rhs)
+        }),
+    }
+    .map_err(Into::into)
+}
+
+/// Fills a shape-admitted exact matrix using only exact rational coefficients.
+fn solve_exact_basis<const N: usize>(
+    mut matrix: RationalMatrix<N>,
+    rows: &[Vec<BigRational>],
+    rhs: &[BigRational],
+) -> Result<Vec<BigRational>, LaError> {
+    for (row, values) in rows.iter().enumerate() {
+        for (column, value) in values.iter().enumerate() {
+            matrix.set(row, column, value.clone())?;
         }
-        let exact_rhs = RationalVector::try_from_fn(|index| rhs[index].clone())?;
-        exact_matrix
-            .solve(&exact_rhs)
-            .map(|solution| solution.into_array().into_iter().collect())
-    })
-    .ok()
+    }
+    let rhs = RationalVector::try_from_fn(|index| rhs[index].clone())?;
+    matrix
+        .solve(&rhs)
+        .map(|solution| solution.into_array().into_iter().collect())
 }
 
 /// Converts a finite floating-point matrix to its exact rational representation.
@@ -1855,7 +1979,12 @@ mod tests {
             .collect();
         let rhs: Vec<_> = matrix
             .iter()
-            .map(|row| dot_product(row, &expected))
+            .map(|row| {
+                row.iter()
+                    .zip(&expected)
+                    .map(|(a, b)| a * b)
+                    .sum::<BigRational>()
+            })
             .collect();
         assert!(
             matrix
@@ -1867,7 +1996,12 @@ mod tests {
         assert_eq!(solution, expected);
         let recovered: Vec<_> = matrix
             .iter()
-            .map(|row| dot_product(row, &solution))
+            .map(|row| {
+                row.iter()
+                    .zip(&solution)
+                    .map(|(a, b)| a * b)
+                    .sum::<BigRational>()
+            })
             .collect();
         assert_eq!(recovered, rhs);
     }
@@ -1884,6 +2018,17 @@ mod tests {
         coordinates
     }
 
+    /// Collects the complete vertex set for the independent classification oracle.
+    fn intersection_polytope_vertices(coordinates: &[Vec<BigRational>]) -> Vec<Vec<BigRational>> {
+        let mut vertices = Vec::new();
+        visit_intersection_vertices(coordinates, MAX_ACTIVE_SETS, |beta| {
+            vertices.push(beta.to_vec());
+            ControlFlow::Continue(())
+        })
+        .unwrap();
+        vertices
+    }
+
     /// Reconstructs the pre-optimization exact active-set decision for agreement tests.
     fn legacy_active_set_classification<L, const D: usize>(
         first: &LabeledSimplexRealization<L, D>,
@@ -1893,7 +2038,7 @@ mod tests {
     where
         L: Eq,
     {
-        let Some(second_vertices_in_first) = barycentric_coordinates_of_vertices(second, first)
+        let Ok(second_vertices_in_first) = barycentric_coordinates_of_vertices(second, first)
         else {
             return IntersectionClassification::SingularBarycentricBasis;
         };
@@ -1918,6 +2063,59 @@ mod tests {
         IntersectionClassification::Valid
     }
 
+    /// Exercises the 7D/8D public boundary and both exact certification routes.
+    fn assert_high_dimension_intersections<const D: usize>() {
+        let coordinates = standard_simplex_coordinates::<D>();
+        let first = LabeledSimplexRealization::try_new(0..=D, coordinates.clone()).unwrap();
+        let coincident =
+            LabeledSimplexRealization::try_new(D + 1..2 * D + 2, coordinates.clone()).unwrap();
+        let error = validate_simplex_intersection(&first, &coincident).unwrap_err();
+        assert_matches!(error, SimplexIntersectionFailure::IntersectionOutsideSharedFace { witness, .. }
+            if witness.shared.is_empty() && !witness.first_only_witness.is_empty()
+                && !witness.second_only_witness.is_empty());
+        assert_matches!(
+            intersection_via_linear_program(&first, &coincident, &[], true),
+            IntersectionLinearProgramResult::Invalid(_)
+        );
+        assert_matches!(
+            intersection_via_active_sets(&first, &coincident, &[], None),
+            IntersectionLinearProgramResult::Invalid(_)
+        );
+        let interior = LabeledSimplexRealization::try_new(
+            D + 1..2 * D + 2,
+            coordinates
+                .iter()
+                .map(|point| point.map(|x| x.mul_add(0.5, 1.0 / 64.0))),
+        )
+        .unwrap();
+        assert_matches!(
+            validate_simplex_intersection(&first, &interior),
+            Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { .. })
+        );
+        let disjoint = LabeledSimplexRealization::try_new(
+            D + 1..2 * D + 2,
+            coordinates.iter().map(|point| point.map(|x| x + 3.0)),
+        )
+        .unwrap();
+        assert!(validate_simplex_intersection(&first, &disjoint).is_ok());
+        let collapsed = LabeledSimplexRealization::try_new(0..=D, vec![[0.0; D]; D + 1]).unwrap();
+        assert_matches!(
+            validate_simplex_intersection(&collapsed, &collapsed),
+            Err(SimplexIntersectionFailure::SingularBarycentricBasis)
+        );
+        let collapsed_second =
+            LabeledSimplexRealization::try_new((0..1).chain(D + 1..=2 * D), vec![[0.0; D]; D + 1])
+                .unwrap();
+        assert_matches!(
+            validate_simplex_intersection(&first, &collapsed_second),
+            Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { .. })
+        );
+        for shared_count in [1, D - 1, D] {
+            let (left, right, _) = boundary_degenerate_pair::<D>(shared_count, 1.0);
+            assert!(validate_simplex_intersection(&left, &right).is_ok());
+        }
+    }
+
     /// Classifies one pair through the public optimized Level 4 predicate.
     fn optimized_classification<L, const D: usize>(
         first: &LabeledSimplexRealization<L, D>,
@@ -1936,6 +2134,12 @@ mod tests {
             }
             Err(SimplexIntersectionFailure::SingularBarycentricBasis) => {
                 IntersectionClassification::SingularBarycentricBasis
+            }
+            Err(SimplexIntersectionFailure::SolverFailed { source }) => {
+                panic!("solver failed: {source:?}")
+            }
+            Err(SimplexIntersectionFailure::ActiveSetBudgetExceeded { limit }) => {
+                panic!("budget exhausted: {limit}")
             }
         }
     }
@@ -2219,7 +2423,7 @@ mod tests {
         // An upper bidiagonal matrix with diagonal 2 and superdiagonal 1
         // maps the all-ones vector to [3, ..., 3, 2]. Rotating its rows
         // forces pivoting without changing that analytically known solution.
-        for dimension in 2..=8 {
+        for dimension in 2..=10 {
             for scale in [1.0, 1.0e150] {
                 let mut matrix = vec![vec![0.0; dimension]; dimension];
                 let mut rhs = vec![3.0 * scale; dimension];
@@ -2276,7 +2480,7 @@ mod tests {
     #[test]
     fn provisional_dot_product_admits_only_matching_finite_lp_vectors() {
         assert_abs_diff_eq!(dot_product_f64(&[], &[]).unwrap(), 0.0);
-        for dimension in 1..=8 {
+        for dimension in 1..=10 {
             let mut right = vec![0.0; dimension];
             right[dimension - 1] = -3.0;
             assert_abs_diff_eq!(
@@ -2285,16 +2489,16 @@ mod tests {
             );
         }
         assert!(dot_product_f64(&[1.0], &[]).is_none());
-        assert!(dot_product_f64(&[1.0; 9], &[1.0; 9]).is_none());
+        assert!(dot_product_f64(&[1.0; 11], &[1.0; 11]).is_none());
         assert!(dot_product_f64(&[f64::NAN], &[1.0]).is_none());
         assert!(dot_product_f64(&[1.0], &[f64::INFINITY]).is_none());
         assert!(dot_product_f64(&[f64::MAX], &[2.0]).is_none());
     }
 
     #[test]
-    fn rational_lp_bases_round_trip_through_dimension_eight() {
-        // Geometric D <= 6 uses LP systems as large as D + 2.
-        for dimension in 1..=8 {
+    fn rational_lp_bases_round_trip_through_dimension_ten() {
+        // Geometric D <= 8 uses LP systems as large as D + 2.
+        for dimension in 1..=10 {
             assert_rational_basis_round_trip(dimension);
         }
     }
@@ -2303,16 +2507,148 @@ mod tests {
     fn rational_lp_basis_rejects_singular_malformed_and_unsupported_systems() {
         let one = rational_one();
         let zero = rational_zero();
-        assert_eq!(solve_rational_system(&[], &[]), Some(vec![]));
-        assert_eq!(solve_rational_system(&[vec![one.clone()]], &[]), None);
-        assert_eq!(
-            solve_rational_system(&[vec![]], std::slice::from_ref(&one)),
-            None
+        assert_eq!(solve_rational_system(&[], &[]), Ok(vec![]));
+        assert_matches!(
+            solve_rational_system(&[vec![one.clone()]], &[]),
+            Err(StackMatrixDispatchError::ActiveBlockDimensionMismatch { .. })
         );
-        assert_eq!(solve_rational_system(&[vec![zero.clone()]], &[one]), None);
+        assert_matches!(
+            solve_rational_system(&[vec![]], std::slice::from_ref(&one)),
+            Err(StackMatrixDispatchError::ActiveBlockDimensionMismatch { .. })
+        );
+        for dimension in [1, 9, 10] {
+            assert_matches!(
+                solve_rational_system(
+                    &vec![vec![zero.clone(); dimension]; dimension],
+                    &vec![one.clone(); dimension]
+                ),
+                Err(StackMatrixDispatchError::La {
+                    source: LaError::Singular { .. }
+                })
+            );
+        }
+        assert_matches!(
+            solve_rational_system(&vec![vec![zero.clone(); 11]; 11], &vec![zero; 11]),
+            Err(StackMatrixDispatchError::UnsupportedDim { k: 11, max: 10 })
+        );
+    }
+
+    #[test]
+    fn rational_high_order_solves_preserve_large_exponents() {
+        for dimension in [9, 10] {
+            let mut matrix = vec![vec![rational_zero(); dimension]; dimension];
+            let expected: Vec<_> = (0..dimension)
+                .map(|i| BigRational::new(BigInt::from(i + 1), BigInt::from(3)))
+                .collect();
+            for (i, row) in matrix.iter_mut().enumerate() {
+                row[i] = if i.is_multiple_of(2) {
+                    BigRational::from_integer(BigInt::from(1) << 2048)
+                } else {
+                    BigRational::new(BigInt::from(1), BigInt::from(1) << 2048)
+                };
+            }
+            matrix.rotate_left(1);
+            let rhs: Vec<BigRational> = matrix
+                .iter()
+                .map(|row| row.iter().zip(&expected).map(|(a, b)| a * b).sum())
+                .collect();
+            let solution = solve_rational_system(&matrix, &rhs).unwrap();
+            assert_eq!(solution, expected);
+            for (row, rhs) in matrix.iter().zip(rhs) {
+                assert_eq!(
+                    row.iter()
+                        .zip(&solution)
+                        .map(|(a, b)| a * b)
+                        .sum::<BigRational>(),
+                    rhs
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn intersections_through_seven_dimensions() {
+        assert_high_dimension_intersections::<7>();
+        assert_shared_facet_is_valid::<7>();
+    }
+
+    #[test]
+    fn intersections_through_eight_dimensions() {
+        assert_high_dimension_intersections::<8>();
+        assert_shared_facet_is_valid::<8>();
+    }
+
+    #[test]
+    fn shared_face_basis_selection_is_provisional_and_shape_checked() {
+        for scale in [1.0, 1.0e100] {
+            let rows = vec![vec![0.0, scale, 2.0 * scale], vec![scale, 0.0, scale]];
+            let columns = shared_face_pivot_columns(&rows).unwrap();
+            assert_eq!(columns, vec![0, 1]);
+            let matrix = basis_matrix(&exact_matrix_from_f64(&rows), &columns).unwrap();
+            assert!(solve_rational_system(&matrix, &[rational_one(), rational_one()]).is_ok());
+            let reversed = vec![rows[1].clone(), rows[0].clone()];
+            assert_eq!(shared_face_pivot_columns(&reversed), Some(columns));
+        }
+        // An invertible exact matrix can be numerically rejected by the policy.
+        let near = vec![vec![1.0, 1.0], vec![1.0, 1.0 + 2.0_f64.powi(-48)]];
+        assert!(shared_face_pivot_columns(&near).is_none());
+        assert!(
+            solve_rational_system(
+                &exact_matrix_from_f64(&near),
+                &[rational_one(), rational_one()]
+            )
+            .is_ok()
+        );
+        assert!(shared_face_pivot_columns(&[vec![1.0e-100]]).is_none());
+        for invalid in [f64::NAN, f64::INFINITY] {
+            assert!(shared_face_pivot_columns(&[vec![1.0, invalid]]).is_none());
+        }
+        assert!(shared_face_pivot_columns(&[vec![1.0], vec![]]).is_none());
+        assert!(shared_face_pivot_columns(&[vec![1.0; 10]]).is_none());
+    }
+
+    #[test]
+    fn exact_objective_dot_preserves_cancellation_and_full_lp_lengths() {
+        let third = BigRational::new(1.into(), 3.into());
+        let huge = BigRational::from_integer(BigInt::from(1) << 2048);
+        // D=8 Phase I/II objectives have 2(D+1)+(D+2)=28 entries.
+        let mut left = vec![third.clone(); 28];
+        left[0] = huge.clone();
+        left[27] = -huge;
+        let right = vec![rational_one(); 28];
         assert_eq!(
-            solve_rational_system(&vec![vec![zero.clone(); 9]; 9], &vec![zero; 9]),
-            None
+            rational_dot(&left, &right).unwrap(),
+            third * BigRational::from_integer(26.into())
+        );
+        assert_eq!(rational_dot(&[], &[]).unwrap(), rational_zero());
+        assert_matches!(
+            rational_dot(&left, &right[..27]),
+            Err(LaError::DimensionMismatch {
+                left: 28,
+                right: 27,
+                ..
+            })
+        );
+    }
+
+    #[test]
+    fn active_set_failure_never_becomes_empty_intersection() {
+        let coordinates = vec![
+            vec![rational_one(), rational_zero()],
+            vec![rational_zero(), rational_one()],
+        ];
+        assert_matches!(
+            visit_intersection_vertices(&coordinates, 0, |_| ControlFlow::Continue(())),
+            Err(ActiveSetFailure::Budget { limit: 0 })
+        );
+        let unsupported = vec![vec![rational_zero(); 11]; 11];
+        assert_matches!(
+            visit_intersection_vertices(&unsupported, MAX_ACTIVE_SETS, |_| ControlFlow::Continue(
+                ()
+            )),
+            Err(ActiveSetFailure::Solver {
+                source: StackMatrixDispatchError::UnsupportedDim { k: 11, max: 10 }
+            })
         );
     }
 

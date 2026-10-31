@@ -80,6 +80,19 @@ The current geometric predicate adapters enforce the following limits:
 
 These are geometric predicate limits, not a general limit on all `la-stack`
 matrix types or on the separate exact simplex-intersection adapter.
+The standalone `validate_simplex_intersection` API accepts labeled simplices
+through D=8. Barycentric, active-set and revised-simplex LP systems require
+orders D, D+1 and D+2, respectively; the consumer uses public `RationalMatrix`
+solves through order ten from published la-stack 0.5.2. Derived rational
+coefficients remain exact. Floating-point rank and basis searches are only
+provisional and require exact certification. Unsupported dimensions, backend
+failures and exhausted active-set budgets return typed errors. The fallback
+permits 50,000 candidates, covering all 43,758 active sets at D=8, and stops
+early when it finds an overlap witness. This does not extend construction,
+TDS arity, `ExactPredicates`, or complete SoS support.
+See the [kernel-adoption evidence](la_stack_adoption.md) for the numerical
+contracts, independent checks, and local performance measurements.
+
 For D=4 through D=6, orientation goes directly to exact arithmetic, while the
 relative in-sphere determinant can still be interval-certified. For D ≥ 7,
 these predicate adapters do not provide an exact sign. The `robust_insphere` distance fallback,
