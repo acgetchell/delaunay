@@ -5,6 +5,21 @@
 //! with boundary**, assuming the underlying triangulation data structure (TDS) is
 //! structurally consistent.
 //!
+//! ## Simplicial conventions
+//!
+//! We use [Lickorish, §2](https://arxiv.org/html/math/9911256v1):
+//! `lk(A, K)` consists of faces disjoint from `A` whose joins with `A` lie in
+//! `K`, and unqualified **star** means the **closed star**
+//! `st(A, K) = A ⋆ lk(A, K)`, including all faces of `A`. Internal star buffers
+//! store only incident D-simplices, and link buffers store complementary
+//! maximal faces; their subfaces, including `∅`, are implicit. See the
+//! [ridge module](crate::topology::ridge#closed-stars-and-links) for the
+//! vertex-in-a-triangle closed/open-star example and the
+//! [terminology mapping](https://github.com/acgetchell/delaunay/blob/main/docs/topology.md#simplicial-terminology-and-notation).
+//! Boundary/interior refers to the manifold realization, not the embedding
+//! space. “Boundary closure” checks mean absence of boundary of boundary,
+//! not a geometric closure operation.
+//!
 //! ## What is being validated
 //!
 //! Let `K` be a pure D-dimensional simplicial complex, with D≥2. The following
@@ -74,7 +89,8 @@
 //! ## References
 //!
 //! - W. B. R. Lickorish, *Simplicial moves on complexes and manifolds* (1999),
-//!   [Definition 2.2](https://arxiv.org/html/math/9911256v1).
+//!   [§2 and Definition 2.2](https://arxiv.org/html/math/9911256v1);
+//!   [bibliography entry](https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md#lickorish1999).
 //!
 //! - J. R. Munkres, *Elements of Algebraic Topology*, Addison–Wesley, 1984.
 //!
@@ -1091,11 +1107,12 @@ fn boundary_facet_count_for_ridge<U, V, const D: usize>(
     Ok(count)
 }
 
-/// Computes the link simplices induced by a simplex star.
+/// Computes maximal link simplices from the incident D-simplex support of a closed star.
 ///
 /// For each incident D-simplex, this returns the complementary vertex set (the vertices in the
-/// D-simplex that are not in `simplex_vertices`). This is the standard combinatorial definition of
-/// the link of a simplex in a pure simplicial complex.
+/// D-simplex that are not in `simplex_vertices`). Including all faces of these
+/// complements recovers `lk(A, K)` in a pure simplicial complex (Lickorish §2).
+/// Periodic complements retain their lifted vertex identities.
 fn simplex_link_simplices_from_star<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex_vertices: &[VertexKey],
@@ -1188,8 +1205,6 @@ fn simplex_link_simplices_from_star<U, V, const D: usize>(
     Ok(link_simplices)
 }
 
-/// Computes the star of a ridge (a (D-2)-simplex) as the set of incident D-simplices.
-///
 /// Validates the ridge-link condition for a PL-manifold (with boundary).
 ///
 /// For a D-dimensional simplicial complex, the link of any (D-2)-simplex is a
@@ -2958,6 +2973,19 @@ mod tests {
         .unwrap();
 
         assert!(validate_ridge_links(&tds).is_ok());
+    }
+
+    #[test]
+    fn maximal_simplex_link_contains_the_empty_simplex() {
+        let (tds, simplex_key) = build_single_triangle_tds(false);
+        tds.validate().unwrap();
+        let vertices = tds.simplex_vertices(simplex_key).unwrap();
+        let support = simplex_star_simplices(&tds, vertices).unwrap();
+        assert_eq!(support.as_slice(), &[simplex_key]);
+        let link = simplex_link_simplices_from_star(&tds, vertices, &support).unwrap();
+        // lk(A, A) = {∅}: one empty face, not an empty collection of faces.
+        assert_eq!(link.len(), 1);
+        assert!(link[0].is_empty());
     }
 
     #[test]

@@ -538,6 +538,10 @@ TDS before using them.
 
 ## Pachner Move API: minimal local move example
 
+The example's **star** is the closed star, with all faces implicit when only
+incident D-simplices are listed. See the
+[Lickorish terminology and triangle example](topology.md#simplicial-terminology-and-notation).
+
 The Pachner Move API exposes explicit local bistellar moves. These operations do **not** automatically restore
 (or preserve) Level 5 Geometric Predicates such as Delaunay.
 

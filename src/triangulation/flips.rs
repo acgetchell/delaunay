@@ -8,6 +8,11 @@
 //! For Delaunay construction/deletion, use
 //! [`crate::DelaunayTriangulation::insert_vertex`] and
 //! [`crate::DelaunayTriangulation::delete_vertex`].
+//!
+//! Unqualified star means the **closed star** `st(A, K) = A ⋆ lk(A, K)`,
+//! following [Lickorish, §2](https://arxiv.org/html/math/9911256v1).
+//! Support lists contain only maximal D-simplices, with their faces implicit.
+//! See the [terminology and closed/open-star example](https://github.com/acgetchell/delaunay/blob/main/docs/topology.md#simplicial-terminology-and-notation).
 
 #![forbid(unsafe_code)]
 
