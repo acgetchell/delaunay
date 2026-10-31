@@ -1011,6 +1011,11 @@ coordinates.
   intersect only in the realization of the face spanned by their shared vertices.
 - **Toroidal periodic images**: toroidal topology is checked in covering-space charts, including
   periodic translates that can overlap across the fundamental-domain boundary.
+  Chart comparisons retain canonical vertex coordinates and compose the stored
+  lift and comparison shift as integers before evaluating `offset * period + coordinate`
+  with one fused operation. Equal vertex/image identities therefore receive equal
+  finite predicate inputs; an already rounded lifted coordinate is never translated
+  again. Exact intersection arithmetic certifies those constructed chart coordinates.
 - **Spherical prototype simplices**: `SphericalDelaunayTriangulation` validates `S^2`/`S^3`
   maximal simplices as nondegenerate spherical simplices realized in `S^D \subset R^(D+1)`.
 - **Geometric validity, not optimality**: Level 4 does not evaluate empty-circumsphere,

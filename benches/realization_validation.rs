@@ -17,7 +17,7 @@ use delaunay::prelude::geometry::{
     AdaptiveKernel, CoordinateRange, ExactPredicates, LabeledSimplexRealization,
     SimplexIntersectionFailure, validate_simplex_intersection,
 };
-use delaunay::try_vertices_from_points;
+use delaunay::{try_vertices_from_points, vertex};
 
 /// Shared benchmark setup error helpers.
 #[path = "common/bench_utils.rs"]
@@ -236,11 +236,38 @@ fn bench_realization_validation(c: &mut Criterion) {
     group.finish();
 }
 
+/// Measures covering-chart comparisons on a certified periodic T² quotient.
+fn bench_periodic_realization_validation(c: &mut Criterion) {
+    let vertices: Vec<_> = (1..=7)
+        .map(|index| {
+            let index = f64::from(index);
+            vertex!([
+                0.9_f64.mul_add((index * 0.618_033_988_749_894_8).fract(), 0.05),
+                0.9_f64.mul_add((index * 0.414_213_562_373_095_03).fract(), 0.05),
+            ])
+            .or_abort()
+        })
+        .collect();
+    let triangulation = DelaunayTriangulationBuilder::new(&vertices)
+        .try_toroidal([1.0; 2])
+        .or_abort()
+        .build()
+        .or_abort()
+        .into_triangulation();
+    triangulation.validate_realization().or_abort();
+    c.bench_function("periodic_realization_validation/t2_7v", |b| {
+        b.iter(|| {
+            let _ = black_box(black_box(&triangulation).is_valid_realization());
+        });
+    });
+}
+
 criterion_group!(
     benches,
     bench_realization_narrow_phase,
     bench_realization_lp,
     bench_realization_high_dimension,
-    bench_realization_validation
+    bench_realization_validation,
+    bench_periodic_realization_validation
 );
 criterion_main!(benches);

@@ -42,6 +42,7 @@ include = [
     "/tests/*.proptest-regressions",
     "/tests/*.rs",
     "/tests/common/**/*.rs",
+    "/tests/fixtures/periodic_seed_3291/*",
     "/tests/COVERAGE.md",
     "/tests/README.md",
 ]
