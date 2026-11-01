@@ -4,8 +4,7 @@
 //! Fixtures are initialized inside selected Criterion callbacks, before timing.
 
 use bench_utils::OrAbortWithContext;
-use criterion::Throughput;
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::construction::DelaunayTriangulation;
 use delaunay::prelude::geometry::{AdaptiveKernel, ExactPredicates};
 use delaunay::prelude::tds::SimplexKey;

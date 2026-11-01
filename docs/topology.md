@@ -231,18 +231,25 @@ general decision procedure for whether a vertex link is a PL sphere or ball.
 Accordingly, a nontrivial `PLManifold` owner in those dimensions also requires
 crate-held construction provenance: Euclidean construction starts with a
 simplex and preserves link type through checked cavity replacements, while the
-periodic builder uses its checked image-point quotient. Explicit connectivity,
-raw TDS promotion, and deserialization do not acquire that proof merely by
-requesting `PLManifold`; they are rejected with
-`HighDimensionalVertexLinkUnproven` unless the complex is the directly
-recognizable single-simplex case. Callers that need only the incidence contract
-can request `Pseudomanifold`.
+periodic builder uses its checked image-point quotient. Explicit connectivity
+and raw TDS promotion do not acquire that proof merely by requesting
+`PLManifold`; they are rejected with `HighDimensionalVertexLinkUnproven` unless
+the complex is the directly recognizable single-simplex case. Callers that need
+only the incidence contract can request `Pseudomanifold`.
+
+Euclidean Delaunay checkpoint restoration has a separate verified path in
+D ≥ 4: it independently replays point construction and requires matching exact
+vertex/coordinate and maximal-simplex signatures before restoring provenance.
+Failed replay or mismatched signatures cannot supply that proof. Periodic
+D ≥ 4 restoration remains unsupported. See the
+[checkpoint restoration contract](construction_and_validation.md#level-2-combinatorial-consistency).
 
 The provenance is not public metadata and cannot be selected through a fluent
 builder option. It belongs to the verified owner, survives only checked
 link-preserving mutations, and is deliberately lost by `Triangulation::into_tds`
-and serialization. That prevents an arbitrary simplex list from laundering
-local link checks into a PL-manifold certificate.
+and is not trusted from serialized metadata. Checkpoint replay must establish
+fresh evidence; arbitrary simplex lists cannot turn local link checks into a
+PL-manifold certificate.
 
 Point-driven builders require an `ExactPredicates<D>` kernel. The built-in
 kernels implement that contract through D=6, so an approximate conflict region
@@ -283,7 +290,8 @@ Implementation pointers:
 ## Boundary semantics
 
 Facet incidence by itself does **not** prove that a facet is a manifold boundary.
-It only describes how many D-simplices share a canonical facet key in the TDS.
+It describes how many simplex-local facet occurrences share a canonical lifted
+facet identity in the TDS.
 The current API keeps this distinction explicit:
 
 - `Triangulation::facet_incidence_index()` and
@@ -296,12 +304,12 @@ The current API keeps this distinction explicit:
 - `topology::manifold::classify_boundary_facet` is the semantic boundary
   classifier used by validation and query code.
 
-This matters for periodic quotient topology. In a true toroidal triangulation,
-a facet can be one-sided in the raw incidence index because the owning simplex
-has an admissible periodic self-neighbor. That facet is a closed
-self-identification, not a boundary. Conversely, an open one-sided facet in a
-closed topology (`Toroidal`, `Spherical`, or `Hyperbolic`) is an invariant error,
-not a valid boundary.
+This matters for periodic quotient topology. A closed self-identification
+requires two distinct local facet occurrences with the same normalized lifted
+identity and reciprocal neighbor slots. Both occurrences may belong to one
+stored simplex; the facet is still two-sided. A facet cannot be its own mirror
+occurrence. An unmatched one-sided facet in a closed topology (`Toroidal`,
+`Spherical`, or `Hyperbolic`) is an invariant error, not a valid boundary.
 
 The validation order is therefore:
 
@@ -415,7 +423,7 @@ internal implementation flexibility:
 **Internal behavior layer**: `GlobalTopologyModel<D>` trait
 (in `src/topology/traits/global_topology_model.rs`)
 
-- Scalar-generic trait defining topology-specific operations:
+- Dimension-generic trait defining topology-specific operations on `f64` coordinates:
   - `canonicalize_point_in_place`: normalize coordinates to fundamental domain
   - `lift_for_orientation`: apply periodic offsets for orientation predicates
   - `periodic_domain`: expose domain periods for periodic topologies
@@ -435,7 +443,7 @@ the codebase.
 **Topology helpers and coordinate backends** (in `src/topology/spaces/`):
 
 - `EuclideanSpace`, `ToroidalSpace`: `f64`-oriented `TopologicalSpace` helper types
-- Not directly used by scalar-generic core algorithms
+- Separate from the dimension-generic core algorithms' `GlobalTopologyModel` dispatch
 - Provide utilities for specific topology computations
 - Spherical Delaunay construction uses `SphericalPoint<D>` and `SphericalMetric<D>`
   as the coordinate/metric backend: `D` is the intrinsic dimension of `S^D`, and

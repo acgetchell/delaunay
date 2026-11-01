@@ -320,7 +320,8 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
 
     /// Returns the dimension of the triangulation.
     ///
-    /// Returns the dimension `D` as an `i32`.
+    /// Returns `-1` for an empty owner and `D` as an `i32` for a nonempty,
+    /// full-dimensional published owner, following [`Triangulation::dim`].
     ///
     /// # Examples
     ///
@@ -1920,7 +1921,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// ```
     #[inline]
-    pub fn adjacency(&self) -> Result<TriangulationAdjacency<'_>, TopologyIndexBuildError> {
+    pub fn adjacency(&self) -> Result<TriangulationAdjacency<'_, D>, TopologyIndexBuildError> {
         self.as_triangulation().adjacency()
     }
 
@@ -1988,7 +1989,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// ```
     #[inline]
-    pub fn build_edge_index(&self) -> Result<EdgeIndex<'_>, TopologyIndexBuildError> {
+    pub fn build_edge_index(&self) -> Result<EdgeIndex<'_, D>, TopologyIndexBuildError> {
         self.as_triangulation().build_edge_index()
     }
 
@@ -2057,7 +2058,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
+    pub fn edges(&self) -> impl Iterator<Item = EdgeKey<D>> + '_ {
         self.as_triangulation().edges()
     }
 
@@ -2068,8 +2069,9 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///
     /// # Errors
     ///
-    /// Returns [`EdgeKeyError`] if the vertices are stale, duplicated, or do not
-    /// share a stored simplex edge.
+    /// Returns [`EdgeKeyError`] if the vertices are stale, have no edge, or
+    /// identify several periodic lattice classes. Use [`Self::edge_key_from_simplex`]
+    /// to select a particular occurrence.
     ///
     /// # Examples
     ///
@@ -2094,8 +2096,21 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn edge_key(&self, a: VertexKey, b: VertexKey) -> Result<EdgeKey, EdgeKeyError> {
+    pub fn edge_key(&self, a: VertexKey, b: VertexKey) -> Result<EdgeKey<D>, EdgeKeyError> {
         self.as_triangulation().edge_key(a, b)
+    }
+
+    /// Selects an edge by two local vertex slots of a stored simplex.
+    ///
+    /// # Errors
+    /// Returns [`EdgeKeyError`] for invalid slots, missing endpoints or invalid incidence.
+    pub fn edge_key_from_simplex(
+        &self,
+        simplex_key: SimplexKey,
+        vertices: [usize; 2],
+    ) -> Result<EdgeKey<D>, EdgeKeyError> {
+        self.as_triangulation()
+            .edge_key_from_simplex(simplex_key, vertices)
     }
 
     /// Revalidates an edge key and returns a borrowed edge view.
@@ -2132,7 +2147,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn edge_view(&self, edge: EdgeKey) -> Result<EdgeView<'_, U, V, D>, EdgeKeyError> {
+    pub fn edge_view(&self, edge: EdgeKey<D>) -> Result<EdgeView<'_, U, V, D>, EdgeKeyError> {
         self.as_triangulation().edge_view(edge)
     }
 
@@ -2167,7 +2182,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey> + '_ {
+    pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey<D>> + '_ {
         self.as_triangulation().incident_edges(v)
     }
 
@@ -2303,8 +2318,9 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///
     /// # Errors
     ///
-    /// Returns [`ConflictError`] if the start simplex is stale, structural data is
-    /// inconsistent, or the conflict boundary cannot be classified.
+    /// Returns [`ConflictError::UnsupportedTopology`] for non-Euclidean owners.
+    /// Other [`ConflictError`] variants identify a stale start simplex,
+    /// inconsistent structural data, or an unclassifiable conflict boundary.
     ///
     /// # Examples
     ///
@@ -2472,7 +2488,7 @@ impl<K, U, V> DelaunayTriangulation<K, U, V, 2> {
     #[inline]
     pub fn try_interior_facet_for_edge_2d(
         &self,
-        edge: EdgeKey,
+        edge: EdgeKey<2>,
     ) -> Result<Option<FacetHandle>, EdgeKeyError> {
         self.as_triangulation().try_interior_facet_for_edge_2d(edge)
     }
@@ -2518,7 +2534,7 @@ impl<K, U, V> DelaunayTriangulation<K, U, V, 2> {
     #[inline]
     pub fn try_incident_facets_to_edge_2d(
         &self,
-        edge: EdgeKey,
+        edge: EdgeKey<2>,
     ) -> Result<impl Iterator<Item = FacetHandle>, EdgeKeyError> {
         self.as_triangulation().try_incident_facets_to_edge_2d(edge)
     }
@@ -2530,6 +2546,7 @@ mod tests {
     use crate::construction::{ConstructionOptions, DelaunayError, DelaunayResult, RetryPolicy};
     use crate::core::operations::DelaunayInsertionState;
     use crate::core::tds::Tds;
+    use crate::delaunay_test_support::init_tracing;
     use crate::draft::DelaunayTriangulationDraft;
     use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates, FastKernel};
     use crate::geometry::traits::coordinate::{CoordinateValidationError, InvalidCoordinateValue};
@@ -2541,7 +2558,7 @@ mod tests {
     use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
-    use std::{assert_matches, collections::HashSet, num::NonZeroUsize, sync::Once};
+    use std::{assert_matches, collections::HashSet, num::NonZeroUsize};
 
     impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         /// Returns the kernel to crate-internal test fixtures.
@@ -2566,18 +2583,6 @@ mod tests {
     struct Payload;
     #[derive(Copy, Clone)]
     struct CopyOnly;
-
-    fn init_tracing() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_test_writer()
-                .try_init();
-        });
-    }
 
     /// Builds the standard D-simplex fixture: origin plus one unit vector per axis.
     fn standard_simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {

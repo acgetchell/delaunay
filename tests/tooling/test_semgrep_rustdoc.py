@@ -43,10 +43,11 @@ CORPUS = {
 }
 
 
-def consumer(root: Path, sources: dict[str, str]) -> tuple[str, ...]:
+def consumer(root: Path, sources: dict[str, str], *, selected_rules: set[str] | None = None) -> tuple[str, ...]:
     """Use unchanged repository rule definitions and consumer extraction policy."""
     rules = yaml.safe_load((ROOT / "semgrep.yaml").read_text(encoding="utf-8"))["rules"]
-    selected = [rule for rule in rules if rule["id"] in {NUMERIC, STDIO, TOPOLOGY, "delaunay.docs.check-before-fix-command-order"}]
+    selected_ids = selected_rules if selected_rules is not None else {NUMERIC, STDIO, TOPOLOGY, "delaunay.docs.check-before-fix-command-order"}
+    selected = [rule for rule in rules if rule["id"] in selected_ids]
     (root / "semgrep.yaml").write_text(yaml.safe_dump({"rules": selected}), encoding="utf-8")
     manifest = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     exclusions = manifest["tool"]["delaunay"]["semgrep"]["rustdoc-exclude"]
@@ -68,6 +69,35 @@ def scan(root: Path, names: tuple[str, ...], monkeypatch: pytest.MonkeyPatch) ->
     """Model only Git inventory; run the installed extractor, scanner and validators."""
     monkeypatch.setattr(semgrep_scan, "security_inventory", lambda *_args, **_kwargs: names)
     return shared_tooling.main(["--root", str(root), "semgrep", "scan", "--include", "*", "--rust-docs", "--batch-size", "1", "--output", "reports"])
+
+
+def test_deep_import_policy_covers_triangulation_paths_and_namespace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real rooted scan observes both the moved directory and its crate namespace."""
+    rule = "delaunay.rust.no-deep-crate-paths-in-functions"
+    corpus = {
+        "src/triangulation/probe.rs": (
+            "use crate::core::collections::SimplexKeyBuffer;\n"
+            "pub fn compliant() { let _buffer = SimplexKeyBuffer::new(); }\n"
+            "pub fn violation() {\n"
+            "    let _buffer = crate::core::collections::SimplexKeyBuffer::new();\n"
+            "}\n"
+        ),
+        "src/geometry/probe.rs": (
+            "use crate::triangulation::query::Query;\n"
+            "pub fn compliant() { let _query = Query::new(); }\n"
+            "pub fn violation() {\n"
+            "    let _query = crate::triangulation::query::Query::new();\n"
+            "}\n"
+        ),
+    }
+    names = consumer(tmp_path, corpus, selected_rules={rule})
+    assert scan(tmp_path, names, monkeypatch) == 1
+    report = json.loads((tmp_path / "reports/semgrep.json").read_bytes())
+    assert report["errors"] == []
+    assert {(row["check_id"], Path(row["path"]).relative_to(tmp_path).as_posix(), row["start"]["line"]) for row in report["results"]} == {
+        (rule, name, 4) for name in corpus
+    }
+    assert {Path(path).relative_to(tmp_path).as_posix() for path in report["paths"]["scanned"]} == set(corpus)
 
 
 @pytest.fixture(scope="module")

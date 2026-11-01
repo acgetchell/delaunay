@@ -120,11 +120,11 @@ pub enum SimplexValidationError {
     /// `(vertex key, lattice offset)` pair.
     #[error("Duplicate vertices: simplex contains non-unique vertex identities")]
     DuplicateVertices,
-    /// The simplex has insufficient vertices to form a proper D-simplex.
+    /// The simplex does not have exactly D+1 vertices.
     #[error(
-        "Insufficient vertices: simplex has {actual} vertices; expected exactly {expected} for a {dimension}D simplex"
+        "Vertex count mismatch: simplex has {actual} vertices; expected exactly {expected} for a {dimension}D simplex"
     )]
-    InsufficientVertices {
+    VertexCountMismatch {
         /// The actual number of vertices in the simplex.
         actual: usize,
         /// The expected number of vertices (D+1).
@@ -603,7 +603,7 @@ impl<V, const D: usize> Simplex<V, D> {
     ///
     /// # Errors
     ///
-    /// Returns [`SimplexValidationError::InsufficientVertices`] if `vertices`
+    /// Returns [`SimplexValidationError::VertexCountMismatch`] if `vertices`
     /// does not contain exactly `D + 1` keys, or
     /// [`SimplexValidationError::DuplicateVertices`] if a key appears more than
     /// once.
@@ -618,7 +618,7 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # Errors
     ///
     /// Returns:
-    /// - `SimplexValidationError::InsufficientVertices` if `vertices` doesn't have exactly D+1 elements.
+    /// - `SimplexValidationError::VertexCountMismatch` if `vertices` doesn't have exactly D+1 elements.
     /// - `SimplexValidationError::DuplicateVertices` if any vertex key appears more than once.
     pub(crate) fn try_new_with_data(
         vertices: impl Into<SimplexVertexKeyBuffer>,
@@ -629,7 +629,7 @@ impl<V, const D: usize> Simplex<V, D> {
         // Validate D+1 vertices
         let actual = vertices.len();
         if actual != D + 1 {
-            return Err(SimplexValidationError::InsufficientVertices {
+            return Err(SimplexValidationError::VertexCountMismatch {
                 actual,
                 expected: D + 1,
                 dimension: D,
@@ -680,7 +680,7 @@ impl<V, const D: usize> Simplex<V, D> {
         let offsets = offsets.into();
         let actual = vertices.len();
         if actual != D + 1 {
-            return Err(SimplexValidationError::InsufficientVertices {
+            return Err(SimplexValidationError::VertexCountMismatch {
                 actual,
                 expected: D + 1,
                 dimension: D,
@@ -719,7 +719,7 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # Errors
     ///
     /// Returns [`SimplexValidationError::InvalidUuid`] if `uuid` is nil,
-    /// [`SimplexValidationError::InsufficientVertices`] if `vertices` does not
+    /// [`SimplexValidationError::VertexCountMismatch`] if `vertices` does not
     /// contain exactly `D + 1` keys, or
     /// [`SimplexValidationError::DuplicateVertices`] if any key appears more
     /// than once.
@@ -1491,7 +1491,7 @@ impl<V, const D: usize> Simplex<V, D> {
     ///
     /// Returns `SimplexValidationError::InvalidUuid` if the simplex's UUID is nil,
     /// `SimplexValidationError::DuplicateVertices` if the simplex contains duplicate vertex identities,
-    /// `SimplexValidationError::InsufficientVertices` if the simplex doesn't have exactly D+1 vertices,
+    /// `SimplexValidationError::VertexCountMismatch` if the simplex doesn't have exactly D+1 vertices,
     /// `SimplexValidationError::InvalidNeighborsLength` if neighbors are provided but don't have D+1 entries, or
     /// `SimplexValidationError::UnassignedNeighborSlot` if an assigned neighbor buffer still has an unassigned slot.
     ///
@@ -1523,7 +1523,7 @@ impl<V, const D: usize> Simplex<V, D> {
 
         // Check that simplex has exactly D+1 vertex keys (a proper D-simplex)
         if self.vertices.len() != D + 1 {
-            return Err(SimplexValidationError::InsufficientVertices {
+            return Err(SimplexValidationError::VertexCountMismatch {
                 actual: self.vertices.len(),
                 expected: D + 1,
                 dimension: D,
@@ -1598,7 +1598,7 @@ impl<V, const D: usize> Simplex<V, D> {
         }
 
         if self.vertices.len() != D + 1 {
-            violations.push(SimplexValidationError::InsufficientVertices {
+            violations.push(SimplexValidationError::VertexCountMismatch {
                 actual: self.vertices.len(),
                 expected: D + 1,
                 dimension: D,
@@ -3711,6 +3711,32 @@ mod tests {
     }
 
     #[test]
+    fn simplex_arity_reports_too_few_and_too_many_vertices() {
+        fn check<const D: usize>() {
+            for actual in [D, D + 2] {
+                let keys = synthetic_vertex_keys(actual);
+                let expected = SimplexValidationError::VertexCountMismatch {
+                    actual,
+                    expected: D + 1,
+                    dimension: D,
+                };
+                assert_eq!(
+                    Simplex::<(), D>::try_new_with_data(keys.clone(), None).unwrap_err(),
+                    expected
+                );
+                assert_eq!(
+                    Simplex::<(), D>::try_new_periodic(keys, vec![[0; D]; actual]).unwrap_err(),
+                    expected
+                );
+            }
+        }
+        check::<2>();
+        check::<3>();
+        check::<4>();
+        check::<5>();
+    }
+
+    #[test]
     fn simplex_new_rejects_insufficient_and_duplicate_vertices() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]).unwrap(),
@@ -3726,7 +3752,7 @@ mod tests {
             .unwrap_err();
         assert_matches!(
             err,
-            SimplexValidationError::InsufficientVertices {
+            SimplexValidationError::VertexCountMismatch {
                 actual: 3,
                 expected: 4,
                 dimension: 3,
@@ -3769,7 +3795,7 @@ mod tests {
         let keys = synthetic_vertex_keys(4);
         assert_eq!(
             Simplex::<(), 3>::try_new_periodic(keys[..3].to_vec(), vec![[0; 3]; 3]).unwrap_err(),
-            SimplexValidationError::InsufficientVertices {
+            SimplexValidationError::VertexCountMismatch {
                 actual: 3,
                 expected: 4,
                 dimension: 3,
@@ -3820,7 +3846,7 @@ mod tests {
         wrong_len.vertices.pop();
         assert_matches!(
             wrong_len.is_valid(),
-            Err(SimplexValidationError::InsufficientVertices { .. })
+            Err(SimplexValidationError::VertexCountMismatch { .. })
         );
 
         // Duplicate vertices

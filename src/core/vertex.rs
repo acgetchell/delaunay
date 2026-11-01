@@ -624,12 +624,14 @@ impl<U, const D: usize> Vertex<U, D> {
     /// `VertexValidationError` indicating the specific validation failure.
     /// A valid vertex has:
     /// - A valid [Point] with finite coordinates (no NaN or infinite values)
-    /// - A valid [Uuid] that is not nil
+    /// - A non-nil version-4 [Uuid], as required by [`validate_uuid`]
     ///
     /// # Errors
     ///
     /// Returns `VertexValidationError::InvalidPoint` if the point has invalid coordinates,
-    /// or `VertexValidationError::InvalidUuid` if the UUID is nil.
+    /// or [`VertexValidationError::InvalidUuid`] if the UUID is nil or is not
+    /// version 4. The typed [`UuidValidationError`]
+    /// source distinguishes these UUID failures.
     ///
     /// # Example
     ///
@@ -893,20 +895,13 @@ impl<U, const D: usize> Hash for Vertex<U, D> {
 mod tests {
     use super::*;
     use crate::core::collections::{FastHashMap, FastHashSet};
-    use crate::core::tds::SimplexKey;
     use crate::core::traits::DataType;
-    use crate::core::util::{UuidValidationError, make_uuid, usize_to_u8};
-    use crate::core::vertex::Vertex;
-    use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::{
-        Coordinate, CoordinateValidationError, InvalidCoordinateValue,
-    };
+    use crate::core::util::usize_to_u8;
+    use crate::geometry::traits::coordinate::InvalidCoordinateValue;
     use approx::{assert_abs_diff_eq, assert_relative_eq};
-    use serde::{Deserialize, Serialize};
     use slotmap::KeyData;
     use std::assert_matches;
     use std::collections::hash_map::DefaultHasher;
-    use std::hash::Hasher;
 
     // Test enum for demonstrating vertex data usage
     #[repr(u8)]

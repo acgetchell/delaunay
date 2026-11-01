@@ -306,8 +306,10 @@ solver is meant to recover.
 `la-stack` owns denominator clearing, fraction-free Bareiss elimination,
 pivoting, and exact singularity diagnostics. Delaunay owns geometric matrix
 construction and semantic predicate interpretation. Runtime-selected exact LP
-bases use the same rational-input backend through matrix dimension 8, covering
-the `D + 2` systems needed through geometric dimension 6. Provisional LP basis
+bases use the same rational-input backend through matrix order 10, covering
+the `D + 2` systems needed by standalone simplex-intersection queries through
+geometric dimension 8. This is separate from the built-in exact-predicate and
+SoS contract, which remains D ≤ 6. Provisional LP basis
 navigation may use rounded floating-point values; certification always solves
 the original rational system. Exact arithmetic remains temporary geometric or
 LP state and is not stored in triangulation owners or public certificates.

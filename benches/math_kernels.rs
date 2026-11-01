@@ -23,7 +23,7 @@ use delaunay::prelude::topology::validation::{
 use delaunay::prelude::try_dedup_vertices_epsilon;
 use delaunay::try_vertices_from_points;
 use la_stack::VectorAngle;
-use std::{hint::black_box, time::Duration};
+use std::{array::from_fn, hint::black_box, time::Duration};
 
 /// Shared fatal-error adapters keep failed operations out of timing evidence.
 #[path = "common/bench_utils.rs"]
@@ -69,8 +69,8 @@ fn bench_orientation<const D: usize, const N: usize>(group: &mut BenchmarkGroup<
         ("exact_nonzero", cancellation, nonzero, false),
         ("exact_zero", degenerate, Orientation::DEGENERATE, false),
     ] {
-        let matrix = Matrix::<N>::try_from_rows(std::array::from_fn(|row| {
-            std::array::from_fn(|column| {
+        let matrix = Matrix::<N>::try_from_rows(from_fn(|row| {
+            from_fn(|column| {
                 if column == D {
                     1.0
                 } else {

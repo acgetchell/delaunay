@@ -910,9 +910,9 @@ test-doc-features:
     {{ managed }} cargo test --doc --release --features diagnostics,count-allocations,bench measure_with_result
     {{ managed }} cargo test --doc --release --features diagnostics,count-allocations,bench debug_print_first_delaunay_violation
 
-# Run feature-only library tests and doctests without the slow-test suite.
+# Run feature-only library tests, doctests, and public allocation integrations.
 [group('tests and coverage')]
-test-features: test-unit-features test-doc-features
+test-features: test-unit-features test-doc-features test-allocation
 
 # Run default integration tests in release mode under the normal 10-second budget.
 # Narrow test-specific overrides grant headroom to boundary-running cases.
@@ -941,7 +941,7 @@ test-integration-fast: _ensure-nextest
 test-python: _ensure-uv
     {{ semgrep_stack_limit }} uv run --locked pytest
 
-# Run default Rust target classes and feature-only library coverage once.
+# Run default Rust target classes and feature-only coverage once.
 [group('tests and coverage')]
 test-rust: test-unit test-integration test-cli test-doc test-features
     @echo "✅ Rust tests passed!"

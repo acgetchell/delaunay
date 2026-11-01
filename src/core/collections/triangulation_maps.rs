@@ -55,7 +55,9 @@ pub(crate) type FacetIssuesMap = FastHashMap<u64, SmallBuffer<(SimplexKey, Facet
 ///
 /// # Note
 ///
-/// This type mirrors `Simplex::neighbors()` which returns `Option<&NeighborBuffer<Option<SimplexKey>>>`.
+/// [`Simplex::neighbors`](crate::tds::Simplex::neighbors) returns an optional
+/// exact-size iterator of `Option<SimplexKey>`. To own the slot sequence, collect
+/// it explicitly: `simplex.neighbors().map(|slots| slots.collect::<NeighborBuffer<_>>())`.
 ///
 /// # Examples
 ///

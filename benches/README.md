@@ -417,9 +417,11 @@ repair fixtures are compiled; direct commands for those harnesses must pass the
 same feature explicitly.
 
 `just perf-large-scale-smoke [max_secs]` is a coarse local wall-clock guard for
-the release-mode large-scale harness. It runs the same 2D-5D cases as
-`just debug-large-scale-{2,3,4,5}d` with their local defaults, caps each test
-runtime at 60 seconds by default, and reports all failing dimensions before
+the release-mode large-scale harness. It fixes the 2D/3D/4D/5D vertex counts at
+32,000/9,000/1,000/160 and checks structure/topology (Levels 1–3) plus the Level 5
+Delaunay property. These differ from the debug helpers' local count and
+validation defaults; see the [command guide](../docs/dev/commands.md#benchmark-profiles).
+The guard caps each test runtime at 60 seconds by default and reports all failing dimensions before
 exiting. At the end it also prints a compact 2D-5D summary table with the
 reported insertion wall time, total wall time, and pass/fail status so you do
 not have to scroll through the full nextest output. This is useful while
@@ -798,8 +800,10 @@ available for manual topology-policy work.
 release summaries. Durable release archives contain raw Criterion data and
 versioned metadata. The CI comparison measures both revisions in one job;
 imported release archives provide absolute timings and suppress ratios because
-they come from separate sessions. `docs/performance.md` owns the curated
-release comparison when retained evidence satisfies publication policy.
+they come from separate sessions. `docs/performance_current.md` owns the current
+curated release comparison, with immutable history under `docs/performance-runs/`,
+when retained evidence satisfies publication policy. `docs/performance.md`
+remains unchanged historical evidence.
 
 ```bash
 uv run --locked benchmark-utils generate-summary

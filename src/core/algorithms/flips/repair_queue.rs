@@ -11,12 +11,14 @@ use super::{
     SimplexKey, SimplexKeyBuffer, SmallBuffer, Tds, TriangleHandle, VecDeque, VertexKey,
     VertexKeyList, apply_delaunay_flip_dynamic, apply_delaunay_flip_k2, apply_delaunay_flip_k3,
     build_k2_flip_context, build_k2_flip_context_from_edge, build_k3_flip_context_for_repair,
-    build_k3_flip_context_from_triangle, check_flip_cycle, debug_ridge_context,
-    delaunay_violation_k2_for_facet, delaunay_violation_k3_for_ridge, env, facet_key_from_vertices,
-    facet_vertices_from_simplex, fmt, is_delaunay_violation_k2, is_delaunay_violation_k3,
-    record_touched_simplices, removed_simplex_frame, resolve_facet_handle_for_key,
-    resolve_ridge_handle_for_key, ridge_vertices_from_simplex,
+    check_flip_cycle, contexts::build_k3_flip_context_from_triangle_key, debug_ridge_context,
+    delaunay_violation_k2_for_facet, delaunay_violation_k3_for_ridge, env, fmt,
+    is_delaunay_violation_k2, is_delaunay_violation_k3, record_touched_simplices,
+    removed_simplex_frame, resolve_facet_handle_for_key, resolve_ridge_handle_for_key,
+    ridge_vertices_from_simplex,
 };
+use crate::core::util::facet_keys::simplex_face_key;
+use crate::topology::spaces::toroidal::{LiftedVertexId, periodic_simplex_key};
 
 // Allow extended repeats to capture diagnostics in long-running repairs.  A threshold of
 // 32 caused false non-convergence on valid 3D inputs (see #306); 128 still bounds
@@ -79,22 +81,22 @@ pub(super) struct RidgeMultiplicitySkipSample {
     pub(super) multiplicity: usize,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct MissingSimplexSkipSample {
     pub(super) location: RepairSkipLocation,
     pub(super) simplex_key: SimplexKey,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) enum RepairSkipLocation {
-    Edge(EdgeKey),
+    Edge([LiftedVertexId; 2]),
     Facet(FacetHandle),
     Ridge(RidgeHandle),
     Triangle(TriangleHandle),
 }
 
 impl RepairSkipLocation {
-    fn fmt_label(self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt_label(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Edge(edge) => write!(f, "edge={edge:?}"),
             Self::Facet(facet) => write!(f, "facet={facet:?}"),
@@ -244,7 +246,7 @@ impl RepairDiagnostics {
 
     /// Captures one stale-simplex sample so slot-swap churn is visible when
     /// repair diagnostics are inspected.
-    pub(super) const fn record_missing_simplex_skip(&mut self, sample: MissingSimplexSkipSample) {
+    pub(super) fn record_missing_simplex_skip(&mut self, sample: MissingSimplexSkipSample) {
         self.missing_simplex_skips = self.missing_simplex_skips.saturating_add(1);
         if self.missing_simplex_sample.is_none() {
             self.missing_simplex_sample = Some(sample);
@@ -619,20 +621,20 @@ pub(super) fn default_max_flips<const D: usize>(simplex_count: usize) -> usize {
     base.max(512)
 }
 
-pub(super) struct RepairQueues {
+pub(super) struct RepairQueues<const D: usize> {
     pub(super) facet_queue: VecDeque<(FacetHandle, u64)>,
     facet_queued: FastHashSet<u64>,
     facet_handles: FastHashMap<u64, FacetHandle>,
     pub(super) ridge_queue: VecDeque<(RidgeHandle, u64)>,
     ridge_queued: FastHashSet<u64>,
     ridge_handles: FastHashMap<u64, RidgeHandle>,
-    pub(super) edge_queue: VecDeque<(EdgeKey, u64)>,
+    pub(super) edge_queue: VecDeque<(EdgeKey<D>, u64)>,
     edge_queued: FastHashSet<u64>,
     pub(super) triangle_queue: VecDeque<(TriangleHandle, u64)>,
     triangle_queued: FastHashSet<u64>,
 }
 
-impl RepairQueues {
+impl<const D: usize> RepairQueues<D> {
     /// Initializes all repair worklists together so queue state cannot be
     /// partially seeded.
     pub(super) fn new() -> Self {
@@ -678,7 +680,7 @@ impl RepairQueues {
 pub(super) fn seed_repair_queues<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     seed_simplices: Option<&[SimplexKey]>,
-    queues: &mut RepairQueues,
+    queues: &mut RepairQueues<D>,
     stats: &mut DelaunayRepairStats,
 ) -> Result<bool, FlipError> {
     if let Some(seeds) = seed_simplices {
@@ -797,7 +799,7 @@ pub(super) fn seed_repair_queues<U, V, const D: usize>(
 pub(super) fn enqueue_new_simplices_for_repair<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     new_simplices: &[SimplexKey],
-    queues: &mut RepairQueues,
+    queues: &mut RepairQueues<D>,
     stats: &mut DelaunayRepairStats,
 ) -> Result<(), FlipError>
 where
@@ -854,7 +856,7 @@ pub(super) fn run_next_ridge_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     kernel: &K,
     topology_model: &GlobalTopologyModelAdapter<D>,
-    queues: &mut RepairQueues,
+    queues: &mut RepairQueues<D>,
     stats: &mut DelaunayRepairStats,
     max_flips: usize,
     config: &RepairAttemptConfig,
@@ -1052,7 +1054,7 @@ pub(super) fn run_next_edge_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     kernel: &K,
     topology_model: &GlobalTopologyModelAdapter<D>,
-    queues: &mut RepairQueues,
+    queues: &mut RepairQueues<D>,
     stats: &mut DelaunayRepairStats,
     max_flips: usize,
     config: &RepairAttemptConfig,
@@ -1082,7 +1084,7 @@ where
         Ok(ctx) => ctx,
         Err(ref err) if let FlipError::MissingSimplex { simplex_key } = err => {
             diagnostics.record_missing_simplex_skip(MissingSimplexSkipSample {
-                location: RepairSkipLocation::Edge(edge),
+                location: RepairSkipLocation::Edge(edge.lifted_endpoints()),
                 simplex_key: *simplex_key,
             });
             log_build_skip(err);
@@ -1191,7 +1193,7 @@ where
         Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
-                location: RepairSkipLocation::Edge(edge),
+                location: RepairSkipLocation::Edge(edge.lifted_endpoints()),
                 removed_face: vertex_key_list(&context.removed_face_vertices),
                 inserted_face: vertex_key_list(&context.inserted_face_vertices),
             });
@@ -1240,7 +1242,7 @@ pub(super) fn run_next_triangle_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     kernel: &K,
     topology_model: &GlobalTopologyModelAdapter<D>,
-    queues: &mut RepairQueues,
+    queues: &mut RepairQueues<D>,
     stats: &mut DelaunayRepairStats,
     max_flips: usize,
     config: &RepairAttemptConfig,
@@ -1268,7 +1270,7 @@ where
             );
         }
     };
-    let context = match build_k3_flip_context_from_triangle(tds, triangle) {
+    let context = match build_k3_flip_context_from_triangle_key(tds, triangle, Some(key)) {
         Ok(ctx) => ctx,
         Err(ref err) if let FlipError::MissingSimplex { simplex_key } = err => {
             diagnostics.record_missing_simplex_skip(MissingSimplexSkipSample {
@@ -1419,7 +1421,7 @@ pub(super) fn run_next_facet_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     kernel: &K,
     topology_model: &GlobalTopologyModelAdapter<D>,
-    queues: &mut RepairQueues,
+    queues: &mut RepairQueues<D>,
     stats: &mut DelaunayRepairStats,
     max_flips: usize,
     config: &RepairAttemptConfig,
@@ -1646,8 +1648,9 @@ pub(super) fn enqueue_facet<U, V, const D: usize>(
         return;
     };
 
-    let facet_vertices = facet_vertices_from_simplex(simplex, facet_index);
-    let key = facet_key_from_vertices(&facet_vertices);
+    let Ok(key) = tds.facet_key_for_simplex_facet(handle.simplex_key(), facet_index) else {
+        return;
+    };
 
     handles.insert(key, handle);
     if queued.insert(key) {
@@ -1660,7 +1663,7 @@ pub(super) fn enqueue_facet<U, V, const D: usize>(
 pub(super) fn enqueue_simplex_edges<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
-    queue: &mut VecDeque<(EdgeKey, u64)>,
+    queue: &mut VecDeque<(EdgeKey<D>, u64)>,
     queued: &mut FastHashSet<u64>,
     stats: &mut DelaunayRepairStats,
 ) {
@@ -1676,20 +1679,20 @@ pub(super) fn enqueue_simplex_edges<U, V, const D: usize>(
     let vertex_count = vertices.len();
     for i in 0..vertex_count {
         for j in (i + 1)..vertex_count {
-            let edge = EdgeKey::from_validated_endpoints(vertices[i], vertices[j]);
+            let edge = EdgeKey::from_simplex_slots(simplex, i, j);
             enqueue_edge(edge, queue, queued, stats);
         }
     }
 }
 
-/// Deduplicates inverse k=2 edge work by vertex-set hash across incident simplices.
-pub(super) fn enqueue_edge(
-    edge: EdgeKey,
-    queue: &mut VecDeque<(EdgeKey, u64)>,
+/// Deduplicates inverse k=2 edge work by lifted face identity across incident simplices.
+pub(super) fn enqueue_edge<const D: usize>(
+    edge: EdgeKey<D>,
+    queue: &mut VecDeque<(EdgeKey<D>, u64)>,
     queued: &mut FastHashSet<u64>,
     stats: &mut DelaunayRepairStats,
 ) {
-    let key = facet_key_from_vertices(&[edge.v0(), edge.v1()]);
+    let key = periodic_simplex_key(&edge.lifted_endpoints());
     if queued.insert(key) {
         queue.push_back((edge, key));
         stats.max_queue_len = stats.max_queue_len.max(queue.len());
@@ -1720,22 +1723,22 @@ pub(super) fn enqueue_simplex_triangles<U, V, const D: usize>(
             for k in (j + 1)..vertex_count {
                 let triangle =
                     TriangleHandle::from_validated_vertices(vertices[i], vertices[j], vertices[k]);
-                enqueue_triangle(triangle, queue, queued, stats);
+                let key = simplex_face_key(simplex, [i, j, k].into_iter());
+                enqueue_triangle(triangle, key, queue, queued, stats);
             }
         }
     }
 }
 
-/// Deduplicates inverse k=3 triangle work by vertex-set hash across incident
+/// Deduplicates inverse k=3 triangle work by lifted face identity across incident
 /// simplices.
 pub(super) fn enqueue_triangle(
     triangle: TriangleHandle,
+    key: u64,
     queue: &mut VecDeque<(TriangleHandle, u64)>,
     queued: &mut FastHashSet<u64>,
     stats: &mut DelaunayRepairStats,
 ) {
-    let vertices = triangle.vertices();
-    let key = facet_key_from_vertices(&vertices);
     if queued.insert(key) {
         queue.push_back((triangle, key));
         stats.max_queue_len = stats.max_queue_len.max(queue.len());
@@ -1815,7 +1818,10 @@ pub(super) fn enqueue_ridge<U, V, const D: usize>(
         return;
     }
 
-    let key = facet_key_from_vertices(&ridge_vertices);
+    let key = simplex_face_key(
+        simplex,
+        (0..vertex_count).filter(|&i| i != omit_a && i != omit_b),
+    );
     handles.insert(key, handle);
     if queued.insert(key) {
         queue.push_back((handle, key));
@@ -1830,10 +1836,159 @@ mod tests {
     use super::*;
     use crate::core::algorithms::insertion::repair_neighbor_pointers;
     use crate::geometry::kernel::AdaptiveKernel;
+    use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::validation::TopologyGuarantee;
     use crate::vertex;
     use slotmap::KeyData;
     use std::iter::once;
+
+    #[test]
+    fn periodic_traversal_all_queue_families_keep_distinct_lifted_faces() {
+        fn check<const D: usize>() {
+            // Two simplex occurrences with identical quotient vertices, one
+            // vertex translated. Exactly the faces containing that occurrence
+            // split into two classes. This checks local scheduling, not Level 4.
+            for translation in [0, 2] {
+                let mut tds: Tds<(), (), D> = Tds::empty();
+                let vertices: Vec<_> = (0..=D)
+                    .map(|i| {
+                        let mut coords = [0.0; D];
+                        if i > 0 {
+                            coords[i - 1] = 0.25;
+                        }
+                        tds.insert_vertex_with_mapping(vertex!(coords).unwrap())
+                            .unwrap()
+                    })
+                    .collect();
+                for shifted in [false, true] {
+                    let mut offsets = vec![[translation; D]; D + 1];
+                    if shifted {
+                        offsets[0][0] += 1;
+                    }
+                    tds.insert_simplex_with_mapping(
+                        Simplex::try_new_periodic(vertices.clone(), offsets).unwrap(),
+                    )
+                    .unwrap();
+                }
+                let mut queues = RepairQueues::new();
+                let mut stats = DelaunayRepairStats::default();
+                for key in tds.simplex_keys() {
+                    enqueue_simplex_ridges(
+                        &tds,
+                        key,
+                        &mut queues.ridge_queue,
+                        &mut queues.ridge_queued,
+                        &mut queues.ridge_handles,
+                        &mut stats,
+                    )
+                    .unwrap();
+                    enqueue_simplex_edges(
+                        &tds,
+                        key,
+                        &mut queues.edge_queue,
+                        &mut queues.edge_queued,
+                        &mut stats,
+                    );
+                    enqueue_simplex_triangles(
+                        &tds,
+                        key,
+                        &mut queues.triangle_queue,
+                        &mut queues.triangle_queued,
+                        &mut stats,
+                    );
+                }
+                assert_eq!(queues.ridge_queue.len(), D * D);
+                if D >= 4 {
+                    assert_eq!(queues.edge_queue.len(), D * (D + 1) / 2 + D);
+                }
+                if D >= 5 {
+                    assert_eq!(queues.triangle_queue.len(), 30);
+                }
+            }
+        }
+        check::<3>();
+        check::<4>();
+        check::<5>();
+    }
+
+    #[test]
+    fn periodic_traversal_queue_preserves_all_eighteen_grid_facets() {
+        let (tds, _) = Tds::periodic_grid_t2_for_test(false);
+        let mut queues = RepairQueues::new();
+        seed_repair_queues(&tds, None, &mut queues, &mut DelaunayRepairStats::default()).unwrap();
+        assert_eq!(queues.facet_queue.len(), 18);
+    }
+
+    #[test]
+    fn periodic_traversal_previously_omitted_facet_has_a_strict_violation() {
+        let (tds, vertices) = Tds::periodic_grid_t2_for_test(false);
+        let mut bare_seen = FastHashSet::default();
+        let mut omitted = None;
+        for facet in AllFacetsIter::try_new(&tds).unwrap() {
+            let facet = facet.unwrap();
+            let indices: Vec<_> = (0..3)
+                .filter(|&slot| slot != usize::from(facet.facet_index()))
+                .collect();
+            let edge =
+                EdgeKey::try_from_simplex(&tds, facet.simplex_key(), [indices[0], indices[1]])
+                    .unwrap();
+            if !bare_seen.insert(edge.endpoints()) && edge.endpoints() == (vertices[0], vertices[3])
+            {
+                omitted = Some(edge.displacement());
+            }
+        }
+        let displacement = omitted.expect("one of the two horizontal classes was omitted");
+        let (corner, point) = if displacement == [0, 0] {
+            (2, [0.25, 0.875])
+        } else {
+            (5, [0.75, 0.875])
+        };
+        let (tds, vertices) =
+            Tds::periodic_grid_t2_with_displacement_for_test(Some((corner, point)));
+        let mut queues = RepairQueues::new();
+        seed_repair_queues(&tds, None, &mut queues, &mut DelaunayRepairStats::default()).unwrap();
+        let (facet, _) = queues
+            .facet_queue
+            .iter()
+            .find(|(facet, _)| {
+                let indices: Vec<_> = (0..3)
+                    .filter(|&slot| slot != usize::from(facet.facet_index()))
+                    .collect();
+                let edge =
+                    EdgeKey::try_from_simplex(&tds, facet.simplex_key(), [indices[0], indices[1]])
+                        .unwrap();
+                edge.endpoints() == (vertices[0], vertices[3])
+                    && edge.displacement() == displacement
+            })
+            .expect("the formerly omitted periodic facet must be scheduled");
+        // In a translated chart this circle has center (1/4,1/8),
+        // radius squared 5/64. The opposite point (1/4,-1/8) has
+        // squared distance 1/16, strictly smaller than 5/64.
+        let topology =
+            GlobalTopology::try_toroidal([1.0; 2], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        let context = build_k2_flip_context(&tds, *facet).unwrap();
+        let config = RepairAttemptConfig {
+            attempt: 0,
+            queue_order: RepairQueueOrder::Fifo,
+            max_flips_override: None,
+        };
+        assert!(
+            is_delaunay_violation_k2(
+                &tds,
+                &RobustKernel::new(),
+                &topology.model(),
+                &context,
+                &config,
+                &mut RepairDiagnostics::default()
+            )
+            .unwrap()
+        );
+        assert!(
+            verify_tds_via_flip_predicates_assuming_connected(&tds, &RobustKernel::new(), topology)
+                .is_err()
+        );
+    }
 
     #[test]
     fn test_repair_diagnostics_cycle_detection_records_repeats() {
@@ -1860,7 +2015,7 @@ mod tests {
         let v0 = VertexKey::from(KeyData::from_ffi(101));
         let v1 = VertexKey::from(KeyData::from_ffi(102));
         let v2 = VertexKey::from(KeyData::from_ffi(103));
-        let edge = EdgeKey::from_validated_endpoints(v0, v1);
+        let edge = EdgeKey::<3>::from_validated_endpoints(v0, v1);
         let facet = FacetHandle::from_validated(simplex, 0);
         let ridge = RidgeHandle::from_validated(simplex, 0, 1);
         let triangle = TriangleHandle::try_new(v0, v1, v2).unwrap();
@@ -1878,7 +2033,7 @@ mod tests {
         );
 
         diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
-            location: RepairSkipLocation::Edge(edge),
+            location: RepairSkipLocation::Edge(edge.lifted_endpoints()),
             removed_face: once(v1).collect(),
             inserted_face: [v0, v2].into_iter().collect(),
         });
@@ -1908,7 +2063,7 @@ mod tests {
             location: RepairSkipLocation::Triangle(triangle),
             simplex_key: missing_simplex,
         };
-        diagnostics.record_missing_simplex_skip(first_missing_sample);
+        diagnostics.record_missing_simplex_skip(first_missing_sample.clone());
         diagnostics.record_missing_simplex_skip(MissingSimplexSkipSample {
             location: RepairSkipLocation::Ridge(ridge),
             simplex_key: SimplexKey::from(KeyData::from_ffi(93)),

@@ -4,6 +4,7 @@
 //! integration test crates, unless the case needs separate crate-level setup,
 //! feature flags, or profile isolation.
 
+use ciborium::Value as CborValue;
 use delaunay::flips::{BistellarFlips, FlipError, SimplexKey};
 use delaunay::geometry::kernel::{AdaptiveKernel, ExactPredicates};
 use delaunay::prelude::checkpoint::{
@@ -41,12 +42,67 @@ use delaunay::prelude::validation::{
 };
 use delaunay::vertex;
 use serde::{Deserialize, Serialize};
+use std::cell::Cell;
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::rc::Rc;
 use uuid::Uuid;
 
 // Deliberately lacks Copy, Hash, Ord, PartialEq, and Debug.
 #[derive(Clone, Deserialize, Serialize)]
 struct PersistencePayload {
     label: String,
+}
+
+/// One destructor unwinds; the remaining batch values can be dropped safely.
+struct PanicOncePayload(Rc<Cell<bool>>);
+
+impl Drop for PanicOncePayload {
+    fn drop(&mut self) {
+        assert!(!self.0.replace(false), "injected payload destructor panic");
+    }
+}
+
+#[test]
+fn simplex_removal_publishes_coherent_state_before_payload_drop() {
+    let vertices = [
+        vertex![0.0, 0.0].unwrap(),
+        vertex![1.0, 0.0].unwrap(),
+        vertex![0.0, 1.0].unwrap(),
+        vertex![1.0, 1.0].unwrap(),
+        vertex![2.0, 0.0].unwrap(),
+    ];
+    let specs = [vec![0, 1, 2], vec![1, 3, 2], vec![1, 4, 3]];
+    let mut tds = TdsBuilder::new(&vertices, &specs)
+        .simplex_data_type::<PanicOncePayload>()
+        .build()
+        .unwrap();
+    let keys: Vec<_> = tds.simplex_keys().collect();
+    let removed_uuids: Vec<_> = keys[..2]
+        .iter()
+        .map(|&key| tds.simplex(key).unwrap().uuid())
+        .collect();
+    let armed = Rc::new(Cell::new(true));
+    for &key in &keys[..2] {
+        tds.set_simplex_data(key, Some(PanicOncePayload(Rc::clone(&armed))))
+            .unwrap();
+    }
+    let generation = tds.generation();
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            tds.remove_simplices_by_keys(&keys[..2]).unwrap();
+        }))
+        .is_err()
+    );
+
+    assert_eq!(tds.simplex_keys().collect::<Vec<_>>(), vec![keys[2]]);
+    for uuid in removed_uuids {
+        assert_eq!(tds.simplex_key_from_uuid(&uuid), None);
+    }
+    assert_eq!(tds.generation(), generation + 1);
+    // Includes canonical incidence, vertex hints, and reciprocal neighbors.
+    tds.validate().unwrap();
+    assert_eq!(tds.remove_simplices_by_keys(&[keys[2]]).unwrap(), 1);
+    tds.validate().unwrap();
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -2104,6 +2160,7 @@ fn regression_issue_591_euclidean_non_delaunay_adapter_workflow() {
 #[test]
 fn regression_issue_591_evolved_torus_export_persistence_and_pachner_composition() {
     let fresh = periodic_payload_fixture_t2();
+    fresh.to_visualization_data().unwrap().validate().unwrap();
     assert_eq!(
         serde_json::to_value(fresh.to_visualization_data().unwrap()).unwrap(),
         serde_json::to_value(fresh.as_triangulation().to_visualization_data().unwrap()).unwrap(),
@@ -2112,7 +2169,9 @@ fn regression_issue_591_evolved_torus_export_persistence_and_pachner_composition
     tri.try_set_validation_policy(ValidationPolicy::Always)
         .unwrap();
     let expected_storage = serde_json::to_value(tri.clone().into_tds()).unwrap();
-    let expected_export = serde_json::to_value(tri.to_visualization_data().unwrap()).unwrap();
+    let export = tri.to_visualization_data().unwrap();
+    export.validate().unwrap();
+    let expected_export = serde_json::to_value(export).unwrap();
     let restored: Triangulation<RobustKernel<f64>, u32, u32, 2> =
         serde_json::from_str(&serde_json::to_string(&tri).unwrap()).unwrap();
     assert_eq!(restored.global_topology(), tri.global_topology());
@@ -2223,6 +2282,124 @@ fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
     assert!(
         dt.is_valid_structure().is_ok(),
         "neighbor validation must compare lifted (offset) identities"
+    );
+}
+
+#[test]
+fn periodic_traversal_published_owner_report_and_occurrence_queries_agree() {
+    let dt = periodic_regression_fixture_t2();
+    let report = dt.delaunay_violation_report(None).unwrap();
+    assert!(report.is_valid());
+    let keys: Vec<_> = dt.simplices().map(|(key, _)| key).collect();
+    assert_eq!(dt.delaunay_violation_report(Some(&keys)).unwrap(), report);
+    assert_eq!(
+        dt.as_triangulation()
+            .delaunay_violation_report(None)
+            .unwrap(),
+        report
+    );
+    for (key, simplex) in dt.simplices() {
+        for i in 0..simplex.number_of_vertices() {
+            for j in i + 1..simplex.number_of_vertices() {
+                let edge = dt.edge_key_from_simplex(key, [i, j]).unwrap();
+                assert!(
+                    dt.edge_view(edge)
+                        .unwrap()
+                        .incident_occurrences()
+                        .any(|(incident, slots)| incident == key && slots == [i, j])
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn periodic_structure_local_facet_repair_preserves_valid_t2() {
+    let mut tri = periodic_regression_fixture_t2().into_triangulation();
+    tri.validate().unwrap();
+    let keys: Vec<_> = tri.simplices().map(|(key, _)| key).collect();
+    let mut quotient_facets = Vec::new();
+    for (_, simplex) in tri.simplices() {
+        for omitted in 0..3 {
+            let mut facet: Vec<_> = simplex
+                .vertices()
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, key)| (slot != omitted).then_some(*key))
+                .collect();
+            facet.sort_unstable();
+            quotient_facets.push(facet);
+        }
+    }
+    quotient_facets.sort_unstable();
+    assert!(
+        quotient_facets
+            .windows(3)
+            .any(|window| window[0] == window[2]),
+        "the fixture must contain distinct lifted facets sharing quotient endpoints"
+    );
+    let before = serde_json::to_value(&tri).unwrap();
+    assert!(!tri.has_local_facet_issues(&keys).unwrap());
+    assert!(tri.local_facet_repair(&keys).unwrap().is_none());
+    assert_eq!(serde_json::to_value(&tri).unwrap(), before);
+    tri.validate().unwrap();
+}
+
+#[test]
+fn periodic_structure_public_snapshot_rejects_same_slot_self_neighbors() {
+    let vertices = [
+        vertex!([0.125, 0.125]).unwrap(),
+        vertex!([0.25, 0.125]).unwrap(),
+        vertex!([0.125, 0.25]).unwrap(),
+    ];
+    let tri = DelaunayTriangulationBuilder::new(&vertices)
+        .build_triangulation()
+        .unwrap();
+    let mut snapshot = serde_json::to_value(&tri).unwrap();
+    serde_json::from_value::<TriangulationSnapshot<(), (), 2>>(snapshot.clone())
+        .unwrap()
+        .try_into_triangulation(RobustKernel::new())
+        .unwrap()
+        .validate_realization()
+        .unwrap();
+    let bytes: Vec<u8> = serde_json::from_value(snapshot["tds"].clone()).unwrap();
+    let mut tds: CborValue = ciborium::de::from_reader(bytes.as_slice()).unwrap();
+    let fields = tds.as_map_mut().unwrap();
+    let neighbors = &mut fields
+        .iter_mut()
+        .find(|(key, _)| key.as_text() == Some("simplex_neighbors"))
+        .unwrap()
+        .1;
+    let (simplex_uuid, neighbor_slots) = &mut neighbors.as_map_mut().unwrap()[0];
+    let simplex_uuid = simplex_uuid.clone();
+    *neighbor_slots = CborValue::Array(vec![simplex_uuid.clone(); 3]);
+    let offsets = &mut fields
+        .iter_mut()
+        .find(|(key, _)| key.as_text() == Some("simplex_vertex_offsets"))
+        .unwrap()
+        .1;
+    *offsets = CborValue::Map(vec![(
+        simplex_uuid,
+        CborValue::Array(vec![
+            CborValue::Array(vec![CborValue::Integer(0.into()); 2]);
+            3
+        ]),
+    )]);
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(&tds, &mut bytes).unwrap();
+    snapshot["tds"] = serde_json::json!(bytes);
+    snapshot["topology_guarantee"] = serde_json::json!("pseudomanifold");
+    snapshot["global_topology"] = serde_json::json!({"kind": "toroidal", "period_bits": [1.0_f64.to_bits(), 1.0_f64.to_bits()], "mode": "periodic_image_point"});
+    // The snapshot parse itself must reject the false Level 2 proof, before
+    // it can be refined into a closed periodic triangulation.
+    let error = serde_json::from_value::<TriangulationSnapshot<(), (), 2>>(snapshot).expect_err(
+        "a positive small triangle with no distinct mirror cannot be a closed quotient",
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("Could not determine mirror facet"),
+        "{error}"
     );
 }
 

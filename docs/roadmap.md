@@ -1,14 +1,27 @@
 # Roadmap
 
-This page separates upcoming v0.8.3 release preparation, completed release
+This page separates v0.8.4 release preparation, completed release
 baselines, and future work. The [limitations guide](limitations.md) owns the
 current supported operation and geometry scope. Historical task snapshots
 live in [`archive/`](archive/).
 
-## v0.8.3 Release Preparation
+## v0.8.4 Release Preparation
 
-v0.8.3 is the upcoming release, not a published baseline. The current checkout
-requires Rust 1.99.1 and includes the following changes since v0.8.2:
+The current checkout is being reviewed for v0.8.4. The published v0.8.3 release
+is the preceding baseline; its completed changes are summarized below.
+
+Release preparation includes coordinated package/citation metadata and
+generated changelog updates, the required native validation, and the benchmark
+and publication gates in [RELEASING.md](RELEASING.md). A completed local check
+does not establish hosted CI, fresh performance measurements, or publication.
+The [changelog](../CHANGELOG.md) owns the detailed generated release notes.
+
+<a id="v083-release-preparation"></a>
+
+## v0.8.3 Released Baseline
+
+v0.8.3 was published on October 26, 2026. It required Rust 1.99.1 and included
+the following changes since v0.8.2:
 
 - **Checked ownership boundaries:** `Tds` owns Levels 1–2,
   `Triangulation` owns general geometry and topology through Levels 1–4, and
@@ -30,12 +43,6 @@ requires Rust 1.99.1 and includes the following changes since v0.8.2:
   supplies shared maintenance, managed tools, and evidence primitives. Cargo
   release workflows validate retained archives and trusted exact-commit CI
   evidence; benchmark comparisons retain their scientific provenance rules.
-
-Release preparation still includes coordinated package/citation metadata and
-generated changelog updates, the required native validation, and the benchmark
-and publication gates in [RELEASING.md](RELEASING.md). A completed local check
-does not establish hosted CI, fresh performance measurements, or publication.
-The [changelog](../CHANGELOG.md) owns the detailed generated release notes.
 
 ## Release Sequence
 
@@ -138,10 +145,11 @@ schedule. Scientific correctness and supporting evidence determine readiness.
 - **Public builder polish:** use downstream experience before finalizing the
   construction API for v1.0.0
   ([#497](https://github.com/acgetchell/delaunay/issues/497)).
-- **Shared tooling adoption:** retire remaining generic orchestration only
-  after the required upstream capabilities are published
-  ([#648](https://github.com/acgetchell/delaunay/issues/648),
-  [#653](https://github.com/acgetchell/delaunay/issues/653)).
+- **Shared tooling adapter cleanup:** remove the temporary adapters after their
+  upstream replacements are published and adopted
+  ([#673](https://github.com/acgetchell/delaunay/issues/673),
+  [#676](https://github.com/acgetchell/delaunay/issues/676)); see the
+  [completed adoption record](dev/tooling_adoption.md) for context.
 - **Spherical integration:** extend the bounded `S^2`/`S^3` prototype to the
   broader spherical construction, realization, and editing contract
   ([#414](https://github.com/acgetchell/delaunay/issues/414)).

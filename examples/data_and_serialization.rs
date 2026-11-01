@@ -95,8 +95,8 @@ fn main() -> Result<(), DataExampleError> {
     println!("  vertex-order entries: {}", vertex_order.len());
     println!("  simplex-visit entries: {}", visited_simplices.len());
 
-    // Tds is the transport/storage DTO. The runtime topology context is kept
-    // alongside it so the same Levels 1–4 contract can be restored.
+    // Serialize the Levels 1–2 proof-bearing Tds owner. Keep its runtime topology
+    // context alongside the snapshot so the same Levels 1–4 contract can be restored.
     let tds = triangulation.into_tds();
     let json = serde_json::to_string_pretty(&tds)?;
     let tds: Tds<i32, i32, 2> = serde_json::from_str(&json)?;

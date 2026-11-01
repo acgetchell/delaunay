@@ -2,10 +2,10 @@
 
 //! Microbenchmark for `core::hint::cold_path` adoption in geometric predicates.
 //!
-//! This benchmark exercises the hot Stage-1 path of the [`insphere`] /
-//! [`insphere_lifted`] predicates (and implicitly the orientation predicate they
-//! both invoke) in 2D–4D, plus a 5D reference whose orientation uses exact arithmetic. A secondary
-//! centered-query group retains its historical `near_boundary` benchmark
+//! This benchmark exercises the Stage-1 interval filters of the [`insphere`] /
+//! [`insphere_lifted`] predicates in 2D–5D. The orientation predicate they both
+//! invoke uses exact arithmetic in both 4D and 5D. A secondary centered-query
+//! group retains its historical `near_boundary` benchmark
 //! identifier for saved-baseline compatibility, but it does not independently
 //! establish Stage-2 entry. The `exact_fallback` group uses known cospherical
 //! points and validates their boundary classification before timing, so it is
@@ -15,8 +15,9 @@
 //!
 //! Orientation uses a determinant error bound through D = 3, followed by an
 //! exact integer determinant (direct expansion through matrix order 4, then
-//! Bareiss elimination). In-sphere uses query-relative outward-rounded
-//! intervals through D = 6, followed by an exact rational determinant.
+//! Bareiss elimination); D = 4–6 goes directly to exact orientation. In-sphere
+//! uses query-relative outward-rounded intervals through D = 6, followed by an
+//! exact rational determinant.
 //! Non-finite or unrepresentable intermediates return typed errors.
 //!
 //! Well-separated inputs can pass the in-sphere interval filter even in 5D.
@@ -42,7 +43,8 @@
 #[cfg(feature = "count-allocations")]
 use allocation_counter::measure;
 use criterion::{
-    BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main,
+    BenchmarkGroup, BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group,
+    criterion_main, measurement::WallTime,
 };
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{
@@ -149,9 +151,7 @@ fn run_insphere_lifted<const D: usize>(simplex: &[Point<D>], queries: &[Point<D>
 }
 
 /// Benchmark a known cospherical query that forces exact sign resolution.
-fn bench_exact_fallback_case<const D: usize>(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-) {
+fn bench_exact_fallback_case<const D: usize>(group: &mut BenchmarkGroup<'_, WallTime>) {
     let simplex = standard_simplex::<D>();
     let boundary = finite_point([1.0; D]);
 
@@ -187,9 +187,7 @@ fn bench_exact_fallback(c: &mut Criterion) {
 }
 
 /// Benchmark complete degenerate `SoS` expansion and preflight every fixture.
-fn bench_sos_degenerate_case<const D: usize>(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-) {
+fn bench_sos_degenerate_case<const D: usize>(group: &mut BenchmarkGroup<'_, WallTime>) {
     let orientation_points = degenerate_orientation_points::<D>();
     let simplex = standard_simplex::<D>();
     let cospherical = finite_point([1.0; D]);

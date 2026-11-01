@@ -19,6 +19,7 @@ use super::{
     robust_orientation, simplex_extras_for_ridge, vertex_point, vertex_point_lifted_into_simplex,
     vertices_to_points, vertices_to_points_with_optional_lift,
 };
+use crate::core::util::facet_keys::simplex_face_key;
 
 /// Check whether a k=3 ridge violates the local Delaunay condition.
 ///
@@ -270,15 +271,16 @@ pub(crate) fn build_k2_flip_context<U, V, const D: usize>(
             neighbor_key,
         })?;
 
-    let Some(facet_index_b) = simplex_a
-        .mirror_facet_index(facet_index_a, simplex_b)
-        .or_else(|| back_reference_facet_index(simplex_a_key, simplex_b))
-    else {
-        return Err(FlipError::InvalidFacetAdjacency {
-            simplex_key: simplex_a_key,
-            neighbor_key,
-        });
-    };
+    let facet_index_b = Tds::<U, V, D>::orientation_mirror_facet_index(
+        simplex_a,
+        facet_index_a,
+        simplex_b,
+        "building k=2 flip context",
+    )
+    .map_err(|source| FlipContextError::MirrorFacet {
+        facet,
+        source: source.into(),
+    })?;
 
     let opposite_a = simplex_a.vertices()[facet_index_a];
     let opposite_b = simplex_b.vertices()[facet_index_b];
@@ -325,17 +327,6 @@ pub(crate) fn build_k2_flip_context<U, V, const D: usize>(
     })
 }
 
-/// Finds the neighbor slot that points back to a source simplex when reciprocal
-/// neighbor pointers are already available.
-pub(super) fn back_reference_facet_index<V, const D: usize>(
-    source_simplex: SimplexKey,
-    neighbor_simplex: &Simplex<V, D>,
-) -> Option<usize> {
-    neighbor_simplex
-        .neighbor_keys()?
-        .position(|neighbor| neighbor == Some(source_simplex))
-}
-
 /// Increments a small vertex-incidence count buffer without allocating a hash map
 /// for the tiny opposite-face sets used by inverse flip context builders.
 pub(super) fn increment_vertex_count(
@@ -375,6 +366,10 @@ pub(super) fn simplex_from_vertex_incidence<U, V, const D: usize>(
 /// dangling vertex incidence, and invalid edge multiplicity.
 pub(super) fn flip_error_from_edge_key_error<const D: usize>(error: EdgeKeyError) -> FlipError {
     match error {
+        source @ (EdgeKeyError::AmbiguousEndpoints { .. }
+        | EdgeKeyError::InvalidOccurrence { .. }) => {
+            FlipEdgeAdjacencyError::InvalidHandle { source }.into()
+        }
         EdgeKeyError::DuplicateEndpoint { endpoint } => {
             FlipEdgeAdjacencyError::DuplicateEndpoints {
                 vertex_key: endpoint,
@@ -425,7 +420,7 @@ pub(super) fn flip_error_from_edge_key_error<const D: usize>(error: EdgeKeyError
 /// or the adjacency data is inconsistent.
 pub(crate) fn build_k2_flip_context_from_edge<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
-    edge: EdgeKey,
+    edge: EdgeKey<D>,
 ) -> Result<FlipContextDyn<D>, FlipError> {
     if D < 3 {
         return Err(FlipError::UnsupportedDimension { dimension: D });
@@ -902,8 +897,17 @@ pub(super) fn build_k3_flip_context_with_star_limit<U, V, const D: usize>(
         return Err(FlipError::InvalidRidgeAdjacency { simplex_key });
     }
 
-    let simplices =
-        collect_simplices_around_ridge(tds, simplex_key, &ridge_vertices, max_simplices)?;
+    let ridge_key = simplex_face_key(
+        simplex,
+        (0..vertex_count).filter(|&slot| slot != omit_a && slot != omit_b),
+    );
+    let simplices = collect_simplices_around_ridge(
+        tds,
+        simplex_key,
+        &ridge_vertices,
+        Some(ridge_key),
+        max_simplices,
+    )?;
     if simplices.len() != 3 {
         return Err(FlipError::InvalidRidgeMultiplicity {
             found: simplices.len(),
@@ -979,6 +983,15 @@ pub(crate) fn build_k3_flip_context_from_triangle<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     triangle: TriangleHandle,
 ) -> Result<FlipContextDyn<D>, FlipError> {
+    build_k3_flip_context_from_triangle_key(tds, triangle, None)
+}
+
+/// Builds the inverse star of one periodic triangle class selected by a queue.
+pub(super) fn build_k3_flip_context_from_triangle_key<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    triangle: TriangleHandle,
+    identity: Option<u64>,
+) -> Result<FlipContextDyn<D>, FlipError> {
     if D < 4 {
         return Err(FlipError::UnsupportedDimension { dimension: D });
     }
@@ -997,7 +1010,10 @@ pub(crate) fn build_k3_flip_context_from_triangle<U, V, const D: usize>(
     let mut removed_simplices: SimplexKeyBuffer = SimplexKeyBuffer::new();
     for simplex_key in tds.simplex_keys_containing_vertex(a) {
         let simplex = simplex_from_vertex_incidence(tds, a, simplex_key)?;
-        if simplex.contains_vertex(b) && simplex.contains_vertex(c) {
+        if simplex.contains_vertex(b)
+            && simplex.contains_vertex(c)
+            && identity.is_none_or(|key| triangle_identity_in_simplex(simplex, key))
+        {
             removed_simplices.push(simplex_key);
         }
     }
@@ -1059,6 +1075,21 @@ pub(crate) fn build_k3_flip_context_from_triangle<U, V, const D: usize>(
         direction: FlipDirection::Inverse,
     })
 }
+
+/// Checks local triangle occurrences without collapsing quotient vertex keys.
+fn triangle_identity_in_simplex<V, const D: usize>(simplex: &Simplex<V, D>, key: u64) -> bool {
+    for i in 0..simplex.number_of_vertices() {
+        for j in i + 1..simplex.number_of_vertices() {
+            for k in j + 1..simplex.number_of_vertices() {
+                if simplex_face_key(simplex, [i, j, k].into_iter()) == key {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "Local predicate evaluation threads topology, source simplices, and diagnostics explicitly"

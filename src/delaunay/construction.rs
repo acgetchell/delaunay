@@ -3500,7 +3500,7 @@ struct DelaunayBatchWorkspace<K, U, V, const D: usize> {
 
 impl<K, U, V, const D: usize> DelaunayBatchWorkspace<K, U, V, D>
 where
-    K: ExactPredicates<D, Scalar = f64>,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -3634,7 +3634,7 @@ pub(crate) mod test_support {
 
     impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
     where
-        K: ExactPredicates<D, Scalar = f64>,
+        K: ExactPredicates<D>,
         U: DataType,
         V: DataType,
     {
@@ -3707,7 +3707,7 @@ pub(crate) mod test_support {
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
-    K: ExactPredicates<D, Scalar = f64>,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -4336,7 +4336,7 @@ where
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error: TriangulationConstructionError::InsufficientVertices {
                     dimension: D,
-                    source: SimplexValidationError::InsufficientVertices {
+                    source: SimplexValidationError::VertexCountMismatch {
                         actual: vertices.len(),
                         expected: D + 1,
                         dimension: D,
@@ -4471,7 +4471,7 @@ where
         if vertices.len() < D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
                 dimension: D,
-                source: SimplexValidationError::InsufficientVertices {
+                source: SimplexValidationError::VertexCountMismatch {
                     actual: vertices.len(),
                     expected: D + 1,
                     dimension: D,
@@ -4534,7 +4534,7 @@ where
 
 impl<K, U, V, const D: usize> DelaunayBatchWorkspace<K, U, V, D>
 where
-    K: ExactPredicates<D, Scalar = f64>,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -4806,17 +4806,16 @@ where
                         // Pass the batch index through to transactional insertion so the
                         // lower-layer retryable-skip trace can point back to this exact
                         // bulk-construction position.
-                        self.tri
-                            .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
-                                *vertex,
-                                None,
-                                self.insertion_state.last_inserted_simplex,
-                                perturbation_seed,
-                                grid_index.as_mut(),
-                                Some(index),
-                                InsertionTelemetryMode::CountsOnly,
-                                retry_degenerate_realization,
-                            )
+                        self.tri.insert_detailed_with_retry_policy(
+                            *vertex,
+                            None,
+                            self.insertion_state.last_inserted_simplex,
+                            perturbation_seed,
+                            grid_index.as_mut(),
+                            Some(index),
+                            InsertionTelemetryMode::CountsOnly,
+                            retry_degenerate_realization,
+                        )
                     };
                     let insert_result = if trace_insertion {
                         let span = tracing::warn_span!(
@@ -4976,17 +4975,16 @@ where
                         // Keep the stats and non-stats branches aligned so bulk-index-based
                         // tracing behaves the same regardless of whether the caller records
                         // construction statistics.
-                        self.tri
-                            .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
-                                *vertex,
-                                None,
-                                self.insertion_state.last_inserted_simplex,
-                                perturbation_seed,
-                                grid_index.as_mut(),
-                                Some(index),
-                                InsertionTelemetryMode::CountsAndTimings,
-                                retry_degenerate_realization,
-                            )
+                        self.tri.insert_detailed_with_retry_policy(
+                            *vertex,
+                            None,
+                            self.insertion_state.last_inserted_simplex,
+                            perturbation_seed,
+                            grid_index.as_mut(),
+                            Some(index),
+                            InsertionTelemetryMode::CountsAndTimings,
+                            retry_degenerate_realization,
+                        )
                     };
                     let insert_result = if trace_insertion {
                         let span = tracing::warn_span!(
@@ -5359,7 +5357,7 @@ where
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
-    K: ExactPredicates<D, Scalar = f64>,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -6252,6 +6250,7 @@ mod tests {
     use crate::core::tds::{
         EntityKind, GeometricError, SimplexKey, TriangulationConstructionState, VertexKey,
     };
+    use crate::delaunay_test_support::init_tracing;
     use crate::diagnostics::BatchLocalRepairTrigger;
     use crate::geometry::coordinate_range::{CoordinateRangeError, CoordinateRangeOrdering};
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
@@ -6274,7 +6273,6 @@ mod tests {
     use slotmap::KeyData;
     use std::assert_matches;
     use std::num::NonZeroUsize;
-    use std::sync::Once;
     use std::time::Instant;
     use uuid::Uuid;
 
@@ -6491,7 +6489,7 @@ mod tests {
                 DelaunayTriangulationConstructionError::Triangulation { source:
                     DelaunayConstructionFailure::InsufficientVertices {
                         dimension: 2,
-                        source: SimplexValidationError::InsufficientVertices {
+                        source: SimplexValidationError::VertexCountMismatch {
                             actual: 2,
                             expected: 3,
                             dimension: 2,
@@ -6500,18 +6498,6 @@ mod tests {
                  }
             )
         );
-    }
-
-    fn init_tracing() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_test_writer()
-                .try_init();
-        });
     }
 
     #[test]
@@ -8147,7 +8133,7 @@ mod tests {
             DelaunayTriangulationConstructionError::Triangulation {
                 source: DelaunayConstructionFailure::InsufficientVertices {
                     dimension: D,
-                    source: SimplexValidationError::InsufficientVertices {
+                    source: SimplexValidationError::VertexCountMismatch {
                         actual: D,
                         expected: D + 1,
                         dimension: D,
@@ -8986,7 +8972,7 @@ mod tests {
 
     #[test]
     fn test_delaunay_construction_failure_preserves_typed_generic_sources() {
-        let simplex_source = SimplexValidationError::InsufficientVertices {
+        let simplex_source = SimplexValidationError::VertexCountMismatch {
             actual: 2,
             expected: 3,
             dimension: 2,

@@ -37,6 +37,7 @@ first use, start with the [README](README.md).
 | Spatial locality | [Skilling and Moon et al.](#spatial-ordering-and-hilbert-curves) [9, 8]: index algorithm and locality analysis |
 | Spherical distances | [Stable vector angles](#stable-vector-angles): la-stack implementation and Kahan background |
 | Topology | [PL and computational topology texts][topology]: simplicial complexes, joins, links, closed stars, and manifold background |
+| Volumes | [Minemyer][volumes] [10]: simplex volume from the edge-vector Gram matrix |
 
 [construction]: #triangulation-construction-algorithms
 [location]: #point-location-in-triangulations
@@ -50,6 +51,7 @@ first use, start with the [README](README.md).
 [similarity]: #set-similarity-metrics-testing-and-validation
 [overlap]: #realized-simplex-overlap-detection-level-4-validation
 [topology]: #topological-manifolds-realizations-and-pl-topology-levels-3-4-validation
+[volumes]: #volume-computation-and-gram-matrix-methods
 
 ## AI-Assisted Development Tools
 
@@ -98,6 +100,7 @@ the corresponding bibliography entries in this file:
 - [7] Edelsbrunner, H., and Mücke, E. P. (1990), Simulation of Simplicity.
 - [8] Moon, B., et al. (2001), locality properties of Hilbert ordering.
 - [9] Skilling, J. (2004), the Hilbert-index algorithm used by the crate.
+- [10] Minemyer, B. (2015 preprint), the Gram-determinant formula for Euclidean simplex volume.
 
 ## Advanced Computational Geometry Topics
 
@@ -116,11 +119,11 @@ These references support specialized features and high-dimensional computations 
 
 ### Volume Computation and Gram Matrix Methods
 
-- Coxeter, H.S.M. *Introduction to Geometry*. 2nd ed., 1969. (Chapter 13.)
-- Richter-Gebert, Jürgen. *Perspectives on Projective Geometry*. 2011. (Section 14.3.)
-- See Edelsbrunner, H. *Geometry and Topology for Mesh Generation* (2001) in
-  [Data Structures and Implementation References](#data-structures-and-implementation-references) for a
-  Gram-matrix treatment (Chapter 2).
+- Minemyer, B. *Intrinsic Geometry of a Euclidean Simplex*. Author's preprint,
+  June 3, 2015, Section 4, Theorem 4 and proof, p. 5.
+  [Author-hosted preprint](https://facstaff.bloomu.edu/bminemyer/pdffiles/geometryofasimplex.pdf).
+  With edge-vector matrix W and Gram matrix Q = WᵀW, the n-simplex volume is
+  √det(Q)/n!. This is formula provenance, not a floating-point conditioning guarantee.
 
 ## Combinatorial Algorithms and Enumeration
 
@@ -386,13 +389,16 @@ and selecting high-quality simplices during triangulation repair.
 
 ## Performance Optimization and Memory Management
 
-These references inform the library's performance optimization strategies and memory-efficient data structure design.
+These references provide implementation context and related background for
+performance optimization and memory-efficient data structures.
 
 ### Cache-Efficient Algorithms
 
 - Arge, L., Goodrich, M.T., Nelson, M., and Sitchinava, N. "Fundamental Parallel Algorithms for Private-Cache Chip Multiprocessors."
   *Proceedings of the Twentieth Annual Symposium on Parallelism in Algorithms and Architectures* (2008): 197-206.
   DOI: [10.1145/1378533.1378573](https://doi.org/10.1145/1378533.1378573)
+  Related background on parallel external-memory algorithms; no local algorithm
+  is attributed to this paper.
 
 ### Memory-Efficient Data Structures
 
@@ -431,7 +437,7 @@ and citable research software artifact.
 These references motivate the Jaccard similarity/distance used in tests to compare
 set-based structures (e.g., edge sets) under different construction orders.
 
-- Jaccard, P. "Étude comparative de la distribution florale dans une portion des Alpes et des Jura."
+- Jaccard, P. "Étude comparative de la distribution florale dans une portion des Alpes et du Jura."
   *Bulletin de la Société Vaudoise des Sciences Naturelles* 37, no. 142 (1901): 547–579.
 - Tanimoto, T. T. "An Elementary Mathematical Theory of Classification and Prediction."
   IBM Technical Report, 1958. Often cited for the Tanimoto coefficient (equivalent to the

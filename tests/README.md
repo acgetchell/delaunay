@@ -111,18 +111,16 @@ Property-based tests for Point data structures verifying fundamental properties.
   - HashMap key usage correctness
 - **Coordinate Operations**:
   - Coordinate extraction roundtrips
-  - Into<[T; D]> conversion consistency
+  - `Into<[f64; D]>` conversion consistency
   - get() method correctness
 - **Serialization**:
   - Serde roundtrip preservation
   - Cross-dimensional serialization
-- **NaN Handling**:
-  - Custom equality semantics (NaN == NaN)
-  - Hash consistency with NaN coordinates
-  - HashMap key usage with NaN
 - **Validation**:
   - Finite coordinates validate successfully
-  - Infinite/NaN coordinates fail validation
+  - Infinite/NaN coordinates are rejected by `Point::try_new`
+- **Scalar Identity Helpers**:
+  - NaN equality/hash semantics for scalar values, separate from finite `Point` storage
 - **Ordering**:
   - Consistency with equality
   - Antisymmetry and transitivity

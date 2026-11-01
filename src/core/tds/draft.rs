@@ -8,8 +8,7 @@ use super::{
     VertexKey,
 };
 use crate::core::collections::SimplexVertexKeyBuffer;
-use crate::core::simplex::Simplex;
-use crate::core::simplex::SimplexValidationError;
+use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::vertex::Vertex;
 use crate::refinement::RefinementError;
 use thiserror::Error;
@@ -217,8 +216,9 @@ impl<U, V, const D: usize> TdsDraft<U, V, D> {
 
     /// Validates the currently staged Levels 1–2 state.
     ///
-    /// A partial bootstrap is intentionally reported as incomplete; success
-    /// means the staged value already satisfies the complete TDS invariants.
+    /// This checks the current unpublished storage's structural invariants.
+    /// Construction completion is checked separately by [`Self::finish`];
+    /// structural success alone does not publish a partial bootstrap.
     ///
     /// # Errors
     ///

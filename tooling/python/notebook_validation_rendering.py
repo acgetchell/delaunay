@@ -6,6 +6,7 @@ import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
+from fractions import Fraction
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -165,7 +166,6 @@ def simplex_points(points: list[Point2], simplex: tuple[int, ...], context: str)
     return [point_by_index(points, point_index, f"{context}[{offset}]") for offset, point_index in enumerate(simplex)]
 
 
-VISUAL_AREA_TOLERANCE = 1.0e-12
 VISUAL_CIRCLE_TOLERANCE = 1.0e-9
 
 
@@ -208,10 +208,13 @@ def simplex_multiplicities(simplices: list[tuple[int, ...]]) -> dict[tuple[int, 
     return counts
 
 
-def triangle_signed_area(points: list[Point2], simplex: tuple[int, ...], context: str) -> float:
-    """Return the signed area of a 2D simplex visual."""
-    a, b, c = simplex_points(points, simplex, context)
-    return 0.5 * ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+def triangle_is_collinear(points: list[Point2], simplex: tuple[int, ...], context: str) -> bool:
+    """Prove collinearity exactly over the finite represented coordinates."""
+    vertices = simplex_points(points, simplex, context)
+    if not all(math.isfinite(coordinate) for point in vertices for coordinate in point):
+        raise ValueError(f"{context} coordinates must be finite")
+    a, b, c = [(Fraction(x), Fraction(y)) for x, y in vertices]
+    return (b[0] - a[0]) * (c[1] - a[1]) == (b[1] - a[1]) * (c[0] - a[0])
 
 
 def point_distance(left: Point2, right: Point2) -> float:
@@ -259,11 +262,9 @@ def validate_degenerate_simplex_witness(case_index: int, level: int, witness: Vi
     for simplex_index in sorted(witness.highlighted_simplices):
         simplices_context = f"cases[{case_index}].visual.simplices"
         simplex = simplex_by_index(witness.simplices, simplex_index, simplices_context)
-        area = abs(triangle_signed_area(witness.points, simplex, f"{simplices_context}[{simplex_index}]"))
-        if not math.isfinite(area):
-            raise ValueError(f"{simplices_context}[{simplex_index}] area must be finite, got {area}")
-        if area > VISUAL_AREA_TOLERANCE:
-            raise ValueError(f"cases[{case_index}].visual.simplices[{simplex_index}] area {area} exceeds degeneracy tolerance {VISUAL_AREA_TOLERANCE}")
+        context = f"{simplices_context}[{simplex_index}]"
+        if not triangle_is_collinear(witness.points, simplex, context):
+            raise ValueError(f"{context} vertices are not exactly collinear")
 
 
 def validate_circumcircle_witness(case_index: int, level: int, witness: VisualWitness) -> None:
@@ -419,9 +420,9 @@ VALIDATION_HIERARCHY_LAYERS = (
         scope=("Local elements: Vertex / Simplex",),
         questions=(
             "Are vertex coordinates finite and valid?",
-            "Are element UUIDs present and non-nil?",
-            "Do simplices have D+1 distinct vertex keys?",
-            "Do simplex vertex keys resolve to distinct coordinates?",
+            "Are element UUIDs non-nil version 4?",
+            "Are the D+1 lifted (key, offset) identities distinct?",
+            "Do different vertex keys have distinct stored coordinates?",
             "Are local neighbor slots shaped and assigned?",
         ),
         color="#dbeafe",

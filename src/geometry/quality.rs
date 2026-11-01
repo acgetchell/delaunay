@@ -589,9 +589,14 @@ pub fn radius_ratio<K, U, V, const D: usize>(
 ///
 /// # Quality Interpretation
 ///
-/// - **Higher values** = better quality
+/// - Within one dimension, higher values indicate more volume relative to mean edge length.
 /// - **Optimal** (equilateral 2D): ≈ 0.433 (sqrt(3)/4)
-/// - **Poor**: < 0.1 (flat or sliver simplex)
+/// - **2D heuristic**: values below 0.1 indicate a relatively flat triangle.
+///
+/// Values are not normalized to a common reference across dimensions. For example,
+/// a regular unit-edge 4-simplex has value sqrt(5)/96 ≈ 0.0233. Use a
+/// dimension-specific reference when comparing quality; the 2D threshold does
+/// not classify higher-dimensional simplices.
 ///
 /// # Arguments
 ///

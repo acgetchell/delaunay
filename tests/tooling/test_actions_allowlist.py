@@ -9,6 +9,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from research_repo_tools import action_updates
 from research_repo_tools.cli import main
 from research_repo_tools.process import run_command
 
@@ -125,3 +126,28 @@ def test_privileged_references_remain_excluded_from_updater() -> None:
     assert AUTH not in actions
     assert not any("dependabot-approve" in name for name in actions)
     assert json.loads(POLICY.read_bytes())["patterns_allowed"].count(f"{AUTH}@{REVIEWED_COMMIT}") == 1
+
+
+def test_codeql_update_preview_preserves_adopted_workflow_pins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """The installed updater must resolve the consumer's selected tags without downgrades."""
+    references: set[tuple[str, str, str]] = set()
+    for workflow in (ROOT / ".github/workflows").glob("*.yml"):
+        references.update(re.findall(r"uses:\s+(github/codeql-action/[a-z-]+)@([0-9a-f]{40})\s+#\s*(v\d+\.\d+\.\d+)", workflow.read_text(encoding="utf-8")))
+    assert {name for name, _sha, _version in references} == {f"github/codeql-action/{part}" for part in ("init", "analyze", "upload-sarif")}
+    assert len(references) == 3
+    adopted = {name: (sha, version) for name, sha, version in references}
+    actions = tomllib.loads((ROOT / ".github/action-updates.toml").read_bytes().decode())["actions"]
+    policy = tmp_path / "updates.toml"
+    policy.write_text("[actions]\n" + "".join(f'"{name}" = "{actions[name]}"\n' for name in sorted(adopted)), encoding="utf-8")
+    workflow = tmp_path / "workflow.yml"
+    original = "jobs:\n  check:\n    steps:\n" + "".join(f"      - uses: {name}@{sha} # {version}\n" for name, (sha, version) in sorted(adopted.items()))
+    workflow.write_text(original, encoding="utf-8", newline="\n")
+
+    def resolve(action: str, target: str, _root: Path) -> tuple[str, str]:
+        sha, version = adopted[action]
+        return (sha if target == version else "1" * 40), target
+
+    monkeypatch.setattr(action_updates, "resolve", resolve)
+    assert main(["--root", str(tmp_path), "actions", "update", "--policy", str(policy), "--check", workflow.name]) == 0
+    assert "Preview: 0 workflow files would change" in capsys.readouterr().out
+    assert workflow.read_bytes() == original.encode()

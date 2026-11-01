@@ -7,10 +7,65 @@ use super::{SimplexKey, VertexKey};
 use crate::core::algorithms::flips::{FlipError, FlipNeighborWiringError};
 use crate::core::facet::FacetError;
 use crate::core::simplex::SimplexValidationError;
+use crate::core::util::PeriodicFacetKeyDerivationError;
 use crate::core::vertex::VertexValidationError;
 use crate::geometry::traits::coordinate::CoordinateValues;
 use thiserror::Error;
 use uuid::Uuid;
+
+/// Structured reason periodic quotient facet-key derivation failed.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PeriodicQuotientFacetKeyDerivationFailure {
+    /// The lifted simplex does not have the expected simplex arity (`D + 1` vertices).
+    #[error("invalid lifted simplex arity: expected {expected} vertices, got {actual}")]
+    InvalidLiftedSimplexArity {
+        /// Expected number of lifted vertices (`D + 1`).
+        expected: usize,
+        /// Actual lifted vertex count provided by the caller.
+        actual: usize,
+    },
+
+    /// The requested facet index exceeds the lifted-vertex count.
+    #[error("facet index {facet_index} out of bounds for lifted vertex count {vertex_count}")]
+    FacetIndexOutOfBounds {
+        /// Requested facet index.
+        facet_index: usize,
+        /// Number of lifted vertices available.
+        vertex_count: usize,
+    },
+
+    /// Relative periodic offset component is outside the encodable byte-delta range.
+    #[error(
+        "periodic offset component {component} (axis {axis}) is out of encodable range 0..=255"
+    )]
+    RelativeOffsetOutOfRange {
+        /// Axis whose shifted component failed.
+        axis: usize,
+        /// Shifted component value.
+        component: i16,
+    },
+}
+
+impl From<PeriodicFacetKeyDerivationError> for PeriodicQuotientFacetKeyDerivationFailure {
+    fn from(source: PeriodicFacetKeyDerivationError) -> Self {
+        match source {
+            PeriodicFacetKeyDerivationError::InvalidLiftedSimplexArity { expected, actual } => {
+                Self::InvalidLiftedSimplexArity { expected, actual }
+            }
+            PeriodicFacetKeyDerivationError::FacetIndexOutOfBounds {
+                facet_index,
+                vertex_count,
+            } => Self::FacetIndexOutOfBounds {
+                facet_index,
+                vertex_count,
+            },
+            PeriodicFacetKeyDerivationError::RelativeOffsetOutOfRange { axis, component } => {
+                Self::RelativeOffsetOutOfRange { axis, component }
+            }
+        }
+    }
+}
 
 // =============================================================================
 // CONSTRUCTION STATE TYPES
@@ -541,6 +596,17 @@ pub enum NeighborValidationError {
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum TdsError {
+    /// A lifted facet cannot be represented by the periodic facet-key encoding.
+    #[error("periodic facet key failed for simplex {simplex_uuid}, facet {facet_index}: {source}")]
+    PeriodicFacetKey {
+        /// Stable identity of the simplex being inspected.
+        simplex_uuid: Uuid,
+        /// Slot opposite the requested facet.
+        facet_index: usize,
+        /// Structured facet-key derivation failure.
+        #[source]
+        source: PeriodicQuotientFacetKeyDerivationFailure,
+    },
     /// The triangulation contains an invalid vertex.
     #[error("Invalid vertex {vertex_id}: {source}")]
     InvalidVertex {
@@ -842,6 +908,8 @@ pub enum TdsError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum TdsErrorKind {
+    /// A periodic facet identity could not be represented.
+    PeriodicFacetKey,
     /// A vertex failed validation.
     InvalidVertex,
     /// A simplex failed validation.
@@ -893,6 +961,7 @@ pub enum TdsErrorKind {
 impl From<&TdsError> for TdsErrorKind {
     fn from(source: &TdsError) -> Self {
         match source {
+            TdsError::PeriodicFacetKey { .. } => Self::PeriodicFacetKey,
             TdsError::InvalidVertex { .. } => Self::InvalidVertex,
             TdsError::InvalidSimplex { .. } => Self::InvalidSimplex,
             TdsError::InvalidNeighbors { .. } => Self::InvalidNeighbors,

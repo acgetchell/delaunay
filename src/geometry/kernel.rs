@@ -418,7 +418,7 @@ impl<const D: usize> Kernel<D> for FastKernel<f64> {
             // Preserve original CoordinateConversionError if present
             match e {
                 SimplexValidationError::CoordinateConversion { source } => source,
-                SimplexValidationError::InsufficientVertices {
+                SimplexValidationError::VertexCountMismatch {
                     actual,
                     expected,
                     dimension,
@@ -942,7 +942,7 @@ mod tests {
 
     #[test]
     fn test_fast_kernel_in_sphere_insufficient_vertices() {
-        // Exercises the SimplexValidationError::InsufficientVertices mapping.
+        // Exercises the SimplexValidationError::VertexCountMismatch mapping.
         let kernel = FastKernel::<f64>::new();
         let simplex: [Point<3>; 2] = [
             Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),

@@ -173,7 +173,9 @@ where
     /// Returns error if:
     /// - Insertion is attempted on a published empty owner rather than through an incremental builder
     /// - Duplicate UUID detected
-    /// - Point is on a facet, edge, or vertex (degenerate cases not yet implemented)
+    /// - The point has an unsupported degenerate location. Exact points on a 2D
+    ///   boundary edge are supported through a checked edge split; other
+    ///   edge/facet locations can return `UnsupportedDegenerateLocation`.
     /// - Spatial index construction fails while seeding duplicate-detection and locate hints
     /// - Conflict region computation fails
     /// - Cavity boundary extraction fails
@@ -667,6 +669,7 @@ mod tests {
     };
     use crate::core::simplex::Simplex;
     use crate::core::tds::{Tds, TdsError};
+    use crate::delaunay_test_support::init_tracing;
     use crate::draft::DelaunayTriangulationDraft;
     use crate::flips::BistellarFlips;
     use crate::geometry::kernel::AdaptiveKernel;
@@ -677,7 +680,7 @@ mod tests {
     use slotmap::KeyData;
     use std::assert_matches;
     use std::iter::once;
-    use std::sync::{Arc, Once};
+    use std::sync::Arc;
 
     #[must_use]
     fn synthetic_nonconvergent_error() -> DelaunayRepairError {
@@ -696,18 +699,6 @@ mod tests {
                 queue_order: RepairQueueOrder::Fifo,
             }),
         }
-    }
-
-    fn init_tracing() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_test_writer()
-                .try_init();
-        });
     }
 
     #[test]

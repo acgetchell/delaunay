@@ -12,7 +12,7 @@ use super::{
     robust_orientation, should_emit_postcondition_facet_debug, should_emit_ridge_debug,
     simplex_extras_for_ridge, validate_periodic_offset_len, vertices_to_points,
 };
-use crate::core::util::permutation::permutation_odd;
+use crate::core::util::{facet_keys::simplex_face_key, permutation::permutation_odd};
 
 /// Chooses replacement-simplex parity from the oriented cavity boundary.
 pub(super) fn orient_replacement_simplices<U, V, const D: usize>(
@@ -636,9 +636,18 @@ pub(super) fn debug_ridge_context<U, V, const D: usize>(
     }
 
     let ridge_vertices = ridge_vertices_from_simplex(simplex, omit_a, omit_b);
-    let neighbor_walk =
-        collect_simplices_around_ridge(tds, ridge.simplex_key(), &ridge_vertices, None)
-            .map(|simplices| simplices.into_iter().collect::<Vec<_>>());
+    let ridge_key = simplex_face_key(
+        simplex,
+        (0..simplex.number_of_vertices()).filter(|&slot| slot != omit_a && slot != omit_b),
+    );
+    let neighbor_walk = collect_simplices_around_ridge(
+        tds,
+        ridge.simplex_key(),
+        &ridge_vertices,
+        Some(ridge_key),
+        None,
+    )
+    .map(|simplices| simplices.into_iter().collect::<Vec<_>>());
     let global_simplices = simplices_containing_vertices(tds, &ridge_vertices);
     let neighbor_snapshot: Option<SmallBuffer<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE>> =
         simplex.neighbor_keys().map(Iterator::collect);

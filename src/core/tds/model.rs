@@ -700,11 +700,10 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         }
 
         periodic_facet_key_from_lifted_vertices::<D>(&lifted_vertices, facet_index).map_err(
-            |error| TdsError::InconsistentDataStructure {
-                message: format!(
-                    "Failed to derive periodic facet key for simplex {:?} facet {facet_index}: {error}",
-                    simplex.uuid()
-                ),
+            |source| TdsError::PeriodicFacetKey {
+                simplex_uuid: simplex.uuid(),
+                facet_index,
+                source: source.into(),
             },
         )
     }
@@ -777,34 +776,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         }
 
         Ok(lifted_vertices)
-    }
-
-    pub(super) fn matching_lifted_facet_index(
-        simplex: &Simplex<V, D>,
-        neighbor: &Simplex<V, D>,
-    ) -> Result<Option<usize>, TdsError> {
-        let simplex_vertices = simplex.vertices();
-        let neighbor_vertices = neighbor.vertices();
-
-        for simplex_facet_index in 0..simplex_vertices.len() {
-            let simplex_facet_key = Self::periodic_facet_key_from_simplex_vertices(
-                simplex,
-                simplex_vertices,
-                simplex_facet_index,
-            )?;
-            for neighbor_facet_index in 0..neighbor_vertices.len() {
-                let neighbor_facet_key = Self::periodic_facet_key_from_simplex_vertices(
-                    neighbor,
-                    neighbor_vertices,
-                    neighbor_facet_index,
-                )?;
-                if simplex_facet_key == neighbor_facet_key {
-                    return Ok(Some(simplex_facet_index));
-                }
-            }
-        }
-
-        Ok(None)
     }
 
     /// Finds the neighbor facet that matches a source facet in lifted periodic coordinates.
@@ -2374,9 +2345,91 @@ mod test_support {
     use crate::core::simplex::Simplex;
     use crate::core::tds::{SimplexKey, TriangulationConstructionState, VertexKey};
     use crate::core::vertex::Vertex;
+    use crate::vertex;
+    use std::array::from_fn;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
     use uuid::Uuid;
+
+    impl Tds<(), (), 2> {
+        /// Minimal two-triangle quotient of T^2, for combinatorial queries below
+        /// the strict-span Level 4 realization contract.
+        pub(crate) fn periodic_one_vertex_t2_for_test() -> (Self, VertexKey) {
+            let mut tds = Self::empty();
+            let vertex = tds
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0]).expect("finite origin"))
+                .expect("fresh fixture vertex");
+            for offsets in [vec![[0, 0], [1, 0], [1, 1]], vec![[0, 0], [1, 1], [0, 1]]] {
+                tds.insert_simplex_with_mapping(
+                    Simplex::try_new_periodic(vec![vertex; 3], offsets)
+                        .expect("three distinct lifted vertices"),
+                )
+                .expect("distinct quotient triangle");
+            }
+            tds.assign_neighbors().expect("paired lifted edges");
+            tds.assign_incident_simplices()
+                .expect("complete fixture incidence");
+            tds.validate().expect("valid two-triangle quotient TDS");
+            (tds, vertex)
+        }
+
+        /// Builds an exact 2-by-3 rectangular T^2 quotient for shared periodic
+        /// traversal and predicate regressions. Moving one corner creates a
+        /// known strict empty-circle violation without changing connectivity.
+        pub(crate) fn periodic_grid_t2_for_test(move_corner: bool) -> (Self, [VertexKey; 6]) {
+            Self::periodic_grid_t2_with_displacement_for_test(
+                move_corner.then_some((1, [0.125, 0.25])),
+            )
+        }
+
+        /// Keeps the grid's connectivity and allows an independently specified
+        /// geometric displacement for queue and predicate regressions.
+        pub(crate) fn periodic_grid_t2_with_displacement_for_test(
+            displacement: Option<(usize, [f64; 2])>,
+        ) -> (Self, [VertexKey; 6]) {
+            let mut tds = Self::empty();
+            let keys = from_fn(|index| {
+                let [x, y] = displacement.filter(|(moved, _)| *moved == index).map_or(
+                    [[0.0, 0.5][index / 3], [0.0, 0.25, 0.75][index % 3]],
+                    |(_, point)| point,
+                );
+                tds.insert_vertex_with_mapping(vertex!([x, y]).expect("finite grid point"))
+                    .expect("distinct grid vertex")
+            });
+            for x in 0..2 {
+                for y in 0..3 {
+                    for slots in [
+                        [(x, y), (x + 1, y), (x + 1, y + 1)],
+                        [(x, y), (x + 1, y + 1), (x, y + 1)],
+                    ] {
+                        let vertices = slots.map(|(i, j)| keys[(i % 2) * 3 + j % 3]);
+                        let offsets = slots.map(|(i, j)| {
+                            [
+                                i8::try_from(i / 2).expect("grid x offset is zero or one"),
+                                i8::try_from(j / 3).expect("grid y offset is zero or one"),
+                            ]
+                        });
+                        tds.insert_simplex_with_mapping(
+                            Simplex::try_new_periodic(vertices.as_slice(), offsets.as_slice())
+                                .expect("three distinct lifted grid corners"),
+                        )
+                        .expect("distinct grid triangle");
+                    }
+                }
+            }
+            tds.assign_neighbors().expect("paired grid edges");
+            tds.assign_incident_simplices()
+                .expect("complete grid incidence");
+            tds.validate().expect("valid rectangular quotient TDS");
+            assert_eq!(
+                tds.build_facet_to_simplices_map()
+                    .expect("valid grid facets")
+                    .len(),
+                18
+            );
+            (tds, keys)
+        }
+    }
 
     impl<U, V, const D: usize> Tds<U, V, D> {
         /// Replaces this storage with a rollback clone for detached-copy tests.
@@ -2514,7 +2567,7 @@ mod test_support {
 mod tests {
     use super::*;
     use crate::core::simplex::Simplex;
-    use crate::core::tds::TdsRollbackTransaction;
+    use crate::core::tds::{PeriodicQuotientFacetKeyDerivationFailure, TdsRollbackTransaction};
     use crate::vertex;
     use std::assert_matches;
     use std::sync::Arc;
@@ -2677,9 +2730,11 @@ mod tests {
         let err = tds.facet_key_for_simplex_facet(simplex_key, 2).unwrap_err();
         assert_matches!(
             err,
-            TdsError::InconsistentDataStructure { message }
-                if message.contains("Failed to derive periodic facet key")
-                    && message.contains("facet 2")
+            TdsError::PeriodicFacetKey { simplex_uuid, facet_index: 2,
+                source: PeriodicQuotientFacetKeyDerivationFailure::RelativeOffsetOutOfRange {
+                    axis: 0, component: 383,
+                },
+            } if simplex_uuid == tds.simplex(simplex_key).unwrap().uuid()
         );
     }
 

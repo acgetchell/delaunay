@@ -8,6 +8,7 @@ use super::{
     SimplexKeyBuffer, SmallBuffer, Tds, VertexKey, env, repair_trace_enabled,
     stable_hash_u64_slice,
 };
+use crate::core::util::facet_keys::simplex_face_key;
 
 /// Extracts facet vertices by omitted slot so facet hashing matches the simplex's
 /// current vertex ordering.
@@ -85,6 +86,7 @@ pub(super) fn collect_simplices_around_ridge<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     start_simplex: SimplexKey,
     ridge: &SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    ridge_identity: Option<u64>,
     max_simplices: Option<usize>,
 ) -> Result<SimplexKeyBuffer, FlipError> {
     let mut queue: SimplexKeyBuffer = SimplexKeyBuffer::new();
@@ -117,6 +119,14 @@ pub(super) fn collect_simplices_around_ridge<U, V, const D: usize>(
             }
         }
         if omit_indices.len() != 2 {
+            return Err(FlipError::InvalidRidgeAdjacency { simplex_key });
+        }
+        if ridge_identity.is_some_and(|key| {
+            simplex_face_key(
+                simplex,
+                (0..simplex.number_of_vertices()).filter(|slot| !omit_indices.contains(slot)),
+            ) != key
+        }) {
             return Err(FlipError::InvalidRidgeAdjacency { simplex_key });
         }
 
@@ -873,7 +883,7 @@ mod tests {
         let ridge: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
             once(ridge_vertex).collect();
 
-        let error = collect_simplices_around_ridge(&tds, start_simplex, &ridge, None)
+        let error = collect_simplices_around_ridge(&tds, start_simplex, &ridge, None, None)
             .expect_err("neighbor without the full ridge should be rejected");
 
         assert_eq!(

@@ -154,7 +154,7 @@ fn main() -> DelaunayResult<()> {
     let new_vertex = vertex![0.5, 0.5, 0.5]?;
     dt.insert_vertex(new_vertex)?;
 
-    // Vertex deletion (topology-preserving, with automatic repair when enabled)
+    // Vertex deletion certifies Levels 1–5 on success and rolls back on failure.
     if let Some((vertex_key, _)) = dt.vertices().next() {
         dt.delete_vertex(vertex_key)?;
     }
@@ -201,16 +201,17 @@ fn main() -> DelaunayResult<()> {
 - **Custom validation policies**: Configure `ValidationPolicy` independently via
   the builder or `dt.try_set_validation_policy(...)`, which returns typed
   feedback for incompatible policy/guarantee pairs.
-- **Custom repair policies**: Configure Delaunay repair behavior
+- **Batch repair policies**: Configure construction-time Delaunay repair cadence
+  through `ConstructionOptions::with_batch_repair_policy`
 
 See `docs/topology.md` for more on toroidal triangulations and `docs/construction_and_validation.md`
 for topology guarantee and validation policy details.
 
 ### Key Characteristics
 
-- **Automatic property preservation**: Insertion maintains the Delaunay
-  empty-circumsphere property; deletion runs flip-based repair when the active
-  `DelaunayRepairPolicy` permits it
+- **Automatic property preservation**: Insertion and deletion publish only
+  after their checked repair/certification paths preserve the Delaunay
+  empty-circumsphere property; failures roll back the owner
 - **Cavity-based insertion**: New vertices are inserted by identifying conflicting simplices, removing them, and filling the cavity
 - **Transactional vertex deletion**: Vertex deletion uses an inverse k=1 fast path
   when possible and fan-based retriangulation otherwise. If post-deletion
@@ -530,6 +531,15 @@ assert!(dt.is_valid_delaunay().is_ok());
 let report = dt.validation_report();
 ```
 
+The free TDS-based `delaunay_violation_report`, `find_delaunay_violations`, and
+`debug_print_first_delaunay_violation` functions require `&GlobalTopology<D>`
+after the TDS argument, because storage alone does not carry domain periods.
+Owner methods supply their stored topology and retain their existing signatures.
+Periodic detailed reports check all lattice images using the exact stored
+coordinate and period bits, including other images of a simplex's own vertices.
+They report strict empty-sphere violations; cospherical boundaries do not apply
+symbolic tie-breaking. Incompatible model/offset combinations return typed errors.
+
 ## Implementation Details
 
 ### Internal Organization
@@ -548,8 +558,8 @@ Topology APIs use names to make ownership visible:
 - `*View` values borrow the canonical owner or are lifetime-bound to it, so they
   cannot outlive the storage they observe. Examples include `FacetView<'tds>`,
   `EdgeView<'tds>`, `RidgeView<'tds>`, `RidgeLinkView<'tds>`,
-  `IncidenceView<'tds>`, `EdgeIndex<'tds>`, `SimplexNeighborIndex<'tds>`,
-  and `TriangulationAdjacency<'tds>`.
+  `IncidenceView<'tds>`, `EdgeIndex<'tds, D>`, `SimplexNeighborIndex<'tds>`,
+  and `TriangulationAdjacency<'tds, D>`.
 - Borrowed slices over canonical storage follow the same rule. For example,
   `Tds::simplex_vertices(simplex_key)` validates the key relation, then returns
   the simplex's stored `&[VertexKey]` instead of copying detached keys into a
@@ -557,7 +567,7 @@ Topology APIs use names to make ownership visible:
 - `*Handle` and `*Key` values are detached, copyable runtime references. They
   may be queued, stored, or returned from snapshots, but callers must validate
   them against a live owner before reading through them. Examples include
-  `VertexKey`, `SimplexKey`, `FacetHandle`, `RidgeHandle`, `EdgeKey`, and
+  `VertexKey`, `SimplexKey`, `FacetHandle`, `RidgeHandle`, `EdgeKey<D>`, and
   `TriangleHandle`.
 - Proof-bearing runtime candidates such as `RidgeCandidate<D>` may validate
   local arity, uniqueness, and canonical ordering without borrowing an owner,
@@ -600,10 +610,18 @@ one downstream move type:
 | Concept | Simplex dimension | Current public shape |
 |---|---:|---|
 | Vertex | 0 | `VertexKey`, `adjacent_simplices(vertex)` |
-| Edge | 1 | `EdgeKey`, `EdgeView`, `incident_edges(vertex)` |
+| Edge | 1 | `EdgeKey<D>`, `EdgeView`, `incident_edges(vertex)` |
 | Ridge | `D - 2` | `RidgeCandidate<D>`, `RidgeQuery<'tds>`, `RidgeView<'tds>` |
 | Facet | `D - 1` | `FacetHandle`, `FacetView<'tds>`, `FacetToSimplicesIndex<'tds, ...>` |
 | Cell | `D` | `SimplexKey`, `Simplex<V, D>` |
+
+`EdgeKey<D>` includes the relative lattice displacement between its canonical
+endpoints. Periodic edges with equal quotient endpoints can therefore remain
+distinct, and nonzero-displacement self-loops are represented. `edge_key(a, b)`
+returns `EdgeKeyError::AmbiguousEndpoints` when several classes join the pair;
+select an occurrence with `edge_key_from_simplex(simplex_key, [i, j])` instead.
+`EdgeView::incident_occurrences()` retains local slot multiplicity, while
+`incident_simplices()` returns the maximal simplex support of that class.
 
 In 2D, an edge is also a cell facet. The first public edge-to-facet bridge is
 therefore 2D-specific:

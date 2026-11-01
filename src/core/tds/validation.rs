@@ -493,13 +493,13 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         Ok(())
     }
 
-    /// Validates that no simplex contains vertices with identical coordinates.
+    /// Validates that different canonical vertex keys in a simplex have different coordinates.
     ///
-    /// This is an element-level coordinate check complementing [`Simplex::try_new()`]'s vertex-key uniqueness
-    /// check. Two different vertex keys can reference geometrically identical points, producing
-    /// a zero-volume simplex that is catastrophic for `SoS` orientation and Pachner moves.
+    /// This element-level storage check complements simplex identity validation.
+    /// Periodic occurrences of one canonical key may have different lattice
+    /// offsets; this check skips that pair, while Level 4 checks the realized chart.
     ///
-    /// Uses exact `OrderedFloat`-based coordinate comparison (NaN-aware, +0.0 == -0.0).
+    /// Uses exact `OrderedFloat`-based comparison of finite coordinates (+0.0 == -0.0).
     ///
     /// # Errors
     ///
@@ -508,15 +508,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     fn validate_simplex_coordinate_uniqueness(&self) -> Result<(), TdsError> {
         for (_simplex_key, simplex) in self.simplices.iter() {
             let vkeys = simplex.vertices();
-            // O(D²) pairwise comparison per simplex — acceptable since D is small (≤ 6).
+            // O(D²) pairs per simplex, with up to O(D) coordinate work per pair.
             for i in 0..vkeys.len() {
                 let Some(vi) = self.vertex(vkeys[i]) else {
                     continue; // Missing keys are caught by validate_simplex_vertex_keys
                 };
                 for j in (i + 1)..vkeys.len() {
-                    // Same key → same vertex; skip to avoid a misleading
-                    // "duplicate coordinates" error for what is really a
-                    // duplicate-key issue (caught by Simplex::new).
+                    // The same canonical key may occur at distinct periodic offsets.
+                    // Simplex validation owns duplicate lifted identities.
                     if vkeys[i] == vkeys[j] {
                         continue;
                     }
@@ -715,7 +714,21 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         let uses_periodic_offsets = simplex.periodic_vertex_offsets().is_some()
             || neighbor_simplex.periodic_vertex_offsets().is_some();
         let mirror_idx = if uses_periodic_offsets && std::ptr::eq(simplex, neighbor_simplex) {
-            Self::matching_lifted_self_mirror_facet_index(simplex, facet_idx, context)?
+            let mirror =
+                Self::matching_lifted_self_mirror_facet_index(simplex, facet_idx, context)?;
+            if simplex.neighbor_key(mirror).flatten().is_none()
+                || simplex.neighbor_key(mirror) != simplex.neighbor_key(facet_idx)
+            {
+                return Err(TdsError::InvalidNeighbors {
+                    reason: NeighborValidationError::MirrorFacetMissing {
+                        simplex_uuid: simplex.uuid(),
+                        facet_index: facet_idx,
+                        neighbor_uuid: simplex.uuid(),
+                        context: context.to_string(),
+                    },
+                });
+            }
+            mirror
         } else if uses_periodic_offsets {
             Self::matching_lifted_mirror_facet_index(simplex, facet_idx, neighbor_simplex, context)?
         } else {
@@ -735,10 +748,10 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
     /// Finds the other occurrence of a self-identified lifted facet.
     ///
-    /// A quotient may store either two matching facet slots on one simplex or a
-    /// single slot whose translated copy is represented implicitly. In the
-    /// latter case the slot is its own mirror. More than two matching slots is
-    /// structurally ambiguous.
+    /// A translated facet must occupy a distinct local slot. A finite vertex
+    /// set cannot equal a nonzero translate of itself, while the zero translate
+    /// has the same induced boundary orientation. More than two matching slots
+    /// is structurally ambiguous.
     fn matching_lifted_self_mirror_facet_index(
         simplex: &Simplex<V, D>,
         facet_idx: usize,
@@ -766,18 +779,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             }
         }
 
-        let mirror_idx = other_match.unwrap_or(facet_idx);
-        if simplex.neighbor_key(mirror_idx).flatten().is_none() {
-            return Err(TdsError::InvalidNeighbors {
-                reason: NeighborValidationError::MirrorFacetMissing {
-                    simplex_uuid: simplex.uuid(),
-                    facet_index: facet_idx,
-                    neighbor_uuid: simplex.uuid(),
-                    context: context.to_string(),
-                },
-            });
-        }
-        Ok(mirror_idx)
+        other_match.ok_or_else(|| TdsError::InvalidNeighbors {
+            reason: NeighborValidationError::MirrorFacetMissing {
+                simplex_uuid: simplex.uuid(),
+                facet_index: facet_idx,
+                neighbor_uuid: simplex.uuid(),
+                context: context.to_string(),
+            },
+        })
     }
 
     pub(super) fn facet_vertices_in_simplex_order(
@@ -882,19 +891,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         neighbor_simplex: &Simplex<V, D>,
         mirror_idx: usize,
     ) -> Result<(bool, bool, bool), TdsError> {
-        // A single stored quotient facet represents adjacency to a translated
-        // copy of the same simplex. The deck translation preserves the lifted
-        // simplex orientation, so this implicit self-mirror contributes a
-        // satisfied equality constraint rather than comparing the facet order
-        // with itself as though it were an ordinary two-sided incidence.
-        if facet_idx == mirror_idx
-            && std::ptr::eq(simplex, neighbor_simplex)
-            && simplex.periodic_vertex_offsets().is_some()
-        {
-            let expected_odd_permutation = (facet_idx + mirror_idx).is_multiple_of(2);
-            return Ok((true, expected_odd_permutation, expected_odd_permutation));
-        }
-
         let simplex_facet_identities =
             Self::facet_vertex_identities_in_simplex_order(simplex, facet_idx)?;
         let neighbor_facet_identities =
@@ -1425,6 +1421,44 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         self.validate_neighbors_with_precomputed_vertex_sets(&simplex_vertices)
     }
 
+    /// Checks a proposed periodic self-pair against its distinct reciprocal facet.
+    fn validate_self_neighbor_topology(
+        simplex_key: SimplexKey,
+        simplex: &Simplex<V, D>,
+        facet_index: usize,
+        neighbors: &[Option<SimplexKey>],
+    ) -> Result<(), TdsError> {
+        if !Self::allows_periodic_self_neighbor(simplex) {
+            return Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::NonPeriodicSelfNeighbor {
+                    simplex_key,
+                    simplex_uuid: simplex.uuid(),
+                    facet_index,
+                },
+            });
+        }
+        let mirror_index = Self::matching_lifted_self_mirror_facet_index(
+            simplex,
+            facet_index,
+            "neighbor topology validation",
+        )?;
+        if neighbors[mirror_index] != Some(simplex_key) {
+            return Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::BackReferenceMismatch {
+                    simplex_key,
+                    simplex_uuid: simplex.uuid(),
+                    facet_index,
+                    neighbor_key: simplex_key,
+                    neighbor_uuid: simplex.uuid(),
+                    mirror_index,
+                    observed: neighbors[mirror_index],
+                    context: "neighbor topology validation".to_string(),
+                },
+            });
+        }
+        Ok(())
+    }
+
     /// Validates the topological invariant for neighbor relationships.
     ///
     /// **Critical Invariant**: For a simplex, `neighbors[i]` must be opposite `vertices[i]`,
@@ -1460,20 +1494,10 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
         for (i, neighbor_key_opt) in neighbors.iter().enumerate() {
             if let Some(neighbor_key) = neighbor_key_opt {
-                // Self-adjacency: a simplex can be its own neighbor on a closed manifold (e.g.
-                // a torus). In that case the invariant "neighbor[i] shares the facet opposite
-                // vertex[i]" is trivially satisfied by the periodic identification.
+                // Self-adjacency requires a distinct reciprocal lifted facet.
                 if *neighbor_key == simplex_key {
-                    if Self::allows_periodic_self_neighbor(simplex) {
-                        continue;
-                    }
-                    return Err(TdsError::InvalidNeighbors {
-                        reason: NeighborValidationError::NonPeriodicSelfNeighbor {
-                            simplex_key,
-                            simplex_uuid: simplex.uuid(),
-                            facet_index: i,
-                        },
-                    });
+                    Self::validate_self_neighbor_topology(simplex_key, simplex, i, neighbors)?;
+                    continue;
                 }
 
                 let neighbor = self.simplices.get(*neighbor_key).ok_or_else(|| {
@@ -1494,9 +1518,13 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                     // Periodic quotient simplices may be represented in different translated
                     // frames. Compare normalized lifted facet identities so offset-distinct
                     // vertices remain distinct while globally translated representatives match.
-                    let matching_facet_index =
-                        Self::matching_lifted_facet_index(simplex, neighbor)?;
-                    (matching_facet_index.map_or(0, |_| D), matching_facet_index)
+                    Self::matching_lifted_mirror_facet_index(
+                        simplex,
+                        i,
+                        neighbor,
+                        "neighbor topology validation",
+                    )?;
+                    (D, Some(i))
                 } else {
                     let neighbor_lifted_vertices =
                         Self::lifted_vertex_identities(*neighbor_key, neighbor)?;
@@ -1612,6 +1640,12 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             NeighborSlot::Boundary => Ok(()),
             NeighborSlot::Neighbor(neighbor) if neighbor == simplex_key => {
                 if Self::allows_periodic_self_neighbor(simplex) {
+                    Self::orientation_mirror_facet_index(
+                        simplex,
+                        facet_index,
+                        simplex,
+                        "boundary facet validation",
+                    )?;
                     return Ok(());
                 }
                 Err(TdsError::InvalidNeighbors {
@@ -3263,7 +3297,7 @@ mod tests {
     }
 
     #[test]
-    fn test_orientation_validation_allows_periodic_self_neighbor() {
+    fn periodic_structure_orientation_rejects_same_slot_self_neighbor() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v_a = tds
@@ -3294,13 +3328,22 @@ mod tests {
 
         let simplex = tds.simplex(simplex_key).unwrap();
         assert!(Tds::<(), (), 2>::allows_periodic_self_neighbor(simplex));
-        assert!(tds.validate_coherent_orientation().is_ok());
-        assert!(tds.is_coherently_oriented());
-        assert!(tds.normalize_coherent_orientation().is_ok());
+        // A finite facet cannot equal a nonzero translate of itself; the zero
+        // translation induces the same boundary orientation, not its opposite.
+        assert_matches!(
+            tds.validate_coherent_orientation(),
+            Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::MirrorFacetMissing { facet_index: 0, .. }
+            })
+        );
+        assert!(!tds.is_coherently_oriented());
+        assert!(tds.normalize_coherent_orientation().is_err());
     }
 
     #[test]
     fn test_orientation_validation_allows_distinct_slot_periodic_self_mirror() {
+        // This is a combinatorial Level 2 fixture only. Its collinear lifts
+        // deliberately do not claim a nondegenerate Level 4 realization.
         let (tds, simplex_key) = periodic_distinct_slot_self_mirror::<3>(
             vec![[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]],
             [0, 3],
@@ -3319,6 +3362,49 @@ mod tests {
         );
         assert!(tds.validate_coherent_orientation().is_ok());
         assert!(tds.is_coherently_oriented());
+        assert_eq!(
+            Tds::<(), (), 3>::facet_permutation_parity(simplex, 0, simplex, 3).unwrap(),
+            (true, false, false)
+        );
+    }
+
+    #[test]
+    fn periodic_structure_self_mirror_requires_reciprocal_slot() {
+        let (mut tds, simplex_key) = periodic_distinct_slot_self_mirror::<3>(
+            vec![[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]],
+            [0, 3],
+        );
+        let other_key = SimplexKey::from(KeyData::from_ffi(123));
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .set_neighbors_from_keys([Some(simplex_key), None, None, Some(other_key)])
+            .unwrap();
+        assert_matches!(
+            tds.validate_coherent_orientation(),
+            Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::MirrorFacetMissing { .. }
+            })
+        );
+    }
+
+    #[test]
+    fn periodic_structure_self_mirror_checks_proposed_neighbor_slots() {
+        let (mut tds, simplex_key) = periodic_distinct_slot_self_mirror::<3>(
+            vec![[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]],
+            [0, 3],
+        );
+        // A checked neighbor transition validates the proposed reciprocal pair,
+        // even when its previous pointers still need repair.
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .set_neighbors_from_keys([None; 4])
+            .unwrap();
+        tds.set_neighbors_by_key(
+            simplex_key,
+            &[Some(simplex_key), None, None, Some(simplex_key)],
+        )
+        .unwrap();
+        tds.validate().unwrap();
     }
 
     #[test]

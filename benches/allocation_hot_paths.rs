@@ -18,6 +18,7 @@ mod bench_utils;
 
 #[cfg(feature = "count-allocations")]
 mod allocation_contracts {
+    use super::bench_utils::{OrAbort, OrAbortWithContext};
     use allocation_counter::AllocationInfo;
     use approx::assert_relative_eq;
     use criterion::{BenchmarkGroup, BenchmarkId, Criterion, measurement::WallTime};
@@ -34,11 +35,8 @@ mod allocation_contracts {
     use delaunay::prelude::query::{EdgeKey, measure_with_result};
     use delaunay::prelude::tds::{SimplexKey, TdsError, VertexKey, facet_key_from_vertices};
     use delaunay::{try_vertices_from_points, vertex};
-    use std::assert_matches;
-    use std::{hint::black_box, num::NonZeroUsize, time::Duration};
+    use std::{assert_matches, hint::black_box, num::NonZeroUsize, time::Duration};
     use thiserror::Error;
-
-    use super::bench_utils::{OrAbort, OrAbortWithContext};
 
     const CANARY_COUNT_2D: usize = 4_000;
     const CANARY_COUNT_3D: usize = 750;
@@ -485,9 +483,9 @@ mod allocation_contracts {
     }
 
     /// Measures the actual allocator cost of one empty edge-set reservation.
-    fn edge_set_reservation(capacity: usize) -> AllocationInfo {
+    fn edge_set_reservation<const D: usize>(capacity: usize) -> AllocationInfo {
         let ((), info) = measure_with_result(|| {
-            let mut set: FastHashSet<EdgeKey> = FastHashSet::default();
+            let mut set: FastHashSet<EdgeKey<D>> = FastHashSet::default();
             set.reserve(capacity);
             black_box(set);
         });
@@ -510,8 +508,8 @@ mod allocation_contracts {
             .vertex_count
             .saturating_mul(fixture.vertex_count.saturating_add(1))
             / 2;
-        let legacy_reservation = edge_set_reservation(occurrences);
-        let bounded_reservation = edge_set_reservation(occurrences.min(vertex_pairs));
+        let legacy_reservation = edge_set_reservation::<D>(occurrences);
+        let bounded_reservation = edge_set_reservation::<D>(occurrences.min(vertex_pairs));
         let (edge_count, observed) = measure_with_result(|| tri.edges().count());
         assert_eq!(edge_count, expected_edges);
         assert!(observed.bytes_total <= bounded_reservation.bytes_total);

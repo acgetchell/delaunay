@@ -1,7 +1,7 @@
 # Limitations and Scope
 
 This page summarizes the operational limits of the code being prepared for
-v0.8.3. It distinguishes construction coverage, validated owner contracts, and
+v0.8.4. It distinguishes construction coverage, validated owner contracts, and
 operations that require a particular geometric model.
 Historical investigations and closed reproducers live in [`archive/`](archive/).
 

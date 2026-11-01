@@ -93,7 +93,7 @@ fn validate_finite_coordinates<const D: usize>(
     Ok(())
 }
 
-/// Scalar-generic topology behavior abstraction used by core triangulation code.
+/// Dimension-generic topology behavior over `f64` coordinates used by core triangulation code.
 pub trait GlobalTopologyModel<const D: usize> {
     /// Returns the topology kind represented by this model.
     fn kind(&self) -> TopologyKind;

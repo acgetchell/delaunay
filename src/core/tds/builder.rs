@@ -16,7 +16,7 @@ use crate::core::collections::{
 use crate::core::facet::facet_key_from_vertices;
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::vertex::Vertex;
-use std::marker::PhantomData;
+use std::{fmt, marker::PhantomData};
 use thiserror::Error;
 
 /// Parse failures at the raw explicit-connectivity boundary.
@@ -323,11 +323,20 @@ pub enum TdsBuilderError {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug)]
 #[must_use = "call build to construct a Tds"]
 pub struct TdsBuilder<'a, U, const D: usize, V = ()> {
     input: TdsBuilderInput<'a, U, D>,
     _simplex_data: PhantomData<V>,
+}
+
+impl<U: fmt::Debug, V, const D: usize> fmt::Debug for TdsBuilder<'_, U, D, V> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TdsBuilder")
+            .field("input", &self.input)
+            .field("_simplex_data", &self._simplex_data)
+            .finish()
+    }
 }
 
 impl<U, V, const D: usize> Clone for TdsBuilder<'_, U, D, V> {

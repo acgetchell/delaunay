@@ -154,9 +154,10 @@ where
     /// remaining vertices is rejected as a [`DeleteVertexError::InvariantViolation`] wrapping
     /// [`InvariantError::Triangulation`], and the pre-deletion state is restored. Both the inverse
     /// k=1 fast-path and fan triangulation may temporarily violate the Delaunay property in some
-    /// cases. If the [`DelaunayRepairPolicy`](crate::DelaunayRepairPolicy) allows it, a flip-based
-    /// repair pass is run automatically after deletion. Otherwise, Level 5 validation is run without
-    /// mutating repair, and Delaunay violations roll back as invariant failures.
+    /// cases. A flip-based repair pass runs automatically when the topology and dimension permit
+    /// it. Published owners expose no option to disable deletion repair. Every successful deletion
+    /// certifies Levels 1–5, including paths where flip repair is inadmissible; failed certification
+    /// rolls back as a typed invariant failure.
     ///
     /// The post-deletion repair and orientation canonicalization steps are
     /// transactional: if either step fails, this method restores the triangulation
@@ -167,9 +168,8 @@ where
     /// is pruned from the spatial index.
     ///
     /// **Future Enhancement**: Delaunay-aware cavity retriangulation will be added for
-    /// deletions. For now, local retriangulation can still require post-deletion flip repair; if
-    /// automatic repair is disabled and Level 5 validation detects a violation, deletion fails and
-    /// rolls back.
+    /// deletions. For now, local retriangulation can still require post-deletion flip repair;
+    /// a repair or certification failure rejects the deletion and restores the prior owner.
     ///
     /// # Arguments
     ///
@@ -195,7 +195,7 @@ where
     /// - Delaunay flip-based repair fails after deletion
     ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Delaunay`] wrapping
     ///   [`DelaunayTriangulationValidationError::RepairOperationFailed`]).
-    /// - Level 5 Delaunay validation fails after deletion when automatic repair is disabled
+    /// - Level 5 Delaunay validation fails after deletion
     ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Delaunay`] wrapping
     ///   [`DelaunayTriangulationValidationError::VerificationFailed`]).
     /// - Orientation canonicalization fails after repair, either as a typed operation failure
@@ -229,8 +229,8 @@ where
     /// let simplices_removed = dt.delete_vertex(vertex_key)?;
     /// println!("Deleted {} simplices along with the vertex", simplices_removed);
     ///
-    /// // Vertex deletion preserves topology; automatic repair is attempted when enabled.
-    /// assert!(dt.as_triangulation().validate().is_ok());
+    /// // Successful deletion preserves the complete Levels 1–5 contract.
+    /// dt.validate()?;
     /// # Ok(())
     /// # }
     /// ```
@@ -377,13 +377,13 @@ mod tests {
     use crate::core::algorithms::insertion::CavityFillingError;
     use crate::core::collections::spatial_hash_grid::HashGridIndex;
     use crate::core::vertex::Vertex;
+    use crate::delaunay_test_support::init_tracing;
     use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates};
     use crate::geometry::util::safe_usize_to_scalar;
     use crate::repair::DelaunayRepairPolicy;
     use crate::vertex;
     use std::assert_matches;
     use std::fmt::Debug;
-    use std::sync::Once;
 
     #[must_use]
     fn synthetic_nonconvergent_error() -> DelaunayRepairError {
@@ -402,18 +402,6 @@ mod tests {
                 queue_order: RepairQueueOrder::Fifo,
             }),
         }
-    }
-
-    fn init_tracing() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_test_writer()
-                .try_init();
-        });
     }
 
     fn simplex_vertices<const D: usize>() -> Vec<Vertex<u32, D>> {

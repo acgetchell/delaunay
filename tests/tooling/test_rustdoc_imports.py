@@ -3,6 +3,7 @@
 import re
 from pathlib import Path
 
+import pytest
 from research_repo_tools.semgrep_docs import rust_blocks
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -17,10 +18,9 @@ def rustdoc_root_prelude_violations(path: Path) -> list[str]:
     except ValueError as exc:
         return [str(exc)]
     return [
-        f"{path}:{line_number}: public Rustdoc must use focused preludes"
+        f"{path}:{block.count('\n', 0, match.start()) + 1}: public Rustdoc must use focused preludes"
         for block in blocks
-        for line_number, line in enumerate(block.splitlines(), start=1)
-        if ROOT_PRELUDE_IMPORT.search(line)
+        for match in ROOT_PRELUDE_IMPORT.finditer(block)
     ]
 
 
@@ -46,7 +46,7 @@ def test_detector_accepts_focused_import_and_prose_mention(tmp_path: Path) -> No
     """Keep focused code imports distinct from explanatory prose."""
     source = tmp_path / "example.rs"
     source.write_text(
-        "//! `use delaunay::prelude::*` remains available for experiments.\n//! ```rust\n//! use delaunay::prelude::query::*;\n//! ```\n",
+        "//! `use delaunay::prelude::*` remains available for experiments.\n//! ```rust\n//! use delaunay::prelude::query::\n//!     *;\n//! ```\n",
         encoding="utf-8",
     )
 
@@ -59,6 +59,19 @@ def test_detector_rejects_unterminated_rustdoc_fence(tmp_path: Path) -> None:
     source.write_text("/// ```rust\n/// let value = 1;\n", encoding="utf-8")
 
     assert rustdoc_root_prelude_violations(source) == [f"unclosed Rust documentation fence: {source}"]
+
+
+@pytest.mark.parametrize("hidden", [False, True])
+def test_detector_rejects_multiline_root_prelude_at_starting_source_line(tmp_path: Path, *, hidden: bool) -> None:
+    """Multiline and hidden imports retain their original Rustdoc source location."""
+    source = tmp_path / "example.rs"
+    prefix = "# " if hidden else ""
+    source.write_text(
+        f"// Leading source line.\n/// ```rust\n/// {prefix}use delaunay::prelude::\n/// {prefix}    *;\n/// ```\n",
+        encoding="utf-8",
+    )
+
+    assert rustdoc_root_prelude_violations(source) == [f"{source}:3: public Rustdoc must use focused preludes"]
 
 
 def test_detector_rejects_hidden_root_prelude_import(tmp_path: Path) -> None:

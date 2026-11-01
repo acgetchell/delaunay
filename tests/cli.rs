@@ -331,7 +331,7 @@ mod cli_tests {
             .expect("visualization JSON should include adjacency");
 
         assert_eq!(metadata["schema"], "delaunay.simplicial_complex");
-        assert_eq!(metadata["schema_version"], 1);
+        assert_eq!(metadata["schema_version"], 2);
         assert_eq!(metadata["dimension"], 3);
         assert_eq!(metadata["vertex_count"], 6);
         assert_ne!(simplices.as_slice(), [] as [Value; 0]);

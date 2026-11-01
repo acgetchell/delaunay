@@ -436,7 +436,8 @@ Default test recipes are split by target class:
 - `just test-python` runs Python tests.
 - `just test-features` composes `just test-unit-features` and
   `just test-doc-features` for `diagnostics,count-allocations,bench`, selecting
-  feature-only library unit tests in debug/release and doctests in release.
+  feature-only library unit tests in debug/release and doctests in release,
+  plus `just test-allocation` for public integration tests with `count-allocations`.
 
 The debug unit-test profile keeps the same 10-second per-test budget as the
 default and CI profiles. Timeout exceptions must be nextest overrides matching
@@ -495,7 +496,7 @@ For test-only changes, run only the matching focused recipe. If multiple test
 target classes changed, compose those focused recipes once each. Use
 `just test` when you intentionally want the full default test suite;
 `just test-rust` composes the four default Rust target classes plus the
-feature-only library lanes once each. Feature-only test additions must be
+feature-only library, doctest, and allocation integration lanes once each. Feature-only test additions must be
 included in the maintained filters described in [`commands.md`](commands.md).
 During iteration, prefer the targeted changed-test commands in
 [`commands.md`](commands.md); reserve full focused recipes such as

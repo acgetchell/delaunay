@@ -4,7 +4,7 @@
 
 use super::{
     CavityFillingError, ConflictError, CoordinateConversionError, CoordinateValidationError,
-    CoordinateValues, DelaunayTriangulationValidationError, EdgeKey, EntityKind, Error, FacetError,
+    CoordinateValues, DelaunayTriangulationValidationError, EntityKind, Error, FacetError,
     FacetHandle, FlipDirection, FlipOrientationCheckStage, GlobalTopologyModelError,
     HullExtensionReason, InsertionError, InsertionErrorKind, InsertionTopologyValidationContext,
     LocateError, MAX_PRACTICAL_DIMENSION_SIZE, NeighborWiringError, RidgeHandle, SimplexKey,
@@ -12,6 +12,8 @@ use super::{
     TdsMutationError, TdsValidationFailure, TopologyGuarantee, TopologyOwnerId, TriangleHandle,
     TriangulationRealizationValidationError, TriangulationValidationError, VertexKey, fmt,
 };
+use crate::core::edge::EdgeKeyError;
+use crate::topology::spaces::toroidal::LiftedVertexId;
 use crate::validation_report::InvariantError;
 
 /// Predicate operation being evaluated by flip logic.
@@ -145,9 +147,17 @@ impl FlipPredicateError {
 /// let err: FlipError = reason.into();
 /// std::assert_matches!(err, FlipError::InvalidFlipContext { .. });
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum FlipContextError {
+    /// The selected facet occurrence has no coherent mirror.
+    #[error("invalid mirror for facet {facet:?}: {source}")]
+    MirrorFacet {
+        /// Selected simplex-local facet.
+        facet: FacetHandle,
+        /// Typed combinatorial failure.
+        source: TdsValidationFailure,
+    },
     /// The requested move size is outside `1..=D+1`.
     #[error("k must be in 1..=D+1 (k={k_move}, D={dimension})")]
     InvalidMoveSize {
@@ -1079,6 +1089,12 @@ pub enum FlipMutationError {
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FlipEdgeAdjacencyError {
+    /// A detached edge request could not be interpreted unambiguously.
+    #[error("invalid edge handle: {source}")]
+    InvalidHandle {
+        /// Typed edge lookup failure.
+        source: EdgeKeyError,
+    },
     /// Edge endpoints are identical.
     #[error("edge endpoints must be distinct ({vertex_key:?})")]
     DuplicateEndpoints {
@@ -1828,7 +1844,7 @@ pub enum DelaunayRepairPostconditionFailure {
     /// A local inverse k=2 edge-collapse opportunity remained after repair.
     LocalInverseK2Violation {
         /// Edge whose inverse flip predicate still reports a violation.
-        edge: EdgeKey,
+        edge: [LiftedVertexId; 2],
     },
     /// A local inverse k=3 triangle-collapse opportunity remained after repair.
     LocalInverseK3Violation {
@@ -2924,7 +2940,7 @@ mod tests {
         let v2 = VertexKey::from(KeyData::from_ffi(103));
         let facet = FacetHandle::from_validated(simplex, 0);
         let ridge = RidgeHandle::from_validated(simplex, 0, 1);
-        let edge = EdgeKey::from_validated_endpoints(v0, v1);
+        let edge = EdgeKey::<3>::from_validated_endpoints(v0, v1);
         let triangle = TriangleHandle::try_new(v0, v1, v2).unwrap();
 
         assert_eq!(
@@ -2943,8 +2959,10 @@ mod tests {
         let k3 = DelaunayRepairPostconditionFailure::LocalK3Violation { ridge }.to_string();
         assert!(k3.contains("local k=3 violation remains after repair"));
 
-        let inverse_k2 =
-            DelaunayRepairPostconditionFailure::LocalInverseK2Violation { edge }.to_string();
+        let inverse_k2 = DelaunayRepairPostconditionFailure::LocalInverseK2Violation {
+            edge: edge.lifted_endpoints(),
+        }
+        .to_string();
         assert!(inverse_k2.contains("local inverse k=2 flip remains applicable after repair"));
 
         let inverse_k3 =

@@ -104,6 +104,8 @@ def test_mixed_sampling_retains_canonical_ids_policy_and_provenance(tmp_path: Pa
     assert source.source_sha256
     assert source.harness_sha256
     assert dict(source.context)["delaunay.scientific-preflight"] == "passed"
+    assert dict(source.context)["delaunay.configuration-sha256"] == benchmark_utils._benchmark_configuration_digest(tmp_path)
+    assert dict(source.context)["delaunay.measurement-plan-sha256"] == benchmark_utils._sampling_plan_digest(TARGETS, policy=policy)
     assert parse_policy(dict(source.context)["delaunay.sampling-policy"].encode()) == policy
     assert benchmark_utils._load_fresh_measurement(criterion) == evidence
 
@@ -386,5 +388,47 @@ def test_controller_changes_reject_measurement(tmp_path: Path, native_boundary: 
     with pytest.raises(ValueError, match="changed during"):
         benchmark_utils._measure_suite(tmp_path, TARGETS)
     assert prior.read_bytes() == b"previous successful generation"
+    assert not (prior.parent / "delaunay-evidence.json").exists()
+    assert ("measure" in native_boundary) == (stage == "sampling")
+
+
+@pytest.mark.parametrize("stage", ["discovery", "preflight", "sampling"])
+@pytest.mark.parametrize("mutation", ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS", "CARGO_PROFILE_PERF_OPT_LEVEL", ".cargo/config.toml"])
+def test_configuration_changes_reject_measurement(
+    tmp_path: Path,
+    native_boundary: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    mutation: str,
+) -> None:
+    """All acquisition phases must use the same effective benchmark configuration."""
+    if mutation != ".cargo/config.toml":
+        monkeypatch.delenv(mutation, raising=False)
+    owner, name = {
+        "discovery": (criterion_inventory, "run_command"),
+        "preflight": (benchmark_utils, "run_cargo_live"),
+        "sampling": (measurement, "run_command_live"),
+    }[stage]
+    original = getattr(owner, name)
+
+    def change_configuration(*args: object, **kwargs: object) -> object:
+        result = original(*args, **kwargs)
+        if mutation == ".cargo/config.toml":
+            config = tmp_path / mutation
+            config.parent.mkdir(exist_ok=True)
+            config.write_text('[build]\nrustflags = ["-C", "opt-level=1"]\n', encoding="utf-8")
+        else:
+            monkeypatch.setenv(mutation, "1" if mutation == "CARGO_PROFILE_PERF_OPT_LEVEL" else "-Copt-level=1")
+        return result
+
+    monkeypatch.setattr(owner, name, change_configuration)
+    prior = tmp_path / "target/criterion/prior"
+    prior.parent.mkdir(parents=True)
+    prior.write_bytes(b"previous successful generation\r\n")
+
+    with pytest.raises(ValueError, match="changed during"):
+        benchmark_utils._measure_suite(tmp_path, TARGETS)
+
+    assert prior.read_bytes() == b"previous successful generation\r\n"
     assert not (prior.parent / "delaunay-evidence.json").exists()
     assert ("measure" in native_boundary) == (stage == "sampling")

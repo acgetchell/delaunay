@@ -206,11 +206,12 @@ impl<const D: usize> Point<D> {
     /// Returns a reference to the point's coordinates as an array.
     ///
     /// This method provides read-only access to the internal coordinate array
-    /// without copying. For owned coordinates, use the `Into<[T; D]>` trait
+    /// without copying. For owned coordinates, use the `Into<[f64; D]>` trait
     /// implementation via `.into()`.
     ///
-    /// Note: In highly generic code (e.g., `K::Scalar`, const `D`), prefer
-    /// `coords()` or `to_array()` over `into()` to avoid type inference ambiguity.
+    /// The coordinate scalar is always `f64`; only the dimension is generic.
+    /// Use [`Self::to_array`] when an owned array should be explicit without
+    /// an `Into` target-type annotation.
     ///
     /// # Example
     ///

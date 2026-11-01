@@ -12,8 +12,8 @@ use crate::core::algorithms::insertion::{
 };
 use crate::core::algorithms::locate::{ConflictError, extract_cavity_boundary};
 use crate::core::collections::{
-    CLEANUP_OPERATION_BUFFER_SIZE, FacetIssuesMap, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE,
-    SimplexKeyBuffer, SimplexKeySet, SmallBuffer, VertexKeySet, fast_hash_set_with_capacity,
+    CLEANUP_OPERATION_BUFFER_SIZE, FacetIssuesMap, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer,
+    SimplexKeySet, SmallBuffer, VertexKeySet, fast_hash_set_with_capacity,
 };
 use crate::core::facet::FacetHandle;
 use crate::core::tds::{SimplexKey, TdsError, VertexKey};
@@ -30,7 +30,6 @@ use crate::triangulation::validation::TriangulationValidationError;
 use crate::validation_report::InvariantError;
 use std::env;
 use std::fmt;
-use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 use thiserror::Error;
 use uuid::Uuid;
@@ -1455,21 +1454,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 
             // For each facet of this simplex
             for facet_idx in 0..simplex.number_of_vertices() {
-                // Compute facet hash from sorted vertex keys
-                let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-                for (i, &vkey) in simplex.vertices().iter().enumerate() {
-                    if i != facet_idx {
-                        facet_vkeys.push(vkey);
-                    }
-                }
-                facet_vkeys.sort_unstable();
-
-                // Hash the facet
-                let mut hasher = FastHasher::default();
-                for &vkey in &facet_vkeys {
-                    vkey.hash(&mut hasher);
-                }
-                let facet_hash = hasher.finish();
+                // Distinct periodic faces may share every quotient vertex key.
+                let facet_hash = self
+                    .tds
+                    .facet_key_for_simplex_facet(simplex_key, facet_idx)?;
 
                 // Track this simplex/facet pair
                 let facet_idx_u8 =

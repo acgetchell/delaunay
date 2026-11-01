@@ -36,6 +36,7 @@ def test_remote_subsets_preserve_every_local_validator() -> None:
         "doc-check",
         "test-unit",
         "test-unit-features",
+        "test-allocation",
         "bench-compile",
         "examples",
     } <= native

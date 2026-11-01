@@ -11,19 +11,19 @@ pub mod bench_utils;
 mod profiling_fixtures;
 use bench_utils::OrAbort;
 use profiling_fixtures::{
-    DEFAULT_SEED, PointDistribution, bench_time, benchmark_vertices_from_generated_points,
-    criterion_config, gen_points, is_dev_mode,
+    DEFAULT_SEED, PointDistribution, bench_time, criterion_config, gen_points, is_dev_mode,
+    vertices_from_points,
 };
 
 /// Shares validated immutable geometry across the selected read-only operations.
-fn bench_bottlenecks(c: &mut Criterion) {
+fn bench_hull_queries(c: &mut Criterion) {
     let count = if is_dev_mode() { 3_000 } else { 10_000 };
     let fixture = OnceLock::new();
     let mut group = c.benchmark_group("algorithmic_bottlenecks");
     group.measurement_time(bench_time(15));
     let prepare = || {
         let points = gen_points::<3>(count, PointDistribution::Random, DEFAULT_SEED);
-        let vertices = benchmark_vertices_from_generated_points(&points);
+        let vertices = vertices_from_points(&points);
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .build()
             .or_abort();
@@ -62,5 +62,5 @@ fn bench_bottlenecks(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(name = benches; config = criterion_config(); targets = bench_bottlenecks);
+criterion_group!(name = benches; config = criterion_config(); targets = bench_hull_queries);
 criterion_main!(benches);

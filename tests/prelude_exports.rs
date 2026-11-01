@@ -90,6 +90,7 @@ use delaunay::prelude::diagnostics::ConstructionTelemetry;
 use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
 use delaunay::prelude::export::{
     InvalidCoordinateValue as ExportPreludeInvalidCoordinateValue,
+    PeriodicVisualizationData as ExportPreludePeriodicVisualizationData,
     VISUALIZATION_SCHEMA as ExportPreludeVisualizationSchema,
     ValidatedVisualizationData as ExportPreludeValidatedVisualizationData,
     VisualizationData as ExportPreludeVisualizationData,
@@ -298,6 +299,7 @@ use delaunay::{
     DelaunayTriangulationConstructionError as RootDelaunayTriangulationConstructionError,
     DelaunayTriangulationValidationError as RootDelaunayTriangulationValidationError,
     PeriodicQuotientFacetKeyDerivationFailure as RootPeriodicFacetFailure,
+    PeriodicVisualizationData as RootPeriodicVisualizationData,
     PlManifoldRepairStage as RootPlManifoldRepairStage,
     SimplexBarycenterError as RootSimplexBarycenterError,
     SimplexDataFillError as RootSimplexDataFillError,
@@ -477,7 +479,7 @@ const fn assert_pachner_prelude_type_exports(dt: &impl PachnerMoves<3, VertexDat
     let _pachner_move_feasibility_size = size_of::<PachnerMoveFeasibility<3>>();
     let _pachner_result_size = size_of::<PachnerMoveResult<3>>();
     let _pachner_owner_size = size_of::<PachnerTopologyOwnerId>();
-    let _pachner_edge_size = size_of::<PachnerEdgeKey>();
+    let _pachner_edge_size = size_of::<PachnerEdgeKey<3>>();
     let _pachner_edge_error_size = size_of::<PachnerEdgeKeyError>();
     let _pachner_facet_error_size = size_of::<PachnerFacetError>();
     let _pachner_facet_size = size_of::<PachnerFacetHandle>();
@@ -727,7 +729,7 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
 #[test]
 fn construction_prelude_exports_low_level_delaunay_error_aliases() {
     let generic_construction = GenericTriangulationConstructionError::FailedToCreateSimplex {
-        source: SimplexValidationError::InsufficientVertices {
+        source: SimplexValidationError::VertexCountMismatch {
             actual: 2,
             expected: 3,
             dimension: 2,
@@ -1301,6 +1303,9 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
         dt.validate();
     validation_result?;
     let root_visualization_data: RootVisualizationData<3> = dt.to_visualization_data()?;
+    let periodic: Option<&RootPeriodicVisualizationData> =
+        root_visualization_data.periodic.as_ref();
+    assert!(periodic.is_none());
     assert_eq!(
         root_visualization_data.metadata.schema,
         RootVisualizationSchema
@@ -1362,7 +1367,7 @@ fn assert_edge_view_exports<K>(
     b: VertexKey,
 ) -> Result<(), PreludeExportTestError> {
     let edge_key = dt.edge_key(a, b)?;
-    let query_edge_key: QueryEdgeKey = edge_key;
+    let query_edge_key: QueryEdgeKey<3> = edge_key;
     let edge_view: EdgeView<'_, (), (), 3> = dt.edge_view(edge_key)?;
     let query_edge_view: QueryEdgeView<'_, (), (), 3> = dt.edge_view(edge_key)?;
 
@@ -1469,6 +1474,9 @@ fn assert_export_prelude_exports<K, U, V, const D: usize>(
 ) -> Result<(), PreludeExportTestError> {
     let focused_visualization_data: ExportPreludeVisualizationData<D> =
         dt.to_visualization_data()?;
+    let periodic: Option<&ExportPreludePeriodicVisualizationData> =
+        focused_visualization_data.periodic.as_ref();
+    assert!(periodic.is_none());
     assert_eq!(
         focused_visualization_data.metadata.schema,
         ExportPreludeVisualizationSchema
@@ -1692,18 +1700,19 @@ fn query_preludes_cover_borrowed_adjacency_view() -> Result<(), PreludeExportTes
     ];
     let dt = DelaunayTriangulation::builder(&vertices).build()?;
 
-    let query_adjacency: QueryTriangulationAdjacency<'_> = dt.adjacency()?;
-    let generic_adjacency: GenericTriangulationAdjacency<'_> = dt.as_triangulation().adjacency()?;
-    let facade_adjacency: QueryFacadeTriangulationAdjacency<'_> = dt.adjacency()?;
-    let root_adjacency: RootTriangulationAdjacency<'_> = dt.adjacency()?;
+    let query_adjacency: QueryTriangulationAdjacency<'_, 3> = dt.adjacency()?;
+    let generic_adjacency: GenericTriangulationAdjacency<'_, 3> =
+        dt.as_triangulation().adjacency()?;
+    let facade_adjacency: QueryFacadeTriangulationAdjacency<'_, 3> = dt.adjacency()?;
+    let root_adjacency: RootTriangulationAdjacency<'_, 3> = dt.adjacency()?;
     let query_incidence: QueryIncidenceView<'_> = dt.incidence();
     let generic_incidence: GenericIncidenceView<'_> = dt.as_triangulation().incidence();
     let facade_incidence: QueryFacadeIncidenceView<'_> = dt.incidence();
     let root_incidence: RootIncidenceView<'_> = dt.incidence();
-    let query_edges: QueryEdgeIndex<'_> = dt.build_edge_index()?;
-    let generic_edges: GenericEdgeIndex<'_> = dt.as_triangulation().build_edge_index()?;
-    let facade_edges: QueryFacadeEdgeIndex<'_> = dt.build_edge_index()?;
-    let root_edges: RootEdgeIndex<'_> = dt.build_edge_index()?;
+    let query_edges: QueryEdgeIndex<'_, 3> = dt.build_edge_index()?;
+    let generic_edges: GenericEdgeIndex<'_, 3> = dt.as_triangulation().build_edge_index()?;
+    let facade_edges: QueryFacadeEdgeIndex<'_, 3> = dt.build_edge_index()?;
+    let root_edges: RootEdgeIndex<'_, 3> = dt.build_edge_index()?;
     let query_neighbors: QuerySimplexNeighborIndex<'_> = dt.build_simplex_neighbor_index()?;
     let generic_neighbors: GenericSimplexNeighborIndex<'_> =
         dt.as_triangulation().build_simplex_neighbor_index()?;
@@ -1711,10 +1720,10 @@ fn query_preludes_cover_borrowed_adjacency_view() -> Result<(), PreludeExportTes
         dt.build_simplex_neighbor_index()?;
     let root_neighbors: RootSimplexNeighborIndex<'_> = dt.build_simplex_neighbor_index()?;
     let Some((vertex_key, _)) = dt.vertices().next() else {
-        return Ok(());
+        panic!("the tetrahedron fixture must expose its vertices");
     };
     let Some((simplex_key, _)) = dt.simplices().next() else {
-        return Ok(());
+        panic!("the tetrahedron fixture must expose its simplex");
     };
 
     assert_eq!(query_adjacency.number_of_edges(), 6);
@@ -2247,10 +2256,10 @@ fn validation_prelude_covers_configuration_and_report_types() {
 fn validation_prelude_covers_delaunay_property_diagnostics() -> Result<(), PreludeExportTestError> {
     let tds: Tds<(), (), 2> = Tds::empty();
 
-    let violations = focused_find_delaunay_violations(&tds, None)?;
+    let violations = focused_find_delaunay_violations(&tds, &GlobalTopology::Euclidean, None)?;
     assert!(violations.is_empty());
 
-    let report = focused_delaunay_violation_report(&tds, None)?;
+    let report = focused_delaunay_violation_report(&tds, &GlobalTopology::Euclidean, None)?;
     let focused_report: FocusedDelaunayViolationReport = report;
     let _focused_detail: Option<FocusedDelaunayViolationDetail> = None;
     assert!(focused_report.is_valid());
@@ -2271,7 +2280,7 @@ fn validation_prelude_covers_delaunay_property_diagnostics() -> Result<(), Prelu
         } if key == simplex_key
     );
 
-    let root_report = root_delaunay_violation_report(&tds, None)?;
+    let root_report = root_delaunay_violation_report(&tds, &GlobalTopology::Euclidean, None)?;
     let root_typed_report: RootDelaunayViolationReport = root_report;
     let _root_typed_detail: Option<RootDelaunayViolationDetail> = None;
     assert!(root_typed_report.is_valid());
@@ -2877,7 +2886,7 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
 #[test]
 fn diagnostics_prelude_covers_opt_in_helpers() {
     let tds: Tds<(), (), 2> = Tds::empty();
-    debug_print_first_delaunay_violation(&tds, None);
+    debug_print_first_delaunay_violation(&tds, &GlobalTopology::Euclidean, None);
 }
 
 #[test]

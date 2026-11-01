@@ -3,10 +3,8 @@
 //! Manual diagnostics extracted from `profiling_suite`; excluded from release signals.
 //! Fixtures are initialized inside selected Criterion callbacks, before timing.
 
-use bench_utils::OrAbort;
-use bench_utils::abort_benchmark;
-use criterion::Throughput;
-use criterion::{Criterion, criterion_group, criterion_main};
+use bench_utils::{OrAbort, abort_benchmark};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulationBuilder, RetryPolicy,
 };
@@ -17,8 +15,8 @@ pub mod bench_utils;
 #[path = "common/profiling_fixtures.rs"]
 mod profiling_fixtures;
 use profiling_fixtures::{
-    DEFAULT_SEED, PointDistribution, bench_time, benchmark_vertices_from_generated_points,
-    criterion_config, gen_points, retry_attempts, scale_cases, seed_for_case, validated_fixture,
+    DEFAULT_SEED, PointDistribution, bench_time, criterion_config, gen_points, retry_attempts,
+    scale_cases, seed_for_case, validated_fixture, vertices_from_points,
 };
 
 /// Benchmark topology validation over a prebuilt triangulation.
@@ -66,7 +64,7 @@ macro_rules! benchmark_validation_components_dimension {
             let fixture = OnceLock::new();
             let prepare = || {
                 let points = gen_points::<$dim>($count, distribution, seed);
-                let vertices = benchmark_vertices_from_generated_points(&points);
+                let vertices = vertices_from_points(&points);
                 let builder = DelaunayTriangulationBuilder::new(&vertices);
                 let builder = if is_adversarial {
                     let attempts = retry_attempts(8);

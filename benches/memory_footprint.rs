@@ -5,7 +5,7 @@
 
 #[cfg(feature = "count-allocations")]
 use allocation_counter::{AllocationInfo, measure};
-use bench_utils::OrAbortWithContext;
+use bench_utils::{OrAbort, OrAbortWithContext};
 #[cfg(feature = "count-allocations")]
 use criterion::{BenchmarkGroup, BenchmarkId, measurement::WallTime};
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -26,13 +26,11 @@ use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, get_cu
 pub mod bench_utils;
 #[path = "common/profiling_fixtures.rs"]
 mod profiling_fixtures;
-use bench_utils::OrAbort;
 #[cfg(feature = "count-allocations")]
 use profiling_fixtures::{DEFAULT_SEED, PointDistribution, gen_points, is_dev_mode};
 use profiling_fixtures::{
-    bench_time, benchmark_vertices_from_generated_points, construct_triangulation,
-    criterion_config, generated_points_in_range, scale_cases, seed_for_case, validated_fixture,
-    wide_bounds,
+    bench_time, construct_triangulation, criterion_config, generated_points_in_range, scale_cases,
+    seed_for_case, validated_fixture, vertices_from_points, wide_bounds,
 };
 #[cfg(any(feature = "count-allocations", feature = "bench-logging"))]
 use std::env;
@@ -87,7 +85,7 @@ where
 {
     let mem_before = memory_usage_kib();
     let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
-    let vertices = benchmark_vertices_from_generated_points(&points);
+    let vertices = vertices_from_points(&points);
 
     let mem_before_tds = memory_usage_kib();
     let dt = construct_triangulation::<D>(&vertices, seed);
@@ -326,7 +324,7 @@ fn bench_memory_usage<const D: usize>(
                 for _ in 0..iters {
                     let points = gen_points::<D>(count, PointDistribution::Random, DEFAULT_SEED);
                     let pts_len = points.len();
-                    let vertices = benchmark_vertices_from_generated_points(&points);
+                    let vertices = vertices_from_points(&points);
                     let start_time = Instant::now();
 
                     let alloc_info = measure(|| {

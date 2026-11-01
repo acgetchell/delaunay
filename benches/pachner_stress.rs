@@ -55,7 +55,7 @@ struct PachnerStressSetup {
     k1_remove_vertex_key: VertexKey,
     facet: FacetHandle,
     k2_inverse_dt: FlipTriangulation<4>,
-    k2_inverse_edge: EdgeKey,
+    k2_inverse_edge: EdgeKey<4>,
     ridge: RidgeHandle,
     k3_inverse_dt: FlipTriangulation<4>,
     k3_inverse_triangle: TriangleHandle,
@@ -151,7 +151,7 @@ fn k1_remove_fixture(
 fn k2_inverse_fixture(
     base_dt: &FlipTriangulation<4>,
     facet: FacetHandle,
-) -> (FlipTriangulation<4>, EdgeKey) {
+) -> (FlipTriangulation<4>, EdgeKey<4>) {
     let mut dt = base_dt.clone();
     let info = attempt_pachner_move(&mut dt, PachnerMove::K2 { facet });
     let edge = inserted_edge(&dt, &info.inserted_face_vertices);
@@ -205,9 +205,9 @@ fn inverse_move_from_forward_result(
 }
 
 /// Converts a reported inserted face into an inverse k=2 edge handle.
-fn inserted_edge(dt: &FlipTriangulation<4>, vertices: &[VertexKey]) -> EdgeKey {
+fn inserted_edge(dt: &FlipTriangulation<4>, vertices: &[VertexKey]) -> EdgeKey<4> {
     let [a, b] = vertices else {
-        return Option::<EdgeKey>::None.or_abort(format_args!(
+        return Option::<EdgeKey<4>>::None.or_abort(format_args!(
             "k=2 flip reported {} inserted-face vertices",
             vertices.len()
         ));

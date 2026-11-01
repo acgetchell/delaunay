@@ -3,27 +3,26 @@
 //! Manual diagnostics extracted from `profiling_suite`; excluded from release signals.
 //! Fixtures are initialized inside selected Criterion callbacks, before timing.
 
-use criterion::{BenchmarkId, Throughput};
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::collections::SmallBuffer;
 use delaunay::prelude::construction::DelaunayTriangulationBuilder;
 use delaunay::prelude::geometry::Point;
 use delaunay::prelude::query::{insphere, insphere_lifted};
+use std::{hint::black_box, sync::OnceLock};
 #[path = "common/bench_utils.rs"]
 pub mod bench_utils;
 #[path = "common/profiling_fixtures.rs"]
 mod profiling_fixtures;
 use bench_utils::{OrAbort, OrAbortWithContext};
 use profiling_fixtures::{
-    DEFAULT_SEED, PointDistribution, bench_time, benchmark_vertices_from_generated_points,
-    criterion_config, gen_points, is_dev_mode,
+    DEFAULT_SEED, PointDistribution, bench_time, criterion_config, gen_points, is_dev_mode,
+    vertices_from_points,
 };
 
 const SIMPLEX_VERTICES_BUFFER_SIZE: usize = 4;
 const QUERY_RESULTS_BUFFER_SIZE: usize = 1024;
 const QUERY_SEED: u64 = 123;
 const MAX_QUERY_RESULTS: usize = 1_000;
-use std::{hint::black_box, sync::OnceLock};
 
 /// Query latency profiling for circumsphere containment tests
 fn benchmark_query_latency(c: &mut Criterion) {
@@ -48,7 +47,7 @@ fn benchmark_query_latency(c: &mut Criterion) {
                 let (precomputed_simplices, query_points) = fixture.get_or_init(|| {
                     // Setup: Create triangulation and query points
                     let points = gen_points::<3>(count, PointDistribution::Random, DEFAULT_SEED);
-                    let vertices = benchmark_vertices_from_generated_points(&points);
+                    let vertices = vertices_from_points(&points);
                     let dt = DelaunayTriangulationBuilder::new(&vertices)
                         .build()
                         .or_abort();

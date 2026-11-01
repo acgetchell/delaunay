@@ -752,8 +752,10 @@ pub fn insphere<const D: usize>(
 /// Thus even a finite coordinate whose squared norm would overflow `f64`
 /// remains classifiable on the exact path. A returned classification has the
 /// mathematically correct sign for the stored finite IEEE-754 coordinates. For
-/// additional robustness strategies (symbolic perturbation, consistency
-/// checking), use [`crate::geometry::kernel::RobustKernel`].
+/// deterministic symbolic perturbation of exact degeneracies, use
+/// [`crate::geometry::kernel::AdaptiveKernel`].
+/// [`crate::geometry::kernel::RobustKernel`] preserves exact zero and
+/// [`InSphere::BOUNDARY`] classifications rather than applying `SoS`.
 ///
 /// # Algorithm
 ///
@@ -838,7 +840,7 @@ pub fn insphere_lifted<const D: usize>(
     test_point: Point<D>,
 ) -> Result<InSphere, SimplexValidationError> {
     if simplex_points.len() != D + 1 {
-        return Err(SimplexValidationError::InsufficientVertices {
+        return Err(SimplexValidationError::VertexCountMismatch {
             actual: simplex_points.len(),
             expected: D + 1,
             dimension: D,
@@ -1727,6 +1729,27 @@ mod tests {
         // At minimum, both methods should give the same result for the same input
         let far_point = Point::try_new([100.0, 100.0]).expect("finite point coordinates");
         assert!(insphere_distance(&simplex_points, far_point).is_ok());
+    }
+
+    #[test]
+    fn lifted_insphere_arity_reports_too_few_and_too_many_points() {
+        fn check<const D: usize>() {
+            let origin = Point::try_new([0.0; D]).unwrap();
+            for actual in [D, D + 2] {
+                assert_eq!(
+                    insphere_lifted(&vec![origin; actual], origin).unwrap_err(),
+                    SimplexValidationError::VertexCountMismatch {
+                        actual,
+                        expected: D + 1,
+                        dimension: D
+                    }
+                );
+            }
+        }
+        check::<2>();
+        check::<3>();
+        check::<4>();
+        check::<5>();
     }
 
     #[test]

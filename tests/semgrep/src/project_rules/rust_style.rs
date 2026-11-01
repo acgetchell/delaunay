@@ -611,6 +611,19 @@ pub fn deep_crate_path_fixture() {
     let _buffer = crate::core::collections::SimplexKeyBuffer::new();
 }
 
+// ok: delaunay.rust.no-deep-crate-paths-in-functions
+use crate::triangulation::query::Query;
+
+pub fn imported_triangulation_path_fixture() {
+    // ok: delaunay.rust.no-deep-crate-paths-in-functions
+    let _query = Query::new();
+}
+
+pub fn deep_triangulation_path_fixture() {
+    // ruleid: delaunay.rust.no-deep-crate-paths-in-functions
+    let _query = crate::triangulation::query::Query::new();
+}
+
 pub struct RawSimplexSeedFrontier {
     // ruleid: delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers
     seed_simplices: Vec<SimplexKey>,

@@ -17,6 +17,8 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::geometry::AdaptiveKernel;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::triangulation::Triangulation;
+#[cfg(feature = "diagnostics")]
+use tracing_subscriber::EnvFilter;
 
 #[cfg(feature = "diagnostics")]
 fn main() -> DelaunayResult<()> {
@@ -42,8 +44,7 @@ fn main() {
 /// Installs a tracing subscriber so users can opt into verbose helper output with `RUST_LOG`.
 #[cfg(feature = "diagnostics")]
 fn init_tracing() {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }
 

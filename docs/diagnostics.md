@@ -138,7 +138,6 @@ Use `delaunay_violation_report` when you want key-based data about Level 5
 empty-circumsphere violations:
 
 ```rust
-use delaunay::prelude::validation::delaunay_violation_report;
 use delaunay::prelude::construction::{
     DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };

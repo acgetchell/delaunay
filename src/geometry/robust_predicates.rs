@@ -106,12 +106,18 @@ pub enum InsphereConsistencyError {
 ///
 /// # Sign Convention
 ///
-/// - The determinant sign is interpreted relative to the simplex orientation.
-/// - If the simplex orientation is [`Orientation::POSITIVE`], a positive
-///   determinant classifies `test_point` as [`InSphere::INSIDE`].
-/// - If the simplex orientation is [`Orientation::NEGATIVE`], the
-///   interpretation is swapped.
-/// - [`Orientation::DEGENERATE`] yields [`InSphere::BOUNDARY`] conservatively.
+/// The relative lifted matrix has rows `[p_i - q, |p_i - q|²]`, where `q` is
+/// `test_point`. Its raw determinant is normalized by the homogeneous simplex
+/// orientation from [`simplex_orientation`](crate::geometry::predicates::simplex_orientation):
+/// `effective_sign = raw_sign * (-1)^(D + 1) * orientation_sign`.
+/// A positive effective sign means [`InSphere::INSIDE`]; a negative one means
+/// [`InSphere::OUTSIDE`]. Thus, for [`Orientation::POSITIVE`], an inside point
+/// has a negative raw determinant in even `D` and a positive one in odd `D`.
+/// Reversing simplex orientation reverses the raw determinant but preserves
+/// the classification. This convention uses the homogeneous `[coordinates, 1]`
+/// orientation matrix, not the ordinary edge-vector matrix.
+///
+/// [`Orientation::DEGENERATE`] yields [`InSphere::BOUNDARY`] conservatively.
 ///
 /// # Arguments
 ///

@@ -9,7 +9,7 @@ use core::{array::from_fn, fmt, hint::cold_path};
 
 use super::conversions::ValueConversionError;
 use crate::geometry::matrix::{
-    DEFAULT_SINGULAR_TOL, ExactF64Conversion, LaError, LaVector, Matrix, MatrixError,
+    BigRational, DEFAULT_SINGULAR_TOL, ExactF64Conversion, LaError, LaVector, Matrix, MatrixError,
     RationalMatrix, RationalVector, SingularityReason, StackMatrixDispatchError, matrix_set,
     rational_from_f64,
 };
@@ -482,16 +482,30 @@ fn exact_circumcenter_from_points<const D: usize>(
     let reference = points[0].coords().map(|coordinate| {
         rational_from_f64(coordinate).expect("validated Point coordinates are finite")
     });
+    let others = points.iter().skip(1).map(|point| {
+        point.coords().map(|coordinate| {
+            rational_from_f64(coordinate).expect("validated Point coordinates are finite")
+        })
+    });
+    Ok(exact_circumcenter_from_coordinates(&reference, others)?
+        .to_rounded_f64()?
+        .into_array())
+}
+
+/// Exact circumcenter shared by binary64 simplices and periodic covering charts.
+/// Callers supply a validated D-simplex; no lattice translation is rounded away.
+pub(crate) fn exact_circumcenter_from_coordinates<const D: usize>(
+    reference: &[BigRational; D],
+    others: impl Iterator<Item = [BigRational; D]>,
+) -> Result<RationalVector<D>, LaError> {
     let zero = rational_from_f64(0.0).expect("zero is finite");
     let half = rational_from_f64(0.5).expect("one half is finite");
     let mut matrix = RationalMatrix::<D>::zero();
     let mut rhs = from_fn(|_| zero.clone());
 
-    for row in 0..D {
+    for (row, coordinates) in others.enumerate() {
         for (column, origin) in reference.iter().enumerate() {
-            let coordinate = rational_from_f64(points[row + 1].coords()[column])
-                .expect("validated Point coordinates are finite");
-            let relative = coordinate - origin;
+            let relative = &coordinates[column] - origin;
             rhs[row] += relative.clone() * relative.clone();
             matrix.set(row, column, relative)?;
         }
@@ -501,7 +515,7 @@ fn exact_circumcenter_from_points<const D: usize>(
     let center = RationalVector::<D>::try_from_fn(|index| {
         reference[index].clone() + half.clone() * solution[index].clone()
     })?;
-    Ok(center.to_rounded_f64()?.into_array())
+    Ok(center)
 }
 
 /// Calculate the circumradius of a set of points forming a simplex.

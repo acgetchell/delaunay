@@ -181,11 +181,6 @@ impl<K, U, V, const D: usize> DelaunayBootstrapWorkspace<K, U, V, D> {
             },
         }
     }
-    /// Returns whether the lower-layer insertion has formed a maximal simplex.
-    fn is_publishable(&self) -> bool {
-        self.tds.number_of_simplices() > 0
-    }
-
     /// Returns a scale-aware duplicate-coordinate failure for bootstrap input.
     fn duplicate_coordinates_error(&self, coords: &[f64; D]) -> Option<InsertionError> {
         let tolerance = duplicate_coordinate_tolerance_from_references(
@@ -264,7 +259,7 @@ impl<K, U, V, const D: usize> DelaunayBootstrapWorkspace<K, U, V, D> {
 
 impl<K, U, V, const D: usize> DelaunayBootstrapWorkspace<K, U, V, D>
 where
-    K: ExactPredicates<D, Scalar = f64>,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -336,15 +331,13 @@ where
 
     /// Publishes the first simplex while carrying its TDS journal through every proof layer.
     fn try_into_owner_after_insertion(
-        mut self,
+        &mut self,
+        publication_kernel: K,
         savepoint: TdsRollbackSavepoint,
         inserted_vertex_key: VertexKey,
         spatial_index_before: Option<HashGridIndex<D>>,
         insertion_state_before: DelaunayInsertionState,
-    ) -> Result<
-        DelaunayTriangulation<K, U, V, D>,
-        RefinementError<Self, DelaunayIncrementalBuilderError>,
-    > {
+    ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayIncrementalBuilderError> {
         let tds_draft = std::mem::take(&mut self.tds);
         let tds = match tds_draft.finish_recoverable() {
             Ok(tds) => tds,
@@ -357,16 +350,13 @@ where
                     spatial_index_before,
                     insertion_state_before,
                 );
-                return Err(RefinementError::new(
-                    self,
-                    DelaunayIncrementalBuilderError::TdsPublication { source },
-                ));
+                return Err(DelaunayIncrementalBuilderError::TdsPublication { source });
             }
         };
 
         let triangulation = match TriangulationDraft::with_topology_context(
             tds,
-            self.kernel.clone(),
+            publication_kernel,
             self.topology_guarantee,
             self.global_topology,
         )
@@ -384,10 +374,7 @@ where
                     spatial_index_before,
                     insertion_state_before,
                 );
-                return Err(RefinementError::new(
-                    self,
-                    DelaunayIncrementalBuilderError::TriangulationPublication { source },
-                ));
+                return Err(DelaunayIncrementalBuilderError::TriangulationPublication { source });
             }
         };
 
@@ -412,10 +399,7 @@ where
                     spatial_index_before,
                     insertion_state_before,
                 );
-                Err(RefinementError::new(
-                    self,
-                    DelaunayIncrementalBuilderError::DelaunayCertification { source },
-                ))
+                Err(DelaunayIncrementalBuilderError::DelaunayCertification { source })
             }
         }
     }
@@ -520,7 +504,7 @@ where
 
 impl<K, U, V, const D: usize> DelaunayIncrementalBuilder<K, U, V, D>
 where
-    K: ExactPredicates<D, Scalar = f64>,
+    K: ExactPredicates<D>,
 {
     /// Starts an empty incremental builder with a caller-selected kernel.
     pub fn with_kernel(kernel: K) -> Self {
@@ -756,12 +740,7 @@ impl<K, U, V, const D: usize> DelaunayIncrementalBuilder<K, U, V, D> {
     /// # }
     /// ```
     #[must_use]
-    pub fn owner_topology_report(&self) -> Option<Result<(), TriangulationValidationReport>>
-    where
-        K: ExactPredicates<D, Scalar = f64>,
-        U: DataType,
-        V: DataType,
-    {
+    pub fn owner_topology_report(&self) -> Option<Result<(), TriangulationValidationReport>> {
         match &self.state {
             DelaunayIncrementalBuilderState::Bootstrap(_) => None,
             DelaunayIncrementalBuilderState::Owner(triangulation) => {
@@ -782,7 +761,7 @@ impl<K, U, V, const D: usize> DelaunayIncrementalBuilder<K, U, V, D> {
 
 impl<K, U, V, const D: usize> DelaunayIncrementalBuilder<K, U, V, D>
 where
-    K: ExactPredicates<D, Scalar = f64>,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -864,6 +843,16 @@ where
         let mut publication = None;
         let result = match &mut self.state {
             DelaunayIncrementalBuilderState::Bootstrap(state) => {
+                // Kernel::clone is caller code and may unwind. Prepare the only
+                // owned kernel needed by publication before opening the journal
+                // or changing bootstrap storage. First-simplex canonicalization
+                // uses raw chart predicates, and Euclidean Level 5 has no other
+                // vertices to test; neither invokes caller kernel predicates.
+                let publication_kernel = (state.vertex_keys.len() == D
+                    && state
+                        .duplicate_coordinates_error(vertex.point().coords())
+                        .is_none())
+                .then(|| state.kernel.clone());
                 let publication_savepoint = state.tds.begin_rollback_savepoint();
                 // Bootstrap contains at most D vertices. Preserve the complete
                 // small cache, including usability, across first publication.
@@ -882,26 +871,14 @@ where
                         .insertion_state
                         .delaunay_repair_insertion_count
                         .saturating_add(1);
-                    if state.is_publishable() {
-                        let replacement = DelaunayBootstrapWorkspace::with_topology_context(
-                            state.kernel.clone(),
-                            state.topology_guarantee,
-                            state.global_topology,
-                        );
-                        let candidate = std::mem::replace(state, replacement);
-                        match candidate.try_into_owner_after_insertion(
+                    if let Some(publication_kernel) = publication_kernel {
+                        publication = Some(state.try_into_owner_after_insertion(
+                            publication_kernel,
                             publication_savepoint,
                             vertex_key,
                             spatial_index_before,
                             insertion_state_before,
-                        ) {
-                            Ok(triangulation) => publication = Some(triangulation),
-                            Err(failure) => {
-                                let (restored, error) = failure.into_parts();
-                                *state = restored;
-                                return Err(error);
-                            }
-                        }
+                        )?);
                     } else {
                         state.tds.commit_savepoint(publication_savepoint);
                     }
@@ -996,12 +973,156 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroUsize;
-
     use super::*;
     use crate::core::simplex::SimplexValidationError;
-    use crate::geometry::kernel::RobustKernel;
+    use crate::geometry::kernel::{Kernel, RobustKernel};
+    use crate::geometry::point::Point;
+    use crate::geometry::traits::coordinate::CoordinateConversionError;
     use crate::vertex;
+    use std::{
+        cell::Cell,
+        num::NonZeroUsize,
+        panic::{AssertUnwindSafe, catch_unwind},
+        rc::Rc,
+    };
+
+    #[derive(Debug, Default)]
+    struct PanicControl {
+        clones: Cell<usize>,
+        panic_at_clone: Cell<usize>,
+        panic_at_predicate: Cell<bool>,
+    }
+
+    #[derive(Debug)]
+    struct UnwindingKernel(Rc<PanicControl>);
+
+    impl Clone for UnwindingKernel {
+        fn clone(&self) -> Self {
+            let count = self.0.clones.get() + 1;
+            self.0.clones.set(count);
+            assert_ne!(
+                count,
+                self.0.panic_at_clone.get(),
+                "injected kernel clone panic"
+            );
+            Self(Rc::clone(&self.0))
+        }
+    }
+
+    impl Kernel<2> for UnwindingKernel {
+        type Scalar = f64;
+
+        fn orientation(&self, points: &[Point<2>]) -> Result<i32, CoordinateConversionError> {
+            assert!(!self.0.panic_at_predicate.get(), "injected predicate panic");
+            AdaptiveKernel::new().orientation(points)
+        }
+
+        fn in_sphere(
+            &self,
+            points: &[Point<2>],
+            query: &Point<2>,
+        ) -> Result<i32, CoordinateConversionError> {
+            assert!(!self.0.panic_at_predicate.get(), "injected predicate panic");
+            AdaptiveKernel::new().in_sphere(points, query)
+        }
+    }
+
+    impl ExactPredicates<2> for UnwindingKernel {}
+
+    fn assert_bootstrap_unwind_atomicity(panic_at_clone: usize, panic_at_predicate: bool) {
+        let control = Rc::new(PanicControl::default());
+        let mut builder: DelaunayIncrementalBuilder<_, (), (), 2> =
+            DelaunayIncrementalBuilder::with_kernel(UnwindingKernel(Rc::clone(&control)));
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+        ];
+        builder.insert_vertex(vertices[0]).unwrap();
+        builder.insert_vertex(vertices[1]).unwrap();
+        let DelaunayIncrementalBuilderState::Bootstrap(before) = &builder.state else {
+            panic!("partial bootstrap")
+        };
+        let storage_before = format!("{:?}", before.tds);
+        let owner_before = before.tds.topology_owner_id();
+        let generation_before = before.tds.topology_generation();
+        let keys_before = before.vertex_keys.clone();
+        let insertion_before = format!("{:?}", before.insertion_state);
+        let grid_before = before.spatial_index.as_ref().unwrap().debug_snapshot();
+        let metadata_before = (
+            before.topology_guarantee,
+            before.global_topology,
+            before.validation_policy,
+            before.euclidean_report_domain,
+        );
+        control.clones.set(0);
+        control.panic_at_clone.set(panic_at_clone);
+        control.panic_at_predicate.set(panic_at_predicate);
+
+        let result = catch_unwind(AssertUnwindSafe(|| builder.insert_vertex(vertices[2])));
+        assert!(result.is_err(), "the selected callback must unwind");
+        let DelaunayIncrementalBuilderState::Bootstrap(restored) = &builder.state else {
+            panic!("unwind must retain bootstrap")
+        };
+        assert_eq!(restored.tds.topology_owner_id(), owner_before);
+        assert_eq!(restored.tds.topology_generation(), generation_before);
+        assert_eq!(format!("{:?}", restored.tds), storage_before);
+        assert_eq!(restored.vertex_keys, keys_before);
+        assert_eq!(format!("{:?}", restored.insertion_state), insertion_before);
+        assert_eq!(
+            restored.spatial_index.as_ref().unwrap().debug_snapshot(),
+            grid_before
+        );
+        assert_eq!(
+            (
+                restored.topology_guarantee,
+                restored.global_topology,
+                restored.validation_policy,
+                restored.euclidean_report_domain
+            ),
+            metadata_before
+        );
+
+        control.panic_at_clone.set(0);
+        control.panic_at_predicate.set(false);
+        builder.insert_vertex(vertices[2]).unwrap();
+        let owner = builder.finish().unwrap();
+        owner.validate().unwrap();
+        assert_eq!(owner.tri.tds.topology_owner_id(), owner_before);
+        for (key, vertex) in keys_before.iter().zip(&vertices) {
+            assert_eq!(owner.tri.tds.vertex(*key).unwrap().uuid(), vertex.uuid());
+        }
+        assert!(
+            owner
+                .tri
+                .tds
+                .vertex_key_from_uuid(&vertices[2].uuid())
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn bootstrap_first_kernel_clone_unwind_restores_original_storage() {
+        assert_bootstrap_unwind_atomicity(1, false);
+    }
+
+    #[test]
+    fn bootstrap_publication_avoids_redundant_clone_and_kernel_predicates() {
+        let control = Rc::new(PanicControl::default());
+        let mut builder: DelaunayIncrementalBuilder<_, (), (), 2> =
+            DelaunayIncrementalBuilder::with_kernel(UnwindingKernel(Rc::clone(&control)));
+        builder.insert_vertex(vertex![0.0, 0.0].unwrap()).unwrap();
+        builder.insert_vertex(vertex![1.0, 0.0].unwrap()).unwrap();
+        control.clones.set(0);
+        control.panic_at_clone.set(2);
+        control.panic_at_predicate.set(true);
+        // Both previously suspected post-mutation callbacks are armed. The
+        // original input must now publish without either callback being needed.
+        builder.insert_vertex(vertex![0.0, 1.0].unwrap()).unwrap();
+        control.panic_at_clone.set(0);
+        control.panic_at_predicate.set(false);
+        builder.finish().unwrap().validate().unwrap();
+    }
 
     macro_rules! test_incremental_builder {
         ($dim:expr, [$($simplex_coords:expr),+ $(,)?], $interior_point:expr) => {

@@ -37,7 +37,7 @@ Implementation entry points:
 - [`Tds::is_coherently_oriented`](../src/core/tds/validation.rs) returns `true` when all
   ordinary and periodic adjacent simplex pairs satisfy the facet-parity convention.
 - `Tds::validate_coherent_orientation()` is called by `Tds::is_valid()` and by
-  `Tds::validation_report()` as `InvariantKind::CoherentOrientation`.
+  `Tds::validation_report()` as `TdsInvariantKind::CoherentOrientation`.
 - `TdsError::OrientationViolation` reports the first incoherent adjacent pair,
   including both facet orderings and the observed/expected permutation parity.
 - `Tds::normalize_coherent_orientation()` computes a BFS flip assignment over
@@ -46,10 +46,10 @@ Implementation entry points:
 
 Periodic image-point triangulations compare lifted facet identities after
 subtracting a deterministic common offset. This makes parity independent of
-lattice representative. A self-neighbor resolves to the other matching facet
-slot when one exists; a single implicit self-mirror represents adjacency to a
-translated copy of the same simplex and contributes a satisfied equality
-constraint. Ambiguous or contradictory quotient constraints fail explicitly.
+lattice representative. A self-neighbor must resolve to one distinct matching
+local facet occurrence with a reciprocal identification. A missing or ambiguous
+mirror occurrence, or a contradictory quotient constraint, fails explicitly;
+the source facet cannot serve as its own implicit mirror.
 
 ### Positive Geometric Simplex Orientation
 
@@ -149,7 +149,7 @@ them when a periodic-aware caller needs lifted facet identity.
 `src/core/tds/validation.rs` owns the combinatorial invariant:
 
 - `TdsError::OrientationViolation`
-- `InvariantKind::CoherentOrientation`
+- `TdsInvariantKind::CoherentOrientation`
 - `Tds::is_coherently_oriented()`
 - `Tds::normalize_coherent_orientation()`
 - `Tds::validate_coherent_orientation_for_simplices(simplices)`
@@ -166,7 +166,7 @@ otherwise it swaps vertex slots `0` and
 `Tds::is_valid()` includes coherent orientation as a Level 2 Combinatorial Consistency check
 after simplex vertex keys, duplicate simplices, facet sharing, and neighbor consistency
 have been validated. The validation report records it as
-`InvariantKind::CoherentOrientation`.
+`TdsInvariantKind::CoherentOrientation`.
 
 ### Triangulation Layer
 
@@ -195,8 +195,9 @@ on the selected kernel.
 policy definitions, while `src/core/algorithms/flips/orientation.rs` provides
 the orientation helpers used during bistellar flips:
 
-- `apply_bistellar_flip_with_k()` asserts coherent orientation before and after
-  the trial mutation in debug builds.
+- `apply_bistellar_flip_with_k_raw()` runs additional coherent-orientation guards
+  before and after the trial mutation in debug builds. Failures return typed
+  `CoherentOrientationViolation` context/mutation errors.
 - Candidate replacement simplices are checked with `robust_orientation`.
 - `Orientation::DEGENERATE` becomes `FlipError::DegenerateSimplex`.
 - `Orientation::NEGATIVE` swaps two vertex slots before insertion.
@@ -206,9 +207,10 @@ the orientation helpers used during bistellar flips:
   orientation for Delaunay-repair replacement simplices.
 - The flip commits only after full-TDS or local-cavity validation succeeds.
 
-The flip code is generic over the scalar type, not over a kernel, for orientation
-canonicalization. Kernels are needed by the Delaunay violation predicates that
-drive repair, but replacement-simplex orientation itself uses `robust_orientation`.
+Flip orientation canonicalization uses `f64` coordinates with dimension and
+payload generics. It is independent of the selected kernel: kernels supply the
+Delaunay violation predicates that drive repair, while replacement-simplex
+orientation itself uses `robust_orientation`.
 
 ### Builder Paths
 

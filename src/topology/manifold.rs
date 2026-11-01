@@ -1152,53 +1152,68 @@ fn simplex_link_simplices_from_star<U, V, const D: usize>(
             .into());
         }
 
-        // Find the reference offset: the first simplex vertex's offset in
-        // this simplex.  All link vertex offsets are computed relative to this
-        // so that shared vertices across TDS-adjacent simplices get the same
-        // lifted ID (adjacent simplices may store different absolute offsets
-        // for the same quotient-space vertex).
-        let ref_slot = offsets.and_then(|_| {
-            candidate_vertices
-                .iter()
-                .position(|cv| simplex_vertices.contains(cv))
-        });
-
-        let mut link_vertices: LiftedVertexBuffer =
-            LiftedVertexBuffer::with_capacity(expected_link_vertices);
-        for (i, &vk) in candidate_vertices.iter().enumerate() {
-            // Membership test on bare key: the input simplex (e.g. a single
-            // vertex) IS the same vertex regardless of periodic offset.
-            if !simplex_vertices.contains(&vk) {
-                // Lift with *relative* offset so adjacent simplices agree.
-                let lifted = match (offsets, ref_slot) {
-                    (Some(offs), Some(r)) => {
-                        let rel: SmallBuffer<i16, 8> = offs[i]
-                            .iter()
-                            .zip(offs[r].iter())
-                            .map(|(&a, &b)| i16::from(a) - i16::from(b))
-                            .collect();
-                        lifted_vertex_id(vk, rel)
-                    }
-                    _ => LiftedVertexId::base(vk),
-                };
-                link_vertices.push(lifted);
-            }
+        // Each occurrence of a quotient vertex contributes a different lifted
+        // simplex to its link. Remove only that anchor slot, and express the
+        // complement relative to it. For higher-dimensional ordinary faces,
+        // preserve the existing complementary-vertex-set convention.
+        let mut anchor_slots: SmallBuffer<usize, 8> = candidate_vertices
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, vertex)| (*vertex == simplex_vertices[0]).then_some(slot))
+            .collect();
+        if simplex_vertices.len() > 1 {
+            anchor_slots.truncate(1);
         }
-
-        if link_vertices.len() != expected_link_vertices {
+        if anchor_slots.is_empty() {
             return Err(TdsError::DimensionMismatch {
                 expected: expected_link_vertices,
-                actual: link_vertices.len(),
-                context: format!(
-                    "simplex link vertex count for {D}D (simplex_key={simplex_key:?})"
-                ),
+                actual: candidate_vertices.len(),
+                context: format!("simplex link anchor missing from {D}D simplex {simplex_key:?}"),
             }
             .into());
         }
 
-        let link_key = anchored_lifted_simplex_key(&link_vertices);
-        if seen_link_simplices.insert(link_key) {
-            link_simplices.push(link_vertices);
+        for ref_slot in anchor_slots {
+            let mut link_vertices: LiftedVertexBuffer =
+                LiftedVertexBuffer::with_capacity(expected_link_vertices);
+            for (i, &vk) in candidate_vertices.iter().enumerate() {
+                let in_anchor = if simplex_vertices.len() == 1 {
+                    i == ref_slot
+                } else {
+                    simplex_vertices.contains(&vk)
+                };
+                if in_anchor {
+                    continue;
+                }
+                let lifted = offsets.map_or_else(
+                    || LiftedVertexId::base(vk),
+                    |offs| {
+                        let rel: SmallBuffer<i16, 8> = offs[i]
+                            .iter()
+                            .zip(offs[ref_slot].iter())
+                            .map(|(&a, &b)| i16::from(a) - i16::from(b))
+                            .collect();
+                        lifted_vertex_id(vk, rel)
+                    },
+                );
+                link_vertices.push(lifted);
+            }
+
+            if link_vertices.len() != expected_link_vertices {
+                return Err(TdsError::DimensionMismatch {
+                    expected: expected_link_vertices,
+                    actual: link_vertices.len(),
+                    context: format!(
+                        "simplex link vertex count for {D}D (simplex_key={simplex_key:?})"
+                    ),
+                }
+                .into());
+            }
+
+            let link_key = anchored_lifted_simplex_key(&link_vertices);
+            if seen_link_simplices.insert(link_key) {
+                link_simplices.push(link_vertices);
+            }
         }
     }
 
@@ -2986,6 +3001,87 @@ mod tests {
         // lk(A, A) = {∅}: one empty face, not an empty collection of faces.
         assert_eq!(link.len(), 1);
         assert!(link[0].is_empty());
+    }
+
+    #[test]
+    fn periodic_structure_one_vertex_t2_link_is_a_six_edge_cycle() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let vertex_key = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+            .unwrap();
+        for offsets in [vec![[0, 0], [1, 0], [1, 1]], vec![[0, 0], [1, 1], [0, 1]]] {
+            tds.insert_simplex_with_mapping(
+                Simplex::try_new_periodic(vec![vertex_key; 3], offsets).unwrap(),
+            )
+            .unwrap();
+        }
+        tds.assign_neighbors().unwrap();
+        tds.assign_incident_simplices().unwrap();
+        tds.validate().unwrap();
+        let star = simplex_star_simplices(&tds, &[vertex_key]).unwrap();
+        let link = simplex_link_simplices_from_star(&tds, &[vertex_key], &star).unwrap();
+        assert_eq!(link.len(), 6);
+        let vertices: FastHashSet<_> = link.iter().flatten().cloned().collect();
+        assert_eq!(vertices.len(), 6);
+        assert_eq!(
+            link_1_skeleton_connectivity_and_max_degree(&link),
+            (true, 2)
+        );
+        validate_vertex_links(
+            &tds.build_facet_to_simplices_index().unwrap(),
+            GlobalTopology::try_toroidal([1.0; 2], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn periodic_structure_one_vertex_t3_link_is_a_triangulated_sphere() {
+        // The six Freudenthal tetrahedra triangulate the cube. Opposite cube
+        // faces are translated copies, giving the standard one-vertex T^3.
+        let mut tds: Tds<(), (), 3> = Tds::empty();
+        let vertex_key = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
+            .unwrap();
+        for [a, b, c] in [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
+            let mut offsets = vec![[0; 3]];
+            let mut offset = [0; 3];
+            for axis in [a, b, c] {
+                offset[axis] = 1;
+                offsets.push(offset);
+            }
+            tds.insert_simplex_with_mapping(
+                Simplex::try_new_periodic(vec![vertex_key; 4], offsets).unwrap(),
+            )
+            .unwrap();
+        }
+        tds.assign_neighbors().unwrap();
+        tds.assign_incident_simplices().unwrap();
+        tds.normalize_coherent_orientation().unwrap();
+        tds.validate().unwrap();
+        let star = simplex_star_simplices(&tds, &[vertex_key]).unwrap();
+        let link = simplex_link_simplices_from_star(&tds, &[vertex_key], &star).unwrap();
+        assert_eq!(link.len(), 24);
+        let vertices: FastHashSet<_> = link.iter().flatten().cloned().collect();
+        assert_eq!(vertices.len(), 14);
+        assert_eq!(triangulated_surface_euler_characteristic_for_link(&link), 2);
+        assert_eq!(
+            triangulated_surface_boundary_component_count_for_link(&link),
+            0
+        );
+        validate_vertex_links(
+            &tds.build_facet_to_simplices_index().unwrap(),
+            GlobalTopology::try_toroidal([1.0; 3], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap(),
+        )
+        .unwrap();
     }
 
     #[test]

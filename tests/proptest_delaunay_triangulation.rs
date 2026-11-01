@@ -44,13 +44,13 @@ use delaunay::prelude::insertion::InsertionOutcome;
 use delaunay::prelude::validation::ValidationPolicy;
 use delaunay::try_vertices_from_points;
 use delaunay::vertex;
+use la_stack::{BigInt, BigRational};
+use num_traits::{One, Zero};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use proptest_config::{repository_default, with_default_cases};
 use rand::{SeedableRng, seq::SliceRandom};
-use std::cell::RefCell;
-use std::collections::HashSet;
-use std::time::Instant;
+use std::{array, cell::RefCell, collections::HashSet, time::Instant};
 
 /// Captures the exact serialized TDS plus its runtime topology generation.
 fn rollback_state<K, const D: usize>(
@@ -273,97 +273,132 @@ fn has_no_nearly_coplanar_tetrahedra_3d(vertices: &[Vertex<(), 3>]) -> bool {
 ///   invariance for **validation Levels 1–3** without depending on perturbation heuristics.
 fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<(), 3>]) -> Result<bool, TestCaseError> {
     const MAX_N: usize = 15;
-
     let n = vertices.len();
     if n < 5 {
         return Ok(true);
     }
-
-    // Guardrail: this filter is O(n^5) due to iterating all 5-point subsets, and it performs up to
-    // 5 `in_sphere` predicate evaluations per 5-tuple for robustness.
-    //
-    // With n=15: C(15, 5) = 3003 5-tuples => ~15k `in_sphere` calls per generated case.
-    //
-    // If you intentionally want to run this filter with larger inputs, set:
-    //   DELAUNAY_ALLOW_SLOW_COSPHERICAL_FILTER=1
+    // One independent 4x4 determinant per unordered tuple, rather than five
+    // calls to the production predicate whose behavior this property exercises.
     let allow_slow = std::env::var_os("DELAUNAY_ALLOW_SLOW_COSPHERICAL_FILTER").is_some();
-
-    // C(n, 5) using integer arithmetic: n*(n-1)*(n-2)*(n-3)*(n-4) / 5!
-    let tuples: u128 =
-        (n as u128) * ((n - 1) as u128) * ((n - 2) as u128) * ((n - 3) as u128) * ((n - 4) as u128)
-            / 120u128;
-    let in_sphere_calls: u128 = tuples * 5u128;
-
-    if n > MAX_N && allow_slow {
-        tracing::warn!(
-            "has_no_cospherical_5_tuples_3d warning: n={n} > {MAX_N}; checking {tuples} 5-tuples (~{in_sphere_calls} in_sphere predicate calls)"
-        );
-    }
-
     assert!(
         n <= MAX_N || allow_slow,
-        "has_no_cospherical_5_tuples_3d: n={n} exceeds MAX_N={MAX_N}; would check {tuples} 5-tuples (~{in_sphere_calls} in_sphere predicate calls). If intentional, set DELAUNAY_ALLOW_SLOW_COSPHERICAL_FILTER=1"
+        "cospherical admission exceeds MAX_N={MAX_N}; set DELAUNAY_ALLOW_SLOW_COSPHERICAL_FILTER=1 for intentional larger inputs"
     );
-
-    // Performance note: this is O(n^5) in the number of input vertices due to iterating all
-    // 5-point subsets.
-    //
-    // With the current generator bounds used by the specialized 3D property (n <= 10), that's
-    // at most C(10, 5) = 252 5-tuples. We do up to 5 `in_sphere` predicate calls per tuple (one
-    // per "test point") for robustness, so the worst case is 252 * 5 = 1260 `in_sphere`
-    // evaluations per generated case.
-    //
-    // If you expand the proptest ranges, consider benchmarking this filter or reducing the
-    // number of predicate calls.
-    let kernel = RobustKernel::<f64>::new();
-
+    let lifted = vertices
+        .iter()
+        .map(|vertex| {
+            let mut row = array::from_fn::<_, 4, _>(|_| BigRational::zero());
+            for (axis, &coordinate) in vertex.point().coords().iter().enumerate() {
+                row[axis] = BigRational::from_float(coordinate)
+                    .ok_or_else(|| TestCaseError::fail("nonfinite admission coordinate"))?;
+            }
+            row[3] = row[..3]
+                .iter()
+                .map(|coordinate| coordinate * coordinate)
+                .sum();
+            Ok(row)
+        })
+        .collect::<Result<Vec<_>, TestCaseError>>()?;
+    // Every stored f64 and its exact squared norm is dyadic. Multiplying each
+    // column by its largest (positive, power-of-two) denominator preserves
+    // determinant zero and clears all fractions once for the whole point set.
+    // Integer expansion avoids a rational GCD for every product in every tuple.
+    let scales: [BigInt; 4] = array::from_fn(|column| {
+        lifted
+            .iter()
+            .map(|row| row[column].denom())
+            .max()
+            .unwrap()
+            .clone()
+    });
+    let lifted: Vec<[BigInt; 4]> = lifted
+        .iter()
+        .map(|row| {
+            array::from_fn(|column| row[column].numer() * (&scales[column] / row[column].denom()))
+        })
+        .collect();
     for i in 0..n {
         for j in (i + 1)..n {
             for k in (j + 1)..n {
                 for l in (k + 1)..n {
                     for m in (l + 1)..n {
-                        let points = [
-                            *vertices[i].point(),
-                            *vertices[j].point(),
-                            *vertices[k].point(),
-                            *vertices[l].point(),
-                            *vertices[m].point(),
-                        ];
-
-                        // For each choice of "test point", ensure it is not exactly on the circumsphere
-                        // of the tetrahedron formed by the other 4 points.
-                        for test_idx in 0..5 {
-                            let mut simplex = [points[0], points[1], points[2], points[3]];
-                            let test_point = points[test_idx];
-
-                            // Build simplex by skipping test_idx.
-                            let mut s = 0usize;
-                            for (p_idx, p) in points.iter().enumerate() {
-                                if p_idx == test_idx {
-                                    continue;
-                                }
-                                simplex[s] = *p;
-                                s += 1;
-                            }
-
-                            let in_sphere = kernel.in_sphere(&simplex, &test_point).map_err(|error| {
-                                TestCaseError::fail(format!(
-                                    "3D co-spherical admission predicate failed for tuple ({i}, {j}, {k}, {l}, {m}) with test index {test_idx}: {error:?}"
-                                ))
-                            })?;
-
-                            // 0 == on boundary => co-spherical.
-                            if in_sphere == 0 {
-                                return Ok(false);
-                            }
+                        let indices = [i, j, k, l];
+                        let matrix = array::from_fn(|row| {
+                            array::from_fn(|column| {
+                                &lifted[indices[row]][column] - &lifted[m][column]
+                            })
+                        });
+                        if determinant_four_by_expansion(&matrix).is_zero() {
+                            return Ok(false);
                         }
                     }
                 }
             }
         }
     }
-
     Ok(true)
+}
+
+/// Leibniz expansion over 24 permutations, independent of the production
+/// filtered determinant and Bareiss backend. Only exact zero is used here.
+fn determinant_four_by_expansion(matrix: &[[BigInt; 4]; 4]) -> BigInt {
+    let mut determinant = BigInt::zero();
+    for a in 0..4 {
+        for b in (0..4).filter(|&b| b != a) {
+            for c in (0..4).filter(|&c| c != a && c != b) {
+                let permutation = [a, b, c, 6 - a - b - c];
+                let inversions = (0..4)
+                    .map(|i| {
+                        ((i + 1)..4)
+                            .filter(|&j| permutation[i] > permutation[j])
+                            .count()
+                    })
+                    .sum::<usize>();
+                let term = permutation
+                    .iter()
+                    .enumerate()
+                    .fold(BigInt::one(), |product, (row, &column)| {
+                        product * &matrix[row][column]
+                    });
+                if inversions.is_multiple_of(2) {
+                    determinant += term;
+                } else {
+                    determinant -= term;
+                }
+            }
+        }
+    }
+    determinant
+}
+
+#[test]
+fn independent_cospherical_admission_has_exact_controls() {
+    // The unit tetrahedron sphere is sum(x_i^2 - x_i) = 0.
+    let mut vertices = vec![
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0, 1.0]).unwrap(),
+    ];
+    assert!(!has_no_cospherical_5_tuples_3d(&vertices).unwrap());
+    let scaled: Vec<_> = vertices
+        .iter()
+        .map(|vertex| {
+            vertex!(
+                vertex
+                    .point()
+                    .coords()
+                    .map(|coordinate| coordinate.mul_add(0.125, 0.25))
+            )
+            .unwrap()
+        })
+        .collect();
+    assert!(!has_no_cospherical_5_tuples_3d(&scaled).unwrap());
+    vertices[4] = vertex!([2.0, 2.0, 2.0]).unwrap(); // power = 6, strictly outside.
+    assert!(has_no_cospherical_5_tuples_3d(&vertices).unwrap());
+    vertices.swap(0, 3);
+    assert!(has_no_cospherical_5_tuples_3d(&vertices).unwrap());
 }
 
 /// Assert the layered validation contract we rely on in these properties:

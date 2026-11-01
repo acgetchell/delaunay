@@ -95,6 +95,37 @@ def test_visual_witnesses_cover_all_validation_levels(case: ValidationCase) -> N
     validate_case_visual_invariants(case, case.level - 1)
 
 
+@pytest.mark.parametrize("scale", [2.0**-30, 2.0**-600])
+def test_degeneracy_witness_rejects_small_noncollinear_points(scale: float) -> None:
+    """Positive represented determinants remain nonzero below area and underflow thresholds."""
+    case = visual_case(4, ((0.0, 0.0), (scale, 0.0), (0.0, scale)), ((0, 1, 2),), highlighted_simplices=frozenset({0}))
+
+    with pytest.raises(ValueError, match="vertices are not exactly collinear"):
+        validate_case_visual_invariants(case, 3)
+
+
+@pytest.mark.parametrize("scale", [1.0, 2.0**-30, 2.0**-600, 2.0**600])
+def test_degeneracy_witness_accepts_exactly_collinear_transformed_points(scale: float) -> None:
+    """Binary scaling and translation preserve a represented collinearity witness."""
+    case = visual_case(
+        4,
+        ((scale, -scale), (2.0 * scale, scale), (3.0 * scale, 3.0 * scale)),
+        ((0, 1, 2),),
+        highlighted_simplices=frozenset({0}),
+    )
+
+    validate_case_visual_invariants(case, 3)
+
+
+@pytest.mark.parametrize("coordinate", [float("inf"), float("-inf"), float("nan")])
+def test_degeneracy_witness_rejects_nonfinite_coordinates(coordinate: float) -> None:
+    """The exact oracle must retain finite-coordinate admission."""
+    case = visual_case(4, ((0.0, 0.0), (1.0, 1.0), (coordinate, 2.0)), ((0, 1, 2),), highlighted_simplices=frozenset({0}))
+
+    with pytest.raises(ValueError, match="coordinates must be finite"):
+        validate_case_visual_invariants(case, 3)
+
+
 @pytest.mark.parametrize(
     ("case", "message"),
     [
@@ -140,7 +171,7 @@ def test_visual_witnesses_cover_all_validation_levels(case: ValidationCase) -> N
                 ((0, 1, 2),),
                 highlighted_simplices=frozenset({0}),
             ),
-            "exceeds degeneracy tolerance",
+            "vertices are not exactly collinear",
         ),
         (
             # These non-collinear points produce inf - inf in the area calculation.
@@ -150,7 +181,7 @@ def test_visual_witnesses_cover_all_validation_levels(case: ValidationCase) -> N
                 ((0, 1, 2),),
                 highlighted_simplices=frozenset({0}),
             ),
-            r"cases\[3\]\.visual\.simplices\[0\] area must be finite, got nan",
+            r"cases\[3\]\.visual\.simplices\[0\] vertices are not exactly collinear",
         ),
         (
             # This right triangle's area overflows to infinity.
@@ -160,7 +191,7 @@ def test_visual_witnesses_cover_all_validation_levels(case: ValidationCase) -> N
                 ((0, 1, 2),),
                 highlighted_simplices=frozenset({0}),
             ),
-            r"cases\[3\]\.visual\.simplices\[0\] area must be finite, got inf",
+            r"cases\[3\]\.visual\.simplices\[0\] vertices are not exactly collinear",
         ),
         (
             visual_case(

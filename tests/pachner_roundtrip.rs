@@ -44,7 +44,7 @@ fn find_live_edge<const D: usize>(
     tri: &Tri<D>,
     a: VertexKey,
     b: VertexKey,
-) -> Result<EdgeKey, EdgeKeyError> {
+) -> Result<EdgeKey<D>, EdgeKeyError> {
     if a == b {
         return Err(EdgeKeyError::DuplicateEndpoint { endpoint: a });
     }
@@ -936,7 +936,7 @@ fn simplex_centroid_generic<const D: usize>(tri: &Tri<D>, simplex_key: SimplexKe
 }
 
 /// Converts a 2D facet handle into the edge key represented by that facet.
-fn edge_for_facet_2d(tri: &Tri2, facet: FacetHandle) -> EdgeKey {
+fn edge_for_facet_2d(tri: &Tri2, facet: FacetHandle) -> EdgeKey<2> {
     let view = tri
         .facets()
         .find_map(|candidate| {
@@ -958,7 +958,7 @@ fn edge_for_facet_2d(tri: &Tri2, facet: FacetHandle) -> EdgeKey {
 }
 
 /// Parses the inserted edge reported by a 2D k=2 move.
-fn inserted_edge_2d(tri: &Tri2, vertices: &[VertexKey]) -> EdgeKey {
+fn inserted_edge_2d(tri: &Tri2, vertices: &[VertexKey]) -> EdgeKey<2> {
     let [a, b] = vertices else {
         panic!(
             "2D k=2 move should report exactly two inserted edge vertices, got {}",
@@ -1317,7 +1317,7 @@ fn roundtrip_k2(tri: &mut Tri4, facet: FacetHandle) {
 
 /// Parses the inserted face of a k=2 move into the edge expected by the inverse API.
 #[cfg(feature = "slow-tests")]
-fn inserted_edge(tri: &Tri4, vertices: &[VertexKey]) -> EdgeKey {
+fn inserted_edge(tri: &Tri4, vertices: &[VertexKey]) -> EdgeKey<4> {
     let [a, b] = vertices else {
         panic!(
             "k=2 flip should report an inserted edge, got {} vertices",
