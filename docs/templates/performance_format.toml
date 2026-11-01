@@ -1,0 +1,8 @@
+# Format the README before its CSV and document are published together.
+# Link destinations are checked by the normal Markdown gate after publication.
+[global]
+line-length = 160
+disable = [ "MD018", "MD024", "MD029", "MD033", "MD037", "MD038", "MD041", "MD057", "MD060" ]
+
+[MD013]
+line-length = 160

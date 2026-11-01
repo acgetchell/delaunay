@@ -1,4 +1,4 @@
-"""Consumer policy over the installed independent-acquisition contract.
+"""Consumer policy over the installed complete-acquisition contract.
 
 Tiny native Python fixtures exercise workflow correctness, never performance.
 Git revision resolution is modeled; these tests do not mutate any Git state.
@@ -71,6 +71,7 @@ def fixture_plan(root: Path, monkeypatch: pytest.MonkeyPatch) -> CompleteMeasure
         backend="worktree",
         compatible=[],
     )
+    declaration["harness-mode"] = "independent"
     for phase in ("baseline", "current"):
         checkout = root / phase
         (checkout / "src").mkdir(parents=True)
@@ -96,7 +97,7 @@ def fixture_plan(root: Path, monkeypatch: pytest.MonkeyPatch) -> CompleteMeasure
 def test_actual_declarations_preserve_scientific_counts_and_release_membership() -> None:
     plan = load_measurement(ROOT, "tooling/measurement-release-signal.toml")
     assert isinstance(plan, CompleteMeasurementPlan)
-    assert (plan.harness_mode, plan.backend, plan.saved_sample, plan.raw_files) == ("independent", "export", "retained", ("tukey.json",))
+    assert (plan.harness_mode, plan.backend, plan.saved_sample, plan.raw_files) == ("common", "export", "retained", ("tukey.json",))
     for phase in (plan.baseline, plan.current):
         assert isinstance(phase.policy, DiscoveryPolicy)
         counts = dict(phase.policy.sample_counts)
@@ -143,6 +144,35 @@ def test_complete_measurement_commands_do_not_add_positional_filters(suite: str)
     for phase in (plan.baseline, plan.current):
         criterion_arguments = phase.command[phase.command.index("--") + 1 :]
         assert all(argument.startswith("-") for argument in criterion_arguments)
+
+
+def test_release_harness_unifies_changed_fixtures_before_measurement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Changed harness bytes become comparable without rewriting library source."""
+    release_plan = load_measurement(ROOT, "tooling/measurement-release-signal.toml")
+    assert isinstance(release_plan, CompleteMeasurementPlan)
+    fixture = fixture_plan(tmp_path, monkeypatch)
+    plan = replace(fixture, harness_mode=release_plan.harness_mode, baseline=replace(fixture.baseline, policy=fixture.current.policy))
+    original_sources = {phase: (tmp_path / phase / "src/lib.rs").read_bytes() for phase in ("baseline", "current")}
+    current_harness = (tmp_path / "current/benches/native.py").read_bytes()
+    retained = measure_prepared_pair(tmp_path / "baseline", tmp_path / "current", plan, ReleasePair("v0.8.4", "v0.8.3"))
+    run = validate_run_policy(retained, plan, release=True)
+    assert not ratio_incompatibilities(retained)
+    for phase, sample in run.phases:
+        assert (tmp_path / phase / "src/lib.rs").read_bytes() == original_sources[phase]
+        assert (tmp_path / phase / "benches/native.py").read_bytes() == current_harness
+        assert {case.full_id for case in sample.cases} == set(dict(fixture.current.policy.sample_counts))
+    assert not (tmp_path / "baseline/benches/baseline_only.py").exists()
+    assert (tmp_path / "events.log").read_text(encoding="utf-8").splitlines() == [
+        "current:list",
+        "current:list",
+        "current:gate",
+        "current:gate",
+        "current:measure",
+        "current:measure",
+    ]
 
 
 @pytest.mark.parametrize("same_release", [False, True])
@@ -263,6 +293,9 @@ def publication_fixture(tmp_path: Path) -> CompleteMeasurementPlan:
     (tmp_path / "tooling").mkdir()
     for name in ("performance-report.toml", "performance-publication.toml", "performance-release.toml"):
         shutil.copyfile(ROOT / "tooling" / name, tmp_path / "tooling" / name)
+    formatter = Path("docs/templates/performance_format.toml")
+    (tmp_path / formatter).parent.mkdir(parents=True)
+    shutil.copyfile(ROOT / formatter, tmp_path / formatter)
     # The native executable, input paths, host and export boundary are modeled.
     # The counts, semantic IDs and publication selections are the consumer's.
     sections = [
@@ -332,6 +365,7 @@ def test_consumer_preparation_strict_promotion_and_readme_publication(tmp_path: 
     shutil.rmtree(tmp_path / "current")
     (tmp_path / settings.payload).unlink()
     (tmp_path / settings.manifest).unlink()
+    assert not (tmp_path / "docs/assets/bench/release-performance.csv").exists()
     publication = load_readme_plan(tmp_path, settings)
     publish_publication(publication)
     readme = (tmp_path / "README.md").read_text(encoding="utf-8")
@@ -341,6 +375,7 @@ def test_consumer_preparation_strict_promotion_and_readme_publication(tmp_path: 
     assert "Current v0.8.3" in readme
     assert "5D construction (12 vertices)" in readme
     assert "Baseline / current" in readme
+    assert "Selection coverage:\n\n- Baseline" in readme
     assert (tmp_path / "docs/assets/bench/release-performance.csv").is_file()
     assert not load_readme_plan(tmp_path, settings).changed_paths
     stale = load_readme_plan(tmp_path, settings)

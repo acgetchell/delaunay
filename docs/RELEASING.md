@@ -200,8 +200,9 @@ just performance-release
 
 Preparation selects the current package and previous stable published release
 without timing. It requires reviewed tags already present locally. Shared
-schema-4 acquisition uses read-only exports, preserving each revision's original
-native harness. Both independent discoveries and scientific gates must pass
+schema-4 acquisition uses read-only source exports and overlays the current
+release-signal harness onto both revisions, preserving original source provenance.
+The common harness must compile against both library versions. Both discoveries and scientific gates must pass
 before either phase starts timing. Source, harness, workload, controller,
 compiler and host changes during acquisition invalidate the run.
 
@@ -220,6 +221,11 @@ release labels, complete coverage and compatible evidence. If no comparable
 baseline exists, publish no comparison/README update; use `just bench-latest`
 and `just bench-perf-summary` for absolute scientific diagnostics instead.
 Never invent proofs for older evidence or reuse a defective methodology.
+
+If a run reports incompatible harness or workload fingerprints, preserve it as
+absolute evidence. After correcting the declaration or harness, rerun both
+`just performance-prepare` and `just performance-release` to collect a fresh pair;
+promotion alone cannot make earlier samples comparable.
 
 Successful promotion creates immutable complete-run history under
 `docs/performance-runs/` and the current report `docs/performance_current.md`.

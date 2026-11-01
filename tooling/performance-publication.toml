@@ -1,5 +1,6 @@
 schema = 2
 document = "README.md"
+formatter = "docs/templates/performance_format.toml"
 archive = "docs/performance-runs"
 measurement = "tooling/measurement-release-signal.toml"
 release = true

@@ -18,6 +18,9 @@ extend-exclude = [
     # Auto-generated from git history; contains commit-message fragments that frequently trip spellcheck.
     "CHANGELOG.md",
     "docs/archives/changelog/**",
+    # Retained machine evidence includes base64-encoded raw samples, not prose.
+    "docs/performance-runs/runs/*/run.json",
+    "docs/performance-runs/runs/*/evidence.json",
 ]
 
 [default]

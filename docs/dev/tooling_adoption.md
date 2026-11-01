@@ -77,8 +77,11 @@ sibling checkout, local wheel override or editable shared-package installation.
 `performance-local`, performance CI, prepared release comparisons, report
 promotion and README publication now call installed commands with the six
 consumer TOML declarations under `tooling/`. The Python wheel/sdist also carries
-these declarations under `share/delaunay/tooling/`. Independent read-only source
-exports preserve both native harnesses and baseline-only files. Each phase
+these declarations under `share/delaunay/tooling/`. Read-only source exports
+retain original source provenance. The release-signal plan overlays one current
+harness onto both library revisions so harness edits do not invalidate the new
+comparison. The topology and historical v0.8.2 plans preserve native harnesses
+and baseline-only files. Each phase
 discovers canonical IDs, completes its scientific gate, executes its declared
 counts, and verifies its saved copy against fresh benchmark/estimate/sample/Tukey
 bytes. The retained payload contains both complete phases and original raw JSON.

@@ -116,7 +116,9 @@ def _assert_installed_modules_and_commands(
                 "import tomllib; "
                 "declarations = root / 'share/delaunay/tooling'; "
                 "assert len(list(declarations.glob('*.toml'))) == 6; "
-                "assert tomllib.loads((declarations / 'measurement-release-signal.toml').read_text())['harness-mode'] == 'independent'; "
+                "assert tomllib.loads((declarations / 'measurement-release-signal.toml').read_text())['harness-mode'] == 'common'; "
+                "publication = tomllib.loads((declarations / 'performance-publication.toml').read_text()); "
+                "assert (root / 'share/delaunay' / publication['formatter']).is_file(); "
                 "assert all(pathlib.Path(importlib.import_module(name).__file__).resolve().is_relative_to(root) for name in sys.argv[1:])"
             ),
             *configuration["tool"]["setuptools"]["py-modules"],
