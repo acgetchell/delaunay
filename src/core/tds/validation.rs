@@ -3408,6 +3408,37 @@ mod tests {
     }
 
     #[test]
+    fn self_neighbor_topology_requires_periodicity_and_reciprocal_proposed_slots() {
+        let (tds, key) = periodic_distinct_slot_self_mirror::<3>(
+            vec![[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]],
+            [0, 3],
+        );
+        tds.validate().unwrap();
+        let simplex = tds.simplex(key).unwrap();
+        let proposed = [Some(key), None, None, None];
+        assert_matches!(Tds::<(), (), 3>::validate_self_neighbor_topology(key, simplex, 0, &proposed),
+            Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::BackReferenceMismatch {
+                    simplex_key, facet_index: 0, mirror_index: 3, observed: None, ..
+                }
+            }) if simplex_key == key);
+
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+        ];
+        let ordinary: Tds<(), (), 2> = TdsBuilder::new(&vertices, &[vec![0, 1, 2]])
+            .build()
+            .unwrap();
+        let (key, simplex) = ordinary.simplices().next().unwrap();
+        assert_matches!(Tds::<(), (), 2>::validate_self_neighbor_topology(key, simplex, 0, &[Some(key); 3]),
+            Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::NonPeriodicSelfNeighbor { simplex_key, facet_index: 0, .. }
+            }) if simplex_key == key);
+    }
+
+    #[test]
     fn test_orientation_validation_rejects_unlinked_distinct_slot_periodic_self_mirror() {
         let (tds, simplex_key) = periodic_distinct_slot_self_mirror::<3>(
             vec![[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]],

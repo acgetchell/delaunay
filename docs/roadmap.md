@@ -16,6 +16,8 @@ and publication gates in [RELEASING.md](RELEASING.md). A completed local check
 does not establish hosted CI, fresh performance measurements, or publication.
 The [changelog](../CHANGELOG.md) owns the detailed generated release notes.
 
+<!-- Preserve the former heading's public deep link. -->
+<!-- markdownlint-disable-next-line MD033 -->
 <a id="v083-release-preparation"></a>
 
 ## v0.8.3 Released Baseline

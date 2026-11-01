@@ -79,8 +79,17 @@ use num_traits::Zero;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::geometry::{CoordinateConversionError, Point, sos_orientation_sign};
-/// # fn main() -> Result<(), CoordinateConversionError> {
+/// use delaunay::prelude::geometry::{
+///     CoordinateConversionError, CoordinateValidationError, Point, sos_orientation_sign,
+/// };
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Conversion(#[from] CoordinateConversionError),
+/// #     #[error(transparent)]
+/// #     Validation(#[from] CoordinateValidationError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let origin = Point::try_new([0.0, 0.0])?;
 /// // The symbolic row order resolves coincident points without moving them.
 /// assert_eq!(sos_orientation_sign(&[origin; 3])?, -1);
@@ -203,8 +212,17 @@ pub fn sos_orientation_sign<const D: usize>(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::geometry::{CoordinateConversionError, Point, sos_insphere_sign};
-/// # fn main() -> Result<(), CoordinateConversionError> {
+/// use delaunay::prelude::geometry::{
+///     CoordinateConversionError, CoordinateValidationError, Point, sos_insphere_sign,
+/// };
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Conversion(#[from] CoordinateConversionError),
+/// #     #[error(transparent)]
+/// #     Validation(#[from] CoordinateValidationError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let simplex = [
 ///     Point::try_new([0.0, 0.0])?,
 ///     Point::try_new([1.0, 0.0])?,
@@ -748,6 +766,18 @@ mod tests {
             Err(CoordinateConversionError::UnsupportedMatrixDimension {
                 requested: 8,
                 max: 7,
+            })
+        );
+    }
+
+    #[test]
+    fn insphere_rejects_unsupported_dimension_before_checking_point_count() {
+        let query = Point::try_new([0.0; 7]).unwrap();
+        assert_eq!(
+            sos_insphere_sign::<7>(&[], &query),
+            Err(CoordinateConversionError::UnsupportedMatrixDimension {
+                requested: 9,
+                max: 8,
             })
         );
     }

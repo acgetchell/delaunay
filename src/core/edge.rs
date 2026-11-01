@@ -1456,6 +1456,27 @@ mod tests {
     }
 
     #[test]
+    fn edge_lookup_rejects_incidence_to_a_simplex_without_its_endpoint() {
+        with_triangle_tds(|tds, [a, _, _]| {
+            let mut tds = tds.clone();
+            let unrelated = tds
+                .insert_vertex_with_mapping(vertex![2.0, 2.0].unwrap())
+                .unwrap();
+            let simplex_key = tds.simplex_keys().next().unwrap();
+            tds.add_simplex_to_vertex_incidence_for_test(unrelated, simplex_key);
+            for (first, second) in [(a, unrelated), (unrelated, a)] {
+                assert_eq!(
+                    EdgeKey::try_new(&tds, first, second),
+                    Err(EdgeKeyError::VertexIncidenceMismatch {
+                        vertex_key: unrelated,
+                        simplex_key
+                    })
+                );
+            }
+        });
+    }
+
+    #[test]
     fn edge_view_rejects_stale_endpoint_handles() {
         with_triangle_tds(|_tds, [a, b, _c]| {
             let stale = EdgeKey::from_validated_endpoints(a, b);

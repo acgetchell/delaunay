@@ -316,7 +316,7 @@ operations abort on error so a failed path cannot silently publish a fast result
 | `validation_components.rs` | Validation layer costs | Ordinary/adversarial 2D–5D | Filter explicitly | Manual only |
 | `circumsphere_queries.rs` | Batched circumsphere queries | 3D 1k/10k/30k | Filter explicitly | Manual only |
 | `hull_queries.rs` | Boundary and hull extraction | 3D 10k | Filter explicitly | Manual only |
-| `realization_validation.rs` | Level 4 narrow phase and whole validation | Realistic/near-degenerate 2D-5D | ~1-5 min | Level 4 tuning |
+| `realization_validation.rs` | Level 4 validation and periodic Level 5 reports | Realistic/near-degenerate 2D-5D; periodic T^2 | ~1-5 min | Validation tuning |
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D/3D seeded cases; 4D/5D inverse-k1; 2D-5D rollback | ~1-5 min | Vertex deletion |
 | `locate.rs` | Point-location facet-walk latency (no-hint vs exact-hint) | 2D-5D fixed cases | ~1-3 min | Locate/walk tuning |
 | `math_kernels.rs` | Geometry and topology kernels | 170 cases: geometry 2D-6D, others 2D-5D | Several minutes | Manual kernel investigations |
